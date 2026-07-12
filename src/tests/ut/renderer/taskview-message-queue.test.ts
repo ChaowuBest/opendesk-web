@@ -408,7 +408,7 @@ describe('task-view message queue', () => {
         expect(echo?.classList.contains('od-user-msg-container')).toBe(true);
         expect(echo?.getAttribute('data-pending-context-type')).toBe('goal_supplement');
         expect(taskView.querySelector('.goal-supplement-pending')).toBeNull();
-        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(placeholder?.textContent).toContain('正在等待模型响应');
         expect(placeholder).toBe(taskView.querySelector('#taskview-chat-history')?.lastElementChild);
     });
 
@@ -450,7 +450,7 @@ describe('task-view message queue', () => {
             'Use packages/appsdk as the target.'
         );
         expect(taskView.textContent).not.toContain('hidden prompt');
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
     });
 
     test('removes pending goal supplement echoes by id instead of text containment', () => {
@@ -515,7 +515,7 @@ describe('task-view message queue', () => {
         expect(echo?.textContent).toContain('Ship the CLI export fix');
         expect(echo?.getAttribute('data-pending-context-type')).toBe('goal_edit');
         expect(taskView.querySelector('.goal-edit-pending')).toBeNull();
-        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(placeholder?.textContent).toContain('正在等待模型响应');
         expect(placeholder).toBe(taskView.querySelector('#taskview-chat-history')?.lastElementChild);
     });
 
@@ -544,7 +544,7 @@ describe('task-view message queue', () => {
         const historyContainer = taskView.querySelector('#taskview-chat-history');
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
         expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
     });
 
@@ -566,7 +566,7 @@ describe('task-view message queue', () => {
         const historyContainer = taskView.querySelector('#taskview-chat-history');
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
         expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
     });
 
@@ -599,7 +599,7 @@ describe('task-view message queue', () => {
         const historyContainer = taskView.querySelector('#taskview-chat-history');
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
         expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
         expect(taskView._pendingGoalEditMessage).not.toBeNull();
     });
@@ -644,7 +644,7 @@ describe('task-view message queue', () => {
         const historyContainer = taskView.querySelector('#taskview-chat-history');
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
         expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
     });
 
@@ -690,7 +690,7 @@ describe('task-view message queue', () => {
         expect(taskView._pendingGoalEditMessage).not.toBeNull();
         expect(taskView.querySelector('.od-pending-context-entry')).not.toBeNull();
         expect(taskView.textContent).toContain('/goal Ship the CLI export fix');
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
     });
 
     test('syncs pending goal edit state to the artifacts panel', () => {
@@ -839,7 +839,7 @@ describe('task-view message queue', () => {
         expect(taskView._pendingGoalEditMessage).not.toBeNull();
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
         expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
         expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
         expect(setGoalEditPending).toHaveBeenNthCalledWith(2, true);
@@ -1042,7 +1042,7 @@ describe('task-view message queue', () => {
             '已被取代'
         );
         expect(taskView.textContent).not.toContain('正在评估目标达成情况');
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
     });
 
     test('moves a superseded evaluation below a goal edit when the edit message renders late', () => {
@@ -1591,7 +1591,7 @@ describe('task-view message queue', () => {
             true
         );
         expect(history.querySelector('.goal-supplement-pending')).toBeNull();
-        expect(history.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(history.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
 
         expect(
             taskView._renderUserProgress(
@@ -1638,7 +1638,7 @@ describe('task-view message queue', () => {
             'goal_edit'
         );
         expect(taskView.querySelector('.goal-edit-pending')).toBeNull();
-        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
         expect(taskView._pendingGoalEditMessage).not.toBeNull();
 
         expect(
@@ -1697,6 +1697,50 @@ describe('task-view message queue', () => {
 
         expect(taskView._pendingGoalEditMessage).toBeNull();
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
+    });
+
+    test('restores the thinking placeholder when an internal goal edit reminder starts the next turn', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            _currentGoal: Record<string, unknown>;
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'stopped';
+        taskView._currentGoal = { id: 'goal-1', status: 'active', revision: 2 };
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">Previous goal output</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const history = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        expect(
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'goal-edit-user-1',
+                    internal: true,
+                    metadata: {
+                        origin: { source: 'internal', reason: 'goal_edit' },
+                        execution: { controllerId: 'goal-1', controllerRevision: 2 }
+                    },
+                    last_part: { type: 'text', rendered: '<p>hidden internal prompt</p>' },
+                    last_part_index: 0
+                },
+                history
+            )
+        ).toBe(false);
+
+        expect(history.textContent).not.toContain('hidden internal prompt');
+        expect(history.querySelector('.waiting-usage-placeholder')?.textContent).toContain('正在等待模型响应');
+        expect(history.querySelector('.waiting-usage-placeholder')).toBe(history.lastElementChild);
     });
 
     test('forwards live task todo updates to artifacts with live-update source', async () => {

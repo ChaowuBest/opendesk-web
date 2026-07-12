@@ -63,6 +63,30 @@ describe('TaskView goal panel history placement', () => {
         expect(goalIndex).toBeLessThan(userIndex);
     });
 
+    test('keeps an active goal panel below newly appended messages', async () => {
+        const goal = createCompletedGoal();
+        goal.status = 'active';
+        delete goal.completedAt;
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: { messages: [] }
+        } as any;
+
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 1_000 });
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task-1',
+            message_id: 'message-during-goal',
+            last_part_index: 0,
+            last_part: new TextMessagePart('message during goal')
+        });
+
+        const output = stripAnsi(taskView.render(120).join('\n'));
+        expect(output.indexOf('message during goal')).toBeLessThan(output.indexOf('Follow-up Goal'));
+    });
+
     test('inserts a terminal goal snapshot before the next streamed user message', async () => {
         const goal = createCompletedGoal();
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
@@ -180,5 +204,65 @@ describe('TaskView goal panel history placement', () => {
 
         expect((taskView as any).goalPanelViews.has(`goal:${goal.id}`)).toBe(false);
         expect((taskView as any).goalPanelViews.has(`goal-final:${goal.id}`)).toBe(true);
+    });
+
+    test('keeps a late final snapshot above user messages sent after completion', async () => {
+        const goal = createCompletedGoal();
+        const snapshot = createFinalSnapshot(goal);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: { ...goal, status: 'active' },
+            goal_final_snapshots: [],
+            chat_context: {
+                messages: [],
+                lastMessage: () => undefined
+            }
+        } as any;
+
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task-1',
+            message_id: 'message-after-goal',
+            last_part_index: 0,
+            last_part: new TextMessagePart('message after goal')
+        });
+        taskView.syncFinalGoalSnapshot(snapshot);
+
+        const output = stripAnsi(taskView.render(120).join('\n'));
+        const goalIndex = output.indexOf('Follow-up Goal');
+        const userIndex = output.indexOf('message after goal');
+
+        expect(goalIndex).toBeGreaterThanOrEqual(0);
+        expect(userIndex).toBeGreaterThanOrEqual(0);
+        expect(goalIndex).toBeLessThan(userIndex);
+    });
+
+    test('does not move a final snapshot when task goal state is stale and active', async () => {
+        const goal = createCompletedGoal();
+        const snapshot = createFinalSnapshot(goal);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: { ...goal, status: 'active' },
+            goal_final_snapshots: [snapshot],
+            chat_context: {
+                messages: [],
+                lastMessage: () => undefined
+            }
+        } as any;
+
+        taskView.syncFinalGoalSnapshot(snapshot);
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task-1',
+            message_id: 'message-after-goal',
+            last_part_index: 0,
+            last_part: new TextMessagePart('message after goal')
+        });
+
+        const output = stripAnsi(taskView.render(120).join('\n'));
+        expect(output.indexOf('Follow-up Goal')).toBeLessThan(output.indexOf('message after goal'));
     });
 });

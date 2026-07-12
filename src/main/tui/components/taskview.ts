@@ -1285,24 +1285,82 @@ export class TaskView implements Component {
         this.removeGoalPanelByKey(`goal:${goalId}`);
     }
 
+    private placeFinalGoalPanel(view: GoalPanel, snapshot: GoalFinalSnapshot): void {
+        const anchorView = snapshot.anchorMessageId
+            ? (this.messageIdToAssistantView.get(snapshot.anchorMessageId) ??
+              this.messageIdToUserView.get(snapshot.anchorMessageId))
+            : undefined;
+        const finalizedAt = getGoalSnapshotTimestamp(snapshot);
+        const firstLaterUserView =
+            finalizedAt === undefined
+                ? undefined
+                : this.messages.find(
+                      (message): message is UserMessageView =>
+                          message instanceof UserMessageView &&
+                          message.message.internal !== true &&
+                          message.message.timestamp > finalizedAt
+                  );
+
+        const placeInCollection = (collection: Component[]): void => {
+            const currentIndex = collection.indexOf(view);
+            if (currentIndex !== -1) collection.splice(currentIndex, 1);
+
+            if (anchorView) {
+                const anchorIndex = collection.indexOf(anchorView);
+                if (anchorIndex !== -1) {
+                    collection.splice(anchorIndex + 1, 0, view);
+                    return;
+                }
+            }
+            if (firstLaterUserView) {
+                const laterUserIndex = collection.indexOf(firstLaterUserView);
+                if (laterUserIndex !== -1) {
+                    collection.splice(laterUserIndex, 0, view);
+                    return;
+                }
+            }
+            collection.push(view);
+        };
+
+        placeInCollection(this.messages);
+        placeInCollection(this.messageLayout.children);
+    }
+
     syncFinalGoalSnapshot(snapshot: GoalFinalSnapshot): boolean {
         this.clearStalePendingGoalEdit();
-        this.removeLiveGoalPanel(snapshot.goalId);
-
         const key = snapshot.id || `goal-final:${snapshot.goalId}`;
         const data = getGoalPanelDataFromFinalSnapshot(snapshot);
         const existing = this.goalPanelViews.get(key);
         if (existing) {
+            this.removeLiveGoalPanel(snapshot.goalId);
             existing.update(data);
+            this.placeFinalGoalPanel(existing, snapshot);
             this.invalidated = true;
             return true;
         }
 
         const view = new GoalPanel({ showCleared: true, showTerminal: true, id: key });
         view.update(data);
+        const liveKey = `goal:${snapshot.goalId}`;
+        const liveView = this.goalPanelViews.get(liveKey);
+        const messageIndex = liveView ? this.messages.indexOf(liveView) : -1;
+        const layoutIndex = liveView ? this.messageLayout.children.indexOf(liveView) : -1;
+
+        if (liveView) {
+            this.goalPanelViews.delete(liveKey);
+        }
         this.goalPanelViews.set(key, view);
-        this.messages.push(view);
-        this.messageLayout.addChild(view);
+        if (messageIndex === -1) {
+            this.messages.push(view);
+        } else {
+            this.messages.splice(messageIndex, 1, view);
+        }
+        if (layoutIndex === -1) {
+            this.messageLayout.addChild(view);
+        } else {
+            this.messageLayout.children.splice(layoutIndex, 1, view);
+        }
+        this.placeFinalGoalPanel(view, snapshot);
         this.invalidated = true;
         return true;
     }
@@ -1329,11 +1387,13 @@ export class TaskView implements Component {
             this.clearPendingGoalSupplementViews();
         }
 
-        if (goal.status === 'complete' || goal.status === 'cleared') {
-            const snapshot = this.getFinalSnapshotForGoal(goal.id);
-            if (snapshot) {
-                return this.syncFinalGoalSnapshot(snapshot);
-            }
+        const snapshot = this.getFinalSnapshotForGoal(goal.id);
+        const finalSnapshotKey = snapshot && (snapshot.id || `goal-final:${snapshot.goalId}`);
+        if (
+            snapshot &&
+            (GoalStates.isTerminal(goal.status) || (finalSnapshotKey && this.goalPanelViews.has(finalSnapshotKey)))
+        ) {
+            return this.syncFinalGoalSnapshot(snapshot);
         }
 
         const key = `goal:${goal.id}`;
@@ -1371,22 +1431,19 @@ export class TaskView implements Component {
         this.requestStreamRender();
     }
 
-    /** 将已存在的 GoalPanel 移动到 messageLayout 末尾。
-     *  仅当 goal 处于非终态（active/paused/blocked）时移动，确保：
+    /** 将已存在的非终态 GoalPanel 移动到 messageLayout 末尾，确保：
      *  - goal 执行中：新消息是 goal 上下文的一部分，GoalPanel 沉到它们下方
      *  - goal 完成后（complete/cleared）：GoalPanel 停在原地，后续新消息出现在其下方 */
     private ensureGoalPanelLast(): void {
         if (this.goalPanelViews.size === 0) return;
-        // 终态 goal：不移动，后续消息应出现在 GoalPanel 下方
-        const goalState = this.taskState?.goal_state;
-        if (!goalState || goalState.status === 'complete' || goalState.status === 'cleared') return;
         const children = this.messageLayout.children;
         for (const [, panel] of this.goalPanelViews) {
+            const goalState = panel.getGoalState();
+            if (!goalState || GoalStates.isTerminal(goalState.status)) continue;
             const idx = children.indexOf(panel);
             if (idx !== -1 && idx < children.length - 1) {
                 children.splice(idx, 1);
                 children.push(panel);
-                this.messageLayout.invalidateCache();
             }
         }
     }

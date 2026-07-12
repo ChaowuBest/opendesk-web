@@ -1823,9 +1823,18 @@ class TaskView extends HTMLElement {
     }
 
     _renderUserProgress(progress, history_container) {
+        const isGoalEditReminder = isGoalEditReminderMessage(progress);
         this._consumeGoalEditReminder(progress);
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
-        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
+        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) {
+            if (
+                isGoalEditReminder &&
+                TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)
+            ) {
+                this._showWaitingAssistantPlaceholder({ force: true });
+            }
+            return false;
+        }
         this.removePendingGoalSupplementForIds(getGoalSupplementIds(progress));
 
         const renderedSet = getRenderedUserPartSet(this._renderedUserParts, progress.message_id);
