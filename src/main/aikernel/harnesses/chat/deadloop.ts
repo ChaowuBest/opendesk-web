@@ -1,5 +1,5 @@
 import { HookRegistry } from '../../hooks.js';
-import type { AssistantMessage, ToolCall } from '../../messages.js';
+import type { ToolCall } from '../../messages.js';
 import { logger } from '../../../utils/logger.js';
 
 /** 单次 LLM 请求中允许的最大工具调用数量 */
@@ -11,11 +11,9 @@ export function registerDeadloopHarness(): void {
     if (registered) return;
     registered = true;
 
-    HookRegistry.beforeToolcallCreated(async (task, assistantMessage, chunkHasNewToolCall) => {
-        const toolcalls = collectToolCalls(assistantMessage);
-
+    HookRegistry.beforeToolcallCreated(async (task, _assistantMessage, chunkHasNewToolCall, requestToolCalls) => {
         // 1. 工具调用数量限制：当前已有 >= MAX 个，且即将追加新工具调用时拒绝
-        if (chunkHasNewToolCall && toolcalls.length >= MAX_TOOLCALLS_PER_REQUEST) {
+        if (chunkHasNewToolCall && requestToolCalls.length >= MAX_TOOLCALLS_PER_REQUEST) {
             logger.warn(
                 `task ${task.task_id}: tool call limit (${MAX_TOOLCALLS_PER_REQUEST}) reached, ` +
                     `rejecting new tool call from this request`
@@ -27,10 +25,10 @@ export function registerDeadloopHarness(): void {
         }
 
         // 2. 重复工具调用检测：已解析的工具调用中是否存在 tool_name + args_string 完全相同的
-        if (toolcalls.length >= 2) {
-            const dupIndex = findDuplicateToolCallIndex(toolcalls);
+        if (requestToolCalls.length >= 2) {
+            const dupIndex = findDuplicateToolCallIndex(requestToolCalls);
             if (dupIndex >= 0) {
-                const dup = toolcalls[dupIndex];
+                const dup = requestToolCalls[dupIndex];
                 logger.warn(
                     `task ${task.task_id}: duplicate tool call detected ` +
                         `(tool="${dup.tool_name}", index=${dupIndex})`
@@ -46,18 +44,7 @@ export function registerDeadloopHarness(): void {
     });
 }
 
-function collectToolCalls(message: AssistantMessage): ToolCall[] {
-    const result: ToolCall[] = [];
-    const content = Array.isArray(message.content) ? message.content : [];
-    for (const part of content) {
-        if (part?.type === 'tool_call') {
-            result.push(...(Array.isArray(part.toolcalls) ? part.toolcalls : []));
-        }
-    }
-    return result;
-}
-
-function findDuplicateToolCallIndex(calls: ToolCall[]): number {
+function findDuplicateToolCallIndex(calls: readonly ToolCall[]): number {
     for (let i = 1; i < calls.length; i++) {
         const current = calls[i];
         if (!current.tool_name) continue;

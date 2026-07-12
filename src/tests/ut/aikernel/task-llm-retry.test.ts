@@ -7,9 +7,12 @@ import {
     AssistantMessage,
     AssistantResponse,
     ChatContext,
+    ToolCall,
+    ToolCallMessagePart,
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages.js';
+import { registerDeadloopHarness } from '../../../main/aikernel/harnesses/chat/deadloop.js';
 import {
     BaseTaskUpdateSubscriber,
     TaskManagerState,
@@ -52,6 +55,14 @@ function textResponse(text: string, finishReason: 'stop' | 'tool_calls' | null =
     const response = new AssistantResponse(message, finishReason);
     response.usage = new Usage(10, text.length, 10 + text.length);
     return response;
+}
+
+function toolCallResponse(index: number, prefix = 'request'): AssistantResponse {
+    const message = new AssistantMessage();
+    const part = new ToolCallMessagePart();
+    part.push(new ToolCall(index, `${prefix}-call-${index}`, `${prefix}-tool-${index}`, '{}'));
+    message.appendToolCallPart(part);
+    return new AssistantResponse(message, 'tool_calls');
 }
 
 function configureSetting(autoRetry: boolean): void {
@@ -122,6 +133,7 @@ describe('task LLM auto retry', () => {
     let tempDir: string;
 
     beforeEach(() => {
+        registerDeadloopHarness();
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-task-llm-retry-'));
         setCustomOpendeskDirectory(tempDir);
         Setting.clearCache();
@@ -198,6 +210,69 @@ describe('task LLM auto retry', () => {
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
         expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
         expect(chunks.some((chunk) => chunk.type === 'assistant' && chunk.last_part.type === 'error')).toBe(true);
+    });
+
+    test('does not count tool calls completed before the current completion request', async () => {
+        const { task } = createRunningTask(false);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        const previousPart = new ToolCallMessagePart();
+        for (let index = 0; index < 10; index++) {
+            const toolCall = new ToolCall(index, `previous-call-${index}`, `previous-tool-${index}`, '{}');
+            toolCall.status = 'success';
+            toolCall.result = '{}';
+            previousPart.push(toolCall);
+        }
+        assistant.appendToolCallPart(previousPart);
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield toolCallResponse(0);
+        });
+
+        await expect(task.processCompletion()).resolves.toBe(false);
+
+        const toolCalls = assistant.content.flatMap((part) => (part.type === 'tool_call' ? part.toolcalls : []));
+        expect(toolCalls).toHaveLength(11);
+        expect(toolCalls[10].id).toBe('request-call-0');
+        expect(toolCalls[10].status).toBe('pending');
+    });
+
+    test('marks a stream stopped by the per-request tool call cap as an internal hook interruption', async () => {
+        const { task } = createRunningTask(false);
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            for (let index = 0; index < 11; index++) {
+                yield toolCallResponse(index);
+            }
+        });
+
+        await expect(task.processCompletion()).resolves.toBe(true);
+
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        const toolCalls = assistant.content.flatMap((part) => (part.type === 'tool_call' ? part.toolcalls : []));
+        expect(toolCalls).toHaveLength(10);
+        expect(toolCalls.every((toolCall) => toolCall.status === 'pending')).toBe(true);
+        expect(toolCalls.some((toolCall) => toolCall.id === 'request-call-10')).toBe(false);
+    });
+
+    test('executes the accepted tool batch and continues after the tool call cap stops a stream', async () => {
+        const { task } = createRunningTask(false);
+        task.parent_id = 'parent-task';
+        const processCompletionSpy = jest
+            .spyOn(task, 'processCompletion')
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+        const processToolCallsSpy = jest
+            .spyOn(task, 'processToolCalls')
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+        const beforeFinishSpy = jest.fn(async () => ({ operation: 'finish' as const }));
+        task.hooks.beforeFinishTurn(beforeFinishSpy);
+
+        await task.processTaskTurn();
+
+        expect(processCompletionSpy).toHaveBeenCalledTimes(2);
+        expect(processToolCallsSpy).toHaveBeenCalledTimes(2);
+        expect(beforeFinishSpy).toHaveBeenCalledTimes(1);
     });
 
     test('uses the latest task model when retrying after a model switch', async () => {
