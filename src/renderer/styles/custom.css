@@ -1473,13 +1473,13 @@ html[data-theme='dark'] .sb-app-popover-visible::-webkit-scrollbar-thumb:hover {
     width: 44px;
     height: 44px;
     border-radius: 12px;
-    overflow: hidden;
     flex-shrink: 0;
 }
 .sb-app-popover-icon-wrap img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    border-radius: 12px;
 }
 .sb-app-popover-icon-wrap .mailbox-unread-badge {
     position: absolute;

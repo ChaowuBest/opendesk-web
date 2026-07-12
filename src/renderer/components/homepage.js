@@ -480,13 +480,14 @@ class HomePage extends HTMLElement {
             wsBar.addEventListener('click', async () => {
                 const selected = await showWorkspacePicker({ title: t('workspace.defaultPickerTitle') });
                 if (selected) {
-                    await window.workspaceAPI.setWorkspaceDirectory(selected);
+                    // 先立即更新 UI，持久化和 filemgr 扫描异步进行，不要等
                     const pathLabel = this.querySelector('#hp-workspace-path');
                     if (pathLabel) {
                         pathLabel.textContent = selected;
                         pathLabel.title = selected;
                     }
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
+                    window.workspaceAPI.setWorkspaceDirectory(selected).catch(() => {});
                 }
             });
         }

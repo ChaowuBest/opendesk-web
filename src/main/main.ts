@@ -2280,6 +2280,28 @@ const registerSettingAPIHandlers = () => {
                         dirPath = '/';
                     }
                 }
+                // 支持虚拟根目录路径（用于 OpenHarmony 家目录 + 应用沙箱）
+                if (dirPath === '{OH_ROOT}') {
+                    if ((process.platform as string) === 'openharmony') {
+                        return {
+                            status: 'ok',
+                            data: [
+                                {
+                                    name: '家目录',
+                                    path: '/storage/Users/currentUser',
+                                    isDirectory: true
+                                },
+                                {
+                                    name: '应用沙箱',
+                                    path: '/data/storage/el2/base/files',
+                                    isDirectory: true
+                                }
+                            ]
+                        };
+                    } else {
+                        dirPath = '/';
+                    }
+                }
 
                 const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
                 const result: { name: string; path: string; isDirectory: boolean }[] = [];
