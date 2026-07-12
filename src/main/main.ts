@@ -517,18 +517,21 @@ function getDefaultCenteredBounds(
 
 const createWindow = () => {
     // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
+    let savedBounds: { x: number; y: number; width: number; height: number } | null = null;
     let windowX: number | undefined;
     let windowY: number | undefined;
     let windowWidth = DEFAULT_WINDOW_WIDTH;
     let windowHeight = DEFAULT_WINDOW_HEIGHT;
     try {
         const guiConfig = Setting.getInstance().getData().gui_config as Record<string, unknown>;
-        const savedBounds = guiConfig.window_bounds as { x: number; y: number; width: number; height: number } | null;
-        if (savedBounds && isValidWindowBounds(savedBounds)) {
-            windowX = savedBounds.x;
-            windowY = savedBounds.y;
-            windowWidth = Math.min(savedBounds.width, screen.getPrimaryDisplay().workArea.width);
-            windowHeight = Math.min(savedBounds.height, screen.getPrimaryDisplay().workArea.height);
+        const bounds = guiConfig.window_bounds as { x: number; y: number; width: number; height: number } | null;
+        if (bounds && isValidWindowBounds(bounds)) {
+            savedBounds = bounds;
+            const targetDisplay = screen.getDisplayMatching(bounds);
+            windowX = bounds.x;
+            windowY = bounds.y;
+            windowWidth = Math.min(bounds.width, targetDisplay.workArea.width);
+            windowHeight = Math.min(bounds.height, targetDisplay.workArea.height);
         } else {
             const defaultBounds = getDefaultCenteredBounds(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
             windowX = defaultBounds.x;
@@ -566,6 +569,11 @@ const createWindow = () => {
 
     // 就绪后显示窗口，避免白屏
     mainWindow.once('ready-to-show', () => {
+        // per-monitor DPI 下 BrowserWindow 构造时的 bounds 可能被错误缩放，
+        // 在窗口已确定最终显示器（DPI 已就绪）后用 setBounds 精确修正
+        if (savedBounds) {
+            mainWindow.setBounds(savedBounds);
+        }
         mainWindow.show();
     });
 
