@@ -909,6 +909,7 @@ export class FileExplorer {
     private _rootNode: ParentNode | null = null;
 
     private _workspaceRoot: string | null = null;
+    private _taskWorkspace: string | null = null;
     private _workspaceRequested = false;
     private _workspaceError: string | null = null;
     private _viewMode: ViewMode = 'tree';
@@ -971,8 +972,9 @@ export class FileExplorer {
     /**
      * 重置所有状态并重新加载工作空间。
      * 切换任务 / 切换工作空间时调用。
+     * @param workspace 可选的任务级工作空间路径，传入后优先使用而非全局 default_workspace
      */
-    refresh(): void {
+    refresh(workspace?: string): void {
         // 切换任务/工作空间时先关闭预览
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
@@ -982,6 +984,7 @@ export class FileExplorer {
         this._editorDirty = false;
         this._editorStatus = 'idle';
         this._destroyEditorInstance();
+        this._taskWorkspace = workspace ?? null;
         this._workspaceRequested = false;
         this._workspaceRoot = null;
         this._workspaceError = null;
@@ -1032,13 +1035,19 @@ export class FileExplorer {
         if (this._workspaceRequested) return;
         this._workspaceRequested = true;
         try {
-            const api = window.workspaceAPI;
-            if (!api || typeof api.getEffectiveWorkspace !== 'function') {
-                this._workspaceError = '当前环境未提供 workspaceAPI';
-                this._renderPanel();
-                return;
+            let root: string;
+            // 优先使用任务级工作空间，否则使用全局工作空间
+            if (this._taskWorkspace) {
+                root = this._taskWorkspace;
+            } else {
+                const api = window.workspaceAPI;
+                if (!api || typeof api.getEffectiveWorkspace !== 'function') {
+                    this._workspaceError = '当前环境未提供 workspaceAPI';
+                    this._renderPanel();
+                    return;
+                }
+                root = await api.getEffectiveWorkspace();
             }
-            const root = await api.getEffectiveWorkspace();
             if (!root) {
                 this._workspaceError = '未能获取工作空间路径';
                 this._renderPanel();

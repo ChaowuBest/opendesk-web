@@ -20,6 +20,15 @@ export const zhCn: Record<string, string> = {
     // Banner
     'banner.workspace': '当前工作空间为: ',
 
+    // Workspace
+    'workspace.defaultLabel': '当前默认工作空间',
+    'workspace.defaultPickerTitle': '选择默认工作空间',
+    'workspace.taskLabel': '当前任务工作空间',
+    'workspace.taskPickerTitle': '选择当前任务工作空间',
+    'workspace.taskPickerTitleWithName': '选择当前任务工作空间 (${name})',
+    'workspace.mismatch.title': '任务工作空间',
+    'workspace.mismatch.message': '当前任务绑定在 ${workspace}，与全局工作空间不同。全局工作空间未切换。',
+
     // Headless
     'headless.action.read': '读取',
     'headless.action.write': '编辑',

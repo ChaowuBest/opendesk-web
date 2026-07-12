@@ -256,10 +256,21 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
 
     const { shell, args } = getShell();
     const isWin = process.platform === 'win32';
+    const bashLike = isBashLikeShell();
 
-    const pwdCmd = isWin ? 'pwd -W' : 'pwd';
+    // bash-like (Git Bash / MSYS2): use && separator, pwd -W on Windows
+    // PowerShell: use ; separator, plain pwd (alias for Get-Location)
+    const separator = bashLike ? '&&' : ';';
+    const pwdCmd = bashLike && isWin ? 'pwd -W' : 'pwd';
     const quotedCwd = shellQuoteCwd(cwd);
-    const wrappedCmd = `cd ${quotedCwd} && ${cmd} && ${pwdCmd}`;
+    let wrappedCmd = `cd ${quotedCwd} ${separator} ${cmd} ${separator} ${pwdCmd}`;
+
+    // Windows PowerShell 默认输出编码为系统 ANSI 代码页（中文环境为 GBK），
+    // 而 Node.js spawn pipe 默认按 UTF-8 解码，导致中文错误信息乱码。
+    // 强制 PowerShell 将输出编码切换为 UTF-8。
+    if (isWin && !bashLike) {
+        wrappedCmd = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; ${wrappedCmd}`;
+    }
 
     const child = spawn(shell, [...args, wrappedCmd], {
         env: { ...process.env },

@@ -111,6 +111,13 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        updateTaskWorkspace: async (taskId, newWorkspace) => {
+            const result = await ipcRenderer.invoke('taskManager:updateTaskWorkspace', taskId, newWorkspace);
+            if (result.status !== 'ok') {
+                console.error('update task workspace failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         clearAllTasks: async () => {
             const result = await ipcRenderer.invoke('taskManager:clearAllTasks');
             if (result.status !== 'ok') {

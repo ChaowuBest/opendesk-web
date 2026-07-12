@@ -37,7 +37,7 @@ import {
     type BackgroundProcessStatus
 } from './background';
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
-import { findExecutableInPath } from '../../utils/shellExec.js';
+import { findExecutableInPath, decodeShellOutput } from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -208,6 +208,14 @@ function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
             baseEnv: interpreterBaseEnv
         })
     };
+    // 默认注入 UTF-8 编码环境变量，避免 Windows 子进程（python/node/bash等）输出乱码
+    // 仅在未显式设置时注入，用户/平台/全局 environ 中的设置优先
+    if (!env.PYTHONIOENCODING) {
+        env.PYTHONIOENCODING = 'utf-8';
+    }
+    if (!env.PYTHONUTF8) {
+        env.PYTHONUTF8 = '1';
+    }
     return env;
 }
 
@@ -384,17 +392,21 @@ async function executeShellCommand(opts: {
     runningProcesses.add(proc);
 
     let output = '';
+    let lastSentOutput = '';
     const stdoutListener = (data: Buffer) => {
-        output += data.toString();
+        output += decodeShellOutput(data);
     };
     const stderrListener = (data: Buffer) => {
-        output += data.toString();
+        output += decodeShellOutput(data);
     };
     proc.stdout.on('data', stdoutListener);
     proc.stderr.on('data', stderrListener);
 
     const updateTimer = setInterval(() => {
-        if (output) result.updateResult(output);
+        if (output !== lastSentOutput) {
+            lastSentOutput = output;
+            result.updateResult(output);
+        }
     }, LIVE_UPDATE_INTERVAL_MS);
 
     let resolveStopPromise: (() => void) | undefined;
@@ -517,7 +529,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             return;
         }
 
-        const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+        const utf8Command = `chcp 65001 | Out-Null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
         await executeShellCommand({
             shellPath: psPath,
             shellArgs: ['-NoProfile', '-Command', utf8Command],

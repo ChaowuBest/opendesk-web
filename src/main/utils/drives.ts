@@ -1,7 +1,5 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import fs from 'fs';
+import { asyncShellExec } from './shellExec.js';
 
 export interface DriveInfo {
     name: string;
@@ -15,7 +13,7 @@ export interface DriveInfo {
 
 /**
  * 获取 Windows 系统盘符列表
- * 支持 PowerShell 和 wmic 两种方式
+ * 优先使用 PowerShell 获取详细容量信息，回退到 Node.js 原生方式遍历盘符。
  */
 export async function getWindowsDrives(): Promise<DriveInfo[]> {
     if (process.platform !== 'win32') {
@@ -24,8 +22,8 @@ export async function getWindowsDrives(): Promise<DriveInfo[]> {
 
     try {
         // 方法1：使用 PowerShell 获取盘符信息（包含容量）
-        const { stdout } = await execAsync(
-            'powershell -NoProfile -Command "Get-PSDrive -PSProvider FileSystem | Select-Object Name, Root, Used, Free | ConvertTo-Json"',
+        const { stdout } = await asyncShellExec(
+            'Get-PSDrive -PSProvider FileSystem | Select-Object Name, Root, Used, Free | ConvertTo-Json',
             { timeout: 5000 }
         );
 
@@ -44,21 +42,23 @@ export async function getWindowsDrives(): Promise<DriveInfo[]> {
                 free: d.Free || undefined
             }));
     } catch (error) {
-        // 方法2：回退到 wmic（兼容性更好）
+        // 方法2：回退到 Node.js 原生方式遍历盘符（wmic 在 Windows 10 21H2+ 已被移除）
         try {
-            const { stdout } = await execAsync('wmic logicaldisk get name', { timeout: 3000 });
-            const lines = stdout.trim().split('\n').slice(1);
-
-            return lines
-                .map((line) => line.trim())
-                .filter((line) => line && /^[A-Z]:$/.test(line))
-                .map((drive) => ({
-                    name: `本地磁盘 (${drive})`,
-                    path: drive.replace(':', ':\\'),
-                    isDirectory: true,
-                    isDrive: true,
-                    driveLetter: drive.replace(':', '')
-                }));
+            const drives: DriveInfo[] = [];
+            for (let i = 65; i <= 90; i++) {
+                const letter = String.fromCharCode(i);
+                const drivePath = `${letter}:\\`;
+                if (fs.existsSync(drivePath)) {
+                    drives.push({
+                        name: `本地磁盘 (${letter}:)`,
+                        path: drivePath,
+                        isDirectory: true,
+                        isDrive: true,
+                        driveLetter: letter
+                    });
+                }
+            }
+            return drives;
         } catch (fallbackError) {
             console.error('Failed to get Windows drives:', fallbackError);
             return [];

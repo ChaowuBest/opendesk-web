@@ -20,6 +20,16 @@ export const enUs: Record<string, string> = {
     // Banner
     'banner.workspace': 'Current workspace: ',
 
+    // Workspace
+    'workspace.defaultLabel': 'Default workspace',
+    'workspace.defaultPickerTitle': 'Select default workspace',
+    'workspace.taskLabel': 'Task workspace',
+    'workspace.taskPickerTitle': 'Select task workspace',
+    'workspace.taskPickerTitleWithName': 'Select task workspace (${name})',
+    'workspace.mismatch.title': 'Task workspace',
+    'workspace.mismatch.message':
+        'Current task is bound to ${workspace}, which differs from the global workspace. Global workspace not changed.',
+
     // Headless
     'headless.action.read': 'Read',
     'headless.action.write': 'Edit',

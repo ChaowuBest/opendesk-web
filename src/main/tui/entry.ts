@@ -1028,6 +1028,21 @@ export class OpenDeskTUI {
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
 
+        // 同步任务的工作空间到状态栏
+        const taskWorkspace = task.getWorkspace() || this.workspace;
+        this.inputArea.statusBar.update({ workspace: taskWorkspace });
+
+        // 检测任务工作空间与全局工作空间不一致时，显示提示
+        if (taskWorkspace && taskWorkspace !== this.workspace) {
+            NotificationStore.getInstance().push(
+                'info',
+                'workspace',
+                t('workspace.mismatch.title'),
+                t('workspace.mismatch.message', { workspace: taskWorkspace }),
+                { priority: 'low' }
+            );
+        }
+
         // 为历史 ToolCall 挂载 toolsets 并解析 tool 引用，确保自定义渲染器正常工作
         await task.ensureToolsResolved();
 
@@ -1334,6 +1349,12 @@ export class OpenDeskTUI {
             : '';
 
         this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });
+
+        // 同步当前工作空间到状态栏
+        const currentWorkspace = this.activeTaskId
+            ? this.taskManagerState.getTask(this.activeTaskId)?.getWorkspace() || this.workspace
+            : this.workspace;
+        this.inputArea.statusBar.update({ workspace: currentWorkspace });
 
         // 优先使用用户配置的上下文长度
         if (modelCfg?.context_length && modelCfg.context_length > 0) {
@@ -1859,14 +1880,14 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 更新工作空间目录，同步刷新 Banner、自动补全 basePath，
-     * 并为所有主任务重建 harnessContext（包含新 workspace 的权限引擎）。
-     * 子任务由父任务在创建时管理，不在此处更新。
+     * 更新工作空间目录，同步刷新 Banner、自动补全 basePath。
+     * 在 TUI 中，切换工作空间同时更新全局工作空间和当前活跃任务的工作空间。
      */
     async updateWorkspace(newWorkspace: string) {
         try {
             logger.info(`changing workspace to ${newWorkspace}`);
             this.workspace = newWorkspace;
+            this.inputArea.statusBar.update({ workspace: newWorkspace });
 
             const platform = getPlatform();
             if (platform instanceof CliPlatform) {
@@ -1879,20 +1900,25 @@ export class OpenDeskTUI {
             this.rebuildBanner();
             this.inputArea.refreshAutocomplete();
 
-            const mode = this._activeMode;
-            for (const task of this.taskManagerState.tasks) {
-                if (task.parent_id !== null) continue;
-                const savedEnv = task.harnessContext.environ;
-                const savedPrompt = task.harnessContext.permissionPrompt;
-                try {
-                    const ctx = await HarnessContext.createForMode(newWorkspace, mode);
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                } catch (err) {
-                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
-                    task.harnessContext.workspace = newWorkspace;
+            // 同步更新当前活跃任务的工作空间
+            if (this.activeTaskId) {
+                const activeTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (activeTask) {
+                    activeTask.workspace = newWorkspace;
+                    const mode = this._activeMode;
+                    const savedEnv = activeTask.harnessContext.environ;
+                    const savedPrompt = activeTask.harnessContext.permissionPrompt;
+                    try {
+                        const ctx = await HarnessContext.createForMode(newWorkspace, mode);
+                        ctx.environ = savedEnv;
+                        ctx.permissionPrompt = savedPrompt;
+                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(activeTask.task_id, false));
+                        activeTask.harnessContext = ctx;
+                    } catch (err) {
+                        logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                        activeTask.harnessContext.workspace = newWorkspace;
+                    }
+                    activeTask.persistLater();
                 }
             }
 

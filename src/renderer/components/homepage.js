@@ -10,6 +10,9 @@
  */
 
 import { showWorkspacePicker } from './workspacePicker.ts';
+import { createRendererTranslator } from '../locale.ts';
+
+const t = createRendererTranslator();
 
 const HOME_SEARCH_DEBOUNCE_MS = 800;
 const HOME_SEARCH_TOP_K = 50;
@@ -429,9 +432,9 @@ class HomePage extends HTMLElement {
                 <h1 class="text-3xl font-medium text-gray-800 mb-3">
                     ${greeting}
                 </h1>
-                <button id="hp-workspace-bar" class="hp-workspace-bar" title="点击切换工作空间">
+                <button id="hp-workspace-bar" class="hp-workspace-bar" title="${t('workspace.defaultLabel')}">
                     <i class="fa-solid fa-briefcase"></i>
-                    <span style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;">当前工作空间</span>
+                    <span style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;">${t('workspace.defaultLabel')}</span>
                     <span id="hp-workspace-path" class="hp-workspace-path">加载中...</span>
                     <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
                 </button>
@@ -475,7 +478,7 @@ class HomePage extends HTMLElement {
         const wsBar = this.querySelector('#hp-workspace-bar');
         if (wsBar) {
             wsBar.addEventListener('click', async () => {
-                const selected = await showWorkspacePicker();
+                const selected = await showWorkspacePicker({ title: t('workspace.defaultPickerTitle') });
                 if (selected) {
                     await window.workspaceAPI.setWorkspaceDirectory(selected);
                     const pathLabel = this.querySelector('#hp-workspace-path');

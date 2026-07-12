@@ -153,6 +153,8 @@ class TaskView extends HTMLElement {
         this._taskListUpdateHandler = null;
         /** @type {string | null} 任务指定的工作空间路径 */
         this._taskWorkspace = null;
+        /** @type {string} 任务名称（用于工作空间选择器标题） */
+        this._taskName = '';
         /** @type {number} 当前模型上下文窗口大小（tokens） */
         this._modelContextSize = 0;
         /** @type {string | null} 当前已加载上下文大小的模型别名 */
@@ -1240,13 +1242,18 @@ class TaskView extends HTMLElement {
             this._renderedUserParts.clear();
 
             if (this._toolbar && task_state.task_name) {
+                this._taskName = task_state.task_name;
                 this._toolbar.setToolbarTitle(task_state.task_name);
             }
             if (this._toolbar && typeof task_state.workspace === 'string' && task_state.workspace.length > 0) {
                 this._taskWorkspace = task_state.workspace;
-                this._toolbar.setToolbarSubtitle(task_state.workspace, () => {
-                    void this._pickWorkspace();
-                });
+                this._toolbar.setToolbarSubtitle(
+                    task_state.workspace,
+                    () => {
+                        void this._pickWorkspace();
+                    },
+                    taskViewT('workspace.taskLabel')
+                );
             }
 
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
@@ -2404,7 +2411,7 @@ class TaskView extends HTMLElement {
         this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
 
         if (typeof rightSidebar.refreshWorkspace === 'function') {
-            rightSidebar.refreshWorkspace();
+            rightSidebar.refreshWorkspace(this._taskWorkspace);
         }
     }
 
@@ -2422,30 +2429,51 @@ class TaskView extends HTMLElement {
     async _initToolbarWorkspace() {
         if (!this._toolbar || !window.workspaceAPI) return;
         try {
-            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
             const wsClickHandler = async () => {
-                const selected = await showWorkspacePicker();
+                const selected = await showWorkspacePicker({
+                    title: this._buildWorkspacePickerTitle()
+                });
                 if (selected) {
-                    await window.workspaceAPI.setWorkspaceDirectory(selected);
-                    this._toolbar.setToolbarSubtitle(selected, wsClickHandler);
+                    await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
+                    this._taskWorkspace = selected;
+                    this._toolbar.setToolbarSubtitle(selected, wsClickHandler, taskViewT('workspace.taskLabel'));
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
             };
-            this._toolbar.setToolbarSubtitle(workspacePath, wsClickHandler);
+            // 从任务状态获取 workspace
+            const workspacePath = this._taskWorkspace || (await window.workspaceAPI.getEffectiveWorkspace());
+            this._toolbar.setToolbarSubtitle(workspacePath, wsClickHandler, taskViewT('workspace.taskLabel'));
         } catch (error) {
             console.error('Failed to init toolbar workspace:', error);
         }
     }
 
+    _buildWorkspacePickerTitle() {
+        const taskName = this._taskName || '';
+        const maxLen = 24;
+        const displayName = taskName.length > maxLen ? taskName.substring(0, maxLen) + '...' : taskName;
+        const key = taskName ? 'workspace.taskPickerTitleWithName' : 'workspace.taskPickerTitle';
+        return taskViewT(key, { name: displayName });
+    }
+
     async _pickWorkspace() {
-        if (!this._toolbar || !window.workspaceAPI) return;
-        const selected = await showWorkspacePicker();
+        if (!this._toolbar || !window.taskManagerAPI) {
+            console.warn('_pickWorkspace: toolbar or taskManagerAPI not available');
+            return;
+        }
+        const selected = await showWorkspacePicker({
+            title: this._buildWorkspacePickerTitle()
+        });
         if (selected) {
-            await window.workspaceAPI.setWorkspaceDirectory(selected);
+            await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
             this._taskWorkspace = selected;
-            this._toolbar.setToolbarSubtitle(selected, () => {
-                void this._pickWorkspace();
-            });
+            this._toolbar.setToolbarSubtitle(
+                selected,
+                () => {
+                    void this._pickWorkspace();
+                },
+                taskViewT('workspace.taskLabel')
+            );
             document.dispatchEvent(new CustomEvent('workspace-changed'));
         }
     }
@@ -2571,7 +2599,7 @@ class TaskView extends HTMLElement {
         this._workspaceChangedHandler = async () => {
             const sidebar = this._getRightSidebarEl();
             if (sidebar && typeof sidebar.refreshWorkspace === 'function') {
-                sidebar.refreshWorkspace();
+                sidebar.refreshWorkspace(this._taskWorkspace);
             }
             if (this._toolbar && window.workspaceAPI && !this._taskWorkspace) {
                 try {
@@ -2590,6 +2618,7 @@ class TaskView extends HTMLElement {
             if (!Array.isArray(taskList)) return;
             const myTask = taskList.find((t) => t.task_id === this.task_id);
             if (myTask && myTask.task_name) {
+                this._taskName = myTask.task_name;
                 this._toolbar.setToolbarTitle(myTask.task_name);
             }
             if (myTask && Object.prototype.hasOwnProperty.call(myTask, 'goal')) {
@@ -2605,9 +2634,13 @@ class TaskView extends HTMLElement {
                 myTask.workspace !== this._taskWorkspace
             ) {
                 this._taskWorkspace = myTask.workspace;
-                this._toolbar.setToolbarSubtitle(myTask.workspace, () => {
-                    void this._pickWorkspace();
-                });
+                this._toolbar.setToolbarSubtitle(
+                    myTask.workspace,
+                    () => {
+                        void this._pickWorkspace();
+                    },
+                    taskViewT('workspace.taskLabel')
+                );
             }
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);

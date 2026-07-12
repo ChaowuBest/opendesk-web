@@ -40,6 +40,8 @@ export interface TaskStatusBarData {
      * - string: 显示实际任务名称
      */
     taskName?: string | null;
+    /** 当前工作空间路径 */
+    workspace?: string;
 }
 
 /**
@@ -55,7 +57,8 @@ export class TaskStatusBar implements Component {
         elapsedMs: 0,
         totalTokens: 0,
         contextSize: 0,
-        modelName: ''
+        modelName: '',
+        workspace: ''
     };
     private timerStarted = false;
     private timerStart: number = 0;
@@ -151,8 +154,17 @@ export class TaskStatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, shellMode, modeDisplay, modeColor, taskName } =
-            this.data;
+        const {
+            elapsedMs,
+            totalTokens,
+            contextSize,
+            modelName,
+            shellMode,
+            modeDisplay,
+            modeColor,
+            taskName,
+            workspace
+        } = this.data;
         const colors = getStatusBarColors();
 
         // 构建左侧 cells（任务级信息）
@@ -179,6 +191,9 @@ export class TaskStatusBar implements Component {
             }
             if (modelName) {
                 leftCells.push({ text: modelName });
+            }
+            if (workspace) {
+                leftCells.push({ text: chalk.hex(colors.fgDim)(`📁 ${workspace}`) });
             }
         }
 
