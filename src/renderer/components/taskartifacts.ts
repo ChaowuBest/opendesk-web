@@ -564,9 +564,10 @@ class TaskArtifacts extends HTMLElement {
     /**
      * 外部调用：当工作空间路径可能已变化时（如用户切换工作空间、切换任务），
      * 重新拉取 workspace 路径并刷新文件浏览器。
+     * @param workspace 可选的任务级工作空间路径
      */
-    refreshWorkspace(): void {
-        this._fileExplorer.refresh();
+    refreshWorkspace(workspace?: string): void {
+        this._fileExplorer.refresh(workspace);
     }
 
     /**

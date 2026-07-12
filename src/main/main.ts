@@ -1087,6 +1087,7 @@ const registerTaskManagerAPIHandlers = () => {
         try {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+            task.workspace = workspace;
             task.activeModeId = activeMode.id;
             task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
@@ -1142,6 +1143,7 @@ const registerTaskManagerAPIHandlers = () => {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
             task.harnessContext.workspace = workspace;
+            task.workspace = workspace;
         }
         return { status: 'ok', data: task.task_id };
     });
@@ -1200,6 +1202,33 @@ const registerTaskManagerAPIHandlers = () => {
         }
         task.rename(newName);
         return { status: 'ok' };
+    });
+    ipcMain.handle('taskManager:updateTaskWorkspace', async (_event, taskId, newWorkspace) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+            const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+            const savedEnv = task.harnessContext.environ;
+            const savedExecutionHost = task.harnessContext.executionHost;
+            const savedPrompt = task.harnessContext.permissionPrompt;
+            const ctx = await HarnessContext.createForMode(newWorkspace, mode);
+            ctx.environ = savedEnv;
+            ctx.executionHost = savedExecutionHost;
+            ctx.permissionPrompt = savedPrompt || new ElectronPermissionPromptProvider();
+            await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+            task.harnessContext = ctx;
+            task.workspace = newWorkspace;
+            task.persistLater();
+            return { status: 'ok' };
+        } catch (err: any) {
+            logger.error(`Failed to update task workspace: ${err?.message ?? err}`);
+            return { status: 'error', message: err?.message ?? String(err) };
+        }
     });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         const removedTaskIds = globalState.taskManagerState.clearAllTasks();
@@ -2163,29 +2192,9 @@ const registerSettingAPIHandlers = () => {
             // 继续执行，工作区设置仅在当前会话生效
         }
 
-        // 同步所有已有任务的 harnessContext 到新工作空间
-        // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
-        const globalState = GlobalState.getInstance();
-        const agentDecl = getGlobalAgentDecl();
-        const modes = agentDecl.supportedModes();
-        for (const task of globalState.taskManagerState.tasks) {
-            if (task.parent_id !== null) continue;
-            const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
-            const mode = modes.find((m) => m.id === modeId) ?? modes[0];
-            const savedEnv = task.harnessContext.environ;
-            const savedExecutionHost = task.harnessContext.executionHost;
-            try {
-                const ctx = await HarnessContext.createForMode(selectedPath, mode);
-                ctx.environ = savedEnv;
-                ctx.executionHost = savedExecutionHost;
-                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                task.harnessContext = ctx;
-            } catch (err) {
-                logger.warn(`Failed to sync task harness for new workspace: ${err}`);
-                task.harnessContext.workspace = selectedPath;
-            }
-        }
+        // 切换全局工作空间不影响已有任务的 workspace 绑定。
+        // 每个任务在创建时就与其工作空间绑定，后续全局切换不应改变已有任务的上下文。
+        // 新创建的任务将使用新的全局工作空间。
     }
 
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {

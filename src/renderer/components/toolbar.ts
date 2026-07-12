@@ -26,6 +26,7 @@ export class ElasticToolbarWidget extends HTMLElement {
     buttons: Button[];
     toolbarTitle?: string;
     toolbarSubtitle?: string;
+    subtitleLabel?: string;
     layout: ToolbarLayout;
     _subtitleClickHandler?: () => void;
 
@@ -63,13 +64,23 @@ export class ElasticToolbarWidget extends HTMLElement {
         }
     }
 
-    setToolbarSubtitle(subtitle: string, onClick?: () => void) {
+    setToolbarSubtitle(subtitle: string, onClick?: () => void, label?: string) {
         this.toolbarSubtitle = subtitle;
+        this.subtitleLabel = label;
         this._subtitleClickHandler = onClick;
         const subtitleEl = this.querySelector(`#toolbar-subtitle-${this.uid}`) as HTMLElement | null;
         if (subtitleEl) {
-            const textSpan = subtitleEl.querySelector('span');
+            const textSpan = subtitleEl.querySelector('span.ws-path');
             if (textSpan) textSpan.textContent = subtitle;
+            const labelSpan = subtitleEl.querySelector('span.ws-label');
+            if (labelSpan) {
+                if (label) {
+                    labelSpan.textContent = label;
+                    labelSpan.style.display = '';
+                } else {
+                    labelSpan.style.display = 'none';
+                }
+            }
             subtitleEl.setAttribute('title', subtitle);
             subtitleEl.style.display = subtitle ? '' : 'none';
             if (onClick) {
@@ -114,12 +125,14 @@ export class ElasticToolbarWidget extends HTMLElement {
         const subtitleHTML = this.toolbarSubtitle
             ? `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" title="${this.toolbarSubtitle}">
                 <i class="fa-solid fa-briefcase"></i>
-                <span>${this.toolbarSubtitle}</span>
+                <span class="ws-label" style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;${this.subtitleLabel ? '' : 'display:none;'}">${this.subtitleLabel || ''}</span>
+                <span class="ws-path">${this.toolbarSubtitle}</span>
                 <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
                </button>`
             : `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" style="display:none;" title="">
                 <i class="fa-solid fa-briefcase"></i>
-                <span></span>
+                <span class="ws-label" style="display:none;"></span>
+                <span class="ws-path"></span>
                 <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
                </button>`;
 

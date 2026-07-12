@@ -525,7 +525,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             return;
         }
 
-        const utf8Command = `chcp 65001 > $; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+        const utf8Command = `chcp 65001 | Out-Null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
         await executeShellCommand({
             shellPath: psPath,
             shellArgs: ['-NoProfile', '-Command', utf8Command],
