@@ -392,6 +392,7 @@ async function executeShellCommand(opts: {
     runningProcesses.add(proc);
 
     let output = '';
+    let lastSentOutput = '';
     const stdoutListener = (data: Buffer) => {
         output += decodeShellOutput(data);
     };
@@ -402,7 +403,10 @@ async function executeShellCommand(opts: {
     proc.stderr.on('data', stderrListener);
 
     const updateTimer = setInterval(() => {
-        if (output) result.updateResult(output);
+        if (output !== lastSentOutput) {
+            lastSentOutput = output;
+            result.updateResult(output);
+        }
     }, LIVE_UPDATE_INTERVAL_MS);
 
     let resolveStopPromise: (() => void) | undefined;
