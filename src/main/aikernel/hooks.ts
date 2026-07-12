@@ -100,7 +100,8 @@ type AfterProcessCompletionCallback = (task: TaskState, assistantMessage: Assist
 type BeforeToolcallCreatedCallback = (
     task: TaskState,
     assistantMessage: AssistantMessage,
-    chunkHasNewToolCall: boolean
+    chunkHasNewToolCall: boolean,
+    requestToolCalls: readonly ToolCall[]
 ) => Promise<BeforeToolcallCreatedFeedback>;
 
 export interface HookRegistrationOptions {
@@ -321,7 +322,9 @@ export class HookRegistry {
      *
      * 触发时机：模型流式输出中，每次 chunk 到达后在 mergeChunk 之前触发
      * （新工具调用尚未追加到 assistant message）。
-     * 回调签名：`(task: TaskState, assistantMessage: AssistantMessage, chunkHasNewToolCall: boolean) => Promise<{ operation: 'accept' | 'reject', ... }>`
+     * 回调签名：
+     * `(task, assistantMessage, chunkHasNewToolCall, requestToolCalls) => Promise<{ operation: 'accept' | 'reject', ... }>`
+     * `requestToolCalls` 仅包含本次 `processCompletion` 中已合并的工具调用。
      * - 返回 `accept`：继续正常流式解析并合并当前 chunk。
      * - 返回 `reject`：不合并当前 chunk，跳出流式解析循环，进入工具调用执行阶段。
      *
@@ -456,11 +459,12 @@ export class HookRegistry {
     static async checkBeforeToolcallCreated(
         task: TaskState,
         assistantMessage: AssistantMessage,
-        chunkHasNewToolCall: boolean
+        chunkHasNewToolCall: boolean,
+        requestToolCalls: readonly ToolCall[]
     ): Promise<BeforeToolcallCreatedFeedback> {
         for (const callback of this.beforeToolcallCreatedCallbacks) {
             try {
-                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall);
+                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
@@ -679,11 +683,12 @@ export class TaskHooks {
     async checkBeforeToolcallCreated(
         task: TaskState,
         assistantMessage: AssistantMessage,
-        chunkHasNewToolCall: boolean
+        chunkHasNewToolCall: boolean,
+        requestToolCalls: readonly ToolCall[]
     ): Promise<BeforeToolcallCreatedFeedback> {
         for (const callback of this.beforeToolcallCreatedCallbacks) {
             try {
-                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall);
+                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
@@ -691,6 +696,6 @@ export class TaskHooks {
                 logger.error('TaskHooks.checkBeforeToolcallCreated: callback error', err);
             }
         }
-        return HookRegistry.checkBeforeToolcallCreated(task, assistantMessage, chunkHasNewToolCall);
+        return HookRegistry.checkBeforeToolcallCreated(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
     }
 }

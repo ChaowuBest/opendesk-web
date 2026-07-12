@@ -2849,7 +2849,7 @@ export class TaskState {
     }
 
     /**
-     * @returns true 表示流被 afterParseToolcall 钩子中断（abortedByParseHook）
+     * @returns true 表示流被 tool call 解析/创建钩子主动中断
      */
     async processCompletion(modelRequestOptions?: TaskModelRequestOptions): Promise<boolean> {
         const assistant_message = this.chat_context.lastMessage();
@@ -3141,9 +3141,14 @@ export class TaskState {
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
-        // 追踪上一次 merge 后的工具调用数量，用于检测新工具调用到达
+        const toolCallsBeforeCompletion = new Set(TaskState.collectToolCalls(assistant_message));
+        const getCurrentRequestToolCalls = (): ToolCall[] =>
+            TaskState.collectToolCalls(assistant_message).filter(
+                (toolCall) => !toolCallsBeforeCompletion.has(toolCall)
+            );
+        // 追踪本次 LLM 请求已 merge 的工具调用数量，用于检测新工具调用到达
         let prevMergedToolCallCount = 0;
-        let abortedByParseHook = false;
+        let abortedByToolcallHook = false;
         const requestOptions: LLMRequestOptions = {
             reasoningEffort: this.reasoningEffort,
             maxCompletionTokens: dynamicMaxCompletionTokens,
@@ -3208,6 +3213,7 @@ export class TaskState {
                                         `task ${this.task_id}: afterParseToolcall rejected ` +
                                             `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
                                     );
+                                    abortedByToolcallHook = true;
                                     await this.sendSubscriptionFeedback();
                                     break;
                                 }
@@ -3216,10 +3222,12 @@ export class TaskState {
 
                         // beforeToolcallCreated 钩子：在 merge 前检查是否应拒绝新的工具调用
                         {
+                            const requestToolCalls = getCurrentRequestToolCalls();
                             const feedback = await this.hooks.checkBeforeToolcallCreated(
                                 this,
                                 assistant_message,
-                                chunkHasNewToolCall
+                                chunkHasNewToolCall,
+                                requestToolCalls
                             );
                             if (feedback.operation === 'reject') {
                                 logger.warn(
@@ -3228,6 +3236,7 @@ export class TaskState {
                                 if (chunk_resp.usage) {
                                     assistant_message.usage = chunk_resp.usage;
                                 }
+                                abortedByToolcallHook = true;
                                 await this.sendSubscriptionFeedback();
                                 break;
                             }
@@ -3241,7 +3250,7 @@ export class TaskState {
 
                         this.resolveStreamingToolCalls(assistant_message);
 
-                        prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
+                        prevMergedToolCallCount = getCurrentRequestToolCalls().length;
 
                         // When content length increases, a new part was created - the previous part is now complete
                         if (assistant_message.content.length > prevPartCount) {
@@ -3330,7 +3339,7 @@ export class TaskState {
                                 break;
                             }
                         }
-                        prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
+                        prevMergedToolCallCount = getCurrentRequestToolCalls().length;
                         await this.sendAssistantMessageReplace(assistant_message);
                     }
 
@@ -3354,8 +3363,8 @@ export class TaskState {
                 }
             }
 
-            // 流结束后，如果之前没有被 afterParseToolcall 钩子拒绝过，则再校验最后一个工具调用
-            if (!abortedByParseHook) {
+            // 流结束后，如果之前没有被 tool call 钩子主动中断，则再校验最后一个工具调用
+            if (!abortedByToolcallHook) {
                 const finalToolCalls = TaskState.collectToolCalls(assistant_message);
                 if (finalToolCalls.length > 0) {
                     const lastTc = finalToolCalls[finalToolCalls.length - 1];
@@ -3367,7 +3376,7 @@ export class TaskState {
                             `task ${this.task_id}: afterParseToolcall rejected last tool call ` +
                                 `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
                         );
-                        abortedByParseHook = true;
+                        abortedByToolcallHook = true;
                         await this.sendSubscriptionFeedback();
                     }
                 }
@@ -3406,7 +3415,7 @@ export class TaskState {
         }
 
         this.persistLater();
-        return abortedByParseHook;
+        return abortedByToolcallHook;
     }
 
     /**
@@ -4161,7 +4170,7 @@ export class TaskState {
                 if (this._turnGeneration !== myGeneration) return;
 
                 try {
-                    const abortedByParseHook = await this.processCompletion(modelRequestOptions);
+                    const abortedByToolcallHook = await this.processCompletion(modelRequestOptions);
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
@@ -4215,7 +4224,7 @@ export class TaskState {
                     let turnRejected: boolean;
                     let turnRejectedReason: string = '';
 
-                    if (abortedByParseHook) {
+                    if (abortedByToolcallHook) {
                         turnRejected = true;
                         turnRejectedReason = '';
                     } else {
