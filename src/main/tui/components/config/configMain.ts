@@ -57,21 +57,21 @@ const SECTION_DEFS: ConfigSectionDef[] = [
     },
     {
         value: 'display',
-        icon: '🖥️',
+        icon: '📺',
         titleKey: 'config.display.title',
         hintKey: 'config.display.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new DisplayConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'network',
-        icon: '🌐',
+        icon: '📟',
         titleKey: 'config.network.title',
         hintKey: 'config.network.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new NetworkConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'debug',
-        icon: '🪜',
+        icon: '📊',
         titleKey: 'config.debug.title',
         hintKey: 'config.debug.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new DebugConfigPage(openDeskTUI.tui, onBack, onConfigChange)

@@ -2074,9 +2074,16 @@ export class TaskState {
             await this.sendUserMessageReplace(user_message);
         }
 
-        const autoParseThinkTags = this.model
-            ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ?? false)
-            : false;
+        const autoParseThinkTags =
+            Setting.getInstance().getModelInstance(
+                this.model || Setting.getInstance().getData().default_model || '',
+                'chat'
+            )?.auto_parse_think_tags ?? false;
+        logger.info(
+            `task ${this.task_id}: creating AssistantMessage ` +
+                `model=${this.model}, ` +
+                `autoParseThinkTags=${autoParseThinkTags}`
+        );
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
         assistant_message.metadata =
             user_message.metadata?.scope === 'interlude'
@@ -3172,8 +3179,16 @@ export class TaskState {
             while (this.task_status !== 'stopped') {
                 try {
                     const requestModel = this.ensureValidModelOrFallback();
-                    const autoParseThinkTags =
-                        Setting.getInstance().getModelInstance(requestModel, 'chat')?.auto_parse_think_tags ?? false;
+                    const effectiveModel = requestModel || Setting.getInstance().getData().default_model || '';
+                    const modelInstance = Setting.getInstance().getModelInstance(effectiveModel, 'chat');
+                    const autoParseThinkTags = modelInstance?.auto_parse_think_tags ?? false;
+                    logger.info(
+                        `task ${this.task_id}: beginCompletionRound ` +
+                            `requestModel=${requestModel}, ` +
+                            `effectiveModel=${effectiveModel}, ` +
+                            `modelInstanceFound=${modelInstance !== null}, ` +
+                            `autoParseThinkTags=${autoParseThinkTags}`
+                    );
                     assistant_message.beginCompletionRound(autoParseThinkTags);
                     for await (const chunk_resp of LLM.streamComplete(
                         this.chat_context,

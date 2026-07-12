@@ -199,4 +199,108 @@ describe('AssistantMessage think tag parsing', () => {
         expect(stripThinkTags(text, true)).toBe('visible answer');
         expect(stripThinkTags(text, false)).toBe(text);
     });
+
+    test('parses implicit think close with multiline Chinese content in one chunk', () => {
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+        const text =
+            '用户发送了一个简单的问候"hello"。根据我的指导原则：\n' +
+            '- 我应该用中文回复（除非用户使用其他语言）\n' +
+            '- 回答要简洁直接，避免空洞的客套话\n' +
+            '- 不要说"好的！"、"没问题！"之类的开场白\n' +
+            '- 一句话能说清楚不要用三句\n' +
+            '\n' +
+            '这是一个简单的问候，我应该直接回应，保持简洁友好的风格。</think>你好！有什么我可以帮你的吗？';
+
+        message.mergeChunk(parseDelta({ content: text }));
+
+        expect(message.content).toHaveLength(2);
+        expect(message.content[0].type).toBe('reasoning');
+        expect((message.content[0] as ReasoningMessagePart).source).toBe('think_tag');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('用户发送了一个简单的问候');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('保持简洁友好的风格。');
+        expect(message.content[1].type).toBe('text');
+        expect((message.content[1] as TextMessagePart).text).toBe('你好！有什么我可以帮你的吗？');
+    });
+
+    test('parses implicit think close with multiline Chinese content in streaming chunks', () => {
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+
+        // Simulate streaming chunks
+        message.mergeChunk(
+            parseDelta({
+                content:
+                    '用户发送了一个简单的问候"hello"。根据我的指导原则：\n' +
+                    '- 我应该用中文回复（除非用户使用其他语言）\n' +
+                    '- 回答要简洁直接，避免空洞的客套话\n'
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                content:
+                    '- 不要说"好的！"、"没问题！"之类的开场白\n' +
+                    '- 一句话能说清楚不要用三句\n' +
+                    '\n' +
+                    '这是一个简单的问候，我应该直接回应，保持简洁友好的风格。</think>'
+            })
+        );
+        message.mergeChunk(parseDelta({ content: '你好！有什么我可以帮你的吗？' }));
+
+        expect(message.content).toHaveLength(2);
+        expect(message.content[0].type).toBe('reasoning');
+        expect((message.content[0] as ReasoningMessagePart).source).toBe('think_tag');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('用户发送了一个简单的问候');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('保持简洁友好的风格。');
+        expect(message.content[1].type).toBe('text');
+        expect((message.content[1] as TextMessagePart).text).toBe('你好！有什么我可以帮你的吗？');
+    });
+
+    test('non-stream stripping removes implicit think content for multiline Chinese content', () => {
+        const text =
+            '用户发送了一个简单的问候"hello"。根据我的指导原则：\n' +
+            '- 我应该用中文回复（除非用户使用其他语言）\n' +
+            '- 回答要简洁直接，避免空洞的客套话\n' +
+            '- 不要说"好的！"、"没问题！"之类的开场白\n' +
+            '- 一句话能说清楚不要用三句\n' +
+            '\n' +
+            '这是一个简单的问候，我应该直接回应，保持简洁友好的风格。</think>你好！有什么我可以帮你的吗？';
+
+        expect(stripThinkTags(text, true)).toBe('你好！有什么我可以帮你的吗？');
+        expect(stripThinkTags(text, false)).toBe(text);
+    });
+
+    test('parses </think> arriving as a single isolated chunk in streaming', () => {
+        // GLM-5 真实场景：思考文本到达后，</think> 作为单独一个 chunk 到来
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+        message.beginCompletionRound(true);
+
+        // 模拟 GLM-5 流式输出（来自 err_raw_log.txt 的实际 chunk 序列）
+        const thinkingChunks = [
+            '用户只是发送了一个"test"消息。这是一个测试性的消息，可能是用户在测试我是否正常工作。\n\n',
+            '我应该简单回复，确认我正在正常工作，并询问用户有什么实际的任务需要帮助。\n\n',
+            '根据人设指引，我需要：\n',
+            '- 使用简体中文回复\n',
+            '- 直接高效，不说废话\n',
+            '- 回答简洁有力\n',
+            '- 避免空洞的客套话（不要说"好的！"、"没问题！"之类的开场白）\n\n',
+            '所以我不应该过度解释，只需简单确认并询问需要什么帮助。'
+        ];
+
+        for (const chunk of thinkingChunks) {
+            message.mergeChunk(parseDelta({ content: chunk }));
+        }
+
+        // </think> 作为独立 chunk 到达（原始日志第 73 行）
+        message.mergeChunk(parseDelta({ content: '</think>' }));
+
+        // 可见回答作为后续 chunk
+        message.mergeChunk(parseDelta({ content: '收到。有什么具体需要帮忙的吗？' }));
+
+        expect(message.content).toHaveLength(2);
+        expect(message.content[0].type).toBe('reasoning');
+        expect((message.content[0] as ReasoningMessagePart).source).toBe('think_tag');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('用户只是发送了一个');
+        expect((message.content[0] as ReasoningMessagePart).content).toContain('需要什么帮助。');
+        expect(message.content[1].type).toBe('text');
+        expect((message.content[1] as TextMessagePart).text).toBe('收到。有什么具体需要帮忙的吗？');
+    });
 });
