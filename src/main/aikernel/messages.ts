@@ -1601,6 +1601,8 @@ export class AssistantMessage {
         content: string,
         source: 'reasoning_content' | 'think_tag' = 'reasoning_content'
     ): AssistantMessage {
+        this._allowThinkTagParsing = false;
+        this._allowImplicitThinkClose = false;
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
@@ -1609,8 +1611,6 @@ export class AssistantMessage {
             this._finalizeLastReasoning();
             this.content.push(new ReasoningMessagePart(content, source));
         }
-        this._allowThinkTagParsing = false;
-        this._allowImplicitThinkClose = false;
         return this;
     }
 
@@ -1707,11 +1707,9 @@ export class AssistantMessage {
     }
 
     private _canUseImplicitThinkClose(lastPart: TextMessagePart): boolean {
-        return (
-            this._allowImplicitThinkClose &&
-            this.content.length === this._thinkRoundStartPartIndex + 1 &&
-            this.content[this._thinkRoundStartPartIndex] === lastPart
-        );
+        if (!this._allowImplicitThinkClose) return false;
+
+        return this.content.length === this._thinkRoundStartPartIndex + 1;
     }
 
     private static _isLiteralThinkTag(text: string, tagStart: number, tag: string): boolean {
