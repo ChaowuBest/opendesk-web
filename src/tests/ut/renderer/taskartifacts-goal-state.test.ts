@@ -6,7 +6,7 @@ import {
     isTerminalGoalStatus,
     shouldAutoCollapseTerminalGoalDetails,
     shouldShowGoalSuggestion
-} from '../../../renderer/components/taskartifacts-goal-state.js';
+} from '../../../renderer/components/taskartifacts-goal/state.js';
 
 describe('task artifacts goal state helpers', () => {
     test('cleared and complete goals are terminal and can be replaced by a new goal', () => {

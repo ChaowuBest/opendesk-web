@@ -66,11 +66,15 @@ describe('task artifacts goal disclosure state', () => {
 
     function createArtifacts(): HTMLElement & {
         setGoalState: (goal: any) => void;
+        setGoalEvalProgress: (progress: any) => void;
         setTaskTodos: (todos: any[], options?: { source?: 'refresh' | 'live-update' }) => void;
+        showGoalCreationForm: () => void;
     } {
         const artifacts = document.createElement('task-artifacts') as HTMLElement & {
             setGoalState: (goal: any) => void;
+            setGoalEvalProgress: (progress: any) => void;
             setTaskTodos: (todos: any[], options?: { source?: 'refresh' | 'live-update' }) => void;
+            showGoalCreationForm: () => void;
         };
         document.body.appendChild(artifacts);
         artifacts.connectedCallback?.();
@@ -212,6 +216,98 @@ describe('task artifacts goal disclosure state', () => {
         const details = getDetails(artifacts);
         expect(details.evalStack.hasAttribute('open')).toBe(true);
         expect(details.timeline.hasAttribute('open')).toBe(true);
+    });
+
+    test('live todo updates preserve an in-progress goal creation draft and textarea DOM', () => {
+        const artifacts = createArtifacts();
+        artifacts.setTaskTodos([
+            {
+                id: 'todo-1',
+                title: 'Initial todo',
+                status: 'pending',
+                updated_at: '2026-07-08T10:01:00.000Z'
+            }
+        ]);
+        artifacts.showGoalCreationForm();
+
+        const objectiveInput = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>(
+            '[data-goal-creation-input="objective"]'
+        );
+        expect(objectiveInput).not.toBeNull();
+        objectiveInput!.value = 'Keep this draft';
+        objectiveInput!.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        artifacts.setTaskTodos(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'Updated todo',
+                    status: 'in_progress',
+                    updated_at: '2026-07-08T10:02:00.000Z'
+                }
+            ],
+            { source: 'live-update' }
+        );
+
+        const preservedInput = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>(
+            '[data-goal-creation-input="objective"]'
+        );
+        expect(preservedInput).toBe(objectiveInput);
+        expect(preservedInput?.value).toBe('Keep this draft');
+    });
+
+    test('a newer goal revision supersedes stale live evaluation until the persisted result arrives', () => {
+        const artifacts = createArtifacts();
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 1,
+            objective: 'Old objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+        artifacts.setGoalEvalProgress({
+            evaluationId: 'eval-1',
+            goalId: 'goal-1',
+            goalRevision: 1,
+            phase: 'start',
+            message: 'Evaluating',
+            startedAt: '2026-07-08T10:01:00.000Z'
+        });
+
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'New objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:02:00.000Z'
+        });
+
+        expect(artifacts.shadowRoot?.querySelector('.goal-evaluation-superseded')).not.toBeNull();
+
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'New objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:03:00.000Z',
+            evaluations: [
+                {
+                    evaluationId: 'eval-1',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    phase: 'end',
+                    status: 'not_met',
+                    message: 'Persisted result',
+                    evaluatedAt: '2026-07-08T10:03:00.000Z'
+                }
+            ]
+        });
+
+        expect(artifacts.shadowRoot?.querySelector('.goal-evaluation-superseded')).toBeNull();
+        expect(artifacts.shadowRoot?.innerHTML).toContain('Persisted result');
     });
 
     test('editing an active running goal dispatches pending event before display message exists', async () => {

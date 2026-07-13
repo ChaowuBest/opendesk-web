@@ -8,7 +8,7 @@ import {
 } from '../task-extension.js';
 import { TaskState, type TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { GoalController } from './controller.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
+import { buildGoalRecoveryPrompt, buildGoalSupplementPrompt } from './prompts.js';
 import { GoalRuntimeAdapter } from './runtime-adapter.js';
 import {
     GoalEvents,
@@ -19,11 +19,10 @@ import {
     type GoalFinalSnapshot,
     type GoalState
 } from './state.js';
-import { markStaleGoalToolCallSkipped } from './tool-call-guard.js';
 
 export const GOAL_EXTENSION_KEY = 'goal';
 
-export class TaskGoalContext implements TaskExtension {
+export class GoalTaskExtension implements TaskExtension {
     readonly key = GOAL_EXTENSION_KEY;
     state?: GoalState;
     finalSnapshots: GoalFinalSnapshot[] = [];
@@ -127,7 +126,7 @@ export class TaskGoalContext implements TaskExtension {
     }
 
     beforeToolCall(toolCall: ToolCall): boolean {
-        return markStaleGoalToolCallSkipped(toolCall, this.state, this.task.task_id);
+        return this.runtime.beforeToolCall(toolCall);
     }
 
     checkpoint(checkpoint: TaskExtensionCheckpoint, options: TaskExtensionCheckpointOptions = {}): Promise<boolean> {
@@ -181,19 +180,12 @@ export class TaskGoalContext implements TaskExtension {
                 supplementIds: supplements.map((supplement) => supplement.id)
             }
         };
-        const prompt = [
-            '<system-reminder>',
-            '用户在当前 goal 执行期间提供了补充信息。请把这些内容作为当前 goal 的补充上下文使用。',
-            '',
-            ...createUserGoalDataBlock(
-                'Supplemental context:',
-                supplements.map((supplement) => ({
-                    source: supplement.source,
-                    content: supplement.content
-                }))
-            ),
-            '</system-reminder>'
-        ].join('\n');
+        const prompt = buildGoalSupplementPrompt(
+            supplements.map((supplement) => ({
+                source: supplement.source,
+                content: supplement.content
+            }))
+        );
         const rawText = supplements.map((supplement) => supplement.content).join('\n\n');
 
         await this.task.materializeExtensionPromptTurn(prompt, metadata, rawText);
@@ -226,11 +218,7 @@ export class TaskGoalContext implements TaskExtension {
             goal.pausedAt = at;
             goal.updatedAt = at;
             if (!goal.pendingContinuation) {
-                goal.pendingContinuation = this.createRecoveryContinuation(
-                    goal,
-                    'OpenDesk 上次在执行当前 goal 时异常退出或重启，旧的执行栈已经不可恢复。',
-                    'crash_recovery'
-                );
+                goal.pendingContinuation = this.createRecoveryContinuation(goal, 'crash_recovery');
             }
             GoalEvents.appendToTask(
                 this.task,
@@ -246,11 +234,7 @@ export class TaskGoalContext implements TaskExtension {
             goal.pausedAt = at;
             goal.updatedAt = at;
             if (!goal.pendingContinuation) {
-                goal.pendingContinuation = this.createRecoveryContinuation(
-                    goal,
-                    '加载时发现 active goal 没有可恢复的 runner，请重新继续。',
-                    'load_recovery'
-                );
+                goal.pendingContinuation = this.createRecoveryContinuation(goal, 'load_recovery');
             }
             GoalEvents.appendToTask(
                 this.task,
@@ -269,31 +253,16 @@ export class TaskGoalContext implements TaskExtension {
         if (changed) this.task._dirty = true;
     }
 
-    private createRecoveryContinuation(
-        goal: GoalState,
-        reason: string,
-        continuationReason: 'crash_recovery' | 'load_recovery'
-    ) {
-        const prompt = [
-            '<system-reminder>',
-            reason,
-            '',
-            ...createUserGoalDataBlock('Goal data:', {
-                objective: goal.objective,
-                successCriteria: goal.successCriteria
-            }),
-            '',
-            '请根据当前 transcript、文件状态和 goal state 继续推进。',
-            '</system-reminder>'
-        ].join('\n');
+    private createRecoveryContinuation(goal: GoalState, continuationReason: 'crash_recovery' | 'load_recovery') {
+        const prompt = buildGoalRecoveryPrompt(goal, continuationReason);
         return GoalStates.createContinuation(goal, prompt, continuationReason);
     }
 }
 
-registerTaskExtension(GOAL_EXTENSION_KEY, (task) => new TaskGoalContext(task));
+registerTaskExtension(GOAL_EXTENSION_KEY, (task) => new GoalTaskExtension(task));
 
-export function getGoalContext(task: TaskState): TaskGoalContext {
-    return task.extensions.require<TaskGoalContext>(GOAL_EXTENSION_KEY);
+export function getGoalExtension(task: TaskState): GoalTaskExtension {
+    return task.extensions.require<GoalTaskExtension>(GOAL_EXTENSION_KEY);
 }
 
 declare module '../states/tasks.js' {
@@ -312,52 +281,52 @@ Object.defineProperties(TaskState.prototype, {
     goal_state: {
         configurable: true,
         get(this: TaskState): GoalState | undefined {
-            return getGoalContext(this).state;
+            return getGoalExtension(this).state;
         },
         set(this: TaskState, value: GoalState | undefined) {
-            getGoalContext(this).state = value;
+            getGoalExtension(this).state = value;
         }
     },
     goal_final_snapshots: {
         configurable: true,
         get(this: TaskState): GoalFinalSnapshot[] {
-            return getGoalContext(this).finalSnapshots;
+            return getGoalExtension(this).finalSnapshots;
         },
         set(this: TaskState, value: GoalFinalSnapshot[]) {
-            getGoalContext(this).finalSnapshots = value;
+            getGoalExtension(this).finalSnapshots = value;
         }
     },
     goal_event_log: {
         configurable: true,
         get(this: TaskState): GoalEventLogStorage | undefined {
-            return getGoalContext(this).eventLog;
+            return getGoalExtension(this).eventLog;
         },
         set(this: TaskState, value: GoalEventLogStorage | undefined) {
-            getGoalContext(this).eventLog = value;
+            getGoalExtension(this).eventLog = value;
         }
     },
     goalRuntime: {
         configurable: true,
         get(this: TaskState): GoalRuntimeAdapter {
-            return getGoalContext(this).runtime;
+            return getGoalExtension(this).runtime;
         }
     },
     isGoalRuntimeInterrupted: {
         configurable: true,
         value(this: TaskState): boolean {
-            return getGoalContext(this).isRuntimeInterrupted();
+            return getGoalExtension(this).isRuntimeInterrupted();
         }
     },
     publishGoalEvalUpdate: {
         configurable: true,
         value(this: TaskState, chunk: TaskUpdateGoalEvalChunk): void {
-            getGoalContext(this).publishEvaluationUpdate(chunk);
+            getGoalExtension(this).publishEvaluationUpdate(chunk);
         }
     },
     materializePendingGoalSupplements: {
         configurable: true,
         value(this: TaskState): Promise<boolean> {
-            return getGoalContext(this).materializePendingSupplements();
+            return getGoalExtension(this).materializePendingSupplements();
         }
     }
 });

@@ -1108,7 +1108,7 @@ export const enUs: Record<string, string> = {
     'goal.edit.task_changed': 'The active task changed while confirmation was open. The original goal was not edited.',
     'goal.edit.invalid_precondition': 'The goal update condition is invalid. Refresh and try again.',
     'goal.pending.tag': 'Waiting to enter context',
-    'goal.pending.create': 'Pending goal creation',
+    'goal.pending.create': 'Goal created, waiting to enter the current execution context',
     'goal.pending.edit': 'Pending goal edit',
     'goal.pause.complete': 'The goal is already complete.',
     'goal.pause.unexpected_args': 'Goal pause does not accept arguments.',

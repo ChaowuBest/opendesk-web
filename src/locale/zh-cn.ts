@@ -1086,7 +1086,7 @@ export const zhCn: Record<string, string> = {
     'goal.edit.task_changed': '确认期间已切换任务，未修改原任务的 Goal。',
     'goal.edit.invalid_precondition': 'Goal 更新条件无效，请刷新后重试。',
     'goal.pending.tag': '等待进入上下文',
-    'goal.pending.create': '待创建 Goal',
+    'goal.pending.create': 'Goal 已创建，等待进入当前执行上下文',
     'goal.pending.edit': '待更新 Goal',
     'goal.pause.complete': '该 goal 已完成。',
     'goal.pause.unexpected_args': 'Goal pause 不接受参数。',

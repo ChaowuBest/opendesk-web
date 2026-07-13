@@ -21,8 +21,8 @@ import {
     type GoalSupplement,
     type ResumeGoalOptions
 } from './state.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
-import './context.js';
+import { buildGoalEvaluationContinuationPrompt, buildGoalObjectiveEditContinuationPrompt } from './prompts.js';
+import './task-extension.js';
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -174,21 +174,6 @@ function createContinuation(goal: GoalState, prompt: string, reason: GoalContinu
     return GoalStates.createContinuation(goal, prompt, reason);
 }
 
-function defaultContinuationPrompt(goal: GoalState, reason: string): string {
-    return [
-        '<system-reminder>',
-        reason,
-        '',
-        ...createUserGoalDataBlock('Goal data:', {
-            objective: goal.objective,
-            successCriteria: goal.successCriteria
-        }),
-        '',
-        '请根据当前 transcript、文件状态和 goal state 继续推进。',
-        '</system-reminder>'
-    ].join('\n');
-}
-
 /** 累计 chat_context 中所有 assistant 消息的 token 用量。 */
 function computeTotalTokenUsage(task: TaskState): number {
     let total = 0;
@@ -331,14 +316,7 @@ export class GoalController {
         );
         goal.pendingContinuation =
             goal.status === 'active'
-                ? createContinuation(
-                      goal,
-                      defaultContinuationPrompt(
-                          goal,
-                          '当前 goal objective 已被用户修改，请按新的 objective 继续推进。'
-                      ),
-                      'edit'
-                  )
+                ? createContinuation(goal, buildGoalObjectiveEditContinuationPrompt(goal), 'edit')
                 : undefined;
         goal.schedulerLease = undefined;
         goal.editHistory.push({
@@ -600,9 +578,7 @@ export class GoalController {
             return { action: 'finish', status: goal.status, evaluationRecord };
         }
 
-        const continuationPrompt =
-            evaluation.nextPrompt ||
-            defaultContinuationPrompt(goal, 'Goal evaluator 判断当前 goal 尚未完成，请继续推进。');
+        const continuationPrompt = evaluation.nextPrompt || buildGoalEvaluationContinuationPrompt(goal);
 
         goal.attempts += 1;
 

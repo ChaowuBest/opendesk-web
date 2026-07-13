@@ -6,9 +6,8 @@ import { HookRegistry } from '../../../main/aikernel/hooks.js';
 import { GoalController, getGoalTokenUsage } from '../../../main/aikernel/goal/controller.js';
 import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
 import { registerGoalHooks } from '../../../main/aikernel/goal/hooks.js';
-import { projectGoalDisplayMessage } from '../../../main/aikernel/goal/message-projection.js';
 import { GoalScheduler } from '../../../main/aikernel/goal/scheduler.js';
-import { GoalService } from '../../../main/aikernel/goal/service.js';
+import { GoalService, projectGoalDisplayMessage } from '../../../main/aikernel/goal/service.js';
 import { GoalEvents, GoalStates, createGoalEvent } from '../../../main/aikernel/goal/state.js';
 import { LLM } from '../../../main/aikernel/llm.js';
 import {
@@ -1895,6 +1894,25 @@ describe('goal controller and scheduler', () => {
         expect(secondProjected.summary?.objectiveEvents?.at(-1)?.displayMessageId).toBe(
             (visibleGoalMessages[0] as UserMessage).message_id
         );
+    });
+
+    test('display projection leaves failed and unmatched command results untouched', () => {
+        const task = createTask();
+        const failedResult = { ok: false, errorCode: 'expected_failure' };
+
+        expect(projectGoalDisplayMessage(task, failedResult, 'create', 'ignored goal')).toBe(failedResult);
+        const successfulResultWithoutGoal = { ok: true };
+        expect(projectGoalDisplayMessage(task, successfulResultWithoutGoal, 'create', 'missing goal')).toBe(
+            successfulResultWithoutGoal
+        );
+        expect(task.chat_context.messages).toHaveLength(0);
+
+        const createResult = GoalController.create(task, { objective: 'created goal', source: 'gui' });
+        expect(projectGoalDisplayMessage(task, createResult, 'edit', 'unmatched edit')).toBe(createResult);
+        expect(task.chat_context.messages).toHaveLength(0);
+        expect(
+            GoalEvents.getTail(task.goal_event_log).filter((event) => event.type === 'display_projected')
+        ).toHaveLength(0);
     });
 
     test('status summary filters timeline events to the current goal', () => {

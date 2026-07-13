@@ -1,42 +1,8 @@
 import type { TaskState } from '../states/tasks.js';
 import { GoalEvents, GoalStates, createGoalEvent, type GoalCommandResult, type GoalSchedulerLease } from './state.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
+import { buildGoalResumePrompt, buildGoalStartPrompt } from './prompts.js';
 
 const LEASE_TTL_MS = 30_000;
-
-function buildStartPrompt(task: TaskState): string {
-    const goal = task.goal_state!;
-    const parts = [
-        '<system-reminder>',
-        '开始推进当前 goal。',
-        '',
-        ...createUserGoalDataBlock('Goal data:', {
-            objective: goal.objective,
-            successCriteria: goal.successCriteria
-        })
-    ];
-    parts.push(
-        '',
-        '请基于当前 task 上下文执行必要步骤，直到 goal 满足或遇到需要用户介入的 blocker。不要把本提醒作为普通用户消息回复。',
-        '</system-reminder>'
-    );
-    return parts.join('\n');
-}
-
-function buildResumePrompt(task: TaskState): string {
-    const goal = task.goal_state!;
-    const parts = [
-        '<system-reminder>',
-        '继续推进当前 goal。',
-        '',
-        ...createUserGoalDataBlock('Goal data:', {
-            objective: goal.objective,
-            successCriteria: goal.successCriteria
-        })
-    ];
-    parts.push('', '请根据当前上下文继续执行，直到满足 goal 或遇到需要用户介入的 blocker。', '</system-reminder>');
-    return parts.join('\n');
-}
 
 function acquireLease(task: TaskState, reason: GoalSchedulerLease['reason']): GoalSchedulerLease | undefined {
     const goal = task.goal_state;
@@ -113,7 +79,7 @@ export class GoalScheduler {
             continuationTurnGeneration = task.getNextTurnGeneration();
         }
         if (!prompt) {
-            prompt = leaseReason === 'create' ? buildStartPrompt(task) : buildResumePrompt(task);
+            prompt = leaseReason === 'create' ? buildGoalStartPrompt(goal) : buildGoalResumePrompt(goal);
         }
         try {
             task.persistLater();

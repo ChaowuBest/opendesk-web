@@ -1,9 +1,8 @@
 import { HookRegistry } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
-import { type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
-import { recordGoalEvaluationFinish, recordGoalEvaluationStart } from './machine.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
+import { GoalStates, type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
+import { buildGoalRevisionNoticePrompt } from './prompts.js';
 import type { TaskStatus, TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
 
@@ -95,7 +94,7 @@ function finishGoalEvaluation(
         anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>;
     }
 ): TaskUpdateGoalEvalChunk {
-    const endRecord = recordGoalEvaluationFinish(goal, {
+    const endRecord = GoalStates.recordEvaluationEnd(goal, {
         evaluationId: input.evaluationId,
         status: input.status,
         ...(input.message !== undefined ? { message: input.message } : {}),
@@ -144,7 +143,7 @@ export function registerGoalHooks(): void {
         const evaluationAnchor = getEvaluationAnchor(task);
 
         // 通知 UI 评估开始
-        const startRecord = recordGoalEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
+        const startRecord = GoalStates.recordEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
         task.persistLater();
         publishGoalEvaluationRecord(task, startRecord);
 
@@ -171,16 +170,10 @@ export function registerGoalHooks(): void {
                     evaluatedAt,
                     anchor: getGoalEditDisplayAnchor(task, currentGoal)
                 });
-                const message = [
-                    '<system-reminder>',
-                    editSupersededEvaluationMessage(),
-                    '',
-                    ...createUserGoalDataBlock('Goal data:', {
-                        revision: currentGoal.revision,
-                        objective: currentGoal.objective
-                    }),
-                    '</system-reminder>'
-                ].join('\n');
+                const message = buildGoalRevisionNoticePrompt(editSupersededEvaluationMessage(), {
+                    revision: currentGoal.revision,
+                    objective: currentGoal.objective
+                });
                 return { operation: 'reject', message };
             }
             if (currentGoal.status !== 'active') {
@@ -231,16 +224,10 @@ export function registerGoalHooks(): void {
                 currentGoal.revision !== evaluatingGoalRevision &&
                 currentGoal.status === 'active'
             ) {
-                const editMessage = [
-                    '<system-reminder>',
-                    editSupersededEvaluationMessage(),
-                    '',
-                    ...createUserGoalDataBlock('Goal data:', {
-                        revision: currentGoal.revision,
-                        objective: currentGoal.objective
-                    }),
-                    '</system-reminder>'
-                ].join('\n');
+                const editMessage = buildGoalRevisionNoticePrompt(editSupersededEvaluationMessage(), {
+                    revision: currentGoal.revision,
+                    objective: currentGoal.objective
+                });
                 finishGoalEvaluation(task, currentGoal, {
                     evaluationId,
                     status: 'superseded',
