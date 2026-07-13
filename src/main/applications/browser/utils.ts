@@ -35,10 +35,8 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 el.style.width = '1280px';
                 if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
             } else {
-                var wasExpanded = tv && tv.constructor && tv.constructor.rightSidebarExpanded;
                 if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (wasExpanded) el._suppressBrowserAutoSwitch = true;
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(!wasExpanded);
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(true);
             }
         }
     `;
