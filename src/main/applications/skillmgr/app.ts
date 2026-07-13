@@ -48,6 +48,9 @@ import {
 } from './utils.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
 
+const HARMONYOS_FALLBACK_SKILL_NAME = 'harmonyos-fallback-skill';
+const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
+
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
     private static refreshListeners: Array<() => void> = [];
@@ -366,9 +369,11 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsSkill.toolsets = [manageSkillsToolset];
         skills.push(manageSkillsSkill);
 
-        const harmonyosSkill = loadHarmonyosFallbackSkill();
-        if (harmonyosSkill) {
-            skills.push(harmonyosSkill);
+        if (isHarmonyosRuntime) {
+            const harmonyosSkill = loadHarmonyosFallbackSkill();
+            if (harmonyosSkill) {
+                skills.push(harmonyosSkill);
+            }
         }
 
         return skills;
@@ -430,9 +435,11 @@ export class SkillMgrApplication extends BaseApplication {
         }> = [];
         for (const [bundleName, skills] of allSkills) {
             for (const skill of skills) {
-                // skillmgr bundle：只暴露 harmonyos-fallback-skill 为内置技能，
+                // skillmgr bundle：只在 HarmonyOS PC 运行时暴露 harmonyos-fallback-skill 为内置技能，
                 // 其他技能（用户安装的 + manage-skills）不在此 Tab 显示
-                if (bundleName === 'skillmgr' && skill.frontmatter.name !== 'harmonyos-fallback-skill') continue;
+                if (bundleName === 'skillmgr') {
+                    if (!isHarmonyosRuntime || skill.frontmatter.name !== HARMONYOS_FALLBACK_SKILL_NAME) continue;
+                }
                 const tools: Array<{
                     name: string;
                     description: string;
