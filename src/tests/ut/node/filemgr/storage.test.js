@@ -21,11 +21,23 @@ import {
     FSStorage,
     RebuildRequiredError,
     WARNINGS,
+    buildIndexedFilePreconditions,
     classifyEmbeddingError,
     limitChunksForEmbedding,
     makeSchema,
     planEmbeddingInputs
 } from '../../../../main/applications/filemgr/storage.js';
+
+assert.deepEqual(buildIndexedFilePreconditions({ scope: undefined, requireEmbedded: false }), [
+    { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+    { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
+]);
+assert.deepEqual(buildIndexedFilePreconditions({ scope: { type: 'path', path: '/workspace' }, requireEmbedded: true }), [
+    { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+    { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+    { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+    { indexer: 'BaseIndexer', field: 'item_id', operator: 'path_descendant_or_self', value: '/workspace' }
+]);
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
@@ -34,6 +46,7 @@ import { dropVectorIndexStoreArkdata } from '../../../../main/services/storage/v
 import { dropChunkIndexStoreArkdata } from '../../../../main/services/storage/chunk-index-db-arkdata.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 import { LLM } from '../../../../main/aikernel/llm.ts';
+import { logger } from '../../../../main/utils/logger.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -229,6 +242,8 @@ if (!OPENROUTER_API_KEY) {
     await testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown();
     await testSearchEmbedFailureReturnsEmbedApiDown();
     await testSearchSemanticRoutesExposeScores();
+    await testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope();
+    await testSearchIndexedChunksContractAndRerankFallback();
     await testSearchFilesByKeywordSupportsLimit();
     await testProcessEmbeddingQueueSkipsFileErrorsOnce();
     await testProcessEmbeddingQueueMarksPermanentFileErrorsAsDisabled();
@@ -763,9 +778,9 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
             'vector name search should hide ref_count=0 rows'
         );
 
-        const byContent = await fss.searchFileByContent('needle');
+        const byContent = await fss.searchIndexedChunks('needle', { topK: 20 });
         assert.ok(
-            !byContent.results.some((item) => item.path === hidden),
+            !byContent.results.some((item) => item.source.path === hidden),
             'vector content search should hide ref_count=0 rows'
         );
 
@@ -3384,7 +3399,7 @@ async function testSearchByNameBaseOnlyReturnsEmbedUnavailable() {
         assert.equal(r.code, 'EMBED_UNAVAILABLE');
         assert.ok(r.warning);
 
-        const byContent = await fss.searchFileByContent('foo');
+        const byContent = await fss.searchIndexedChunks('foo', { topK: 20 });
         assert.equal(byContent.results.length, 0);
         assert.equal(byContent.totalHits, 0);
         assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
@@ -3412,7 +3427,7 @@ async function testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable() 
         assert.equal(byName.warning, WARNINGS.NO_EMBEDDING_MODEL);
         assert.equal(byName.code, CODES.EMBED_UNAVAILABLE);
 
-        const byContent = await fss.searchFileByContent('alpha');
+        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
         assert.equal(byContent.code, CODES.EMBED_UNAVAILABLE);
     } finally {
@@ -3434,7 +3449,7 @@ async function testSearchBlankQueryReturnsEmptyResult() {
         assert.equal(byName.totalHits, 0);
         assert.equal(byName.code, undefined);
 
-        const byContent = await fss.searchFileByContent('');
+        const byContent = await fss.searchIndexedChunks('', { topK: 20 });
         assert.equal(byContent.query, '');
         assert.deepEqual(byContent.results, []);
         assert.equal(byContent.totalHits, 0);
@@ -3457,7 +3472,7 @@ async function testSearchDeferredReturnsIndexNotReady() {
         assert.equal(byName.warning, WARNINGS.DEFERRED);
         assert.equal(byName.code, CODES.INDEX_NOT_READY);
 
-        const byContent = await fss.searchFileByContent('alpha');
+        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.DEFERRED);
         assert.equal(byContent.code, CODES.INDEX_NOT_READY);
     } finally {
@@ -3481,7 +3496,7 @@ async function testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown() {
         assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byName.code, CODES.EMBED_API_DOWN);
 
-        const byContent = await fss.searchFileByContent('alpha');
+        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byContent.code, CODES.EMBED_API_DOWN);
     } finally {
@@ -3514,7 +3529,7 @@ async function testSearchEmbedFailureReturnsEmbedApiDown() {
         assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byName.code, CODES.EMBED_API_DOWN);
 
-        const byContent = await fss.searchFileByContent('alpha');
+        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byContent.code, CODES.EMBED_API_DOWN);
     } finally {
@@ -3568,8 +3583,8 @@ async function testSearchSemanticRoutesExposeScores() {
         const byName = await fss.searchFileByName('alpha');
         assert.equal(byName.results[0].semanticScore, 0.91);
 
-        const byContent = await fss.searchFileByContent('alpha');
-        assert.equal(byContent.results[0].semanticScore, 0.77);
+        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        assert.equal(byContent.results[0].score, 0.77);
     } finally {
         LLM.embed = originalEmbed;
         LLM.rerank = originalRerank;
@@ -3610,6 +3625,108 @@ async function testSearchFilesByKeywordSupportsLimit() {
         cleanup(dir);
     }
     console.log('  ✅ testSearchFilesByKeywordSupportsLimit');
+}
+
+async function testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope() {
+    console.log('  testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope...');
+    const dir = tmpDir('scoped-diagnostics');
+    const originalEmbed = LLM.embed;
+    const originalRerank = LLM.rerank;
+    const originalInfo = logger.info;
+    const previousFlag = process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS;
+    try {
+        const calls = [];
+        const logs = [];
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        fss.storage = {
+            async searchScope(request, options) {
+                calls.push({ request, options });
+                return { items: [], totalCount: 0, diagnostics: { backend: 'native' } };
+            }
+        };
+        LLM.embed = async () => [0.1];
+        LLM.rerank = async (_query, items) => items;
+        logger.info = (...args) => logs.push(args.join(' '));
+
+        delete process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS;
+        await fss.searchFileByName('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        assert.equal(calls[0].options.collectDiagnostics, false);
+        assert.deepEqual(logs, []);
+
+        process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS = '1';
+        await fss.searchFileByName('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        assert.equal(calls[1].options.collectDiagnostics, true);
+        assert.equal(logs.length, 1);
+        assert.match(logs[0], /name_semantic/);
+        assert.match(logs[0], /\/Docs/);
+
+        await fss.searchIndexedChunks('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        assert.equal(logs.length, 2);
+        assert.match(logs[1], /content_semantic/);
+        assert.match(logs[1], /\/Docs/);
+    } finally {
+        LLM.embed = originalEmbed;
+        LLM.rerank = originalRerank;
+        logger.info = originalInfo;
+        if (previousFlag === undefined) delete process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS;
+        else process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS = previousFlag;
+        cleanup(dir);
+    }
+    console.log('  ✅ testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope');
+}
+
+async function testSearchIndexedChunksContractAndRerankFallback() {
+    console.log('  testSearchIndexedChunksContractAndRerankFallback...');
+    const dir = tmpDir('chunk-contract');
+    const originalEmbed = LLM.embed;
+    const originalRerank = LLM.rerank;
+    try {
+        const calls = [];
+        const hits = [
+            { item: { item_id: '/Docs/a.md', filename: 'a.md', modified: 1, size: 2, ref_count: 1, root_refs: '["/Docs"]' }, chunk_id: 'a', chunk_text: 'complete A', ChunkScore: 0.7 },
+            { item: { item_id: '/Docs/b.md', filename: 'b.md', modified: 3, size: 4, ref_count: 1, root_refs: '["/Docs"]' }, chunk_id: 'b', chunk_text: 'complete B', ChunkScore: 0.9 }
+        ];
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        fss.storage = {
+            async search(conditions) { calls.push(['global', conditions]); return { items: hits, totalCount: 2 }; },
+            async searchScope(request) { calls.push(['scope', request]); return { items: hits, totalCount: 2 }; }
+        };
+        LLM.embed = async () => [0.1];
+        let rerankCalls = 0;
+        LLM.rerank = async (_query, items, text) => {
+            rerankCalls++;
+            assert.deepEqual(items.map(text), ['complete A', 'complete B']);
+            return [items[1]];
+        };
+
+        const global = await fss.searchIndexedChunks('plan', { topK: 7 });
+        assert.equal(calls[0][1][0].vectorQuery.topK, 7);
+        assert.equal(global.results[0].chunk.text, 'complete B');
+        assert.equal(global.results[0].score, 0.9);
+        assert.equal(global.results[0].source.path, '/Docs/b.md');
+        assert.equal(global.totalHits, 1);
+
+        const scoped = await fss.searchIndexedChunks('plan', { topK: 9, scope: { type: 'path', path: '/Docs' } });
+        assert.equal(calls[1][1].targetCondition.vectorQuery.topK, 9);
+        assert.deepEqual(calls[1][1].preconditions.map((condition) => [condition.field, condition.operator, condition.value]), [
+            ['type', '=', 'file'], ['embedded', '=', 1], ['ref_count', '>', 0], ['item_id', 'path_descendant_or_self', '/Docs']
+        ]);
+        assert.equal(rerankCalls, 2);
+
+        LLM.rerank = async () => { throw new Error('rerank down'); };
+        const fallback = await fss.searchIndexedChunks('plan', { topK: 2 });
+        assert.deepEqual(fallback.results.map((hit) => hit.chunk.id), ['a', 'b']);
+        assert.deepEqual(fallback.results.map((hit) => hit.score), [0.7, 0.9]);
+        await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 1.5 }), /integer/);
+        await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 5001 }), /1\.\.5000/);
+    } finally {
+        LLM.embed = originalEmbed;
+        LLM.rerank = originalRerank;
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchIndexedChunksContractAndRerankFallback');
 }
 
 // ── Test: processEmbeddingQueue skips non-API file errors once ───────
@@ -4054,6 +4171,8 @@ async function main() {
         testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown,
         testSearchEmbedFailureReturnsEmbedApiDown,
         testSearchSemanticRoutesExposeScores,
+        testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope,
+        testSearchIndexedChunksContractAndRerankFallback,
         testProcessEmbeddingQueueSkipsFileErrorsOnce,
         testProcessEmbeddingQueueMarksPermanentFileErrorsAsDisabled,
         testProcessEmbeddingQueueKeepsAmbiguousBadRequestRetryable,

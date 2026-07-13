@@ -51,12 +51,14 @@ import path from 'path';
 import fs from 'fs';
 import { getHomeDir } from '../../utils/temp.js';
 import {
+    createIndexedSearchContext,
     filterIndexedResults,
+    groupIndexedChunksByFile,
     mergeSearchRoutes,
-    normalizeSearchTopK,
+    InvalidFilemgrSearchScopeError,
     rankSearchResults,
     toIndexedFileSearchResult
-} from './search-indexed.js';
+} from './search/indexed.js';
 import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
 
@@ -64,30 +66,6 @@ const MAX_RECENT_FAILURES = 20;
 
 const FILEMGR_SCANNING_ENABLED = true;
 const UNAVAILABLE_THRESHOLD = 50;
-
-const SEARCH_ROUTE_ALIASES = {
-    keyword: 'keyword',
-    name: 'name_semantic',
-    name_semantic: 'name_semantic',
-    content: 'content_semantic',
-    content_semantic: 'content_semantic'
-};
-
-function normalizeIndexedSearchRoutes(options = {}) {
-    const requested = Array.isArray(options?.routes)
-        ? options.routes.map((route) => SEARCH_ROUTE_ALIASES[String(route)]).filter(Boolean)
-        : null;
-    const routes = new Set(requested?.length ? requested : ['keyword', 'name_semantic', 'content_semantic']);
-    if (options?.includeContentSemantic === false) {
-        routes.delete('content_semantic');
-    }
-    return {
-        keyword: routes.has('keyword'),
-        nameSemantic: routes.has('name_semantic'),
-        contentSemantic: routes.has('content_semantic'),
-        needsSemantic: routes.has('name_semantic') || routes.has('content_semantic')
-    };
-}
 
 function normalizeSearchArgs(query, topK) {
     return {
@@ -1353,76 +1331,73 @@ class FileManagerWorker extends BaseWorker {
         return stat?.isFile?.() ? stat : null;
     }
 
-    async searchIndexedFiles(query, options = {}) {
-        const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-        const topK = normalizeSearchTopK(options?.topK);
-        const routes = normalizeIndexedSearchRoutes(options);
-
+    _checkIndexedSearchPreconditions(context) {
         if (!this.storage || this.storage.isDeferred()) {
-            return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
         }
+        if (!context.query) return toIndexedFileSearchResult(context.query, [], 0);
+        return null;
+    }
 
-        if (!normalizedQuery) {
-            return toIndexedFileSearchResult(normalizedQuery, [], 0);
+    async _runKeywordRoute(context) {
+        try {
+            const search = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
+            const results = await search.call(this.storage, context.query, { limit: context.topK * 3, scope: context.scope });
+            return { route: 'keyword', success: true, results };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
+            return { route: 'keyword', success: false, results: [], error };
         }
+    }
 
-        let keyword = [];
-        if (routes.keyword) {
-            try {
-                const keywordSearch = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
-                keyword = await keywordSearch.call(this.storage, normalizedQuery, { limit: topK * 3 });
-            } catch (error) {
-                logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
-                return toIndexedFileSearchResult(
-                    normalizedQuery,
-                    [],
-                    0,
-                    '文件搜索暂不可用，请稍后重试',
-                    CODES.SEARCH_FAILED
-                );
-            }
+    async _runNameSemanticRoute(context) {
+        try {
+            const result = await this.storage.searchFileByName(context.query, {
+                topK: Math.min(context.topK * 2, 200),
+                scope: context.scope
+            });
+            return { route: 'name_semantic', success: !result?.code, results: result?.results ?? [] };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles name semantic failed: ${error.message}`);
+            return { route: 'name_semantic', success: false, results: [], error };
         }
+    }
 
-        let name = { results: [] };
-        let content = { results: [] };
-        let warning;
-        let code;
-
-        if (routes.needsSemantic) {
-            if (this.storage.mode === 'full') {
-                if (routes.nameSemantic) {
-                    try {
-                        name = await this.storage.searchFileByName(normalizedQuery, { topK: topK * 2 });
-                        if (name?.code) code = CODES.SEMANTIC_PARTIAL;
-                    } catch (error) {
-                        logger.warn(`[filemgr] searchIndexedFiles name semantic failed: ${error.message}`);
-                        code = CODES.SEMANTIC_PARTIAL;
-                    }
-                }
-
-                if (routes.contentSemantic) {
-                    try {
-                        content = await this.storage.searchFileByContent(normalizedQuery, { topK: topK * 2 });
-                        if (content?.code) code = CODES.SEMANTIC_PARTIAL;
-                    } catch (error) {
-                        logger.warn(`[filemgr] searchIndexedFiles content semantic failed: ${error.message}`);
-                        code = CODES.SEMANTIC_PARTIAL;
-                    }
-                }
-
-                if (code === CODES.SEMANTIC_PARTIAL) {
-                    warning = WARNINGS.SEMANTIC_PARTIAL;
-                }
-            } else {
-                warning = WARNINGS.NO_EMBEDDING_MODEL;
-                code = CODES.EMBED_UNAVAILABLE;
-            }
+    async _runContentSemanticRoute(context) {
+        try {
+            const result = await this.storage.searchIndexedChunks(context.query, {
+                topK: Math.min(context.topK * 3, 5000),
+                scope: context.scope
+            });
+            return {
+                route: 'content_semantic',
+                success: !result?.code,
+                results: result?.code ? [] : groupIndexedChunksByFile(result?.results ?? [], Math.min(context.topK * 2, 200))
+            };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles content semantic failed: ${error.message}`);
+            return { route: 'content_semantic', success: false, results: [], error };
         }
+    }
 
+    async _finalizeIndexedSearch(context, outcomes, initialWarning, initialCode) {
+        const failed = outcomes.filter((outcome) => !outcome.success);
+        const succeeded = outcomes.filter((outcome) => outcome.success);
+        if (failed.length > 0 && succeeded.length === 0) {
+            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.SEARCH_FAILED, CODES.SEARCH_FAILED);
+        }
+        let warning = initialWarning;
+        let code = initialCode;
+        if (failed.length > 0) {
+            const keywordFailed = failed.some((outcome) => outcome.route === 'keyword');
+            warning = keywordFailed ? WARNINGS.SEARCH_PARTIAL : WARNINGS.SEMANTIC_PARTIAL;
+            code = keywordFailed ? CODES.SEARCH_PARTIAL : CODES.SEMANTIC_PARTIAL;
+        }
+        const byRoute = Object.fromEntries(outcomes.map((outcome) => [outcome.route, outcome.results]));
         const merged = mergeSearchRoutes({
-            keyword,
-            nameSemantic: name?.results ?? [],
-            contentSemantic: content?.results ?? []
+            keyword: byRoute.keyword ?? [],
+            nameSemantic: byRoute.name_semantic ?? [],
+            contentSemantic: byRoute.content_semantic ?? []
         });
         const filtered = await filterIndexedResults(merged, {
             entries: this._lastConfig?.entries ?? this.config?.entries ?? [],
@@ -1431,8 +1406,37 @@ class FileManagerWorker extends BaseWorker {
             statFile: (filePath) => this._statFileForSearch(filePath),
             concurrency: 16
         });
-        const ranked = rankSearchResults(filtered, { currentWorkspace: this._currentWorkspace }).slice(0, topK);
-        return toIndexedFileSearchResult(normalizedQuery, ranked, filtered.length, warning, code);
+        const ranked = rankSearchResults(filtered, { currentWorkspace: this._currentWorkspace }).slice(0, context.topK);
+        return toIndexedFileSearchResult(context.query, ranked, filtered.length, warning, code);
+    }
+
+    async searchIndexedFiles(query, options = {}) {
+        let context;
+        try {
+            context = createIndexedSearchContext(query, options);
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+                return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE);
+            }
+            throw error;
+        }
+        const earlyResult = this._checkIndexedSearchPreconditions(context);
+        if (earlyResult) return earlyResult;
+        const outcomes = [];
+        if (context.routes.keyword) outcomes.push(await this._runKeywordRoute(context));
+        let warning;
+        let code;
+        if (context.routes.needsSemantic) {
+            if (this.storage.mode === 'full') {
+                if (context.routes.nameSemantic) outcomes.push(await this._runNameSemanticRoute(context));
+                if (context.routes.contentSemantic) outcomes.push(await this._runContentSemanticRoute(context));
+            } else {
+                warning = WARNINGS.NO_EMBEDDING_MODEL;
+                code = CODES.EMBED_UNAVAILABLE;
+            }
+        }
+        return this._finalizeIndexedSearch(context, outcomes, warning, code);
     }
 
     /**

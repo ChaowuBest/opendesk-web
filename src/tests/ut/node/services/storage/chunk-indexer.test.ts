@@ -9,7 +9,16 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item, SearchItem } from '../../../../../main/services/storage/abstract-storage.js';
+import {
+    BaseStorage,
+    ColumnSchema,
+    Item,
+    SearchItem,
+    ScopedSearchValidationError,
+    mergeScopedChunkHits
+} from '../../../../../main/services/storage/abstract-storage.js';
+import { setArkdataDatabaseKit } from '../../../../../main/services/storage/arkdata-bridge.js';
+import type { DatabaseKit } from '../../../../../platforms/bridges/common.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -290,6 +299,312 @@ async function testInsertMissingFieldThrows(): Promise<void> {
     console.log('[testInsertMissingFieldThrows] PASS');
 }
 
+async function testScopedChunkSearchFiltersAndRestoresMetadata(): Promise<void> {
+    const storage = new BaseStorage('scoped-chunk', testSchema, tmpDir('scoped-chunk'));
+    const calls: string[] = [];
+    (storage as any).baseIndexer = {
+        search: async () => {
+            calls.push('base');
+            return {
+                items: [
+                    { item_id: 'a', item_type: 'file', filename: 'A' },
+                    { item_id: 'b', item_type: 'file', filename: 'B' }
+                ],
+                totalCount: 2
+            };
+        }
+    };
+    (storage as any).chunkIndexer = {
+        getBackend: () => 'native',
+        searchChunks: async (_value: unknown, _query: unknown, ids: string[]) => {
+            calls.push(`chunk:${ids.join(',')}`);
+            return [
+                { item_id: 'outside', chunk_id: 'x', chunk_text: 'outside', similarity: 1 },
+                { item_id: 'b', chunk_id: '2', chunk_text: 'B2', similarity: 0.7 },
+                { item_id: 'a', chunk_id: '2', chunk_text: 'A2', similarity: 0.7 },
+                { item_id: 'a', chunk_id: '1', chunk_text: 'A1', similarity: 0.7 }
+            ];
+        }
+    };
+    const result = await storage.searchScope({
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
+        targetCondition: {
+            indexer: 'ChunkIndexer',
+            field: 'chunk_text',
+            operator: 'vector_near',
+            value: makeOneHot(0),
+            vectorQuery: { topK: 3 }
+        }
+    });
+    assert.deepEqual(calls, ['base', 'chunk:a,b']);
+    assert.deepEqual(
+        result.items.map((hit) => [hit.item.item_id, hit.chunk_id, hit.item.filename]),
+        [
+            ['a', '1', 'A'],
+            ['a', '2', 'A'],
+            ['b', '2', 'B']
+        ]
+    );
+
+    assert.throws(
+        () =>
+            mergeScopedChunkHits(
+                [
+                    [
+                        { item_id: 'a', chunk_id: '1', chunk_text: 'A', similarity: 0.5 },
+                        { item_id: 'a', chunk_id: '1', chunk_text: 'A', similarity: 0.4 }
+                    ]
+                ],
+                new Map([['a', { item_id: 'a', item_type: 'file' }]]),
+                3
+            ),
+        /duplicate chunk hit/
+    );
+    for (const similarity of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assert.throws(
+            () =>
+                mergeScopedChunkHits(
+                    [[{ item_id: 'a', chunk_id: 'x', chunk_text: 'A', similarity } as any]],
+                    new Map([['a', { item_id: 'a', item_type: 'file' }]]),
+                    1
+                ),
+            /finite similarity/
+        );
+    }
+}
+
+async function testScopedChunkTargetValidationPrecedesBasePrefilter(): Promise<void> {
+    const invalidTargets: Array<[string, any]> = [
+        ['non-object target', null],
+        ['empty field', { indexer: 'ChunkIndexer', field: '', operator: 'vector_near', value: [1] }],
+        ['unsupported operator', { indexer: 'ChunkIndexer', field: 'chunk_text', operator: '=', value: [1] }],
+        ['non-array vector', { indexer: 'ChunkIndexer', field: 'chunk_text', operator: 'vector_near', value: '1' }],
+        [
+            'non-finite typed vector',
+            {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: new Float32Array([Number.POSITIVE_INFINITY])
+            }
+        ],
+        [
+            'null vectorQuery',
+            {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: null
+            }
+        ],
+        [
+            'fractional topK',
+            {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { topK: 1.5 }
+            }
+        ],
+        [
+            'non-string metric',
+            {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { metric: 1 }
+            }
+        ],
+        [
+            'non-finite threshold',
+            {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { threshold: Number.NaN }
+            }
+        ]
+    ];
+
+    for (const candidateItems of [[], [{ item_id: 'candidate', item_type: 'file' as const }]]) {
+        const storage = new BaseStorage('scoped-chunk-validation', testSchema, tmpDir('scoped-chunk-validation'));
+        let baseCalls = 0;
+        let backendCalls = 0;
+        let targetCalls = 0;
+        (storage as any).baseIndexer = {
+            search: async () => {
+                baseCalls++;
+                return { items: candidateItems, totalCount: candidateItems.length };
+            }
+        };
+        (storage as any).chunkIndexer = {
+            getBackend: () => {
+                backendCalls++;
+                return 'native';
+            },
+            searchChunks: async (_value: unknown, _query: unknown, ids: string[]) => {
+                targetCalls++;
+                assert.deepEqual(
+                    ids,
+                    candidateItems.map((item) => item.item_id)
+                );
+                return candidateItems.map((item) => ({
+                    item_id: item.item_id,
+                    chunk_id: 'chunk-1',
+                    chunk_text: 'control',
+                    similarity: 0.75
+                }));
+            }
+        };
+        const control = await storage.searchScope({
+            preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
+            targetCondition: {
+                indexer: 'ChunkIndexer',
+                field: 'chunk_text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { topK: 1 }
+            }
+        });
+        assert.equal(baseCalls, 1);
+        assert.equal(backendCalls, 1);
+        assert.equal(targetCalls, candidateItems.length === 0 ? 0 : 1);
+        assert.deepEqual(
+            control.items.map((hit) => hit.item.item_id),
+            candidateItems.map((item) => item.item_id)
+        );
+        baseCalls = 0;
+        backendCalls = 0;
+        targetCalls = 0;
+        for (const [name, targetCondition] of invalidTargets) {
+            await assert.rejects(
+                () =>
+                    storage.searchScope({
+                        preconditions: [
+                            { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
+                        ],
+                        targetCondition
+                    }),
+                ScopedSearchValidationError,
+                `${name} must fail before a ${candidateItems.length === 0 ? 'potentially empty' : 'non-empty'} prefilter`
+            );
+        }
+        assert.equal(baseCalls, 0);
+        assert.equal(backendCalls, 0);
+        assert.equal(targetCalls, 0);
+    }
+}
+
+async function testNativeScopedChunkUsesExactCandidateTopK(): Promise<void> {
+    const dir = tmpDir('native-scoped-chunk');
+    const storage = await createTestStorage(dir);
+    await storage.insert([
+        makeItemWithChunks('outside', ['outside'], [0]),
+        makeItemWithChunks('inside-best', ['inside best'], [1]),
+        makeItemWithChunks('inside-worse', ['inside worse'], [2])
+    ]);
+    const result = await storage.searchScope({
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_id', operator: 'like', value: 'inside%' }],
+        targetCondition: {
+            indexer: 'ChunkIndexer',
+            field: 'chunk_text',
+            operator: 'vector_near',
+            value: makeOneHot(0),
+            vectorQuery: { topK: 1, metric: 'cosine' }
+        }
+    });
+    assert.equal(result.items.length, 1);
+    assert.notEqual(result.items[0].item.item_id, 'outside');
+    storage.close();
+    cleanup(dir);
+}
+
+async function testArkDataScopedChunkBatchesGloballyAndFailsWholeTarget(): Promise<void> {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const previousArkData = process.env.ARKDATA_AVAILABLE;
+    Object.defineProperty(process, 'platform', { value: 'openharmony', configurable: true });
+    process.env.ARKDATA_AVAILABLE = '1';
+    const candidates = Array.from({ length: 10001 }, (_, index) => ({
+        item_id: `item-${index}`,
+        item_type: 'file' as const,
+        filename: `item-${index}`
+    }));
+    let searchCalls = 0;
+    let failCall = 0;
+    const sqlShapes: string[] = [];
+    const batchSizes: number[] = [];
+    const fakeKit: DatabaseKit = {
+        available: async () => true,
+        execSql: async () => {},
+        execSqlParams: async () => {},
+        querySqlShort: async () => [],
+        openStore: async () => {},
+        closeStore: async () => {},
+        executePrepared: async () => ({ affectedRows: 0 }),
+        executePreparedMany: async () => ({ affectedRows: 0 }),
+        executePreparedManyBatched: async () => ({ affectedRows: 0 }),
+        queryPrepared: async (_storeId, sql, params) => {
+            if (!/AS distance/.test(sql)) return [];
+            searchCalls++;
+            sqlShapes.push(sql);
+            batchSizes.push(params.length - 2);
+            if (searchCalls === failCall) throw new Error('ark chunk batch failed');
+            const rows = [
+                { item_id: 'item-4999', chunk_id: 'c1', chunk_text: 'first', distance: 0.3 },
+                { item_id: 'item-9999', chunk_id: 'c2', chunk_text: 'second', distance: 0.2 },
+                { item_id: 'item-10000', chunk_id: 'c3', chunk_text: 'third', distance: 0.1 }
+            ];
+            return [rows[(searchCalls - 1) % 3]];
+        },
+        beginTransaction: async () => ({ id: 'fake-tx' }),
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        transaction: async (_storeId, txFn) => txFn({ id: 'fake-tx' })
+    };
+    const previousKit = setArkdataDatabaseKit(fakeKit);
+    const storage = new BaseStorage('arkdata-scoped-chunk', testSchema, tmpDir('arkdata-scoped-chunk'));
+    (storage as any).baseIndexer = {
+        search: async () => ({ items: candidates, totalCount: candidates.length }),
+        close: () => {}
+    };
+    await (storage as any).chunkIndexer.initialize();
+    const request = {
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=' as const, value: 'file' }],
+        targetCondition: {
+            indexer: 'ChunkIndexer',
+            field: 'chunk_text',
+            operator: 'vector_near' as const,
+            value: makeOneHot(0),
+            vectorQuery: { topK: 2, metric: 'cosine' as const }
+        }
+    };
+    try {
+        const result = await storage.searchScope(request);
+        assert.deepEqual(batchSizes, [5000, 5000, 1]);
+        assert.equal(searchCalls, 3);
+        assert(sqlShapes.every((sql) => /WHERE item_id IN \(/.test(sql)));
+        assert.deepEqual(
+            result.items.map((hit) => hit.item.item_id),
+            ['item-10000', 'item-9999']
+        );
+
+        searchCalls = 0;
+        failCall = 2;
+        await assert.rejects(() => storage.searchScope(request), /ark chunk batch failed/);
+        assert.equal(searchCalls, 2);
+    } finally {
+        storage.close();
+        setArkdataDatabaseKit(previousKit);
+        if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+        if (previousArkData === undefined) delete process.env.ARKDATA_AVAILABLE;
+        else process.env.ARKDATA_AVAILABLE = previousArkData;
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -303,7 +618,11 @@ async function main(): Promise<void> {
         testBaseIndexerFilterInSearch,
         testChunkScoreNotDeduped,
         testForbiddenMixThrows,
-        testInsertMissingFieldThrows
+        testInsertMissingFieldThrows,
+        testScopedChunkSearchFiltersAndRestoresMetadata,
+        testScopedChunkTargetValidationPrecedesBasePrefilter,
+        testNativeScopedChunkUsesExactCandidateTopK,
+        testArkDataScopedChunkBatchesGloballyAndFailsWholeTarget
     ];
 
     let passed = 0,

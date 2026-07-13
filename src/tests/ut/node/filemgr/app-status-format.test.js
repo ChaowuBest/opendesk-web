@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { FileMgrApplication, formatStorageStatusBlock } from '../../../../main/applications/filemgr/app.js';
 import { ApplicationRegistry } from '../../../../main/applications/registry.js';
 import { Setting } from '../../../../main/utils/setting.js';
-import { setRuntimeLocale } from '../../../../locale/index.js';
+import { setRuntimeLocale, t } from '../../../../locale/index.js';
 
 const originalCallWorker = ApplicationRegistry.callWorker;
 const now = Date.now();
@@ -391,6 +391,25 @@ async function testSlashAlertMessages() {
     }
 }
 
+async function testSearchIndexedFilesForwardsOptionsAndUnwraps() {
+    const app = new FileMgrApplication();
+    const calls = [];
+    app.registry = {
+        callWorker: async (...args) => {
+            calls.push(args);
+            return { data: { query: 'plan', results: [], totalHits: 0 } };
+        }
+    };
+    const options = { topK: 5, scope: { type: 'path', path: '/workspace' } };
+    assert.deepEqual(await app.searchIndexedFiles('plan', options), { query: 'plan', results: [], totalHits: 0 });
+    assert.deepEqual(calls, [['filemgr', 'searchIndexedFiles', 'plan', options]]);
+
+    app.registry.callWorker = async () => ({ status: 'error', message: 'worker failed' });
+    await assert.rejects(() => app.searchIndexedFiles('plan', options), /worker failed/);
+    app.registry.callWorker = async () => ({ status: 'error' });
+    await assert.rejects(() => app.searchIndexedFiles('plan', options), (error) => error.message === t('filemgr.search.failed'));
+}
+
 testBaseOnlyDoesNotReportUnloadedChunksAsZero();
 testFullModeReportsChunkCount();
 await testTUIReadonlyModesAreHiddenFromDashboard();
@@ -401,5 +420,6 @@ await testSlashReadonlyFullModeCopyIsClear();
 await testSlashShowsUnavailableRootsAndVisibleRebuildEvent();
 await testSlashStatusLabels();
 await testSlashAlertMessages();
+await testSearchIndexedFilesForwardsOptionsAndUnwraps();
 ApplicationRegistry.callWorker = originalCallWorker;
 console.log('✅ app-status-format tests passed');

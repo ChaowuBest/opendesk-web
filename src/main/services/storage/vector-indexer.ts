@@ -70,6 +70,7 @@ export interface VectorMetaCondition {
 // IVectorIndexDB - 统一异步接口（VectorIndexDB 和 VectorIndexDBHm 共同实现）
 // ============================================================================
 export interface IVectorIndexDB {
+    readonly backend: 'native' | 'arkdata' | 'wasm';
     insert(record: VectorIndexRecord): Promise<boolean>;
     insertMany(records: VectorIndexRecord[]): Promise<number>;
     upsert(record: VectorIndexRecord): Promise<boolean>;
@@ -157,6 +158,10 @@ export class VectorIndexer extends Indexer {
         }
         if (!this.db) throw new Error('VectorIndexer not initialized. Call initialize() first.');
         return this.db;
+    }
+
+    getBackend(): IVectorIndexDB['backend'] {
+        return this.ensureDB().backend;
     }
 
     /**

@@ -22,6 +22,7 @@ import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { pathDescendantOrSelfSqlValues } from './path-scope.js';
 import type {
     BaseIndexStoreProbeResult,
     BaseQueryCondition,
@@ -49,7 +50,8 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     'in',
     'notin',
     'between',
-    'notbetween'
+    'notbetween',
+    'path_descendant_or_self'
 ];
 
 export function probeBaseIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
@@ -525,7 +527,11 @@ export class BaseIndexDB implements IBaseIndexDB {
                 );
             }
 
-            if (op === 'in' || op === 'notin') {
+            if (op === 'path_descendant_or_self') {
+                const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(value);
+                clauses.push(`(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`);
+                params.push(normalizedPath, descendantPattern);
+            } else if (op === 'in' || op === 'notin') {
                 if (!Array.isArray(value)) {
                     throw new Error(`${operator} operator requires an array value`);
                 }

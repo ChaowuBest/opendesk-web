@@ -22,7 +22,8 @@ import {
     ExtractTextTool,
     ReadImageTool,
     SemanticSearchTool,
-    createFileManagerToolset
+    createFileManagerToolset,
+    formatSemanticSearchMarkdown
 } from '../../../../main/applications/filemgr/tools.js';
 
 setRuntimeLocale('en-US');
@@ -145,6 +146,50 @@ test('semanticSearch returns at most 30 markdown bullet results with path, title
     assert.match(output, /Title: report-1\.md/);
     assert.match(output, /Chunk: matching chunk 1/);
     assert.match(output, /extractText/);
+});
+
+test('semanticSearch forwards scope and renders snippets within the shared budget', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return {
+            query: 'plan',
+            results: [{
+                path: '/workspace/report.md',
+                snippets: [
+                    { chunkId: 'a', text: 'A'.repeat(500), score: 0.9 },
+                    { chunkId: 'b', text: 'second chunk', score: 0.8 }
+                ]
+            }],
+            totalHits: 1
+        };
+    });
+    const scope = { type: 'path' as const, path: '/workspace' };
+    const output = await tool.executeCommand({ query: 'plan', maxResults: 5, scope } as any);
+    assert.deepEqual(calls, [['plan', 5, scope]]);
+    assert.match(output, /second chunk/);
+});
+
+test('semanticSearch enforces the real shared 8000 character budget but keeps every path and title', async () => {
+    const fullSnippet = (index: number) => `${String(index).padStart(2, '0')}${'x'.repeat(498)}`;
+    const output = formatSemanticSearchMarkdown({
+        query: 'budget',
+        results: [
+            {
+                path: '/workspace/first.md',
+                filename: 'first.md',
+                snippets: Array.from({ length: 17 }, (_, index) => ({ text: fullSnippet(index), score: 1 - index / 100 }))
+            },
+            { path: '/workspace/second.md', filename: 'second.md', snippet: 'must not fit' }
+        ],
+        totalHits: 2
+    });
+    assert.match(output, /00x+/);
+    assert.match(output, /15x+/);
+    assert.doesNotMatch(output, /16x+/);
+    assert.doesNotMatch(output, /must not fit/);
+    assert.match(output, /\/workspace\/second\.md/);
+    assert.match(output, /Title: second\.md/);
 });
 
 test('extractText GUI render uses an inline summary without embedding extracted content', async () => {

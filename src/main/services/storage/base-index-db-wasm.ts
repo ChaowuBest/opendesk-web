@@ -22,6 +22,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { pathDescendantOrSelfSqlValues } from './path-scope.js';
 import type {
     BaseIndexStoreProbeResult,
     BaseQueryCondition,
@@ -52,7 +53,8 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     'in',
     'notin',
     'between',
-    'notbetween'
+    'notbetween',
+    'path_descendant_or_self'
 ];
 
 export function probeBaseIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
@@ -205,6 +207,13 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
                 throw new Error(
                     `Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`
                 );
+            }
+
+            if (op === 'path_descendant_or_self') {
+                const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(value);
+                clauses.push(`(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`);
+                params.push(normalizedPath, descendantPattern);
+                continue;
             }
 
             if (op === 'in' || op === 'notin') {

@@ -2,9 +2,27 @@ import assert from 'node:assert/strict';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item } from '../../../../../main/services/storage/abstract-storage.js';
+import {
+    ARKDATA_SCOPED_SEARCH_BATCH_SIZE,
+    BaseStorage,
+    ColumnSchema,
+    Item
+} from '../../../../../main/services/storage/abstract-storage.js';
 import { BaseIndexDBArkdata } from '../../../../../main/services/storage/base-index-db-arkdata.js';
+import { BaseIndexDBWasm } from '../../../../../main/services/storage/base-index-db-wasm.js';
+import { VectorIndexDBArkdata } from '../../../../../main/services/storage/vector-index-db-arkdata.js';
+import { ChunkIndexDBArkdata } from '../../../../../main/services/storage/chunk-index-db-arkdata.js';
 import { createBaseIndexDB, probeBaseIndexStore } from '../../../../../main/services/storage/base-index-db-factory.js';
+import { VectorIndexDBHm } from '../../../../../main/services/storage/vector-index-db-hm.js';
+import { ChunkIndexDBHm } from '../../../../../main/services/storage/chunk-index-db-hm.js';
+
+assert.equal((VectorIndexDBHm as any).backend, 'native', 'HM vector DB is a native sqlite/vec0 backend');
+assert.equal((ChunkIndexDBHm as any).backend, 'native', 'HM chunk DB is a native sqlite/vec0 backend');
+import {
+    escapeSqlLikePattern,
+    normalizePathDescendantOrSelfValue,
+    pathDescendantOrSelfSqlValues
+} from '../../../../../main/services/storage/path-scope.js';
 import { toArkDataDbPath } from '../../../../../main/services/storage/arkdata-path.js';
 import { createWithNativeSqliteFallback } from '../../../../../main/services/storage/platform.js';
 import type { DatabaseKit } from '../../../../../platforms/bridges/common.js';
@@ -146,6 +164,134 @@ async function testBaseStorageSearchLimit() {
         fs.rmSync(dir, { recursive: true, force: true });
     }
     console.log('  ✅ testBaseStorageSearchLimit');
+}
+
+const pathScopeSchema: ColumnSchema = {
+    columns: { item_id: { type: 'TEXT' }, item_type: { type: 'TEXT' } },
+    needIndexers: {}
+};
+
+const pathScopeRows: Item[] = [
+    { item_id: '/a/b', item_type: 'file' },
+    { item_id: '/a/b/file.txt', item_type: 'file' },
+    { item_id: '/a/bb/file.txt', item_type: 'file' },
+    { item_id: '/a/%_dir', item_type: 'file' },
+    { item_id: '/a/%_dir/child.txt', item_type: 'file' },
+    { item_id: '/a/xxdir/child.txt', item_type: 'file' },
+    { item_id: '/a/dir\\name', item_type: 'file' },
+    { item_id: '/a/dir\\name/child.txt', item_type: 'file' },
+    { item_id: '/a/dirname/child.txt', item_type: 'file' },
+    { item_id: 'C:/', item_type: 'file' },
+    { item_id: 'C:/folder/file.txt', item_type: 'file' }
+];
+
+async function assertPathOperator(db: {
+    insertMany(records: Record<string, any>[]): Promise<number>;
+    search(conditions: any[]): Promise<Record<string, any>[]>;
+    count(conditions?: any[]): Promise<number>;
+    close(): void;
+}) {
+    await db.insertMany(pathScopeRows);
+    const condition = (value: unknown) => [{ field: 'item_id', operator: 'path_descendant_or_self', value }];
+
+    assert.deepEqual((await db.search(condition('/a/b/'))).map((row) => row.item_id).sort(), ['/a/b', '/a/b/file.txt']);
+    assert.deepEqual((await db.search(condition('/a/%_dir'))).map((row) => row.item_id).sort(), [
+        '/a/%_dir',
+        '/a/%_dir/child.txt'
+    ]);
+    assert.deepEqual((await db.search(condition('/a/dir\\name'))).map((row) => row.item_id).sort(), [
+        '/a/dir\\name',
+        '/a/dir\\name/child.txt'
+    ]);
+    assert.equal(await db.count(condition('C:/')), 2);
+    await assert.rejects(() => db.search(condition('')), /non-empty string/);
+    await assert.rejects(() => db.search(condition(42)), /non-empty string/);
+}
+
+async function testPathScopeHelpers() {
+    console.log('  testPathScopeHelpers...');
+    assert.equal(normalizePathDescendantOrSelfValue('/'), '/');
+    assert.equal(normalizePathDescendantOrSelfValue('C:/'), 'C:/');
+    assert.equal(normalizePathDescendantOrSelfValue('//server/share/'), '//server/share');
+    assert.equal(normalizePathDescendantOrSelfValue('/a/b///'), '/a/b');
+    assert.equal(escapeSqlLikePattern('/a/%_dir\\name'), '/a/\\%\\_dir\\\\name');
+    assert.deepEqual(pathDescendantOrSelfSqlValues('/'), ['/', '/%']);
+    assert.deepEqual(pathDescendantOrSelfSqlValues('C:/'), ['C:/', 'C:/%']);
+    assert.throws(() => normalizePathDescendantOrSelfValue(''), /non-empty string/);
+    assert.throws(() => normalizePathDescendantOrSelfValue(1), /non-empty string/);
+    console.log('  ✅ testPathScopeHelpers');
+}
+
+async function testNativePathDescendantOrSelfOperator() {
+    console.log('  testNativePathDescendantOrSelfOperator...');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-path-scope-'));
+    const db = await createBaseIndexDB(path.join(dir, 'base-index.db'), pathScopeSchema);
+    try {
+        await assertPathOperator(db);
+    } finally {
+        db.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+    console.log('  ✅ testNativePathDescendantOrSelfOperator');
+}
+
+async function testWasmPathDescendantOrSelfOperator() {
+    console.log('  testWasmPathDescendantOrSelfOperator...');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wasm-path-scope-'));
+    const db = new BaseIndexDBWasm(path.join(dir, 'base-index.db'), pathScopeSchema);
+    try {
+        await assertPathOperator(db);
+    } finally {
+        db.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+    console.log('  ✅ testWasmPathDescendantOrSelfOperator');
+}
+
+async function testArkDataPathDescendantOrSelfBindings() {
+    console.log('  testArkDataPathDescendantOrSelfBindings...');
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const fakeKit: DatabaseKit = {
+        available: async () => true,
+        execSql: async () => {},
+        execSqlParams: async () => {},
+        querySqlShort: async () => [],
+        openStore: async () => {},
+        closeStore: async () => {},
+        executePrepared: async () => ({ affectedRows: 0 }),
+        executePreparedMany: async () => ({ affectedRows: 0 }),
+        executePreparedManyBatched: async () => ({ affectedRows: 0 }),
+        queryPrepared: async (_storeId, sql, params = []) => {
+            calls.push({ sql, params });
+            if (/COUNT\(\*\)/i.test(sql)) return [{ count: 0 }];
+            return [];
+        },
+        beginTransaction: async () => ({ id: 'fake-tx' }),
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        transaction: async (_storeId, txFn) => txFn({ id: 'fake-tx' })
+    };
+    const { setArkdataDatabaseKit } = await import('../../../../../main/services/storage/arkdata-bridge.js');
+    const previous = setArkdataDatabaseKit(fakeKit);
+    const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-path-scope.db', pathScopeSchema);
+    try {
+        const condition = [{ field: 'item_id', operator: 'path_descendant_or_self' as const, value: '/a/%_dir/' }];
+        await db.search(condition);
+        await db.count(condition);
+        const scopedCalls = calls.filter((call) => call.sql.includes('ESCAPE'));
+        assert.ok(scopedCalls.length >= 2);
+        for (const call of scopedCalls) {
+            assert.ok(call.sql.includes(`(item_id = ? OR item_id LIKE ? ESCAPE '\\')`));
+            assert.deepEqual(call.params.slice(0, 2), [
+                { t: 'scalar', v: '/a/%_dir' },
+                { t: 'scalar', v: '/a/\\%\\_dir/%' }
+            ]);
+        }
+    } finally {
+        db.close();
+        setArkdataDatabaseKit(previous);
+    }
+    console.log('  ✅ testArkDataPathDescendantOrSelfBindings');
 }
 
 async function testBaseIndexStoreProbeMissingDoesNotCreateFile() {
@@ -383,6 +529,46 @@ async function testArkDataFindAllPaginatesExplicitOffset() {
     console.log('  ✅ testArkDataFindAllPaginatesExplicitOffset');
 }
 
+async function testArkDataSemanticFiltersUseExactInSql(): Promise<void> {
+    const { setArkdataDatabaseKit } = await import('../../../../../main/services/storage/arkdata-bridge.js');
+    const queries: Array<{ sql: string; params: any[] }> = [];
+    const fakeKit: DatabaseKit = {
+        available: async () => true,
+        execSql: async () => {},
+        execSqlParams: async () => {},
+        querySqlShort: async () => [],
+        openStore: async () => {},
+        closeStore: async () => {},
+        executePrepared: async () => ({ affectedRows: 0 }),
+        executePreparedMany: async () => ({ affectedRows: 0 }),
+        executePreparedManyBatched: async () => ({ affectedRows: 0 }),
+        queryPrepared: async (_storeId, sql, params = []) => {
+            queries.push({ sql, params });
+            return [];
+        },
+        beginTransaction: async () => ({ id: 'fake-tx' }),
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        transaction: async (_storeId, txFn) => txFn({ id: 'fake-tx' })
+    };
+    const previous = setArkdataDatabaseKit(fakeKit);
+    try {
+        await new VectorIndexDBArkdata('/tmp/scoped-vector-sql.db', 4).search(
+            [1, 0, 0, 0],
+            { columnName: 'filename', topK: 2 },
+            ['a', 'b']
+        );
+        await new ChunkIndexDBArkdata('/tmp/scoped-chunk-sql.db', 4).search([1, 0, 0, 0], { topK: 2 }, ['a', 'b']);
+    } finally {
+        setArkdataDatabaseKit(previous);
+    }
+    const [vector, chunk] = queries;
+    assert.match(vector.sql, /WHERE item_type = \? AND item_id IN \(\?,\?\)/);
+    assert.equal(vector.params.length, 5, 'query vector + column + two IDs + order vector');
+    assert.match(chunk.sql, /WHERE item_id IN \(\?,\?\)/);
+    assert.equal(chunk.params.length, 4, 'query vector + two IDs + order vector');
+}
+
 async function testNativeSqliteFallbackUsesWasmForMissingBinding() {
     console.log('  testNativeSqliteFallbackUsesWasmForMissingBinding...');
     const calls: string[] = [];
@@ -522,8 +708,13 @@ async function testDropIndexersPartialFailurePoisonsStorage() {
 }
 
 async function main() {
+    assert.equal(ARKDATA_SCOPED_SEARCH_BATCH_SIZE, 5000);
     await testEnsureColumnsAddsMissing();
     await testBaseStorageSearchLimit();
+    await testPathScopeHelpers();
+    await testNativePathDescendantOrSelfOperator();
+    await testWasmPathDescendantOrSelfOperator();
+    await testArkDataPathDescendantOrSelfBindings();
     await testBaseIndexStoreProbeMissingDoesNotCreateFile();
     await testBaseIndexStoreProbeExisting();
     await testBaseStorageProbeIndexers();
@@ -532,13 +723,14 @@ async function main() {
     await testArkDataFindAllPreservesSmallExplicitLimitShape();
     await testArkDataFindAllPaginatesExplicitLimitGreaterThanCap();
     await testArkDataFindAllPaginatesExplicitOffset();
+    await testArkDataSemanticFiltersUseExactInSql();
     await testNativeSqliteFallbackUsesWasmForMissingBinding();
     await testNativeSqliteFallbackRethrowsUnrelatedErrors();
     await testNativeSqliteFallbackRespectsForcedWasmPlatform();
     await testDropIndexersDeletesOwnedFilesAndSidecars();
     await testDropIndexersNoopAndPostDropCloseAreSafe();
     await testDropIndexersPartialFailurePoisonsStorage();
-    console.log('=== Results: 16 passed ===');
+    console.log('=== Results: 20 passed ===');
 }
 main().catch((e) => {
     console.error(e);

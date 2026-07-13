@@ -122,6 +122,14 @@ class FileMgrApplication extends BaseApplication {
         return FileManagerWorker;
     }
 
+    async searchIndexedFiles(query, options = {}) {
+        const resp = await this.callWorker('searchIndexedFiles', query, options);
+        if (resp?.status === 'error') {
+            throw new Error(resp.message ?? t('filemgr.search.failed'));
+        }
+        return resp?.data;
+    }
+
     static getConfigSchema() {
         return z.object({
             enabled: z.boolean().describe('启用AI文件系统').default(false),
@@ -160,13 +168,9 @@ class FileMgrApplication extends BaseApplication {
         });
 
         toolset.addTool(
-            new SemanticSearchTool(async (query, maxResults) => {
-                const resp = await this.callWorker('searchIndexedFiles', query, { topK: maxResults });
-                if (resp?.status === 'error') {
-                    throw new Error(resp.message ?? '搜索失败');
-                }
-                return resp?.data;
-            })
+            new SemanticSearchTool((query, maxResults, scope) =>
+                this.searchIndexedFiles(query, { topK: maxResults, scope })
+            )
         );
 
         return [toolset];

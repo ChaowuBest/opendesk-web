@@ -11,6 +11,64 @@
 
 import path from 'path';
 import picomatch from 'picomatch';
+import { normalizePathDescendantOrSelfValue } from '../../../services/storage/path-scope.js';
+
+const SEARCH_ROUTE_ALIASES = {
+    keyword: 'keyword',
+    name: 'name_semantic',
+    name_semantic: 'name_semantic',
+    content: 'content_semantic',
+    content_semantic: 'content_semantic'
+};
+
+function normalizeIndexedSearchRoutes(options = {}) {
+    const requested = Array.isArray(options?.routes)
+        ? options.routes.map((route) => SEARCH_ROUTE_ALIASES[String(route)]).filter(Boolean)
+        : null;
+    const routes = new Set(requested === null ? ['keyword', 'name_semantic', 'content_semantic'] : requested);
+    if (options?.includeContentSemantic === false) {
+        routes.delete('content_semantic');
+    }
+    return {
+        keyword: routes.has('keyword'),
+        nameSemantic: routes.has('name_semantic'),
+        contentSemantic: routes.has('content_semantic'),
+        needsSemantic: routes.has('name_semantic') || routes.has('content_semantic')
+    };
+}
+
+export class InvalidFilemgrSearchScopeError extends Error {
+    constructor() {
+        super('Invalid file manager search scope');
+        this.name = 'InvalidFilemgrSearchScopeError';
+    }
+}
+
+export function normalizeFilemgrSearchScope(scope) {
+    if (scope === undefined) return undefined;
+    if (!scope || typeof scope !== 'object' || scope.type !== 'path' || typeof scope.path !== 'string') {
+        throw new InvalidFilemgrSearchScopeError();
+    }
+
+    if (!scope.path.trim()) {
+        throw new InvalidFilemgrSearchScopeError();
+    }
+
+    try {
+        const normalizedPath = normalizePathDescendantOrSelfValue(scope.path);
+        const segments = normalizedPath.split('/');
+        const hasDotSegment = segments.some((segment) => segment === '.' || segment === '..');
+        const isPosix = /^\/(?:[^/]+(?:\/[^/]+)*)?$/.test(normalizedPath);
+        const isDrive = /^[A-Za-z]:\/(?:[^/]+(?:\/[^/]+)*)?$/.test(normalizedPath);
+        const isUnc = /^\/\/[^/]+\/[^/]+(?:\/[^/]+)*$/.test(normalizedPath);
+        if (hasDotSegment || (!isPosix && !isDrive && !isUnc)) {
+            throw new InvalidFilemgrSearchScopeError();
+        }
+        return { type: 'path', path: normalizedPath };
+    } catch {
+        throw new InvalidFilemgrSearchScopeError();
+    }
+}
 
 function normalizeComparablePath(value) {
     const raw = String(value ?? '').replace(/\\/g, '/');
@@ -48,6 +106,7 @@ function sourceToItem(source) {
         modified: raw.modified ?? 0,
         size: raw.size ?? 0,
         snippet: raw.snippet ?? null,
+        snippets: raw.snippets,
         ref_count: raw.ref_count,
         root_refs: raw.root_refs,
         semanticScore:
@@ -92,6 +151,15 @@ export function normalizeSearchTopK(value) {
     return Math.max(1, Math.min(Math.trunc(numeric), 100));
 }
 
+export function createIndexedSearchContext(query, options = {}) {
+    return {
+        query: typeof query === 'string' ? query.trim() : '',
+        topK: normalizeSearchTopK(options?.topK),
+        routes: normalizeIndexedSearchRoutes(options),
+        scope: normalizeFilemgrSearchScope(options?.scope)
+    };
+}
+
 export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSemantic = [] }) {
     const merged = new Map();
     const routes = [
@@ -110,6 +178,7 @@ export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSema
             if (existing) {
                 if (!existing.matchTypes.includes(matchType)) existing.matchTypes.push(matchType);
                 if (matchType === 'content_semantic' && base.snippet) existing.snippet = base.snippet;
+                if (matchType === 'content_semantic' && base.snippets) existing.snippets = base.snippets;
                 if (
                     (matchType === 'name_semantic' || matchType === 'content_semantic') &&
                     typeof base.semanticScore === 'number' &&
@@ -131,6 +200,34 @@ export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSema
     }
 
     return [...merged.values()];
+}
+
+export function groupIndexedChunksByFile(chunkHits, fileLimit) {
+    const grouped = new Map();
+    for (const hit of chunkHits ?? []) {
+        const file = grouped.get(hit.source.path) ?? {
+            path: hit.source.path,
+            filename: hit.source.filename,
+            modified: hit.source.modified,
+            size: hit.source.size,
+            ref_count: hit.source.refCount,
+            root_refs: hit.source.rootRefs,
+            snippets: []
+        };
+        file.snippets.push({ chunkId: hit.chunk.id, text: hit.chunk.text, score: hit.score });
+        grouped.set(hit.source.path, file);
+    }
+    return [...grouped.values()]
+        .map((file) => {
+            file.snippets.sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
+            return {
+                ...file,
+                snippet: file.snippets[0]?.text ?? null,
+                semanticScore: file.snippets[0]?.score ?? 0
+            };
+        })
+        .sort((left, right) => right.semanticScore - left.semanticScore)
+        .slice(0, fileLimit);
 }
 
 export function rankSearchResults(items, _options = {}) {
@@ -196,6 +293,7 @@ export function toIndexedFileSearchResult(query, items, totalHits, warning = und
             modified: item.modified,
             size: item.size,
             snippet: item.snippet,
+            snippets: item.snippets,
             matchTypes: item.matchTypes,
             score: item.score
         })),

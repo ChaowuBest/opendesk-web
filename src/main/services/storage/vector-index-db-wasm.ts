@@ -145,6 +145,7 @@ function computeMetric(
 }
 
 export class VectorIndexDBWasm implements IVectorIndexDB {
+    readonly backend = 'wasm' as const;
     private readonly db: InstanceType<(typeof sqlite3Wasm)['Database']>;
     private readonly dbPath: string;
     private readonly dimension: number;

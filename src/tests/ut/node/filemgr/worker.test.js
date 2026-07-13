@@ -225,6 +225,8 @@ if (!OPENROUTER_API_KEY) {
     await testSearchIndexedFilesDropsUnavailableAndExcluded();
     await testSearchIndexedFilesSemanticPartial();
     await testSearchIndexedFilesKeywordFailureReturnsError();
+    await testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage();
+    await testSearchIndexedFilesScopedRouteBudgetsAndOutcomes();
     await testTask5StartScannersDedupesRoots();
     await testResetFileSystemStorageUsesManualResetReason();
     await testTask7ReadonlyModeWhenScanLockHeld();
@@ -400,11 +402,10 @@ async function testSearchAfterScan() {
         assert.ok(typeof nameResult.totalHits === 'number', 'searchFileByName should have totalHits');
         assert.ok(nameResult.results.length > 0, 'searchFileByName should find results');
 
-        // searchFileByContent
-        const contentResult = await worker.searchFileByContent('authentication');
-        assert.ok(contentResult.query === 'authentication', 'searchFileByContent should have query field');
-        assert.ok(Array.isArray(contentResult.results), 'searchFileByContent should have results array');
-        assert.ok(contentResult.results.length > 0, 'searchFileByContent should find results');
+        const contentResult = await worker.searchIndexedFiles('authentication', { routes: ['content_semantic'] });
+        assert.ok(contentResult.query === 'authentication', 'content search should have query field');
+        assert.ok(Array.isArray(contentResult.results), 'content search should have results array');
+        assert.ok(contentResult.results.length > 0, 'content search should find results');
         // First result should have snippet
         assert.ok(contentResult.results[0].snippet !== undefined, 'content result should have snippet');
 
@@ -1238,9 +1239,9 @@ async function testSearchWhenStorageMissingReturnsIndexNotReady() {
         assert.equal(byName.warning, '文件索引尚未就绪，请稍后重试。');
         assert.equal(byName.code, 'INDEX_NOT_READY');
 
-        const byContent = await worker.searchFileByContent('alpha', 5);
-        assert.equal(byContent.warning, '文件索引尚未就绪，请稍后重试。');
-        assert.equal(byContent.code, 'INDEX_NOT_READY');
+        const indexed = await worker.searchIndexedFiles('alpha', { topK: 5, routes: ['content_semantic'] });
+        assert.equal(indexed.warning, '文件索引尚未就绪，请稍后重试。');
+        assert.equal(indexed.code, 'INDEX_NOT_READY');
     } finally {
         cleanup(appDir);
     }
@@ -1265,28 +1266,17 @@ async function testTask5SearchWrappersNormalizeAndShortCircuit() {
                 calls.push({ method: 'name', query, options });
                 return { query, results: [], totalHits: 0 };
             },
-            async searchFileByContent(query, options) {
-                calls.push({ method: 'content', query, options });
-                return { query, results: [], totalHits: 0 };
-            }
+            isDeferred: () => false
         };
 
         const blankName = await worker.searchFileByName('   ', 10);
         assert.deepEqual(blankName, { query: '   ', results: [], totalHits: 0 });
         assert.equal(calls.length, 0, 'blank name query should not call storage');
 
-        const blankContent = await worker.searchFileByContent({ text: 'beta' }, 10);
-        assert.deepEqual(blankContent, { query: '', results: [], totalHits: 0 });
-        assert.equal(calls.length, 0, 'non-string content query should normalize to blank and not call storage');
-
         await worker.searchFileByName('alpha', 500);
-        await worker.searchFileByContent('beta', -3);
-        await worker.searchFileByContent('gamma', 'not-a-number');
 
         assert.deepEqual(calls, [
-            { method: 'name', query: 'alpha', options: { topK: 100 } },
-            { method: 'content', query: 'beta', options: { topK: 1 } },
-            { method: 'content', query: 'gamma', options: { topK: 20 } }
+            { method: 'name', query: 'alpha', options: { topK: 100 } }
         ]);
     } finally {
         cleanup(appDir);
@@ -1310,7 +1300,7 @@ function makeSearchWorker() {
         searchFileByName: async () => {
             throw new Error('semantic should not run');
         },
-        searchFileByContent: async () => {
+        searchIndexedChunks: async () => {
             throw new Error('semantic should not run');
         }
     };
@@ -1368,18 +1358,10 @@ async function testSearchIndexedFilesMergesSortsAndFilters() {
                 { path: '/docs/plan.md', filename: 'plan.md', modified: 3, size: 4, snippet: null, ref_count: 1 }
             ]
         });
-        worker.storage.searchFileByContent = async () => ({
-            results: [
-                {
-                    path: '/docs/content.md',
-                    filename: 'content.md',
-                    modified: 5,
-                    size: 6,
-                    snippet: 'hello',
-                    ref_count: 1
-                }
-            ]
-        });
+        worker.storage.searchIndexedChunks = async () => ({ results: [{
+            chunk: { id: '1', text: 'hello' }, score: 0.8,
+            source: { path: '/docs/content.md', filename: 'content.md', modified: 5, size: 6, refCount: 1 }
+        }] });
 
         const result = await worker.searchIndexedFiles('report', { topK: 10 });
 
@@ -1438,30 +1420,12 @@ async function testSearchIndexedFilesRouteSelectionKeepsExpectedGroups() {
                 ]
             };
         };
-        worker.storage.searchFileByContent = async () => {
+        worker.storage.searchIndexedChunks = async () => {
             semanticCalls += 1;
-            return {
-                results: [
-                    {
-                        path: '/workspace/content.md',
-                        filename: 'content.md',
-                        modified: 1,
-                        size: 2,
-                        snippet: 'content hit',
-                        semanticScore: 0.5,
-                        ref_count: 1
-                    },
-                    {
-                        path: '/workspace/both.md',
-                        filename: 'both.md',
-                        modified: 1,
-                        size: 2,
-                        snippet: 'both content',
-                        semanticScore: 0.4,
-                        ref_count: 1
-                    }
-                ]
-            };
+            return { results: [
+                { chunk: { id: '1', text: 'content hit' }, score: 0.5, source: { path: '/workspace/content.md', filename: 'content.md', modified: 1, size: 2, refCount: 1 } },
+                { chunk: { id: '2', text: 'both content' }, score: 0.4, source: { path: '/workspace/both.md', filename: 'both.md', modified: 1, size: 2, refCount: 1 } }
+            ] };
         };
 
         const keywordOnly = await worker.searchIndexedFiles('report', { topK: 10, routes: ['keyword'] });
@@ -1529,7 +1493,7 @@ async function testSearchIndexedFilesSemanticPartial() {
         worker.storage.searchFileByName = async () => {
             throw new Error('semantic down');
         };
-        worker.storage.searchFileByContent = async () => ({ results: [] });
+        worker.storage.searchIndexedChunks = async () => ({ results: [] });
 
         const result = await worker.searchIndexedFiles('report');
 
@@ -1558,6 +1522,81 @@ async function testSearchIndexedFilesKeywordFailureReturnsError() {
         cleanup(worker.appDataDirectory);
     }
     console.log('  ✅ testSearchIndexedFilesKeywordFailureReturnsError');
+}
+
+async function testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage() {
+    console.log('  testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage...');
+    for (const options of [
+        { routes: [] },
+        { routes: ['unknown'] },
+        { routes: ['content_semantic'], includeContentSemantic: false }
+    ]) {
+        const worker = makeSearchWorker();
+        let calls = 0;
+        worker.storage.mode = 'full';
+        worker.storage.searchFilesByKeyword = async () => { calls++; return []; };
+        worker.storage.searchFileByName = async () => { calls++; return { results: [] }; };
+        worker.storage.searchIndexedChunks = async () => { calls++; return { results: [] }; };
+        const result = await worker.searchIndexedFiles('report', options);
+        assert.equal(calls, 0);
+        assert.deepEqual(result.results, []);
+        assert.equal(result.totalHits, 0);
+        assert.equal(result.code, undefined);
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage');
+}
+
+async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
+    console.log('  testSearchIndexedFilesScopedRouteBudgetsAndOutcomes...');
+    const scope = { type: 'path', path: '/workspace/empty' };
+    const worker = makeSearchWorker();
+    for (const method of [
+        '_checkIndexedSearchPreconditions',
+        '_runKeywordRoute',
+        '_runNameSemanticRoute',
+        '_runContentSemanticRoute',
+        '_finalizeIndexedSearch'
+    ]) assert.equal(typeof worker[method], 'function', `${method} must remain an explicit search orchestration boundary`);
+    const calls = [];
+    worker.storage.mode = 'full';
+    worker.storage.searchFilesByKeyword = async (_query, options) => { calls.push(['keyword', options]); return []; };
+    worker.storage.searchFileByName = async (_query, options) => { calls.push(['name', options]); return { results: [] }; };
+    worker.storage.searchIndexedChunks = async (_query, options) => { calls.push(['content', options]); return { results: [] }; };
+    let statCalls = 0;
+    worker._statFileForSearch = async () => { statCalls++; return { isFile: () => true }; };
+
+    const empty = await worker.searchIndexedFiles('plan', { topK: 5, scope });
+    assert.deepEqual(calls, [
+        ['keyword', { limit: 15, scope }],
+        ['name', { topK: 10, scope }],
+        ['content', { topK: 15, scope }]
+    ]);
+    assert.deepEqual(empty.results, []);
+    assert.equal(empty.code, undefined);
+    assert.equal(statCalls, 0);
+
+    worker.storage.searchFileByName = async () => ({ results: [{ path: '/workspace/empty/stale.md', filename: 'stale.md', ref_count: 1 }] });
+    worker._statFileForSearch = async () => { statCalls++; return null; };
+    const scopedFiltered = await worker.searchIndexedFiles('plan', { routes: ['name_semantic'], scope });
+    assert.deepEqual(scopedFiltered.results, []);
+    assert.equal(statCalls, 1);
+
+    let unscopedContentOptions;
+    worker.storage.searchIndexedChunks = async (_query, options) => { unscopedContentOptions = options; return { results: [] }; };
+    await worker.searchIndexedFiles('plan', { topK: 100, routes: ['content_semantic'] });
+    assert.deepEqual(unscopedContentOptions, { topK: 300, scope: undefined });
+
+    worker.storage.searchFilesByKeyword = async () => { throw new Error('keyword down'); };
+    worker.storage.searchFileByName = async () => ({ results: [] });
+    const partial = await worker.searchIndexedFiles('plan', { routes: ['keyword', 'name_semantic'], scope });
+    assert.equal(partial.code, CODES.SEARCH_PARTIAL);
+
+    worker.storage.searchFileByName = async () => { throw new Error('name down'); };
+    const failed = await worker.searchIndexedFiles('plan', { routes: ['keyword', 'name_semantic'], scope });
+    assert.equal(failed.code, CODES.SEARCH_FAILED);
+    cleanup(worker.appDataDirectory);
+    console.log('  ✅ testSearchIndexedFilesScopedRouteBudgetsAndOutcomes');
 }
 
 // ── Test: Task 5 duplicate scanner roots are ignored ────────────────

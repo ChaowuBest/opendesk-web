@@ -21,6 +21,7 @@ import {
     ItemType,
     ScalarOperator
 } from './abstract-storage.js';
+import { normalizePathDescendantOrSelfValue } from './path-scope.js';
 
 // BaseIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;
@@ -102,7 +103,8 @@ export class BaseIndexer extends Indexer {
         'in',
         'notin',
         'between',
-        'notbetween'
+        'notbetween',
+        'path_descendant_or_self'
     ];
 
     private _supportedFields: string[] = [];
@@ -191,6 +193,9 @@ export class BaseIndexer extends Indexer {
     private toQueryCondition(cond: FilterCondition): BaseQueryCondition {
         this.validateField(cond.field);
         this.validateOperator(cond.operator);
+        if (cond.operator === 'path_descendant_or_self') {
+            normalizePathDescendantOrSelfValue(cond.value);
+        }
 
         return {
             field: cond.field,

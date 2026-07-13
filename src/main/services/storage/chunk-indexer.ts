@@ -63,6 +63,7 @@ export interface ChunkSearchOptions {
 // IChunkIndexDB — 统一异步接口（ChunkIndexDB 和 ChunkIndexDBHm 共同实现）
 // ============================================================================
 export interface IChunkIndexDB {
+    readonly backend: 'native' | 'arkdata' | 'wasm';
     /** 批量插入 chunk 记录（事务保证原子性） */
     insertMany(records: ChunkIndexRecord[]): Promise<number>;
     /** 按 item_id 删除所有 chunk，无 chunk 时删 0 行，无副作用 */
@@ -143,6 +144,10 @@ export class ChunkIndexer extends Indexer {
 
     async probeStore(): Promise<BaseIndexStoreProbeResult> {
         return probeChunkIndexStore(this._dbPath);
+    }
+
+    getBackend(): IChunkIndexDB['backend'] {
+        return this.ensureDB().backend;
     }
 
     private buildRecordsForItem(item: Item): ChunkIndexRecord[] {
