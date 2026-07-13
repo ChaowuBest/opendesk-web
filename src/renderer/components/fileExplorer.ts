@@ -978,6 +978,8 @@ export class FileExplorer {
         // 切换任务/工作空间时先关闭预览
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
+        this._browserFullscreen = false;
+        this._previewFullscreen = false;
         this._editorMode = false;
         this._editorFilePath = null;
         this._editorOpenLine = null;
@@ -1013,13 +1015,14 @@ export class FileExplorer {
         this._editorSaving = false;
         this._editorPendingSave = false;
         this._previewState = { status: 'idle' };
+        this._previewFullscreen = false;
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
                 el.classList.remove('ws-file-selected');
             });
         }
-        this._renderPreview();
+        this._renderPanel();
     }
 
     /**
