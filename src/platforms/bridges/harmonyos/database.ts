@@ -26,7 +26,7 @@ import type {
 } from '../common.js';
 import { callArkTS, EtsBridgeMethods, hasArkTSAdapter } from './arkts.js';
 
-const POLL_INITIAL_MS = 50;
+const POLL_INITIAL_MS = 5;
 const POLL_MAX_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
 const pendingStoreCloses = new Map<string, Promise<void>>();
