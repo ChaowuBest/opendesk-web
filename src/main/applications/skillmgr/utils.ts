@@ -1411,11 +1411,26 @@ export async function searchSkillsFromAllRegistries(
     }
 
     results.sort((a, b) => {
+        const scoreA = scoreSearchRelevance(a, query);
+        const scoreB = scoreSearchRelevance(b, query);
+        if (scoreB !== scoreA) return scoreB - scoreA;
         if (b.installCount !== a.installCount) return b.installCount - a.installCount;
         return a.fullName.localeCompare(b.fullName);
     });
 
     return { results, errors };
+}
+
+function scoreSearchRelevance(skill: RegistrySearchSkill, query: string): number {
+    const q = query.toLowerCase();
+    const name = skill.skillName.toLowerCase();
+    const fullName = skill.fullName.toLowerCase();
+    const desc = skill.description.toLowerCase();
+
+    if (name === q || fullName === q) return 100;
+    if (name.includes(q) || fullName.includes(q)) return 50;
+    if (desc.includes(q)) return 30;
+    return 0;
 }
 
 function scoreRegistrySkillMatch(registry: SkillRegistryBase, skill: RegistrySkill, query: string): number {

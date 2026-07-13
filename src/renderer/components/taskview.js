@@ -26,6 +26,7 @@ import {
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_RIGHT_SIDEBAR_WIDTH = 500;
 export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
@@ -121,12 +122,12 @@ function mergeGoalSummary(existingGoal, incomingGoal) {
 }
 
 class TaskView extends HTMLElement {
-    // 全局侧边栏状态：跨任务共享
-    static rightSidebarExpanded = false;
-    static rightSidebarWidth = 380;
-
     constructor() {
         super();
+
+        // 每个任务独立的侧边栏状态
+        this._rightSidebarExpanded = false;
+        this._rightSidebarWidth = DEFAULT_RIGHT_SIDEBAR_WIDTH;
 
         this.task_id = null;
         this.widget_id = crypto.randomUUID();
@@ -1232,7 +1233,7 @@ class TaskView extends HTMLElement {
             const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
             if (artifacts && typeof artifacts.setGoalState === 'function') {
                 this._syncArtifactsGoalState(this._currentGoal);
-                if (this._currentGoal && !TaskView.rightSidebarExpanded) {
+                if (this._currentGoal && !this._rightSidebarExpanded) {
                     const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
                     this._expandRightSidebar(artifacts, resizer);
                 }
@@ -1857,7 +1858,7 @@ class TaskView extends HTMLElement {
     }
 
     _expandRightSidebar(rightSidebar, resizer) {
-        const targetWidth = TaskView.rightSidebarWidth || 380;
+        const targetWidth = this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
         rightSidebar.style.width = '0px';
@@ -1889,7 +1890,7 @@ class TaskView extends HTMLElement {
         };
         rightSidebar.addEventListener('transitionend', onEnd);
 
-        TaskView.rightSidebarExpanded = true;
+        this._rightSidebarExpanded = true;
         this._autoSwitchTabIfEmpty(rightSidebar);
 
         // 侧边栏展开时隐藏画中画浮窗
@@ -1904,7 +1905,8 @@ class TaskView extends HTMLElement {
             rightSidebar.closeEditor();
         }
 
-        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || 380;
+        this._rightSidebarWidth =
+            parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
             'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
@@ -1935,7 +1937,7 @@ class TaskView extends HTMLElement {
         };
         rightSidebar.addEventListener('transitionend', onEnd);
 
-        TaskView.rightSidebarExpanded = false;
+        this._rightSidebarExpanded = false;
 
         // 侧边栏收起时重置画中画关闭状态（新的折叠周期，允许重新弹出）
         if (this._browserPip) {
@@ -2041,7 +2043,7 @@ class TaskView extends HTMLElement {
      * 注意：即使画中画被用户关闭，也不阻塞调用（浏览器工具仍可在后台工作）。
      */
     _ensureRightSidebarOpen() {
-        if (!TaskView.rightSidebarExpanded) {
+        if (!this._rightSidebarExpanded) {
             const sidebar = this._getRightSidebarEl();
             const browserActive =
                 sidebar && typeof sidebar.isBrowserVisible === 'function' && sidebar.isBrowserVisible();
@@ -2369,15 +2371,15 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
-        // 面板已展开时，抑制 ensureBrowserReady 内部的自动切换，避免打断用户正在查看的 tab
-        if (TaskView.rightSidebarExpanded) {
-            sidebar._suppressBrowserAutoSwitch = true;
+
+        if (!this._rightSidebarExpanded) {
+            // 侧边栏未展开：先展开侧边栏
+            this._ensureRightSidebarOpen();
         }
         sidebar[method](...args);
-        sidebar._suppressBrowserAutoSwitch = false;
 
         // 若侧边栏已展开则保持不变；若已收起，尝试显示画中画浮窗
-        if (!TaskView.rightSidebarExpanded) {
+        if (!this._rightSidebarExpanded) {
             this._showBrowserPipIfNeeded();
             // 浏览器事件发生时立即刷新截图，而不是等待定时器
             if (this._browserPip && this._browserPip.isVisible()) {
@@ -2387,16 +2389,16 @@ class TaskView extends HTMLElement {
         }
     }
 
-    /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
+    /** 同步当前任务侧边栏状态到 DOM（切换任务时调用） */
     syncRightSidebarState() {
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        if (TaskView.rightSidebarExpanded) {
+        if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
-            rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+            rightSidebar.style.width = this._rightSidebarWidth + 'px';
             rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);
@@ -2408,7 +2410,7 @@ class TaskView extends HTMLElement {
             // 侧边栏收起时，根据浏览器状态决定是否显示画中画
             this._showBrowserPipIfNeeded();
         }
-        this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
+        this._updateSidebarToggleIcon(this._rightSidebarExpanded);
 
         if (typeof rightSidebar.refreshWorkspace === 'function') {
             rightSidebar.refreshWorkspace(this._taskWorkspace);
@@ -2531,7 +2533,7 @@ class TaskView extends HTMLElement {
                     },
                     {
                         id: 'taskview-sidebar-toggle-btn',
-                        icon: TaskView.rightSidebarExpanded ? 'fa-table-columns' : 'fa-table-columns',
+                        icon: this._rightSidebarExpanded ? 'fa-table-columns' : 'fa-table-columns',
                         label: '面板',
                         action: () => {
                             this._toggleRightSidebar();
@@ -2876,7 +2878,7 @@ class TaskView extends HTMLElement {
                 <!-- 右侧边栏拖拽条 -->
                 <div id="task-${this.task_id}-resizer"
                     class="resizer-group relative shrink-0"
-                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
+                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${this._rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                         <div class="resizer-handle-indicator resizer-blue" style="width: 2px; height: 3rem; border-radius: 9999px; background: #e5e7eb;"></div>
@@ -2884,7 +2886,7 @@ class TaskView extends HTMLElement {
                 </div>
 
                 <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
-                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
+                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${this._rightSidebarExpanded ? '' : 'none'}; width: ${this._rightSidebarWidth}px;"></task-artifacts>
             </div>
         </div>
         `;
@@ -2917,7 +2919,7 @@ class TaskView extends HTMLElement {
                 const maxWidth = cachedContainerRect.width * 0.85;
                 if (newWidth < minWidth || newWidth > maxWidth) return;
                 rightSidebar.style.width = newWidth + 'px';
-                TaskView.rightSidebarWidth = newWidth;
+                this._rightSidebarWidth = newWidth;
             });
         };
 

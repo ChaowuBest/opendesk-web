@@ -1372,13 +1372,7 @@ class SettingPanel extends HTMLElement {
                         ${chatModelOptions}
                     </select>
                 </div>
-                <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${this._t('config.defaultmodel.field.intent_model')}</label>
-                    <select id="default-intent-model-select" class="sp-form-input">
-                        <option value="">${this._t('common.none')}</option>
-                        ${chatModelOptions}
-                    </select>
-                </div>
+
             </div>
         </section>
         `;
@@ -1480,8 +1474,7 @@ class SettingPanel extends HTMLElement {
             'default-model-select',
             'default-embedding-model-select',
             'default-reranker-model-select',
-            'default-vision-model-select',
-            'default-intent-model-select'
+            'default-vision-model-select'
         ];
         selects.forEach((id) => {
             this.querySelector(`#${id}`)?.addEventListener('change', (e) => {
@@ -1751,8 +1744,7 @@ class SettingPanel extends HTMLElement {
             'default-model-select': 'default_model',
             'default-embedding-model-select': 'default_embedding_model',
             'default-reranker-model-select': 'default_reranker_model',
-            'default-vision-model-select': 'default_vision_model',
-            'default-intent-model-select': 'default_intent_parsing_model'
+            'default-vision-model-select': 'default_vision_model'
         };
     }
 
@@ -2718,8 +2710,7 @@ class SettingPanel extends HTMLElement {
             'default_model',
             'default_embedding_model',
             'default_reranker_model',
-            'default_vision_model',
-            'default_intent_parsing_model'
+            'default_vision_model'
         ].some((field) => this.currentData[field] === model.alias);
 
         if (isDefault) {
@@ -2873,8 +2864,7 @@ class SettingPanel extends HTMLElement {
                 'default-model-select',
                 'default-embedding-model-select',
                 'default-reranker-model-select',
-                'default-vision-model-select',
-                'default-intent-model-select'
+                'default-vision-model-select'
             ];
             selects.forEach((id) => {
                 this.querySelector(`#${id}`)?.addEventListener('change', (e) => {

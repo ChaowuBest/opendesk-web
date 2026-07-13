@@ -383,26 +383,49 @@ export class EmbeddedBrowser extends BrowserInstance {
                 display: none;
                 position: absolute;
                 top: 100%; right: 0;
-                width: 200px;
+                width: 260px;
                 background: white;
                 border: 1px solid #e5e7eb;
-                border-radius: 8px;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+                border-radius: 10px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.12);
                 z-index: 200;
-                padding: 4px 0;
+                padding: 6px 0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
             .bw-tool-menu.bw-visible { display: block; }
             .bw-tm-item {
                 display: flex; align-items: center; gap: 10px;
-                padding: 7px 14px;
-                font-size: 12px; color: #374151;
+                padding: 8px 16px;
+                font-size: 13px; color: #374151;
                 cursor: pointer;
                 transition: background 0.1s;
             }
             .bw-tm-item:hover { background: #f3f4f6; }
-            .bw-tm-item i { width: 14px; text-align: center; color: #6b7280; font-size: 12px; }
+            .bw-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
             .bw-tm-label { flex: 1; }
+            .bw-tm-shortcut { color: #9ca3af; font-size: 11px; }
+            .bw-tm-divider {
+                height: 1px; background: #f0f0f0; margin: 4px 0;
+            }
+            .bw-tm-zoom-row {
+                display: flex; align-items: center; gap: 6px;
+                padding: 6px 16px;
+                font-size: 13px; color: #374151;
+            }
+            .bw-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
+            .bw-tm-zoom-label { flex: 1; }
+            .bw-tm-zoom-controls {
+                display: flex; align-items: center; gap: 4px;
+            }
+            .bw-tm-zoom-btn {
+                width: 24px; height: 24px; border-radius: 4px;
+                border: 1px solid #e5e7eb; background: white;
+                cursor: pointer; display: flex; align-items: center; justify-content: center;
+                font-size: 11px; color: #6b7280;
+                transition: background 0.1s;
+            }
+            .bw-tm-zoom-btn:hover { background: #f3f4f6; }
+            .bw-tm-zoom-val { font-size: 12px; min-width: 36px; text-align: center; }
 
             /* ---- Webview area ---- */
             .bw-webview-container {
@@ -509,6 +532,29 @@ export class EmbeddedBrowser extends BrowserInstance {
             :host([data-theme="dark"]) .bw-tm-item i {
                 color: #ababab !important;
             }
+            :host([data-theme="dark"]) .bw-tm-shortcut {
+                color: #777777 !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-divider {
+                background: rgba(255, 255, 255, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-zoom-row {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-zoom-row i {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-zoom-btn {
+                background: #3c3c3c !important;
+                border-color: rgba(255, 255, 255, 0.12) !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-zoom-btn:hover {
+                background: #4a4a4a !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-zoom-val {
+                color: #cccccc !important;
+            }
             :host([data-theme="dark"]) .bw-webview-container {
                 background: #1e1e1e !important;
                 box-shadow: inset 0 2px 6px rgba(0,0,0,0.3) !important;
@@ -533,7 +579,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 </div>
                 <div class="bw-sep"></div>
                 <div class="bw-toolbar-right">
-                    <button class="bw-btn bw-menu-btn" title="调试"><i class="fas fa-ellipsis"></i></button>
+                    <button class="bw-btn bw-menu-btn" title="工具菜单"><i class="fas fa-ellipsis"></i></button>
                     <div class="bw-tool-menu"></div>
                 </div>
                 <button class="bw-btn bw-fullscreen-btn" title="全屏"><i class="fas fa-expand"></i><span class="bw-fullscreen-label"></span></button>
@@ -676,36 +722,93 @@ export class EmbeddedBrowser extends BrowserInstance {
             return;
         }
 
+        const zoomPct = Math.round(this._currentZoomFactor * 100);
+
         toolMenu.innerHTML = `
+            <div class="bw-tm-zoom-row">
+                <i class="fas fa-magnifying-glass-plus"></i>
+                <span class="bw-tm-zoom-label">缩放</span>
+                <div class="bw-tm-zoom-controls">
+                    <button class="bw-tm-zoom-btn" data-action="zoomOut"><i class="fas fa-minus"></i></button>
+                    <span class="bw-tm-zoom-val">${zoomPct}%</span>
+                    <button class="bw-tm-zoom-btn" data-action="zoomIn"><i class="fas fa-plus"></i></button>
+                </div>
+            </div>
+            <div class="bw-tm-divider"></div>
+            <div class="bw-tm-item" data-action="screenshot">
+                <i class="fas fa-camera"></i>
+                <span class="bw-tm-label">截图</span>
+            </div>
+            <div class="bw-tm-item" data-action="print">
+                <i class="fas fa-print"></i>
+                <span class="bw-tm-label">打印…</span>
+                <span class="bw-tm-shortcut">⌘P</span>
+            </div>
+            <div class="bw-tm-divider"></div>
             <div class="bw-tm-item" data-action="consoleDebug">
                 <i class="fas fa-terminal"></i>
-                <span class="bw-tm-label">Console</span>
+                <span class="bw-tm-label">开发者工具</span>
             </div>
             <div class="bw-tm-item" data-action="snapshotDebug">
                 <i class="fas fa-sitemap"></i>
-                <span class="bw-tm-label">Snapshot</span>
+                <span class="bw-tm-label">导出快照</span>
             </div>
         `;
 
         toolMenu.querySelectorAll('[data-action]').forEach((el) => {
             el.addEventListener('click', () => {
                 const action = (el as HTMLElement).dataset.action;
-                toolMenu.classList.remove('bw-visible');
-                this.handleDebugAction(action!);
+                // zoom actions keep menu open
+                if (action !== 'zoomIn' && action !== 'zoomOut') {
+                    toolMenu.classList.remove('bw-visible');
+                }
+                void this.handleToolMenuAction(action!);
             });
         });
 
         toolMenu.classList.add('bw-visible');
     }
 
-    private handleDebugAction(action: string): void {
+    private async handleToolMenuAction(action: string): Promise<void> {
         switch (action) {
+            case 'zoomIn':
+                this._currentZoomFactor = Math.min(this._currentZoomFactor + 0.1, 3);
+                this._applyZoomToAllWebviews(this._currentZoomFactor);
+                this._updateZoomDisplay();
+                break;
+            case 'zoomOut':
+                this._currentZoomFactor = Math.max(this._currentZoomFactor - 0.1, 0.25);
+                this._applyZoomToAllWebviews(this._currentZoomFactor);
+                this._updateZoomDisplay();
+                break;
+            case 'screenshot':
+                void this.capturePage();
+                break;
+            case 'print':
+                this._printPage();
+                break;
             case 'consoleDebug':
                 void this.openWebviewDevTools();
                 break;
             case 'snapshotDebug':
                 void this.captureAndSaveSnapshot();
                 break;
+        }
+    }
+
+    private _updateZoomDisplay(): void {
+        const valEl = this.container?.querySelector('.bw-tm-zoom-val');
+        if (valEl) valEl.textContent = `${Math.round(this._currentZoomFactor * 100)}%`;
+    }
+
+    private _printPage(): void {
+        const tab = this.getActiveTab();
+        if (tab?.ready && tab.webview) {
+            try {
+                (tab.webview as any).print();
+            } catch {
+                /* ignore */
+            }
         }
     }
 

@@ -74,33 +74,42 @@ export class SkillHubRegistry extends SkillRegistryBase {
             const fetchSize = Math.min(Math.max(limit * 3, 50), MAX_PAGE_SIZE);
             const { skills: raw, total } = await this.fetchPage(1, fetchSize, trimmedQuery);
 
-            const q = trimmedQuery.toLowerCase();
+            const tokens = trimmedQuery
+                .toLowerCase()
+                .split(/\s+/)
+                .filter((t) => t.length > 0);
             const filtered = raw.filter((s: any) => {
                 const name = (s.name || '').toLowerCase();
                 const slug = (s.slug || '').toLowerCase();
                 const desc = (s.description || '').toLowerCase();
                 const descZh = (s.description_zh || '').toLowerCase();
                 const tags = Array.isArray(s.tags) ? s.tags.join(' ').toLowerCase() : '';
-                return (
-                    name.includes(q) || slug.includes(q) || desc.includes(q) || descZh.includes(q) || tags.includes(q)
-                );
+                const combined = `${name} ${slug} ${desc} ${descZh} ${tags}`;
+                return tokens.every((token) => combined.includes(token));
             });
 
             const serverSideWorked = filtered.length > 0 || raw.length < fetchSize;
-            const resultSkills = serverSideWorked ? filtered : raw;
+            if (!serverSideWorked) {
+                return {
+                    skills: [],
+                    total: 0,
+                    hasMore: false,
+                    message: `未找到匹配"${trimmedQuery}"的技能`
+                };
+            }
 
             const start = (page - 1) * limit;
-            const paged = resultSkills.slice(start, start + limit);
+            const paged = filtered.slice(start, start + limit);
             const skills = paged.map((s: any) => this.mapSkill(s));
 
             return {
                 skills,
-                total: serverSideWorked ? filtered.length : total,
-                hasMore: start + limit < resultSkills.length,
+                total: filtered.length,
+                hasMore: start + limit < filtered.length,
                 message:
                     skills.length > 0
-                        ? `显示 ${skills.length} / ${serverSideWorked ? filtered.length : total} 个结果`
-                        : undefined
+                        ? `显示 ${skills.length} / ${filtered.length} 个结果`
+                        : `未找到匹配"${trimmedQuery}"的技能`
             };
         } catch (e: any) {
             if (e.name === 'AbortError' || e.name === 'TimeoutError') {

@@ -479,6 +479,15 @@ export function getFileExplorerCSS(): string {
         .ws-preview-md-host::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.35); }
         .ws-preview-md-host::-webkit-scrollbar-corner { background: transparent; }
 
+        .ws-preview-svg-host {
+            flex: 1; overflow: auto; min-height: 60px;
+            display: flex; align-items: center; justify-content: center;
+            background: repeating-conic-gradient(#f0f0f0 0% 25%, transparent 0% 50%) 50% / 20px 20px;
+        }
+        .ws-preview-svg-host img {
+            max-width: 100%; max-height: 100%; object-fit: contain;
+        }
+
         /* Fullscreen toggle button (shared style for browser & preview) */
         .ws-fullscreen-btn {
             display: inline-flex;
@@ -658,6 +667,11 @@ function isMarkdownFile(filePath: string): boolean {
 function isHtmlFile(filePath: string): boolean {
     const ext = filePath.split('.').pop()?.toLowerCase();
     return ext === 'html' || ext === 'htm';
+}
+
+function isSvgFile(filePath: string): boolean {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    return ext === 'svg';
 }
 
 const CODE_FILE_EXTENSIONS: Record<string, string> = {
@@ -1577,6 +1591,7 @@ export class FileExplorer {
 
         this._attachMarkdownShadow(panel);
         this._attachHtmlPreview(panel);
+        this._attachSvgPreview(panel);
     }
 
     /**
@@ -2176,6 +2191,7 @@ export class FileExplorer {
         if (!this._editorMode) {
             this._attachMarkdownShadow(el);
             this._attachHtmlPreview(el);
+            this._attachSvgPreview(el);
         }
     }
 
@@ -2223,6 +2239,30 @@ export class FileExplorer {
         iframe.srcdoc = srcdoc;
         host.style.cssText = 'width:100%;height:100%;overflow:hidden;';
         host.appendChild(iframe);
+    }
+
+    private _attachSvgPreview(root: ParentNode): void {
+        if (
+            !this._selectedFile ||
+            !isSvgFile(this._selectedFile) ||
+            this._previewState.status !== 'idle' ||
+            !this._previewState.data?.content
+        ) {
+            return;
+        }
+        const host = root.querySelector<HTMLElement>('.ws-preview-svg-host');
+        if (!host || host.dataset.attached) return;
+        host.dataset.attached = '1';
+
+        const svgText = this._previewState.data.content;
+        const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
+        const img = document.createElement('img');
+        img.src = dataUri;
+        img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;';
+        img.alt = this._selectedFile.split('/').pop() || 'SVG';
+        host.style.cssText =
+            'width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f0f0f0 0% 25%, transparent 0% 50%) 50% / 20px 20px;';
+        host.appendChild(img);
     }
 
     private _renderPreviewHtml(): string {
@@ -2317,6 +2357,8 @@ export class FileExplorer {
                         <div class="ws-preview-hint">当前预览器仅支持文本文件</div>
                     </div>
                 </div>`;
+            } else if (this._selectedFile && isSvgFile(this._selectedFile)) {
+                bodyHtml = `<div class="ws-preview-svg-host"></div>`;
             } else if (this._selectedFile && isMarkdownFile(this._selectedFile)) {
                 bodyHtml = `<div class="ws-preview-md-host"></div>`;
             } else if (this._selectedFile && isHtmlFile(this._selectedFile)) {

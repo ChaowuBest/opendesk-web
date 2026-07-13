@@ -363,10 +363,25 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
             // 创建目录选择器组件并挂载
             dirSelector = new FileSelector({
                 listDirectory: async (p, opts) => {
-                    // 处理虚拟根目录
+                    // 处理虚拟根目录：Windows 盘符浏览
                     if (p === '{DRIVE_ROOT}') {
                         const drives = await window.workspaceAPI.listDrives();
                         return drives || [];
+                    }
+                    // 处理虚拟根目录：OpenHarmony 家目录 + 应用沙箱
+                    if (p === '{OH_ROOT}') {
+                        return [
+                            {
+                                name: '家目录',
+                                path: '/storage/Users/currentUser',
+                                isDirectory: true
+                            },
+                            {
+                                name: '应用沙箱',
+                                path: '/data/storage/el2/base/files',
+                                isDirectory: true
+                            }
+                        ];
                     }
                     return window.workspaceAPI.listDirectory(p, opts);
                 },
@@ -427,9 +442,9 @@ function _getHomeDirFromWorkspace(workspace: string): string {
         return '{DRIVE_ROOT}';
     }
 
-    // OpenHarmony 平台使用系统暴露的家目录路径
-    if (systemInfo?.isOpenHarmony && systemInfo?.homePath) {
-        return systemInfo.homePath;
+    // OpenHarmony 平台返回虚拟根目录标记（家目录 + 应用沙箱）
+    if (systemInfo?.isOpenHarmony) {
+        return '{OH_ROOT}';
     }
 
     // Unix/macOS 原有逻辑

@@ -149,7 +149,7 @@ export class FileSelector {
 
     private _list(dirPath: string): Promise<FSEntry[]> {
         // 虚拟根目录不需要 includeFiles 参数
-        if (dirPath === '{DRIVE_ROOT}') {
+        if (dirPath === '{DRIVE_ROOT}' || dirPath === '{OH_ROOT}') {
             return this._opts.listDirectory(dirPath, { showHidden: this._showHidden });
         }
         const dirOnly = this._opts.directoryOnly !== false;

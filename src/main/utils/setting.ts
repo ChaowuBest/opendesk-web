@@ -839,12 +839,15 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
+ * - OpenHarmony: /storage/Users/currentUser/OpenDesk
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
  */
 function getTempWorkspaceDirectory(): string {
     let workspacePath: string;
-    if (process.platform === 'win32') {
+    if ((process.platform as string) === 'openharmony') {
+        workspacePath = '/storage/Users/currentUser/OpenDesk';
+    } else if (process.platform === 'win32') {
         const userProfile = process.env.USERPROFILE || process.env.HOME || '';
         workspacePath = path.join(userProfile, 'opendesk');
     } else {
