@@ -63,6 +63,7 @@ describe('browser utils', () => {
         runScript(makeEnsureSidebarScript('task-1'));
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
+        expect((document.getElementById('nonAppSlot') as HTMLElement).style.display).toBe('');
         // offscreen rendering
         expect(taskView.getAttribute('data-background')).toBe('1');
         expect(taskView.style.height).toBe('800px');

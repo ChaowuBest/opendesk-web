@@ -184,6 +184,7 @@ class TaskArtifacts extends HTMLElement {
     private _taskRunning = false;
     private _goalController: TaskArtifactsGoalController;
     private _browserVisible = false;
+    private _pendingBrowserNavigations = 0;
     private _sessionMemoryHtml: string | null = null;
     private _sessionMemoryVisible = false;
     private _sessionMemoryRefreshTimer: number | null = null;
@@ -944,12 +945,23 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
      * 自动切换到浏览器标签并展开侧边栏。
      */
-    browserNavigate(url: string): void {
-        this.ensureBrowserReady();
-        if (this._browser) {
-            this._browser.navigateTo(url);
+    async browserNavigate(url: string): Promise<void> {
+        this._pendingBrowserNavigations += 1;
+        try {
+            this.ensureBrowserReady();
+            if (this._browser) {
+                try {
+                    await this._browser.waitUntilReadyForNavigation();
+                } catch {
+                    throw new Error(t('renderer.browser.viewport_not_ready'));
+                }
+                this._browser.navigateTo(url);
+            }
+            this.dispatchEvent(new CustomEvent('browser-action', { bubbles: true, composed: true }));
+        } finally {
+            this._pendingBrowserNavigations -= 1;
+            this._syncBrowserActiveState();
         }
-        this.dispatchEvent(new CustomEvent('browser-action', { bubbles: true, composed: true }));
     }
 
     /**
@@ -1024,10 +1036,26 @@ class TaskArtifacts extends HTMLElement {
     /**
      * 外部调用：新建标签页并导航到指定 URL。
      */
-    browserAddTab(url: string): number {
-        this.ensureBrowserReady();
-        if (!this._browser) return -1;
-        return this._browser.addTab(url);
+    async browserAddTab(url: string): Promise<number> {
+        this._pendingBrowserNavigations += 1;
+        let tabId = -1;
+        try {
+            this.ensureBrowserReady();
+            if (!this._browser) return -1;
+            tabId = this._browser.addTab();
+            try {
+                await this._browser.waitUntilReadyForNavigation();
+            } catch {
+                this._browser.closeTab(tabId);
+                tabId = -1;
+                throw new Error(t('renderer.browser.viewport_not_ready'));
+            }
+            this._browser.navigateTo(url);
+            return tabId;
+        } finally {
+            this._pendingBrowserNavigations -= 1;
+            this._syncBrowserActiveState();
+        }
     }
 
     /**
@@ -1077,6 +1105,10 @@ class TaskArtifacts extends HTMLElement {
     private _syncBrowserActiveState(): void {
         if (!this._browser) return;
         const hasContent = this._browser.hasActiveContent();
+        // The cold about:blank guest can finish loading while the first tool
+        // navigation is waiting for a stable host viewport. Do not let that
+        // transient event hide the browser panel and invalidate the viewport.
+        if (!hasContent && this._pendingBrowserNavigations > 0) return;
         if (this._browserVisible !== hasContent) {
             this._browserVisible = hasContent;
             this._rebuildTabBar();

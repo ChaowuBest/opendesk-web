@@ -31,6 +31,7 @@ export function makeEnsureSidebarScript(taskId: string): string {
         if (el) {
             var tv = el.closest('task-view');
             var taskViewIsHidden = tv && (tv.hasAttribute('data-background') || tv.style.display === 'none');
+            var renderRoot = tv && tv.closest('#nonAppSlot');
             function resetOversizedArtifact() {
                 if (el.style.minWidth === '1280px') el.style.minWidth = '';
                 if (el.style.width === '1280px') {
@@ -91,11 +92,14 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 tv.style.opacity = '0';
                 tv.style.pointerEvents = 'none';
                 tv.style.zIndex = '-1';
+                // app iframe 在前台时 nonAppSlot 可能为 display:none。让承载根节点继续参与布局，
+                // 前台 app-frames-container 仍位于其上方，不会切换或遮挡用户当前界面。
+                if (renderRoot && window.getComputedStyle(renderRoot).display === 'none') {
+                    renderRoot.style.display = '';
+                }
                 el.style.display = '';
                 el.style.width = '1280px';
                 el.style.height = '800px';
-                if (typeof el.keepBrowserPanelRenderable === 'function') el.keepBrowserPanelRenderable();
-                setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));
             } else {
                 // 前台任务：重置此前可能由后台 offscreen 模式设置的 1280px 尺寸，
                 // 恢复为侧边栏正常宽度。
@@ -112,6 +116,12 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 tv._ensureRightSidebarOpen();
             }
             forceBrowserActive(true);
+            if (tv && taskViewIsHidden) {
+                // forceBrowserActive 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
+                // 再应用一次尺寸，并保持 browser panel 可渲染。
+                if (typeof el.keepBrowserPanelRenderable === 'function') el.keepBrowserPanelRenderable();
+                setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));
+            }
         }
     `;
 }
