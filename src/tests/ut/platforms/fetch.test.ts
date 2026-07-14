@@ -302,6 +302,50 @@ describe('Platform fetch 抽象层', () => {
             }
         });
 
+        test('CLI fetch 对无 options 的 worker 请求应用全局 skip SSL', async () => {
+            const { Setting } = await import('../../../main/utils/setting');
+            const { logger } = await import('../../../main/utils/logger');
+            const { CliPlatform } = await import('../../../platforms/cli');
+            const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => logger);
+            jest.spyOn(Setting, 'getInstance').mockReturnValue({
+                getData: () => ({
+                    network_config: {
+                        no_ssl: true,
+                        use_proxy: 'system',
+                        custom_proxy_addr: '',
+                        no_proxy: ''
+                    }
+                })
+            } as unknown as InstanceType<typeof Setting>);
+            const server = http.createServer((_req, res) => {
+                res.end('global-skip-ssl-ok');
+            });
+            const port = await listenLocalServer(server);
+            const proxyEnv = captureProxyEnv();
+
+            try {
+                restoreProxyEnv({
+                    HTTP_PROXY: undefined,
+                    HTTPS_PROXY: undefined,
+                    http_proxy: undefined,
+                    https_proxy: undefined,
+                    NO_PROXY: undefined,
+                    no_proxy: undefined
+                });
+                const platform = new CliPlatform();
+                const response = await platform.fetch(`http://127.0.0.1:${port}/search`);
+
+                await expect(response.text()).resolves.toBe('global-skip-ssl-ok');
+                const requestLogs = infoSpy.mock.calls
+                    .map((call) => String(call[0]))
+                    .filter((message) => message.includes('[proxy-fetch] fetch request'));
+                expect(requestLogs.some((message) => message.includes('"skipTlsVerification":true'))).toBe(true);
+            } finally {
+                restoreProxyEnv(proxyEnv);
+                await closeLocalTcpServer(server);
+            }
+        });
+
         test('fetch bypassProxy 使用 Node 传输直连', async () => {
             const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
             const originalFetch = globalThis.fetch;

@@ -18,6 +18,7 @@ import { createInteractionToolset } from '../main/aikernel/interaction/tools.js'
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
 import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import type { PlatformFetchOptions } from './base.js';
+import { Setting } from '../main/utils/setting.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -69,10 +70,11 @@ export class CliPlatform extends AbstractPlatform {
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
+        const globalSkipTlsVerification = Setting.getInstance().getData().network_config.no_ssl;
         return fetchWithResolvedProxy(url, init, {
             useEnvironmentProxy: !options?.bypassProxy,
             bypassProxy: options?.bypassProxy,
-            skipTlsVerification: options?.skipTlsVerification
+            skipTlsVerification: globalSkipTlsVerification || options?.skipTlsVerification
         });
     }
 
