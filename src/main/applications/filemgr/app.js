@@ -244,6 +244,9 @@ class FileMgrApplication extends BaseApplication {
             const total = (source.total_files ?? 0).toLocaleString();
             const embedded = (source.embedded_count ?? 0).toLocaleString();
             const pending = (source.pending_count ?? 0).toLocaleString();
+            if (source.paused === true) {
+                return t('renderer.filemgr.source.pausedWithCount', { count: total });
+            }
             if (source.state === 'unavailable') return `路径不可访问 · 上次 ${total} 文件`;
             if (source.state === 'pending') return '等待扫描';
             if (source.state === 'scanning') return `扫描中 · ${embedded} / ${total} 文件（待处理 ${pending}）`;

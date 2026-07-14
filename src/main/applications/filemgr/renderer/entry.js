@@ -17,6 +17,7 @@ import {
     loadEntries,
     openSettings,
     resetFileSystemStorage,
+    setSourcePaused,
     subscribeStatus
 } from './adapter.js';
 import { createActions } from './actions.js';
@@ -328,6 +329,8 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 
         const sources = createSources({
             document: doc,
+            t: this._t,
+            onSetSourcePaused: (request) => this._setSourcePaused(request),
             onProtectedWorkspaceDelete: () => {
                 void this._showProtectedWorkspaceModal();
             },
@@ -360,6 +363,19 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         });
 
         this._components = [banner, sources, actions, this._treeView, this._toast];
+    }
+
+    async _setSourcePaused(request) {
+        try {
+            const snapshot = await setSourcePaused(request);
+            if (this.isConnected) this._setSnapshotDirect(snapshot);
+            return snapshot;
+        } catch (error) {
+            if (error?.snapshot && this.isConnected) {
+                this._setSnapshotDirect(error.snapshot);
+            }
+            throw error;
+        }
     }
 
     _subscribeStatus(token) {
@@ -430,6 +446,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         return showDeleteRootModal({
             rootName: basename(root),
             mountTarget: this,
+            t: this._t,
             onConfirm: async () => {
                 const nextEntries = Array.isArray(payload?.result?.nextEntries)
                     ? payload.result.nextEntries

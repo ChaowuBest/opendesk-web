@@ -148,6 +148,17 @@ export async function forceRefreshScan() {
     return result;
 }
 
+export async function setSourcePaused(request) {
+    const result = await window.applicationAPI.call('setSourcePaused', request);
+    if (result?.status !== 'ok') {
+        const error = new Error('Source pause state was not applied.');
+        error.code = result?.code ?? 'generic';
+        error.snapshot = result?.data ?? null;
+        throw error;
+    }
+    return result.data;
+}
+
 export function openSettings() {
     const globalControlAPI = getGlobalControlAPI();
     if (!globalControlAPI?.openSettingEditor) {

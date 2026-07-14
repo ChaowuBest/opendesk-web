@@ -576,6 +576,10 @@ class FSStorage {
                     if (val.last_scan_at !== null && typeof val.last_scan_at !== 'number') {
                         throw new Error(`invalid root last_scan_at: ${key}`);
                     }
+                    val.paused ??= false;
+                    if (typeof val.paused !== 'boolean') {
+                        throw new Error(`invalid root paused: ${key}`);
+                    }
                 }
                 this.scannerState = state;
                 return;
@@ -600,6 +604,34 @@ class FSStorage {
         // to the caller (not swallowed).
         this._stateWriteChain = this._stateWriteChain.then(writeOp, writeOp);
         return this._stateWriteChain;
+    }
+
+    async _writeScannerStateSnapshot(state, commit) {
+        // Freeze pause state at call time, then commit memory before the write chain advances.
+        const serialized = JSON.stringify(state, null, 2);
+        const writeOp = async () => {
+            const tmp = this._scannerStatePath + '.tmp';
+            await fs.promises.writeFile(tmp, serialized, 'utf-8');
+            await fs.promises.rename(tmp, this._scannerStatePath);
+            commit();
+        };
+        this._stateWriteChain = this._stateWriteChain.then(writeOp, writeOp);
+        return this._stateWriteChain;
+    }
+
+    async setRootPaused(root, paused) {
+        const rootState = this.scannerState.roots[root];
+        if (!rootState) throw new Error(`unknown scanner root: ${root}`);
+        const nextState = {
+            ...this.scannerState,
+            roots: {
+                ...this.scannerState.roots,
+                [root]: { ...rootState, paused }
+            }
+        };
+        await this._writeScannerStateSnapshot(nextState, () => {
+            rootState.paused = paused;
+        });
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
@@ -1832,9 +1864,12 @@ class FSStorage {
         ];
         const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
         const result = scope
-            ? await this.storage.searchScope({ preconditions: conditions.slice(1), targetCondition: conditions[0] }, {
-                  collectDiagnostics
-              })
+            ? await this.storage.searchScope(
+                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                  {
+                      collectDiagnostics
+                  }
+              )
             : await this.storage.search(conditions);
         logScopedSearchDiagnostics('name_semantic', scope, result);
 
@@ -1899,9 +1934,12 @@ class FSStorage {
         ];
         const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
         const result = scope
-            ? await this.storage.searchScope({ preconditions: conditions.slice(1), targetCondition: conditions[0] }, {
-                  collectDiagnostics
-              })
+            ? await this.storage.searchScope(
+                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                  {
+                      collectDiagnostics
+                  }
+              )
             : await this.storage.search(conditions);
         logScopedSearchDiagnostics('content_semantic', scope, result);
         let items = result.items.slice(0, normalizedTopK).map((it) => ({
@@ -1939,10 +1977,10 @@ class FSStorage {
                   { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
                   { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
               ];
-        const result = await this.storage.search(
-            conditions,
-            { limit, orderBy: { field: 'modified', direction: 'DESC' } }
-        );
+        const result = await this.storage.search(conditions, {
+            limit,
+            orderBy: { field: 'modified', direction: 'DESC' }
+        });
         const rows = result.items.map((it) => ({
             path: it.item.item_id,
             filename: it.item.filename,

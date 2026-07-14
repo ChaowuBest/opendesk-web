@@ -343,6 +343,28 @@ async function testSlashShowsUnavailableRootsAndVisibleRebuildEvent() {
     assert.ok(page.text.includes('⚠️ 部分扫描路径暂时不可访问，索引已保留。'));
 }
 
+async function testSlashShowsLocalizedPausedSource() {
+    const page = await runSlashStatus(
+        makeStatusData({
+            sources: [
+                {
+                    root: '/tmp/filemgr-status-test',
+                    paused: true,
+                    state: 'paused',
+                    last_scan_at: now - 5 * 60 * 1000,
+                    total_files: 12,
+                    embedded_count: 12,
+                    pending_count: 0,
+                    is_workspace: false
+                }
+            ]
+        })
+    );
+
+    assert.ok(page.text.includes('已暂停 · 12 个文件'));
+    assert.doesNotMatch(page.text, /\bpaused\b/);
+}
+
 async function testSlashStatusLabels() {
     const cases = [
         ['idle', '● 未配置'],
@@ -407,7 +429,10 @@ async function testSearchIndexedFilesForwardsOptionsAndUnwraps() {
     app.registry.callWorker = async () => ({ status: 'error', message: 'worker failed' });
     await assert.rejects(() => app.searchIndexedFiles('plan', options), /worker failed/);
     app.registry.callWorker = async () => ({ status: 'error' });
-    await assert.rejects(() => app.searchIndexedFiles('plan', options), (error) => error.message === t('filemgr.search.failed'));
+    await assert.rejects(
+        () => app.searchIndexedFiles('plan', options),
+        (error) => error.message === t('filemgr.search.failed')
+    );
 }
 
 testBaseOnlyDoesNotReportUnloadedChunksAsZero();
@@ -418,6 +443,7 @@ await testStatusChangedBridgePublishesAndNotifiesTUI();
 await testSlashReadonlyDeferredDoesNotShowNoScanDirs();
 await testSlashReadonlyFullModeCopyIsClear();
 await testSlashShowsUnavailableRootsAndVisibleRebuildEvent();
+await testSlashShowsLocalizedPausedSource();
 await testSlashStatusLabels();
 await testSlashAlertMessages();
 await testSearchIndexedFilesForwardsOptionsAndUnwraps();

@@ -39,15 +39,29 @@ async function runConfirmedAction(onConfirm) {
     return result ?? true;
 }
 
-export async function showDeleteRootModal({ rootName, onConfirm, mountTarget } = {}) {
+function modalText(t, key, vars, fallback) {
+    const translated = t?.(key, vars);
+    if (translated && translated !== key) {
+        return translated;
+    }
+    return fallback.replace(/\$\{(\w+)\}/g, (_match, name) => String(vars?.[name] ?? ''));
+}
+
+export async function showDeleteRootModal({ rootName, onConfirm, mountTarget, t } = {}) {
+    const escapedRootName = escapeHtml(rootName);
     const confirmed = await showConfirmModal({
         icon: 'fa-trash-can',
-        iconBg: '#FEF2F2',
-        iconColor: '#DC2626',
-        title: '删除数据源',
-        message: `删除数据源「${escapeHtml(rootName)}」？此操作会清除该路径下的本地索引，但不会删除你的文件。`,
-        confirmText: '删除',
-        cancelText: '取消',
+        iconBg: 'color-mix(in srgb, #ef4444 14%, var(--od-bg-elevated, #ffffff))',
+        iconColor: '#ef4444',
+        title: modalText(t, 'renderer.filemgr.source.removeDialog.title', null, 'Remove scan path'),
+        message: modalText(
+            t,
+            'renderer.filemgr.source.removeDialog.message',
+            { name: escapedRootName },
+            'Remove scan path “${name}”? This folder will no longer be scanned and its search data will be cleared. No files will be deleted.'
+        ),
+        confirmText: modalText(t, 'renderer.filemgr.source.removeDialog.confirm', null, 'Remove'),
+        cancelText: modalText(t, 'renderer.filemgr.source.removeDialog.cancel', null, 'Cancel'),
         danger: true,
         mountTarget
     });

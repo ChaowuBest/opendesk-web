@@ -32,12 +32,15 @@ assert.deepEqual(buildIndexedFilePreconditions({ scope: undefined, requireEmbedd
     { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
     { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
 ]);
-assert.deepEqual(buildIndexedFilePreconditions({ scope: { type: 'path', path: '/workspace' }, requireEmbedded: true }), [
-    { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-    { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
-    { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
-    { indexer: 'BaseIndexer', field: 'item_id', operator: 'path_descendant_or_self', value: '/workspace' }
-]);
+assert.deepEqual(
+    buildIndexedFilePreconditions({ scope: { type: 'path', path: '/workspace' }, requireEmbedded: true }),
+    [
+        { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+        { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+        { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+        { indexer: 'BaseIndexer', field: 'item_id', operator: 'path_descendant_or_self', value: '/workspace' }
+    ]
+);
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
@@ -152,6 +155,11 @@ if (!OPENROUTER_API_KEY) {
             testInitializeSyncEmbeddingGate,
             testProbeEmbeddingBudgetOptions,
             testScannerStateMigratesLegacyProbeError,
+            testScannerStateMigratesPausedWithoutResettingCheckpoint,
+            testSetRootPausedPersistsDiskBeforeMemoryCommit,
+            testSetRootPausedUsesCallTimeSnapshot,
+            testQueuedCheckpointSaveKeepsCommittedPause,
+            testSetRootPausedFailureDoesNotLeakIntoLaterSave,
             testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
             testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
             testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
@@ -165,7 +173,8 @@ if (!OPENROUTER_API_KEY) {
             testHarmonyPerRootCountsFallbackToScannerStateOnError,
             testHarmonyPerRootCountsClearCacheHelpers,
             testHarmonyPerRootCountsClearInvalidatesInFlightRefresh,
-            testHarmonyPerRootCountsModeTransitionClearsCache
+            testHarmonyPerRootCountsModeTransitionClearsCache,
+            testProcessEmbeddingQueueExcludesPausedOnlyOwnership
         ].filter((test) => test.name.includes(filter));
         for (const test of filteredTests) {
             await test();
@@ -176,6 +185,11 @@ if (!OPENROUTER_API_KEY) {
     await testScannerStateNewField();
     await testScannerStateMigratesLastFileCount();
     await testScannerStateMigratesLastScanAt();
+    await testScannerStateMigratesPausedWithoutResettingCheckpoint();
+    await testSetRootPausedPersistsDiskBeforeMemoryCommit();
+    await testSetRootPausedUsesCallTimeSnapshot();
+    await testQueuedCheckpointSaveKeepsCommittedPause();
+    await testSetRootPausedFailureDoesNotLeakIntoLaterSave();
     await testScannerStateMigratesLegacyProbeError();
     await testProbeErrorPersistsAndNotifies();
     await testClassifyEmbeddingErrorTableRules();
@@ -198,6 +212,7 @@ if (!OPENROUTER_API_KEY) {
     await testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping();
     await testRefCountZeroHiddenFromSearchQueueAndStats();
     await testProcessEmbeddingQueueUsesRootAwareCandidates();
+    await testProcessEmbeddingQueueExcludesPausedOnlyOwnership();
     await testProcessEmbeddingQueueYieldsAtFileBoundary();
     await testRootAwareCandidatesDedupMultiRootFile();
     await testCarveOutKeepsIntermediateRowInvisibleUntilChildScan();
@@ -897,6 +912,55 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
         cleanup(dir);
     }
     console.log('  ✅ testProcessEmbeddingQueueYieldsAtFileBoundary');
+}
+
+async function testProcessEmbeddingQueueExcludesPausedOnlyOwnership() {
+    console.log('  testProcessEmbeddingQueueExcludesPausedOnlyOwnership...');
+    const dir = tmpDir('embedding-runnable-ownership');
+    let fss;
+    try {
+        fss = new FSStorage(dir);
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        const pausedRoot = '/paused';
+        const runnableRoot = '/runnable';
+        const pausedOnly = `${pausedRoot}/only.md`;
+        const runnableOnly = `${runnableRoot}/only.md`;
+        const shared = `${runnableRoot}/shared.md`;
+        await fss.storage.upsert(
+            [
+                makeStoredFileItem(pausedOnly, [pausedRoot], { embedded: 0 }),
+                makeStoredFileItem(runnableOnly, [runnableRoot], { embedded: 0 }),
+                makeStoredFileItem(shared, [pausedRoot, runnableRoot], { embedded: 0, ref_count: 2 })
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const seen = [];
+        fss.embedSingleFile = async (row) => {
+            seen.push(row.item_id);
+            await fss.storage.update([{ item_id: row.item_id, item_type: 'file', embedded: 1 }], {
+                indexers: ['BaseIndexer']
+            });
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false, { activeRoots: [runnableRoot] });
+
+        assert.equal(processed, 2);
+        assert.deepEqual(seen.sort(), [runnableOnly, shared].sort());
+        const pending = await fss.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: pausedOnly }
+        ]);
+        assert.equal(pending.items[0].item.embedded, 0);
+        const sharedRow = await fss.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: shared }
+        ]);
+        assert.equal(sharedRow.items[0].item.embedded, 1);
+        assert.deepEqual(JSON.parse(sharedRow.items[0].item.root_refs).sort(), [pausedRoot, runnableRoot].sort());
+        assert.equal(sharedRow.items[0].item.ref_count, 2);
+    } finally {
+        if (fss?.storage) fss.storage.close();
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueExcludesPausedOnlyOwnership');
 }
 
 async function testRootAwareCandidatesDedupMultiRootFile() {
@@ -1837,6 +1901,200 @@ async function testScannerStateMigratesLastScanAt() {
         cleanup(dir);
     }
     console.log('  ✅ testScannerStateMigratesLastScanAt');
+}
+
+async function testScannerStateMigratesPausedWithoutResettingCheckpoint() {
+    console.log('  testScannerStateMigratesPausedWithoutResettingCheckpoint...');
+    const dir = tmpDir('scanner-paused-migration');
+    const root = path.join(dir, 'source');
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'scanner_state.json'),
+            JSON.stringify({
+                version: 1,
+                roots: {
+                    [root]: {
+                        last_full_scan: 111,
+                        last_scan_at: 222,
+                        total_files: 33,
+                        last_file_count: 44
+                    }
+                }
+            }),
+            'utf-8'
+        );
+        const storage = new FSStorage(dir);
+        await storage.initializeReadonly();
+        assert.deepEqual(storage.getScannerState().roots[root], {
+            last_full_scan: 111,
+            last_scan_at: 222,
+            total_files: 33,
+            last_file_count: 44,
+            paused: false
+        });
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testSetRootPausedPersistsDiskBeforeMemoryCommit() {
+    console.log('  testSetRootPausedPersistsDiskBeforeMemoryCommit...');
+    const dir = tmpDir('scanner-paused-success');
+    const root = path.join(dir, 'source');
+    try {
+        const storage = new FSStorage(dir);
+        storage.scannerState.roots[root] = {
+            last_full_scan: 10,
+            last_scan_at: 20,
+            total_files: 30,
+            last_file_count: 30,
+            paused: false
+        };
+        await storage.saveScannerState();
+
+        await storage.setRootPaused(root, true);
+
+        assert.equal(storage.scannerState.roots[root].paused, true);
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, 'scanner_state.json'), 'utf-8'));
+        assert.equal(saved.roots[root].paused, true);
+        assert.equal(saved.roots[root].last_full_scan, 10);
+        assert.equal(saved.roots[root].last_scan_at, 20);
+        assert.equal(saved.roots[root].total_files, 30);
+        assert.equal(saved.roots[root].last_file_count, 30);
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testSetRootPausedUsesCallTimeSnapshot() {
+    console.log('  testSetRootPausedUsesCallTimeSnapshot...');
+    const dir = tmpDir('scanner-paused-call-time-snapshot');
+    const root = path.join(dir, 'source');
+    const storage = new FSStorage(dir);
+    const originalWrite = fs.promises.writeFile;
+    let releaseWrite;
+    let writeStarted;
+    let pausePromise;
+    try {
+        storage.scannerState.roots[root] = {
+            last_full_scan: 10,
+            last_scan_at: 20,
+            total_files: 30,
+            last_file_count: 30,
+            paused: false
+        };
+        await storage.saveScannerState();
+        writeStarted = new Promise((resolve) => {
+            fs.promises.writeFile = async (...args) => {
+                resolve();
+                await new Promise((release) => {
+                    releaseWrite = release;
+                });
+                return originalWrite(...args);
+            };
+        });
+
+        pausePromise = storage.setRootPaused(root, true);
+        await writeStarted;
+        assert.equal(storage.scannerState.roots[root].paused, false);
+        storage.scannerState.roots[root].total_files = 999;
+        releaseWrite();
+        await pausePromise;
+
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, 'scanner_state.json'), 'utf-8'));
+        assert.equal(saved.roots[root].paused, true);
+        assert.equal(saved.roots[root].total_files, 30);
+        assert.equal(storage.scannerState.roots[root].total_files, 999);
+    } finally {
+        fs.promises.writeFile = originalWrite;
+        releaseWrite?.();
+        await Promise.allSettled([pausePromise].filter(Boolean));
+        cleanup(dir);
+    }
+}
+
+async function testQueuedCheckpointSaveKeepsCommittedPause() {
+    console.log('  testQueuedCheckpointSaveKeepsCommittedPause...');
+    const dir = tmpDir('scanner-paused-queued-checkpoint');
+    const root = path.join(dir, 'source');
+    const storage = new FSStorage(dir);
+    const originalWrite = fs.promises.writeFile;
+    let releasePauseWrite;
+    let pauseWriteStarted;
+    let pausePromise;
+    let checkpointPromise;
+    try {
+        storage.scannerState.roots[root] = {
+            last_full_scan: 10,
+            last_scan_at: 20,
+            total_files: 30,
+            last_file_count: 30,
+            paused: false
+        };
+        await storage.saveScannerState();
+        pauseWriteStarted = new Promise((resolve) => {
+            let blocked = false;
+            fs.promises.writeFile = async (...args) => {
+                if (!blocked) {
+                    blocked = true;
+                    resolve();
+                    await new Promise((release) => {
+                        releasePauseWrite = release;
+                    });
+                }
+                return originalWrite(...args);
+            };
+        });
+
+        pausePromise = storage.setRootPaused(root, true);
+        await pauseWriteStarted;
+        checkpointPromise = storage.saveScannerState();
+        storage.scannerState.roots[root].last_full_scan = 77;
+        releasePauseWrite();
+        await Promise.all([pausePromise, checkpointPromise]);
+
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, 'scanner_state.json'), 'utf-8'));
+        assert.equal(saved.roots[root].paused, true);
+        assert.equal(saved.roots[root].last_full_scan, 77);
+        assert.equal(storage.scannerState.roots[root].paused, true);
+    } finally {
+        fs.promises.writeFile = originalWrite;
+        releasePauseWrite?.();
+        await Promise.allSettled([pausePromise, checkpointPromise].filter(Boolean));
+        cleanup(dir);
+    }
+}
+
+async function testSetRootPausedFailureDoesNotLeakIntoLaterSave() {
+    console.log('  testSetRootPausedFailureDoesNotLeakIntoLaterSave...');
+    const dir = tmpDir('scanner-paused-failure');
+    const root = path.join(dir, 'source');
+    const storage = new FSStorage(dir);
+    const originalWrite = fs.promises.writeFile;
+    try {
+        storage.scannerState.roots[root] = {
+            last_full_scan: 1,
+            last_scan_at: 2,
+            total_files: 3,
+            last_file_count: 3,
+            paused: false
+        };
+        await storage.saveScannerState();
+        fs.promises.writeFile = async () => {
+            throw new Error('pause state write failed');
+        };
+        await assert.rejects(() => storage.setRootPaused(root, true), /pause state write failed/);
+        assert.equal(storage.scannerState.roots[root].paused, false);
+
+        fs.promises.writeFile = originalWrite;
+        storage.scannerState.last_embedding_task_at = 123;
+        await storage.saveScannerState();
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, 'scanner_state.json'), 'utf-8'));
+        assert.equal(saved.roots[root].paused, false);
+    } finally {
+        fs.promises.writeFile = originalWrite;
+        cleanup(dir);
+    }
 }
 
 async function testScannerStateMigratesLegacyProbeError() {
@@ -3684,14 +3942,44 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
     try {
         const calls = [];
         const hits = [
-            { item: { item_id: '/Docs/a.md', filename: 'a.md', modified: 1, size: 2, ref_count: 1, root_refs: '["/Docs"]' }, chunk_id: 'a', chunk_text: 'complete A', ChunkScore: 0.7 },
-            { item: { item_id: '/Docs/b.md', filename: 'b.md', modified: 3, size: 4, ref_count: 1, root_refs: '["/Docs"]' }, chunk_id: 'b', chunk_text: 'complete B', ChunkScore: 0.9 }
+            {
+                item: {
+                    item_id: '/Docs/a.md',
+                    filename: 'a.md',
+                    modified: 1,
+                    size: 2,
+                    ref_count: 1,
+                    root_refs: '["/Docs"]'
+                },
+                chunk_id: 'a',
+                chunk_text: 'complete A',
+                ChunkScore: 0.7
+            },
+            {
+                item: {
+                    item_id: '/Docs/b.md',
+                    filename: 'b.md',
+                    modified: 3,
+                    size: 4,
+                    ref_count: 1,
+                    root_refs: '["/Docs"]'
+                },
+                chunk_id: 'b',
+                chunk_text: 'complete B',
+                ChunkScore: 0.9
+            }
         ];
         const fss = new FSStorage(dir);
         fss.mode = 'full';
         fss.storage = {
-            async search(conditions) { calls.push(['global', conditions]); return { items: hits, totalCount: 2 }; },
-            async searchScope(request) { calls.push(['scope', request]); return { items: hits, totalCount: 2 }; }
+            async search(conditions) {
+                calls.push(['global', conditions]);
+                return { items: hits, totalCount: 2 };
+            },
+            async searchScope(request) {
+                calls.push(['scope', request]);
+                return { items: hits, totalCount: 2 };
+            }
         };
         LLM.embed = async () => [0.1];
         let rerankCalls = 0;
@@ -3710,15 +3998,29 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
 
         const scoped = await fss.searchIndexedChunks('plan', { topK: 9, scope: { type: 'path', path: '/Docs' } });
         assert.equal(calls[1][1].targetCondition.vectorQuery.topK, 9);
-        assert.deepEqual(calls[1][1].preconditions.map((condition) => [condition.field, condition.operator, condition.value]), [
-            ['type', '=', 'file'], ['embedded', '=', 1], ['ref_count', '>', 0], ['item_id', 'path_descendant_or_self', '/Docs']
-        ]);
+        assert.deepEqual(
+            calls[1][1].preconditions.map((condition) => [condition.field, condition.operator, condition.value]),
+            [
+                ['type', '=', 'file'],
+                ['embedded', '=', 1],
+                ['ref_count', '>', 0],
+                ['item_id', 'path_descendant_or_self', '/Docs']
+            ]
+        );
         assert.equal(rerankCalls, 2);
 
-        LLM.rerank = async () => { throw new Error('rerank down'); };
+        LLM.rerank = async () => {
+            throw new Error('rerank down');
+        };
         const fallback = await fss.searchIndexedChunks('plan', { topK: 2 });
-        assert.deepEqual(fallback.results.map((hit) => hit.chunk.id), ['a', 'b']);
-        assert.deepEqual(fallback.results.map((hit) => hit.score), [0.7, 0.9]);
+        assert.deepEqual(
+            fallback.results.map((hit) => hit.chunk.id),
+            ['a', 'b']
+        );
+        assert.deepEqual(
+            fallback.results.map((hit) => hit.score),
+            [0.7, 0.9]
+        );
         await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 1.5 }), /integer/);
         await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 5001 }), /1\.\.5000/);
     } finally {
@@ -4116,6 +4418,11 @@ async function main() {
         testScannerStateNewField,
         testScannerStateMigratesLastFileCount,
         testScannerStateMigratesLastScanAt,
+        testScannerStateMigratesPausedWithoutResettingCheckpoint,
+        testSetRootPausedPersistsDiskBeforeMemoryCommit,
+        testSetRootPausedUsesCallTimeSnapshot,
+        testQueuedCheckpointSaveKeepsCommittedPause,
+        testSetRootPausedFailureDoesNotLeakIntoLaterSave,
         testPermanentErrorPersistsFormatsAndNotifies,
         testClassifyEmbeddingErrorTableRules,
         testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing,
@@ -4161,6 +4468,7 @@ async function main() {
         testEmbedSingleFileDriftReturnsSkipped,
         testProcessEmbeddingQueueDrainsPending,
         testProcessEmbeddingQueueDriftSkippedOnce,
+        testProcessEmbeddingQueueExcludesPausedOnlyOwnership,
         testHotSwapBaseOnlyToFull,
         testInitializeBaseOnlyWhenNoEmbedding,
         testInitializeFullWhenEmbeddingConfigured,
