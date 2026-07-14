@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import path from 'node:path';
 import * as http from 'http';
 import * as net from 'net';
+import * as zlib from 'node:zlib';
 
 async function listenLocalServer(server: net.Server | http.Server, port = 0): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -55,6 +56,25 @@ async function closeLocalTcpServer(server: net.Server | http.Server): Promise<vo
             }
         });
     });
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs = 3_000): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                    () => reject(new Error(`Operation did not settle within ${timeoutMs}ms`)),
+                    timeoutMs
+                );
+            })
+        ]);
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
 }
 
 const PROXY_ENV_KEYS = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy'] as const;
@@ -368,6 +388,328 @@ describe('Platform fetch 抽象层', () => {
             } finally {
                 globalThis.fetch = originalFetch;
                 await closeLocalTcpServer(server);
+            }
+        });
+
+        test.each([
+            ['gzip', 'gzip', (body: Buffer) => zlib.gzipSync(body)],
+            ['deflate', 'deflate', (body: Buffer) => zlib.deflateSync(body)],
+            ['raw deflate', 'deflate', (body: Buffer) => zlib.deflateRawSync(body)],
+            ['brotli', 'br', (body: Buffer) => zlib.brotliCompressSync(body)]
+        ] as const)('Node 传输流式解压 %s 响应', async (_label, contentEncoding, compress) => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const payload = JSON.stringify({ source: 'proxy-fetch', contentEncoding });
+            const compressed = compress(Buffer.from(payload));
+            let acceptEncoding: string | undefined;
+            const server = http.createServer((req, res) => {
+                acceptEncoding = req.headers['accept-encoding'];
+                res.writeHead(200, {
+                    'Content-Encoding': contentEncoding,
+                    'Content-Length': String(compressed.length),
+                    'Content-Type': 'application/json',
+                    'X-Compression-Test': contentEncoding
+                });
+                res.end(compressed);
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/compressed`, undefined, {
+                    bypassProxy: true
+                });
+
+                await expect(response.text()).resolves.toBe(payload);
+                expect(acceptEncoding).toBe('gzip, deflate, br');
+                expect(response.headers.get('content-encoding')).toBeNull();
+                expect(response.headers.get('content-length')).toBeNull();
+                expect(response.headers.get('content-type')).toBe('application/json');
+                expect(response.headers.get('x-compression-test')).toBe(contentEncoding);
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('Node 传输按 Content-Encoding 的逆序解压多层编码', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const payload = 'multi-layer-compression-ok';
+            const compressed = zlib.brotliCompressSync(zlib.gzipSync(Buffer.from(payload)));
+            const server = http.createServer((_req, res) => {
+                res.writeHead(200, {
+                    'Content-Encoding': 'gzip, br',
+                    'Content-Length': String(compressed.length)
+                });
+                res.end(compressed);
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/multi`, undefined, {
+                    bypassProxy: true
+                });
+
+                await expect(response.text()).resolves.toBe(payload);
+                expect(response.headers.get('content-encoding')).toBeNull();
+                expect(response.headers.get('content-length')).toBeNull();
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('Node 传输在响应结束前持续产出解压后的数据', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            let releaseSecondChunk: (() => void) | undefined;
+            const secondChunkReleased = new Promise<void>((resolve) => {
+                releaseSecondChunk = resolve;
+            });
+            let firstChunkFlushed: (() => void) | undefined;
+            const firstChunkReady = new Promise<void>((resolve) => {
+                firstChunkFlushed = resolve;
+            });
+            const server = http.createServer(async (_req, res) => {
+                res.writeHead(200, { 'Content-Encoding': 'gzip' });
+                const compressor = zlib.createGzip();
+                compressor.pipe(res);
+                compressor.write('first-stream-chunk');
+                compressor.flush(zlib.constants.Z_SYNC_FLUSH, () => firstChunkFlushed?.());
+                await secondChunkReleased;
+                compressor.end('second-stream-chunk');
+            });
+            const port = await listenLocalServer(server);
+            let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/stream`, undefined, {
+                    bypassProxy: true
+                });
+                reader = response.body!.getReader();
+                await settleWithin(firstChunkReady);
+                const first = await settleWithin(reader.read());
+
+                expect(first.done).toBe(false);
+                expect(new TextDecoder().decode(first.value)).toContain('first-stream-chunk');
+
+                releaseSecondChunk?.();
+                let remaining = '';
+                while (true) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    remaining += new TextDecoder().decode(chunk.value);
+                }
+                expect(remaining).toContain('second-stream-chunk');
+            } finally {
+                releaseSecondChunk?.();
+                await reader?.cancel().catch(() => {});
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('取消解压后的 Web 流会关闭上游压缩响应', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            let responseClosed: (() => void) | undefined;
+            const responseClosePromise = new Promise<void>((resolve) => {
+                responseClosed = resolve;
+            });
+            const server = http.createServer((_req, res) => {
+                res.writeHead(200, { 'Content-Encoding': 'gzip' });
+                const compressor = zlib.createGzip();
+                const interval = setInterval(() => {
+                    compressor.write('stream-data-'.repeat(256));
+                    compressor.flush(zlib.constants.Z_SYNC_FLUSH);
+                }, 10);
+                res.once('close', () => {
+                    clearInterval(interval);
+                    compressor.destroy();
+                    responseClosed?.();
+                });
+                compressor.pipe(res);
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/cancel`, undefined, {
+                    bypassProxy: true
+                });
+                const reader = response.body!.getReader();
+                const first = await settleWithin(reader.read());
+                expect(first.done).toBe(false);
+
+                await reader.cancel('test cancellation');
+                await settleWithin(responseClosePromise);
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('AbortSignal 会终止解压管线并关闭上游响应', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const controller = new AbortController();
+            let responseClosed: (() => void) | undefined;
+            const responseClosePromise = new Promise<void>((resolve) => {
+                responseClosed = resolve;
+            });
+            const server = http.createServer((_req, res) => {
+                res.writeHead(200, { 'Content-Encoding': 'gzip' });
+                const compressor = zlib.createGzip();
+                const interval = setInterval(() => {
+                    compressor.write('abort-stream-data-'.repeat(256));
+                    compressor.flush(zlib.constants.Z_SYNC_FLUSH);
+                }, 10);
+                res.once('close', () => {
+                    clearInterval(interval);
+                    compressor.destroy();
+                    responseClosed?.();
+                });
+                compressor.pipe(res);
+            });
+            const port = await listenLocalServer(server);
+            let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+            try {
+                const response = await fetchWithResolvedProxy(
+                    `http://127.0.0.1:${port}/abort`,
+                    { signal: controller.signal },
+                    { bypassProxy: true }
+                );
+                reader = response.body!.getReader();
+                const first = await settleWithin(reader.read());
+                expect(first.done).toBe(false);
+
+                controller.abort();
+                const readUntilRejected = async () => {
+                    while (true) {
+                        const chunk = await reader!.read();
+                        if (chunk.done) {
+                            throw new Error('Aborted response ended without propagating an error');
+                        }
+                    }
+                };
+                await expect(settleWithin(readUntilRejected())).rejects.toThrow();
+                await settleWithin(responseClosePromise);
+            } finally {
+                controller.abort();
+                await reader?.cancel().catch(() => {});
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('损坏的压缩响应通过 body Promise 返回错误', async () => {
+            const { logger } = await import('../../../main/utils/logger');
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+            const server = http.createServer((_req, res) => {
+                res.writeHead(200, { 'Content-Encoding': 'gzip' });
+                res.end('not-a-valid-gzip-stream');
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/invalid`, undefined, {
+                    bypassProxy: true
+                });
+
+                await expect(response.text()).rejects.toThrow();
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('Node 传输保留调用方显式指定的 Accept-Encoding', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            let acceptEncoding: string | undefined;
+            const server = http.createServer((req, res) => {
+                acceptEncoding = req.headers['accept-encoding'];
+                res.end('identity-ok');
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(
+                    `http://127.0.0.1:${port}/identity`,
+                    { headers: { 'Accept-Encoding': 'identity' } },
+                    { bypassProxy: true }
+                );
+
+                await expect(response.text()).resolves.toBe('identity-ok');
+                expect(acceptEncoding).toBe('identity');
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('Node 传输对未知 Content-Encoding 保留原始正文和响应头', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const server = http.createServer((_req, res) => {
+                res.writeHead(200, { 'Content-Encoding': 'future-codec' });
+                res.end('opaque-body');
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/unknown`, undefined, {
+                    bypassProxy: true
+                });
+
+                await expect(response.text()).resolves.toBe('opaque-body');
+                expect(response.headers.get('content-encoding')).toBe('future-codec');
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test.each([
+            ['HEAD', 200],
+            ['GET', 204],
+            ['GET', 304]
+        ])('Node 传输不会为无正文的 %s %s 响应创建解压器', async (method, status) => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const server = http.createServer((_req, res) => {
+                res.writeHead(status, {
+                    'Content-Encoding': 'gzip',
+                    'Content-Length': '128'
+                });
+                res.end();
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(
+                    `http://127.0.0.1:${port}/no-body`,
+                    { method },
+                    { bypassProxy: true }
+                );
+
+                expect(response.status).toBe(status);
+                await expect(response.text()).resolves.toBe('');
+                expect(response.headers.get('content-encoding')).toBe('gzip');
+                expect(response.headers.get('content-length')).toBe('128');
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('HTTP 代理返回的压缩响应同样由中央传输解压', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const payload = 'proxy-compression-ok';
+            const compressed = zlib.gzipSync(Buffer.from(payload));
+            const proxyServer = http.createServer((_req, res) => {
+                res.writeHead(200, {
+                    'Content-Encoding': 'gzip',
+                    'Content-Length': String(compressed.length)
+                });
+                res.end(compressed);
+            });
+            const proxyPort = await listenLocalServer(proxyServer);
+
+            try {
+                const response = await fetchWithResolvedProxy('http://search.example/results', undefined, {
+                    proxyUrl: `http://127.0.0.1:${proxyPort}`
+                });
+
+                await expect(response.text()).resolves.toBe(payload);
+                expect(response.headers.get('content-encoding')).toBeNull();
+                expect(response.headers.get('content-length')).toBeNull();
+            } finally {
+                await closeLocalTcpServer(proxyServer);
             }
         });
 

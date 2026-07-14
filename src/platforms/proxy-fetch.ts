@@ -12,8 +12,9 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as net from 'node:net';
-import { Readable } from 'node:stream';
+import { pipeline, Readable, Transform, type TransformCallback } from 'node:stream';
 import * as tls from 'node:tls';
+import * as zlib from 'node:zlib';
 import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { logger } from '../main/utils/logger.js';
 
@@ -26,6 +27,7 @@ interface ResolvedProxyFetchOptions {
 
 const FETCH_BODY_PREVIEW_CHARS = 2_000;
 const FETCH_BODY_PREVIEW_ENV = 'OPENDESK_DEBUG_FETCH_BODY';
+const DEFAULT_ACCEPT_ENCODING = 'gzip, deflate, br';
 const MAX_REDIRECTS = 20;
 const REDACTED_HEADER_VALUE = '<redacted>';
 const REDACTED_URL_VALUE = 'redacted';
@@ -235,6 +237,13 @@ function requestModuleForProtocol(protocol: string): typeof http | typeof https 
     return protocol === 'https:' ? https : http;
 }
 
+function ensureAcceptEncoding(headers: http.OutgoingHttpHeaders): void {
+    const hasAcceptEncoding = Object.keys(headers).some((name) => name.toLowerCase() === 'accept-encoding');
+    if (!hasAcceptEncoding) {
+        headers['Accept-Encoding'] = DEFAULT_ACCEPT_ENCODING;
+    }
+}
+
 function observeSocketErrors(socket: net.Socket, scope: string): void {
     socket.on('error', (error) => {
         logger.warn(`[proxy-fetch] ${scope} socket error: ${error.message}`);
@@ -298,14 +307,154 @@ function responseHeadersFromRaw(rawHeaders: string[]): Headers {
     return headers;
 }
 
-function responseFromIncomingMessage(response: http.IncomingMessage): Response {
+function isZlibWrappedDeflate(prefix: Buffer): boolean {
+    if (prefix.length < 2) {
+        return true;
+    }
+    const compressionMethodAndInfo = prefix[0];
+    const flags = prefix[1];
+    // Some servers send raw RFC 1951 data as "deflate". A valid RFC 1950 wrapper has this two-byte checksum.
+    return (
+        (compressionMethodAndInfo & 0x0f) === 8 &&
+        compressionMethodAndInfo >> 4 <= 7 &&
+        ((compressionMethodAndInfo << 8) + flags) % 31 === 0
+    );
+}
+
+class AutoDeflateDecoder extends Transform {
+    private decoder?: Transform;
+    private prefix = Buffer.alloc(0);
+
+    private initializeDecoder(prefix: Buffer): Transform {
+        const decoder = isZlibWrappedDeflate(prefix) ? zlib.createInflate() : zlib.createInflateRaw();
+        decoder.on('data', (chunk: Buffer) => {
+            if (!this.push(chunk)) {
+                decoder.pause();
+            }
+        });
+        decoder.once('error', (error) => {
+            this.destroy(error);
+        });
+        this.decoder = decoder;
+        return decoder;
+    }
+
+    override _read(size: number): void {
+        super._read(size);
+        this.decoder?.resume();
+    }
+
+    override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+        const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        if (this.decoder) {
+            this.decoder.write(input, callback);
+            return;
+        }
+
+        this.prefix = this.prefix.length === 0 ? input : Buffer.concat([this.prefix, input]);
+        if (this.prefix.length < 2) {
+            callback();
+            return;
+        }
+
+        const prefix = this.prefix;
+        this.prefix = Buffer.alloc(0);
+        this.initializeDecoder(prefix).write(prefix, callback);
+    }
+
+    override _flush(callback: TransformCallback): void {
+        if (this.decoder) {
+            this.decoder.once('end', callback);
+            this.decoder.end();
+            return;
+        }
+
+        const prefix = this.prefix;
+        this.prefix = Buffer.alloc(0);
+        const decoder = this.initializeDecoder(prefix);
+        decoder.once('end', callback);
+        decoder.end(prefix);
+    }
+
+    override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+        this.decoder?.destroy();
+        callback(error);
+    }
+}
+
+function createContentDecoder(encoding: string): Transform | null {
+    switch (encoding) {
+        case 'gzip':
+        case 'x-gzip':
+            return zlib.createGunzip();
+        case 'deflate':
+        case 'x-deflate':
+            return new AutoDeflateDecoder();
+        case 'br':
+            return zlib.createBrotliDecompress();
+        default:
+            return null;
+    }
+}
+
+function observeResponseStreamErrors(response: http.IncomingMessage): void {
     response.on('error', (error) => {
         logger.warn(`[proxy-fetch] response stream error: ${error.message}`);
     });
-    return new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
-        status: response.statusCode ?? 0,
+}
+
+function createDecodedResponseBody(response: http.IncomingMessage, headers: Headers): Readable {
+    const contentEncoding = headers.get('content-encoding');
+    if (!contentEncoding) {
+        observeResponseStreamErrors(response);
+        return response;
+    }
+
+    const encodings = contentEncoding
+        .split(',')
+        .map((encoding) => encoding.trim().toLowerCase())
+        .filter((encoding) => encoding.length > 0 && encoding !== 'identity');
+    if (encodings.length === 0) {
+        observeResponseStreamErrors(response);
+        return response;
+    }
+
+    const decoders: Transform[] = [];
+    // Content-Encoding lists encodings in application order, so decoding must happen in reverse.
+    for (const encoding of [...encodings].reverse()) {
+        const decoder = createContentDecoder(encoding);
+        if (!decoder) {
+            observeResponseStreamErrors(response);
+            return response;
+        }
+        decoders.push(decoder);
+    }
+
+    headers.delete('content-encoding');
+    headers.delete('content-length');
+    return pipeline([response, ...decoders], (error) => {
+        if (error && error.code !== 'ABORT_ERR' && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger.warn(`[proxy-fetch] response decompression error: ${error.message}`);
+        }
+    }) as Readable;
+}
+
+function responseHasBody(requestMethod: string, status: number): boolean {
+    return requestMethod.toUpperCase() !== 'HEAD' && status !== 204 && status !== 205 && status !== 304;
+}
+
+function responseFromIncomingMessage(response: http.IncomingMessage, requestMethod: string): Response {
+    const status = response.statusCode ?? 0;
+    const headers = responseHeadersFromRaw(response.rawHeaders);
+    const hasBody = responseHasBody(requestMethod, status);
+    if (!hasBody) {
+        observeResponseStreamErrors(response);
+    }
+    const body = hasBody ? createDecodedResponseBody(response, headers) : null;
+    return new Response(body ? (Readable.toWeb(body) as ReadableStream<Uint8Array>) : null, {
+        status,
         statusText: response.statusMessage,
-        headers: responseHeadersFromRaw(response.rawHeaders)
+        headers
     });
 }
 
@@ -319,6 +468,7 @@ function nativeFetchPlainRequest(
         const requestUrl = proxy ?? targetUrl;
         const requestModule = requestModuleForProtocol(requestUrl.protocol);
         const headers = toOutgoingHeaders(init?.headers as NativeRequestHeaders);
+        ensureAcceptEncoding(headers);
         if (proxy) {
             headers.host ??= targetUrl.host;
             addProxyAuthorization(headers, proxy);
@@ -335,7 +485,7 @@ function nativeFetchPlainRequest(
                 signal: init?.signal ?? undefined
             },
             (response) => {
-                resolve(responseFromIncomingMessage(response));
+                resolve(responseFromIncomingMessage(response, init?.method ?? 'GET'));
             }
         );
         request.on('error', reject);
@@ -351,6 +501,8 @@ function nativeFetchOverSocket(
 ): Promise<Response> {
     return new Promise((resolve, reject) => {
         const requestModule = requestModuleForProtocol(targetUrl.protocol);
+        const headers = toOutgoingHeaders(init?.headers as NativeRequestHeaders);
+        ensureAcceptEncoding(headers);
         const request = requestModule.request(
             {
                 protocol: targetUrl.protocol,
@@ -358,7 +510,7 @@ function nativeFetchOverSocket(
                 port: urlPort(targetUrl),
                 method: init?.method ?? 'GET',
                 path: targetUrl.pathname + targetUrl.search,
-                headers: toOutgoingHeaders(init?.headers as NativeRequestHeaders),
+                headers,
                 rejectUnauthorized: options.skipTlsVerification ? false : undefined,
                 signal: init?.signal ?? undefined,
                 createConnection: () => {
@@ -375,7 +527,7 @@ function nativeFetchOverSocket(
                 }
             },
             (response) => {
-                resolve(responseFromIncomingMessage(response));
+                resolve(responseFromIncomingMessage(response, init?.method ?? 'GET'));
             }
         );
         request.on('error', reject);

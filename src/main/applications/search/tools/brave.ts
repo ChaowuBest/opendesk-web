@@ -151,7 +151,6 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             method: 'GET',
             headers: {
                 Accept: 'application/json',
-                'Accept-Encoding': 'gzip',
                 'X-Subscription-Token': this.apiKey
             },
             signal: controller.signal
