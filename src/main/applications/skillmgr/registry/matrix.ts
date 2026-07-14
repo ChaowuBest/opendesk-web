@@ -88,7 +88,7 @@ export class MatrixRegistry extends SkillRegistryBase {
                 const cats = catNames.join(', ');
                 return {
                     id: s.enName || String(s.id || ''),
-                    name: s.enName || s.name || '',
+                    name: s.name || s.enName || '',
                     description: s.description || s.name || '',
                     author: ownerName || cats,
                     source: 'matrix' as const,
