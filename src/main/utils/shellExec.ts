@@ -214,9 +214,45 @@ export function decodeShellOutput(buffer: Buffer): string {
     }
 }
 
+// ── 非交互式环境变量防御表 ───────────────────────────────────────────────
+// 子进程的 stdin 已关闭，但部分工具会绕过 stdin/stdout pipe 直接打开
+// /dev/tty 做交互式提示，导致进程永久阻塞。以下变量告知这些工具：
+// 此处没有交互终端可用。
+//
+// 仅当 env 中不存在该 key 时才注入，用户/平台/全局 environ 显式设置的值优先。
+const NON_INTERACTIVE_ENV: Record<string, string> = {
+    CI: 'true',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',
+    DEBIAN_FRONTEND: 'noninteractive',
+    NEEDRESTART_MODE: 'a',
+    SUDO_ASKPASS: '/bin/false',
+    PAGER: 'cat',
+    GIT_PAGER: 'cat',
+    npm_config_yes: 'true',
+    PIP_NO_INPUT: '1',
+    DOCKER_CLI_HINTS: 'false',
+    DOCKER_SCAN_SUGGEST: 'false',
+    HGPLAIN: '1',
+    PYTHONINSPECT: '0',
+    GPG_TTY: ''
+};
+
+/**
+ * 向 env 注入非交互式防御变量。已存在的 key 不会被覆盖。
+ */
+export function injectNonInteractiveEnv(env: NodeJS.ProcessEnv): void {
+    for (const [key, value] of Object.entries(NON_INTERACTIVE_ENV)) {
+        if (!(key in env)) {
+            env[key] = value;
+        }
+    }
+}
+
 /**
  * 获取全局环境变量合并后的 env 对象。
  * 优先级：process.env → 平台注入环境变量 → 用户全局 environ → 调用方显式 env。
+ * 自动注入非交互式防御变量（用户显式设置优先）。
  */
 export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
     // 合并平台注入的环境变量（如 OpenHarmony 上的 NODE_OPTIONS=--jitless）
@@ -232,13 +268,18 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
     } catch {
         // Setting 未初始化时回退
     }
+
+    let result: NodeJS.ProcessEnv;
     if (!globalEnviron || Object.keys(globalEnviron).length === 0) {
-        return explicitEnv ? { ...baseEnv, ...explicitEnv } : baseEnv;
+        result = explicitEnv ? { ...baseEnv, ...explicitEnv } : baseEnv;
+    } else if (explicitEnv) {
+        result = { ...baseEnv, ...globalEnviron, ...explicitEnv };
+    } else {
+        result = { ...baseEnv, ...globalEnviron };
     }
-    if (explicitEnv) {
-        return { ...baseEnv, ...globalEnviron, ...explicitEnv };
-    }
-    return { ...baseEnv, ...globalEnviron };
+
+    injectNonInteractiveEnv(result);
+    return result;
 }
 
 /**
@@ -255,6 +296,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
             env: env,
             stdio: 'pipe'
         });
+        proc.stdin?.end();
 
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];

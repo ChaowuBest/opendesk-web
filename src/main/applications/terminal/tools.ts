@@ -37,7 +37,7 @@ import {
     type BackgroundProcessStatus
 } from './background';
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
-import { findExecutableInPath, decodeShellOutput } from '../../utils/shellExec.js';
+import { findExecutableInPath, decodeShellOutput, injectNonInteractiveEnv } from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -208,6 +208,7 @@ function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
             baseEnv: interpreterBaseEnv
         })
     };
+    // ── 编码环境变量 ──────────────────────────────────────────────────────
     // 默认注入 UTF-8 编码环境变量，避免 Windows 子进程（python/node/bash等）输出乱码
     // 仅在未显式设置时注入，用户/平台/全局 environ 中的设置优先
     if (!env.PYTHONIOENCODING) {
@@ -216,6 +217,10 @@ function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
     if (!env.PYTHONUTF8) {
         env.PYTHONUTF8 = '1';
     }
+
+    // 注入非交互式防御变量，防止子进程绕过 pipe 直接打开 /dev/tty 抢占终端
+    injectNonInteractiveEnv(env);
+
     return env;
 }
 
@@ -389,6 +394,7 @@ async function executeShellCommand(opts: {
     const env = buildSpawnEnv(taskState);
     const startTime = Date.now();
     const proc = spawn(shellPath, shellArgs, { cwd, env });
+    proc.stdin?.end();
     runningProcesses.add(proc);
 
     let output = '';
