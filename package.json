@@ -189,6 +189,11 @@
         "yauzl": "^2.10.0",
         "zod": "^4.2.1"
     },
+    "overrides": {
+        "@kenhkl/agent-moss": {
+            "better-sqlite3": "12.11.1"
+        }
+    },
     "optionalDependencies": {
         "@node-rs/jieba": "^2.0.1",
         "better-sqlite3": "^12.6.2",

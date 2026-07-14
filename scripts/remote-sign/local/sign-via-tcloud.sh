@@ -35,12 +35,16 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -o Serve
 
 # --- rsync probe (used for both upload & download) ---
 RSYNC_BIN=""
+# Temporarily disable pipefail to avoid SIGPIPE (exit 141)
+# from `head -1` closing the pipe early in the version check below.
+set +o pipefail
 for candidate in /opt/homebrew/bin/rsync /usr/local/bin/rsync /opt/local/bin/rsync; do
     if [[ -x "${candidate}" ]] && "${candidate}" --version 2>/dev/null | head -1 | grep -q "rsync  version 3"; then
         RSYNC_BIN="${candidate}"
         break
     fi
 done
+set -o pipefail
 RSYNC_SSH="ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes${SSH_KEY:+ -i ${SSH_KEY}}"
 
 mkdir -p "${OUT_DIR}"
@@ -180,7 +184,7 @@ fi
 # --- Auto-generate DMG if create-dmg.sh exists ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-if [[ -x "${ROOT_DIR}/scripts/create-dmg.sh" ]]; then
+if [[ -f "${ROOT_DIR}/scripts/create-dmg.sh" ]]; then
     echo
     echo "=> Wrapping in DMG..."
     DMG_NAME="OpenDesk-$(date +%Y%m%d)-arm64.dmg"
