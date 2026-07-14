@@ -791,6 +791,29 @@ function rmRecursive(p) {
     }
 }
 
+type SkillInstallConflictPolicy =
+    | { action: 'auto-rename' }
+    | { action: 'reject' }
+    | { action: 'overwrite' }
+    | { action: 'rename'; name: string };
+
+const AUTO_RENAME_CONFLICT: SkillInstallConflictPolicy = { action: 'auto-rename' };
+const REJECT_CONFLICT: SkillInstallConflictPolicy = { action: 'reject' };
+
+function isSkillConflictError(result: InstallSkillResult): boolean {
+    return !result.success && /^技能「.+?」已存在(?:，.*)?$/.test(result.error || '');
+}
+
+function validateCustomSkillName(name: string): string | undefined {
+    const trimmed = name.trim();
+    if (!trimmed) return '技能名称不能为空';
+    if (trimmed.length > 64) return '技能名称长度不能超过 64 个字符';
+    if (trimmed === '.' || trimmed === '..' || /[/\\\x00-\x1f\x7f]/.test(trimmed) || path.isAbsolute(trimmed)) {
+        return '技能名称不能包含路径分隔符或控制字符';
+    }
+    return undefined;
+}
+
 /**
  * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
@@ -799,18 +822,37 @@ function rmRecursive(p) {
  * @param {boolean} [refresh=true] - 是否立即刷新全局缓存与 toolset。批量导入时应设为 false，循环结束后统一 refresh()
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromDirectory(sourceDir, force = false, fallbackName, refresh = true) {
+function addSkillFromDirectory(
+    sourceDir,
+    force = false,
+    fallbackName,
+    refresh = true,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : AUTO_RENAME_CONFLICT
+) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
     }
     const result = loadSkillFromDir(resolved, fallbackName);
     if (!result.success) return { success: false, error: result.error };
-    const skillsDir = getSkillsDirectory();
+    const skillsDir = path.resolve(getSkillsDirectory());
     const originalName = result.name;
-    let destDir = path.join(skillsDir, result.name);
+    let targetName = originalName;
+
+    if (conflictPolicy.action === 'rename') {
+        const validationError = validateCustomSkillName(conflictPolicy.name);
+        if (validationError) return { success: false, error: validationError };
+        targetName = conflictPolicy.name.trim();
+    }
+
+    let destDir = path.resolve(skillsDir, targetName);
+    const relativeDest = path.relative(skillsDir, destDir);
+    if (!relativeDest || relativeDest.startsWith('..') || path.isAbsolute(relativeDest)) {
+        return { success: false, error: '无效的技能名称' };
+    }
+
     if (fs.existsSync(destDir)) {
-        if (force) {
+        if (conflictPolicy.action === 'overwrite') {
             try {
                 if (typeof fs.rmSync === 'function') {
                     fs.rmSync(destDir, { recursive: true, force: true });
@@ -820,19 +862,19 @@ function addSkillFromDirectory(sourceDir, force = false, fallbackName, refresh =
             } catch (e) {
                 return { success: false, error: `删除旧技能失败: ${e.message}` };
             }
-        } else {
-            // 自动重命名：查找下一个可用的名称
+        } else if (conflictPolicy.action === 'auto-rename') {
             let counter = 1;
-            let newName;
             do {
-                newName = `${originalName}-${counter}`;
+                targetName = `${originalName}-${counter}`;
                 counter++;
-            } while (fs.existsSync(path.join(skillsDir, newName)));
-            result.name = newName;
-            destDir = path.join(skillsDir, newName);
-            logger.info(`SkillRegistry: 技能名冲突，自动重命名为 ${newName}`);
+            } while (fs.existsSync(path.join(skillsDir, targetName)));
+            destDir = path.join(skillsDir, targetName);
+            logger.info(`SkillRegistry: 技能名冲突，自动重命名为 ${targetName}`);
+        } else {
+            return { success: false, error: `技能「${targetName}」已存在` };
         }
     }
+    result.name = targetName;
     try {
         copyDirRecursive(resolved, destDir);
         // 从 metadata.json 合成的技能需要落盘 SKILL.md
@@ -1115,7 +1157,8 @@ export function installSkillFromLocalZip(
     zipPath: string,
     skillRelPath?: string,
     force: boolean = false,
-    refresh: boolean = true
+    refresh: boolean = true,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : AUTO_RENAME_CONFLICT
 ): InstallSkillResult {
     if (!zipPath || typeof zipPath !== 'string') {
         return { success: false, error: '请选择有效的 zip 文件' };
@@ -1147,7 +1190,7 @@ export function installSkillFromLocalZip(
         if (!skillRoot) {
             return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
         }
-        return SkillRegistry.addSkillFromDirectory(skillRoot, force, undefined, refresh);
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force, undefined, refresh, conflictPolicy);
     } catch (e: any) {
         return { success: false, error: e?.message || '解压或添加失败' };
     } finally {
@@ -1155,7 +1198,11 @@ export function installSkillFromLocalZip(
     }
 }
 
-export async function installSkillFromUrl(url: string, force: boolean = false): Promise<InstallSkillResult> {
+export async function installSkillFromUrl(
+    url: string,
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
+): Promise<InstallSkillResult> {
     if (!url || typeof url !== 'string') {
         return { success: false, error: '请提供有效的 URL' };
     }
@@ -1174,7 +1221,7 @@ export async function installSkillFromUrl(url: string, force: boolean = false): 
         const zipBuffer = Buffer.from(await res.arrayBuffer());
         const zipPath = path.join(tmpDir, 'download.zip');
         fs.writeFileSync(zipPath, zipBuffer);
-        return installSkillFromLocalZip(zipPath, undefined, force);
+        return installSkillFromLocalZip(zipPath, undefined, force, true, conflictPolicy);
     } catch (e: any) {
         return { success: false, error: e?.message || '下载或安装失败' };
     } finally {
@@ -1182,7 +1229,11 @@ export async function installSkillFromUrl(url: string, force: boolean = false): 
     }
 }
 
-async function installSkillFromGitHubUrl(githubUrl: string, force: boolean = false): Promise<InstallSkillResult> {
+async function installSkillFromGitHubUrl(
+    githubUrl: string,
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
+): Promise<InstallSkillResult> {
     let parsed = parseGitHubTreeUrl(githubUrl);
     if (!parsed) {
         const repoMatch = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/?#]+)/i);
@@ -1210,7 +1261,7 @@ async function installSkillFromGitHubUrl(githubUrl: string, force: boolean = fal
         const zipBuffer = Buffer.from(await res.arrayBuffer());
         const zipPath = path.join(tmpDir, 'repo.zip');
         fs.writeFileSync(zipPath, zipBuffer);
-        return installSkillFromLocalZip(zipPath, relPath || undefined, force);
+        return installSkillFromLocalZip(zipPath, relPath || undefined, force, true, conflictPolicy);
     } catch (e: any) {
         return { success: false, error: e?.message || '下载或安装失败' };
     } finally {
@@ -1221,7 +1272,8 @@ async function installSkillFromGitHubUrl(githubUrl: string, force: boolean = fal
 export async function installSkillFromClawHubSlug(
     slug: string,
     version?: string,
-    force: boolean = false
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
 ): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
@@ -1232,29 +1284,38 @@ export async function installSkillFromClawHubSlug(
         params.set('version', String(version).trim());
     }
     const downloadUrl = `${CLAWHUB_DOWNLOAD_URL}?${params}`;
-    return installSkillFromUrl(downloadUrl, force);
+    return installSkillFromUrl(downloadUrl, force, conflictPolicy);
 }
 
-export async function installSkillFromMatrixSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+export async function installSkillFromMatrixSlug(
+    slug: string,
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
+): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 Matrix Skill 的英文名称（如 test-master）' };
     }
     const safeSlug = slug.trim();
     const downloadUrl = `https://matrix.openharmony.cn/api/registry/skill/${encodeURIComponent(safeSlug)}/install?format=zip`;
-    return installSkillFromUrl(downloadUrl, force);
+    return installSkillFromUrl(downloadUrl, force, conflictPolicy);
 }
 
-export async function installSkillFromSkillHubSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+export async function installSkillFromSkillHubSlug(
+    slug: string,
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
+): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 SkillHub 技能 slug' };
     }
     const downloadUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(slug.trim())}`;
-    return installSkillFromUrl(downloadUrl, force);
+    return installSkillFromUrl(downloadUrl, force, conflictPolicy);
 }
 
 export async function installSkillFromModelScopeSlug(
     slug: string,
-    force: boolean = false
+    force: boolean = false,
+    conflictPolicy: SkillInstallConflictPolicy = force ? { action: 'overwrite' } : REJECT_CONFLICT
 ): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 ModelScope 技能名称' };
@@ -1263,40 +1324,47 @@ export async function installSkillFromModelScopeSlug(
 
     if (safeSlug.includes('/')) {
         const msUrl = `https://www.modelscope.cn/api/v1/skills/${safeSlug}/archive/zip/master`;
-        const result = await installSkillFromUrl(msUrl, force);
-        if (result.success) return result;
+        const result = await installSkillFromUrl(msUrl, force, conflictPolicy);
+        if (result.success || isSkillConflictError(result)) return result;
     }
 
     const nameOnly = safeSlug.includes('/') ? safeSlug.split('/').pop()! : safeSlug;
 
     const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
-    let result = await installSkillFromUrl(clawhubUrl, force);
-    if (result.success) return result;
+    let result = await installSkillFromUrl(clawhubUrl, force, conflictPolicy);
+    if (result.success || isSkillConflictError(result)) return result;
 
     const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
-    result = await installSkillFromUrl(skillhubUrl, force);
-    if (result.success) return result;
+    result = await installSkillFromUrl(skillhubUrl, force, conflictPolicy);
+    if (result.success || isSkillConflictError(result)) return result;
 
     return { success: false, error: `ModelScope 技能「${safeSlug}」安装失败：所有下载源均不可用` };
 }
 
 export async function installFromRegistryInstallUrl(
     installUrl: string,
-    force: boolean = false
+    force: boolean = false,
+    customName?: string
 ): Promise<InstallSkillResult> {
+    const conflictPolicy: SkillInstallConflictPolicy = customName
+        ? { action: 'rename', name: customName }
+        : force
+          ? { action: 'overwrite' }
+          : REJECT_CONFLICT;
     const method = getInstallMethod(installUrl);
     if (['clawhub', 'matrix', 'modelscope', 'skillhub'].includes(method)) {
         const parsed = parseInstallUrl(installUrl);
         if (!parsed) return { success: false, error: `无效的 ${method} installUrl` };
-        if (method === 'clawhub') return installSkillFromClawHubSlug(parsed.slug, parsed.version, force);
-        if (method === 'matrix') return installSkillFromMatrixSlug(parsed.slug, force);
-        if (method === 'modelscope') return installSkillFromModelScopeSlug(parsed.slug, force);
-        return installSkillFromSkillHubSlug(parsed.slug, force);
+        if (method === 'clawhub')
+            return installSkillFromClawHubSlug(parsed.slug, parsed.version, force, conflictPolicy);
+        if (method === 'matrix') return installSkillFromMatrixSlug(parsed.slug, force, conflictPolicy);
+        if (method === 'modelscope') return installSkillFromModelScopeSlug(parsed.slug, force, conflictPolicy);
+        return installSkillFromSkillHubSlug(parsed.slug, force, conflictPolicy);
     }
     if (method === 'github') {
-        return installSkillFromGitHubUrl(installUrl, force);
+        return installSkillFromGitHubUrl(installUrl, force, conflictPolicy);
     }
-    return installSkillFromUrl(installUrl, force);
+    return installSkillFromUrl(installUrl, force, conflictPolicy);
 }
 
 function normalizeRegistryName(registryName: string): SkillRegistryBase | undefined {
@@ -1509,7 +1577,7 @@ export async function installSkillFromRegistryByName(
         };
     }
 
-    const existingSkillName = String(matched.id || matched.name || '');
+    const existingSkillName = String(matched.name || '');
     const skillExists = options.skillExists ?? SkillRegistry.skillExists;
     const force = options.force ?? false;
     if (existingSkillName && skillExists(existingSkillName) && !force) {

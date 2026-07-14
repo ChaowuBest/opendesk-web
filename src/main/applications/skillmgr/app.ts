@@ -547,8 +547,8 @@ export class SkillMgrApplication extends BaseApplication {
         return result;
     }
 
-    async installFromRegistry(installUrl: string, force: boolean = false) {
-        const result = await installFromRegistryInstallUrl(installUrl, force);
+    async installFromRegistry(installUrl: string, force: boolean = false, customName?: string) {
+        const result = await installFromRegistryInstallUrl(installUrl, force, customName);
         if (!result.success) {
             throw new Error(result.error);
         }

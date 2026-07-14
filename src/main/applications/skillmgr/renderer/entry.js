@@ -4,6 +4,7 @@
  */
 
 import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+import { showDuplicateInstallModal } from './duplicateInstallModal.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
@@ -28,8 +29,8 @@ function getSkillsAPI() {
         getRegistries: () => window.applicationAPI.call('getRegistries'),
         searchRegistry: (registryId, query, page, limit, cursor, categoryFilter) =>
             window.applicationAPI.call('searchRegistry', registryId, query, page, limit, cursor, categoryFilter),
-        installFromRegistry: (installUrl, force) =>
-            window.applicationAPI.call('installFromRegistry', installUrl, force),
+        installFromRegistry: (installUrl, force, customName) =>
+            window.applicationAPI.call('installFromRegistry', installUrl, force, customName),
         skillExists: (skillName) => window.applicationAPI.call('skillExists', skillName),
         getSkillDetail: (skillId) => window.applicationAPI.call('getSkillDetail', skillId),
         sendNotification: (type, title, message) =>
@@ -2041,10 +2042,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             const url = el.getAttribute('data-install-url');
             const card = el.closest('.skill-card');
             const id = card?.getAttribute('data-skill-id');
-            if (url && !el.disabled)
+            const name = card?.getAttribute('data-skill-name');
+            if (url && name)
                 el.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.installFromRegistry(url, id);
+                    this.installFromRegistry(url, id, name);
                 });
         });
         container.querySelectorAll('[data-registry-tab]').forEach((el) => {
@@ -2092,32 +2094,54 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
     }
 
-    async installFromRegistry(installUrl, skillId) {
+    async _resolveRegistryInstallConflict(skillName) {
+        const result = await showDuplicateInstallModal({
+            skillName,
+            mountTarget: this.shadowRoot
+        });
+        if (result.action === 'overwrite') return { force: true, customName: undefined };
+        if (result.action === 'install-new' && result.customName) {
+            return { force: false, customName: result.customName };
+        }
+        return null;
+    }
+
+    getRegistryConflictSkillName(error) {
+        const message = String(error?.message || error || '').replace(/^Error:\s*/, '');
+        return message.match(/^技能「(.+?)」已存在(?:，.*)?$/)?.[1] || null;
+    }
+
+    async installFromRegistry(installUrl, skillId, skillName) {
         const api = getSkillsAPI();
-        if (!installUrl || !api?.installFromRegistry) return;
+        if (!installUrl || !skillName || !api?.installFromRegistry) return;
         let force = false;
+        let customName = undefined;
         try {
-            const exists = await api.skillExists(skillId);
-            if (exists) {
-                const confirmed = await showConfirmModal({
-                    icon: 'fa-rotate',
-                    iconBg: '#FEF1E6',
-                    iconColor: '#E8935A',
-                    title: '覆盖安装',
-                    message: `技能「<b>${escapeHtml(skillId)}</b>」已存在，是否覆盖安装？`,
-                    confirmText: '覆盖安装',
-                    danger: true,
-                    mountTarget: this.shadowRoot
-                });
-                if (!confirmed) return;
-                force = true;
+            if (await api.skillExists(skillName)) {
+                const conflict = await this._resolveRegistryInstallConflict(skillName);
+                if (!conflict) return;
+                ({ force, customName } = conflict);
             }
-        } catch {}
+        } catch {
+            // 前置检查仅用于提前展示交互，最终冲突仍由安装策略处理。
+        }
         this.installingRegistryIds.add(skillId);
         this._updateInstallBtn(skillId, true);
         try {
-            const addRes = await api.installFromRegistry(installUrl, force);
-            this._notify('info', '安装成功', `技能「${addRes?.name ?? ''}」已${force ? '覆盖' : ''}安装`);
+            let addRes;
+            try {
+                addRes = await api.installFromRegistry(installUrl, force, customName);
+            } catch (e) {
+                const conflictSkillName = !force && !customName ? this.getRegistryConflictSkillName(e) : null;
+                if (!conflictSkillName) throw e;
+                const conflict = await this._resolveRegistryInstallConflict(conflictSkillName);
+                if (!conflict) return;
+                ({ force, customName } = conflict);
+                addRes = await api.installFromRegistry(installUrl, force, customName);
+            }
+            const actionLabel = force ? '覆盖' : customName ? `以名称「${customName}」` : '';
+            const message = customName ? `${actionLabel}安装` : `技能「${addRes?.name ?? ''}」已${actionLabel}安装`;
+            this._notify('info', '安装成功', message);
             await this.loadSkills();
         } catch (e) {
             this._notify('error', '安装失败', e?.message || '未知错误');
@@ -2464,6 +2488,18 @@ class SkillMgrEntryWidget extends HTMLElement {
             this._removeDetailModal();
             if (action.id === 'delete') this.deleteSkill(detail.id);
             if (action.id === 'install' && action.data) this.installFromRegistry(action.data, detail.id);
+        });
+
+        // 绑定工具参数展开/折叠
+        overlay.querySelectorAll('.detail-tool-params-toggle').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = btn.getAttribute('data-tool-toggle');
+                const paramsEl = overlay.querySelector(`[data-tool-params="${idx}"]`);
+                if (!paramsEl) return;
+                const isHidden = paramsEl.style.display === 'none';
+                paramsEl.style.display = isHidden ? 'block' : 'none';
+                btn.classList.toggle('expanded', isHidden);
+            });
         });
         this.shadowRoot.appendChild(card);
     }
@@ -3141,7 +3177,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 const downloadsStr = formatDownloads(s.downloads);
                 const color = this._getSkillPastel(s.name || s.id);
                 return `
-            <div class="skill-card" data-skill-id="${escapeHtml(s.id)}" data-registry-tab="${tabId}">
+            <div class="skill-card" data-skill-id="${escapeHtml(s.id)}" data-skill-name="${escapeHtml(s.name)}" data-registry-tab="${tabId}">
               <div class="card-header">
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
                 <div class="card-info">
@@ -4147,10 +4183,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             const url = el.getAttribute('data-install-url');
             const card = el.closest('.skill-card');
             const id = card?.getAttribute('data-skill-id');
-            if (url && !el.disabled)
+            const name = card?.getAttribute('data-skill-name');
+            if (url && name)
                 el.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.installFromRegistry(url, id);
+                    this.installFromRegistry(url, id, name);
                 });
         });
 

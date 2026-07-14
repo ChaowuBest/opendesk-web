@@ -213,11 +213,11 @@ class SkillsWorker extends BaseWorker {
     }
 
     /** 从 Registry 安装技能（installUrl 为 registry slug、zip URL 或 registry 返回的仓库地址） */
-    async installFromRegistry(installUrl, force = false) {
+    async installFromRegistry(installUrl, force = false, customName) {
         if (!installUrl || typeof installUrl !== 'string') {
             throw new Error('无效的安装 URL');
         }
-        const result = await installFromRegistryInstallUrl(installUrl, force);
+        const result = await installFromRegistryInstallUrl(installUrl, force, customName);
         if (!result.success) throw new Error(result.error);
         if (result.name) setDefaultStatus(result.name, true);
         notifyMainSync();
