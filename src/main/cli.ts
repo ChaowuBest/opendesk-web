@@ -123,6 +123,7 @@ function parseCommandLineArgs() {
     prog.option('--export-json <path>', 'export session as JSON when -c task completes', (v) => v);
     prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
+    prog.option('--resume <task-id>', 'resume/continue a specific task by its ID');
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'no permission check, every operation is allowed');
     prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
@@ -362,6 +363,7 @@ function parseCommandLineArgs() {
             mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode,
             language: kwargs.language,
             renderInterval: kwargs.renderInterval,
+            resume: kwargs.resume,
             appCliOptions
         });
     });
@@ -499,7 +501,22 @@ async function main(args: CommandLineArgs) {
 
         if (args.command) {
             ApplicationRegistry.onReady(() => {
-                tui.executeCommand(args.command!);
+                if (args.resume) {
+                    // -c 模式下 resume：找不到任务直接报错退出
+                    const task = tui.taskManagerState.getTask(args.resume);
+                    if (!task) {
+                        process.stderr.write(`[error] ${t('cli.resume.not_found.detail', { taskId: args.resume })}\n`);
+                        process.exit(1);
+                        return;
+                    }
+                    tui.resumeTask(args.resume, args.command!);
+                } else {
+                    tui.executeCommand(args.command!);
+                }
+            });
+        } else if (args.resume) {
+            ApplicationRegistry.onReady(() => {
+                tui.resumeTask(args.resume);
             });
         }
     }
