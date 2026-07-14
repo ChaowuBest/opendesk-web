@@ -22,6 +22,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import {
     buildContextProjection,
@@ -162,7 +163,9 @@ function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record
         return {};
     }
     return {
-        ...extraHeaders,
+        ...Object.fromEntries(
+            Object.entries(extraHeaders).map(([k, v]) => [k, iconv.encode(v, 'latin1').toString('latin1')])
+        ),
         span_id: crypto.randomBytes(8).toString('hex')
     };
 }
@@ -179,7 +182,14 @@ export class OpenAIAdapter {
         this.client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers,
+            defaultHeaders: modelInstance.custom_headers
+                ? Object.fromEntries(
+                      Object.entries(modelInstance.custom_headers).map(([k, v]) => [
+                          k,
+                          iconv.encode(v, 'latin1').toString('latin1')
+                      ])
+                  )
+                : undefined,
             fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => fetchModelUrl(modelInstance, url, init)
         });
     }
