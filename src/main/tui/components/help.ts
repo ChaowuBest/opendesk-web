@@ -62,18 +62,34 @@ export class HelpOverlay implements Component {
         this.box.addChild(this.commandTable);
 
         // 代理 SelectTable 事件
-        this.setupTableCallbacks(this.commandTable);
+        this.setupTableCallbacks(this.commandTable, (commandName) => this.selectCommand(commandName));
         this.setupTableCallbacks(this.skillTable);
         this.setupTableCallbacks(this.shortcutTable);
     }
 
-    private setupTableCallbacks(table: SelectTable) {
-        table.onSelect = () => {
+    private setupTableCallbacks(table: SelectTable, onSelect?: (value: string) => void) {
+        table.onSelect = (value) => {
+            if (onSelect) {
+                onSelect(value);
+                return;
+            }
             this.close();
         };
         table.onCancel = () => {
             this.close();
         };
+    }
+
+    private selectCommand(commandName: string) {
+        // The empty-state row is not actionable. Also reject commands that were
+        // unregistered while the help overlay was open instead of inserting a stale command.
+        if (!this.openDeskTUI.commandRegistry.has(commandName)) {
+            this.close();
+            return;
+        }
+
+        this.openDeskTUI.inputArea.input.setText(`/${commandName} `);
+        this.close();
     }
 
     private close() {
