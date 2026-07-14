@@ -26,6 +26,7 @@ interface ResolvedProxyFetchOptions {
 
 const FETCH_BODY_PREVIEW_CHARS = 2_000;
 const FETCH_BODY_PREVIEW_ENV = 'OPENDESK_DEBUG_FETCH_BODY';
+const MAX_REDIRECTS = 20;
 const REDACTED_HEADER_VALUE = '<redacted>';
 const REDACTED_URL_VALUE = 'redacted';
 const SENSITIVE_HEADER_NAMES = new Set([
@@ -234,6 +235,12 @@ function requestModuleForProtocol(protocol: string): typeof http | typeof https 
     return protocol === 'https:' ? https : http;
 }
 
+function observeSocketErrors(socket: net.Socket, scope: string): void {
+    socket.on('error', (error) => {
+        logger.warn(`[proxy-fetch] ${scope} socket error: ${error.message}`);
+    });
+}
+
 async function writeIterableBody(request: http.ClientRequest, body: AsyncIterable<Uint8Array>) {
     for await (const chunk of body) {
         if (!request.write(chunk)) {
@@ -292,6 +299,9 @@ function responseHeadersFromRaw(rawHeaders: string[]): Headers {
 }
 
 function responseFromIncomingMessage(response: http.IncomingMessage): Response {
+    response.on('error', (error) => {
+        logger.warn(`[proxy-fetch] response stream error: ${error.message}`);
+    });
     return new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
         status: response.statusCode ?? 0,
         statusText: response.statusMessage,
@@ -353,11 +363,13 @@ function nativeFetchOverSocket(
                 signal: init?.signal ?? undefined,
                 createConnection: () => {
                     if (targetUrl.protocol === 'https:') {
-                        return tls.connect({
+                        const tlsSocket = tls.connect({
                             socket,
                             servername: targetUrl.hostname,
                             rejectUnauthorized: !options.skipTlsVerification
                         });
+                        observeSocketErrors(tlsSocket, 'target TLS');
+                        return tlsSocket;
                     }
                     return socket;
                 }
@@ -402,6 +414,7 @@ function nativeFetchProxyTunnelRequest(
             if (head.length > 0) {
                 socket.unshift(head);
             }
+            observeSocketErrors(socket, 'proxy tunnel');
             nativeFetchOverSocket(targetUrl, init, socket, options).then(resolve, reject);
         });
         connectRequest.on('error', reject);
@@ -409,17 +422,114 @@ function nativeFetchProxyTunnelRequest(
     });
 }
 
-function nativeFetchWithResolvedProxy(
-    url: string,
-    init: RequestInit | undefined,
-    options: NativeFetchOptions
-): Promise<Response> {
+function nativeFetchOnce(url: string, init: RequestInit | undefined, options: NativeFetchOptions): Promise<Response> {
     const targetUrl = new URL(url);
     const proxy = options.proxyUrl ? normalizeProxyUrl(options.proxyUrl) : null;
     if (proxy && shouldTunnelProxyRequest(targetUrl.href)) {
         return nativeFetchProxyTunnelRequest(targetUrl, init, proxy, options);
     }
     return nativeFetchPlainRequest(targetUrl, init, proxy, options);
+}
+
+function isRedirectStatus(status: number): boolean {
+    return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+function filterRedirectHeaders(
+    headers: HeadersInit | undefined,
+    removeBodyHeaders: boolean,
+    removeSensitiveHeaders: boolean
+): HeadersInit | undefined {
+    if (!headers) {
+        return undefined;
+    }
+
+    const excluded = new Set<string>(['host']);
+    if (removeBodyHeaders) {
+        excluded.add('content-length');
+        excluded.add('content-type');
+        excluded.add('transfer-encoding');
+    }
+    if (removeSensitiveHeaders) {
+        excluded.add('authorization');
+        excluded.add('cookie');
+        excluded.add('proxy-authorization');
+    }
+    const shouldKeep = (name: string) => !excluded.has(name.toLowerCase());
+
+    if (Array.isArray(headers)) {
+        return headers.filter(([name]) => shouldKeep(name));
+    }
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        const filtered = new Headers(headers);
+        for (const name of excluded) {
+            filtered.delete(name);
+        }
+        return filtered;
+    }
+    return Object.fromEntries(Object.entries(headers).filter(([name]) => shouldKeep(name)));
+}
+
+function buildRedirectInit(init: RequestInit | undefined, status: number, fromUrl: URL, toUrl: URL): RequestInit {
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const switchToGet = (status === 301 || status === 302) && method === 'POST';
+    const switchToGetForSeeOther = status === 303 && method !== 'HEAD';
+    const removeBody = switchToGet || switchToGetForSeeOther;
+    const crossOrigin = fromUrl.origin !== toUrl.origin;
+
+    if (!removeBody && typeof ReadableStream !== 'undefined' && init?.body instanceof ReadableStream) {
+        throw new TypeError('Cannot follow redirect with a streaming request body');
+    }
+
+    return {
+        ...init,
+        method: removeBody ? 'GET' : method,
+        body: removeBody ? undefined : init?.body,
+        headers: filterRedirectHeaders(init?.headers, removeBody, crossOrigin)
+    };
+}
+
+async function discardRedirectResponse(response: Response): Promise<void> {
+    try {
+        await response.body?.cancel();
+    } catch (error) {
+        logger.warn(
+            `[proxy-fetch] failed to discard redirect response: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+}
+
+async function nativeFetchWithResolvedProxy(
+    url: string,
+    init: RequestInit | undefined,
+    options: NativeFetchOptions
+): Promise<Response> {
+    let currentUrl = new URL(url);
+    let currentInit = init;
+    const redirectMode = init?.redirect ?? 'follow';
+
+    for (let redirectCount = 0; ; redirectCount++) {
+        const response = await nativeFetchOnce(currentUrl.href, currentInit, options);
+        const location = response.headers.get('location');
+        if (!isRedirectStatus(response.status) || !location) {
+            return response;
+        }
+        if (redirectMode === 'manual') {
+            return response;
+        }
+
+        await discardRedirectResponse(response);
+        if (redirectMode === 'error') {
+            throw new TypeError(`Redirect encountered for ${currentUrl.href}`);
+        }
+        if (redirectCount >= MAX_REDIRECTS - 1) {
+            throw new TypeError(`Too many redirects for ${url}`);
+        }
+
+        const redirectUrl = new URL(location, currentUrl);
+        currentInit = buildRedirectInit(currentInit, response.status, currentUrl, redirectUrl);
+        currentUrl = redirectUrl;
+    }
 }
 
 function summarizeBody(body: BodyInit | null | undefined): FetchBodySummary {

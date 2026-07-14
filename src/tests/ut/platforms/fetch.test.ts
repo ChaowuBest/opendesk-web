@@ -371,6 +371,35 @@ describe('Platform fetch 抽象层', () => {
             }
         });
 
+        test('Node 传输遵循 redirect follow 并释放中间响应', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const requests: string[] = [];
+            const server = http.createServer((req, res) => {
+                requests.push(req.url ?? '');
+                if (req.url === '/redirect') {
+                    res.writeHead(302, { Location: '/result' });
+                    res.end('redirect-body');
+                    return;
+                }
+                res.end('redirect-ok');
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const response = await fetchWithResolvedProxy(
+                    `http://127.0.0.1:${port}/redirect`,
+                    { redirect: 'follow' },
+                    { bypassProxy: true }
+                );
+
+                expect(response.status).toBe(200);
+                await expect(response.text()).resolves.toBe('redirect-ok');
+                expect(requests).toEqual(['/redirect', '/result']);
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
         test('fetch bypassProxy 真实请求跳过环境变量代理并直连', async () => {
             const { CliPlatform } = await import('../../../platforms/cli');
             let proxyConnections = 0;
