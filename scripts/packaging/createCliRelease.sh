@@ -164,10 +164,6 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "vectra": "^0.11.1",
     "esbuild": "^0.27.3",
     "unpdf": "^1.4.0"
-  },
-  "optionalDependencies": {
-    "better-sqlite3": "^12.6.2",
-    "sqlite-vec": "^0.1.7-alpha.2"
   }
 }
 EOF
