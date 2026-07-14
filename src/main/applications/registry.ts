@@ -641,4 +641,20 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
             }
         }
     });
+
+    // 网络配置变更时同步到 Worker，确保代理/SSL 设置在 Worker 中实时生效
+    Setting.afterSetDataCallbacks.push(() => {
+        const nc = Setting.getInstance().getData().network_config;
+        if (worker && nc) {
+            worker.postMessage({
+                type: '__network_config_updated',
+                config: {
+                    no_ssl: nc.no_ssl,
+                    use_proxy: nc.use_proxy,
+                    custom_proxy_addr: nc.custom_proxy_addr,
+                    no_proxy: nc.no_proxy
+                }
+            });
+        }
+    });
 }

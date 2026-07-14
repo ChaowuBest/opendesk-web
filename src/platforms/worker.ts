@@ -12,14 +12,15 @@
 /**
  * 工作线程专用的 Platform 实现。
  *
- * Worker 线程不能直接使用 Electron 的 net 模块或 undici，
- * 因此 fetch 请求通过 IPC (parentPort.postMessage) 转发到主进程执行。
+ * fetch 请求直接在 Worker 中通过 undici（Node.js 原生 fetch）执行，
+ * 支持流式响应（SSE 等长连接），并根据网络配置自动处理代理和 SSL 设置。
  */
 
 import { AbstractPlatform, type PlatformFetchOptions } from './base.js';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
-import { parentPort } from 'worker_threads';
+import { parentPort, workerData } from 'worker_threads';
+import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import { BaseApplication } from '../main/applications/base';
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -42,10 +43,55 @@ import { initAgentGateHook } from '../main/agentgate/hook.js';
 // Ensure hook is registered in the worker chunk (same bundle as tool execution)
 initAgentGateHook();
 
-let fetchRequestCounter = 0;
 let shellRequestCounter = 0;
 
+interface WorkerNetworkConfig {
+    no_ssl: boolean;
+    use_proxy: 'system' | 'custom' | 'none';
+    custom_proxy_addr: string;
+    no_proxy: string;
+}
+
 export class WorkerPlatform extends AbstractPlatform {
+    private networkConfig: WorkerNetworkConfig;
+    private _onNetworkConfigMessage: ((msg: any) => void) | null = null;
+
+    constructor() {
+        super();
+        const setting = (workerData as any)?.setting;
+        const nc = setting?.network_config;
+        this.networkConfig = {
+            no_ssl: nc?.no_ssl ?? false,
+            use_proxy: nc?.use_proxy ?? 'none',
+            custom_proxy_addr: nc?.custom_proxy_addr ?? '',
+            no_proxy: nc?.no_proxy ?? ''
+        };
+        // 将 no_proxy 设置同步到环境变量，供 isHostInNoProxy 使用
+        if (this.networkConfig.no_proxy) {
+            process.env.NO_PROXY = this.networkConfig.no_proxy;
+            process.env.no_proxy = this.networkConfig.no_proxy;
+        }
+        // 监听主进程下发的网络配置更新
+        this._onNetworkConfigMessage = (msg: any) => {
+            if (msg?.type === '__network_config_updated') {
+                this.updateNetworkConfig(msg.config);
+            }
+        };
+        if (parentPort) {
+            parentPort.on('message', this._onNetworkConfigMessage);
+        }
+    }
+
+    updateNetworkConfig(config: WorkerNetworkConfig): void {
+        this.networkConfig = { ...config };
+        if (config.no_proxy) {
+            process.env.NO_PROXY = config.no_proxy;
+            process.env.no_proxy = config.no_proxy;
+        } else {
+            delete process.env.NO_PROXY;
+            delete process.env.no_proxy;
+        }
+    }
     getName(): string {
         return 'worker';
     }
@@ -67,81 +113,23 @@ export class WorkerPlatform extends AbstractPlatform {
     }
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
-        if (!parentPort) {
-            throw new Error('WorkerPlatform.fetch: parentPort is not available');
-        }
-
-        const requestId = `__fetch_${++fetchRequestCounter}_${Date.now()}`;
         const url = input instanceof URL ? input.href : input;
+        const bypassProxy = !!options?.bypassProxy;
+        const skipTlsVerification = !!options?.skipTlsVerification;
+        const forceEnvironmentProxy = !!options?.forceEnvironmentProxy;
 
-        const serializableInit: Record<string, any> = {};
-        if (init) {
-            if (init.method) serializableInit.method = init.method;
-            if (init.headers) {
-                if (init.headers instanceof Headers) {
-                    const h: Record<string, string> = {};
-                    init.headers.forEach((v, k) => {
-                        h[k] = v;
-                    });
-                    serializableInit.headers = h;
-                } else {
-                    serializableInit.headers = init.headers;
-                }
-            }
-            if (init.body !== undefined && init.body !== null) {
-                if (typeof init.body === 'string') {
-                    serializableInit.body = init.body;
-                } else if (init.body instanceof ArrayBuffer) {
-                    serializableInit.bodyBuffer = Buffer.from(init.body).toString('base64');
-                } else if (ArrayBuffer.isView(init.body)) {
-                    serializableInit.bodyBuffer = Buffer.from(
-                        init.body.buffer,
-                        init.body.byteOffset,
-                        init.body.byteLength
-                    ).toString('base64');
-                } else {
-                    serializableInit.body = String(init.body);
-                }
-            }
-            if (init.redirect) serializableInit.redirect = init.redirect;
-        }
+        // 根据网络配置决定代理行为
+        const useProxy = !bypassProxy && this.networkConfig.use_proxy !== 'none';
+        const proxyUrl =
+            useProxy && this.networkConfig.use_proxy === 'custom' ? this.networkConfig.custom_proxy_addr : undefined;
+        const useEnvironmentProxy = useProxy && this.networkConfig.use_proxy === 'system';
+        const noSsl = skipTlsVerification || this.networkConfig.no_ssl;
 
-        return new Promise<Response>((resolve, reject) => {
-            const handler = (msg: any) => {
-                if (msg.type !== '__fetch_response' || msg.id !== requestId) return;
-                parentPort!.off('message', handler);
-
-                if (msg.status === 'error') {
-                    reject(new Error(msg.message || 'Fetch failed in main process'));
-                    return;
-                }
-
-                const bodyBytes = msg.bodyBase64 ? Buffer.from(msg.bodyBase64, 'base64') : new Uint8Array();
-                const responseHeaders = new Headers(msg.headers || {});
-
-                resolve(
-                    new Response(bodyBytes, {
-                        status: msg.statusCode,
-                        statusText: msg.statusText || '',
-                        headers: responseHeaders
-                    })
-                );
-            };
-
-            parentPort!.on('message', handler);
-            parentPort!.postMessage({
-                type: '__fetch_request',
-                id: requestId,
-                url,
-                init: serializableInit,
-                options: options
-                    ? {
-                          forceEnvironmentProxy: !!options.forceEnvironmentProxy,
-                          bypassProxy: !!options.bypassProxy,
-                          skipTlsVerification: !!options.skipTlsVerification
-                      }
-                    : undefined
-            });
+        return fetchWithResolvedProxy(url, init, {
+            proxyUrl: proxyUrl || undefined,
+            useEnvironmentProxy: forceEnvironmentProxy || useEnvironmentProxy,
+            bypassProxy,
+            skipTlsVerification: noSsl
         });
     }
 
