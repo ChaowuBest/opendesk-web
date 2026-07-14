@@ -16,6 +16,9 @@ export const enUs: Record<string, string> = {
 
     // CLI
     'cli.task_name.requires_command': '--task-name can only be used with -c/--command',
+    'cli.resume.hint': 'Resume/continue the task with the following command:',
+    'cli.resume.not_found': 'Task Not Found',
+    'cli.resume.not_found.detail': 'Cannot find task with ID ${taskId}, unable to resume.',
 
     // Banner
     'banner.workspace': 'Current workspace: ',

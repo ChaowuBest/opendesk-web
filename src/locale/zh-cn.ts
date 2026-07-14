@@ -16,6 +16,9 @@ export const zhCn: Record<string, string> = {
 
     // CLI
     'cli.task_name.requires_command': '--task-name 只能与 -c/--command 一起使用',
+    'cli.resume.hint': '通过下面的命令恢复/继续任务:',
+    'cli.resume.not_found': '任务不存在',
+    'cli.resume.not_found.detail': '找不到任务 ID 为 ${taskId} 的任务，无法恢复。',
 
     // Banner
     'banner.workspace': '当前工作空间为: ',

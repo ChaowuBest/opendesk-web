@@ -34,6 +34,7 @@ import { exportTaskToHtml } from '../utils/export.js';
 import { ToolCallMessagePartView } from './components/taskview.js';
 import type { CommandLineArgs } from './entry.js';
 import {
+    UserMessage,
     AssistantMessage,
     ReasoningMessagePart,
     TextMessagePart,
@@ -129,12 +130,26 @@ export class HeadlessRunner {
             ) + '\n'
         );
 
-        const task = this.taskManagerState.createTask(this.args.model, { taskName: this.args.taskName });
+        let task: TaskState;
+        if (this.args.resume) {
+            const existingTask = this.taskManagerState.getTask(this.args.resume);
+            if (!existingTask) {
+                process.stderr.write(
+                    chalk.red(`[error] ${t('cli.resume.not_found.detail', { taskId: this.args.resume })}\n`)
+                );
+                process.exit(1);
+                return; // for type checker
+            }
+            task = existingTask;
+        } else {
+            task = this.taskManagerState.createTask(this.args.model, { taskName: this.args.taskName });
+        }
 
         if (this.args.profile) {
             task.profiler = new TaskProfiler(task.task_id);
         }
 
+        // 初始化 harness（resume 的任务也需要重新初始化，因为 harnessContext 不落盘）
         try {
             task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
@@ -145,8 +160,15 @@ export class HeadlessRunner {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
 
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
-        await task.setSystemPrompt(systemPrompt);
+        // 仅对新任务设置 system prompt，resume 的任务保留原有 system prompt
+        if (!this.args.resume) {
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
+            await task.setSystemPrompt(systemPrompt);
+        } else {
+            // resume 时需要先解析工具引用，再打印历史对话
+            await task.ensureToolsResolved();
+            this.printHistory(task);
+        }
 
         // 打印用户输入
         this.printUserMessage(command);
@@ -291,6 +313,10 @@ export class HeadlessRunner {
             }
         }
 
+        // ── resume 提示 ──
+        process.stdout.write(t('cli.resume.hint') + '\n');
+        process.stdout.write(`  opendesk --resume ${task.task_id}\n`);
+
         // 退出
         try {
             await this.taskManagerState.flushAllPendingSaves();
@@ -307,6 +333,23 @@ export class HeadlessRunner {
     private printUserMessage(text: string): void {
         if (!text.trim()) return;
         process.stdout.write(chalk.bold.cyan(`[${t('headless.user')}] `) + text + '\n');
+    }
+
+    /**
+     * 打印任务的历史对话（resume 时使用）。
+     * 遍历 chat_context 中的所有消息，跳过内部消息，复用已有的格式化逻辑。
+     */
+    private printHistory(task: TaskState): void {
+        for (const msg of task.chat_context.messages) {
+            if (msg instanceof UserMessage) {
+                if (msg.internal) continue;
+                this.printUserMessage(msg.getPlainText());
+            } else if (msg instanceof AssistantMessage) {
+                for (let i = 0; i < msg.content.length; i++) {
+                    this.flushPart(msg.message_id, i, msg.content[i], task);
+                }
+            }
+        }
     }
 
     /**

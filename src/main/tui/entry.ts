@@ -78,6 +78,8 @@ export interface CommandLineArgs {
     mode?: string;
     language?: string;
     renderInterval?: number;
+    /** 恢复/继续指定任务 ID */
+    resume?: string;
     /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
     appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
 }
@@ -1230,6 +1232,8 @@ export class OpenDeskTUI {
     }
 
     async exit() {
+        const resumeTaskId = this.activeTaskId;
+
         try {
             this.dashboardBar.stop();
             this.toastManager.stop();
@@ -1238,6 +1242,12 @@ export class OpenDeskTUI {
             this.tui.stop();
         } catch {
             /* 忽略 TUI 清理错误 */
+        }
+
+        // TUI 已停止，可以安全输出到终端
+        if (resumeTaskId) {
+            process.stdout.write(t('cli.resume.hint') + '\n');
+            process.stdout.write(`  opendesk --resume ${resumeTaskId}\n`);
         }
 
         try {
@@ -1312,6 +1322,40 @@ export class OpenDeskTUI {
      */
     executeCommand(command: string): void {
         this.onRequestSubmit(command);
+    }
+
+    /**
+     * 恢复/继续指定任务。如果任务不存在，通过 InfoOverlay 弹窗报错。
+     * 如果提供了 command，切换到任务后追加消息继续执行。
+     * harnessContext 不落盘，resume 时需要重新初始化。
+     * @param taskId - 要恢复的任务 ID
+     * @param command - 可选的追加消息
+     */
+    resumeTask(taskId: string, command?: string): void {
+        const task = this.taskManagerState.getTask(taskId);
+        if (!task) {
+            const errorOverlay = new InfoOverlay(this, {
+                title: t('cli.resume.not_found'),
+                message: t('cli.resume.not_found.detail', { taskId }),
+                closeLabel: t('common.close'),
+                type: 'error'
+            });
+            errorOverlay.show();
+            return;
+        }
+        // harnessContext 不落盘，resume 时需要重新初始化
+        this.initTaskHarness(task)
+            .then(() => {
+                return this.switchToTask(task);
+            })
+            .then(() => {
+                if (command) {
+                    this.onRequestSubmit(command);
+                }
+            })
+            .catch((err) => {
+                logger.error(`Failed to resume task ${taskId}: ${err}`);
+            });
     }
 
     /**
