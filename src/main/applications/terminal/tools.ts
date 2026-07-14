@@ -41,6 +41,14 @@ import { findExecutableInPath, decodeShellOutput, injectNonInteractiveEnv } from
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
+
+// 过滤 bash 在某些受限环境下启动时的 getcwd 噪音警告
+const SHELL_CWD_WARNING_RE =
+    /^shell-init: error retrieving current directory: getcwd: cannot access parent directories: Permission denied\r?\n?/gm;
+
+function filterShellEnvironmentWarnings(text: string): string {
+    return text.replace(SHELL_CWD_WARNING_RE, '');
+}
 const PATH_SEGMENT = process.platform === 'win32' ? ';' : ':';
 const USER_PYTHON_ENV_KEYS = ['VIRTUAL_ENV', 'CONDA_PREFIX', 'CONDA_PREFIX_1'] as const;
 const USER_PYTHON_CONTEXT_ENV_KEYS = [
@@ -417,7 +425,7 @@ async function executeShellCommand(opts: {
         output += decodeShellOutput(data);
     };
     const stderrListener = (data: Buffer) => {
-        output += decodeShellOutput(data);
+        output += filterShellEnvironmentWarnings(decodeShellOutput(data));
     };
     proc.stdout.on('data', stdoutListener);
     proc.stderr.on('data', stderrListener);
