@@ -34,7 +34,7 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
     try {
         // 方法1：通过 npm root 获取全局目录，直接读取 package.json
         const { stdout: globalRoot } = await asyncShellExec('npm root -g', {
-            timeout: 5000
+            timeout: 10000
         });
         const packageJsonPath = `${globalRoot.trim()}/${PACKAGE_NAME}/package.json`;
 
@@ -50,7 +50,7 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
     } catch {
         // 方法2：回退到 npm list（较慢但可靠）
         try {
-            const { stdout } = await asyncShellExec(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
+            const { stdout } = await asyncShellExec(`npm list -g '${PACKAGE_NAME}' --depth=0 --json`, {
                 timeout: 15000
             });
             const result = JSON.parse(stdout);
@@ -154,7 +154,7 @@ export async function getNpmVersion(packageName: string, tag: string = 'latest')
     } catch {
         // 回退到 npm view 命令
         try {
-            const { stdout } = await asyncShellExec(`npm view ${packageName} version --tag ${tag}`, {
+            const { stdout } = await asyncShellExec(`npm view '${packageName}' version --tag ${tag}`, {
                 timeout: 30000
             });
             return stdout.trim() || null;
@@ -248,55 +248,51 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /**
- * 执行 npm install -g 安装指定版本
+ * 执行 npm install -g 安装指定版本。
+ * 前置检查（isNpmInstalled、latest 可用性、needsUpdate）应由调用方完成。
+ * @param versionInfo 调用方已验证的版本信息
  * @param tag npm tag ('latest' 或 'nightly')
  * @returns 是否安装成功
  */
 export async function installVersion(
+    versionInfo: VersionInfo,
     tag: 'latest' | 'nightly' = 'latest'
 ): Promise<{ success: boolean; message: string }> {
-    try {
-        const versionInfo = await getVersionInfo(tag);
+    // 防御性检查（安全网，调用方 performUpgrade 已做完整前置检查）
+    if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
+        return {
+            success: false,
+            message:
+                '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。'
+        };
+    }
 
-        if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
-            return {
-                success: false,
-                message:
-                    '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。'
-            };
-        }
+    if (!versionInfo.latest) {
+        return { success: false, message: `无法从 npm 获取 ${tag} 版本信息，请检查网络连接` };
+    }
 
-        if (!versionInfo.latest) {
-            return { success: false, message: `无法从 npm 获取 ${tag} 版本信息，请检查网络连接` };
-        }
+    // 执行全局安装
+    const installCmd = `npm install -g '${PACKAGE_NAME}@${tag}'`;
+    await asyncShellExec(installCmd, {
+        timeout: 120000
+    });
 
-        if (!versionInfo.needsUpdate) {
-            return { success: false, message: `当前已是最新 ${tag} 版本 (${versionInfo.current})` };
-        }
-
-        // 执行全局安装
-        const installCmd = `npm install -g ${PACKAGE_NAME}@${tag}`;
-        await asyncShellExec(installCmd, {
-            timeout: 120000
-        });
-
-        // 检查安装是否成功
-        const newVersion = await getCurrentVersion();
-        if (newVersion === versionInfo.latest) {
-            return {
-                success: true,
-                message: `升级成功: ${versionInfo.current} -> ${versionInfo.latest}`
-            };
-        }
-
+    // 检查安装是否成功
+    const newVersion = await getCurrentVersion();
+    if (newVersion === null) {
+        return { success: false, message: '安装后无法验证版本，请检查是否安装成功' };
+    }
+    if (newVersion === versionInfo.latest) {
         return {
             success: true,
-            message: `安装完成，请重启 OpenDesk 以使用新版本 (${versionInfo.latest})`
+            message: `升级成功: ${versionInfo.current} -> ${versionInfo.latest}`
         };
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return { success: false, message: `安装失败: ${errorMessage}` };
     }
+
+    return {
+        success: true,
+        message: `安装完成，请重启 OpenDesk 以使用新版本 (${versionInfo.latest})`
+    };
 }
 
 /**
@@ -349,14 +345,35 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
     }
 
     // 执行升级
-    const result = await installVersion(tag);
-    return {
-        success: result.success,
-        message: result.message,
-        currentVersion: versionInfo.current,
-        latestVersion: versionInfo.latest,
-        needsUpdate: true
-    };
+    try {
+        const result = await installVersion(versionInfo, tag);
+
+        // 安装成功后重新获取当前版本，确保返回最新版本号
+        let currentVersion = versionInfo.current;
+        if (result.success) {
+            const newVersion = await getCurrentVersion();
+            if (newVersion !== null) {
+                currentVersion = newVersion;
+            }
+        }
+
+        return {
+            success: result.success,
+            message: result.message,
+            currentVersion,
+            latestVersion: versionInfo.latest,
+            needsUpdate: true
+        };
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return {
+            success: false,
+            message: `安装失败: ${errorMessage}`,
+            currentVersion: versionInfo.current,
+            latestVersion: versionInfo.latest,
+            needsUpdate: true
+        };
+    }
 }
 
 /**
