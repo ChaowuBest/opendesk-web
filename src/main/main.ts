@@ -2843,14 +2843,16 @@ function startApplication() {
         for (const task of GlobalState.getInstance().taskManagerState.tasks) {
             if (!task.harnessContext.workspace) {
                 const savedExecutionHost = task.harnessContext.executionHost;
+                // 优先用任务自身持久化的 workspace，回退到全局启动 workspace
+                const taskWorkspace = task.workspace || startupWorkspace;
                 try {
-                    task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
+                    task.harnessContext = await HarnessContext.createForMode(taskWorkspace, defaultMode);
                     task.harnessContext.executionHost = savedExecutionHost;
                     task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
                     await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 } catch (err) {
                     logger.warn(`Failed to init restored task harness: ${err}`);
-                    task.harnessContext.workspace = startupWorkspace;
+                    task.harnessContext.workspace = taskWorkspace;
                 }
             }
         }
