@@ -1,0 +1,115 @@
+import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { parseHTML } from 'linkedom';
+
+describe('MCP manager installed list scroll position', () => {
+    let getServers: jest.Mock;
+
+    beforeAll(async () => {
+        const { window } = parseHTML('<!doctype html><html><body></body></html>');
+        Object.assign(globalThis, {
+            window,
+            document: window.document,
+            HTMLElement: window.HTMLElement,
+            CustomEvent: window.CustomEvent,
+            Event: window.Event,
+            customElements: window.customElements,
+            CSS: { escape: (value: string) => value },
+            requestAnimationFrame: (callback: FrameRequestCallback) => {
+                callback(0);
+                return 0;
+            },
+            cancelAnimationFrame: () => undefined
+        });
+
+        await jest.unstable_mockModule('../../../main/applications/widget_utils.js', () => ({
+            AgentOperableHTMLElement: class extends HTMLElement {},
+            RendererTool: class {},
+            RendererToolset: class {}
+        }));
+        await jest.unstable_mockModule('../../../renderer/theme/theme-iframe-bridge.ts', () => ({
+            OPENDESK_THEME_CHANGED: 'opendesk-theme-changed'
+        }));
+        await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
+            syncShadowHostTheme: jest.fn()
+        }));
+        await jest.unstable_mockModule('../../../renderer/components/confirmModal', () => ({
+            showConfirmModal: jest.fn()
+        }));
+
+        await import('../../../main/applications/mcpmgr/renderer/entry.js');
+    });
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        getServers = jest.fn();
+        window.applicationAPI = {
+            call: (method: string) => {
+                if (method === 'getServers') return getServers();
+                return undefined;
+            },
+            callMainWorld: jest.fn(),
+            subscribe: jest.fn(),
+            unsubscribe: jest.fn()
+        };
+    });
+
+    function createWidget() {
+        const widget = document.createElement('mcpmgr-entry-widget') as any;
+        widget.loadingServers = false;
+        widget.activeTab = 'installed';
+        widget.servers = [
+            {
+                id: 'server-1',
+                name: 'Server 1',
+                transport: 'stdio',
+                enabled: true,
+                status: 'connected',
+                tools: []
+            }
+        ];
+        widget.render();
+        return widget;
+    }
+
+    test('restores the installed panel position after a full render', () => {
+        const widget = createWidget();
+        const previousPanel = widget.shadowRoot.getElementById('panel-installed') as HTMLElement;
+        previousPanel.scrollTop = 240;
+
+        widget.servers[0].status = 'error';
+        widget.render();
+
+        const nextPanel = widget.shadowRoot.getElementById('panel-installed') as HTMLElement;
+        expect(nextPanel).not.toBe(previousPanel);
+        expect(nextPanel.scrollTop).toBe(240);
+    });
+
+    test('keeps the existing list mounted while refreshed server data is pending', async () => {
+        const widget = createWidget();
+        const previousPanel = widget.shadowRoot.getElementById('panel-installed') as HTMLElement;
+        previousPanel.scrollTop = 320;
+        let resolveServers: (servers: unknown[]) => void = () => undefined;
+        getServers.mockReturnValue(
+            new Promise((resolve) => {
+                resolveServers = resolve;
+            })
+        );
+
+        const refresh = widget.loadServers();
+
+        expect(widget.shadowRoot.getElementById('panel-installed')).toBe(previousPanel);
+        resolveServers([
+            {
+                id: 'server-1',
+                name: 'Server 1',
+                transport: 'stdio',
+                enabled: true,
+                status: 'disconnected',
+                tools: []
+            }
+        ]);
+        await refresh;
+
+        expect(widget.shadowRoot.getElementById('panel-installed').scrollTop).toBe(320);
+    });
+});
