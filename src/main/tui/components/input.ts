@@ -338,9 +338,10 @@ async function triggerFileKeywordSearch(keyword: string, basePath: string, edito
 
         const items: AutocompleteItem[] = [];
         for (const fileResult of result.data.slice(0, FILE_COMPLETION_MAX_RESULTS)) {
-            let relativePath = fileResult.path;
-            if (fileResult.path.startsWith(basePath)) {
-                relativePath = fileResult.path.slice(basePath.length);
+            let relativePath = fileResult.path.replace(/\\/g, '/');
+            const normalizedBase = basePath.replace(/\\/g, '/');
+            if (relativePath.startsWith(normalizedBase)) {
+                relativePath = relativePath.slice(normalizedBase.length);
                 if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
             }
             const fileName = fileResult.filename || relativePath.split('/').pop() || relativePath;

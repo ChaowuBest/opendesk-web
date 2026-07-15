@@ -2105,7 +2105,7 @@ class AgentInput extends HTMLElement {
     async loadFileCompletions(query, textarea) {
         try {
             if (!this._workspacePath && window.workspaceAPI?.getEffectiveWorkspace) {
-                this._workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+                this._workspacePath = (await window.workspaceAPI.getEffectiveWorkspace()).replace(/\\/g, '/');
             }
             if (!this._workspacePath) return;
 
@@ -2153,7 +2153,7 @@ class AgentInput extends HTMLElement {
                             this._workspacePath
                         );
                         for (const result of results) {
-                            let relativePath = result.path;
+                            let relativePath = result.path.replace(/\\/g, '/');
                             if (relativePath.startsWith(this._workspacePath)) {
                                 relativePath = relativePath.slice(this._workspacePath.length);
                                 if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
@@ -2181,7 +2181,7 @@ class AgentInput extends HTMLElement {
 
                 for (const result of results) {
                     // result.path 是绝对路径，转换为相对于工作区的路径
-                    let relativePath = result.path;
+                    let relativePath = result.path.replace(/\\/g, '/');
                     if (relativePath.startsWith(this._workspacePath)) {
                         relativePath = relativePath.slice(this._workspacePath.length);
                         if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
@@ -2239,7 +2239,7 @@ class AgentInput extends HTMLElement {
             <button class="autocomplete-panel-item${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
                 ${iconContent}
                 <div class="autocomplete-panel-item-info">
-                    <div class="autocomplete-panel-item-name">/${item.label}</div>
+                    <div class="autocomplete-panel-item-name">${this.autocompleteMode === 'file' ? '' : '/'}${item.label}</div>
                     ${item.description ? `<div class="autocomplete-panel-item-desc">${item.description}</div>` : ''}
                 </div>
             </button>
