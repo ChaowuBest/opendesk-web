@@ -162,7 +162,21 @@ export function buildInterpretersEnv(
     }
 
     const pipBinDir = path.join(pipTarget, isWindows ? 'Scripts' : 'bin');
+    const uvDir = path.join(interpretersDir, 'uv');
+    const uvCacheDir = path.join(uvDir, 'cache');
+    if (!fs.existsSync(uvCacheDir)) {
+        fs.mkdirSync(uvCacheDir, { recursive: true });
+    }
+    const uvToolDir = path.join(uvDir, 'tools');
+    if (!fs.existsSync(uvToolDir)) {
+        fs.mkdirSync(uvToolDir, { recursive: true });
+    }
+    const uvToolBinDir = path.join(uvToolDir, 'bin');
     env.PIP_TARGET = pipTarget;
+    env.UV_CACHE_DIR = uvCacheDir;
+    env.UV_TOOL_DIR = uvToolDir;
+    env.UV_TOOL_BIN_DIR = uvToolBinDir;
+    env.PATH = prependEnvPath([npmBinDir, pipBinDir, uvToolBinDir], baseEnv.PATH);
     env.PYTHONPATH = prependEnvPath([pipTarget], baseEnv.PYTHONPATH);
     env.PATH = prependEnvPath([npmBinDir, pipBinDir], baseEnv.PATH);
     return env;
