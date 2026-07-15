@@ -967,11 +967,11 @@ describe('Platform fetch 抽象层', () => {
             expect(platform.getName()).toBe('worker');
         });
 
-        test('fetch 在无 parentPort 时也能正常执行（使用原生 fetch）', async () => {
+        test('fetch 在无 parentPort 时也能正常执行（降级为原生 fetch）', async () => {
             const { WorkerPlatform } = await import('../../../platforms/worker');
             const platform = new WorkerPlatform();
 
-            // WorkerPlatform.fetch 现在直接使用 undici 原生 fetch，不再依赖 IPC
+            // 无 parentPort 时降级为 globalThis.fetch（测试环境兼容）
             const response = await platform.fetch('https://example.com');
             expect(response.status).toBeGreaterThanOrEqual(200);
         });

@@ -12,15 +12,15 @@
 /**
  * 工作线程专用的 Platform 实现。
  *
- * fetch 请求直接在 Worker 中通过 undici（Node.js 原生 fetch）执行，
- * 支持流式响应（SSE 等长连接），并根据网络配置自动处理代理和 SSL 设置。
+ * fetch 请求通过 IPC (parentPort.postMessage) 转发到主进程执行，
+ * 主进程使用 Electron 的 Chromium 网络栈处理请求并逐 chunk 回传 body，
+ * 支持流式响应（SSE 等长连接）。
  */
 
 import { AbstractPlatform, type PlatformFetchOptions } from './base.js';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { parentPort, workerData } from 'worker_threads';
-import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import { BaseApplication } from '../main/applications/base';
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -52,9 +52,23 @@ interface WorkerNetworkConfig {
     no_proxy: string;
 }
 
+function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
+    if (!headers) return {};
+    if (headers instanceof Headers) {
+        return Object.fromEntries(headers.entries());
+    }
+    if (Array.isArray(headers)) {
+        return Object.fromEntries(headers);
+    }
+    return { ...headers };
+}
+
 export class WorkerPlatform extends AbstractPlatform {
     private networkConfig: WorkerNetworkConfig;
     private _onNetworkConfigMessage: ((msg: any) => void) | null = null;
+    private _onFetchMessage: ((msg: any) => void) | null = null;
+    private _fetchStreamHandlers: Map<string, (msg: any) => void> = new Map();
+    private _fetchRequestCounter = 0;
 
     constructor() {
         super();
@@ -77,8 +91,16 @@ export class WorkerPlatform extends AbstractPlatform {
                 this.updateNetworkConfig(msg.config);
             }
         };
+        // 监听主进程回传的 fetch 流式消息
+        this._onFetchMessage = (msg: any) => {
+            const handler = this._fetchStreamHandlers.get(msg.id);
+            if (handler) {
+                handler(msg);
+            }
+        };
         if (parentPort) {
             parentPort.on('message', this._onNetworkConfigMessage);
+            parentPort.on('message', this._onFetchMessage);
         }
     }
 
@@ -114,22 +136,177 @@ export class WorkerPlatform extends AbstractPlatform {
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
-        const bypassProxy = !!options?.bypassProxy;
-        const skipTlsVerification = !!options?.skipTlsVerification;
-        const forceEnvironmentProxy = !!options?.forceEnvironmentProxy;
 
-        // 根据网络配置决定代理行为
-        const useProxy = !bypassProxy && this.networkConfig.use_proxy !== 'none';
-        const proxyUrl =
-            useProxy && this.networkConfig.use_proxy === 'custom' ? this.networkConfig.custom_proxy_addr : undefined;
-        const useEnvironmentProxy = useProxy && this.networkConfig.use_proxy === 'system';
-        const noSsl = skipTlsVerification || this.networkConfig.no_ssl;
+        // 退化路径：无 parentPort 时（测试环境等）直接使用全局 fetch
+        if (!parentPort) {
+            return globalThis.fetch(url, init ?? {});
+        }
 
-        return fetchWithResolvedProxy(url, init, {
-            proxyUrl: proxyUrl || undefined,
-            useEnvironmentProxy: forceEnvironmentProxy || useEnvironmentProxy,
-            bypassProxy,
-            skipTlsVerification: noSsl
+        const requestId = `__fetch_${++this._fetchRequestCounter}_${Date.now()}`;
+
+        // 序列化 init 为可通过 IPC 传递的格式
+        const fetchInit: Record<string, any> = {};
+        if (init) {
+            if (init.method) fetchInit.method = init.method;
+            if (init.headers) fetchInit.headers = headersToRecord(init.headers);
+            if (init.body !== undefined && init.body !== null) {
+                if (typeof init.body === 'string') {
+                    fetchInit.body = init.body;
+                } else if (init.body instanceof ArrayBuffer) {
+                    fetchInit.bodyBuffer = Buffer.from(init.body).toString('base64');
+                } else if (ArrayBuffer.isView(init.body)) {
+                    fetchInit.bodyBuffer = Buffer.from(
+                        init.body.buffer,
+                        init.body.byteOffset,
+                        init.body.byteLength
+                    ).toString('base64');
+                } else {
+                    fetchInit.body = String(init.body);
+                }
+            }
+            if (init.redirect) fetchInit.redirect = init.redirect;
+        }
+
+        return new Promise<Response>((resolve, reject) => {
+            let settled = false;
+
+            const handler = (msg: any) => {
+                if (msg.id !== requestId) return;
+
+                // 忽略 chunk/end 消息（它们在 headers 阶段之后由 streamHandler 处理）
+                if (msg.type === '__fetch_response_chunk' || msg.type === '__fetch_response_end') {
+                    return;
+                }
+
+                if (msg.type === '__fetch_response_headers') {
+                    if (msg.status === 'error') {
+                        settled = true;
+                        this._fetchStreamHandlers.delete(requestId);
+                        reject(new Error(msg.message || 'Fetch failed in main process'));
+                        return;
+                    }
+
+                    const responseHeaders = new Headers(msg.headers);
+
+                    // 构建 ReadableStream，body 由 IPC 回传的 chunk 消息驱动
+                    const pendingChunks: Uint8Array[] = [];
+                    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+                    let streamClosed = false;
+                    let streamError: Error | null = null;
+
+                    const bodyStream = new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            streamController = controller;
+                            // 排空在 start() 之前到达的 chunks
+                            for (const chunk of pendingChunks) {
+                                controller.enqueue(chunk);
+                            }
+                            pendingChunks.length = 0;
+                            if (streamClosed) {
+                                if (streamError) {
+                                    controller.error(streamError);
+                                } else {
+                                    controller.close();
+                                }
+                            }
+                        },
+                        cancel: (_reason) => {
+                            this._fetchStreamHandlers.delete(requestId);
+                            parentPort!.postMessage({
+                                type: '__fetch_abort',
+                                id: requestId
+                            });
+                        }
+                    });
+
+                    // 切换到流阶段 handler
+                    const streamHandler = (streamMsg: any) => {
+                        if (streamMsg.id !== requestId) return;
+
+                        if (streamMsg.type === '__fetch_response_chunk') {
+                            const data = Buffer.from(streamMsg.chunk, 'base64');
+                            if (streamController) {
+                                try {
+                                    streamController.enqueue(data);
+                                } catch (_e) {
+                                    // stream 可能已被关闭
+                                }
+                            } else {
+                                pendingChunks.push(data);
+                            }
+                        } else if (streamMsg.type === '__fetch_response_end') {
+                            this._fetchStreamHandlers.delete(requestId);
+                            streamClosed = true;
+                            if (streamMsg.error) {
+                                streamError = new Error(streamMsg.error);
+                            }
+                            if (streamController) {
+                                if (streamError) {
+                                    try {
+                                        streamController.error(streamError);
+                                    } catch (_e) {
+                                        // ignore
+                                    }
+                                } else {
+                                    try {
+                                        streamController.close();
+                                    } catch (_e) {
+                                        // ignore
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    this._fetchStreamHandlers.set(requestId, streamHandler);
+                    settled = true;
+                    resolve(
+                        new Response(bodyStream, {
+                            status: msg.statusCode,
+                            statusText: msg.statusText,
+                            headers: responseHeaders
+                        })
+                    );
+                }
+            };
+
+            this._fetchStreamHandlers.set(requestId, handler);
+
+            // 处理 AbortSignal
+            if (init?.signal) {
+                const signal = init.signal;
+                const onAbort = () => {
+                    if (!settled) {
+                        settled = true;
+                        this._fetchStreamHandlers.delete(requestId);
+                        reject(new DOMException('The operation was aborted', 'AbortError'));
+                        parentPort!.postMessage({
+                            type: '__fetch_abort',
+                            id: requestId
+                        });
+                    }
+                };
+                if (signal.aborted) {
+                    onAbort();
+                    return;
+                }
+                signal.addEventListener('abort', onAbort, { once: true });
+            }
+
+            // 发起 IPC 请求
+            parentPort!.postMessage({
+                type: '__fetch_request',
+                id: requestId,
+                url,
+                init: fetchInit,
+                options: options
+                    ? {
+                          forceEnvironmentProxy: !!options.forceEnvironmentProxy,
+                          bypassProxy: !!options.bypassProxy,
+                          skipTlsVerification: !!options.skipTlsVerification
+                      }
+                    : undefined
+            });
         });
     }
 

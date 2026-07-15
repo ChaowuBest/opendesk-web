@@ -59,6 +59,7 @@ export class ApplicationRegistry {
         }
     > = new Map();
     static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
+    static activeFetchReaders: Map<string, ReadableStreamDefaultReader<Uint8Array>> = new Map();
     static globalWorker: Worker | null = null;
     private static applicationListChangedCallbacks: Array<() => void> = [];
 
@@ -410,6 +411,15 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
             callback(undefined);
         }
         ApplicationRegistry.pendingStreamRequests.clear();
+        // 清理所有活跃的 fetch reader
+        for (const [id, reader] of ApplicationRegistry.activeFetchReaders) {
+            try {
+                reader.cancel();
+            } catch (_e) {
+                /* ignore */
+            }
+        }
+        ApplicationRegistry.activeFetchReaders.clear();
     };
 
     worker.on('error', (error) => {
@@ -556,6 +566,7 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
             case '__fetch_request': {
                 const { id, url, init: fetchInit, options: fetchOptions } = event;
                 (async () => {
+                    let headersSent = false;
                     try {
                         const opts: RequestInit = {};
                         const platformOptions: PlatformFetchOptions | undefined = fetchOptions
@@ -576,30 +587,77 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
                             if (fetchInit.redirect) opts.redirect = fetchInit.redirect;
                         }
                         const response = await getPlatform().fetch(url, opts, platformOptions);
-                        const bodyArrayBuffer = await response.arrayBuffer();
-                        const bodyBase64 = Buffer.from(bodyArrayBuffer).toString('base64');
+
+                        // ① 立即发送 headers
                         const headers: Record<string, string> = {};
                         response.headers.forEach((v, k) => {
                             headers[k] = v;
                         });
                         worker.postMessage({
-                            type: '__fetch_response',
+                            type: '__fetch_response_headers',
                             id,
                             status: 'ok',
                             statusCode: response.status,
                             statusText: response.statusText,
-                            headers,
-                            bodyBase64
+                            headers
+                        });
+                        headersSent = true;
+
+                        // ② 流式发送 body
+                        if (response.body) {
+                            const reader = response.body.getReader();
+                            ApplicationRegistry.activeFetchReaders.set(id, reader);
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    worker.postMessage({
+                                        type: '__fetch_response_chunk',
+                                        id,
+                                        chunk: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+                                            'base64'
+                                        )
+                                    });
+                                }
+                            } finally {
+                                reader.releaseLock();
+                                ApplicationRegistry.activeFetchReaders.delete(id);
+                            }
+                        }
+
+                        // ③ 发送结束信号
+                        worker.postMessage({
+                            type: '__fetch_response_end',
+                            id
                         });
                     } catch (err: any) {
+                        if (!headersSent) {
+                            worker.postMessage({
+                                type: '__fetch_response_headers',
+                                id,
+                                status: 'error',
+                                message: err.message || String(err)
+                            });
+                        }
+                        ApplicationRegistry.activeFetchReaders.delete(id);
                         worker.postMessage({
-                            type: '__fetch_response',
+                            type: '__fetch_response_end',
                             id,
-                            status: 'error',
-                            message: err.message || String(err)
+                            error: err.message || String(err)
                         });
                     }
                 })();
+                break;
+            }
+            case '__fetch_abort': {
+                const { id } = event;
+                const reader = ApplicationRegistry.activeFetchReaders.get(id);
+                if (reader) {
+                    reader.cancel().catch(() => {
+                        // ignore
+                    });
+                    ApplicationRegistry.activeFetchReaders.delete(id);
+                }
                 break;
             }
             case '__shell_request': {

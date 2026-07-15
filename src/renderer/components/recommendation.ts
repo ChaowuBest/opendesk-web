@@ -74,10 +74,10 @@ const DEFAULT_RECOMMENDATION_DATA: RecommendationData = {
             icon: 'fa-wand-magic-sparkles',
             items: [
                 {
-                    id: 'daily-report',
-                    title: '工作日报',
-                    description: '根据今天的工作内容生成日报，按任务维度写进展和问题',
-                    prompt: '请帮我根据今天的工作内容生成一份工作日报，按任务维度写出进展和问题。',
+                    id: 'technical-survey',
+                    title: '技术调研',
+                    description: '根据你指定的技术主题，进行详细的搜索，生成一份调研报告',
+                    prompt: '请帮我做一份技术调研报告。我会告诉你技术主题和目标，请帮我搜索相关资料，整理成一份结构化的调研报告，包含背景、现状、趋势和参考资料。',
                     icon: 'fa-file-lines'
                 },
                 {
