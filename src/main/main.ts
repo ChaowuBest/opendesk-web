@@ -87,7 +87,7 @@ import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult, GoalEvent } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
-import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
+import { lookupKnownContextSize, lookupKnownVisionSupport, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
 import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
@@ -1941,6 +1941,23 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
+    });
+
+    ipcMain.handle('model:checkVisionSupport', (_event, models) => {
+        if (!Array.isArray(models)) {
+            return {};
+        }
+        const result: Record<string, boolean> = {};
+        for (const m of models) {
+            if (m.alias && m.model_name) {
+                const vision = lookupKnownVisionSupport(m.model_name);
+                if (vision !== undefined) {
+                    result[m.alias] = vision;
+                }
+                // 如果内置表查不到，默认悲观认为不支持视觉
+            }
+        }
+        return result;
     });
 
     const embeddingConfigFingerprint = (data: any): string => {

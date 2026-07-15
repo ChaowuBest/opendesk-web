@@ -159,6 +159,8 @@ class AgentInput extends HTMLElement {
         this.onStopCallback = null;
         /** @type {{ alias: string, model_name: string }[]} */
         this.availableModels = [];
+        /** @type {Record<string, boolean>} alias → 是否支持视觉 */
+        this.visionMap = {};
         this.selectedModel = '';
         this.selectedReasoningEffort = '';
         this.defaultModelAlias = '';
@@ -252,6 +254,7 @@ class AgentInput extends HTMLElement {
             }
             this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             await this.loadModes();
+            await this.loadVisionSupport();
             this.render();
         });
 
@@ -287,8 +290,19 @@ class AgentInput extends HTMLElement {
             this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             // 加载 Ctrl+Enter 设置
             this.ctrlEnterSend = !!settingObj.gui_config?.ctrl_enter_send;
+            // 加载视觉能力映射
+            await this.loadVisionSupport();
         } catch (err) {
             console.warn('Failed to load settings for agent-input:', err);
+        }
+    }
+
+    async loadVisionSupport() {
+        if (!this.availableModels.length || !window.settingAPI?.checkVisionSupport) return;
+        try {
+            this.visionMap = await window.settingAPI.checkVisionSupport(this.availableModels);
+        } catch {
+            this.visionMap = {};
         }
     }
 
@@ -1094,10 +1108,18 @@ class AgentInput extends HTMLElement {
                     m.alias === this.selectedModel
                         ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
                         : '';
-                return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
-                    <div class="popup-panel-item-icon"><i class="fas fa-robot text-blue-500 text-xs"></i></div>
+                const hasVision = this.visionMap[m.alias] === true;
+                const iconHTML = hasVision
+                    ? '<i class="fas fa-eye text-blue-500 text-xs"></i>'
+                    : '<i class="fas fa-comments text-gray-400 text-xs"></i>';
+                const visionTagHTML = hasVision
+                    ? `<span class="popup-panel-item-tag">${this.t('renderer.agentInput.model.visionTag')}</span>`
+                    : '';
+                return `<button class="popup-panel-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
+                    <div class="popup-panel-item-icon">${iconHTML}</div>
                     <div class="popup-panel-item-info">
                         <div class="popup-panel-item-name">${m.alias}</div>
+                        ${visionTagHTML}
                     </div>
                     ${checkMark}
                     <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>
@@ -1139,6 +1161,7 @@ class AgentInput extends HTMLElement {
         ].join('');
 
         const currentModelLabel = this.getModelButtonLabel();
+        const currentModelHasVision = this.visionMap[this.selectedModel] === true;
         const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
         const currentModeIcon = currentMode ? currentMode.icon : '';
@@ -1190,7 +1213,7 @@ class AgentInput extends HTMLElement {
                                 ? `
                         <div class="agent-input-toolbar-item" data-toolbar-priority="1">
                             <button id="agent-input-model-btn" class="agent-input-toolbar-control">
-                                <i class="fas fa-robot"></i>
+                                <i class="fas ${currentModelHasVision ? 'fa-eye' : 'fa-comments'}"></i>
                                 <span>${currentModelLabel}</span>
                             </button>
                             <div id="agent-input-model-panel" class="popup-panel-hidden">
@@ -1589,10 +1612,17 @@ class AgentInput extends HTMLElement {
                         m.alias === this.selectedModel
                             ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
                             : '';
-                    return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
-                        <div class="popup-panel-item-icon"><i class="fas fa-robot text-blue-500 text-xs"></i></div>
+                    const hasVision = this.visionMap[m.alias] === true;
+                    const iconHTML = hasVision
+                        ? '<i class="fas fa-eye text-blue-500 text-xs"></i>'
+                        : '<i class="fas fa-comments text-gray-400 text-xs"></i>';
+                    const visionTagHTML = hasVision
+                        ? `<span class="popup-panel-item-tag">${this.t('renderer.agentInput.model.visionTag')}</span>`
+                        : '';
+                    return `<button class="popup-panel-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
+                        <div class="popup-panel-item-icon">${iconHTML}</div>
                         <div class="popup-panel-item-info">
-                            <div class="popup-panel-item-name">${m.alias}</div>
+                            <div class="popup-panel-item-name">${m.alias}${visionTagHTML}</div>
                         </div>
                         ${checkMark}
                         <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>

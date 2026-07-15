@@ -997,6 +997,10 @@ if (shouldExposeMainWindowAPIs()) {
             const result = await ipcRenderer.invoke('setting:estimateContextSize', modelName);
             if (result.status !== 'ok') return 0;
             return result.data;
+        },
+        checkVisionSupport: async (models) => {
+            const result = await ipcRenderer.invoke('model:checkVisionSupport', models);
+            return result;
         }
     });
 

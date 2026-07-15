@@ -1,4 +1,4 @@
-import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
+﻿import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
 
 /**
  * 已知模型的信息记录，合并了上下文窗口大小、最大输出 token 和视觉支持。
@@ -33,6 +33,10 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gpt-5-5': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-5-pro': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-5-instant': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
+    'gpt-5-6': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
+    'gpt-5-6-sol': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
+    'gpt-5-6-terra': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
+    'gpt-5-6-luna': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-4': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-4-pro': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-4-mini': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
@@ -47,13 +51,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gpt-4-turbo': { contextSize: 128000, maxOutputTokens: 4096, vision: true },
     'gpt-4': { contextSize: 8192, maxOutputTokens: 4096, vision: false },
     'gpt-4-32k': { contextSize: 32768, maxOutputTokens: 4096, vision: false },
-    'gpt-3-5-turbo': { contextSize: 16384, maxOutputTokens: 4096 },
-    'gpt-3-5-turbo-16k': { contextSize: 16384, maxOutputTokens: 4096 },
+    'gpt-3-5-turbo': { contextSize: 16384, maxOutputTokens: 4096, vision: false },
+    'gpt-3-5-turbo-16k': { contextSize: 16384, maxOutputTokens: 4096, vision: false },
     o1: { contextSize: 200000, maxOutputTokens: 100000, vision: true },
-    'o1-mini': { contextSize: 128000, maxOutputTokens: 65536, vision: true },
+    'o1-mini': { contextSize: 128000, maxOutputTokens: 65536, vision: false },
     'o1-pro': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
     o3: { contextSize: 200000, maxOutputTokens: 100000, vision: true },
-    'o3-mini': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
+    'o3-mini': { contextSize: 200000, maxOutputTokens: 100000, vision: false },
     'o4-mini': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
 
     // ═══════════════════════════════════════════════
@@ -89,19 +93,28 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gemini-1-5-flash': { contextSize: 1048576, maxOutputTokens: 8192, vision: true },
 
     // ═══════════════════════════════════════════════
+    // Gemma / Google
+    // ═══════════════════════════════════════════════
+    'gemma-4-31b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'gemma-4-26b-a4b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'gemma-4-12b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'gemma-4-e4b-it': { contextSize: 131072, maxOutputTokens: 0, vision: true },
+    'gemma-4-e2b-it': { contextSize: 131072, maxOutputTokens: 0, vision: true },
+
+    // ═══════════════════════════════════════════════
     // DeepSeek
     // ═══════════════════════════════════════════════
     'deepseek-v4-pro': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
     'deepseek-v4-flash': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
-    'deepseek-v4': { contextSize: 1048576, maxOutputTokens: 0, vision: false },
+    'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
     'deepseek-v3-2': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'deepseek-v3-1': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'deepseek-v3': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'deepseek-r1': { contextSize: 131072, maxOutputTokens: 0, vision: false },
-    'deepseek-r1-distill-qwen-7b': { contextSize: 65536, maxOutputTokens: 0 },
-    'deepseek-r1-distill-qwen-32b': { contextSize: 65536, maxOutputTokens: 0 },
-    'deepseek-r1-distill-llama-8b': { contextSize: 65536, maxOutputTokens: 0 },
-    'deepseek-r1-distill-llama-70b': { contextSize: 65536, maxOutputTokens: 0 },
+    'deepseek-r1-distill-qwen-7b': { contextSize: 131072, maxOutputTokens: 0 },
+    'deepseek-r1-distill-qwen-32b': { contextSize: 131072, maxOutputTokens: 0 },
+    'deepseek-r1-distill-llama-8b': { contextSize: 131072, maxOutputTokens: 0 },
+    'deepseek-r1-distill-llama-70b': { contextSize: 131072, maxOutputTokens: 0 },
 
     // ═══════════════════════════════════════════════
     // Qwen / Alibaba
@@ -155,10 +168,10 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // GLM / Zhipu
     // ═══════════════════════════════════════════════
-    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
-    'glm-5-1': { contextSize: 202752, maxOutputTokens: 0, vision: true },
-    'glm-5': { contextSize: 204800, maxOutputTokens: 0, vision: true },
-    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 0, vision: true },
+    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
+    'glm-5-1': { contextSize: 202752, maxOutputTokens: 0, vision: false },
+    'glm-5': { contextSize: 204800, maxOutputTokens: 0, vision: false },
+    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 0, vision: false },
     'glm-5v-turbo': { contextSize: 200000, maxOutputTokens: 0, vision: true },
     'glm-4-7': { contextSize: 204800, maxOutputTokens: 0 },
     'glm-4-7-flashx': { contextSize: 200000, maxOutputTokens: 0 },
@@ -191,14 +204,20 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // MiniMax
     // ═══════════════════════════════════════════════
-    'minimax-m3': { contextSize: 512000, maxOutputTokens: 0, vision: true },
+    'minimax-m3': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
     'minimax-m2-7': { contextSize: 204800, maxOutputTokens: 0 },
     'minimax-m2-5': { contextSize: 204800, maxOutputTokens: 0 },
     'minimax-m2-5-highspeed': { contextSize: 204800, maxOutputTokens: 0 },
-    'minimax-m2-1': { contextSize: 1000000, maxOutputTokens: 0 },
-    'minimax-m2': { contextSize: 1000000, maxOutputTokens: 0 },
+    'minimax-m2-1': { contextSize: 200000, maxOutputTokens: 0 },
+    'minimax-m2': { contextSize: 200000, maxOutputTokens: 0 },
     'minimax-m1': { contextSize: 1000000, maxOutputTokens: 0 },
     'minimax-01': { contextSize: 4194304, maxOutputTokens: 0 },
+
+    // ═══════════════════════════════════════════════
+    // MiMo / Xiaomi
+    // ═══════════════════════════════════════════════
+    'mimo-v2-5': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'mimo-v2-5-pro': { contextSize: 1048576, maxOutputTokens: 131072, vision: false },
 
     // ═══════════════════════════════════════════════
     // Kimi / Moonshot
@@ -214,6 +233,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'moonshot-v1-128k': { contextSize: 131072, maxOutputTokens: 0 },
 
     // ═══════════════════════════════════════════════
+    // Hy / Tencent-Hunyuan
+    // ═══════════════════════════════════════════════
+    hy3: { contextSize: 262144, maxOutputTokens: 0, vision: false },
+    'hy3-fp8': { contextSize: 262144, maxOutputTokens: 0, vision: false },
+    'hy3-preview': { contextSize: 262144, maxOutputTokens: 0, vision: false },
+
+    // ═══════════════════════════════════════════════
     // Doubao / ByteDance
     // ═══════════════════════════════════════════════
     'doubao-seed-2-1-pro': { contextSize: 256000, maxOutputTokens: 0, vision: true },
@@ -227,9 +253,9 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'doubao-seed-1-6-flash': { contextSize: 256000, maxOutputTokens: 0, vision: true },
     'doubao-seed-1-6-thinking': { contextSize: 256000, maxOutputTokens: 0, vision: true },
     'doubao-seed-1-6-lite': { contextSize: 256000, maxOutputTokens: 0 },
-    'doubao-1-5-pro-32k': { contextSize: 131072, maxOutputTokens: 0, vision: true },
+    'doubao-1-5-pro-32k': { contextSize: 32768, maxOutputTokens: 0, vision: true },
     'doubao-1-5-lite-32k': { contextSize: 32768, maxOutputTokens: 0 },
-    'doubao-1-5-pro-256k': { contextSize: 262144, maxOutputTokens: 0 },
+    'doubao-1-5-pro-256k': { contextSize: 262144, maxOutputTokens: 0, vision: true },
     'doubao-1-5-thinking-pro': { contextSize: 131072, maxOutputTokens: 0 },
     'doubao-pro-32k': { contextSize: 32768, maxOutputTokens: 0 },
     'doubao-lite-32k': { contextSize: 32768, maxOutputTokens: 0 },
@@ -241,20 +267,20 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     'llama-4-scout': { contextSize: 10485760, maxOutputTokens: 0, vision: true },
     'llama-4-maverick': { contextSize: 1048576, maxOutputTokens: 0, vision: true },
-    'llama-3-3-70b': { contextSize: 131072, maxOutputTokens: 0 },
-    'llama-3-1-8b': { contextSize: 131072, maxOutputTokens: 0 },
-    'llama-3-1-70b': { contextSize: 131072, maxOutputTokens: 0 },
-    'llama-3-1-405b': { contextSize: 131072, maxOutputTokens: 0 },
+    'llama-3-3-70b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'llama-3-1-8b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'llama-3-1-70b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'llama-3-1-405b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
 
     // ═══════════════════════════════════════════════
     // Mistral
     // ═══════════════════════════════════════════════
-    'mistral-large': { contextSize: 131072, maxOutputTokens: 0 },
-    'mistral-small': { contextSize: 131072, maxOutputTokens: 0 },
-    'mistral-medium': { contextSize: 32768, maxOutputTokens: 0 },
-    'mistral-7b': { contextSize: 32768, maxOutputTokens: 0 },
-    'mixtral-8x7b': { contextSize: 32768, maxOutputTokens: 0 },
-    'mixtral-8x22b': { contextSize: 65536, maxOutputTokens: 0 }
+    'mistral-large': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'mistral-small': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'mistral-medium': { contextSize: 32768, maxOutputTokens: 0, vision: false },
+    'mistral-7b': { contextSize: 32768, maxOutputTokens: 0, vision: false },
+    'mixtral-8x7b': { contextSize: 32768, maxOutputTokens: 0, vision: false },
+    'mixtral-8x22b': { contextSize: 65536, maxOutputTokens: 0, vision: false }
 };
 
 // ═══════════════════════════════════════════════

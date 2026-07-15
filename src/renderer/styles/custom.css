@@ -983,6 +983,11 @@ html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb {
 html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28);
 }
+html[data-theme='dark'] .popup-panel-item-tag {
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.12);
+    border-color: rgba(167, 139, 250, 0.3);
+}
 .popup-panel-item {
     display: flex;
     align-items: center;
@@ -1040,6 +1045,18 @@ html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb:hover {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.popup-panel-item-tag {
+    display: inline-block;
+    font-size: 8px;
+    font-weight: 600;
+    color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 3px;
+    padding: 0 3px;
+    line-height: 1.3;
+    margin-top: 1px;
+}
 .popup-panel-item-desc {
     font-size: 11px;
     color: #9ca3af;
@@ -1056,6 +1073,12 @@ html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb:hover {
 #agent-input-mode-panel .mode-panel-item {
     align-items: flex-start;
     padding: 9px 10px;
+}
+#agent-input-model-panel .model-panel-item {
+    padding: 6px 10px;
+}
+#agent-input-model-panel .popup-panel-item-name {
+    font-size: 12px;
 }
 #agent-input-mode-panel .mode-panel-item-icon {
     font-size: 14px;

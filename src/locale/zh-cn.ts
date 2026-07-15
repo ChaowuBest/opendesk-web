@@ -883,6 +883,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.placeholder.enter': '在这里输入消息，按 Enter 发送',
     'renderer.agentInput.placeholder.ctrlEnter': '在这里输入消息，按 Ctrl+Enter 发送',
     'renderer.agentInput.modelRequired': '请先选择模型才能开始对话',
+    'renderer.agentInput.model.visionTag': '视觉',
     'renderer.agentInput.submit.sendLabel': '发送',
     'renderer.agentInput.submit.enterTitle': '发送 (Enter)',
     'renderer.agentInput.submit.ctrlEnterTitle': '发送 (Ctrl+Enter)',
