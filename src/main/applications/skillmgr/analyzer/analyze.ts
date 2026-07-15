@@ -35,6 +35,8 @@ import { generateAnalyzeExportPage, generateAnalyzeExportDataJs, type AnalyzeSki
 import { extractPythonTopLevelImports, extractSubprocessCommands, extractShellCommands } from './dep-prescan.js';
 import { logger } from '../../../utils/logger.js';
 import { getTempDir } from '../../../utils/temp.js';
+import { Mutex } from 'async-mutex';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -107,6 +109,7 @@ export class SkillAnalyzer {
     private onStatusChange?: StatusChangeCallback;
     /** 当前正在执行的分析队列引用，用于 stop() 时清空 */
     private _currentQueue?: Array<string | TestCasePlan>;
+    private readonly _testResultWriteMutexes = new Map<string, Mutex>();
 
     constructor(onStatusChange?: StatusChangeCallback) {
         this.state = this._createInitialState();
@@ -607,9 +610,9 @@ export class SkillAnalyzer {
         this._finishRun({ cancelPendingQueue: true });
     }
 
-    private _failTestCase(plan: TestCasePlan, message: string, taskId?: string): void {
+    private async _failTestCase(plan: TestCasePlan, message: string, taskId?: string): Promise<void> {
         try {
-            this._updateTestCaseStatus(
+            await this._updateTestCaseStatus(
                 plan.skillId,
                 plan.skillDir,
                 plan.testCase.index,
@@ -1018,7 +1021,7 @@ ${preScanSection}`;
                     logger.error(
                         `[SkillAnalyzer] 测试用例 ${plan.skillName} #${plan.testCase.index} 异常: ${this._formatError(err)}`
                     );
-                    this._failTestCase(plan, `测试运行内部异常: ${this._formatErrorMessage(err)}`);
+                    await this._failTestCase(plan, `测试运行内部异常: ${this._formatErrorMessage(err)}`);
                     this._markOneCompleted();
                     this._notifyStatusChange();
                 }
@@ -1102,7 +1105,7 @@ ${preScanSection}`;
 
                 if (parseResult.success) {
                     // 更新状态
-                    this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
+                    await this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
 
                     // 第三步：生成运行时依赖元数据
                     if (this.state.running) {
@@ -1126,7 +1129,7 @@ ${preScanSection}`;
                 // 解析/校验失败
                 if (attempt >= MAX_TESTRESULT_RETRIES - 1) {
                     // 达到最大重试次数，标记为失败
-                    this._updateTestCaseStatus(
+                    await this._updateTestCaseStatus(
                         skillId,
                         skillDir,
                         tcIndex,
@@ -1140,7 +1143,7 @@ ${preScanSection}`;
                 }
             }
         } catch (err) {
-            this._failTestCase(plan, `Agent 执行异常: ${this._formatErrorMessage(err)}`, task?.task_id);
+            await this._failTestCase(plan, `Agent 执行异常: ${this._formatErrorMessage(err)}`, task?.task_id);
         } finally {
             // 清理临时工作空间
             if (tempWorkspace) {
@@ -1193,73 +1196,81 @@ ${preScanSection}`;
         }
     }
 
+    private _getTestResultWriteMutex(skillDir: string): Mutex {
+        const key = path.resolve(skillDir);
+        let mutex = this._testResultWriteMutexes.get(key);
+        if (!mutex) {
+            mutex = new Mutex();
+            this._testResultWriteMutexes.set(key, mutex);
+        }
+        return mutex;
+    }
+
     /**
-     * 更新测试用例状态：内存中的 results + 持久化到 opendesk_meta.json
+     * 串行且原子地提交单条测试结果；磁盘提交成功后才更新内存状态。
      */
-    private _updateTestCaseStatus(
+    private async _updateTestCaseStatus(
         skillId: string,
         skillDir: string,
         testCaseIndex: number,
         testResult: TestResult,
         taskId?: string
-    ): void {
-        const failureReasonCategory = testResult.result === 'failed' ? testResult.failureReasonCategory : undefined;
+    ): Promise<void> {
+        const mutex = this._getTestResultWriteMutex(skillDir);
 
-        // 更新内存中的 results
-        const resultEntry = this.state.results[skillId];
-        if (resultEntry?.testCases) {
-            const tcs = resultEntry.testCases as Array<Record<string, unknown>>;
-            for (const tc of tcs) {
-                if (tc['index'] === testCaseIndex) {
-                    tc['status'] = testResult.result === 'succeeded' ? 'passed' : 'failed';
-                    if (testResult.result === 'succeeded') {
-                        tc['actualResult'] = testResult.message;
-                        delete tc['error'];
-                        delete tc['failureReasonCategory'];
-                    } else {
-                        delete tc['actualResult'];
-                        tc['error'] = testResult.message;
-                        tc['failureReasonCategory'] = failureReasonCategory;
-                    }
-                    if (taskId) {
-                        tc['taskId'] = taskId;
-                    }
-                    break;
-                }
-            }
-        }
-
-        // 持久化到 opendesk_meta.json
-        try {
+        await mutex.runExclusive(async () => {
             const metaPath = path.join(skillDir, OPENDESK_META_FILENAME);
-            if (fs.existsSync(metaPath)) {
-                const raw = fs.readFileSync(metaPath, 'utf-8');
+            const tempPath = path.join(skillDir, `.${OPENDESK_META_FILENAME}.${process.pid}.${randomUUID()}.tmp`);
+
+            try {
+                const [raw, stat] = await Promise.all([
+                    fs.promises.readFile(metaPath, 'utf-8'),
+                    fs.promises.stat(metaPath)
+                ]);
                 const meta = JSON.parse(raw);
-                if (meta?.testCases && Array.isArray(meta.testCases)) {
-                    for (const tc of meta.testCases) {
-                        if (tc['index'] === testCaseIndex) {
-                            tc['status'] = testResult.result === 'succeeded' ? 'passed' : 'failed';
-                            if (testResult.result === 'succeeded') {
-                                tc['actualResult'] = testResult.message;
-                                delete tc['error'];
-                                delete tc['failureReasonCategory'];
-                            } else {
-                                delete tc['actualResult'];
-                                tc['error'] = testResult.message;
-                                tc['failureReasonCategory'] = failureReasonCategory;
-                            }
-                            if (taskId) {
-                                tc['taskId'] = taskId;
-                            }
-                            break;
-                        }
-                    }
-                    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+                if (!Array.isArray(meta?.testCases)) {
+                    throw new Error(`${OPENDESK_META_FILENAME} 未包含测试用例`);
                 }
+
+                const testCase = meta.testCases.find(
+                    (candidate: Record<string, unknown>) => candidate['index'] === testCaseIndex
+                );
+                if (!testCase) throw new Error(`未找到测试用例 #${testCaseIndex}`);
+                this._applyTestCaseResult(testCase, testResult, taskId);
+
+                const file = await fs.promises.open(tempPath, 'wx', stat.mode);
+                try {
+                    await file.writeFile(`${JSON.stringify(meta, null, 2)}\n`, 'utf-8');
+                    await file.sync();
+                } finally {
+                    await file.close();
+                }
+                await fs.promises.rename(tempPath, metaPath);
+
+                const memoryTestCase = (
+                    this.state.results[skillId]?.testCases as Array<Record<string, unknown>> | undefined
+                )?.find((candidate) => candidate['index'] === testCaseIndex);
+                if (memoryTestCase) this._applyTestCaseResult(memoryTestCase, testResult, taskId);
+            } catch (e) {
+                await fs.promises.rm(tempPath, { force: true }).catch(() => {});
+                throw e;
             }
-        } catch (e) {
-            logger.warn(`[SkillAnalyzer] 持久化测试结果失败: ${(e as Error).message}`);
+        });
+    }
+
+    private _applyTestCaseResult(testCase: Record<string, unknown>, testResult: TestResult, taskId?: string): void {
+        testCase['status'] = testResult.result === 'succeeded' ? 'passed' : 'failed';
+        if (testResult.result === 'succeeded') {
+            testCase['actualResult'] = testResult.message;
+            delete testCase['error'];
+            delete testCase['failureReasonCategory'];
+        } else {
+            delete testCase['actualResult'];
+            testCase['error'] = testResult.message;
+            testCase['failureReasonCategory'] = testResult.failureReasonCategory;
         }
+        if (taskId) testCase['taskId'] = taskId;
+        else delete testCase['taskId'];
     }
 
     /**
