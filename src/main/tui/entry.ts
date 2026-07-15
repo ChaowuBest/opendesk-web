@@ -17,6 +17,7 @@ import {
     TaskManagerState,
     TaskState,
     TaskUpdateChunk,
+    type TaskUpdateGoalEvalChunk,
     BaseTaskManagerUpdateSubscriber
 } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
@@ -26,6 +27,7 @@ import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
+import { getGoalElapsedMs } from '../../common/goal/format.js';
 import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
@@ -35,10 +37,10 @@ import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
-import { GoalPanel } from './components/goalpanel';
+import type { GoalPanelData } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
 import { GoalService } from '../aikernel/goal/service.js';
-import { GoalStates, type GoalState } from '../aikernel/goal/state.js';
+import { GoalStates } from '../aikernel/goal/state.js';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -95,7 +97,6 @@ export class OpenDeskTUI {
     public taskView: TaskView;
     public logPanel: LogPanel;
     private todoList: TodoList;
-    public goalPanel: GoalPanel;
     public inputArea: AgentInputArea;
     public dashboardBar: DashboardBar;
 
@@ -119,6 +120,8 @@ export class OpenDeskTUI {
     /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
     private _hasOpenOverlay = false;
     private pendingInputPromptActions: Array<() => void> = [];
+    /** 记录正在评估中的 goal（按 taskId -> `${goalId}:${revision}`），用于避免“评估中”闪烁 */
+    private goalEvaluationInProgressByTask = new Map<string, string>();
 
     get hasOpenOverlay(): boolean {
         return this._hasOpenOverlay;
@@ -194,7 +197,6 @@ export class OpenDeskTUI {
         this.taskView = new TaskView(this.tui, args.renderInterval);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
-        this.goalPanel = new GoalPanel();
         this.inputArea = new AgentInputArea(this);
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
@@ -257,7 +259,6 @@ export class OpenDeskTUI {
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
-        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
         this.container.addChild(this.inputArea);
         this.container.addChild(this.dashboardBar);
@@ -325,8 +326,8 @@ export class OpenDeskTUI {
 
         // 获取 TodoWrite 工具使用的 taskTodosMap 并绑定更新回调
         this.bindTodoUpdates();
-        // 绑定 GoalPanel 更新（轮询 goal 状态、token、耗时）
-        this.bindGoalPanelUpdates();
+        // 绑定消息流 Goal 快照更新（轮询 goal 状态、token、耗时）
+        this.bindGoalSnapshotUpdates();
 
         // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
@@ -335,6 +336,7 @@ export class OpenDeskTUI {
         this.taskView.onRetryStateChange = () => {
             this.syncRetryCommandAvailability();
         };
+        this.taskView.onGoalEvalUpdate = (chunk) => this.handleGoalEvalUpdate(chunk);
 
         // 从已注册指令中提取快捷键（跳过由 cli_config.shortcuts 管理的命令）
         const CLI_MANAGED_COMMANDS = new Set(['switch']);
@@ -477,6 +479,20 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
+    public syncInputStatusFromTask(taskId: string): boolean {
+        if (this.activeTaskId !== taskId) return false;
+        const task = this.taskManagerState.getTask(taskId);
+        const isRunning = task?.task_status === 'running';
+        if (isRunning) {
+            this.inputArea.setStatus('running');
+            this.inputArea.statusBar.startTimer();
+        } else {
+            this.inputArea.statusBar.stopTimer();
+            this.inputArea.setStatus('idle');
+        }
+        return isRunning;
+    }
+
     public isActiveGoalRunningForInput(): boolean {
         const task = this.getActiveTask();
         return task?.task_status === 'running' && task.goal_state?.status === 'active';
@@ -522,45 +538,91 @@ export class OpenDeskTUI {
                 closeLabel: t('common.close')
             });
             info.show();
+        } else {
+            this.taskView.appendPendingGoalSupplementMessage(request, result.supplementId);
         }
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();
         return true;
     }
 
-    private getGoalElapsedMs(goal: GoalState | null): number {
-        if (!goal) return 0;
-        const startedAt = Date.parse(goal.createdAt);
-        if (!Number.isFinite(startedAt)) return 0;
-        const endedAt =
-            goal.status === 'complete' && goal.completedAt
-                ? Date.parse(goal.completedAt)
-                : goal.status === 'cleared' && goal.clearedAt
-                  ? Date.parse(goal.clearedAt)
-                  : Date.now();
-        if (!Number.isFinite(endedAt)) return 0;
-        return Math.max(0, endedAt - startedAt);
-    }
-
-    private resetGoalPanel(): boolean {
-        if (this.goalPanel.getGoalState() === null && !this.goalPanel.isVisible()) {
-            return false;
+    private handleGoalEvalUpdate(chunk: TaskUpdateGoalEvalChunk): void {
+        const task = this.taskView.taskState;
+        if (!task || task.task_id !== chunk.task_id || this.activeTaskId !== chunk.task_id) {
+            return;
         }
-        this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
-        this.inputArea.clearGoalSupplementQueuedHint();
-        return true;
+        if (
+            !task.goal_state ||
+            task.goal_state.id !== chunk.goalId ||
+            task.goal_state.revision !== chunk.goalRevision
+        ) {
+            return;
+        }
+
+        if (chunk.phase === 'start') {
+            const goalState = task.goal_state;
+            const totalTokens = getGoalTokenUsage(task);
+            const elapsedMs = getGoalElapsedMs(goalState);
+            this.goalEvaluationInProgressByTask.set(chunk.task_id, `${chunk.goalId}:${chunk.goalRevision}`);
+            this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs, evaluating: true });
+            this.tui.requestRender();
+            return;
+        }
+
+        if (chunk.status === 'superseded') {
+            const goalState = task.goal_state;
+            const totalTokens = getGoalTokenUsage(task);
+            const elapsedMs = getGoalElapsedMs(goalState);
+            this.goalEvaluationInProgressByTask.set(chunk.task_id, `${chunk.goalId}:${chunk.goalRevision}`);
+            this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs, evaluating: true });
+            this.tui.requestRender();
+            return;
+        }
+
+        const evaluatingKey = this.goalEvaluationInProgressByTask.get(task.task_id);
+        if (evaluatingKey === `${chunk.goalId}:${chunk.goalRevision}`) {
+            this.goalEvaluationInProgressByTask.delete(task.task_id);
+        } else {
+            this.goalEvaluationInProgressByTask.delete(task.task_id);
+        }
+
+        this.updateGoalPanelFromTask(task, { evaluating: false });
+        this.tui.requestRender();
     }
 
-    private updateGoalPanelFromTask(task: TaskState): void {
+    private updateGoalPanelFromTask(task: TaskState, options: { evaluating?: boolean } = {}): void {
         const goalState = task.goal_state ?? null;
         const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
-        const elapsedMs = this.getGoalElapsedMs(goalState);
+        const elapsedMs = getGoalElapsedMs(goalState);
+        let evaluating = options.evaluating;
 
-        if (GoalStates.isTerminal(goalState?.status)) {
-            this.taskView.syncTerminalGoalPanelSnapshot({ goalState, totalTokens, elapsedMs });
-            this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
-        } else {
-            this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+        // 同步消息列表中的 per-goal 面板（每个 goal.id 对应一个）
+        if (goalState) {
+            if (evaluating === undefined) {
+                const progressKey = this.goalEvaluationInProgressByTask.get(task.task_id);
+                const currentKey = `${goalState.id}:${goalState.revision}`;
+
+                if (progressKey === currentKey) {
+                    if (goalState.status === 'active') {
+                        evaluating = true;
+                    } else {
+                        evaluating = false;
+                        this.goalEvaluationInProgressByTask.delete(task.task_id);
+                    }
+                } else if (progressKey !== undefined) {
+                    this.goalEvaluationInProgressByTask.delete(task.task_id);
+                }
+            }
+
+            const updateData: Partial<GoalPanelData> = {
+                goalState,
+                totalTokens,
+                elapsedMs
+            };
+            if (evaluating !== undefined) {
+                updateData.evaluating = evaluating;
+            }
+            this.taskView.syncGoalPanel(updateData as GoalPanelData);
         }
         const pendingSupplements =
             goalState?.pendingSupplements.filter((supplement) => !supplement.consumedAt).length ?? 0;
@@ -801,12 +863,10 @@ export class OpenDeskTUI {
             this.container.addChild(this.logPanel);
         } else if (mode === 'last') {
             this.container.addChild(this.taskView);
-            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
             this.container.addChild(this.logPanel);
         } else {
             this.container.addChild(this.taskView);
-            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
         }
 
@@ -868,7 +928,6 @@ export class OpenDeskTUI {
             this.container.clear();
             this.container.addChild(new OpenDeskBanner(this.workspace));
             this.container.addChild(this.taskView);
-            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
             if (this.logPanel.mode !== 'off') {
                 this.container.addChild(this.logPanel);
@@ -926,7 +985,6 @@ export class OpenDeskTUI {
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
-        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
 
         if (this.logPanel.mode !== 'off') {
@@ -993,8 +1051,11 @@ export class OpenDeskTUI {
     clearActiveTask() {
         this.taskView.taskState = undefined;
         this.taskView.clearMessages();
+        if (this.activeTaskId) {
+            this.goalEvaluationInProgressByTask.delete(this.activeTaskId);
+        }
         this.activeTaskId = undefined;
-        this.resetGoalPanel();
+        this.inputArea.clearGoalSupplementQueuedHint();
         this.syncRetryCommandAvailability();
         this.syncTaskName();
         this.inputArea.clearMessageQueue();
@@ -1090,10 +1151,11 @@ export class OpenDeskTUI {
                 this.taskView.clearStreamThrottle();
                 const lastView = this.taskView.getLastAssistantView();
                 if (lastView) lastView.setStreamingComplete();
-                this.inputArea.statusBar.stopTimer();
-                this.inputArea.setStatus('idle');
+                const isRunning = this.syncInputStatusFromTask(snapshotTaskId);
                 this.tui.requestRender();
-                this.processQueue();
+                if (!isRunning) {
+                    this.processQueue();
+                }
 
                 startRunningMonitor();
             });
@@ -1302,10 +1364,11 @@ export class OpenDeskTUI {
 
         await this.taskView.communicate(request).finally(async () => {
             if (this.activeTaskId === taskId) {
-                this.inputArea.statusBar.stopTimer();
-                this.inputArea.setStatus('idle');
+                const isRunning = this.syncInputStatusFromTask(taskId);
                 this.syncTaskName();
-                this.processQueue();
+                if (!isRunning) {
+                    this.processQueue();
+                }
 
                 // 如果使用了 -c 参数，执行 beforeExit 钩子后退出
                 if (this.singleShot) {
@@ -1507,7 +1570,6 @@ export class OpenDeskTUI {
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
-        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
         if (this.logPanel.mode !== 'off') {
             this.container.addChild(this.logPanel);
@@ -1555,12 +1617,13 @@ export class OpenDeskTUI {
             if (taskId) {
                 this.undoStacks?.delete(taskId);
             }
+            let taskStillRunning = false;
             await this.taskView.communicate(next).finally(() => {
-                if (this.activeTaskId === taskId) {
-                    this.inputArea.statusBar.stopTimer();
-                    this.inputArea.setStatus('idle');
+                if (taskId && this.activeTaskId === taskId) {
+                    taskStillRunning = this.syncInputStatusFromTask(taskId);
                 }
             });
+            if (taskStillRunning) break;
         }
     }
 
@@ -1586,24 +1649,20 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 绑定 GoalPanel 更新：轮询当前活跃任务的 goal_state、token 用量、执行时间。
+     * 绑定消息流 Goal 快照更新：轮询当前活跃任务的 goal_state、token 用量、执行时间。
      * 与 bindTodoUpdates 使用相同的 polling 模式，每 300ms 检查一次。
      */
-    private bindGoalPanelUpdates() {
+    private bindGoalSnapshotUpdates() {
         const checkGoalChanges = () => {
             if (!this.activeTaskId) {
-                if (this.resetGoalPanel()) {
-                    this.tui.requestRender();
-                }
+                this.inputArea.clearGoalSupplementQueuedHint();
                 setTimeout(checkGoalChanges, 500);
                 return;
             }
 
             const task = this.taskManagerState.getTask(this.activeTaskId);
             if (!task) {
-                if (this.resetGoalPanel()) {
-                    this.tui.requestRender();
-                }
+                this.inputArea.clearGoalSupplementQueuedHint();
                 setTimeout(checkGoalChanges, 500);
                 return;
             }

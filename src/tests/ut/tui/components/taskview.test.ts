@@ -1,7 +1,11 @@
 import { jest } from '@jest/globals';
 import { ReasoningMessagePartView, TaskView, ToolCallMessagePartView } from '../../../../main/tui/components/taskview';
 import { AssistantMessage, ChatContext, UserMessage } from '../../../../main/aikernel/messages';
-import type { TaskUpdateChunk, TaskUpdateUserChunk } from '../../../../main/aikernel/states/tasks';
+import type {
+    TaskUpdateChunk,
+    TaskUpdateGoalEvalChunk,
+    TaskUpdateUserChunk
+} from '../../../../main/aikernel/states/tasks';
 
 describe('TaskView chunk handling', () => {
     test('skips malformed user chunks without throwing', async () => {
@@ -65,6 +69,94 @@ describe('TaskView chunk handling', () => {
         }
 
         expect(taskView.messages).toHaveLength(1);
+    });
+
+    test('routes goal evaluation updates to the panel without adding a message card', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const onGoalEvalUpdate = jest.fn();
+        taskView.onGoalEvalUpdate = onGoalEvalUpdate;
+        const chunk: TaskUpdateGoalEvalChunk = {
+            type: 'goal_eval',
+            task_id: 'task_1',
+            task_status: 'running',
+            phase: 'start',
+            evaluationId: 'eval_1',
+            startedAt: '2026-01-01T00:00:00.000Z'
+        };
+
+        await taskView.handleChunkUpdate(chunk);
+
+        expect(onGoalEvalUpdate).toHaveBeenCalledWith(chunk);
+        expect(taskView.messages).toHaveLength(0);
+    });
+
+    test('removes pending goal edit when the matching internal reminder materializes', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.showPendingGoalEdit('edit', 'replacement goal', 'goal-1');
+
+        expect(taskView.messages).toHaveLength(1);
+
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: { type: 'text', text: 'hidden reminder' },
+            internal: true,
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_edit' },
+                execution: { controllerId: 'goal-1' }
+            }
+        } as any);
+
+        expect(taskView.messages).toHaveLength(1);
+        expect((taskView as any).pendingGoalEditView).toBeNull();
+    });
+
+    test('deduplicates the same pending goal revision and replaces it when the revision advances', () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+
+        taskView.showPendingGoalEdit('edit', 'first objective', 'goal-1', 2);
+        taskView.showPendingGoalEdit('edit', 'first objective', 'goal-1', 2);
+        expect(taskView.messages).toHaveLength(1);
+
+        taskView.showPendingGoalEdit('edit', 'second objective', 'goal-1', 3);
+
+        expect(taskView.messages).toHaveLength(1);
+        expect((taskView as any).pendingGoalEditView).toMatchObject({
+            goalId: 'goal-1',
+            goalRevision: 3,
+            objective: 'second objective'
+        });
+    });
+
+    test('consumes only matching pending goal supplements and resets the rest on task switch', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.appendPendingGoalSupplementMessage('first pending', 'supplement-1');
+        taskView.appendPendingGoalSupplementMessage('unidentified pending');
+
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: { type: 'text', text: 'first pending' },
+            internal: true,
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_supplement' },
+                execution: { controller: 'goal', supplementIds: ['supplement-1'] }
+            }
+        } as any);
+
+        expect((taskView as any).pendingGoalSupplementViews).toHaveLength(1);
+        expect(taskView.messages).toHaveLength(2);
+
+        taskView.clearMessages();
+
+        expect((taskView as any).pendingGoalSupplementViews).toHaveLength(0);
+        expect(taskView.messages).toHaveLength(0);
     });
 
     test('rebuilds history while skipping malformed message parts', () => {

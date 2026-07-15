@@ -85,7 +85,8 @@ import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
-import type { GoalCommandResult, GoalEvent } from './aikernel/goal/state.js';
+import type { GoalCommandResult } from './aikernel/goal/state.js';
+import { parseGoalEditIfMatch } from '../common/goal/command.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -118,10 +119,6 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const modes = agent.supportedModes();
     const mode = modes.find((m) => m.id === (_currentElectronModeId || agent.defaultModeId())) ?? modes[0];
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
-}
-
-function shouldReplaceGoalOnCreate(raw: unknown): boolean {
-    return !!raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).replace === true;
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -1279,15 +1276,14 @@ const registerTaskManagerAPIHandlers = () => {
         }
         return { status: 'ok', data: GoalController.getStatus(task) };
     });
-    ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective, options) => {
+    ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         const hasUnfinishedGoal =
             task.goal_state && task.goal_state.status !== 'complete' && task.goal_state.status !== 'cleared';
-        const replaceExistingGoal = hasUnfinishedGoal && shouldReplaceGoalOnCreate(options);
-        if (hasUnfinishedGoal && !replaceExistingGoal) {
+        if (hasUnfinishedGoal) {
             return {
                 status: 'ok',
                 data: {
@@ -1302,9 +1298,7 @@ const registerTaskManagerAPIHandlers = () => {
             objective: String(objective ?? ''),
             source: 'gui' as const
         };
-        const result = replaceExistingGoal
-            ? await GoalService.replace(task, input)
-            : await GoalService.create(task, input);
+        const result = await GoalService.create(task, input, { projectDisplayMessage: true });
         const response: GoalCommandResult =
             result.ok === false && result.errorCode === 'task_running' && task.goal_state?.status === 'active'
                 ? {
@@ -1322,14 +1316,32 @@ const registerTaskManagerAPIHandlers = () => {
             data: response
         };
     });
-    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
+    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        const rawIfMatch =
+            options && typeof options === 'object' && !Array.isArray(options)
+                ? (options as Record<string, unknown>).ifMatch
+                : undefined;
+        const ifMatch = parseGoalEditIfMatch(rawIfMatch);
+        if (rawIfMatch !== undefined && !ifMatch) {
+            return {
+                status: 'ok',
+                data: {
+                    ok: false,
+                    messageKey: 'goal.edit.invalid_precondition',
+                    errorCode: 'invalid_goal_precondition'
+                } satisfies GoalCommandResult
+            };
+        }
         return {
             status: 'ok',
-            data: await GoalService.edit(task, String(objective ?? ''), 'gui')
+            data: await GoalService.edit(task, String(objective ?? ''), 'gui', {
+                projectDisplayMessage: true,
+                ...(ifMatch ? { ifMatch } : {})
+            })
         };
     });
     ipcMain.handle('taskManager:addGoalSupplement', async (_event, taskId, content) => {
@@ -1597,13 +1609,13 @@ const registerTaskManagerAPIHandlers = () => {
         task.persistLater();
         return { status: 'ok' };
     });
-    ipcMain.handle('taskManager:stopTask', (event, taskId) => {
+    ipcMain.handle('taskManager:stopTask', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         if (task.goal_state?.status === 'active') {
-            return { status: 'error', message: t('goal.stop.active_rejected') };
+            return { status: 'ok', data: await GoalService.stopActiveGoal(task, 'gui') };
         }
         task.stop();
         return { status: 'ok' };

@@ -1,31 +1,150 @@
+import { UserMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
-import { GoalController, type GoalPausedOrBlockedSnapshot } from './controller.js';
+import { GoalController, type GoalObjectiveEditOptions, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
-import type {
-    AddGoalSupplementInput,
-    CreateGoalInput,
-    GoalCommandResult,
-    GoalEvent,
-    ResumeGoalOptions
+import {
+    GoalEvents,
+    GoalStates,
+    createGoalEvent,
+    type AddGoalSupplementInput,
+    type CreateGoalInput,
+    type GoalCommandResult,
+    type GoalEvent,
+    type ResumeGoalOptions
 } from './state.js';
+
+export type GoalDisplayProjectionType = 'create' | 'edit';
+
+function displayEventType(type: GoalDisplayProjectionType): GoalEvent['type'] {
+    return type === 'create' ? 'created' : 'edited';
+}
+
+function displayReason(type: GoalDisplayProjectionType): string {
+    return type === 'create' ? 'goal_create_display' : 'goal_edit_display';
+}
+
+function appendGoalDisplayMessage(
+    task: TaskState,
+    input: {
+        objective: string;
+        goalId: string;
+        goalRevision: number;
+        reason: string;
+    }
+): string {
+    const message = new UserMessage(`/goal ${input.objective}`);
+    message.rawText = `/goal ${input.objective}`;
+    message.metadata = {
+        scope: 'goal',
+        origin: { source: 'internal', reason: input.reason },
+        execution: {
+            controller: 'goal',
+            controllerId: input.goalId,
+            controllerRevision: input.goalRevision
+        }
+    };
+    task.chat_context.appendMessage(message);
+    void task.sendSubscriptionFeedback(0);
+    return message.message_id;
+}
+
+function findLatestGoalEvent(
+    task: TaskState,
+    input: {
+        eventType: GoalEvent['type'];
+        goalId: string;
+        goalRevision: number;
+    }
+): GoalEvent | undefined {
+    const events = GoalEvents.getTail(task.goal_event_log);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event.goalId !== input.goalId || event.revision !== input.goalRevision || event.type !== input.eventType) {
+            continue;
+        }
+        return event;
+    }
+    return undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasDisplayProjection(task: TaskState, targetEvent: GoalEvent): boolean {
+    const events = GoalEvents.getTail(task.goal_event_log);
+    return events.some((event) => {
+        if (event.goalId !== targetEvent.goalId || event.type !== 'display_projected' || !isObject(event.payload)) {
+            return false;
+        }
+        return event.payload.targetEventId === targetEvent.id && typeof event.payload.displayMessageId === 'string';
+    });
+}
+
+export function projectGoalDisplayMessage(
+    task: TaskState,
+    result: GoalCommandResult,
+    type: GoalDisplayProjectionType,
+    objective: string
+): GoalCommandResult {
+    if (!result.ok) return result;
+
+    const goal = task.goal_state;
+    if (!goal) return result;
+    const event = findLatestGoalEvent(task, {
+        eventType: displayEventType(type),
+        goalId: goal.id,
+        goalRevision: goal.revision
+    });
+    if (!event) return result;
+    if (hasDisplayProjection(task, event)) {
+        return {
+            ...result,
+            summary: GoalStates.renderSummary(task.goal_state, task.goal_event_log)
+        };
+    }
+
+    const displayMessageId = appendGoalDisplayMessage(task, {
+        objective,
+        goalId: goal.id,
+        goalRevision: goal.revision,
+        reason: displayReason(type)
+    });
+    GoalEvents.appendToTask(
+        task,
+        createGoalEvent(goal, 'display_projected', 'system', {
+            targetEventId: event.id,
+            targetEventType: event.type,
+            targetRevision: event.revision,
+            displayMessageId
+        })
+    );
+    task.persistLater();
+
+    return {
+        ...result,
+        summary: GoalStates.renderSummary(task.goal_state, task.goal_event_log)
+    };
+}
 
 const RESUME_INTERRUPT_SETTLE_TIMEOUT_MS = 2_000;
 const RESUME_INTERRUPT_POLL_MS = 50;
+
+export interface GoalServiceDisplayOptions {
+    projectDisplayMessage?: boolean;
+}
+
+export interface GoalServiceEditOptions extends GoalServiceDisplayOptions, GoalObjectiveEditOptions {}
 
 function hasPendingRuntimeInterrupt(task: TaskState): boolean {
     return task.runtimeInterrupt?.requested === true && !task.runtimeInterrupt.handledAt;
 }
 
-async function waitForRuntimeInterruptSettled(task: TaskState): Promise<void> {
-    if (hasPendingRuntimeInterrupt(task)) {
-        await task.waitForRuntimeInterruptSettled();
-    }
-}
-
 async function waitForPendingRuntimeInterrupt(task: TaskState): Promise<boolean> {
     const deadline = Date.now() + RESUME_INTERRUPT_SETTLE_TIMEOUT_MS;
     while (hasPendingRuntimeInterrupt(task)) {
+        if (task.settleRuntimeInterruptIfTaskStopped()) return true;
         if (Date.now() >= deadline) return false;
         await new Promise((resolve) => setTimeout(resolve, RESUME_INTERRUPT_POLL_MS));
     }
@@ -50,7 +169,7 @@ async function waitForGoalCreateReadiness(task: TaskState): Promise<GoalCommandR
 function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandResult): GoalCommandResult {
     const goal = task.goal_state;
     if (goal?.status === 'active') {
-        task.injectGoalEditReminder({
+        task.goalRuntime.injectGoalEditReminder({
             goalId: goal.id,
             goalRevision: goal.revision,
             objective: goal.objective,
@@ -92,13 +211,20 @@ async function startCreatedGoal(
 }
 
 export class GoalService {
-    static async create(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
+    static async create(
+        task: TaskState,
+        input: CreateGoalInput,
+        options: GoalServiceDisplayOptions = {}
+    ): Promise<GoalCommandResult> {
         const readinessError = await waitForGoalCreateReadiness(task);
         if (readinessError) return readinessError;
 
         const wasRunningAtCreate = task.task_status === 'running';
-        const created = GoalController.create(task, input);
+        let created = GoalController.create(task, input);
         if (!created.ok) return created;
+        if (options.projectDisplayMessage === true) {
+            created = projectGoalDisplayMessage(task, created, 'create', input.objective);
+        }
 
         if (wasRunningAtCreate) {
             return attachCreatedGoalToRunningTurn(task, created);
@@ -107,53 +233,18 @@ export class GoalService {
         return startCreatedGoal(task, created, { attachToRunningTurn: true });
     }
 
-    static async replace(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
-        if (input.objective.trim().length === 0) {
-            return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
-        }
-
-        const source = input.source ?? 'api';
-        const clearResult = GoalController.clear(task, source);
-        resetInProgressTaskTodos(task.task_id);
-        if (!clearResult.ok) return clearResult;
-
-        let interruptedRunner = false;
-        if (task.task_status === 'running') {
-            await task.interruptRunningTurn({
-                reason: 'goal_clear',
-                stopRunningTools: true,
-                cancelPermissionPrompts: true
-            });
-            interruptedRunner = true;
-        }
-
-        await waitForRuntimeInterruptSettled(task);
-        if (task.task_status === 'running') {
-            return {
-                ok: false,
-                status: task.goal_state?.status,
-                messageKey: 'goal.scheduler.running',
-                errorCode: 'task_running',
-                interruptedRunner
-            };
-        }
-
-        const created = GoalController.create(task, input);
-        if (!created.ok) return { ...created, interruptedRunner };
-        deleteTaskTodos(task.task_id);
-        created.clearedTaskTodos = true;
-        const started = await startCreatedGoal(task, created);
-        return { ...started, interruptedRunner };
-    }
-
     static async edit(
         task: TaskState,
         objective: string,
-        source: GoalEvent['source'] = 'api'
+        source: GoalEvent['source'] = 'api',
+        options: GoalServiceEditOptions = {}
     ): Promise<GoalCommandResult> {
         const wasBlockedBeforeEdit = task.goal_state?.status === 'blocked';
-        const result = GoalController.editObjective(task, objective, source);
+        let result = GoalController.editObjective(task, objective, source, { ifMatch: options.ifMatch });
         if (!result.ok) return result;
+        if (options.projectDisplayMessage === true) {
+            result = projectGoalDisplayMessage(task, result, 'edit', objective);
+        }
         const goal = task.goal_state;
         if (!goal) {
             return result;
@@ -165,7 +256,7 @@ export class GoalService {
             return result;
         }
         if (task.task_status === 'running') {
-            task.injectGoalEditReminder({
+            task.goalRuntime.injectGoalEditReminder({
                 goalId: goal.id,
                 goalRevision: goal.revision,
                 objective: goal.objective,
@@ -181,7 +272,7 @@ export class GoalService {
         }
         if (!started.ok) {
             if (started.errorCode === 'task_running' && task.task_status === 'running') {
-                task.injectGoalEditReminder({
+                task.goalRuntime.injectGoalEditReminder({
                     goalId: goal.id,
                     goalRevision: goal.revision,
                     objective: goal.objective,
@@ -262,7 +353,35 @@ export class GoalService {
             await task.interruptRunningTurn({
                 reason: 'goal_pause',
                 stopRunningTools: true,
-                cancelPermissionPrompts: true
+                cancelPermissionPrompts: true,
+                skipFinishHooks: true
+            });
+            interruptedRunner = true;
+        }
+        return { ...result, interruptedRunner };
+    }
+
+    static async stopActiveGoal(task: TaskState, source: GoalEvent['source'] = 'api'): Promise<GoalCommandResult> {
+        if (task.goal_state?.status !== 'active') {
+            return {
+                ok: false,
+                status: task.goal_state?.status,
+                messageKey: 'goal.resume.invalid_status',
+                messageArgs: { status: task.goal_state?.status ?? 'none' },
+                errorCode: 'invalid_status'
+            };
+        }
+
+        const result = GoalController.pause(task, source);
+        if (!result.ok) return result;
+        let interruptedRunner = false;
+        if (task.task_status === 'running') {
+            await task.interruptRunningTurn({
+                reason: 'goal_pause',
+                stopRunningTools: true,
+                cancelPermissionPrompts: true,
+                userInitiated: true,
+                skipFinishHooks: true
             });
             interruptedRunner = true;
         }
@@ -325,7 +444,8 @@ export class GoalService {
             await task.interruptRunningTurn({
                 reason: 'goal_clear',
                 stopRunningTools: true,
-                cancelPermissionPrompts: true
+                cancelPermissionPrompts: true,
+                skipFinishHooks: true
             });
             interruptedRunner = true;
         }

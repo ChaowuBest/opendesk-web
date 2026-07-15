@@ -14,18 +14,22 @@ import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { GoalService } from '../../aikernel/goal/service.js';
 import { t } from '../../../locale/index.js';
 import {
+    decideGoalObjectiveAction,
     getGoalSubcommandCompletions,
     goalResultToMessageKey,
-    isTerminalGoalStatus,
     parseGoalCommandArgs,
     validateGoalSubcommandArgs,
-    type GoalCommandResultLike
-} from '../../../common/goal-command.js';
+    type GoalCommandResultLike,
+    type GoalCommandSnapshotLike,
+    type GoalEditIfMatch
+} from '../../../common/goal/command.js';
 
-/** 检查 goal 是否有未终结状态，用于新 goal 的替换确认。 */
-function hasNonTerminalGoal(task: ReturnType<typeof getCurrentTask>): boolean {
-    return !!task?.goal_state && !isTerminalGoalStatus(task.goal_state.status);
-}
+type GoalResultWithDisplayEvents = GoalCommandResultLike & {
+    summary?: {
+        objectiveEvents?: Array<{ displayMessageId?: string }>;
+        recentEvents?: Array<{ displayMessageId?: string }>;
+    };
+};
 
 function showInfo(tui: OpenDeskTUI, titleKey: string, message: string): void {
     const info = new InfoOverlay(tui, {
@@ -67,11 +71,18 @@ function createGoalInput(objective: string) {
     };
 }
 
-function confirmEditGoal(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): Promise<boolean> {
+function confirmEditGoal(
+    tui: OpenDeskTUI,
+    currentGoal: GoalCommandSnapshotLike,
+    nextObjective: string
+): Promise<boolean> {
     return new Promise((resolve) => {
         const confirm = new ConfirmOverlay(tui, {
             title: t('goal.edit.title'),
-            message: t('goal.edit.message', { objective: task.goal_state?.objective ?? '' }),
+            message: t('goal.edit.message', {
+                objective: currentGoal.objective,
+                nextObjective
+            }),
             confirmLabel: t('goal.edit.confirm'),
             cancelLabel: t('common.cancel')
         });
@@ -87,8 +98,72 @@ function followStartedGoalTask(
     task: ReturnType<typeof getCurrentTask>,
     result: { ok: boolean; startedScheduler?: boolean }
 ): void {
-    if (result.ok && result.startedScheduler && task) {
+    if (!result.ok || !task) return;
+    if (result.startedScheduler) {
         tui.followRunningTask(task);
+    } else {
+        tui.syncInputStatusFromTask(task.task_id);
+    }
+}
+
+type GoalDisplayEvent = {
+    type?: string;
+    revision?: number;
+    displayMessageId?: string;
+};
+
+function getLatestGoalDisplayMessageEvent(
+    result: GoalResultWithDisplayEvents,
+    type: 'create' | 'edit'
+): GoalDisplayEvent | undefined {
+    const events =
+        result.summary?.objectiveEvents && result.summary.objectiveEvents.length > 0
+            ? result.summary.objectiveEvents
+            : (result.summary?.recentEvents ?? []);
+    const expectedType = type === 'create' ? 'created' : 'edited';
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (!event || event.type !== expectedType) {
+            continue;
+        }
+        const messageId = event.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0 && typeof event.revision === 'number') {
+            return { type: event.type, revision: event.revision, displayMessageId: messageId };
+        }
+    }
+    return undefined;
+}
+
+function maybeShowPendingGoalEdit(
+    tui: OpenDeskTUI,
+    task: NonNullable<ReturnType<typeof getCurrentTask>>,
+    result: GoalResultWithDisplayEvents,
+    type: 'create' | 'edit',
+    objective: string
+): void {
+    const goalState = task.goal_state;
+    const event = getLatestGoalDisplayMessageEvent(result, type);
+    if (
+        result.ok === false ||
+        goalState?.id === undefined ||
+        typeof goalState.revision !== 'number' ||
+        result.startedScheduler === true ||
+        task.task_status !== 'running' ||
+        !event ||
+        goalState.revision !== event.revision
+    ) {
+        return;
+    }
+    tui.taskView.showPendingGoalEdit(type, objective, goalState.id, goalState.revision);
+}
+
+function syncGoalDisplayMessage(tui: OpenDeskTUI, result: GoalResultWithDisplayEvents, type: 'create' | 'edit'): void {
+    if (result.ok === false) return;
+    const event = getLatestGoalDisplayMessageEvent(result, type);
+    const messageId = event?.displayMessageId ?? '';
+    if (messageId) {
+        tui.taskView.syncUserMessageFromHistory(messageId);
     }
 }
 
@@ -104,22 +179,35 @@ async function createGoal(
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
     objective: string
 ): Promise<void> {
-    const result = await GoalService.create(task, createGoalInput(objective));
+    const result = await GoalService.create(task, createGoalInput(objective), { projectDisplayMessage: true });
     showResult(tui, result);
+    syncGoalDisplayMessage(tui, result, 'create');
     followStartedGoalTask(tui, task, result);
+    maybeShowPendingGoalEdit(tui, task, result, 'create', objective);
 }
 
 async function editGoalAfterConfirmation(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
-    objective: string
+    objective: string,
+    currentGoal: GoalCommandSnapshotLike,
+    ifMatch: GoalEditIfMatch
 ): Promise<void> {
-    const confirmed = await confirmEditGoal(tui, task);
+    const confirmed = await confirmEditGoal(tui, currentGoal, objective);
     if (!confirmed) return;
+    if (tui.activeTaskId !== task.task_id) {
+        showInfo(tui, 'goal.edit.title', t('goal.edit.task_changed'));
+        return;
+    }
 
-    const result = await GoalService.edit(task, objective, 'tui');
+    const result = await GoalService.edit(task, objective, 'tui', {
+        projectDisplayMessage: true,
+        ifMatch
+    });
     showResult(tui, result);
+    syncGoalDisplayMessage(tui, result, 'edit');
     followStartedGoalTask(tui, task, result);
+    maybeShowPendingGoalEdit(tui, task, result, 'edit', objective);
 }
 
 export function registerGoalCommand(tui: OpenDeskTUI): void {
@@ -187,10 +275,11 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            if (hasNonTerminalGoal(task)) {
-                await editGoalAfterConfirmation(tui, task, objective);
-            } else {
+            const action = decideGoalObjectiveAction(task.goal_state, objective);
+            if (action.kind === 'create') {
                 await createGoal(tui, task, objective);
+            } else if (action.kind === 'edit') {
+                await editGoalAfterConfirmation(tui, task, objective, action.currentGoal, action.ifMatch);
             }
         }
     });

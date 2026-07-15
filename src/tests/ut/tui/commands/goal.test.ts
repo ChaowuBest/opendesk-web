@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { SlashCommandRegistry } from '../../../../main/tui/commands/base';
 import { GoalController, getGoalTokenUsage } from '../../../../main/aikernel/goal/controller';
+import { GoalScheduler } from '../../../../main/aikernel/goal/scheduler';
 import { GoalEvents } from '../../../../main/aikernel/goal/state';
 import { TaskManagerState, TaskState } from '../../../../main/aikernel/states/tasks';
 import { setRuntimeLocale } from '../../../../locale/index';
@@ -64,11 +65,16 @@ async function createTui(task = createTask()) {
         commandRegistry: registry,
         activeTaskId: task.task_id,
         taskManagerState: task.task_manager_state,
+        taskView: {
+            syncUserMessageFromHistory: jest.fn(),
+            showPendingGoalEdit: jest.fn()
+        },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
             setStatus: jest.fn(),
             clearMessageQueue: jest.fn()
         },
+        syncInputStatusFromTask: jest.fn(),
         followRunningTask: jest.fn(),
         tui: { requestRender: jest.fn() }
     } as any;
@@ -96,11 +102,16 @@ async function createTuiWithoutActiveTask() {
             jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
             tui.activeTaskId = task.task_id;
         }),
+        taskView: {
+            syncUserMessageFromHistory: jest.fn(),
+            showPendingGoalEdit: jest.fn()
+        },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
             setStatus: jest.fn(),
             clearMessageQueue: jest.fn()
         },
+        syncInputStatusFromTask: jest.fn(),
         followRunningTask: jest.fn(),
         tui: { requestRender: jest.fn() }
     } as any;
@@ -140,9 +151,13 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('running');
         expect(task.processTaskTurn).toHaveBeenCalledTimes(1);
         expect(tui.followRunningTask).toHaveBeenCalledWith(task);
-        const userMessage = task.chat_context.messages[0] as any;
-        expect(userMessage.internal).toBe(true);
-        expect(userMessage.metadata.execution.controller).toBe('goal');
+        // Display message at [0], scheduler internal message at [1]
+        const displayMessage = task.chat_context.messages[0] as any;
+        expect(displayMessage.rawText).toBe('/goal fix export rendering');
+        expect(displayMessage.metadata.execution.controller).toBe('goal');
+        const schedulerMessage = task.chat_context.messages[1] as any;
+        expect(schedulerMessage.internal).toBe(true);
+        expect(schedulerMessage.metadata.execution.controller).toBe('goal');
     });
 
     test('creates a goal during a running task without starting another scheduler turn', async () => {
@@ -157,6 +172,13 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('running');
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
+        expect(tui.syncInputStatusFromTask).toHaveBeenCalledWith(task.task_id);
+        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
+            'create',
+            'track current TodoWrite',
+            task.goal_state?.id,
+            task.goal_state?.revision
+        );
     });
 
     test('completes subcommands only and treats additional text as objective text', async () => {
@@ -190,6 +212,7 @@ describe('/goal command', () => {
         await Promise.resolve();
         expect(confirmShows).toHaveLength(1);
         expect(confirmShows.at(-1)?.message).toContain('initial goal');
+        expect(confirmShows.at(-1)?.message).toContain('replacement goal');
         confirmShows.at(-1)?.onCancel?.();
         await cancelPending;
 
@@ -214,7 +237,6 @@ describe('/goal command', () => {
         GoalController.create(task, { objective: 'initial running goal', source: 'tui' });
         const originalGoalId = task.goal_state!.id;
         task.task_status = 'running';
-        const waitForRuntimeInterruptSettledSpy = jest.spyOn(task, 'waitForRuntimeInterruptSettled');
         const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
 
         const pending = registry.execute('/goal replacement after interrupt');
@@ -230,11 +252,80 @@ describe('/goal command', () => {
         expect(task.goal_state?.status).toBe('active');
         expect(task.task_status).toBe('running');
         expect(task.runtimeInterrupt).toBeUndefined();
+        expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
+        expect(task.goal_state?.pendingContinuation?.goalRevision).toBe(2);
         expect(interruptSpy).not.toHaveBeenCalled();
-        expect(waitForRuntimeInterruptSettledSpy).not.toHaveBeenCalled();
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
-        expect((task as any)._pendingGoalEditReminders).toHaveLength(1);
+        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
+            'edit',
+            'replacement after interrupt',
+            task.goal_state?.id,
+            task.goal_state?.revision
+        );
+        expect(await task.goalRuntime.checkpoint('after_tools', { includeSupplements: false })).toBe(true);
+        expect(task.chat_context.messages.some((message) => message.metadata?.origin.reason === 'goal_edit')).toBe(
+            true
+        );
+    });
+
+    test('does not overwrite a goal that changes while edit confirmation is open', async () => {
+        const { registry, task } = await createTui();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+
+        const pending = registry.execute('/goal requested replacement');
+        await Promise.resolve();
+        expect(confirmShows).toHaveLength(1);
+
+        GoalController.editObjective(task, 'concurrent replacement', 'api');
+        confirmShows.at(-1)?.onConfirm?.();
+        await pending;
+
+        expect(task.goal_state?.objective).toBe('concurrent replacement');
+        expect(task.goal_state?.revision).toBe(2);
+        expect(overlayShows.at(-1)?.message).toContain('changed while confirmation was open');
+    });
+
+    test('does not prompt when the requested objective is unchanged', async () => {
+        const { registry, task } = await createTui();
+        GoalController.create(task, { objective: 'same goal', source: 'tui' });
+
+        await registry.execute('/goal same goal');
+
+        expect(confirmShows).toHaveLength(0);
+        expect(task.goal_state?.revision).toBe(1);
+    });
+
+    test('does not edit the original task after switching tasks during confirmation', async () => {
+        const { tui, registry, task } = await createTui();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+
+        const pending = registry.execute('/goal requested replacement');
+        await Promise.resolve();
+        tui.activeTaskId = 'another-task';
+        confirmShows.at(-1)?.onConfirm?.();
+        await pending;
+
+        expect(task.goal_state?.objective).toBe('initial goal');
+        expect(task.goal_state?.revision).toBe(1);
+        expect(overlayShows.at(-1)?.message).toContain('active task changed');
+    });
+
+    test('auto-starts a pending edit continuation after the current turn finishes', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+        GoalController.editObjective(task, 'replacement goal', 'tui');
+        task.task_status = 'stopped';
+        const startExecutionSpy = jest.spyOn(GoalScheduler, 'startExecution').mockResolvedValue({
+            ok: true,
+            status: 'active',
+            startedScheduler: true
+        });
+
+        task.goalRuntime.afterTurnFinished();
+        await Promise.resolve();
+
+        expect(startExecutionSpy).toHaveBeenCalledWith(task, 'resume');
     });
 
     test('does not clear an active goal when showing help', async () => {
@@ -330,7 +421,7 @@ describe('/goal command', () => {
         expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
     });
 
-    test('/stop rejects active goal without calling ordinary task stop', async () => {
+    test('/stop pauses a running active goal without calling ordinary task stop', async () => {
         const { registry, task, tui } = await createTui();
         await registry.execute('/goal active work');
         const stopSpy = jest.spyOn(task, 'stop');
@@ -338,9 +429,30 @@ describe('/goal command', () => {
         expect(await registry.execute('/stop')).toBe(true);
 
         expect(stopSpy).not.toHaveBeenCalled();
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.task_status).toBe('running');
-        expect(tui.inputArea.statusBar.stopTimer).not.toHaveBeenCalled();
-        expect(overlayShows.at(-1)?.message).toContain('/goal pause');
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('stopped');
+        expect(task.stop_requested_by_user).toBe(true);
+        expect(task.runtimeInterrupt?.reason).toBe('goal_pause');
+        expect(tui.inputArea.statusBar.stopTimer).toHaveBeenCalled();
+        expect(tui.inputArea.setStatus).toHaveBeenCalledWith('idle');
+        expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
+        expect(overlayShows).toHaveLength(0);
+    });
+
+    test('/stop pauses a non-running active goal', async () => {
+        const { registry, task, tui } = await createTui();
+        GoalController.create(task, { objective: 'active but idle goal', source: 'tui' });
+        task.task_status = 'stopped';
+        const stopSpy = jest.spyOn(task, 'stop');
+
+        expect(await registry.execute('/stop')).toBe(true);
+
+        expect(stopSpy).not.toHaveBeenCalled();
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('stopped');
+        expect(task.runtimeInterrupt).toBeUndefined();
+        expect(tui.inputArea.statusBar.stopTimer).toHaveBeenCalled();
+        expect(tui.inputArea.setStatus).toHaveBeenCalledWith('idle');
+        expect(tui.inputArea.clearMessageQueue).not.toHaveBeenCalled();
     });
 });

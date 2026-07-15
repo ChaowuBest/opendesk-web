@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import type { GoalEditConflict } from '../../../common/goal/command.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 
 // GoalStatus 是持久化状态，不等同于 task runner 的瞬时执行状态。
@@ -24,6 +25,7 @@ export interface GoalSchedulerLease {
 
 // Evaluator 的输出必须带 goalId/revision，Controller 据此丢弃过期评估结果。
 export interface GoalEvaluation {
+    evaluationId?: string;
     goalId: string;
     goalRevision: number;
     status: 'met' | 'not_met' | 'blocked';
@@ -33,13 +35,39 @@ export interface GoalEvaluation {
     evaluatedAt: string;
 }
 
+export type GoalEvaluationDisplayStatus = GoalEvaluation['status'] | 'error' | 'superseded' | 'cancelled';
+
+export interface GoalEvaluationRecord {
+    evaluationId: string;
+    goalId: string;
+    goalRevision: number;
+    /** Related chat message used by renderers to place the evaluation card in context. */
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
+    phase: 'start' | 'end';
+    status?: GoalEvaluationDisplayStatus;
+    message?: string;
+    evidence?: string[];
+    startedAt: string;
+    evaluatedAt?: string;
+    updatedAt: string;
+}
+
+export type GoalContinuationReason =
+    | 'not_met'
+    | 'edit'
+    | 'crash_recovery'
+    | 'load_recovery'
+    | 'manual_pause'
+    | 'unspecified';
+
 // evaluator/recovery 生成的下一轮内部 prompt；消费后保留 consumed* 字段用于审计。
 export interface GoalContinuation {
     id: string;
     goalId: string;
     goalRevision: number;
     prompt: string;
-    reason: string;
+    reason: GoalContinuationReason;
     createdAt: string;
     consumedAt?: string;
     consumedByTurnGeneration?: number;
@@ -73,6 +101,7 @@ export interface GoalState {
     tokenUsageBaseline?: number;
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
+    evaluationHistory?: GoalEvaluationRecord[];
     pendingContinuation?: GoalContinuation;
     pendingSupplements: GoalSupplement[];
     editHistory: GoalEditRecord[];
@@ -85,6 +114,24 @@ export interface GoalState {
     resumedAt?: string;
     completedAt?: string;
     clearedAt?: string;
+}
+
+export interface GoalFinalSnapshot {
+    id: string;
+    taskId: string;
+    goalId: string;
+    goalRevision: number;
+    objective: string;
+    status: Extract<GoalStatus, 'complete' | 'cleared'>;
+    lastEvaluation?: GoalEvaluation;
+    totalTokens: number;
+    elapsedMs: number;
+    createdAt: string;
+    finalizedAt: string;
+    completedAt?: string;
+    clearedAt?: string;
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
 }
 
 // 事件日志用于 UI timeline、调试和审计；payload 可以包含内部细节，渲染层只能拿过滤后的字段。
@@ -100,12 +147,16 @@ export interface GoalEvent {
         | 'evaluated'
         | 'continuation_created'
         | 'continuation_consumed'
+        | 'continuation_superseded'
         | 'supplement_added'
         | 'supplement_consumed'
         | 'blocked'
         | 'completed'
         | 'forked'
-        | 'cleared';
+        | 'cleared'
+        | 'prompt_injection_materialized'
+        | 'supplement_materialized'
+        | 'display_projected';
     revision: number;
     timestamp: string;
     source: 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | 'evaluator' | 'user_message' | 'system';
@@ -156,10 +207,15 @@ export interface GoalRenderSummary {
     successCriteria?: string[];
     attempts?: number;
     lastEvaluation?: {
+        evaluationId?: string;
+        goalId: string;
+        goalRevision: number;
         status: GoalEvaluation['status'];
         reason: string;
+        evidence?: string[];
         evaluatedAt: string;
     };
+    evaluations?: GoalEvaluationRecord[];
     recentEvents?: Array<{
         type: GoalEvent['type'];
         revision: number;
@@ -193,37 +249,35 @@ export interface GoalCommandResult {
     status?: GoalStatus;
     messageKey?: string;
     messageArgs?: Record<string, unknown>;
+    supplementId?: string;
     startedScheduler?: boolean;
     interruptedRunner?: boolean;
     clearedTaskTodos?: boolean;
     summary?: GoalRenderSummary;
     errorCode?: string;
+    conflict?: GoalEditConflict;
 }
 
 export type GoalEvaluationApplyResult =
-    | { action: 'finish'; status: GoalStatus }
-    | { action: 'continue'; continuationPrompt: string; continuationId: string };
-
-export type GoalMaybeResumeResult = { action: 'none' };
+    | { action: 'finish'; status: GoalStatus; evaluationRecord?: GoalEvaluationRecord }
+    | {
+          action: 'continue';
+          continuationPrompt: string;
+          continuationId: string;
+          evaluationRecord?: GoalEvaluationRecord;
+      };
 
 export interface GoalRenderSummaryOptions {
     includeCleared?: boolean;
     terminalRetentionMs?: number;
-}
-
-// 运行中 pause/clear/stop 使用的协作式中断标记，由 task loop 负责最终消费并写 handledAt。
-export interface TaskRuntimeInterrupt {
-    requested: boolean;
-    reason: 'goal_pause' | 'goal_clear' | 'user_stop' | 'system_shutdown' | 'failure_recovery';
-    requestedAt: string;
-    turnGeneration?: number;
-    handledAt?: string;
+    includeEvaluationHistory?: boolean;
 }
 
 // inline limit 控制 task json 大小；supplement 限制防止运行中用户输入无限堆积。
 const GOAL_EVENT_LOG_INLINE_LIMIT = 200;
 const GOAL_SUPPLEMENT_CONTENT_LIMIT = 4_000;
 const GOAL_SUPPLEMENT_PENDING_LIMIT = 20;
+const GOAL_EVALUATION_HISTORY_LIMIT = 50;
 
 function isoNow(): string {
     return new Date().toISOString();
@@ -276,12 +330,16 @@ function normalizeEventType(raw: unknown): GoalEvent['type'] {
         raw === 'evaluated' ||
         raw === 'continuation_created' ||
         raw === 'continuation_consumed' ||
+        raw === 'continuation_superseded' ||
         raw === 'supplement_added' ||
         raw === 'supplement_consumed' ||
         raw === 'blocked' ||
         raw === 'completed' ||
         raw === 'forked' ||
-        raw === 'cleared'
+        raw === 'cleared' ||
+        raw === 'prompt_injection_materialized' ||
+        raw === 'supplement_materialized' ||
+        raw === 'display_projected'
     ) {
         return raw;
     }
@@ -300,6 +358,7 @@ function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
     }
     if (typeof raw.goalId !== 'string' || typeof raw.goalRevision !== 'number') return undefined;
     return {
+        ...(typeof raw.evaluationId === 'string' ? { evaluationId: raw.evaluationId } : {}),
         goalId: raw.goalId,
         goalRevision: raw.goalRevision,
         status,
@@ -308,6 +367,90 @@ function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
         ...(typeof raw.nextPrompt === 'string' ? { nextPrompt: raw.nextPrompt } : {}),
         evaluatedAt: typeof raw.evaluatedAt === 'string' ? raw.evaluatedAt : isoNow()
     };
+}
+
+function normalizeEvaluationDisplayStatus(raw: unknown): GoalEvaluationDisplayStatus | undefined {
+    if (
+        raw === 'met' ||
+        raw === 'not_met' ||
+        raw === 'blocked' ||
+        raw === 'error' ||
+        raw === 'superseded' ||
+        raw === 'cancelled'
+    ) {
+        return raw;
+    }
+    return undefined;
+}
+
+function normalizeEvaluationRecord(raw: unknown): GoalEvaluationRecord | undefined {
+    if (!isObject(raw)) return undefined;
+    if (typeof raw.goalId !== 'string' || typeof raw.goalRevision !== 'number') return undefined;
+    const phase = raw.phase === 'end' ? 'end' : raw.phase === 'start' ? 'start' : undefined;
+    if (!phase) return undefined;
+    const startedAt =
+        typeof raw.startedAt === 'string'
+            ? raw.startedAt
+            : typeof raw.evaluatedAt === 'string'
+              ? raw.evaluatedAt
+              : isoNow();
+    const evaluatedAt = typeof raw.evaluatedAt === 'string' ? raw.evaluatedAt : undefined;
+    const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : (evaluatedAt ?? startedAt);
+    const status = normalizeEvaluationDisplayStatus(raw.status);
+    return {
+        evaluationId: typeof raw.evaluationId === 'string' ? raw.evaluationId : crypto.randomUUID(),
+        goalId: raw.goalId,
+        goalRevision: raw.goalRevision,
+        ...(typeof raw.anchorMessageId === 'string' ? { anchorMessageId: raw.anchorMessageId } : {}),
+        ...(typeof raw.anchorMessageIndex === 'number' && Number.isInteger(raw.anchorMessageIndex)
+            ? { anchorMessageIndex: raw.anchorMessageIndex }
+            : {}),
+        phase,
+        ...(status ? { status } : {}),
+        ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
+        ...(Array.isArray(raw.evidence) ? { evidence: normalizeStringArray(raw.evidence) } : {}),
+        startedAt,
+        ...(evaluatedAt ? { evaluatedAt } : {}),
+        updatedAt
+    };
+}
+
+function normalizeContinuationReason(raw: unknown): GoalContinuationReason {
+    if (
+        raw === 'not_met' ||
+        raw === 'edit' ||
+        raw === 'crash_recovery' ||
+        raw === 'load_recovery' ||
+        raw === 'manual_pause'
+    ) {
+        return raw;
+    }
+    return 'unspecified';
+}
+
+function evaluationRecordFromEvaluation(evaluation: GoalEvaluation): GoalEvaluationRecord {
+    return {
+        evaluationId: evaluation.evaluationId ?? crypto.randomUUID(),
+        goalId: evaluation.goalId,
+        goalRevision: evaluation.goalRevision,
+        phase: 'end',
+        status: evaluation.status,
+        message: evaluation.reason,
+        evidence: [...evaluation.evidence],
+        startedAt: evaluation.evaluatedAt,
+        evaluatedAt: evaluation.evaluatedAt,
+        updatedAt: evaluation.evaluatedAt
+    };
+}
+
+function normalizeEvaluationHistory(raw: unknown, lastEvaluation?: GoalEvaluation): GoalEvaluationRecord[] {
+    const records = Array.isArray(raw)
+        ? raw.map(normalizeEvaluationRecord).filter((item): item is GoalEvaluationRecord => item !== undefined)
+        : [];
+    if (records.length === 0 && lastEvaluation) {
+        records.push(evaluationRecordFromEvaluation(lastEvaluation));
+    }
+    return records.slice(-GOAL_EVALUATION_HISTORY_LIMIT);
 }
 
 function normalizeContinuation(raw: unknown): GoalContinuation | undefined {
@@ -325,7 +468,7 @@ function normalizeContinuation(raw: unknown): GoalContinuation | undefined {
         goalId: raw.goalId,
         goalRevision: raw.goalRevision,
         prompt: raw.prompt,
-        reason: typeof raw.reason === 'string' ? raw.reason : 'unspecified',
+        reason: normalizeContinuationReason(raw.reason),
         createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : isoNow(),
         ...(typeof raw.consumedAt === 'string' ? { consumedAt: raw.consumedAt } : {}),
         ...(typeof raw.consumedByTurnGeneration === 'number'
@@ -402,6 +545,49 @@ function normalizeTokenUsageBaseline(raw: unknown): number | undefined {
     return raw;
 }
 
+function normalizeFinalSnapshot(raw: unknown, taskId: string): GoalFinalSnapshot | undefined {
+    if (!isObject(raw)) return undefined;
+    const goalId = typeof raw.goalId === 'string' ? raw.goalId : '';
+    const status = raw.status === 'complete' || raw.status === 'cleared' ? raw.status : undefined;
+    const objective = typeof raw.objective === 'string' ? raw.objective : '';
+    if (!goalId || !status || !objective) return undefined;
+
+    const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString();
+    const finalizedAt = typeof raw.finalizedAt === 'string' ? raw.finalizedAt : createdAt;
+    const snapshot: GoalFinalSnapshot = {
+        id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : `goal-final:${goalId}`,
+        taskId: typeof raw.taskId === 'string' && raw.taskId.length > 0 ? raw.taskId : taskId,
+        goalId,
+        goalRevision: typeof raw.goalRevision === 'number' ? raw.goalRevision : 1,
+        objective,
+        status,
+        totalTokens: typeof raw.totalTokens === 'number' ? raw.totalTokens : 0,
+        elapsedMs: typeof raw.elapsedMs === 'number' ? raw.elapsedMs : 0,
+        createdAt,
+        finalizedAt
+    };
+    if (isObject(raw.lastEvaluation)) {
+        snapshot.lastEvaluation = raw.lastEvaluation as GoalFinalSnapshot['lastEvaluation'];
+    }
+    if (typeof raw.completedAt === 'string') snapshot.completedAt = raw.completedAt;
+    if (typeof raw.clearedAt === 'string') snapshot.clearedAt = raw.clearedAt;
+    if (typeof raw.anchorMessageId === 'string') snapshot.anchorMessageId = raw.anchorMessageId;
+    if (typeof raw.anchorMessageIndex === 'number') snapshot.anchorMessageIndex = raw.anchorMessageIndex;
+    return snapshot;
+}
+
+function normalizeFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
+    if (!Array.isArray(raw)) return [];
+    const snapshots = raw
+        .map((item) => normalizeFinalSnapshot(item, taskId))
+        .filter((item): item is GoalFinalSnapshot => item !== undefined);
+    const byGoalId = new Map<string, GoalFinalSnapshot>();
+    for (const snapshot of snapshots) {
+        byGoalId.set(snapshot.goalId, snapshot);
+    }
+    return [...byGoalId.values()];
+}
+
 export const GoalStates = {
     // 创建新 goal 只生成状态对象，不启动 runner；启动由 GoalService/GoalScheduler 决定。
     create(taskId: string, input: CreateGoalInput): GoalState {
@@ -416,6 +602,7 @@ export const GoalStates = {
             revision: 1,
             attempts: 0,
             startedAt: now,
+            evaluationHistory: [],
             pendingSupplements: [],
             editHistory: [],
             createdAt: now,
@@ -431,6 +618,8 @@ export const GoalStates = {
         const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id : crypto.randomUUID();
         const now = isoNow();
         const tokenUsageBaseline = normalizeTokenUsageBaseline(raw.tokenUsageBaseline);
+        const lastEvaluation = normalizeEvaluation(raw.lastEvaluation);
+        const pendingContinuation = normalizeContinuation(raw.pendingContinuation);
         return {
             version: 1,
             id,
@@ -442,12 +631,9 @@ export const GoalStates = {
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
             ...(tokenUsageBaseline !== undefined ? { tokenUsageBaseline } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
-            ...(normalizeEvaluation(raw.lastEvaluation)
-                ? { lastEvaluation: normalizeEvaluation(raw.lastEvaluation) }
-                : {}),
-            ...(normalizeContinuation(raw.pendingContinuation)
-                ? { pendingContinuation: normalizeContinuation(raw.pendingContinuation) }
-                : {}),
+            ...(lastEvaluation ? { lastEvaluation } : {}),
+            evaluationHistory: normalizeEvaluationHistory(raw.evaluationHistory, lastEvaluation),
+            ...(pendingContinuation ? { pendingContinuation } : {}),
             pendingSupplements: normalizeSupplements(raw.pendingSupplements),
             editHistory: normalizeEditHistory(raw.editHistory),
             ...(typeof raw.pauseReason === 'string' ? { pauseReason: raw.pauseReason } : {}),
@@ -460,6 +646,10 @@ export const GoalStates = {
             ...(typeof raw.completedAt === 'string' ? { completedAt: raw.completedAt } : {}),
             ...(typeof raw.clearedAt === 'string' ? { clearedAt: raw.clearedAt } : {})
         };
+    },
+
+    deserializeFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
+        return normalizeFinalSnapshots(raw, taskId);
     },
 
     // 对外返回深拷贝，避免 UI/API 层无意修改 TaskState 上的持久化对象。
@@ -480,6 +670,10 @@ export const GoalStates = {
         return status === 'active' || status === 'paused' || status === 'blocked';
     },
 
+    hasPendingContinuation(goal?: GoalState): boolean {
+        return !!(goal?.status === 'active' && goal.pendingContinuation && !goal.pendingContinuation.consumedAt);
+    },
+
     renderSummary(
         state?: GoalState,
         events?: GoalEventLogStorage,
@@ -496,6 +690,34 @@ export const GoalStates = {
             }
         }
         const tailEvents = events ? getGoalEventTail(events).filter((event) => event.goalId === state.id) : [];
+        const displayMessageIdsByEventId = new Map<string, string>();
+        const displayMessageIdsByRevisionType = new Map<string, string>();
+        for (const event of tailEvents) {
+            if (event.type !== 'display_projected' || !isObject(event.payload)) continue;
+            const displayMessageId =
+                typeof event.payload.displayMessageId === 'string' ? event.payload.displayMessageId : undefined;
+            const targetEventId =
+                typeof event.payload.targetEventId === 'string' ? event.payload.targetEventId : undefined;
+            const targetEventType =
+                event.payload.targetEventType === 'created' || event.payload.targetEventType === 'edited'
+                    ? event.payload.targetEventType
+                    : undefined;
+            const targetRevision =
+                typeof event.payload.targetRevision === 'number' ? event.payload.targetRevision : event.revision;
+            if (!displayMessageId) continue;
+            if (targetEventId) {
+                displayMessageIdsByEventId.set(targetEventId, displayMessageId);
+            }
+            if (targetEventType) {
+                displayMessageIdsByRevisionType.set(`${targetEventType}:${targetRevision}`, displayMessageId);
+            }
+        }
+        const internalTimelineEventTypes = new Set<GoalEvent['type']>([
+            'display_projected',
+            'prompt_injection_materialized',
+            'supplement_materialized'
+        ]);
+        const renderableEvents = tailEvents.filter((event) => !internalTimelineEventTypes.has(event.type));
         const toRenderEvent = (event: GoalEvent) => {
             const base = {
                 type: event.type,
@@ -504,12 +726,20 @@ export const GoalStates = {
                 source: event.source
             };
             const payload = event.payload;
-            if (!payload) return base;
-            const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
+            const objective =
+                isObject(payload) && typeof payload.objective === 'string' ? payload.objective : undefined;
             const previousObjective =
-                typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
+                isObject(payload) && typeof payload.previousObjective === 'string'
+                    ? payload.previousObjective
+                    : undefined;
+            const inlineDisplayMessageId =
+                isObject(payload) && typeof payload.displayMessageId === 'string'
+                    ? payload.displayMessageId
+                    : undefined;
             const displayMessageId =
-                typeof payload.displayMessageId === 'string' ? payload.displayMessageId : undefined;
+                inlineDisplayMessageId ??
+                displayMessageIdsByEventId.get(event.id) ??
+                displayMessageIdsByRevisionType.get(`${event.type}:${event.revision}`);
             if (objective === undefined && previousObjective === undefined && displayMessageId === undefined) {
                 return base;
             }
@@ -543,16 +773,32 @@ export const GoalStates = {
             ...(state.lastEvaluation
                 ? {
                       lastEvaluation: {
+                          ...(state.lastEvaluation.evaluationId
+                              ? { evaluationId: state.lastEvaluation.evaluationId }
+                              : {}),
+                          goalId: state.lastEvaluation.goalId,
+                          goalRevision: state.lastEvaluation.goalRevision,
                           status: state.lastEvaluation.status,
                           reason: state.lastEvaluation.reason,
+                          evidence: [...state.lastEvaluation.evidence],
                           evaluatedAt: state.lastEvaluation.evaluatedAt
                       }
                   }
                 : {}),
+            ...(options.includeEvaluationHistory === false
+                ? {}
+                : {
+                      evaluations: (state.evaluationHistory ?? [])
+                          .slice(-GOAL_EVALUATION_HISTORY_LIMIT)
+                          .map((evaluation) => ({
+                              ...evaluation,
+                              ...(evaluation.evidence ? { evidence: [...evaluation.evidence] } : {})
+                          }))
+                  }),
             ...(events
                 ? {
-                      recentEvents: tailEvents.slice(-8).map(toRenderEvent),
-                      objectiveEvents: tailEvents.filter(hasTimelineDetails).slice(-8).map(toRenderEvent)
+                      recentEvents: renderableEvents.slice(-8).map(toRenderEvent),
+                      objectiveEvents: renderableEvents.filter(hasTimelineDetails).slice(-8).map(toRenderEvent)
                   }
                 : {})
         };
@@ -571,7 +817,7 @@ export const GoalStates = {
     },
 
     // continuation 与 supplement 都绑定 goal revision，后续消费时可识别过期上下文。
-    createContinuation(goal: GoalState, prompt: string, reason: string): GoalContinuation {
+    createContinuation(goal: GoalState, prompt: string, reason: GoalContinuationReason): GoalContinuation {
         return {
             id: crypto.randomUUID(),
             goalId: goal.id,
@@ -591,6 +837,72 @@ export const GoalStates = {
             source: input.source ?? 'api',
             createdAt: isoNow()
         };
+    },
+
+    recordEvaluationStart(
+        goal: GoalState,
+        evaluationId: string = crypto.randomUUID(),
+        startedAt: string = isoNow(),
+        anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>
+    ) {
+        const record: GoalEvaluationRecord = {
+            evaluationId,
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            ...(anchor?.anchorMessageId ? { anchorMessageId: anchor.anchorMessageId } : {}),
+            ...(typeof anchor?.anchorMessageIndex === 'number'
+                ? { anchorMessageIndex: anchor.anchorMessageIndex }
+                : {}),
+            phase: 'start',
+            startedAt,
+            updatedAt: startedAt
+        };
+        goal.evaluationHistory = GoalStates.upsertEvaluationRecord(goal.evaluationHistory, record);
+        goal.updatedAt = startedAt;
+        return record;
+    },
+
+    recordEvaluationEnd(
+        goal: GoalState,
+        input: {
+            evaluationId: string;
+            status: GoalEvaluationDisplayStatus;
+            message?: string;
+            evidence?: string[];
+            evaluatedAt?: string;
+            anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>;
+        }
+    ) {
+        const evaluatedAt = input.evaluatedAt ?? isoNow();
+        const existing = (goal.evaluationHistory ?? []).find((item) => item.evaluationId === input.evaluationId);
+        const anchorMessageId = input.anchor?.anchorMessageId ?? existing?.anchorMessageId;
+        const anchorMessageIndex = input.anchor?.anchorMessageIndex ?? existing?.anchorMessageIndex;
+        const record: GoalEvaluationRecord = {
+            evaluationId: input.evaluationId,
+            goalId: existing?.goalId ?? goal.id,
+            goalRevision: existing?.goalRevision ?? goal.revision,
+            ...(anchorMessageId ? { anchorMessageId } : {}),
+            ...(typeof anchorMessageIndex === 'number' ? { anchorMessageIndex } : {}),
+            phase: 'end',
+            status: input.status,
+            ...(input.message !== undefined ? { message: input.message } : {}),
+            ...(input.evidence ? { evidence: [...input.evidence] } : {}),
+            startedAt: existing?.startedAt ?? evaluatedAt,
+            evaluatedAt,
+            updatedAt: evaluatedAt
+        };
+        goal.evaluationHistory = GoalStates.upsertEvaluationRecord(goal.evaluationHistory, record);
+        goal.updatedAt = evaluatedAt;
+        return record;
+    },
+
+    upsertEvaluationRecord(records: GoalEvaluationRecord[] | undefined, record: GoalEvaluationRecord) {
+        const next = (records ?? []).filter((item) => item.evaluationId !== record.evaluationId);
+        next.push({
+            ...record,
+            ...(record.evidence ? { evidence: [...record.evidence] } : {})
+        });
+        return next.slice(-GOAL_EVALUATION_HISTORY_LIMIT);
     },
 
     limitPendingSupplements(supplements: GoalSupplement[]): GoalSupplement[] {

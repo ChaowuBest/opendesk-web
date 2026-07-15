@@ -1,0 +1,504 @@
+import { beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { parseHTML } from 'linkedom';
+
+describe('task artifacts goal disclosure state', () => {
+    beforeAll(async () => {
+        const { window } = parseHTML('<!doctype html><html><body></body></html>');
+        Object.assign(globalThis, {
+            window,
+            document: window.document,
+            HTMLElement: window.HTMLElement,
+            Element: window.Element,
+            HTMLTextAreaElement: window.HTMLTextAreaElement,
+            HTMLButtonElement: window.HTMLButtonElement,
+            CustomEvent: window.CustomEvent,
+            customElements: window.customElements,
+            ResizeObserver: class {
+                observe() {}
+                disconnect() {}
+            },
+            requestAnimationFrame: (callback: FrameRequestCallback) => {
+                callback(0);
+                return 0;
+            },
+            cancelAnimationFrame: () => undefined
+        });
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { languages: ['zh-CN'], language: 'zh-CN' },
+            configurable: true
+        });
+
+        await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
+            FileExplorer: class {
+                onOpenInBrowser: ((filePath: string) => void) | null = null;
+                mount() {}
+                refresh() {}
+                softRefresh() {}
+                selectFile() {}
+                closeEditor() {}
+                openEditor() {}
+                isEditorOpen() {
+                    return false;
+                }
+            },
+            getFileExplorerCSS: () => ''
+        }));
+        await jest.unstable_mockModule('../../../renderer/browser.ts', () => ({
+            EmbeddedBrowser: class {
+                constructor() {}
+                register() {}
+                unregister() {}
+                destroy() {}
+            }
+        }));
+        await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
+            syncShadowHostTheme: jest.fn()
+        }));
+
+        (window as any).settingAPI = {
+            loadSettingObject: async () => ({}),
+            onSettingChanged: () => undefined
+        };
+        (window as any).taskManagerAPI = {};
+
+        await import('../../../renderer/components/taskartifacts.ts');
+    });
+
+    function createArtifacts(): HTMLElement & {
+        setGoalState: (goal: any) => void;
+        setGoalEvalProgress: (progress: any) => void;
+        setTaskTodos: (todos: any[], options?: { source?: 'refresh' | 'live-update' }) => void;
+        showGoalCreationForm: () => void;
+    } {
+        const artifacts = document.createElement('task-artifacts') as HTMLElement & {
+            setGoalState: (goal: any) => void;
+            setGoalEvalProgress: (progress: any) => void;
+            setTaskTodos: (todos: any[], options?: { source?: 'refresh' | 'live-update' }) => void;
+            showGoalCreationForm: () => void;
+        };
+        document.body.appendChild(artifacts);
+        artifacts.connectedCallback?.();
+        return artifacts;
+    }
+
+    function createRunningTaskArtifacts(): HTMLElement & {
+        setGoalState: (goal: any) => void;
+    } {
+        const taskView = document.createElement('task-view') as HTMLElement & { task_status: string };
+        taskView.task_status = 'running';
+        const artifacts = document.createElement('task-artifacts') as HTMLElement & {
+            setGoalState: (goal: any) => void;
+        };
+        artifacts.setAttribute('task-id', 'task-1');
+        taskView.appendChild(artifacts);
+        document.body.appendChild(taskView);
+        artifacts.connectedCallback?.();
+        return artifacts;
+    }
+
+    function terminalGoal(id: string) {
+        return {
+            id,
+            status: 'complete',
+            revision: 1,
+            objective: `Goal ${id}`,
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z',
+            evaluations: [
+                {
+                    evaluationId: `${id}-eval`,
+                    goalRevision: 1,
+                    phase: 'end',
+                    status: 'met',
+                    message: 'Done',
+                    evaluatedAt: '2026-07-08T10:00:00.000Z'
+                }
+            ],
+            objectiveEvents: [
+                {
+                    type: 'created',
+                    revision: 1,
+                    timestamp: '2026-07-08T09:59:00.000Z',
+                    source: 'user',
+                    objective: `Goal ${id}`
+                }
+            ]
+        };
+    }
+
+    function getDetails(artifacts: HTMLElement) {
+        const root = artifacts.shadowRoot!;
+        return {
+            evalStack: root.querySelector<HTMLDetailsElement>('details.goal-eval-stack')!,
+            timeline: root.querySelector<HTMLDetailsElement>('details.goal-timeline')!
+        };
+    }
+
+    test('live task todo changes collapse terminal goal evaluation and timeline once', () => {
+        const artifacts = createArtifacts();
+        artifacts.setGoalState(terminalGoal('goal-1'));
+        artifacts.setTaskTodos([
+            {
+                id: 'todo-1',
+                title: 'Initial todo',
+                status: 'pending',
+                updated_at: '2026-07-08T10:01:00.000Z'
+            }
+        ]);
+
+        let details = getDetails(artifacts);
+        expect(details.evalStack.hasAttribute('open')).toBe(true);
+        expect(details.timeline.hasAttribute('open')).toBe(true);
+
+        artifacts.setTaskTodos(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'Initial todo',
+                    status: 'completed',
+                    updated_at: '2026-07-08T10:02:00.000Z',
+                    completed_at: '2026-07-08T10:02:00.000Z'
+                }
+            ],
+            { source: 'live-update' }
+        );
+
+        details = getDetails(artifacts);
+        expect(details.evalStack.hasAttribute('open')).toBe(false);
+        expect(details.timeline.hasAttribute('open')).toBe(false);
+
+        details.evalStack.setAttribute('open', '');
+        details.timeline.setAttribute('open', '');
+        artifacts.setTaskTodos(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'Initial todo',
+                    status: 'completed',
+                    updated_at: '2026-07-08T10:03:00.000Z',
+                    completed_at: '2026-07-08T10:03:00.000Z'
+                }
+            ],
+            { source: 'live-update' }
+        );
+
+        details = getDetails(artifacts);
+        expect(details.evalStack.hasAttribute('open')).toBe(true);
+        expect(details.timeline.hasAttribute('open')).toBe(true);
+    });
+
+    test('new goals do not inherit a previous goal auto-collapsed state', () => {
+        const artifacts = createArtifacts();
+        artifacts.setGoalState(terminalGoal('goal-1'));
+        artifacts.setTaskTodos([
+            {
+                id: 'todo-1',
+                title: 'Initial todo',
+                status: 'pending',
+                updated_at: '2026-07-08T10:01:00.000Z'
+            }
+        ]);
+        artifacts.setTaskTodos(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'Initial todo',
+                    status: 'completed',
+                    updated_at: '2026-07-08T10:02:00.000Z',
+                    completed_at: '2026-07-08T10:02:00.000Z'
+                }
+            ],
+            { source: 'live-update' }
+        );
+
+        artifacts.setGoalState(terminalGoal('goal-2'));
+
+        const details = getDetails(artifacts);
+        expect(details.evalStack.hasAttribute('open')).toBe(true);
+        expect(details.timeline.hasAttribute('open')).toBe(true);
+    });
+
+    test('live todo updates preserve an in-progress goal creation draft and textarea DOM', () => {
+        const artifacts = createArtifacts();
+        artifacts.setTaskTodos([
+            {
+                id: 'todo-1',
+                title: 'Initial todo',
+                status: 'pending',
+                updated_at: '2026-07-08T10:01:00.000Z'
+            }
+        ]);
+        artifacts.showGoalCreationForm();
+
+        const objectiveInput = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>(
+            '[data-goal-creation-input="objective"]'
+        );
+        expect(objectiveInput).not.toBeNull();
+        objectiveInput!.value = 'Keep this draft';
+        objectiveInput!.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        artifacts.setTaskTodos(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'Updated todo',
+                    status: 'in_progress',
+                    updated_at: '2026-07-08T10:02:00.000Z'
+                }
+            ],
+            { source: 'live-update' }
+        );
+
+        const preservedInput = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>(
+            '[data-goal-creation-input="objective"]'
+        );
+        expect(preservedInput).toBe(objectiveInput);
+        expect(preservedInput?.value).toBe('Keep this draft');
+    });
+
+    test('a newer goal revision supersedes stale live evaluation until the persisted result arrives', () => {
+        const artifacts = createArtifacts();
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 1,
+            objective: 'Old objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+        artifacts.setGoalEvalProgress({
+            evaluationId: 'eval-1',
+            goalId: 'goal-1',
+            goalRevision: 1,
+            phase: 'start',
+            message: 'Evaluating',
+            startedAt: '2026-07-08T10:01:00.000Z'
+        });
+
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'New objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:02:00.000Z'
+        });
+
+        expect(artifacts.shadowRoot?.querySelector('.goal-evaluation-superseded')).not.toBeNull();
+
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'New objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:03:00.000Z',
+            evaluations: [
+                {
+                    evaluationId: 'eval-1',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    phase: 'end',
+                    status: 'not_met',
+                    message: 'Persisted result',
+                    evaluatedAt: '2026-07-08T10:03:00.000Z'
+                }
+            ]
+        });
+
+        expect(artifacts.shadowRoot?.querySelector('.goal-evaluation-superseded')).toBeNull();
+        expect(artifacts.shadowRoot?.innerHTML).toContain('Persisted result');
+    });
+
+    test('editing an active running goal dispatches pending event before display message exists', async () => {
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            startedScheduler: false,
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 2,
+                objective: 'New objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:05:00.000Z',
+                objectiveEvents: [
+                    {
+                        type: 'edited',
+                        revision: 2,
+                        timestamp: '2026-07-08T10:05:00.000Z',
+                        source: 'user',
+                        objective: 'New objective',
+                        previousObjective: 'Old objective'
+                    }
+                ]
+            }
+        }));
+        (window as any).taskManagerAPI = { editGoal };
+        const pendingEvents: CustomEvent[] = [];
+        const onPending = (event: Event) => pendingEvents.push(event as CustomEvent);
+        document.addEventListener('goal-pending', onPending);
+
+        try {
+            const artifacts = createRunningTaskArtifacts();
+            artifacts.setGoalState({
+                id: 'goal-1',
+                status: 'active',
+                revision: 1,
+                objective: 'Old objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:00:00.000Z'
+            });
+
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+            const input = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+            if (input) {
+                input.value = 'New objective';
+                input.dispatchEvent(new window.Event('input', { bubbles: true }));
+            }
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-save"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(editGoal).toHaveBeenCalledWith('task-1', 'New objective');
+            expect(pendingEvents).toHaveLength(1);
+            expect(pendingEvents[0].detail).toEqual(
+                expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'edit',
+                    objective: 'New objective',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    source: 'goal_editor'
+                })
+            );
+        } finally {
+            document.removeEventListener('goal-pending', onPending);
+        }
+    });
+
+    test('editing uses explicit task running state when dispatching pending event', async () => {
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            startedScheduler: false,
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 2,
+                objective: 'New objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:05:00.000Z'
+            }
+        }));
+        (window as any).taskManagerAPI = { editGoal };
+        const pendingEvents: CustomEvent[] = [];
+        const onPending = (event: Event) => pendingEvents.push(event as CustomEvent);
+        document.addEventListener('goal-pending', onPending);
+
+        try {
+            const artifacts = createArtifacts() as HTMLElement & {
+                setGoalState: (goal: any) => void;
+                setTaskRunning: (running: boolean) => void;
+            };
+            artifacts.setAttribute('task-id', 'task-1');
+            artifacts.setTaskRunning(true);
+            artifacts.setGoalState({
+                id: 'goal-1',
+                status: 'active',
+                revision: 1,
+                objective: 'Old objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:00:00.000Z'
+            });
+
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+            const input = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+            if (input) {
+                input.value = 'New objective';
+                input.dispatchEvent(new window.Event('input', { bubbles: true }));
+            }
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-save"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(editGoal).toHaveBeenCalledWith('task-1', 'New objective');
+            expect(pendingEvents).toHaveLength(1);
+            expect(pendingEvents[0].detail).toEqual(
+                expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'edit',
+                    objective: 'New objective',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    source: 'goal_editor'
+                })
+            );
+        } finally {
+            document.removeEventListener('goal-pending', onPending);
+        }
+    });
+
+    test('pending goal edit disables the objective edit entrypoint', () => {
+        const alertSpy = jest.fn();
+        (window as any).alert = alertSpy;
+        const artifacts = createRunningTaskArtifacts() as HTMLElement & {
+            setGoalState: (goal: any) => void;
+            setGoalEditPending: (pending: boolean) => void;
+        };
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 1,
+            objective: 'Old objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+
+        artifacts.setGoalEditPending(true);
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
+        expect(alertSpy).toHaveBeenCalledWith('Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。');
+
+        artifacts.setGoalEditPending(false);
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).not.toBeNull();
+    });
+
+    test('terminal goal edit entrypoint shows an unavailable status message', () => {
+        const alertSpy = jest.fn();
+        (window as any).alert = alertSpy;
+        const artifacts = createRunningTaskArtifacts() as HTMLElement & {
+            setGoalState: (goal: any) => void;
+        };
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'complete',
+            revision: 2,
+            objective: 'Finished objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
+        expect(alertSpy).toHaveBeenCalledWith('当前 Goal 状态不支持编辑。');
+    });
+});

@@ -9,124 +9,42 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Component, truncateToWidth } from '@earendil-works/pi-tui';
-import type { GoalEvaluation, GoalState, GoalStatus } from '../../aikernel/goal/state.js';
+import { Component, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+
+import { GoalStates, type GoalState, type GoalStatus } from '../../aikernel/goal/state.js';
 import chalk from 'chalk';
 import { Card } from './card.js';
 import { t } from '../../../locale/index.js';
-
-// ── 颜色常量 ──────────────────────────────────────────────────────────────
-
-const GOAL_ACTIVE_COLOR = '#00E676';
-const GOAL_PAUSED_COLOR = '#FFA726';
-const GOAL_BLOCKED_COLOR = '#EF5350';
-const GOAL_COMPLETE_COLOR = '#66BB6A';
-const GOAL_CLEARED_COLOR = '#9E9E9E';
-
-// ── 工具函数 ──────────────────────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-    if (ms <= 0) return '00:00';
-    const totalSec = Math.floor(ms / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    const hours = Math.floor(min / 60);
-    if (hours > 0) {
-        return `${String(hours).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    }
-    return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
-function formatTokens(n: number): string {
-    if (n <= 0) return '0';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return String(n);
-}
-
-function getGoalStatusColor(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return GOAL_ACTIVE_COLOR;
-        case 'paused':
-            return GOAL_PAUSED_COLOR;
-        case 'blocked':
-            return GOAL_BLOCKED_COLOR;
-        case 'complete':
-            return GOAL_COMPLETE_COLOR;
-        case 'cleared':
-            return GOAL_CLEARED_COLOR;
-    }
-}
+import {
+    formatClockDuration,
+    formatTokens,
+    getGoalEvaluationStatusLabelKey,
+    getGoalStatusMeta
+} from '../../../common/goal/format.js';
+import { getLatestGoalEvaluationDisplay } from '../../../common/goal/evaluation-display.js';
 
 function getGoalStatusLabel(status: GoalStatus): string {
-    const key = `goal.label.status.${status}`;
+    const meta = getGoalStatusMeta(status);
+    const label = t(meta.labelKey);
+    return label === meta.labelKey ? meta.fallbackLabel : label;
+}
+
+function getGoalEvaluationStatusLabel(status: string): string {
+    const key = getGoalEvaluationStatusLabelKey(status);
     const label = t(key);
     return label === key ? status : label;
 }
 
+function getGoalStatusColor(status: GoalStatus): string {
+    return getGoalStatusMeta(status).color;
+}
+
 function getGoalStatusIcon(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return '◉';
-        case 'paused':
-            return '⏸';
-        case 'blocked':
-            return '⊗';
-        case 'complete':
-            return '✓';
-        case 'cleared':
-            return '✕';
-    }
+    return getGoalStatusMeta(status).icon;
 }
 
-function getEvaluationIcon(status: string): string {
-    switch (status) {
-        case 'met':
-            return '✅';
-        case 'not_met':
-            return '⏳';
-        case 'blocked':
-            return '🚫';
-        default:
-            return '❓';
-    }
-}
-
-function getColoredEvaluationIcon(status: GoalEvaluation['status']): string {
-    const icon = getEvaluationIcon(status);
-    switch (status) {
-        case 'not_met':
-            return chalk.hex(GOAL_PAUSED_COLOR)(icon);
-        case 'blocked':
-            return chalk.hex(GOAL_BLOCKED_COLOR)(icon);
-        case 'met':
-            return icon;
-    }
-}
-
-export function buildEvalTrail(goal: GoalState): string {
-    const evaluation = goal.lastEvaluation;
-    if (!evaluation) {
-        return '';
-    }
-
-    const notMetIcon = getColoredEvaluationIcon('not_met');
-    const finalIcon = getColoredEvaluationIcon(evaluation.status);
-    const attempts = Math.max(0, goal.attempts);
-    const icons =
-        evaluation.status === 'not_met'
-            ? Array.from({ length: Math.max(1, attempts) }, () => notMetIcon)
-            : [...Array.from({ length: attempts }, () => notMetIcon), finalIcon];
-
-    if (icons.length <= 5) {
-        return icons.join('');
-    }
-
-    // The folded not_met examples count the current hourglass as the final marker.
-    const omittedCount = icons.length - 3 + (evaluation.status === 'not_met' ? 1 : 0);
-    const omittedText = t('goal.panel.eval_trail.omitted', { count: omittedCount });
-    return `${icons.slice(0, 2).join('')}${chalk.dim(omittedText)}${icons[icons.length - 1]}`;
+function visibleLabelWidth(label: string): number {
+    return visibleWidth(`${label}: `);
 }
 
 // ── GoalPanel 组件 ─────────────────────────────────────────────────────
@@ -138,22 +56,29 @@ export interface GoalPanelData {
     totalTokens: number;
     /** 累计执行时间（ms） */
     elapsedMs: number;
+    /** 目标评估进行中（true 表示 LLM 正在评估） */
+    evaluating?: boolean;
 }
 
 export interface GoalPanelOptions {
     /** 历史快照需要继续展示 cleared 状态；实时底部面板默认隐藏 cleared。 */
     showCleared?: boolean;
+    /** 历史快照需要继续展示 complete/cleared；实时底部面板默认只展示未终结 goal。 */
+    showTerminal?: boolean;
+    /** 消息列表中的 GoalPanel 用 goal.id 作为身份标识，用于去重和更新。 */
+    id?: string;
 }
 
 /**
- * GoalPanel：常驻的 Goal 信息面板，在 VerticalLayout 中插在 TaskView 与 TodoList 之间。
+ * GoalPanel：展示 goal 的目标、状态、token 用量、执行时间、评估结果等信息。
  *
- * 当前活跃任务有未清除 goal 时即显示。goal 完成后面板继续保留，
- * 清除后默认隐藏，避免已清除 goal 干扰后续普通对话。
- * 展示 goal 的目标、状态、token 用量、执行时间、评估结果等。
+ * 可用于持久面板（常驻于 TUI 布局中）和消息列表中的 per-goal 面板。
+ * 通过 id 字段标识，支持在消息列表中原地更新。
  */
 export class GoalPanel implements Component {
+    readonly id?: string;
     private readonly showCleared: boolean;
+    private readonly showTerminal: boolean;
     private data: GoalPanelData = {
         goalState: null,
         totalTokens: 0,
@@ -165,21 +90,41 @@ export class GoalPanel implements Component {
     private cachedOutput?: string[];
 
     constructor(options: GoalPanelOptions = {}) {
+        this.id = options.id;
         this.showCleared = options.showCleared === true;
+        this.showTerminal = options.showTerminal === true || this.showCleared;
     }
 
     /**
      * 更新面板数据。由外部驱动（TaskView 的 token update + 定时器/GoalService 事件）。
      */
     update(data: Partial<GoalPanelData>): void {
+        const previousGoalId = this.data.goalState?.id;
+        const nextGoalState = data.goalState ?? this.data.goalState;
         if (data.goalState !== undefined) {
             this.data.goalState = data.goalState;
+            if (!data.goalState || data.goalState.id !== previousGoalId) {
+                this.data.evaluating = false;
+            }
         }
         if (data.totalTokens !== undefined) {
             this.data.totalTokens = data.totalTokens;
         }
         if (data.elapsedMs !== undefined) {
-            this.data.elapsedMs = data.elapsedMs;
+            if (
+                nextGoalState &&
+                previousGoalId !== undefined &&
+                nextGoalState.id === previousGoalId &&
+                GoalStates.isTerminal(nextGoalState.status) &&
+                data.elapsedMs < this.data.elapsedMs
+            ) {
+                // 避免未完成的终态快照把已知更大的耗时覆盖为 0 或回退。
+            } else {
+                this.data.elapsedMs = data.elapsedMs;
+            }
+        }
+        if (data.evaluating !== undefined) {
+            this.data.evaluating = data.evaluating;
         }
         this.updateVisibility();
         this.invalidated = true;
@@ -209,12 +154,20 @@ export class GoalPanel implements Component {
     /**
      * 根据当前 goalState 更新可见性：
      * - goal 为 null → 隐藏
-     * - cleared → 默认隐藏，历史快照可通过 showCleared 展示
-     * - 其他状态（含 complete）→ 显示，便于查看最终评估结果
+     * - complete/cleared → 默认隐藏，可通过 showTerminal/showCleared 配置显示
+     * - 其他状态 → 显示
      */
     private updateVisibility(): void {
         const goal = this.data.goalState;
-        this._visible = goal !== null && (goal.status !== 'cleared' || this.showCleared);
+        if (!goal) {
+            this._visible = false;
+            return;
+        }
+        if (goal.status === 'complete' || goal.status === 'cleared') {
+            this._visible = this.showTerminal && (goal.status !== 'cleared' || this.showCleared);
+            return;
+        }
+        this._visible = true;
     }
 
     // ── 渲染 ─────────────────────────────────────────────────────
@@ -258,7 +211,7 @@ export class GoalPanel implements Component {
         const statusColor = getGoalStatusColor(goal.status);
         const statusIcon = chalk.hex(statusColor)(getGoalStatusIcon(goal.status));
         const statusLabel = chalk.hex(statusColor)(getGoalStatusLabel(goal.status));
-        const elapsed = formatDuration(this.data.elapsedMs);
+        const elapsed = formatClockDuration(this.data.elapsedMs);
 
         return {
             icon: '',
@@ -282,17 +235,43 @@ export class GoalPanel implements Component {
             lines.push(reasonLine);
         }
 
-        // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
-        if (goal.lastEvaluation) {
-            const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
-            const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
-            lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);
+        // 评估进行中
+        if (this.data.evaluating) {
+            lines.push(`${chalk.yellow('⟳')} ${chalk.italic(chalk.yellow(t('goal.panel.evaluating')))}`);
         }
+
+        const evaluationLines = this.buildEvaluationLines(goal, contentWidth);
+        lines.push(...evaluationLines);
 
         // Token 用量
         const usedTokens = this.data.totalTokens;
         const usedStr = formatTokens(usedTokens);
         lines.push(`${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}`);
+
+        return lines;
+    }
+
+    private buildEvaluationLines(goal: GoalState, contentWidth: number): string[] {
+        const evaluation = getLatestGoalEvaluationDisplay(goal);
+        if (!evaluation) {
+            return [];
+        }
+
+        const status = getGoalEvaluationStatusLabel(evaluation.status);
+        const reason = evaluation.message;
+        const summary = reason ? `${status} - ${reason}` : status;
+        const summaryWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.latest_evaluation')));
+        const lines = [
+            `${chalk.dim(`${t('goal.panel.latest_evaluation')}:`)} ${truncateToWidth(summary, summaryWidth, '…', true)}`
+        ];
+
+        const evidence = evaluation.evidence[0];
+        if (evidence) {
+            const evidenceWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.evidence')));
+            lines.push(
+                `${chalk.dim(`${t('goal.panel.evidence')}:`)} ${truncateToWidth(evidence, evidenceWidth, '…', true)}`
+            );
+        }
 
         return lines;
     }
@@ -305,11 +284,11 @@ export class GoalPanel implements Component {
         const status = goal.status;
         if (status === 'blocked' && goal.blockedReason) {
             const truncated = truncateToWidth(goal.blockedReason, Math.max(1, contentWidth - 10), '…', true);
-            return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(GOAL_BLOCKED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(getGoalStatusMeta('blocked').color)(truncated)}`;
         }
         if (status === 'paused' && goal.pauseReason) {
             const truncated = truncateToWidth(goal.pauseReason, Math.max(1, contentWidth - 10), '…', true);
-            return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(getGoalStatusMeta('paused').color)(truncated)}`;
         }
         return null;
     }

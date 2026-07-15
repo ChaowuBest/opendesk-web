@@ -92,24 +92,23 @@ import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
-import { t } from '../../../locale/index.js';
 import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
-import { GoalController } from '../goal/controller.js';
-import { GoalService } from '../goal/service.js';
-import {
-    GoalEvents,
-    GoalStates,
-    type GoalEvent,
-    type GoalEventLogStorage,
-    type GoalState,
-    type TaskRuntimeInterrupt
-} from '../goal/state.js';
-import { createUserGoalDataBlock } from '../goal/prompt-data.js';
+import { TaskExtensionManager } from '../task-extension.js';
 
-type TaskStatus = 'waiting' | 'running' | 'stopped';
+export type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+
+export interface TaskRuntimeInterrupt {
+    requested: boolean;
+    reason: string;
+    requestedAt: string;
+    turnGeneration?: number;
+    handledAt?: string;
+    skipFinishHooks?: boolean;
+}
+
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 export type TaskModelRequestOptions = LLMRequestOptions;
 
@@ -121,21 +120,16 @@ export interface StartInternalTurnOptions {
     prompt: string;
     /** Optional user-facing command text used by renderers while keeping prompt internal. */
     rawText?: string;
-    source: 'goal_create' | 'goal_resume' | 'goal_continuation' | 'goal_hook';
+    source: string;
     metadata: RuntimeMetadata;
-}
-
-export interface GoalEditReminderInput {
-    goalId: string;
-    goalRevision: number;
-    objective: string;
-    reason: 'goal_create' | 'goal_edit';
 }
 
 export interface InterruptRunningTurnOptions {
     reason: TaskRuntimeInterrupt['reason'];
     stopRunningTools?: boolean;
     cancelPermissionPrompts?: boolean;
+    userInitiated?: boolean;
+    skipFinishHooks?: boolean;
 }
 
 // ==================== Task Changes (for 变更 panel) ====================
@@ -195,7 +189,6 @@ export interface TaskUpdateUserChunk {
     message_id: string;
     last_part_index: number;
     last_part: UserMessagePart;
-    /** 是否为该用户消息的最后一个 part */
     isLastPart?: boolean;
     rawText?: string;
     metadata?: RuntimeMetadata;
@@ -247,12 +240,31 @@ export interface TaskUpdateRetryChunk {
     status: 'scheduled' | 'retrying' | 'cleared';
 }
 
+export interface TaskUpdateGoalEvalChunk {
+    type: 'goal_eval';
+    task_id: string;
+    task_status: TaskStatus;
+    goalId?: string;
+    goalRevision?: number;
+    evaluationId?: string;
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
+    phase: 'start' | 'end';
+    status?: 'met' | 'not_met' | 'blocked' | 'error' | 'superseded' | 'cancelled';
+    message?: string;
+    evidence?: string[];
+    startedAt?: string;
+    evaluatedAt?: string;
+    updatedAt?: string;
+}
+
 export type TaskUpdateChunk =
     | TaskUpdateUserChunk
     | TaskUpdateAssistantChunk
     | TaskUpdateUserReplaceChunk
     | TaskUpdateAssistantReplaceChunk
-    | TaskUpdateRetryChunk;
+    | TaskUpdateRetryChunk
+    | TaskUpdateGoalEvalChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -368,8 +380,6 @@ export class TaskState {
     microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
-    goal_state?: GoalState;
-    goal_event_log?: GoalEventLogStorage;
     runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
@@ -454,10 +464,10 @@ export class TaskState {
     onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
+    /** 与任务执行生命周期集成的可选领域功能。 */
+    readonly extensions: TaskExtensionManager;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
-    /** runtime interrupt 被当前 turn 消费后 resolve，用于 goal replace 等待旧 turn 退出。 */
-    private _runtimeInterruptSettledResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
     /** LLM 重试等待窗口是否已经对前端可见 */
@@ -467,7 +477,6 @@ export class TaskState {
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
-    private _pendingGoalEditReminders: GoalEditReminderInput[] = [];
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -573,7 +582,20 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
+        this.extensions = new TaskExtensionManager(this);
         this.bindChatContextMessageAppend();
+    }
+
+    getTurnGeneration(): number {
+        return this._turnGeneration;
+    }
+
+    async materializeExtensionPromptTurn(prompt: string, metadata: RuntimeMetadata, rawText?: string): Promise<void> {
+        await this.appendInternalUserMessage(prompt, metadata, rawText);
+        const assistantMessage = new AssistantMessage();
+        assistantMessage.metadata = metadata;
+        this.chat_context.appendMessage(assistantMessage);
+        this._activeTurnMetadata = metadata;
     }
 
     private bindChatContextMessageAppend(): void {
@@ -623,6 +645,10 @@ export class TaskState {
                 );
             }
         }
+    }
+
+    publishTaskUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
+        this.publishChunkUpdate(chunkUpdate, context);
     }
 
     private scheduleTaskReview(): void {
@@ -826,19 +852,8 @@ export class TaskState {
         if (typeof task_json.executionNodeLabel === 'string') {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
-        task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
-        if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
-            task.goal_event_log = {
-                mode: 'artifact',
-                tail: GoalEvents.deserializeEvents(task_json.goal_event_log_tail),
-                artifactPath:
-                    typeof task_json.goal_event_log_artifact === 'string' ? task_json.goal_event_log_artifact : ''
-            };
-        } else {
-            task.goal_event_log = GoalEvents.deserialize(task_json.goal_event_log);
-        }
         task._dirty = false;
-        GoalController.normalizeLoadedTask(task, wasRunningAtShutdown);
+        task.extensions.restore(task_json, wasRunningAtShutdown);
         return task;
     }
 
@@ -863,7 +878,7 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             stop_requested_by_user: this.stop_requested_by_user,
-            goal: GoalStates.renderSummary(this.goal_state)
+            ...this.extensions.toSimplifiedJSON()
         };
     }
 
@@ -908,6 +923,7 @@ export class TaskState {
                   })
                 : undefined;
         return {
+            ...this.extensions.serialize(),
             task_id: this.task_id,
             parent_id: this.parent_id,
             task_name: this.task_name,
@@ -933,17 +949,12 @@ export class TaskState {
             workspaceID: this.workspaceID,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
-            stop_requested_by_user: this.stop_requested_by_user,
-            goal_state: GoalStates.serialize(this.goal_state),
-            goal_event_log: GoalEvents.serialize(this.goal_event_log)
+            stop_requested_by_user: this.stop_requested_by_user
         };
     }
 
     /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
     toRenderJSON() {
-        const goal = GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
-            includeCleared: true
-        });
         return {
             task_id: this.task_id,
             task_name: this.task_name,
@@ -956,10 +967,10 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             created_at: this.created_at.toISOString(),
-            goal,
             chat_context: this.chat_context.toRenderJSON(),
             workspace: this.getWorkspace() || '',
-            workspaceID: this.workspaceID || ''
+            workspaceID: this.workspaceID || '',
+            ...this.extensions.toRenderJSON()
         };
     }
 
@@ -1463,126 +1474,35 @@ export class TaskState {
         this.processTaskTurn(generation, this.withUsageTelemetry());
     }
 
-    injectGoalEditReminder(input: GoalEditReminderInput): void {
-        this._pendingGoalEditReminders.push(input);
-    }
-
-    private async materializePendingGoalEditReminders(): Promise<void> {
-        if (this._pendingGoalEditReminders.length === 0) return;
-        const reminders = this._pendingGoalEditReminders.splice(0);
-        for (const reminder of reminders) {
-            const metadata: RuntimeMetadata = {
-                scope: 'goal',
-                origin: { source: 'internal', reason: reminder.reason },
-                execution: {
-                    generation: this._turnGeneration,
-                    controller: 'goal',
-                    controllerId: reminder.goalId,
-                    controllerRevision: reminder.goalRevision
-                }
-            };
-            const prompt =
-                reminder.reason === 'goal_create'
-                    ? [
-                          '<system-reminder>',
-                          '用户在当前任务运行中创建新的 goal。继续利用当前上下文和已有 TodoWrite，但后续推进必须围绕这个 goal objective 展开。',
-                          '',
-                          ...createUserGoalDataBlock('Goal data:', {
-                              revision: reminder.goalRevision,
-                              objective: reminder.objective
-                          }),
-                          '</system-reminder>'
-                      ].join('\n')
-                    : [
-                          '<system-reminder>',
-                          '当前 goal objective 已被用户修改。必须停止按旧 objective 推进，改为按新 revision 继续。',
-                          '',
-                          ...createUserGoalDataBlock('Goal data:', {
-                              revision: reminder.goalRevision,
-                              objective: reminder.objective
-                          }),
-                          '</system-reminder>'
-                      ].join('\n');
-            await this.appendInternalUserMessage(prompt, metadata);
-            const assistantMessage = new AssistantMessage();
-            assistantMessage.metadata = metadata;
-            this.chat_context.appendMessage(assistantMessage);
-            this._activeTurnMetadata = metadata;
-        }
-    }
-
-    private async materializePendingGoalSupplements(): Promise<boolean> {
-        const goal = this.goal_state;
-        if (!goal || goal.status !== 'active') return false;
-
-        const supplements = GoalController.consumePendingSupplements(this, this._turnGeneration);
-        if (supplements.length === 0) return false;
-
-        const metadata: RuntimeMetadata = {
-            scope: 'goal',
-            origin: { source: 'internal', reason: 'goal_supplement' },
-            execution: {
-                generation: this._turnGeneration,
-                controller: 'goal',
-                controllerId: goal.id,
-                controllerRevision: goal.revision
-            }
-        };
-        const prompt = [
-            '<system-reminder>',
-            '用户在当前 goal 执行期间提供了补充信息。请把这些内容作为当前 goal 的补充上下文使用。',
-            '',
-            ...createUserGoalDataBlock(
-                'Supplemental context:',
-                supplements.map((supplement) => ({
-                    source: supplement.source,
-                    content: supplement.content
-                }))
-            ),
-            '</system-reminder>'
-        ].join('\n');
-
-        await this.appendInternalUserMessage(prompt, metadata);
-        const assistantMessage = new AssistantMessage();
-        assistantMessage.metadata = metadata;
-        this.chat_context.appendMessage(assistantMessage);
-        this._activeTurnMetadata = metadata;
-        return true;
-    }
-
-    private hasUnfinishedGoal(): boolean {
-        return GoalStates.isUnfinished(this.goal_state?.status);
-    }
-
     rewindMessages(
         count: number,
-        source: GoalEvent['source'] = 'system'
+        source: string = 'system'
     ): Array<UserMessage | AssistantMessage | CompactSeparatorMessage> {
         const actualCount = Math.min(Math.max(0, count), this.chat_context.messages.length);
         if (actualCount === 0) {
             return [];
         }
         const removed = this.chat_context.messages.splice(this.chat_context.messages.length - actualCount, actualCount);
-        GoalController.blockForHistoryMutation(this, source);
+        this.extensions.onHistoryMutation(source);
         this.persistLater();
         return removed;
     }
 
     redoMessages(
         messages: Array<UserMessage | AssistantMessage | CompactSeparatorMessage>,
-        source: GoalEvent['source'] = 'system'
+        source: string = 'system'
     ): void {
         if (messages.length === 0) {
             return;
         }
         this.chat_context.messages.push(...messages);
-        GoalController.blockForHistoryMutation(this, source);
+        this.extensions.onHistoryMutation(source);
         this.persistLater();
     }
 
     async rewindToUserMessage(
         messageId: string,
-        options: { resubmit?: boolean; source?: GoalEvent['source'] } = {}
+        options: { resubmit?: boolean; source?: string } = {}
     ): Promise<{ removedCount: number; resubmitted: boolean; userMessageText: string }> {
         const idx = this.chat_context.messages.findIndex(
             (message) => message.role === 'user' && message.message_id === messageId
@@ -1607,7 +1527,7 @@ export class TaskState {
         const removedCount = this.chat_context.messages.length - idx;
         if (removedCount > 0) {
             this.chat_context.messages.splice(idx);
-            GoalController.blockForHistoryMutation(this, options.source ?? 'system');
+            this.extensions.onHistoryMutation(options.source ?? 'system');
         }
         this.task_status = 'stopped';
         this.stop_requested_by_user = false;
@@ -1961,27 +1881,19 @@ export class TaskState {
         message: string,
         imageDataUris?: string[],
         modelRequestOptions?: TaskModelRequestOptions
-    ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }> {
-        if (this.goal_state?.status === 'active' && this.task_status === 'running') {
-            if (imageDataUris && imageDataUris.length > 0) {
-                return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
-            }
-            const supplement = GoalService.addSupplement(this, { content: message, source: 'user_message' });
-            if (!supplement.ok) {
-                return {
-                    status: 'error',
-                    messageKey: supplement.messageKey ?? 'goal.error.unknown',
-                    messageArgs: supplement.messageArgs
-                };
-            }
-            return { status: 'ok' };
-        }
+    ): Promise<
+        | { status: 'ok'; supplementId?: string }
+        | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
+    > {
+        const extensionInputResult = await this.extensions.handleUserMessage(message, imageDataUris);
+        if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(modelRequestOptions);
         this.task_status = 'running';
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
         const generation = ++this._turnGeneration;
+        this.clearRuntimeInterruptForNewTurn();
         this.recordTaskInteraction();
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -2085,13 +1997,7 @@ export class TaskState {
                 `autoParseThinkTags=${autoParseThinkTags}`
         );
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
-        assistant_message.metadata =
-            user_message.metadata?.scope === 'interlude'
-                ? {
-                      scope: 'interlude',
-                      origin: { source: 'user', reason: 'goal_paused_interlude' }
-                  }
-                : undefined;
+        assistant_message.metadata = this.extensions.getAssistantMetadata(user_message.metadata);
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -2215,7 +2121,8 @@ export class TaskState {
             requested: true,
             reason: options.reason,
             requestedAt,
-            turnGeneration: this._turnGeneration
+            turnGeneration: this._turnGeneration,
+            skipFinishHooks: options.skipFinishHooks
         };
         if (options.cancelPermissionPrompts) {
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
@@ -2247,7 +2154,7 @@ export class TaskState {
         }
         if (this.task_status !== 'stopped') {
             this.task_status = 'stopped';
-            this.stop_requested_by_user = false;
+            this.stop_requested_by_user = options.userInitiated === true;
             this.finished_at = new Date();
             this.markInterruptedToolCalls(options.reason, options.reason);
         }
@@ -2257,43 +2164,31 @@ export class TaskState {
         this._stopResolvers = [];
         if (!this._turnRunning) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            this.resolveRuntimeInterruptSettledWaiters();
             await this.sendSubscriptionFeedback();
         }
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
     }
 
-    waitForRuntimeInterruptSettled(): Promise<void> {
-        if (this.runtimeInterrupt?.requested !== true || this.runtimeInterrupt.handledAt) {
-            return Promise.resolve();
+    settleRuntimeInterruptIfTaskStopped(): boolean {
+        if (
+            this.runtimeInterrupt?.requested !== true ||
+            this.runtimeInterrupt.handledAt ||
+            this.task_status === 'running'
+        ) {
+            return false;
         }
-        return new Promise((resolve) => {
-            this._runtimeInterruptSettledResolvers.push(resolve);
-        });
-    }
-
-    private resolveRuntimeInterruptSettledWaiters(): void {
-        for (const resolver of this._runtimeInterruptSettledResolvers) {
-            resolver();
-        }
-        this._runtimeInterruptSettledResolvers = [];
+        this.runtimeInterrupt.handledAt = new Date().toISOString();
+        this.runtimeInterrupt = undefined;
+        this.persistLater();
+        return true;
     }
 
     private clearRuntimeInterruptForNewTurn(): void {
         if (this.runtimeInterrupt?.requested === true && !this.runtimeInterrupt.handledAt) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            this.resolveRuntimeInterruptSettledWaiters();
         }
         this.runtimeInterrupt = undefined;
-    }
-
-    isGoalRuntimeInterrupted(): boolean {
-        return (
-            this.runtimeInterrupt?.requested === true &&
-            !this.runtimeInterrupt.handledAt &&
-            (this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear')
-        );
     }
 
     private finishRuntimeInterruptIfCurrentTurn(generation: number): boolean {
@@ -2303,10 +2198,8 @@ export class TaskState {
             (this.runtimeInterrupt.turnGeneration === undefined || this.runtimeInterrupt.turnGeneration === generation)
         ) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            const shouldSkipHooks =
-                this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear';
+            const shouldSkipHooks = this.runtimeInterrupt.skipFinishHooks === true;
             this.runtimeInterrupt = undefined;
-            this.resolveRuntimeInterruptSettledWaiters();
             return shouldSkipHooks;
         }
         return false;
@@ -2398,7 +2291,7 @@ export class TaskState {
                 try {
                     return callback?.(chunkUpdate);
                 } finally {
-                    if (!activeStatuses.includes(chunkUpdate.task_status)) {
+                    if (chunkUpdate.task_status === 'stopped') {
                         settle();
                     }
                 }
@@ -2594,7 +2487,7 @@ export class TaskState {
         forkedTask.executionNodeLabel = this.executionNodeLabel;
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
-        GoalController.prepareForkedGoal(this, forkedTask);
+        this.extensions.prepareFork(forkedTask);
 
         // Add to task manager — forkedTask._dirty 默认 true，save 时会写入
         this.task_manager_state.tasks.push(forkedTask);
@@ -2707,7 +2600,7 @@ export class TaskState {
                 return;
             }
 
-            this.publishChunkUpdate(chunkUpdate, 'subscription feedback');
+            this.publishTaskUpdate(chunkUpdate, 'subscription feedback');
         } catch (err) {
             logger.error(`error sending subscription feedback for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2737,7 +2630,7 @@ export class TaskState {
                 internal: userMessage.internal,
                 timestamp: userMessage.timestamp
             };
-            this.publishChunkUpdate(chunkUpdate, 'user message replace');
+            this.publishTaskUpdate(chunkUpdate, 'user message replace');
         } catch (err) {
             logger.error(`error sending user message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2761,7 +2654,7 @@ export class TaskState {
                 parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
                 usage: assistantMessage.usage
             };
-            this.publishChunkUpdate(chunkUpdate, 'assistant message replace');
+            this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {
             logger.error(`error sending assistant message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2791,7 +2684,7 @@ export class TaskState {
             ...update
         };
 
-        this.publishChunkUpdate(chunkUpdate, 'retry feedback');
+        this.publishTaskUpdate(chunkUpdate, 'retry feedback');
     }
 
     private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
@@ -2811,8 +2704,8 @@ export class TaskState {
 
         return await new Promise<boolean>((resolve) => {
             let settled = false;
-            let interval: ReturnType<typeof setInterval>;
-            let timeout: ReturnType<typeof setTimeout>;
+            let interval: ReturnType<typeof setInterval> = undefined as any;
+            let timeout: ReturnType<typeof setTimeout> = undefined as any;
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);
@@ -3689,47 +3582,6 @@ export class TaskState {
         return this.chat_context.getTool(tool_call.tool_name);
     }
 
-    private getStaleGoalRevisionResult(tool_call: ToolCall):
-        | {
-              skipped: true;
-              reason: 'stale_goal_revision';
-              goalRevision: number;
-              currentGoalRevision: number;
-          }
-        | undefined {
-        const execution = tool_call.metadata?.execution;
-        const goal = this.goal_state;
-        if (
-            execution?.controller !== 'goal' ||
-            !goal ||
-            execution.controllerId !== goal.id ||
-            typeof execution.controllerRevision !== 'number' ||
-            execution.controllerRevision === goal.revision
-        ) {
-            return undefined;
-        }
-        return {
-            skipped: true,
-            reason: 'stale_goal_revision',
-            goalRevision: execution.controllerRevision,
-            currentGoalRevision: goal.revision
-        };
-    }
-
-    private markStaleGoalToolCallSkipped(tool_call: ToolCall): boolean {
-        const result = this.getStaleGoalRevisionResult(tool_call);
-        if (!result) return false;
-        tool_call.status = 'error';
-        tool_call.result_object = result;
-        tool_call.result = JSON.stringify(result);
-        tool_call.rendered = undefined;
-        logger.warn(
-            `task ${this.task_id}: skipped stale goal tool call ${tool_call.tool_name} ` +
-                `(goal revision ${result.goalRevision}, current ${result.currentGoalRevision})`
-        );
-        return true;
-    }
-
     /**
      * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
      * @param tool_call 要被执行的工具调用
@@ -3751,7 +3603,7 @@ export class TaskState {
             return;
         }
 
-        if (this.markStaleGoalToolCallSkipped(tool_call)) {
+        if (this.extensions.beforeToolCall(tool_call)) {
             return;
         }
 
@@ -4105,7 +3957,7 @@ export class TaskState {
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
         for (const { tool_call, partIndex } of pendingCalls) {
-            if (this.markStaleGoalToolCallSkipped(tool_call)) {
+            if (this.extensions.beforeToolCall(tool_call)) {
                 permissionResults.set(tool_call, true);
                 await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
@@ -4201,19 +4053,39 @@ export class TaskState {
                         }
                     }
 
-                    await this.materializePendingGoalEditReminders();
+                    const materializedExtensionEvents = await this.extensions.checkpoint('after_completion', {
+                        includeSupplements: false
+                    });
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
+                    if (materializedExtensionEvents) {
+                        hookRejectCount = 0;
+                        this._currentTurn++;
+                        continue;
+                    }
 
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
+                        const materializedExtensionEventsAfterTools = await this.extensions.checkpoint('after_tools', {
+                            includeSupplements: false
+                        });
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedExtensionEventsAfterTools) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         hookRejectCount = 0;
                         this._currentTurn++;
-                        await this.materializePendingGoalSupplements();
+                        await this.extensions.checkpoint('after_tool_turn');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
@@ -4223,13 +4095,13 @@ export class TaskState {
                         continue;
                     }
 
-                    const materializedGoalSupplements = await this.materializePendingGoalSupplements();
+                    const materializedExtensionEventsBeforeFinish = await this.extensions.checkpoint('before_finish');
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
-                    if (materializedGoalSupplements) {
+                    if (materializedExtensionEventsBeforeFinish) {
                         hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
@@ -4245,6 +4117,18 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedExtensionEventsAfterHooks =
+                            await this.extensions.checkpoint('after_finish_hooks');
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedExtensionEventsAfterHooks) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         if (checkHooks.operation === 'finish') {
                             turnRejected = false;
                         } else {
@@ -4262,7 +4146,7 @@ export class TaskState {
                             logger.warn(
                                 `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                             );
-                            GoalController.blockActiveGoal(this, 'hook_reject_safety_cap', 'system');
+                            this.extensions.onTurnIterationFailed('hook_reject_safety_cap', false);
                             shouldScheduleSessionMemoryUpdate = true;
                             break;
                         }
@@ -4272,6 +4156,18 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedExtensionEventsAfterBackoff =
+                            await this.extensions.checkpoint('after_hook_backoff');
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedExtensionEventsAfterBackoff) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         await this.appendInternalUserMessage(turnRejectedReason);
                         const autoParseThinkTags = this.model
                             ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ??
@@ -4290,17 +4186,17 @@ export class TaskState {
                     // 异常后任务标记为 stopped，安全退出
                     this.task_status = 'stopped';
                     this.finished_at = new Date();
-                    if (!this.isGoalRuntimeInterrupted()) {
-                        GoalController.blockActiveGoal(this, 'turn_iteration_failed', 'system');
-                    }
+                    this.extensions.onTurnIterationFailed('turn_iteration_failed');
                     break;
                 }
             }
 
+            // 即使被新 turn 取代，也先完成当前 turn 的 runtime interrupt 清理
+            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
+
             // 清理代码：仅在未被新 turn 取代时执行
             if (this._turnGeneration !== myGeneration) return;
 
-            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
             if (this.task_status !== 'stopped') {
                 this.task_status = 'stopped';
             }
@@ -4315,12 +4211,11 @@ export class TaskState {
             if (shouldScheduleSessionMemoryUpdate) {
                 this.recordMicrocompactAssistantCompleted(completedAt);
             }
-            if (this.goal_state?.schedulerLease && this.goal_state.status === 'active') {
-                this.goal_state.schedulerLease = undefined;
-            }
+            this.extensions.onTurnSettled();
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
+            this.extensions.afterTurnFinished();
             if (shouldScheduleSessionMemoryUpdate) {
                 this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
             }

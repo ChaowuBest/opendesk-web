@@ -16,14 +16,15 @@
 
 import { showConfirmModal } from './confirmModal.js';
 import { createRendererTranslator } from '../locale.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 import {
+    decideGoalObjectiveAction,
     goalResultToMessageKey,
-    isTerminalGoalStatus,
     parseGoalCommandArgs,
     validateGoalSubcommandArgs,
     type GoalCommandResultLike,
     type GoalSubcommand
-} from '../../common/goal-command.js';
+} from '../../common/goal/command.js';
 
 // ---- 颜色方案（与技能柔和色区分，使用更中性的色调）----
 const CMD_COLORS = { bg: '#F0F0F5', text: '#636366' };
@@ -54,6 +55,13 @@ export interface SlashCommandContext {
     /** 清空当前消息队列 */
     clearMessageQueue: (() => void) | null;
 }
+
+interface SlashCommandExecutionResult {
+    inputDisposition: 'clear' | 'preserve';
+}
+
+const SLASH_CLEAR_INPUT: SlashCommandExecutionResult = { inputDisposition: 'clear' };
+const SLASH_PRESERVE_INPUT: SlashCommandExecutionResult = { inputDisposition: 'preserve' };
 
 let t = createRendererTranslator();
 
@@ -90,6 +98,56 @@ function showGoalResult(result: GoalCommandResultLike | undefined): void {
     showGoalInfo(t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined));
 }
 
+function dispatchPendingGoalEvent(
+    taskId: string,
+    type: 'create' | 'edit',
+    objective: string,
+    goalId: string | undefined,
+    goalRevision: number | undefined,
+    source: 'slash_command' = 'slash_command'
+): void {
+    if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
+    document.dispatchEvent(
+        new CustomEvent('goal-pending', {
+            detail: {
+                taskId,
+                type,
+                objective,
+                goalId,
+                goalRevision,
+                source
+            }
+        })
+    );
+}
+
+type GoalDisplayEvent = {
+    type?: string;
+    revision?: number;
+    displayMessageId?: string;
+};
+
+function getLatestGoalDisplayMessageEvent(
+    summary: Record<string, any> | null | undefined,
+    type: 'create' | 'edit'
+): GoalDisplayEvent | undefined {
+    const objectiveEvents = Array.isArray(summary?.objectiveEvents) ? summary?.objectiveEvents : undefined;
+    const recentEvents = Array.isArray(summary?.recentEvents) ? summary?.recentEvents : [];
+    const events = objectiveEvents && objectiveEvents.length > 0 ? objectiveEvents : recentEvents;
+    const expectedType = type === 'create' ? 'created' : 'edited';
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (!event || event.type !== expectedType) {
+            continue;
+        }
+        const messageId = event.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0 && typeof event.revision === 'number') {
+            return { type: event.type, revision: event.revision, displayMessageId: messageId };
+        }
+    }
+    return undefined;
+}
+
 function getGoalSummary(statusResult: any): any {
     return statusResult?.summary ?? statusResult?.data?.summary ?? null;
 }
@@ -112,6 +170,16 @@ async function ensureGoalTask(ctx: SlashCommandContext): Promise<{ taskId: strin
     }
     const taskId = await ctx.taskManagerAPI.createTask({});
     return { taskId, createdTask: true };
+}
+
+async function isTaskRunningAtInvocation(ctx: SlashCommandContext, taskId: string): Promise<boolean> {
+    if (!ctx.taskManagerAPI?.getFullTask) return false;
+    try {
+        const task = await ctx.taskManagerAPI.getFullTask(taskId);
+        return task?.task_status === 'running';
+    } catch {
+        return false;
+    }
 }
 
 async function executeGoalSubcommand(
@@ -143,44 +211,121 @@ async function executeGoalSubcommand(
     }
 }
 
-async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<void> {
+async function confirmGoalEdit(currentObjective: string, nextObjective: string): Promise<boolean> {
+    const message = escapeHtml(
+        t('goal.edit.message', {
+            objective: currentObjective,
+            nextObjective
+        })
+    ).replace(/\n/g, '<br>');
+    return showConfirmModal({
+        icon: 'fa-bullseye',
+        iconBg: '#FFF7ED',
+        iconColor: '#EA580C',
+        title: t('goal.edit.title'),
+        message,
+        confirmText: t('goal.edit.confirm'),
+        cancelText: t('common.cancel')
+    });
+}
+
+async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<SlashCommandExecutionResult> {
     const command = parseGoalCommandArgs(args);
 
     if (command.kind === 'help') {
         showGoalHelp();
-        return;
+        return SLASH_CLEAR_INPUT;
     }
 
     if (command.kind === 'subcommand') {
         if (!ctx.currentTaskId) {
             showGoalInfo(t('goal.error.no_task'));
-            return;
+            return SLASH_CLEAR_INPUT;
         }
         await executeGoalSubcommand(command.subcommand, command.rest, ctx, ctx.currentTaskId);
-        return;
+        return SLASH_CLEAR_INPUT;
     }
 
     try {
         const { taskId, createdTask } = await ensureGoalTask(ctx);
         if (!taskId) {
             showGoalInfo(t('goal.error.no_task'));
-            return;
+            return SLASH_PRESERVE_INPUT;
         }
 
         const currentGoal = createdTask ? null : await fetchGoalSummary(ctx, taskId);
-        const shouldEditCurrentGoal = currentGoal && !isTerminalGoalStatus(currentGoal.status);
-        if (shouldEditCurrentGoal) {
-            showGoalResult(await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective));
-            return;
+        const action = decideGoalObjectiveAction(currentGoal, command.objective);
+        if (action.kind === 'noop') {
+            return SLASH_CLEAR_INPUT;
+        }
+        if (action.kind === 'edit') {
+            const confirmed = await confirmGoalEdit(action.currentGoal.objective, command.objective);
+            if (!confirmed) {
+                return SLASH_PRESERVE_INPUT;
+            }
+            const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
+            const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective, {
+                ifMatch: action.ifMatch
+            });
+            showGoalResult(result);
+            if (!result || result.ok === false) {
+                return SLASH_PRESERVE_INPUT;
+            }
+            const editEvent =
+                result?.summary && typeof result.summary.id === 'string'
+                    ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
+                    : undefined;
+            const hasValidEditEvent =
+                runningAtInvocation &&
+                result?.ok !== false &&
+                result?.summary?.status === 'active' &&
+                result.startedScheduler !== true &&
+                typeof result.summary.revision === 'number';
+            if (hasValidEditEvent) {
+                dispatchPendingGoalEvent(
+                    taskId,
+                    'edit',
+                    command.objective,
+                    result.summary.id,
+                    editEvent?.revision ?? result.summary.revision
+                );
+            }
+            return SLASH_CLEAR_INPUT;
         }
 
+        const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
         const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
         showGoalResult(result);
+        if (!result || result.ok === false) {
+            return SLASH_PRESERVE_INPUT;
+        }
+        const createEvent =
+            result?.summary && typeof result.summary.id === 'string'
+                ? getLatestGoalDisplayMessageEvent(result.summary, 'create')
+                : undefined;
+        const hasValidCreateEvent =
+            runningAtInvocation &&
+            result?.ok !== false &&
+            result?.summary?.status === 'active' &&
+            typeof result.summary.id === 'string' &&
+            result.summary.id.length > 0 &&
+            result.startedScheduler !== true;
+        if (hasValidCreateEvent) {
+            dispatchPendingGoalEvent(
+                taskId,
+                'create',
+                command.objective,
+                result.summary.id,
+                createEvent?.revision ?? result.summary.revision
+            );
+        }
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);
         }
+        return SLASH_CLEAR_INPUT;
     } catch (error: any) {
         showGoalInfo(t('goal.renderer.action_failed', { message: error?.message || String(error) }));
+        return SLASH_PRESERVE_INPUT;
     }
 }
 
@@ -282,7 +427,11 @@ export function filterSlashCommands(prefix: string): SlashCommandDef[] {
 /**
  * 执行指定的 slash command
  */
-export async function executeSlashCommand(name: string, ctx: SlashCommandContext, args = ''): Promise<void> {
+export async function executeSlashCommand(
+    name: string,
+    ctx: SlashCommandContext,
+    args = ''
+): Promise<SlashCommandExecutionResult> {
     switch (name) {
         case 'new':
             ctx.globalControlAPI?.openHomePage();
@@ -307,8 +456,7 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
         }
 
         case 'goal': {
-            await executeGoalCommand(ctx, args);
-            break;
+            return executeGoalCommand(ctx, args);
         }
 
         case 'exit':
@@ -373,4 +521,5 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
         default:
             console.warn(`Unknown slash command: /${name}`);
     }
+    return SLASH_CLEAR_INPUT;
 }

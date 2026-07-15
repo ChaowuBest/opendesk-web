@@ -18,11 +18,28 @@ import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 import {
-    canSubmitAsGoalSupplement,
-    getGoalSummaryFromStatusResult,
-    isGoalRunningInput,
-    isTextOnlyGoalSupplementDetail
-} from './taskview-goal-input.js';
+    GoalController,
+    canShowWaitingAssistantPlaceholder,
+    getGoalEditReminderGoalId,
+    hasGoalEditReminderAfterLatestAssistant,
+    isGoalEditReminderMessage,
+    isWaitingForAssistantReply,
+    mergeGoalSummary
+} from './taskview-goal/controller.js';
+import {
+    findActiveGoalEvalProgress,
+    getGoalEvaluationRecordsForMessage,
+    getTaskGoalEvaluationRecords,
+    getUnanchoredGoalEvaluationRecords,
+    relocateGoalEvaluationsToMessage,
+    renderGoalEvaluationProgress,
+    renderGoalEvaluationRecordsHtml
+} from './taskview-goal/evaluation.js';
+import {
+    getGoalSupplementDisplayText,
+    getGoalSupplementIds,
+    shouldRenderGoalUserMessage
+} from '../../common/goal/user-message-display.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -68,11 +85,22 @@ function installDOMSanitizer(container) {
     return observer;
 }
 
-export function shouldRenderUserHistoryMessage(message) {
-    return !message?.internal;
+function createRenderedTextPartFromPlainText(text) {
+    return {
+        type: 'text',
+        rendered: `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`
+    };
 }
 
-function getRenderableUserParts(_message, fallbackParts) {
+export function shouldRenderUserHistoryMessage(message) {
+    return shouldRenderGoalUserMessage(message);
+}
+
+function getRenderableUserParts(message, fallbackParts) {
+    const supplementText = getGoalSupplementDisplayText(message);
+    if (supplementText !== undefined) {
+        return [createRenderedTextPartFromPlainText(supplementText)];
+    }
     return Array.isArray(fallbackParts) ? fallbackParts : [];
 }
 
@@ -107,21 +135,67 @@ function formatReasoningElapsedTime(seconds) {
     return taskViewT('reasoning.elapsed.minutes', { minutes, seconds: remainingSeconds });
 }
 
-function mergeGoalSummary(existingGoal, incomingGoal) {
-    if (!incomingGoal) return null;
-    if (!existingGoal || existingGoal.id !== incomingGoal.id) return incomingGoal;
-
-    const merged = { ...existingGoal, ...incomingGoal };
-    if (!Array.isArray(incomingGoal.recentEvents) && Array.isArray(existingGoal.recentEvents)) {
-        merged.recentEvents = existingGoal.recentEvents;
-    }
-    if (!Array.isArray(incomingGoal.objectiveEvents) && Array.isArray(existingGoal.objectiveEvents)) {
-        merged.objectiveEvents = existingGoal.objectiveEvents;
-    }
-    return merged;
-}
-
 class TaskView extends HTMLElement {
+
+    // 全局侧边栏状态：跨任务共享
+    static rightSidebarExpanded = false;
+    static rightSidebarWidth = 380;
+
+    get _currentGoal() {
+        return this._goalController.currentGoal;
+    }
+
+    set _currentGoal(value) {
+        this._goalController.currentGoal = value;
+    }
+
+    get _goalRefreshTimer() {
+        return this._goalController.refreshTimer;
+    }
+
+    set _goalRefreshTimer(value) {
+        this._goalController.refreshTimer = value;
+    }
+
+    get _goalLiveRefreshTimer() {
+        return this._goalController.liveRefreshTimer;
+    }
+
+    set _goalLiveRefreshTimer(value) {
+        this._goalController.liveRefreshTimer = value;
+    }
+
+    get _goalRefreshPending() {
+        return this._goalController.refreshPending;
+    }
+
+    set _goalRefreshPending(value) {
+        this._goalController.refreshPending = value;
+    }
+
+    get _pendingGoalSupplementMessages() {
+        return this._goalController.pendingSupplementMessages;
+    }
+
+    set _pendingGoalSupplementMessages(value) {
+        this._goalController.pendingSupplementMessages = value;
+    }
+
+    get _consumedGoalSupplementPendingItems() {
+        return this._goalController.consumedSupplementPendingItems;
+    }
+
+    set _consumedGoalSupplementPendingItems(value) {
+        this._goalController.consumedSupplementPendingItems = value;
+    }
+
+    get _pendingGoalEditMessage() {
+        return this._goalController.pendingEditMessage;
+    }
+
+    set _pendingGoalEditMessage(value) {
+        this._goalController.pendingEditMessage = value;
+    }
     constructor() {
         super();
 
@@ -130,6 +204,7 @@ class TaskView extends HTMLElement {
         this._rightSidebarWidth = DEFAULT_RIGHT_SIDEBAR_WIDTH;
 
         this.task_id = null;
+        this._goalController = new GoalController(this, { getTranslator: () => taskViewT });
         this.widget_id = crypto.randomUUID();
         /** @type {HTMLDivElement | null} */
         this.history_container = null;
@@ -137,7 +212,6 @@ class TaskView extends HTMLElement {
         this.subscription_id = null;
         this.auto_scrolling_to_bottom = true;
         this.task_status = 'waiting';
-        this._currentGoal = null;
         /** @type {Array} 当前任务级待办 */
         this._taskTodos = [];
         /** @type {Array} 全局待办 */
@@ -178,16 +252,10 @@ class TaskView extends HTMLElement {
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
-        /** @type {number | null} goal 面板节流刷新定时器 */
-        this._goalRefreshTimer = null;
-        /** @type {number | null} active goal 运行期刷新定时器 */
-        this._goalLiveRefreshTimer = null;
-        /** @type {boolean} 是否有待刷新的 goal 状态 */
-        this._goalRefreshPending = false;
-        /** @type {Array<object>} GUI 运行期 goal supplement 的本地展示消息，不写入 chat_context。 */
-        this._visibleGoalSupplementMessages = [];
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
+        /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
+        this._historyGoalEvaluationRecords = [];
         /** @type {number} 当前已经渲染的最早持久化消息下标。 */
         this._historyRenderStartIndex = 0;
         /** @type {boolean} 防止顶部滚动连续触发重复补载。 */
@@ -298,41 +366,97 @@ class TaskView extends HTMLElement {
         return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
     }
 
-    createVisibleGoalSupplementMessage(content) {
-        const text = String(content || '').trim();
-        const rendered = `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
-        return {
-            role: 'user',
-            message_id: `goal-supplement-${crypto.randomUUID()}`,
-            timestamp: Date.now(),
-            rawText: text,
-            metadata: {
-                scope: 'goal',
-                origin: { source: 'gui', reason: 'goal_supplement_display' },
-                execution: { controller: 'goal' }
-            },
-            content: [{ type: 'text', rendered }]
-        };
+    createPendingGoalSupplementMessage(content, supplementId) {
+        return this._goalController.createPendingGoalSupplementMessage(content, supplementId);
     }
 
-    appendVisibleGoalSupplementMessage(message) {
-        const historyContainer = this.getHistoryContainer();
-        if (!historyContainer) return;
-        if (historyContainer.querySelector(`#user-msg-${message.message_id}`)) return;
-
-        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
-        waitingPlaceholder?.remove();
-        historyContainer.insertAdjacentHTML('beforeend', this.renderUserMessage(message));
-        if (waitingPlaceholder) {
-            historyContainer.appendChild(waitingPlaceholder);
-        }
-        this.tryScrollToEnd();
+    renderPendingContextEchoMessage(message, options = {}) {
+        const text = String(options.text ?? message?.message ?? message?.objective ?? '').trim();
+        if (!text) return '';
+        const id = escapeHtml(String(message?.id || crypto.randomUUID()));
+        const type = escapeHtml(String(options.type || message?.type || 'context'));
+        const rawAttr = ` data-raw-text="${escapeHtml(text)}"`;
+        const timeHtml = message?.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(message.timestamp)}</div>`
+            : '';
+        return `
+            <div id="pending-context-${id}" class="od-user-msg-container od-pending-context-entry" data-pending-context-id="${id}" data-pending-context-type="${type}"${rawAttr}>
+                ${this.renderUserPart(createRenderedTextPartFromPlainText(text))}
+                ${timeHtml}
+            </div>
+        `;
     }
 
-    showVisibleGoalSupplement(content) {
-        const message = this.createVisibleGoalSupplementMessage(content);
-        this._visibleGoalSupplementMessages.push(message);
-        this.appendVisibleGoalSupplementMessage(message);
+    renderPendingGoalSupplementMessage(message) {
+        return this._goalController.renderPendingGoalSupplementMessage(message);
+    }
+
+    appendPendingGoalSupplementMessage(message) {
+        return this._goalController.appendPendingGoalSupplementMessage(message);
+    }
+
+    renderConsumedGoalSupplementMessage(message) {
+        return this._goalController.renderConsumedGoalSupplementMessage(message);
+    }
+
+    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id, goalRevision, options = {}) {
+        return this._goalController.createPendingGoalEditMessage(
+            type,
+            objective,
+            goalId,
+            taskId,
+            goalRevision,
+            options
+        );
+    }
+
+    renderPendingGoalEditMessage(message) {
+        return this._goalController.renderPendingGoalEditMessage(message);
+    }
+
+    appendPendingGoalEditMessage(message) {
+        return this._goalController.appendPendingGoalEditMessage(message);
+    }
+
+    showPendingGoalSupplement(content, supplementId) {
+        return this._goalController.showPendingGoalSupplement(content, supplementId);
+    }
+
+    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id, goalRevision = 0, options = {}) {
+        return this._goalController.showPendingGoalEdit(type, objective, goalId, taskId, goalRevision, options);
+    }
+
+    _syncPendingGoalEditToArtifacts() {
+        return this._goalController.syncPendingGoalEditToArtifacts();
+    }
+
+    showPendingSlashGoalCommand() {
+        return this._goalController.showPendingSlashGoalCommand();
+    }
+
+    removePendingGoalSupplementForIds(supplementIds) {
+        return this._goalController.removePendingGoalSupplementForIds(supplementIds);
+    }
+
+    _transitionGoalSupplementToConsumed(message) {
+        return this._goalController.transitionGoalSupplementToConsumed(message);
+    }
+
+    clearPendingGoalSupplements() {
+        return this._goalController.clearPendingGoalSupplements();
+    }
+
+    /** 当 LLM 开始输出时，移除所有处于过渡状态的 supplement 回显。 */
+    resolvePendingGoalSupplements() {
+        return this._goalController.resolvePendingGoalSupplements();
+    }
+
+    removePendingGoalEditByGoalId(goalId) {
+        return this._goalController.removePendingGoalEditByGoalId(goalId);
+    }
+
+    resolvePendingGoalEditFromSummary(goal) {
+        return this._goalController.resolvePendingGoalEditFromSummary(goal);
     }
 
     static formatRelativeTime(timestamp) {
@@ -423,6 +547,18 @@ class TaskView extends HTMLElement {
             }
         }
         return false;
+    }
+
+    static hasGoalEditReminderAfterLatestAssistant(messages) {
+        return hasGoalEditReminderAfterLatestAssistant(messages);
+    }
+
+    static isWaitingForAssistantReply(taskStatus, goal, messages) {
+        return isWaitingForAssistantReply(taskStatus, goal, messages);
+    }
+
+    static canShowWaitingAssistantPlaceholder(taskStatus, goal) {
+        return canShowWaitingAssistantPlaceholder(taskStatus, goal);
     }
 
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
@@ -687,6 +823,14 @@ class TaskView extends HTMLElement {
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
             }
+            const goalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+                getGoalEvaluationRecordsForMessage(this._historyGoalEvaluationRecords, message),
+                this.task_id,
+                taskViewT
+            );
+            if (goalEvaluationHtml) {
+                htmlParts.push(goalEvaluationHtml);
+            }
         }
 
         return htmlParts.join('');
@@ -694,6 +838,7 @@ class TaskView extends HTMLElement {
 
     _renderInitialHistoryWindow(messages, options = {}) {
         this._historyMessages = Array.isArray(messages) ? messages : [];
+        this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
         this._historyRenderStartIndex = TaskView.findHistoryBatchStart(
             this._historyMessages,
             this._historyMessages.length
@@ -706,14 +851,46 @@ class TaskView extends HTMLElement {
                 usageAssistantIdx: options.usageAssistantIdx
             })
         ];
+        const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+            getUnanchoredGoalEvaluationRecords(this._historyGoalEvaluationRecords, this._historyMessages),
+            this.task_id,
+            taskViewT
+        );
+        if (unanchoredGoalEvaluationHtml) {
+            htmlParts.push(unanchoredGoalEvaluationHtml);
+        }
 
-        for (const message of this._visibleGoalSupplementMessages) {
-            htmlParts.push(this.renderUserMessage(message));
+        for (const message of this._historyMessages) {
+            this.removePendingGoalSupplementForIds(getGoalSupplementIds(message));
+            if (isGoalEditReminderMessage(message)) {
+                const goalId = getGoalEditReminderGoalId(message);
+                if (goalId) {
+                    this.removePendingGoalEditByGoalId(goalId);
+                }
+            }
+        }
+
+        for (const message of this._pendingGoalSupplementMessages) {
+            htmlParts.push(this.renderPendingGoalSupplementMessage(message));
+        }
+        // 全量重渲染时恢复已被消费但等待 LLM 响应的过渡态卡片
+        for (const message of this._consumedGoalSupplementPendingItems) {
+            htmlParts.push(this.renderConsumedGoalSupplementMessage(message));
+        }
+        const shouldRestorePendingGoalEdit =
+            this._pendingGoalEditMessage?.taskId === this.task_id &&
+            TaskView.canShowWaitingAssistantPlaceholder(this.task_status, options.goal || this._currentGoal);
+        if (shouldRestorePendingGoalEdit) {
+            htmlParts.push(this.renderPendingGoalEditMessage(this._pendingGoalEditMessage));
         }
 
         historyContainer.innerHTML = htmlParts.join('');
+        if (shouldRestorePendingGoalEdit) {
+            this._showWaitingAssistantPlaceholder({ force: true });
+        }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
+        this._syncPendingGoalEditToArtifacts();
     }
 
     _loadOlderHistoryBatch(options = {}) {
@@ -961,7 +1138,7 @@ class TaskView extends HTMLElement {
                 }
                 this._messageContainerCache.delete(progress.message_id);
             }
-            if (progress.task_status === 'running') {
+            if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
                 this._showWaitingAssistantPlaceholder();
             }
             return;
@@ -1210,12 +1387,7 @@ class TaskView extends HTMLElement {
     }
 
     _handleGoalMessageAnchor = (event) => {
-        const messageId = event?.detail?.messageId;
-        if (typeof messageId !== 'string' || messageId.length === 0) return;
-        void this.scrollToMessage(messageId).then((found) => {
-            if (found) return;
-            return this.reload().then(() => this.scrollToMessage(messageId));
-        });
+        this._goalController.handleMessageAnchor(event);
     };
 
     async reload() {
@@ -1228,6 +1400,7 @@ class TaskView extends HTMLElement {
             if (version !== this._reloadVersion) return;
 
             this.task_status = task_state.task_status || 'waiting';
+            this._syncArtifactsTaskStatus();
             this._currentGoal = mergeGoalSummary(this._currentGoal, task_state.goal || null);
             this._syncGoalLiveRefresh();
             const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
@@ -1279,12 +1452,6 @@ class TaskView extends HTMLElement {
             this._refreshModelContextSize(task_state.model).then(() => this._updateLastUsageRatio());
 
             const messages = task_state.chat_context.messages;
-            const lastAssistantIdx = (() => {
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    if (messages[i].role === 'assistant') return i;
-                }
-                return -1;
-            })();
             const usageAssistantIdx = (() => {
                 for (let i = messages.length - 1; i >= 0; i--) {
                     const message = messages[i];
@@ -1299,17 +1466,23 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
-            const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
-            const isWaitingForAssistant =
+            const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(
+                this.task_status,
+                this._currentGoal,
+                messages
+            );
+            const isWaitingForGoalEditAssistant =
                 this.task_status === 'running' &&
-                (lastAssistantIdx === -1 ||
-                    !Array.isArray(lastAssistantMessage?.content) ||
-                    lastAssistantMessage.content.length === 0);
+                this._currentGoal?.status === 'active' &&
+                TaskView.hasGoalEditReminderAfterLatestAssistant(messages);
             this._renderInitialHistoryWindow(messages, {
+                goal: task_state.goal,
+                goalFinalSnapshots: task_state.goal_final_snapshots,
                 usageAssistantIdx
             });
-
-            if (isWaitingForAssistant) {
+            if (isWaitingForGoalEditAssistant) {
+                this._showWaitingAssistantPlaceholder({ force: true });
+            } else if (isWaitingForAssistant) {
                 this._showWaitingAssistantPlaceholder();
             }
 
@@ -1341,8 +1514,19 @@ class TaskView extends HTMLElement {
     }
 
     _renderUserProgress(progress, history_container) {
+        const isGoalEditReminder = isGoalEditReminderMessage(progress);
+        this._consumeGoalEditReminder(progress);
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
-        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
+        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) {
+            if (
+                isGoalEditReminder &&
+                TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)
+            ) {
+                this._showWaitingAssistantPlaceholder({ force: true });
+            }
+            return false;
+        }
+        this.removePendingGoalSupplementForIds(getGoalSupplementIds(progress));
 
         const renderedSet = getRenderedUserPartSet(this._renderedUserParts, progress.message_id);
         const partIndex = getProgressPartIndex(progress);
@@ -1367,10 +1551,32 @@ class TaskView extends HTMLElement {
                 : '';
             if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
         }
-        if (progress.task_status === 'running') {
+        relocateGoalEvaluationsToMessage(history_container, progress.message_id);
+        if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
             this._showWaitingAssistantPlaceholder();
         }
         return true;
+    }
+
+    _consumeGoalEditReminder(progress) {
+        return this._goalController.consumeGoalEditReminder(progress);
+    }
+
+    /** 渲染目标评估进度和结果。 */
+    _renderGoalEvalProgress(progress) {
+        return renderGoalEvaluationProgress(this, progress, taskViewT);
+    }
+
+    _findActiveGoalEvalProgress(progress) {
+        return findActiveGoalEvalProgress(this.getHistoryContainer(), progress);
+    }
+
+    _syncArtifactsGoalEvalProgress(progress, options = {}) {
+        return this._goalController.syncArtifactsGoalEvalProgress(progress, options);
+    }
+
+    _handleGoalEvalProgress(progress, options = {}) {
+        return this._goalController.handleGoalEvalProgress(progress, options);
     }
 
     async _refreshModelContextSize(modelAlias) {
@@ -1415,11 +1621,7 @@ class TaskView extends HTMLElement {
     }
 
     _hasActiveGoal() {
-        return this._currentGoal?.status === 'active';
-    }
-
-    _canSubmitAsGoalSupplement(detail) {
-        return canSubmitAsGoalSupplement(this.task_status, this._currentGoal?.status, detail);
+        return this._goalController.hasActiveGoal();
     }
 
     _isTaskInputRunning() {
@@ -1428,23 +1630,21 @@ class TaskView extends HTMLElement {
     }
 
     _syncArtifactsGoalState(goal, options = {}) {
+        return this._goalController.syncArtifactsGoalState(goal, options);
+    }
+
+    _syncArtifactsTaskStatus() {
         const artifacts = this._getRightSidebarEl();
-        if (!artifacts || typeof artifacts.setGoalState !== 'function') return false;
-        const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
-        artifacts.setGoalState(goal);
-        const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
-        const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
-        if (options.autoExpandForGoalSuggestion && revealedGoalSuggestion) {
-            this._ensureRightSidebarOpen();
+        if (artifacts && typeof artifacts.setTaskRunning === 'function') {
+            artifacts.setTaskRunning(this.task_status === 'running');
         }
-        return revealedGoalSuggestion;
     }
 
     _syncArtifactsTaskTodos(todos, options = {}) {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setTaskTodos !== 'function') return false;
         const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
-        artifacts.setTaskTodos(todos);
+        artifacts.setTaskTodos(todos, { source: options.source });
         const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
         const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
         if (options.autoExpandForGoalSuggestion && revealedGoalSuggestion) {
@@ -1454,73 +1654,23 @@ class TaskView extends HTMLElement {
     }
 
     async _refreshGoalSummary() {
-        if (!this.task_id) return undefined;
-        try {
-            const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
-            const goal = getGoalSummaryFromStatusResult(result);
-            if (goal) {
-                this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
-                this._syncGoalLiveRefresh();
-                this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
-                this.updateStopButtonVisibility();
-            }
-            return goal;
-        } catch {
-            return undefined;
-        }
+        return this._goalController.refreshGoalSummary();
     }
 
     async _isActiveGoalRunningNow() {
-        if (isGoalRunningInput(this.task_status, this._currentGoal?.status)) {
-            return true;
-        }
-        if (!this._isTaskInputRunning()) {
-            return false;
-        }
-        const goal = await this._refreshGoalSummary();
-        return goal?.status === 'active';
+        return this._goalController.isActiveGoalRunningNow();
     }
 
     async _handleActiveGoalInput(detail, options = {}) {
-        const goal = this._currentGoal?.status === 'active' ? this._currentGoal : await this._refreshGoalSummary();
-        if (goal?.status !== 'active') {
-            return 'not-goal';
-        }
-        if (!isTextOnlyGoalSupplementDetail(detail)) {
-            if (options.alertUnsupported) {
-                window.alert(taskViewT('goal.supplement.images_unsupported'));
-            }
-            return 'unsupported';
-        }
-        return (await this._submitGoalSupplement(detail)) ? 'submitted' : 'failed';
+        return this._goalController.handleActiveGoalInput(detail, options);
     }
 
     async _handleRunningGoalInput(detail, options = {}) {
-        const activeGoalRunning = await this._isActiveGoalRunningNow();
-        if (!activeGoalRunning) {
-            return 'not-goal';
-        }
-        return this._handleActiveGoalInput(detail, options);
+        return this._goalController.handleRunningGoalInput(detail, options);
     }
 
     async _submitGoalSupplement(detail) {
-        try {
-            const result = await window.taskManagerAPI.addGoalSupplement(this.task_id, detail.message);
-            if (result?.ok === false) {
-                window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
-                return false;
-            }
-            this._currentGoal = result?.summary
-                ? mergeGoalSummary(this._currentGoal, result.summary)
-                : this._currentGoal;
-            this._syncGoalLiveRefresh();
-            this._syncArtifactsGoalState(this._currentGoal);
-            this.showVisibleGoalSupplement(detail.message);
-            return true;
-        } catch (error) {
-            console.error('Failed to add goal supplement:', error);
-            return false;
-        }
+        return this._goalController.submitGoalSupplement(detail);
     }
 
     /**
@@ -1529,78 +1679,38 @@ class TaskView extends HTMLElement {
      * 不依赖 progress.usage：很多 provider 流式过程中不返回 usage。
      */
     _scheduleGoalRefresh() {
-        if (this._goalRefreshTimer) {
-            this._goalRefreshPending = true;
-            return;
-        }
-        this._doGoalRefresh();
-        this._goalRefreshTimer = setTimeout(() => {
-            this._goalRefreshTimer = null;
-            if (this._goalRefreshPending) {
-                this._goalRefreshPending = false;
-                this._scheduleGoalRefresh();
-            }
-        }, 500);
+        return this._goalController.scheduleGoalRefresh();
     }
 
     _syncGoalLiveRefresh() {
-        const shouldRefresh = this._currentGoal?.status === 'active';
-        if (shouldRefresh && !this._goalLiveRefreshTimer) {
-            this._goalLiveRefreshTimer = window.setInterval(() => {
-                if (this.style.display === 'none' || this.hasAttribute('data-background')) return;
-                this._scheduleGoalRefresh();
-            }, 1000);
-        } else if (!shouldRefresh && this._goalLiveRefreshTimer) {
-            clearInterval(this._goalLiveRefreshTimer);
-            this._goalLiveRefreshTimer = null;
-        }
+        return this._goalController.syncGoalLiveRefresh();
     }
 
     async _doGoalRefresh() {
-        if (!this.task_id || !this._currentGoal) return;
-        try {
-            const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
-            const statusView = result?.data?.summary ? result.data : result;
-            if (!statusView?.summary) return;
-            const goal = statusView.summary;
-            this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
-            this._syncGoalLiveRefresh();
-            this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
-            this.updateStopButtonVisibility();
-        } catch {
-            // 非致命错误，goal 面板会在下次 reload 时同步
-        }
+        return this._goalController.doGoalRefresh();
     }
 
     async _pauseActiveGoal() {
-        const result = await window.taskManagerAPI.pauseGoal(this.task_id);
-        if (result?.ok === false) {
-            window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
-            return false;
-        }
-        this._currentGoal = result?.summary
-            ? mergeGoalSummary(this._currentGoal, result.summary)
-            : this._currentGoal
-              ? { ...this._currentGoal, status: 'paused' }
-              : null;
-        this._syncGoalLiveRefresh();
-        this._syncArtifactsGoalState(this._currentGoal);
-        return true;
+        return this._goalController.pauseActiveGoal();
+    }
+
+    async _stopActiveGoal() {
+        return this._goalController.stopActiveGoal();
     }
 
     updateStopButtonVisibility() {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {
             if (typeof inputWidget.setRunningInputMode === 'function') {
-                inputWidget.setRunningInputMode(this._hasActiveGoal() ? 'goal_supplement' : 'queue');
+                inputWidget.setRunningInputMode('queue');
             }
             if (this.task_status === 'running') {
                 inputWidget.setDisabled(true);
                 inputWidget.setStopMode(true, async () => {
                     try {
                         if (this._hasActiveGoal()) {
-                            const paused = await this._pauseActiveGoal();
-                            if (!paused) return;
+                            const stopped = await this._stopActiveGoal();
+                            if (!stopped) return;
                         } else {
                             await window.taskManagerAPI.stopTask(this.task_id);
                         }
@@ -1689,7 +1799,7 @@ class TaskView extends HTMLElement {
         if (!item) return;
         if (this._immediateQueueSending) return;
 
-        const goalInputResult = await this._handleActiveGoalInput(item, { alertUnsupported: true });
+        const goalInputResult = await this._handleRunningGoalInput(item, { alertUnsupported: true });
         if (goalInputResult === 'submitted') {
             this.removeFromMessageQueue(id);
             return;
@@ -1780,6 +1890,7 @@ class TaskView extends HTMLElement {
         // 立即同步状态为 running，防止用户在 submitMessage 异步完成前
         // 通过正常 submit 路径再次发送消息，造成竞态
         this.task_status = 'running';
+        this._syncArtifactsTaskStatus();
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
 
@@ -1811,6 +1922,7 @@ class TaskView extends HTMLElement {
 
         const wasRunning = this.task_status === 'running';
         this.task_status = nextStatus;
+        this._syncArtifactsTaskStatus();
         this.updateStopButtonVisibility();
 
         if (this.task_status === 'running') {
@@ -1823,6 +1935,9 @@ class TaskView extends HTMLElement {
         }
 
         if (this.task_status !== 'running') {
+            if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+                this.removePendingGoalEditByGoalId(this._pendingGoalEditMessage.goalId);
+            }
             this._startBrowserIdleTimer();
         }
 
@@ -1840,7 +1955,9 @@ class TaskView extends HTMLElement {
         const panel = this.querySelector('#message-queue-panel');
         if (!panel) return;
 
-        panel.setQueue(this.messageQueue);
+        panel.setQueue(this.messageQueue, {
+            activeGoalRunning: this.task_status === 'running' && this._hasActiveGoal()
+        });
     }
 
     _toggleRightSidebar() {
@@ -2192,6 +2309,30 @@ class TaskView extends HTMLElement {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
     }
 
+    _getDeepActiveElement() {
+        let activeElement = document.activeElement;
+        while (activeElement?.shadowRoot?.activeElement) {
+            activeElement = activeElement.shadowRoot.activeElement;
+        }
+        return activeElement;
+    }
+
+    _isRightSidebarEditableFocused() {
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar) return false;
+
+        const activeElement = this._getDeepActiveElement();
+        if (!(activeElement instanceof HTMLElement)) return false;
+
+        const activeInSidebar =
+            activeElement === sidebar ||
+            sidebar.contains(activeElement) ||
+            Boolean(sidebar.shadowRoot?.contains(activeElement));
+        if (!activeInSidebar) return false;
+
+        return activeElement.matches('textarea, input, select, [contenteditable="true"]');
+    }
+
     /**
      * 将侧边栏移到屏幕外（保持渲染活跃），代替 display:none。
      * 保留原始宽度，让 webview 继续在合理尺寸下渲染。
@@ -2319,7 +2460,8 @@ class TaskView extends HTMLElement {
                     const prevHasTodos = this._taskTodos.length > 0;
                     this._taskTodos = Array.isArray(payload.todos) ? payload.todos : [];
                     const revealedGoalSuggestion = this._syncArtifactsTaskTodos(this._taskTodos, {
-                        autoExpandForGoalSuggestion: true
+                        autoExpandForGoalSuggestion: true,
+                        source: 'live-update'
                     });
                     // 仅在从"无任务计划"变为"有任务计划"时自动展开右侧栏，
                     // 避免每次 TodoWrite 都强制展开，干扰用户手动折叠的偏好
@@ -2568,27 +2710,14 @@ class TaskView extends HTMLElement {
         this.addEventListener('mouseover', this._handleReasoningHoverEnter);
         this.addEventListener('mouseout', this._handleReasoningHoverLeave);
 
-        this._handleGoalStateChanged = () => {
-            void this.reload();
-        };
-        this.addEventListener('goal-state-changed', this._handleGoalStateChanged);
-        this.addEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
-
-        this._handleGoalCreationOpen = () => {
-            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
-            const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
-            if (artifacts && typeof artifacts.showGoalCreationForm === 'function') {
-                artifacts.showGoalCreationForm();
-                this._expandRightSidebar(artifacts, resizer);
-            }
-        };
-        this.addEventListener('open-goal-creation', this._handleGoalCreationOpen);
+        this._goalController.connect();
 
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
         if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
             sidebarEl.setTaskId(this.task_id);
         }
+        this._syncArtifactsTaskStatus();
 
         // 订阅全局待办更新（跨任务共享）
         this._subscribeGlobalTodos();
@@ -2660,12 +2789,18 @@ class TaskView extends HTMLElement {
                 }
             }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                if (progress.type === 'user') {
+                    this._consumeGoalEditReminder(progress);
+                }
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                 // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                 // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
                 if (this._shouldSuppressIncrementalRender()) {
                     this._handleTaskStatusUpdate(progress.task_status);
+                    if (progress.type === 'goal_eval') {
+                        this._handleGoalEvalProgress(progress, { renderToConversation: false });
+                    }
                     return;
                 }
 
@@ -2704,8 +2839,12 @@ class TaskView extends HTMLElement {
                     } else {
                         this._renderUserProgress(progress, history_container);
                     }
+                } else if (progress.type === 'goal_eval') {
+                    this._handleGoalEvalProgress(progress);
                 } else {
                     this._renderAssistantProgress(progress, history_container);
+                    // 有 assistant token 输出 → 移除过渡中的 goal supplement 卡片
+                    this.resolvePendingGoalSupplements();
                     // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
                     // 不依赖 progress.usage：很多 provider 流式过程中不返回 usage，只在结束时才返回。
                     if (this._currentGoal) {
@@ -2725,8 +2864,10 @@ class TaskView extends HTMLElement {
                         .forEach((el) => {
                             TaskView.finalizeReasoningBlock(el);
                         });
+                    // 任务结束时也清理过渡中的 supplement 卡片
+                    this.resolvePendingGoalSupplements();
                     const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
-                    if (inputWidget) {
+                    if (inputWidget && !this._isRightSidebarEditableFocused()) {
                         const textarea = inputWidget.querySelector('#agent-input-textarea');
                         if (textarea && document.activeElement !== textarea) textarea.focus();
                     }
@@ -2773,18 +2914,7 @@ class TaskView extends HTMLElement {
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
-        this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
-        this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
-        this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
-        if (this._goalRefreshTimer) {
-            clearTimeout(this._goalRefreshTimer);
-            this._goalRefreshTimer = null;
-        }
-        if (this._goalLiveRefreshTimer) {
-            clearInterval(this._goalLiveRefreshTimer);
-            this._goalLiveRefreshTimer = null;
-        }
-        this._goalRefreshPending = false;
+        this._goalController.disconnect();
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
@@ -2983,7 +3113,7 @@ class TaskView extends HTMLElement {
                 try {
                     const isQP = await window.quickpassAPI.isQuickPass(message);
                     if (isQP) {
-                        const { name: _name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const { hasApplications } = await window.quickpassAPI.importQuickPass(message);
                         const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
                         await window.notificationAPI.sendNotification(
                             'info',
@@ -3005,12 +3135,13 @@ class TaskView extends HTMLElement {
                 }
             }
 
-            const goalInputResult = await this._handleRunningGoalInput(event.detail, { alertUnsupported: true });
-            if (goalInputResult === 'submitted' || goalInputResult === 'unsupported' || goalInputResult === 'failed') {
+            if (await this._isActiveGoalRunningNow()) {
+                this.addToMessageQueue(event.detail);
                 return;
             }
 
             this.task_status = 'running';
+            this._syncArtifactsTaskStatus();
             this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
 
@@ -3024,17 +3155,14 @@ class TaskView extends HTMLElement {
                 // 发送失败时重置状态，防止 task_status/isRunning 永久卡住
                 // 导致后续所有输入都被阻塞
                 this.task_status = 'stopped';
+                this._syncArtifactsTaskStatus();
                 this.updateStopButtonVisibility();
                 this._startBrowserIdleTimer();
             }
         });
 
         // 监听消息队列事件
-        input_widget.addEventListener('queue', async (event) => {
-            const goalInputResult = await this._handleRunningGoalInput(event.detail);
-            if (goalInputResult === 'submitted') {
-                return;
-            }
+        input_widget.addEventListener('queue', (event) => {
             this.addToMessageQueue(event.detail);
         });
 
@@ -3396,9 +3524,7 @@ class EmbeddedTaskView extends HTMLElement {
         if (parts.length === 0) {
             return '';
         }
-        const rawAttr = user_message.rawText
-            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
-            : '';
+        const rawAttr = user_message.rawText ? ` data-raw-text="${escapeHtml(user_message.rawText)}"` : '';
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
@@ -3409,7 +3535,7 @@ class EmbeddedTaskView extends HTMLElement {
         }
         inner += timeHtml;
 
-        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
+        return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -3437,7 +3563,7 @@ class EmbeddedTaskView extends HTMLElement {
         const content = this.renderAssistantParts(assistant_message.content);
         const html = `
         <div class="od-assistant-msg-container flex items-start">
-            <div class="px-2 bg-transparent w-full">
+            <div id='message-container-${assistant_message.message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-${assistant_message.message_id}'>
                     ${content}
                 </div>
@@ -3450,7 +3576,7 @@ class EmbeddedTaskView extends HTMLElement {
     createEmptyAssistantContainer(message_id) {
         return `
         <div class="od-assistant-msg-container flex items-start">
-            <div class="px-2 bg-transparent w-full">
+            <div id='message-container-${message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-${message_id}'>
                 </div>
             </div>
@@ -3572,18 +3698,12 @@ class EmbeddedTaskView extends HTMLElement {
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
         const messages = task_state.chat_context.messages;
-        const lastAssistantIdx = (() => {
-            for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === 'assistant') return i;
-            }
-            return -1;
-        })();
-        const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
-        const isWaitingForAssistant =
+        const goalEvaluationRecords = getTaskGoalEvaluationRecords(task_state.goal, task_state.goal_final_snapshots);
+        const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(this.task_status, task_state.goal, messages);
+        const isWaitingForGoalEditAssistant =
             this.task_status === 'running' &&
-            (lastAssistantIdx === -1 ||
-                !Array.isArray(lastAssistantMessage?.content) ||
-                lastAssistantMessage.content.length === 0);
+            task_state.goal?.status === 'active' &&
+            TaskView.hasGoalEditReminderAfterLatestAssistant(messages);
         for (const message of messages) {
             if (message.role === 'user') {
                 if (!shouldRenderUserHistoryMessage(message)) continue;
@@ -3594,15 +3714,42 @@ class EmbeddedTaskView extends HTMLElement {
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
             }
+            const goalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+                getGoalEvaluationRecordsForMessage(goalEvaluationRecords, message),
+                this.task_id,
+                taskViewT
+            );
+            if (goalEvaluationHtml) {
+                htmlParts.push(goalEvaluationHtml);
+            }
+        }
+        const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+            getUnanchoredGoalEvaluationRecords(goalEvaluationRecords, messages),
+            this.task_id,
+            taskViewT
+        );
+        if (unanchoredGoalEvaluationHtml) {
+            htmlParts.push(unanchoredGoalEvaluationHtml);
         }
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
-        if (isWaitingForAssistant) {
+        if (isWaitingForGoalEditAssistant) {
+            this._showWaitingAssistantPlaceholder({ force: true });
+        } else if (isWaitingForAssistant) {
             this._showWaitingAssistantPlaceholder();
         }
         this._renderedUserParts.clear();
         this.tryScrollToEnd();
+    }
+
+    /** 渲染目标评估进度和结果（EmbeddedTaskView 版）。 */
+    _renderGoalEvalProgress(progress) {
+        return renderGoalEvaluationProgress(this, progress, taskViewT);
+    }
+
+    _findActiveGoalEvalProgress(progress) {
+        return findActiveGoalEvalProgress(this.getHistoryContainer(), progress);
     }
 
     connectedCallback() {
@@ -3678,9 +3825,12 @@ class EmbeddedTaskView extends HTMLElement {
                             : '';
                         if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                     }
+                    relocateGoalEvaluationsToMessage(history_container, progress.message_id);
                     if (progress.task_status === 'running') {
                         this._showWaitingAssistantPlaceholder();
                     }
+                } else if (progress.type === 'goal_eval') {
+                    this._renderGoalEvalProgress(progress);
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {

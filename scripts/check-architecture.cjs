@@ -25,6 +25,11 @@ const FILE_EXCEPTIONS = {
     'src/main/utils/export.ts': ['aikernel']
 };
 
+// 核心任务状态只能依赖通用 extension 生命周期，具体领域功能反向依赖 TaskState。
+const FILE_FORBIDDEN_IMPORTS = {
+    'src/main/aikernel/states/tasks.ts': [/\/goal\//]
+};
+
 const colors = {
     reset: '\x1b[0m',
     red: '\x1b[31m',
@@ -97,8 +102,18 @@ function checkFile(filePath) {
 
     const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
     const fileExceptions = FILE_EXCEPTIONS[relativePath] || [];
+    const forbiddenImports = FILE_FORBIDDEN_IMPORTS[relativePath] || [];
 
     for (const importPath of imports) {
+        if (forbiddenImports.some((pattern) => pattern.test(importPath))) {
+            violations.push({
+                file: filePath,
+                from: currentLayer,
+                to: 'forbidden-domain',
+                import: importPath
+            });
+            continue;
+        }
         const targetLayer = getTargetLayer(importPath, filePath);
 
         if (targetLayer && targetLayer !== 'external' && targetLayer !== currentLayer) {

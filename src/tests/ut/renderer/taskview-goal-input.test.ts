@@ -3,7 +3,7 @@ import {
     getGoalSummaryFromStatusResult,
     isGoalRunningInput,
     isTextOnlyGoalSupplementDetail
-} from '../../../renderer/components/taskview-goal-input.js';
+} from '../../../renderer/components/taskview-goal/input.js';
 
 describe('task view goal input helpers', () => {
     test('captures text-only running active goal input as supplemental context', () => {

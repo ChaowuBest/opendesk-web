@@ -1,5 +1,6 @@
 import type { TaskState } from '../states/tasks.js';
-import { UserMessage } from '../messages.js';
+import { getGoalElapsedMs } from '../../../common/goal/format.js';
+import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal/command.js';
 import {
     GoalEvents,
     GoalStates,
@@ -9,17 +10,19 @@ import {
     type CreateGoalInput,
     type GoalCommandResult,
     type GoalContinuation,
+    type GoalContinuationReason,
     type GoalEvaluation,
     type GoalEvaluationApplyResult,
     type GoalEvent,
-    type GoalMaybeResumeResult,
+    type GoalFinalSnapshot,
     type GoalRenderSummary,
     type GoalState,
     type GoalStatusView,
     type GoalSupplement,
     type ResumeGoalOptions
 } from './state.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
+import { buildGoalEvaluationContinuationPrompt, buildGoalObjectiveEditContinuationPrompt } from './prompts.js';
+import './task-extension.js';
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -27,6 +30,36 @@ function nowIso(): string {
 
 function summary(task: TaskState): GoalRenderSummary | undefined {
     return GoalStates.renderSummary(task.goal_state, task.goal_event_log);
+}
+
+export interface GoalObjectiveEditOptions {
+    ifMatch?: GoalEditIfMatch;
+}
+
+function goalCommandSnapshot(goal: GoalState): GoalCommandSnapshotLike {
+    return {
+        id: goal.id,
+        revision: goal.revision,
+        status: goal.status,
+        objective: goal.objective
+    };
+}
+
+function getGoalEditConflict(goal: GoalState | undefined, expected: GoalEditIfMatch): GoalEditConflict | undefined {
+    if (!goal) {
+        return { reason: 'goal_missing', expected };
+    }
+    const current = goalCommandSnapshot(goal);
+    if (goal.id !== expected.id) {
+        return { reason: 'goal_replaced', expected, current };
+    }
+    if (goal.revision !== expected.revision) {
+        return { reason: 'revision_changed', expected, current };
+    }
+    if (goal.status !== expected.status) {
+        return { reason: 'status_changed', expected, current };
+    }
+    return undefined;
 }
 
 function shouldDeriveTaskNameFromGoal(task: TaskState): boolean {
@@ -54,25 +87,81 @@ function persistGoalChange(task: TaskState): void {
     task.task_manager_state.publishTaskListUpdate();
 }
 
-function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: string, reason: string): string {
-    const message = new UserMessage(`/goal ${objective}`);
-    message.rawText = `/goal ${objective}`;
-    message.metadata = {
-        scope: 'goal',
-        origin: { source: 'internal', reason },
-        execution: {
-            controller: 'goal',
-            controllerId: goal.id,
-            controllerRevision: goal.revision
-        }
-    };
-    task.chat_context.appendMessage(message);
-    void task.sendSubscriptionFeedback(0);
-    return message.message_id;
+function normalizeGoalTerminalTimestamp(goal: GoalState, candidate?: string): string {
+    const now = nowIso();
+    const startedAt = Date.parse(goal.createdAt);
+    const candidateAt = typeof candidate === 'string' ? Date.parse(candidate) : NaN;
+    if (!Number.isFinite(candidateAt)) {
+        return now;
+    }
+    if (Number.isFinite(startedAt) && candidateAt < startedAt) {
+        return now;
+    }
+    return candidate!;
 }
 
-function shouldAppendGoalDisplayMessage(source: GoalEvent['source'] | undefined): boolean {
-    return source === 'gui';
+function getGoalFinalSnapshotAnchor(
+    task: TaskState,
+    goal: GoalState
+): Pick<GoalFinalSnapshot, 'anchorMessageId' | 'anchorMessageIndex'> {
+    const records = goal.evaluationHistory ?? [];
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (
+            record.phase === 'end' &&
+            record.goalId === goal.id &&
+            record.goalRevision === goal.revision &&
+            record.anchorMessageId
+        ) {
+            return {
+                anchorMessageId: record.anchorMessageId,
+                ...(typeof record.anchorMessageIndex === 'number'
+                    ? { anchorMessageIndex: record.anchorMessageIndex }
+                    : {})
+            };
+        }
+    }
+
+    const messages = Array.isArray(task.chat_context?.messages) ? task.chat_context.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index] as { message_id?: unknown } | undefined;
+        if (typeof message?.message_id === 'string' && message.message_id.length > 0) {
+            return { anchorMessageId: message.message_id, anchorMessageIndex: index };
+        }
+    }
+    return {};
+}
+
+function upsertGoalFinalSnapshot(task: TaskState, goal: GoalState): GoalFinalSnapshot | undefined {
+    if (goal.status !== 'complete' && goal.status !== 'cleared') return undefined;
+    const finalizedAt =
+        goal.status === 'complete' ? (goal.completedAt ?? goal.updatedAt) : (goal.clearedAt ?? goal.updatedAt);
+    const snapshot: GoalFinalSnapshot = {
+        id: `goal-final:${goal.id}`,
+        taskId: task.task_id,
+        goalId: goal.id,
+        goalRevision: goal.revision,
+        objective: goal.objective,
+        status: goal.status,
+        ...(goal.lastEvaluation
+            ? {
+                  lastEvaluation: {
+                      ...goal.lastEvaluation,
+                      evidence: [...goal.lastEvaluation.evidence]
+                  }
+              }
+            : {}),
+        totalTokens: computeGoalTokenUsage(task, goal),
+        elapsedMs: getGoalElapsedMs(goal),
+        createdAt: goal.createdAt,
+        finalizedAt,
+        ...(goal.completedAt ? { completedAt: goal.completedAt } : {}),
+        ...(goal.clearedAt ? { clearedAt: goal.clearedAt } : {}),
+        ...getGoalFinalSnapshotAnchor(task, goal)
+    };
+    const existing = Array.isArray(task.goal_final_snapshots) ? task.goal_final_snapshots : [];
+    task.goal_final_snapshots = [...existing.filter((item) => item.goalId !== goal.id), snapshot];
+    return snapshot;
 }
 
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
@@ -81,23 +170,8 @@ function ensureExistingGoal(task: TaskState): GoalState | undefined {
     return goal;
 }
 
-function createContinuation(goal: GoalState, prompt: string, reason: string): GoalContinuation {
+function createContinuation(goal: GoalState, prompt: string, reason: GoalContinuationReason): GoalContinuation {
     return GoalStates.createContinuation(goal, prompt, reason);
-}
-
-function defaultContinuationPrompt(goal: GoalState, reason: string): string {
-    return [
-        '<system-reminder>',
-        reason,
-        '',
-        ...createUserGoalDataBlock('Goal data:', {
-            objective: goal.objective,
-            successCriteria: goal.successCriteria
-        }),
-        '',
-        '请根据当前 transcript、文件状态和 goal state 继续推进。',
-        '</system-reminder>'
-    ].join('\n');
 }
 
 /** 累计 chat_context 中所有 assistant 消息的 token 用量。 */
@@ -185,24 +259,39 @@ export class GoalController {
             task.task_name = deriveTaskNameFromGoalObjective(objective);
         }
         const source = input.source ?? 'api';
-        const displayMessageId = shouldAppendGoalDisplayMessage(source)
-            ? appendGoalDisplayMessage(task, goal, objective, 'goal_create_display')
-            : undefined;
         appendEvent(task, goal, 'created', source, {
-            objective,
-            ...(displayMessageId ? { displayMessageId } : {})
+            objective
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
 
-    static editObjective(task: TaskState, objective: string, source: GoalEvent['source'] = 'api'): GoalCommandResult {
+    static editObjective(
+        task: TaskState,
+        objective: string,
+        source: GoalEvent['source'] = 'api',
+        options: GoalObjectiveEditOptions = {}
+    ): GoalCommandResult {
         const trimmed = objective.trim();
         if (!trimmed) {
             return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
         }
 
         const goal = ensureExistingGoal(task);
+        if (options.ifMatch) {
+            const conflict = getGoalEditConflict(goal, options.ifMatch);
+            if (conflict) {
+                return {
+                    ok: false,
+                    status: goal?.status,
+                    messageKey: 'goal.edit.conflict',
+                    messageArgs: { reason: conflict.reason },
+                    summary: summary(task),
+                    errorCode: 'goal_conflict',
+                    conflict
+                };
+            }
+        }
         if (!goal) {
             return { ok: false, messageKey: 'goal.error.none', errorCode: 'no_goal' };
         }
@@ -219,7 +308,16 @@ export class GoalController {
         goal.objective = trimmed;
         goal.updatedAt = editedAt;
         goal.lastEvaluation = undefined;
-        goal.pendingContinuation = undefined;
+        // 清理已结束的旧 revision 评估记录，防止 GUI 显示过期评估。
+        // 注意：in-flight（phase === 'start'）的记录必须保留，否则后续 finishGoalEvaluation
+        // 找不到 start record，会以当前 revision 创建 end record，污染评估历史。
+        goal.evaluationHistory = (goal.evaluationHistory ?? []).filter((record) =>
+            record.phase === 'end' ? record.goalRevision === goal.revision : true
+        );
+        goal.pendingContinuation =
+            goal.status === 'active'
+                ? createContinuation(goal, buildGoalObjectiveEditContinuationPrompt(goal), 'edit')
+                : undefined;
         goal.schedulerLease = undefined;
         goal.editHistory.push({
             revision: goal.revision,
@@ -228,16 +326,29 @@ export class GoalController {
             editedAt,
             source
         });
-        const displayMessageId = shouldAppendGoalDisplayMessage(source)
-            ? appendGoalDisplayMessage(task, goal, trimmed, 'goal_edit_display')
-            : undefined;
         appendEvent(task, goal, 'edited', source, {
             previousObjective,
-            objective: trimmed,
-            ...(displayMessageId ? { displayMessageId } : {})
+            objective: trimmed
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
+    }
+
+    static consumePendingEditContinuation(task: TaskState, goalId: string, goalRevision: number): void {
+        const goal = task.goal_state;
+        if (
+            !goal ||
+            goal.id !== goalId ||
+            goal.revision !== goalRevision ||
+            goal.pendingContinuation?.reason !== 'edit' ||
+            goal.pendingContinuation.goalRevision !== goalRevision ||
+            goal.pendingContinuation.consumedAt
+        ) {
+            return;
+        }
+        goal.pendingContinuation = undefined;
+        goal.updatedAt = nowIso();
+        persistGoalChange(task);
     }
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
@@ -273,6 +384,7 @@ export class GoalController {
             ok: true,
             status: goal.status,
             messageKey: 'goal.supplement.added',
+            supplementId: supplement.id,
             summary: summary(task)
         };
     }
@@ -286,6 +398,20 @@ export class GoalController {
         const consumedAt = nowIso();
         const consumedIds = new Set(pending.map((supplement) => supplement.id));
         goal.pendingSupplements = goal.pendingSupplements.filter((supplement) => !consumedIds.has(supplement.id));
+        if (
+            goal.pendingContinuation &&
+            !goal.pendingContinuation.consumedAt &&
+            goal.pendingContinuation.reason === 'not_met'
+        ) {
+            const continuation = goal.pendingContinuation;
+            goal.pendingContinuation = undefined;
+            appendEvent(task, goal, 'continuation_superseded', 'user_message', {
+                continuationId: continuation.id,
+                reason: continuation.reason,
+                supersededBy: 'goal_supplement',
+                supplementIds: [...consumedIds]
+            });
+        }
         goal.updatedAt = consumedAt;
 
         for (const supplement of pending) {
@@ -386,14 +512,20 @@ export class GoalController {
         }
         const at = nowIso();
         goal.status = 'cleared';
+        task.goalRuntime.clearPendingGoalEditReminders();
         goal.pendingContinuation = undefined;
         goal.pendingSupplements = [];
         goal.schedulerLease = undefined;
         goal.clearedAt = at;
         goal.updatedAt = at;
         appendEvent(task, goal, 'cleared', source);
+        upsertGoalFinalSnapshot(task, goal);
         persistGoalChange(task);
-        return { ok: true, status: goal.status, summary: summary(task) };
+        return {
+            ok: true,
+            status: goal.status,
+            summary: GoalStates.renderSummary(task.goal_state, task.goal_event_log, { includeCleared: true })
+        };
     }
 
     static recordEvaluation(task: TaskState, evaluation: GoalEvaluation): GoalEvaluationApplyResult {
@@ -407,9 +539,18 @@ export class GoalController {
             return { action: 'finish', status: goal?.status ?? 'cleared' };
         }
 
+        const evaluationId = evaluation.evaluationId ?? crypto.randomUUID();
+        evaluation.evaluationId = evaluationId;
         goal.lastEvaluation = evaluation;
-        goal.updatedAt = nowIso();
+        const evaluationRecord = GoalStates.recordEvaluationEnd(goal, {
+            evaluationId,
+            status: evaluation.status,
+            message: evaluation.reason,
+            evidence: evaluation.evidence,
+            evaluatedAt: evaluation.evaluatedAt
+        });
         appendEvent(task, goal, 'evaluated', 'evaluator', {
+            evaluationId,
             status: evaluation.status,
             reason: evaluation.reason,
             evidenceCount: evaluation.evidence.length
@@ -417,14 +558,15 @@ export class GoalController {
 
         if (evaluation.status === 'met') {
             goal.status = 'complete';
-            goal.completedAt = goal.updatedAt;
+            goal.completedAt = normalizeGoalTerminalTimestamp(goal, evaluation.evaluatedAt);
             goal.pendingContinuation = undefined;
             goal.pendingSupplements = [];
             goal.schedulerLease = undefined;
             resetCompletedGoalTurnCounters(goal);
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
+            upsertGoalFinalSnapshot(task, goal);
             persistGoalChange(task);
-            return { action: 'finish', status: goal.status };
+            return { action: 'finish', status: goal.status, evaluationRecord };
         }
 
         if (evaluation.status === 'blocked') {
@@ -433,12 +575,10 @@ export class GoalController {
             goal.schedulerLease = undefined;
             appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
             persistGoalChange(task);
-            return { action: 'finish', status: goal.status };
+            return { action: 'finish', status: goal.status, evaluationRecord };
         }
 
-        const continuationPrompt =
-            evaluation.nextPrompt ||
-            defaultContinuationPrompt(goal, 'Goal evaluator 判断当前 goal 尚未完成，请继续推进。');
+        const continuationPrompt = evaluation.nextPrompt || buildGoalEvaluationContinuationPrompt(goal);
 
         goal.attempts += 1;
 
@@ -448,37 +588,54 @@ export class GoalController {
         return {
             action: 'continue',
             continuationPrompt,
-            continuationId: goal.pendingContinuation.id
+            continuationId: goal.pendingContinuation.id,
+            evaluationRecord
         };
     }
 
-    static recordEvaluatorFailure(task: TaskState, staleGoal: GoalState, error: unknown): GoalEvaluationApplyResult {
+    static recordEvaluatorFailure(
+        task: TaskState,
+        staleGoal: GoalState,
+        error: unknown,
+        evaluationId: string = crypto.randomUUID(),
+        evaluatedAt: string = nowIso()
+    ): GoalEvaluationApplyResult {
         const goal = task.goal_state;
         if (!goal || goal.id !== staleGoal.id || goal.revision !== staleGoal.revision || goal.status !== 'active') {
             return { action: 'finish', status: goal?.status ?? 'cleared' };
         }
 
         const reason = `goal_evaluator_failed: ${sanitizeErrorSummary(error)}`;
+        const evidence = ['Evaluator failed before producing a valid structured result'];
         goal.status = 'blocked';
         goal.blockedReason = 'goal_evaluator_failed';
         goal.schedulerLease = undefined;
         goal.lastEvaluation = {
+            evaluationId,
             goalId: goal.id,
             goalRevision: goal.revision,
             status: 'blocked',
             reason,
-            evidence: ['Evaluator failed before producing a valid structured result'],
-            evaluatedAt: nowIso()
+            evidence,
+            evaluatedAt
         };
+        const evaluationRecord = GoalStates.recordEvaluationEnd(goal, {
+            evaluationId,
+            status: 'error',
+            message: reason,
+            evidence,
+            evaluatedAt
+        });
         goal.updatedAt = goal.lastEvaluation.evaluatedAt;
-        appendEvent(task, goal, 'evaluated', 'evaluator', { status: 'blocked', reason, evaluatorFailure: true });
+        appendEvent(task, goal, 'evaluated', 'evaluator', {
+            evaluationId,
+            status: 'blocked',
+            reason,
+            evaluatorFailure: true
+        });
         appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
         persistGoalChange(task);
-        return { action: 'finish', status: goal.status };
-    }
-
-    static maybeResumeGoalFromUserMessage(_task: TaskState, _message: string): GoalMaybeResumeResult {
-        return { action: 'none' };
+        return { action: 'finish', status: goal.status, evaluationRecord };
     }
 
     static blockForHistoryMutation(task: TaskState, source: GoalEvent['source'] = 'system'): void {
@@ -505,62 +662,6 @@ export class GoalController {
         goal.updatedAt = at;
         appendEvent(task, goal, 'blocked', source, { reason });
         persistGoalChange(task);
-    }
-
-    static normalizeLoadedTask(task: TaskState, wasRunningAtShutdown: boolean): void {
-        const goal = task.goal_state;
-        if (!goal) return;
-        let changed = false;
-        const at = nowIso();
-
-        if (goal.schedulerLease) {
-            goal.schedulerLease = undefined;
-            changed = true;
-        }
-
-        if (wasRunningAtShutdown && goal.status === 'active') {
-            goal.status = 'paused';
-            goal.pauseReason = 'task_restarted_after_running_interruption';
-            goal.pausedAt = at;
-            goal.updatedAt = at;
-            if (!goal.pendingContinuation) {
-                goal.pendingContinuation = createContinuation(
-                    goal,
-                    defaultContinuationPrompt(
-                        goal,
-                        'OpenDesk 上次在执行当前 goal 时异常退出或重启，旧的执行栈已经不可恢复。'
-                    ),
-                    'crash_recovery'
-                );
-            }
-            appendEvent(task, goal, 'paused', 'system', {
-                reason: goal.pauseReason,
-                wasTaskStatus: 'running'
-            });
-            changed = true;
-        } else if (goal.status === 'active' && task.task_status === 'waiting') {
-            goal.status = 'paused';
-            goal.pauseReason = 'active_goal_loaded_without_runner';
-            goal.pausedAt = at;
-            goal.updatedAt = at;
-            if (!goal.pendingContinuation) {
-                goal.pendingContinuation = createContinuation(
-                    goal,
-                    defaultContinuationPrompt(goal, '加载时发现 active goal 没有可恢复的 runner，请重新继续。'),
-                    'load_recovery'
-                );
-            }
-            appendEvent(task, goal, 'paused', 'system', { reason: goal.pauseReason, wasTaskStatus: 'waiting' });
-            task.task_status = 'stopped';
-            changed = true;
-        } else if ((goal.status === 'paused' || goal.status === 'blocked') && task.task_status === 'waiting') {
-            task.task_status = 'stopped';
-            changed = true;
-        }
-
-        if (changed) {
-            task._dirty = true;
-        }
     }
 
     static prepareForkedGoal(sourceTask: TaskState, forkedTask: TaskState): void {

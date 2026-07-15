@@ -96,6 +96,59 @@ describe('task subscription feedback', () => {
         );
     });
 
+    test('does not finish a subscription for non-terminal goal evaluation updates', async () => {
+        const task = createTaskWithUserMessage();
+        let finished = false;
+        const wait = task.waitUntilFinished().then(() => {
+            finished = true;
+        });
+
+        task.publishTaskUpdate(
+            {
+                type: 'goal_eval',
+                task_id: task.task_id,
+                phase: 'start'
+            } as TaskUpdateChunk,
+            'legacy goal evaluation test'
+        );
+        await Promise.resolve();
+
+        expect(finished).toBe(false);
+
+        task.publishTaskUpdate(
+            {
+                type: 'goal_eval',
+                task_id: task.task_id,
+                task_status: 'running',
+                phase: 'end',
+                status: 'met'
+            },
+            'goal evaluation test'
+        );
+        await Promise.resolve();
+
+        expect(finished).toBe(false);
+
+        task.publishTaskUpdate(
+            {
+                type: 'goal_eval',
+                task_id: task.task_id,
+                task_status: 'waiting',
+                phase: 'start'
+            },
+            'waiting goal evaluation test'
+        );
+        await Promise.resolve();
+
+        expect(finished).toBe(false);
+
+        task.task_status = 'stopped';
+        await task.sendSubscriptionFeedback(0);
+        await wait;
+
+        expect(finished).toBe(true);
+    });
+
     test('isolates subscriber send and availability failures', async () => {
         const task = createTaskWithUserMessage();
         const errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => {});

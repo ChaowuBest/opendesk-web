@@ -1,21 +1,46 @@
 import { jest } from '@jest/globals';
 import { GoalController } from '../../../main/aikernel/goal/controller.js';
+import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
 
 describe('OpenDeskTUI active task view state', () => {
-    test('clearActiveTask clears stale goal panel data', () => {
-        const goalPanel = {
-            getGoalState: jest.fn(() => ({ status: 'active' })),
-            isVisible: jest.fn(() => true),
-            update: jest.fn()
-        };
+    test('syncs input status from the current task instead of forcing idle', () => {
+        const task = { task_id: 'task-1', task_status: 'running' };
+        const setStatus = jest.fn();
+        const startTimer = jest.fn();
+        const stopTimer = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: task.task_id,
+            taskManagerState: {
+                getTask: jest.fn(() => task)
+            },
+            inputArea: {
+                setStatus,
+                statusBar: { startTimer, stopTimer }
+            }
+        }) as any;
+
+        expect(tui.syncInputStatusFromTask(task.task_id)).toBe(true);
+
+        expect(setStatus).toHaveBeenLastCalledWith('running');
+        expect(startTimer).toHaveBeenCalledTimes(1);
+        expect(stopTimer).not.toHaveBeenCalled();
+
+        task.task_status = 'stopped';
+        expect(tui.syncInputStatusFromTask(task.task_id)).toBe(false);
+
+        expect(stopTimer).toHaveBeenCalledTimes(1);
+        expect(setStatus).toHaveBeenLastCalledWith('idle');
+    });
+
+    test('clearActiveTask clears stale active task state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: { task_id: 'task-1' },
                 clearMessages: jest.fn()
             },
             activeTaskId: 'task-1',
-            goalPanel,
+            goalEvaluationInProgressByTask: new Map(),
             syncRetryCommandAvailability: jest.fn(),
             inputArea: {
                 clearMessageQueue: jest.fn(),
@@ -36,7 +61,7 @@ describe('OpenDeskTUI active task view state', () => {
 
         expect(tui.taskView.taskState).toBeUndefined();
         expect(tui.activeTaskId).toBeUndefined();
-        expect(goalPanel.update).toHaveBeenCalledWith({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        expect(tui.inputArea.clearGoalSupplementQueuedHint).toHaveBeenCalled();
         expect(tui.tui.requestRender).toHaveBeenCalled();
     });
 
@@ -45,31 +70,38 @@ describe('OpenDeskTUI active task view state', () => {
             task_id: 'task-1',
             task_status: 'stopped',
             task_name: 'Task',
-            chat_context: { messages: [] },
+            chat_context: {
+                messages: [],
+                appendMessage: jest.fn()
+            },
             goal_state: undefined,
             goal_event_log: undefined,
             task_manager_state: {
                 publishTaskListUpdate: jest.fn()
             },
             persistLater: jest.fn(),
+            sendSubscriptionFeedback: jest.fn(),
             isGoalRuntimeInterrupted: jest.fn(() => false)
         } as any;
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         task.task_status = 'running';
 
         const communicate = jest.fn();
+        const appendPendingGoalSupplementMessage = jest.fn();
+        const syncGoalPanel = jest.fn();
         const startTimer = jest.fn();
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: task,
-                communicate
+                communicate,
+                appendLocalUserMessage: jest.fn(),
+                appendPendingGoalSupplementMessage,
+                syncGoalPanel
             },
             activeTaskId: 'task-1',
+            goalEvaluationInProgressByTask: new Map(),
             taskManagerState: {
                 getTask: jest.fn(() => task)
-            },
-            goalPanel: {
-                update: jest.fn()
             },
             inputArea: {
                 clearGoalSupplementQueuedHint: jest.fn(),
@@ -96,5 +128,113 @@ describe('OpenDeskTUI active task view state', () => {
         expect(task.goal_state?.pendingSupplements[0].content).toBe('Use packages/appsdk as the target.');
         expect(task.goal_state?.pendingSupplements[0].source).toBe('user_message');
         expect(task.chat_context.messages).toHaveLength(0);
+        expect(appendPendingGoalSupplementMessage).toHaveBeenCalledWith(
+            'Use packages/appsdk as the target.',
+            task.goal_state?.pendingSupplements[0].id
+        );
+        expect(syncGoalPanel).toHaveBeenCalledWith({
+            goalState: task.goal_state,
+            totalTokens: 0,
+            elapsedMs: expect.any(Number)
+        });
+    });
+
+    test('goal evaluation end immediately moves terminal goal panel into task history', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.status = 'complete';
+        goal.completedAt = '2026-01-01T00:00:05.000Z';
+        const task = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: {
+                messages: []
+            }
+        } as any;
+        const syncGoalPanel = jest.fn();
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            taskView: {
+                taskState: task,
+                syncGoalPanel
+            },
+            activeTaskId: 'task-1',
+            goalEvaluationInProgressByTask: new Map([[task.task_id, `${goal.id}:${goal.revision}`]]),
+            inputArea: {
+                clearGoalSupplementQueuedHint: jest.fn()
+            },
+            tui: {
+                requestRender
+            }
+        }) as any;
+
+        tui.handleGoalEvalUpdate({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            task_status: 'running',
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            phase: 'end',
+            evaluationId: 'eval-1',
+            status: 'met',
+            message: 'done',
+            evidence: [],
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        });
+
+        expect(syncGoalPanel).toHaveBeenCalledWith({
+            goalState: goal,
+            totalTokens: 0,
+            elapsedMs: 5_000,
+            evaluating: false
+        });
+        expect(requestRender).toHaveBeenCalled();
+    });
+
+    test('goal evaluation superseded by edit keeps goal panel evaluating', () => {
+        const goal = GoalStates.create('task-1', { objective: 'replacement goal' });
+        goal.revision = 2;
+        const task = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: {
+                messages: []
+            }
+        } as any;
+        const syncGoalPanel = jest.fn();
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            taskView: {
+                taskState: task,
+                syncGoalPanel
+            },
+            activeTaskId: 'task-1',
+            goalEvaluationInProgressByTask: new Map([[task.task_id, `${goal.id}:1`]]),
+            tui: {
+                requestRender
+            }
+        }) as any;
+
+        tui.handleGoalEvalUpdate({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            task_status: 'running',
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            phase: 'end',
+            evaluationId: 'eval-1',
+            status: 'superseded',
+            message: 'edited during evaluation',
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        });
+
+        expect(syncGoalPanel).toHaveBeenCalledWith({
+            goalState: goal,
+            totalTokens: 0,
+            elapsedMs: expect.any(Number),
+            evaluating: true
+        });
+        expect(tui.goalEvaluationInProgressByTask.get('task-1')).toBe(`${goal.id}:${goal.revision}`);
+        expect(requestRender).toHaveBeenCalled();
     });
 });

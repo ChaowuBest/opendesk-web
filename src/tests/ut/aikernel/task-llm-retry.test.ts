@@ -178,9 +178,9 @@ describe('task LLM auto retry', () => {
         expect(retryChunks(chunks).find((chunk) => chunk.attempt === 1)?.delay_ms).toBe(10_000);
 
         await jest.advanceTimersByTimeAsync(10_000);
-        await waitForCondition(() =>
-            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 2)
-        );
+        await waitForCondition(() => {
+            return retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 2);
+        });
         expect(retryChunks(chunks).find((chunk) => chunk.attempt === 2)?.delay_ms).toBe(20_000);
 
         await jest.advanceTimersByTimeAsync(20_000);
@@ -291,9 +291,9 @@ describe('task LLM auto retry', () => {
 
         const completion = task.processCompletion();
 
-        await waitForCondition(() =>
-            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
-        );
+        await waitForCondition(() => {
+            return retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1);
+        });
 
         task.model = 'next-model';
         expect(task.isLLMRetryDelayPending()).toBe(true);

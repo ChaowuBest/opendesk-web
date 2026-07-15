@@ -42,6 +42,8 @@ export interface RuntimeMetadata {
         controllerRevision?: number;
         /** continuation 实例 ID；用于追踪由 goal continuation 触发的内部 turn。 */
         continuationId?: string;
+        /** 本条内部消息消费的 goal supplement ID 列表。 */
+        supplementIds?: string[];
     };
 }
 
@@ -1304,7 +1306,8 @@ export class UserMessage {
     timestamp: number = Date.now();
     /**
      * 标记此消息为内部消息（如钩子系统自动生成的 reject 消息）。
-     * internal = true 时，仅在 debug 模式下在 TUI 中显示；
+     * internal = true 时，TUI 默认仅在 debug 模式下显示；
+     * 带 rawText 的可展示 goal 内部消息会作为用户可见消息展示。
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;
