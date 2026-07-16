@@ -196,7 +196,7 @@ const SNAPSHOT_INJECTION = `(() => {
     }
 
     function textOf(el) {
-        return (el.innerText || el.textContent || '').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
+        return (el.innerText || el.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
     }
 
     function getAccessibleName(el) {
@@ -230,7 +230,7 @@ const SNAPSHOT_INJECTION = `(() => {
                 var clone = parentLabel.cloneNode(true);
                 var inputs = clone.querySelectorAll('input,select,textarea');
                 for (var i = 0; i < inputs.length; i++) inputs[i].remove();
-                var lt = (clone.innerText || clone.textContent || '').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
+                var lt = (clone.innerText || clone.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
                 if (lt) return lt;
             }
         }
@@ -564,7 +564,7 @@ const SNAPSHOT_INJECTION = `(() => {
                 buf.push(child);
             } else {
                 if (buf.length) {
-                    var merged = buf.join('').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
+                    var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
                     if (merged) newChildren.push(merged);
                     buf = [];
                 }
@@ -573,7 +573,7 @@ const SNAPSHOT_INJECTION = `(() => {
             }
         }
         if (buf.length) {
-            var merged = buf.join('').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
+            var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
             if (merged) newChildren.push(merged);
         }
         ariaNode.children = newChildren;
