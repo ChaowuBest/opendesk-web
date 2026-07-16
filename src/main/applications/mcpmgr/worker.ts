@@ -8,6 +8,7 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { mergeGlobalEnviron } from '../../utils/shellExec.js';
+import { buildInterpretersEnv } from '../terminal/tools.js';
 
 interface McpConnection {
     client: Client;
@@ -301,8 +302,14 @@ export default class McpMgrWorker extends BaseWorker {
             case 'stdio': {
                 // 合并全局环境变量（process.env + 平台注入 + 用户配置），再叠加上 MCP 配置的 env
                 const mergedEnv = mergeGlobalEnviron();
+                // 应用解释器隔离环境变量（UV_CACHE_DIR / PIP_TARGET / NPM_CONFIG_PREFIX 等），
+                // 确保 uvx、npx 等命令有可写的缓存目录
+                const interpreterEnv = buildInterpretersEnv({
+                    useIsolatedPython: true,
+                    baseEnv: mergedEnv
+                });
                 const env: Record<string, string> = {};
-                for (const [key, value] of Object.entries(mergedEnv || process.env)) {
+                for (const [key, value] of Object.entries(interpreterEnv)) {
                     if (value !== undefined) {
                         env[key] = value;
                     }
