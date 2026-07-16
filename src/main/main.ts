@@ -101,6 +101,7 @@ import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
+import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
@@ -2615,6 +2616,53 @@ const registerMagicPointerHandlers = () => {
     });
 };
 
+const registerAuthAPIHandlers = () => {
+    ipcMain.handle('auth:isAvailable', async () => {
+        try {
+            const available = await getHuaweiAuthService().isAvailable();
+            return { status: 'ok', data: { available } };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:login', async () => {
+        try {
+            const session = await getHuaweiAuthService().login();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:getSession', () => {
+        try {
+            const session = getHuaweiAuthService().getSession();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:refreshToken', async () => {
+        try {
+            const session = await getHuaweiAuthService().refreshToken();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:logout', async () => {
+        try {
+            await getHuaweiAuthService().logout();
+            return { status: 'ok' };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+};
+
 const registerHotKeys = () => {
     let hotkey = 'Alt+Space';
     if (process.platform === 'darwin') {
@@ -3079,6 +3127,7 @@ function startApplication() {
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
+        registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
         registerThemeHandlers();
         getMainThemeService().init();
