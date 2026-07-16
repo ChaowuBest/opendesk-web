@@ -533,6 +533,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         message: null
     };
     private installedQuery = '';
+    private installedScrollTop = 0;
     private _onServersUpdated: (() => void) | null = null;
     private _onThemeChange: ((e: any) => void) | null = null;
 
@@ -625,9 +626,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async loadServers() {
-        this.loadingServers = true;
         this.serverError = '';
-        this.render();
         try {
             this.servers = await getAPI().call<McpServerState[]>('getServers');
         } catch (err: any) {
@@ -939,6 +938,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     render() {
+        const installedPanel = this.shadowRoot?.getElementById('panel-installed') as HTMLElement | null;
+        if (installedPanel) this.installedScrollTop = installedPanel.scrollTop;
+
         const effectiveTheme = this.getEffectiveTheme();
         syncShadowHostTheme(this, effectiveTheme as any);
         this.style.backgroundColor = effectiveTheme === 'dark' ? '#1e1e1e' : '#fff';
@@ -974,6 +976,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         </div>`;
 
         this.bindEvents();
+        const nextInstalledPanel = this.shadowRoot!.getElementById('panel-installed') as HTMLElement | null;
+        if (nextInstalledPanel) nextInstalledPanel.scrollTop = this.installedScrollTop;
         syncShadowHostTheme(this, effectiveTheme as any);
         requestAnimationFrame(() => {
             if (this.dataset.theme === effectiveTheme) this.style.backgroundColor = '';
