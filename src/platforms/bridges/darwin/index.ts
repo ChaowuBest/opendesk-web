@@ -9,12 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { NativeBridge, SpeechKit, NaiveOcrKit } from '../common.js';
+import { NativeBridge, SpeechKit, NaiveOcrKit, NaiveHuaweiAccountKit } from '../common.js';
+import type { HuaweiAccountKit } from '../common.js';
 import { DarwinSpeechKit } from './speech.js';
 
 class DarwinNativeBridge implements NativeBridge {
     _speechKit = new DarwinSpeechKit();
     _ocrKit = new NaiveOcrKit();
+    _huaweiAccountKit = new NaiveHuaweiAccountKit();
 
     async getPlatform(): Promise<string> {
         return 'darwin';
@@ -30,6 +32,10 @@ class DarwinNativeBridge implements NativeBridge {
 
     async getOcrKit() {
         return this._ocrKit;
+    }
+
+    async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
+        return this._huaweiAccountKit;
     }
 }
 

@@ -121,6 +121,18 @@ export function registerNativeBridge(): void {
             case 'databaseKit:rollbackTransaction':
                 data = await registeredBridge.getDatabaseKit().then((kit) => kit.rollbackTransaction(args[0], args[1]));
                 break;
+            case 'accountKit:available':
+                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.available());
+                break;
+            case 'accountKit:startLogin':
+                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.startLogin());
+                break;
+            case 'accountKit:peekLogin':
+                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.peekLogin());
+                break;
+            case 'accountKit:closeLogin':
+                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.closeLogin());
+                break;
             default:
                 return { status: 'error', message: `Method not found: ${method}` };
         }
