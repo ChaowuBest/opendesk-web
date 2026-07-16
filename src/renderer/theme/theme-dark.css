@@ -2470,6 +2470,7 @@ html[data-theme='dark'] mailbox-entry-widget .text-gray-400 {
 html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text) !important;
+    border-color: var(--od-border) !important;
 }
 
 html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder {
@@ -2477,19 +2478,305 @@ html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder 
     opacity: 1;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-100'] {
-    background: var(--od-bg-subtle) !important;
+html[data-theme='dark'] mailbox-entry-widget #account-selector-menu,
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-menu {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-list-header,
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-button,
+html[data-theme='dark'] mailbox-entry-widget #email-list,
+html[data-theme='dark'] mailbox-entry-widget #email-content > elastic-toolbar-widget.mailbox-reader-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-button,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-filter-option {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-900'] {
-    background: var(--od-accent) !important;
-    color: #fff !important;
+html[data-theme='dark'] mailbox-entry-widget .mailbox-filter-option:hover,
+html[data-theme='dark'] mailbox-entry-widget .account-selector-item:hover,
+html[data-theme='dark'] mailbox-entry-widget .email-item:hover {
+    background: var(--od-bg-subtle) !important;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #account-selector-menu {
+html[data-theme='dark'] mailbox-entry-widget .email-item {
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-item[class*='bg-indigo-50'] {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-elevated)) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .account-selector-item[class*='bg-indigo-50'] {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-elevated)) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-message-heading:hover,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-header-row:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-header-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--from {
+    background: color-mix(in srgb, #71717a 22%, var(--od-bg-elevated)) !important;
+    border-color: #52525b !important;
+    color: #e4e4e7 !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--to {
+    background: color-mix(in srgb, #3b82f6 20%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 45%, var(--od-border-strong)) !important;
+    color: #bfdbfe !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--cc {
+    background: color-mix(in srgb, #22c55e 18%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #4ade80 40%, var(--od-border-strong)) !important;
+    color: #bbf7d0 !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--bcc {
+    background: color-mix(in srgb, #a855f7 18%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #c084fc 40%, var(--od-border-strong)) !important;
+    color: #e9d5ff !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip:hover {
+    filter: brightness(1.12);
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-value,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-action {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-action:hover {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-expand-toggle {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-expand-toggle:hover {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-subtle)) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item {
+    background: color-mix(in srgb, #3b82f6 20%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 45%, var(--od-border-strong)) !important;
+    color: #bfdbfe !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item:hover,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item:focus-visible {
+    background: color-mix(in srgb, #3b82f6 28%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 60%, var(--od-border-strong)) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button:hover,
+html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button i {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item .mailbox-attachment-file-icon {
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button:hover i,
+html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible i {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-accent) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button:active {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-accent) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-scroll,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-fields,
+html[data-theme='dark'] mail-editor-widget > elastic-toolbar-widget.mailbox-compose-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-fields {
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-row {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-row:focus-within {
+    background: color-mix(in srgb, var(--od-accent) 7%, var(--od-bg-elevated)) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-label,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-recipient-actions,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-date {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-recipient-actions span:hover {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget #subject {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tagify {
+    --tag-bg: #27272a;
+    --tag-hover: #3f3f46;
+    --tag-text-color: #e4e4e7;
+    --tag-remove-bg: #52525b;
+    --tag-remove-btn-color: #a1a1aa;
+    --tag-remove-btn-bg--hover: #ef4444;
+    --input-color: #e4e4e7;
+    --placeholder-color: #71717a;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tagify__input,
+html[data-theme='dark'] mail-editor-widget .tagify__tag-text {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tagify__dropdown__wrapper {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tagify__dropdown__item--active {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachments {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item {
+    background: #27272a !important;
+    border-color: transparent !important;
+    color: #e4e4e7 !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item:hover,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item:focus-visible {
+    background: #3f3f46 !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .mailbox-attachment-file-icon,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .remove-attachment {
+    color: #a1a1aa !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .remove-attachment:hover {
+    background: color-mix(in srgb, #ef4444 20%, transparent) !important;
+    color: #fca5a5 !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox-tinymce {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-editor-header,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar-overlord,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar__primary,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar__overflow,
+html[data-theme='dark'] mail-editor-widget .tox .tox-statusbar {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn,
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn__select-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn svg {
+    fill: currentColor !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn:hover,
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn--enabled {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-edit-area__iframe {
+    background: #18181b !important;
+}
+
+html[data-theme='dark'] .tox .tox-menu,
+html[data-theme='dark'] .tox .tox-collection--list,
+html[data-theme='dark'] .tox .tox-dialog,
+html[data-theme='dark'] .tox .tox-dialog__header,
+html[data-theme='dark'] .tox .tox-dialog__body,
+html[data-theme='dark'] .tox .tox-dialog__footer {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tox .tox-collection__item,
+html[data-theme='dark'] .tox .tox-collection__item-label,
+html[data-theme='dark'] .tox .tox-dialog__title,
+html[data-theme='dark'] .tox .tox-label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tox .tox-collection__item--active,
+html[data-theme='dark'] .tox .tox-collection__item:hover {
+    background: var(--od-bg-subtle) !important;
 }
 
 html[data-theme='dark'] mailbox-entry-widget main#email-content,

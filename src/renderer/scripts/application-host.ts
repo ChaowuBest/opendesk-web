@@ -118,32 +118,6 @@ async function submitRequest(request: { message: string }): Promise<void> {
                     </header>
                     <embedded-task-view id='task-view-${currentTaskId}' task_id="${currentTaskId}" class="flex-1 overflow-y-auto" />
                     `;
-
-        const taskView = document.querySelector(`#task-view-${currentTaskId}`);
-        const agentInput = document.querySelector('#application-agent-input');
-        if (taskView && agentInput) {
-            taskView.addEventListener('task-status-changed', (e: Event) => {
-                const { taskId, status } = (e as CustomEvent).detail;
-                if (taskId === currentTaskId) {
-                    if (status === 'running') {
-                        (agentInput as HTMLElement & { setTaskStatus: (...args: unknown[]) => void }).setTaskStatus(
-                            'running',
-                            async () => {
-                                try {
-                                    await window.taskManagerAPI.stopTask(currentTaskId!);
-                                } catch (error) {
-                                    console.error('Failed to stop task:', error);
-                                }
-                            }
-                        );
-                    } else {
-                        (agentInput as HTMLElement & { setTaskStatus: (...args: unknown[]) => void }).setTaskStatus(
-                            status
-                        );
-                    }
-                }
-            });
-        }
     }
 
     const widget = applicationEntryWidget as HTMLElement & {
@@ -236,20 +210,6 @@ async function bootstrapApplication(): Promise<void> {
 
     const entryName = `${applicationBundleName}-entry-widget`;
 
-    let showAgentBar = false;
-    try {
-        showAgentBar = await window.applicationAPI.callMainWorld('needAgentBar');
-    } catch (err) {
-        console.warn('Failed to check needAgentBar:', err);
-    }
-
-    if (showAgentBar) {
-        const agentInputWrapper = document.querySelector('#agent-input-wrapper');
-        if (agentInputWrapper) {
-            (agentInputWrapper as HTMLElement).style.display = '';
-        }
-    }
-
     window.aiBarAPI = {
         submitRequest: (request: string) => submitRequest({ message: request }),
         submitRequestInNewTask: async (request: string) => {
@@ -263,17 +223,6 @@ async function bootstrapApplication(): Promise<void> {
         throw new Error('application-container not found');
     }
     container.innerHTML = `<${entryName} id="application-entry-widget" class="w-full h-full" data-od-widget></${entryName}>`;
-
-    if (showAgentBar) {
-        document.querySelector('#application-agent-input')?.addEventListener('focus', () => {
-            if (currentTaskId !== null) {
-                Alpine.$data(document.body).showFloatingChatPanel = true;
-            }
-        });
-        document.querySelector('#application-agent-input')?.addEventListener('submit', (e: Event) => {
-            void submitRequest((e as CustomEvent).detail);
-        });
-    }
 }
 
 void (async () => {

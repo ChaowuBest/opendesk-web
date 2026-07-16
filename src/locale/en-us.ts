@@ -873,6 +873,20 @@ export const enUs: Record<string, string> = {
     'search.result.chars': '${count} chars',
     'search.result.papers': '${count} papers',
 
+    // Renderer - Mailbox
+    'renderer.mailbox.filter.all': 'All',
+    'renderer.mailbox.filter.unread': 'Unread',
+    'renderer.mailbox.filter.starred': 'Starred',
+    'renderer.mailbox.filter.draft': 'Drafts',
+    'renderer.mailbox.filter.sent': 'Sent',
+    'renderer.mailbox.attachment.open': 'Open',
+    'renderer.mailbox.attachment.saveAs': 'Save As',
+    'renderer.mailbox.attachment.saveAll': 'Save All',
+    'renderer.mailbox.attachment.remove': 'Remove attachment',
+    'renderer.mailbox.attachment.count': 'Attachments (${count})',
+    'renderer.mailbox.attachment.actionFailed': 'Unable to process attachment',
+    'renderer.mailbox.attachment.actionFailedDetail': 'Please verify the attachment still exists and try again.',
+
     // Renderer - Settings
     'renderer.settings.memorySystem': 'Memory',
     'renderer.settings.developerMode': 'Developer Mode',

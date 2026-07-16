@@ -10,10 +10,12 @@
  */
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { createRendererTranslator } from '../../../../renderer/locale.js';
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 import { EmailHeader, EmailContent } from '../common.js';
+import { bindAttachmentItemInteractions } from './attachment-interactions.js';
 
 // ========== Tagify 导入 ==========
 import Tagify from '@yaireo/tagify';
@@ -69,9 +71,131 @@ const MailOperations = Object.freeze({
     POLISH: 'polish'
 });
 
+const MailboxFilters = Object.freeze({
+    all: { labelKey: 'renderer.mailbox.filter.all', icon: 'fa-inbox' },
+    unread: { labelKey: 'renderer.mailbox.filter.unread', icon: 'fa-envelope' },
+    starred: { labelKey: 'renderer.mailbox.filter.starred', icon: 'fa-star' },
+    draft: { labelKey: 'renderer.mailbox.filter.draft', icon: 'fa-file-lines' },
+    sent: { labelKey: 'renderer.mailbox.filter.sent', icon: 'fa-paper-plane' }
+});
+
+let activeAttachmentMenu = null;
+let activeAttachmentMenuDismissHandler = null;
+let activeAttachmentMenuKeyHandler = null;
+let activeAttachmentMenuViewportHandler = null;
+
+function dismissMailboxAttachmentMenu() {
+    if (activeAttachmentMenuDismissHandler) {
+        document.removeEventListener('pointerdown', activeAttachmentMenuDismissHandler, true);
+        activeAttachmentMenuDismissHandler = null;
+    }
+    if (activeAttachmentMenuKeyHandler) {
+        document.removeEventListener('keydown', activeAttachmentMenuKeyHandler, true);
+        activeAttachmentMenuKeyHandler = null;
+    }
+    if (activeAttachmentMenuViewportHandler) {
+        document.removeEventListener('scroll', activeAttachmentMenuViewportHandler, true);
+        window.removeEventListener('resize', activeAttachmentMenuViewportHandler);
+        activeAttachmentMenuViewportHandler = null;
+    }
+    activeAttachmentMenu?.remove();
+    activeAttachmentMenu = null;
+}
+
+function showMailboxAttachmentMenu(event, item, translate, onAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    dismissMailboxAttachmentMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'mailbox-attachment-menu';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = `
+        <button type="button" role="menuitem" data-action="open">
+            <i class="fa fa-external-link-alt" aria-hidden="true"></i>
+            <span>${translate('renderer.mailbox.attachment.open')}</span>
+        </button>
+        <button type="button" role="menuitem" data-action="saveAs">
+            <i class="fa fa-save" aria-hidden="true"></i>
+            <span>${translate('renderer.mailbox.attachment.saveAs')}</span>
+        </button>
+        <button type="button" role="menuitem" data-action="saveAll">
+            <i class="fa fa-folder-open" aria-hidden="true"></i>
+            <span>${translate('renderer.mailbox.attachment.saveAll')}</span>
+        </button>
+    `;
+    document.body.appendChild(menu);
+    activeAttachmentMenu = menu;
+
+    const itemRect = item.getBoundingClientRect();
+    const isContextMenu = event.type === 'contextmenu' && 'clientX' in event;
+    const preferredLeft = isContextMenu ? event.clientX : itemRect.left;
+    const preferredTop = isContextMenu ? event.clientY : itemRect.bottom + 4;
+    const menuRect = menu.getBoundingClientRect();
+    const viewportPadding = 8;
+    menu.style.left = `${Math.max(viewportPadding, Math.min(preferredLeft, window.innerWidth - menuRect.width - viewportPadding))}px`;
+    menu.style.top = `${Math.max(viewportPadding, Math.min(preferredTop, window.innerHeight - menuRect.height - viewportPadding))}px`;
+
+    menu.querySelectorAll('button[data-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.dataset.action;
+            dismissMailboxAttachmentMenu();
+            void onAction(action);
+        });
+    });
+
+    activeAttachmentMenuDismissHandler = (pointerEvent) => {
+        if (!menu.contains(pointerEvent.target)) dismissMailboxAttachmentMenu();
+    };
+    activeAttachmentMenuKeyHandler = (keyEvent) => {
+        if (keyEvent.key === 'Escape') dismissMailboxAttachmentMenu();
+    };
+    activeAttachmentMenuViewportHandler = () => dismissMailboxAttachmentMenu();
+    document.addEventListener('pointerdown', activeAttachmentMenuDismissHandler, true);
+    document.addEventListener('keydown', activeAttachmentMenuKeyHandler, true);
+    document.addEventListener('scroll', activeAttachmentMenuViewportHandler, true);
+    window.addEventListener('resize', activeAttachmentMenuViewportHandler);
+    menu.querySelector('button')?.focus();
+}
+
+async function handleMailboxAttachmentAction(action, attachment, attachments, translate) {
+    try {
+        if (action === 'open') {
+            await window.fsAPI.openPath(attachment.path);
+            return;
+        }
+
+        if (action === 'saveAs') {
+            const result = await window.fsAPI.saveFile({
+                title: translate('renderer.mailbox.attachment.saveAs'),
+                defaultPath: String(attachment.filename || 'attachment')
+                    .split(/[/\\]/)
+                    .pop()
+            });
+            if (result.canceled || !result.filePath) return;
+            await window.applicationAPI.call('saveAttachmentFile', attachment.path, result.filePath);
+            return;
+        }
+
+        if (action === 'saveAll') {
+            const directory = await window.fsAPI.selectDirectory();
+            if (!directory) return;
+            await window.applicationAPI.call('saveAllAttachmentFiles', attachments, directory);
+        }
+    } catch (error) {
+        console.error('Attachment action failed:', error);
+        await Swal.fire({
+            title: translate('renderer.mailbox.attachment.actionFailed'),
+            text: translate('renderer.mailbox.attachment.actionFailedDetail'),
+            icon: 'error'
+        });
+    }
+}
+
 class MailBoxEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
+        this._t = createRendererTranslator();
 
         /** @type {Map<string, import('../common.js').EmailHeader>} */
         this.emailHeaderList = new Map();
@@ -97,13 +221,21 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.isHeadersExpanded = false; // 邮件头是否展开
         /** @type {object | null} */
         this.currentSearchQuery = null; // 当前搜索/筛选查询条件
-
+        this.lifecycleAbortController = new AbortController();
         // 多账号支持
         this.accounts = [];
         this.currentAccount = null;
     }
 
     async connectedCallback() {
+        if (this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController = new AbortController();
+        }
+        try {
+            this._t = createRendererTranslator(await window.settingAPI?.loadSettingObject?.());
+        } catch {
+            this._t = createRendererTranslator();
+        }
         this.render();
         this.setupAccountSelectorListeners();
         this.setupScrollListener();
@@ -160,6 +292,16 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 this.emailHeaderList.clear();
             }
         });
+    }
+
+    disconnectedCallback() {
+        dismissMailboxAttachmentMenu();
+        this.lifecycleAbortController.abort();
+        for (const eventName of ['emailListUpdated', 'accountsUpdated']) {
+            void Promise.resolve(window.applicationAPI?.unsubscribe?.(eventName)).catch((error) => {
+                console.warn(`Failed to unsubscribe mailbox event ${eventName}:`, error);
+            });
+        }
     }
 
     /**
@@ -580,50 +722,72 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     renderEmailItem(email) {
         const isSelected = email.uid === this.selectedEmailUid;
-        let classes = 'email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ';
+        let classes = 'email-item cursor-pointer border-b border-gray-200 border-l-2 px-3 py-2.5 ';
         if (isSelected) {
-            classes += 'bg-indigo-50/50 relative border-l-indigo-600';
+            classes += 'bg-indigo-50/70 relative border-l-indigo-500';
         } else {
             classes += 'hover:bg-gray-50 transition-colors border-l-transparent';
         }
 
-        let subject_classes = 'font-medium text-gray-500';
-        if (email.unread) {
-            subject_classes = 'font-bold text-gray-800';
-        }
+        const senderClasses = email.unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-600';
+        const subjectClasses = email.unread ? 'font-semibold text-gray-800' : 'font-medium text-gray-600';
 
         // 根据邮件类型显示不同的图标
         let typeIcon = '';
         if (email.type === 'draft') {
-            typeIcon = '<i class="fa fa-file-alt text-gray-400 mr-1" title="草稿"></i>';
+            typeIcon = '<i class="fa fa-file-alt text-gray-400" title="草稿"></i>';
         } else if (email.type === 'sent') {
-            typeIcon = '<i class="fa fa-paper-plane text-blue-400 mr-1" title="已发送"></i>';
+            typeIcon = '<i class="fa fa-paper-plane text-blue-400" title="已发送"></i>';
         }
 
         // 显示收件人或发件人和日期
+        let correspondent = '';
         let infoLine = '';
         if (email.type === 'sent' || email.type === 'draft') {
             // 已发送和草稿显示收件人
             const toAddresses =
                 email.to && email.to.length > 0 ? email.to.map((t) => t.name || t.address).join(', ') : '无收件人';
-            infoLine = `<p class="text-gray-500 text-xs truncate mb-1">收件人: ${toAddresses}</p>`;
+            correspondent = toAddresses;
+            infoLine = `收件人: ${toAddresses}`;
         } else {
             // 收件箱显示发件人
             const fromAddress =
                 email.from && email.from.length > 0 ? email.from[0].name || email.from[0].address : '未知发件人';
-            infoLine = `<p class="text-gray-500 text-xs truncate mb-1">发件人: ${fromAddress}</p>`;
+            correspondent = fromAddress;
+            infoLine = email.from?.[0]?.address || fromAddress;
         }
 
         return `
-        <div class="${classes}" data-uid="${email.uid}">
-            <div class="flex justify-between items-start mb-1">
-                <span class="${subject_classes}">${typeIcon}${email.subject || '(无主题)'}</span>
-                ${email.starred ? '<i class="fa fa-star text-yellow-500"></i>' : ''}
+        <div class="${classes}" data-uid="${escapeHtml(email.uid)}">
+            <div class="flex items-center justify-between gap-3 mb-1">
+                <div class="min-w-0 flex items-center gap-1.5">
+                    ${email.unread ? '<span class="mailbox-unread-dot h-1.5 w-1.5 flex-none rounded-full bg-indigo-500"></span>' : ''}
+                    ${typeIcon}
+                    <span class="${senderClasses} text-xs truncate">${escapeHtml(correspondent)}</span>
+                </div>
+                <span class="flex-none text-[11px] text-gray-400">${this.formatListDate(email.date)}</span>
             </div>
-            ${infoLine}
-            <p class="text-gray-400 text-xs">${new Date(email.date).toLocaleString()}</p>
+            <div class="flex items-center justify-between gap-2 mb-0.5 pl-3">
+                <span class="${subjectClasses} text-xs truncate">${escapeHtml(email.subject || '(无主题)')}</span>
+                ${email.starred ? '<i class="fa fa-star text-amber-400 text-[11px] flex-none"></i>' : ''}
+            </div>
+            <p class="text-gray-400 text-[11px] truncate pl-3">${escapeHtml(infoLine)}</p>
         </div>
         `;
+    }
+
+    formatListDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+
+        const now = new Date();
+        if (date.toDateString() === now.toDateString()) {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        if (date.getFullYear() === now.getFullYear()) {
+            return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+        return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
     createEmailItemElement(email) {
@@ -1045,14 +1209,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     textColor = 'text-gray-700';
             }
 
+            const displayName = escapeHtml(address.name || address.address || '');
+            const emailAddress = escapeHtml(address.address || '');
+
             return `
-            <div class="flex items-center ${bgColor} border ${borderColor} rounded px-1.5 py-0.5 text-xs ${textColor}">
-                <span class="font-medium">${address.name}</span>
-                <span class="ml-1 text-gray-400 italic font-normal">&lt;${address.address}&gt;</span>
+            <div class="mailbox-address-chip mailbox-address-chip--${type} flex items-center ${bgColor} border ${borderColor} rounded px-1.5 py-0.5 text-xs ${textColor}">
+                <span class="font-medium">${displayName}</span>
+                <span class="mailbox-address-value ml-1 text-gray-400 italic font-normal">&lt;${emailAddress}&gt;</span>
                 ${
                     type === 'from'
                         ? `
-                <button class="ml-1 text-gray-400 hover:text-gray-600">
+                <button class="mailbox-address-action ml-1 text-gray-400 hover:text-gray-600">
                     <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
                 </button>
                 `
@@ -1087,8 +1254,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
             addresses += `
             <!-- 发件人行 -->
-            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">发件人</label>
+            <div class="mailbox-header-row group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="mailbox-header-label w-12 text-xs text-gray-400 font-medium pt-0.5">发件人</label>
                 <div class="flex-1 flex flex-wrap gap-2 items-center">
                     ${senderHtml}
                     ${expandButton}
@@ -1122,8 +1289,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
             addresses += `
             <!-- 收件人行 -->
-            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">收件人</label>
+            <div class="mailbox-header-row group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="mailbox-header-label w-12 text-xs text-gray-400 font-medium pt-0.5">收件人</label>
                 <div class="flex-1 flex flex-wrap gap-2">
                     ${toHtml}
                 </div>
@@ -1152,8 +1319,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
             if (ccHtml) {
                 addresses += ` <!-- 抄送行 -->
-                <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
-                    <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">抄送</label>
+                <div class="mailbox-header-row group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                    <label class="mailbox-header-label w-12 text-xs text-gray-400 font-medium pt-0.5">抄送</label>
                     <div class="flex-1 flex flex-wrap gap-2">
                         ${ccHtml}
                     </div>
@@ -1166,8 +1333,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && shouldShowAll) {
             const bccHtml = this.selectedEmailHeader.bcc.map((addr) => renderEmailAddress(addr, 'bcc')).join('');
             addresses += ` <!-- 密送行 -->
-                <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">密送</label>
+                <div class="mailbox-header-row group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="mailbox-header-label w-12 text-xs text-gray-400 font-medium pt-0.5">密送</label>
                 <div class="flex-1 flex flex-wrap gap-2">
                     ${bccHtml}
                 </div>
@@ -1177,22 +1344,18 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         let attachments = '';
         if (this.selectedEmailContent && this.selectedEmailContent.attachments) {
-            for (const attachment of this.selectedEmailContent.attachments) {
+            for (const [index, attachment] of this.selectedEmailContent.attachments.entries()) {
                 attachments += `
-                <div class="mailbox-open-attachment-item flex items-center group cursor-pointer w-fit max-w-sm
-                    bg-white/70 backdrop-blur-xl
-                    rounded-xl px-2.5 py-1
-                    border border-black/[0.08] shadow-sm
-                    hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
-                    transition-all duration-200 ease-out select-none"
-                    data-attachment_path="${attachment.path}"
+                <div class="mailbox-open-attachment-item mailbox-address-chip mailbox-address-chip--attachment flex items-center cursor-pointer w-fit max-w-sm
+                    rounded px-1.5 py-0.5 border border-blue-200 bg-blue-50 text-blue-800 text-xs
+                    transition-colors duration-150 select-none"
+                    data-attachment-index="${index}"
+                    role="button"
+                    tabindex="0"
+                    title="${escapeHtml(attachment.filename)}"
                 >
-                    <i class="fa fa-file-alt text-gray-400 text-sm mr-2"></i>
-                    <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
-                        <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
-                            ${attachment.filename}
-                        </span>
-                    </div>
+                    <i class="fa fa-file-alt mailbox-attachment-file-icon text-gray-400 mr-1.5" aria-hidden="true"></i>
+                    <span class="mailbox-attachment-filename font-medium truncate">${escapeHtml(attachment.filename)}</span>
                 </div>
                 `;
             }
@@ -1200,8 +1363,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         if (attachments) {
             attachments = `
-            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium">附件</label>
+            <div class="mailbox-header-row group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="mailbox-header-label w-12 text-xs text-gray-400 font-medium">附件</label>
                 <div class="flex-1 flex flex-wrap gap-2 items-center">
                     ${attachments}
                 </div>
@@ -1210,12 +1373,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
 
         const fullHeader = `
-        <div class="mb-2">
+        <div class="mb-3">
             <div class="flex flex-col items-center justify-between">
                 <div class="flex flex-col items-left w-full">
-                    <div class="group flex flex-col items-left px-1 py-1 hover:bg-gray-50 transition-colors">
+                    <div class="mailbox-message-heading group flex flex-col items-left px-1 py-1 hover:bg-gray-50 transition-colors">
                         <span class="text-xs text-gray-400 mr-4 mb-1">${new Date(this.selectedEmailHeader.date).toLocaleString()}</span>
-                        <h2 class="text-gray-900 text-lg font-bold leading-tight">${this.selectedEmailHeader.subject}</h2>
+                        <h2 class="text-gray-900 text-base font-semibold leading-tight">${escapeHtml(this.selectedEmailHeader.subject || '')}</h2>
                     </div>
                     ${addresses}
                     ${attachments}
@@ -1238,6 +1401,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
         const editor = new MailEditorWidget();
+        editor._t = this._t;
         // 与阅读界面一致：flex flex-col 让工具栏固定顶部、内容区单独滚动；min-h-0 使内部 overflow 生效；不加 overflow-y-auto 避免整块（含工具栏）一起滚动
         editor.classList.add('flex-1', 'flex', 'flex-col', 'min-h-0', 'bg-white', 'w-full');
         editor.id = 'editor';
@@ -1289,6 +1453,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async handleFilter(filter) {
         console.info('handle filter', filter);
         this.currentFilter = filter; // 保存当前过滤器状态
+        this.updateFilterSelectorUI();
 
         // 根据筛选器从数据库加载邮件
         const query = this.buildFilterQuery();
@@ -1314,6 +1479,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     async reloadCurrentEmailContent(redownload = false) {
+        dismissMailboxAttachmentMenu();
         if (!this.selectedEmailUid) {
             this.querySelector('#email-content').replaceChildren();
             return;
@@ -1447,7 +1613,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
 
         const toolbar = new ElasticToolbarWidget(topButtons);
-        toolbar.classList.add('pl-3', 'pr-16', 'align-left', 'mailbox-header');
+        toolbar.classList.add('align-left', 'mailbox-header', 'mailbox-reader-toolbar');
 
         this.querySelector('#email-content').innerHTML = '';
         this.querySelector('#email-content').appendChild(toolbar);
@@ -1457,12 +1623,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             'beforeend',
             `
         <!-- 邮件阅读区 -->
-        <div class="flex-1 overflow-y-auto p-4 bg-white">
-            <div class="max-w-4xl mx-auto">
+        <div class="mailbox-reader-scroll flex-1 overflow-y-auto px-5 py-4 bg-white">
+            <div class="max-w-5xl mx-auto">
                 <!-- 邮件头部 -->
                 ${this.renderCurrentEmailHeader()}
                 <!-- 邮件主体 -->
-                <div id="email-body-content" class="prose prose-indigo max-w-none w-full break-words overflow-x-auto overflow-y-auto">
+                <div id="email-body-content" class="prose prose-indigo max-w-none w-full text-[13px] leading-relaxed break-words overflow-x-auto overflow-y-auto">
                 </div>
             </div>
         </div>
@@ -1480,14 +1646,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             document.querySelector('#email-body-content').shadowRoot.innerHTML = '';
         }
 
-        document.querySelectorAll('.mailbox-open-attachment-item').forEach((item) => {
-            item.addEventListener('click', (event) => {
-                const filePath = item.dataset.attachment_path;
-                if (!filePath) {
-                    return;
+        this.querySelectorAll('.mailbox-open-attachment-item').forEach((item) => {
+            const attachmentIndex = Number(item.dataset.attachmentIndex);
+            bindAttachmentItemInteractions(item, {
+                showMenu: (event) => this.showAttachmentMenu(event, item, attachmentIndex),
+                open: () => {
+                    this.dismissAttachmentMenu();
+                    void this.handleAttachmentAction('open', attachmentIndex);
                 }
-                console.info('open attachment', filePath);
-                window.fsAPI.openPath(filePath);
             });
         });
 
@@ -1499,6 +1665,26 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 this.reloadCurrentEmailContent();
             });
         }
+    }
+
+    dismissAttachmentMenu() {
+        dismissMailboxAttachmentMenu();
+    }
+
+    showAttachmentMenu(event, item, attachmentIndex) {
+        const attachments = [...(this.selectedEmailContent?.attachments || [])];
+        const attachment = attachments[attachmentIndex];
+        if (!attachment) return;
+        showMailboxAttachmentMenu(event, item, this._t, (action) =>
+            handleMailboxAttachmentAction(action, attachment, attachments, this._t)
+        );
+    }
+
+    async handleAttachmentAction(action, attachmentIndex) {
+        const attachments = [...(this.selectedEmailContent?.attachments || [])];
+        const attachment = attachments[attachmentIndex];
+        if (!attachment) return;
+        await handleMailboxAttachmentAction(action, attachment, attachments, this._t);
     }
 
     async editDraft(uid) {
@@ -1675,11 +1861,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             .map(
                 (acc) => `
             <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === this.currentAccount?.email ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
-                 data-email="${acc.email}">
+                 data-email="${escapeHtml(acc.email)}">
                  <div class="w-2 h-2 rounded-full ${acc.email === this.currentAccount?.email ? 'bg-indigo-600' : 'bg-transparent'}"></div>
                  <div class="flex flex-col overflow-hidden">
-                    <span class="font-medium truncate">${acc.name || acc.email}</span>
-                    <span class="text-xs text-gray-400 truncate">${acc.email}</span>
+                    <span class="font-medium truncate">${escapeHtml(acc.name || acc.email)}</span>
+                    <span class="text-xs text-gray-400 truncate">${escapeHtml(acc.email)}</span>
                  </div>
             </div>
         `
@@ -1687,17 +1873,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             .join('');
 
         this.innerHTML = `
-        <splitter-widget class="w-full h-full flex">
+        <splitter-widget class="w-full h-full flex" initial-width="380">
             <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0" style="height: 100%; min-height: 0; overflow: hidden;">
 
-                <div class="px-3 space-y-3">
+                <div id="mailbox-list-header" class="px-3 py-2 space-y-2 border-b border-gray-200">
                     <div class="flex items-center justify-between">
-                        <div class="relative z-20 pt-3">
-                            <button id="account-selector-btn" class="flex items-center gap-2 px-2 py-1 -ml-2 rounded-lg hover:bg-gray-100 transition-colors group">
-                                <h1 class="text-xl font-bold tracking-tight text-gray-900 group-hover:text-indigo-600 transition-colors truncate max-w-[180px]">
-                                    ${accountName}
+                        <div class="relative z-30">
+                            <button id="account-selector-btn" class="flex items-center gap-1.5 px-2 py-1 -ml-2 rounded-md hover:bg-gray-100 transition-colors group">
+                                <h1 class="text-sm font-semibold tracking-tight text-gray-900 group-hover:text-indigo-600 transition-colors truncate max-w-[190px]">
+                                    ${escapeHtml(accountName)}
                                 </h1>
-                                <i class="fa-solid fa-chevron-down text-gray-400 text-xs group-hover:text-indigo-500 transition-colors"></i>
+                                <i class="fa-solid fa-chevron-down text-gray-400 text-[10px] group-hover:text-indigo-500 transition-colors"></i>
                             </button>
 
                             <div id="account-selector-menu" class="hidden absolute left-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-100 py-1 overflow-hidden origin-top-left transition-all duration-200">
@@ -1715,22 +1901,38 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                         <div id="mailbox-header-toolbar" class="flex items-center gap-2">
                         </div>
                     </div>
-                    <!-- 搜索框 -->
-                    <div class="relative rounded-2xl">
-                        <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
-                        <input type="text" id="mailbox-search-input" placeholder="搜索邮件..." class="w-full bg-gray-100 border-none rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
-                    </div>
-                    <!-- 导航标签 (水平排列) -->
-                    <div class="flex gap-2 overflow-x-auto pb-1 text-xs no-scrollbar" id="mailbox-tabs">
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active" id="mailbox-all-email-button">全部</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-unread-email-button">未读</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-star-email-button">收藏</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-draft-email-button">草稿</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-sent-email-button">已发送</button>
+                    <div class="flex items-center gap-2">
+                        <!-- 搜索框 -->
+                        <div class="relative flex-1 min-w-0">
+                            <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]"></i>
+                            <input type="text" id="mailbox-search-input" placeholder="搜索邮件..." class="w-full bg-gray-100 border border-transparent rounded-lg pl-8 pr-3 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-400 outline-none">
+                        </div>
+                        <!-- 邮件分类 -->
+                        <div class="relative flex-none" id="mailbox-filter-selector">
+                            <button id="mailbox-filter-button" type="button" aria-haspopup="menu" aria-expanded="false" class="h-8 min-w-[88px] flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                                <span class="flex items-center gap-1.5 min-w-0">
+                                    <i id="mailbox-filter-button-icon" class="fa-solid ${MailboxFilters[this.currentFilter].icon} text-gray-400 text-[10px]"></i>
+                                    <span id="mailbox-filter-label">${this._t(MailboxFilters[this.currentFilter].labelKey)}</span>
+                                </span>
+                                <i class="fa-solid fa-chevron-down text-gray-400 text-[9px]"></i>
+                            </button>
+                            <div id="mailbox-filter-menu" role="menu" class="hidden absolute right-0 top-full z-30 mt-1 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                                ${Object.entries(MailboxFilters)
+                                    .map(
+                                        ([filter, config]) => `
+                                <button type="button" role="menuitem" data-filter="${filter}" class="mailbox-filter-option w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100">
+                                    <i class="fa-solid ${config.icon} w-3 text-center text-gray-400 text-[10px]"></i>
+                                    <span class="flex-1">${this._t(config.labelKey)}</span>
+                                    <i class="mailbox-filter-check fa-solid fa-check text-indigo-500 text-[9px] ${filter === this.currentFilter ? '' : 'invisible'}"></i>
+                                </button>`
+                                    )
+                                    .join('')}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <!-- 邮件列表区 -->
-                <div id="email-list" class="flex-1 overflow-y-auto border-t border-gray-200"></div>
+                <div id="email-list" class="flex-1 overflow-y-auto"></div>
             </aside>
             <!-- 右侧栏：邮件内容 -->
             <main id='email-content' slot="right" class="flex-1 bg-white flex flex-col overflow-auto"></main>
@@ -1738,7 +1940,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `;
 
         this._createHeaderToolbar();
-        this.setupTabListeners();
+        this.setupFilterMenuListeners();
         this.setupSearchListeners();
     }
 
@@ -1778,11 +1980,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         });
 
         // 点击外部关闭菜单
-        document.addEventListener('click', (e) => {
-            if (!menu.classList.contains('hidden') && !btn.contains(e.target) && !menu.contains(e.target)) {
-                menu.classList.add('hidden');
-            }
-        });
+        document.addEventListener(
+            'click',
+            (e) => {
+                if (!menu.classList.contains('hidden') && !btn.contains(e.target) && !menu.contains(e.target)) {
+                    menu.classList.add('hidden');
+                }
+            },
+            { signal: this.lifecycleAbortController.signal }
+        );
 
         // 账号点击事件
         const items = menu.querySelectorAll('.account-selector-item');
@@ -1844,11 +2050,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             .map(
                 (acc) => `
             <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === this.currentAccount?.email ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
-                 data-email="${acc.email}">
+                 data-email="${escapeHtml(acc.email)}">
                  <div class="w-2 h-2 rounded-full ${acc.email === this.currentAccount?.email ? 'bg-indigo-600' : 'bg-transparent'}"></div>
                  <div class="flex flex-col overflow-hidden">
-                    <span class="font-medium truncate">${acc.name || acc.email}</span>
-                    <span class="text-xs text-gray-400 truncate">${acc.email}</span>
+                    <span class="font-medium truncate">${escapeHtml(acc.name || acc.email)}</span>
+                    <span class="text-xs text-gray-400 truncate">${escapeHtml(acc.email)}</span>
                  </div>
             </div>
         `
@@ -1884,43 +2090,73 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this._bindAddNewMailboxBtn(menu);
     }
 
-    // 辅助方法：设置标签页事件
-    setupTabListeners() {
-        const tabsContainer = document.getElementById('mailbox-tabs');
-        if (!tabsContainer) return;
+    // 辅助方法：设置邮件分类下拉菜单事件
+    setupFilterMenuListeners() {
+        const button = this.querySelector('#mailbox-filter-button');
+        const menu = this.querySelector('#mailbox-filter-menu');
+        if (!button || !menu) return;
 
-        const tabButtons = tabsContainer.querySelectorAll('button');
-        tabsContainer.addEventListener('click', function (e) {
-            if (e.target.tagName === 'BUTTON') {
-                // 重置所有按钮样式
-                tabButtons.forEach((btn) => {
-                    btn.className =
-                        'whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium';
-                });
-                // 设置当前按钮为激活状态
-                e.target.className = 'whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active';
-            }
+        const closeMenu = () => {
+            menu.classList.add('hidden');
+            button.setAttribute('aria-expanded', 'false');
+        };
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const willOpen = menu.classList.contains('hidden');
+            menu.classList.toggle('hidden', !willOpen);
+            button.setAttribute('aria-expanded', String(willOpen));
         });
 
-        // 绑定具体功能
-        document.getElementById('mailbox-all-email-button')?.addEventListener('click', () => this.handleFilter('all'));
-        document
-            .getElementById('mailbox-unread-email-button')
-            ?.addEventListener('click', () => this.handleFilter('unread'));
-        document
-            .getElementById('mailbox-star-email-button')
-            ?.addEventListener('click', () => this.handleFilter('starred'));
-        document
-            .getElementById('mailbox-draft-email-button')
-            ?.addEventListener('click', () => this.handleFilter('draft'));
-        document
-            .getElementById('mailbox-sent-email-button')
-            ?.addEventListener('click', () => this.handleFilter('sent'));
+        menu.querySelectorAll('.mailbox-filter-option').forEach((option) => {
+            option.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const filter = option.dataset.filter;
+                if (!MailboxFilters[filter]) return;
+                this.currentFilter = filter;
+                this.updateFilterSelectorUI();
+                closeMenu();
+                void this.handleFilter(filter);
+            });
+        });
+
+        document.addEventListener(
+            'click',
+            (event) => {
+                if (!button.contains(event.target) && !menu.contains(event.target)) {
+                    closeMenu();
+                }
+            },
+            { signal: this.lifecycleAbortController.signal }
+        );
+        document.addEventListener(
+            'keydown',
+            (event) => {
+                if (event.key === 'Escape') closeMenu();
+            },
+            { signal: this.lifecycleAbortController.signal }
+        );
+    }
+
+    updateFilterSelectorUI() {
+        const config = MailboxFilters[this.currentFilter] || MailboxFilters.all;
+        const label = this.querySelector('#mailbox-filter-label');
+        const icon = this.querySelector('#mailbox-filter-button-icon');
+        if (label) label.textContent = this._t(config.labelKey);
+        if (icon) {
+            Object.values(MailboxFilters).forEach((item) => icon.classList.remove(item.icon));
+            icon.classList.add(config.icon);
+        }
+        this.querySelectorAll('.mailbox-filter-option').forEach((option) => {
+            option
+                .querySelector('.mailbox-filter-check')
+                ?.classList.toggle('invisible', option.dataset.filter !== this.currentFilter);
+        });
     }
 
     // 辅助方法：设置搜索事件
     setupSearchListeners() {
-        const searchInput = document.getElementById('mailbox-search-input');
+        const searchInput = this.querySelector('#mailbox-search-input');
         if (!searchInput) return;
 
         let searchTimeout = null;
@@ -1928,8 +2164,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             clearTimeout(searchTimeout);
             const query = e.target.value.trim();
             if (query === '') {
-                // 如果搜索框为空，恢复显示所有邮件
-                this.loadEmailList();
+                // 如果搜索框为空，恢复当前分类的邮件列表
+                void this.handleFilter(this.currentFilter);
                 return;
             }
             // 防抖：延迟500ms执行搜索
@@ -2019,6 +2255,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 class MailEditorWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
+        this._t = createRendererTranslator();
+        this.themeObserver = null;
         this.attachments = [];
         this.editorReady = new Promise((resolve) => {
             this.resolveEditor = resolve;
@@ -2057,7 +2295,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
      * 渲染附件列表UI
      */
     renderAttachmentList() {
-        const container = document.getElementById('attachment-list-container');
+        dismissMailboxAttachmentMenu();
+        const container = this.querySelector('#attachment-list-container');
         if (!container) return;
 
         if (this.attachments.length === 0) {
@@ -2070,73 +2309,23 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
         const attachmentsHTML = this.attachments
             .map((attachment, index) => {
-                const ext = attachment.filename.split('.').pop().toLowerCase();
-                let iconClass = 'fa-file';
-                let iconColor = 'text-gray-500';
-
-                if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
-                    iconClass = 'fa-file-image';
-                    iconColor = 'text-blue-500';
-                } else if (['pdf'].includes(ext)) {
-                    iconClass = 'fa-file-pdf';
-                    iconColor = 'text-red-500';
-                } else if (['doc', 'docx'].includes(ext)) {
-                    iconClass = 'fa-file-word';
-                    iconColor = 'text-blue-600';
-                } else if (['xls', 'xlsx'].includes(ext)) {
-                    iconClass = 'fa-file-excel';
-                    iconColor = 'text-green-600';
-                } else if (['ppt', 'pptx'].includes(ext)) {
-                    iconClass = 'fa-file-powerpoint';
-                    iconColor = 'text-orange-500';
-                } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
-                    iconClass = 'fa-file-archive';
-                    iconColor = 'text-yellow-600';
-                } else if (['txt', 'md'].includes(ext)) {
-                    iconClass = 'fa-file-alt';
-                    iconColor = 'text-gray-600';
-                } else if (['mp4', 'avi', 'mov', 'wmv', 'flv'].includes(ext)) {
-                    iconClass = 'fa-file-video';
-                    iconColor = 'text-purple-500';
-                } else if (['mp3', 'wav', 'flac', 'aac'].includes(ext)) {
-                    iconClass = 'fa-file-audio';
-                    iconColor = 'text-pink-500';
-                }
-
                 return `
-                <div class="attachment-item group flex items-center gap-3 px-3 py-2.5
-                            bg-gradient-to-r from-gray-50 to-white
-                            border border-gray-200 rounded-lg
-                            hover:shadow-md hover:border-blue-300 hover:from-blue-50 hover:to-white
-                            transition-all duration-200"
-                     data-index="${index}">
-                    <!-- 文件图标 -->
-                    <div class="flex-shrink-0 w-10 h-10 flex items-center justify-center
-                                bg-white rounded-lg border border-gray-200
-                                group-hover:border-blue-300 transition-colors">
-                        <i class="fas ${iconClass} ${iconColor} text-lg"></i>
-                    </div>
-
-                    <!-- 文件信息 -->
-                    <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium text-gray-900 truncate">
-                            ${attachment.filename}
-                        </div>
-                        <div class="text-xs text-gray-500 truncate mt-0.5">
-                            ${attachment.path}
-                        </div>
-                    </div>
-
-                    <!-- 删除按钮 -->
-                    <button class="remove-attachment flex-shrink-0 w-7 h-7
-                                   flex items-center justify-center
-                                   rounded-full bg-white border border-gray-200
-                                   hover:bg-red-50 hover:border-red-300
-                                   opacity-0 group-hover:opacity-100
-                                   transition-all duration-200"
+                <div class="mailbox-compose-attachment-item attachment-item mailbox-address-chip mailbox-address-chip--attachment
+                            inline-flex items-center max-w-xs rounded px-1.5 py-0.5
+                            border border-blue-200 bg-blue-50 text-blue-800 text-xs select-none cursor-pointer"
+                     data-index="${index}"
+                     role="button"
+                     tabindex="0"
+                     title="${escapeHtml(attachment.filename)}">
+                    <i class="fas fa-file-alt mailbox-attachment-file-icon text-blue-500 mr-1.5" aria-hidden="true"></i>
+                    <span class="mailbox-attachment-filename min-w-0 truncate font-medium">${escapeHtml(attachment.filename)}</span>
+                    <button class="remove-attachment flex-shrink-0 ml-1 w-4 h-4
+                                   inline-flex items-center justify-center rounded-full
+                                   text-blue-500 hover:bg-red-100 hover:text-red-600 transition-colors"
                             data-index="${index}"
-                            title="删除附件">
-                        <i class="fas fa-times text-gray-400 hover:text-red-500 text-xs"></i>
+                            title="${this._t('renderer.mailbox.attachment.remove')}"
+                            aria-label="${this._t('renderer.mailbox.attachment.remove')}">
+                        <i class="fas fa-times text-[9px]" aria-hidden="true"></i>
                     </button>
                 </div>
             `;
@@ -2144,13 +2333,15 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             .join('');
 
         container.innerHTML = `
-            <div class="px-4 py-2 bg-gray-50 border-t border-gray-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <i class="fas fa-paperclip text-gray-500 text-sm"></i>
-                    <span class="text-sm font-medium text-gray-700">附件 (${this.attachments.length})</span>
-                </div>
-                <div class="space-y-2 pb-2">
+            <div class="mailbox-compose-attachments px-1 py-1.5">
+                <div class="flex items-start gap-2">
+                    <span class="mailbox-compose-attachment-label inline-flex items-center gap-1.5 pt-0.5 text-xs font-medium text-gray-500 whitespace-nowrap">
+                        <i class="fas fa-paperclip text-[11px]" aria-hidden="true"></i>
+                        ${this._t('renderer.mailbox.attachment.count', { count: this.attachments.length })}
+                    </span>
+                    <div class="flex flex-wrap gap-1.5 min-w-0">
                     ${attachmentsHTML}
+                    </div>
                 </div>
             </div>
         `;
@@ -2163,6 +2354,34 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                 this.removeAttachment(index);
             });
         });
+
+        container.querySelectorAll('.mailbox-compose-attachment-item').forEach((item) => {
+            const attachmentIndex = Number(item.dataset.index);
+            bindAttachmentItemInteractions(item, {
+                showMenu: (event) => this.showAttachmentMenu(event, item, attachmentIndex),
+                open: () => {
+                    dismissMailboxAttachmentMenu();
+                    void this.handleAttachmentAction('open', attachmentIndex);
+                },
+                ignoreSelector: '.remove-attachment'
+            });
+        });
+    }
+
+    showAttachmentMenu(event, item, attachmentIndex) {
+        const attachments = [...this.attachments];
+        const attachment = attachments[attachmentIndex];
+        if (!attachment) return;
+        showMailboxAttachmentMenu(event, item, this._t, (action) =>
+            handleMailboxAttachmentAction(action, attachment, attachments, this._t)
+        );
+    }
+
+    async handleAttachmentAction(action, attachmentIndex) {
+        const attachments = [...this.attachments];
+        const attachment = attachments[attachmentIndex];
+        if (!attachment) return;
+        await handleMailboxAttachmentAction(action, attachment, attachments, this._t);
     }
 
     /**
@@ -2176,6 +2395,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     connectedCallback() {
         this.render();
+        this.themeObserver = new MutationObserver(() => this.syncEditorTheme());
+        this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         this.addEventListener('focusin', () => {
             try {
                 const Alpine = window.Alpine;
@@ -2186,6 +2407,54 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                 /* ignore */
             }
         });
+    }
+
+    disconnectedCallback() {
+        dismissMailboxAttachmentMenu();
+        this.themeObserver?.disconnect();
+        this.themeObserver = null;
+    }
+
+    syncEditorTheme() {
+        const editor = tinymce.get('email-editor');
+        const editorDocument = editor?.getDoc?.();
+        if (editorDocument) {
+            editorDocument.documentElement.dataset.theme = document.documentElement.dataset.theme || 'light';
+        }
+    }
+
+    getEditorContentStyle() {
+        return `
+            ${contentCss}
+            ${contentUiCss}
+            html, body {
+                min-height: 100%;
+            }
+            body {
+                margin: 0;
+                padding: 14px 16px;
+                color: #1f2937;
+                background: #ffffff;
+                font-size: 13px;
+                line-height: 1.55;
+            }
+            html[data-theme='dark'] body {
+                color: #e4e4e7;
+                background: #18181b;
+            }
+            html[data-theme='dark'] a {
+                color: #93c5fd;
+            }
+            html[data-theme='dark'] blockquote {
+                color: #a1a1aa;
+                border-left-color: #52525b;
+            }
+            html[data-theme='dark'] hr,
+            html[data-theme='dark'] td,
+            html[data-theme='dark'] th {
+                border-color: #3f3f46;
+            }
+        `;
     }
 
     async cancel() {
@@ -2413,7 +2682,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             }
         ];
         const headerToolbar = new ElasticToolbarWidget(buttons);
-        headerToolbar.classList.add('pl-3', 'pr-16', 'align-left', 'mailbox-header');
+        headerToolbar.classList.add('align-left', 'mailbox-header', 'mailbox-compose-toolbar');
 
         this.innerHTML = '';
         this.appendChild(headerToolbar);
@@ -2422,25 +2691,25 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             'beforeend',
             `
         <!-- 邮件编辑区（布局与阅读界面一致：工具栏固定顶部，此处 flex-1 min-h-0 使内容区单独滚动） -->
-        <div class="flex-1 min-h-0 overflow-y-auto p-4 bg-white flex flex-col">
+        <div class="mailbox-compose-scroll flex-1 min-h-0 overflow-y-auto px-5 py-4 bg-white flex flex-col">
             <div class="w-full max-w-5xl mx-auto flex-1 flex flex-col">
-                <div class="w-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden font-sans mb-3">
+                <div class="mailbox-compose-fields w-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden font-sans mb-3">
 
-                    <div class="flex items-center px-4 border-b border-gray-100 min-h-[46px]">
-                        <span class="text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">收件人</span>
+                    <div class="mailbox-compose-field-row flex items-center px-4 border-b border-gray-100 min-h-[46px]">
+                        <span class="mailbox-compose-field-label text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">收件人</span>
 
                         <div class="flex-1 ml-2 mr-4">
                             <input id="to" value="" class="w-full" placeholder="">
                         </div>
 
-                        <div class="text-xs text-gray-400 space-x-2 flex-shrink-0 select-none">
+                        <div class="mailbox-compose-recipient-actions text-xs text-gray-400 space-x-2 flex-shrink-0 select-none">
                             <span id="btn-cc" onclick="toggleRow('cc')" class="cursor-pointer hover:text-gray-800 transition-colors">抄送</span>
                             <span id="btn-bcc" onclick="toggleRow('bcc')" class="cursor-pointer hover:text-gray-800 transition-colors">密送</span>
                         </div>
                     </div>
 
-                    <div id="row-cc" class="hidden flex items-center px-4 border-b border-gray-100 min-h-[46px]">
-                        <span class="text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">抄送</span>
+                    <div id="row-cc" class="mailbox-compose-field-row hidden flex items-center px-4 border-b border-gray-100 min-h-[46px]">
+                        <span class="mailbox-compose-field-label text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">抄送</span>
                         <div class="flex-1 ml-2 mr-4">
                             <input id="cc" value="" class="w-full" placeholder="">
                         </div>
@@ -2452,8 +2721,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         </button>
                     </div>
 
-                    <div id="row-bcc" class="hidden flex items-center px-4 border-b border-gray-100 min-h-[46px]">
-                        <span class="text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">密送</span>
+                    <div id="row-bcc" class="mailbox-compose-field-row hidden flex items-center px-4 border-b border-gray-100 min-h-[46px]">
+                        <span class="mailbox-compose-field-label text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">密送</span>
                         <div class="flex-1 ml-2 mr-4">
                             <input id="bcc" value="" class="w-full" placeholder="">
                         </div>
@@ -2465,14 +2734,14 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         </button>
                     </div>
 
-                    <div class="flex items-center px-4 min-h-[50px]">
-                        <div class="text-sm text-gray-600 font-medium w-14 flex justify-between cursor-default mr-2">
+                    <div class="mailbox-compose-field-row flex items-center px-4 min-h-[50px]">
+                        <div class="mailbox-compose-field-label text-sm text-gray-600 font-medium w-14 flex justify-between cursor-default mr-2">
                             <span>主&nbsp题</span>
                         </div>
                         <input type="text" id="subject"
                             class="flex-1 bg-transparent outline-none text-sm font-medium text-gray-900 h-9 placeholder-gray-400"
                             placeholder="" value="">
-                        <span class="text-xs text-gray-300 font-light ml-2 whitespace-nowrap">
+                        <span class="mailbox-compose-date text-xs text-gray-300 font-light ml-2 whitespace-nowrap">
                             ${new Date().toLocaleString()}
                         </span>
                     </div>
@@ -2571,6 +2840,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             // 【关键配置】TinyMCE 7.x 需要的配置
             skin: false, // 不动态加载皮肤（已在顶部 import）
             content_css: false, // 不动态加载内容样式（已在顶部 import）
+            content_style: this.getEditorContentStyle(),
             license_key: 'gpl', // 声明为 GPL 开源使用（避免弹窗）
             highlight_on_focus: false,
 
@@ -2638,6 +2908,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             // 回调
             init_instance_callback: (editor) => {
                 console.log('编辑器加载完成！');
+                this.syncEditorTheme();
                 editor.on('focus', () => {
                     try {
                         const Alpine = window.Alpine;

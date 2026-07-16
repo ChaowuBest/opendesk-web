@@ -857,6 +857,20 @@ export const zhCn: Record<string, string> = {
     'search.result.chars': '${count} 字符',
     'search.result.papers': '${count} 篇论文',
 
+    // Renderer - Mailbox
+    'renderer.mailbox.filter.all': '全部',
+    'renderer.mailbox.filter.unread': '未读',
+    'renderer.mailbox.filter.starred': '收藏',
+    'renderer.mailbox.filter.draft': '草稿',
+    'renderer.mailbox.filter.sent': '已发送',
+    'renderer.mailbox.attachment.open': '打开',
+    'renderer.mailbox.attachment.saveAs': '另存为',
+    'renderer.mailbox.attachment.saveAll': '全部保存',
+    'renderer.mailbox.attachment.remove': '移除附件',
+    'renderer.mailbox.attachment.count': '附件（${count}）',
+    'renderer.mailbox.attachment.actionFailed': '附件操作失败',
+    'renderer.mailbox.attachment.actionFailedDetail': '请确认附件文件仍然存在，然后重试。',
+
     // Renderer - Settings
     'renderer.settings.memorySystem': '记忆系统',
     'renderer.settings.developerMode': '开发者模式',
