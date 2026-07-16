@@ -1289,9 +1289,9 @@ export class SendNodeFileTool extends NodeCommandTool<typeof SendNodeFileSchema>
 
 const NodeEditFileSchema = z.object({
     nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
-    filePath: z.string().min(1).describe('node 上要修改或创建的文件路径'),
-    oldString: z.string().describe('要替换的原始文本。使用空字符串可创建新文件'),
-    newString: z.string().describe('替换后的新文本。当创建新文件时，此参数将成为文件内容'),
+    filePath: z.string().min(1).describe('node 上要修改的文件路径'),
+    oldString: z.string().min(1, 'oldString 不能为空').describe('要替换的原始文本'),
+    newString: z.string().describe('替换后的新文本'),
     expectedReplacements: z.number().int().min(1).optional().describe('预期替换次数，默认 1')
 });
 
@@ -1300,7 +1300,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
         super(
             app,
             'editNodeFile',
-            '在指定或默认 node 的文件中执行精确文本替换。通过 nodeId 选择目标节点。也可用空 oldString 创建 node 上的新文件。',
+            '在指定或默认 node 的文件中执行精确文本替换。通过 nodeId 选择目标节点。',
             NodeEditFileSchema,
             NODE_FILE_COMMANDS.editText
         );
@@ -1316,27 +1316,22 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
         const filePath = args?.filePath;
         const oldString = args?.oldString;
         const newString = args?.newString;
-        const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? '创建文件' : '编辑文件';
         if (
-            !isNewFile &&
             oldString &&
             newString !== undefined &&
             filePath &&
             (toolcall.status === 'success' || toolcall.status === 'running')
         ) {
-            return renderNodeDiffCard(title, filePath, oldString, newString, toolcall.status, 12, args?.nodeId);
+            return renderNodeDiffCard('编辑文件', filePath, oldString, newString, toolcall.status, 12, args?.nodeId);
         }
         const detailParts = [];
         if (filePath) detailParts.push(filePath);
-        if (isNewFile && toolcall.status === 'success' && newString) {
-            detailParts.push(`${newString.length.toLocaleString()} 字符`);
-        } else if (!isNewFile && oldString && newString !== undefined) {
+        if (oldString && newString !== undefined) {
             detailParts.push(`${args?.expectedReplacements || 1} 处替换`);
         }
         return renderNodeInlineTool({
-            icon: isNewFile ? 'fas fa-file-circle-plus' : 'fas fa-scissors',
-            title,
+            icon: 'fas fa-scissors',
+            title: '编辑文件',
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
             detailTitle: filePath,
@@ -1348,30 +1343,24 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
         const args = toolcall.args_object as z.output<typeof NodeEditFileSchema> | undefined;
         const oldString = args?.oldString;
         const newString = args?.newString;
-        const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? '创建文件' : '编辑文件';
         const body: string[] = [];
         if (args?.filePath) body.push(chalk.yellow(truncText(args.filePath, Math.max(8, width - 8))));
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 编辑中…'));
         } else if (toolcall.status === 'success') {
-            if (isNewFile) {
-                body.push(chalk.dim('  ✅ 新文件已创建'));
-            } else {
-                const expectedReplacements = args?.expectedReplacements || 1;
-                body.push(chalk.dim(`  ✅ 已完成 ${expectedReplacements} 处替换`));
-                if (oldString && newString !== undefined) {
-                    const diffLines = renderDiffOutput(oldString, newString, width);
-                    if (diffLines.length > 0) {
-                        body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
-                        body.push(...diffLines);
-                    }
+            const expectedReplacements = args?.expectedReplacements || 1;
+            body.push(chalk.dim(`  ✅ 已完成 ${expectedReplacements} 处替换`));
+            if (oldString && newString !== undefined) {
+                const diffLines = renderDiffOutput(oldString, newString, width);
+                if (diffLines.length > 0) {
+                    body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                    body.push(...diffLines);
                 }
             }
         }
         return new Card({
-            icon: isNewFile ? '📄' : '✂️',
-            title: nodeTitle(title, args?.nodeId),
+            icon: '✂️',
+            title: nodeTitle('编辑文件', args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);

@@ -45,7 +45,8 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    | { ok: true }
+    | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -1655,13 +1656,14 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
 // ==================== EditFile 工具 ====================
 
 const editFileSchema = z.object({
-    filePath: z.string().describe('要修改或创建的文件路径，可以使用工作区相对路径或绝对路径'),
+    filePath: z.string().describe('要修改的文件路径，可以使用工作区相对路径或绝对路径'),
     oldString: z
         .string()
+        .min(1, 'oldString 不能为空，创建新文件请使用 writeFile 工具')
         .describe(
-            '要替换的原始文本（必须与文件内容完全匹配，包括所有空白和缩进）。对于单次替换，建议在目标文本前后各包含至少3行上下文。使用空字符串可创建新文件'
+            '要替换的原始文本（必须与文件内容完全匹配，包括所有空白和缩进）。对于单次替换，建议在目标文本前后各包含至少3行上下文'
         ),
-    newString: z.string().describe('替换后的新文本。当创建新文件时（oldString 为空），此参数将成为文件内容'),
+    newString: z.string().describe('替换后的新文本'),
     expectedReplacements: z
         .number()
         .min(1)
@@ -1673,7 +1675,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
     constructor() {
         super(
             'editFile',
-            '在现有文件中进行文本替换操作，支持字面字符串替换，可处理多次出现的替换。也可用于创建新文件（当 oldString 为空时）。这是对文件进行精确、针对性修改的首选工具',
+            '在现有文件中进行文本替换操作，支持字面字符串替换，可处理多次出现的替换。这是对文件进行精确、针对性修改的首选工具。创建新文件请使用 writeFile 工具',
             editFileSchema
         );
 
@@ -1683,9 +1685,6 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
     getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const p = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         if (!p) return [];
-        if (args.oldString === '') {
-            return [{ resourceType: 'file', action: 'write', resourcePath: p }];
-        }
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
             { resourceType: 'file', action: 'write', resourcePath: p }
@@ -1696,9 +1695,8 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const filePath = toolcall.args_object?.['filePath'] as string | undefined;
         const oldString = toolcall.args_object?.['oldString'] as string | undefined;
         const newString = toolcall.args_object?.['newString'] as string | undefined;
-        const isNewFile = oldString === '' || oldString === undefined;
 
-        if (!isNewFile && oldString && newString !== undefined && filePath) {
+        if (oldString && newString !== undefined && filePath) {
             const resultStr = toolcall.result as string | undefined;
             const isError = resultStr ? resultStr.startsWith('错误:') : false;
             if ((toolcall.status === 'success' || toolcall.status === 'running') && !isError) {
@@ -1706,33 +1704,15 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             }
         }
 
-        if (isNewFile && filePath && newString && isPreviewableFile(filePath) && toolcall.status !== 'error') {
-            const stat = toolcall.status === 'success' ? `${newString.length.toLocaleString()} 字符` : undefined;
-            return renderPreviewCard({
-                icon: 'fas fa-file-circle-plus',
-                title: t('filemgr.createFile.name'),
-                status: toolcall.status,
-                filePath,
-                content: newString,
-                detail: stat
-            });
-        }
-
-        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
         let detail = filePath ? escapeHtml(filePath) : '';
-        if (isNewFile) {
-            if (toolcall.status === 'success' && newString) {
-                const charCount = newString.length;
-                detail += ` · ${charCount.toLocaleString()} 字符`;
-            }
-        } else if (oldString && newString !== undefined) {
+        if (oldString && newString !== undefined) {
             const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
             detail += ` · ${expectedReplacements} 处替换`;
         }
 
         return renderInlineTool({
-            icon: isNewFile ? 'fas fa-file-circle-plus' : 'fas fa-scissors',
-            title,
+            icon: 'fas fa-scissors',
+            title: t('filemgr.editFile.name'),
             status: toolcall.status,
             detail,
             editorFilePath: filePath || undefined
@@ -1755,8 +1735,6 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             const resultStr = toolcall.result as string | undefined;
             if (resultStr && resultStr.startsWith('错误:')) {
                 body.push(chalk.red(`  ✗ ${truncText(resultStr, width - 6)}`));
-            } else if (oldString === '' || oldString === undefined) {
-                body.push(chalk.dim('  ✅ 新文件已创建'));
             } else {
                 const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
                 body.push(chalk.dim(`  ✅ 已完成 ${expectedReplacements} 处替换`));
@@ -1771,11 +1749,9 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             }
         }
 
-        const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
         return new Card({
-            icon: isNewFile ? '📄' : '✂️',
-            title: title,
+            icon: '✂️',
+            title: t('filemgr.editFile.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -1787,16 +1763,6 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
         if (!validation.ok) {
             return validation.message;
-        }
-
-        if (oldString === '') {
-            const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            await fs.promises.writeFile(filePath, trimTrailingWhitespace(newString), 'utf8');
-            clearReadFileState(taskState, filePath);
-            return `文件已创建: ${filePath}`;
         }
 
         let content: string;

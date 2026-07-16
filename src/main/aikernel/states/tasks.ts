@@ -1350,31 +1350,7 @@ export class TaskState {
                 const oldString = (args as any).oldString;
                 const newString = (args as any).newString;
                 if (typeof oldString !== 'string' || typeof newString !== 'string') return null;
-                if (oldString === '' && newString === '') return null;
-
-                // For new file creation (oldString is empty), treat as writeFile
-                if (oldString === '') {
-                    const lines = newString.split('\n');
-                    const hunks: DiffHunk[] = [
-                        {
-                            oldStart: 0,
-                            oldLines: 0,
-                            newStart: 1,
-                            newLines: lines.length,
-                            lines: lines.map((line: string, i: number) => ({
-                                type: 'added' as const,
-                                newNum: i + 1,
-                                content: line
-                            }))
-                        }
-                    ];
-                    return {
-                        toolName: toolName === 'editFile' ? 'editFile (新建)' : 'searchReplace (新建)',
-                        hunks,
-                        addedLines: lines.length,
-                        removedLines: 0
-                    };
-                }
+                if (oldString === '') return null;
 
                 // Compute diff between oldString and newString
                 return this._buildDiffEntry(toolName, oldString, newString);
