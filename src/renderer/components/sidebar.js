@@ -286,19 +286,25 @@ class SideBar extends HTMLElement {
         popover.classList.add('sb-app-popover-visible');
         appsBtn.classList.add('sb-nav-btn-active');
 
-        const btnRect = appsBtn.getBoundingClientRect();
+        // 初始 offscreen 定位，避免 popover 在 DOM 默认位置闪现一帧
         popover.style.position = 'fixed';
-        popover.style.left = `${btnRect.left}px`;
-        popover.style.top = `${btnRect.bottom + 4}px`;
+        popover.style.left = '-9999px';
+        popover.style.top = '-9999px';
 
         requestAnimationFrame(() => {
+            // 在同一帧内获取按钮和 popover 的 rect，避免 CSS transition 时序差
+            const btnRect = appsBtn.getBoundingClientRect();
             const popRect = popover.getBoundingClientRect();
-            if (popRect.right > window.innerWidth) {
-                popover.style.left = `${window.innerWidth - popRect.width - 8}px`;
+            let left = btnRect.left;
+            let top = btnRect.bottom + 4;
+            if (left + popRect.width > window.innerWidth) {
+                left = window.innerWidth - popRect.width - 8;
             }
-            if (popRect.bottom > window.innerHeight) {
-                popover.style.top = `${btnRect.top - popRect.height - 4}px`;
+            if (top + popRect.height > window.innerHeight) {
+                top = btnRect.top - popRect.height - 4;
             }
+            popover.style.left = `${left}px`;
+            popover.style.top = `${top}px`;
         });
     }
 
@@ -309,19 +315,25 @@ class SideBar extends HTMLElement {
         popover.classList.remove('sb-app-popover-hidden');
         popover.classList.add('sb-app-popover-visible');
 
-        const btnRect = anchorBtn.getBoundingClientRect();
+        // 初始 offscreen 定位，避免 popover 在 DOM 默认位置闪现一帧
         popover.style.position = 'fixed';
-        popover.style.left = `${btnRect.right + 4}px`;
-        popover.style.top = `${btnRect.top}px`;
+        popover.style.left = '-9999px';
+        popover.style.top = '-9999px';
 
         requestAnimationFrame(() => {
+            // 在同一帧内获取按钮和 popover 的 rect，避免 CSS transition 时序差
+            const btnRect = anchorBtn.getBoundingClientRect();
             const popRect = popover.getBoundingClientRect();
-            if (popRect.right > window.innerWidth) {
-                popover.style.left = `${btnRect.left - popRect.width - 4}px`;
+            let left = btnRect.right + 4;
+            let top = btnRect.top;
+            if (left + popRect.width > window.innerWidth) {
+                left = btnRect.left - popRect.width - 4;
             }
-            if (popRect.bottom > window.innerHeight) {
-                popover.style.top = `${window.innerHeight - popRect.height - 8}px`;
+            if (top + popRect.height > window.innerHeight) {
+                top = window.innerHeight - popRect.height - 8;
             }
+            popover.style.left = `${left}px`;
+            popover.style.top = `${top}px`;
         });
     }
 
@@ -331,6 +343,10 @@ class SideBar extends HTMLElement {
         if (popover) {
             popover.classList.add('sb-app-popover-hidden');
             popover.classList.remove('sb-app-popover-visible');
+            // 清除 inline style，避免残留影响下次定位
+            popover.style.position = '';
+            popover.style.left = '';
+            popover.style.top = '';
         }
         if (appsBtn) {
             appsBtn.classList.remove('sb-nav-btn-active');
@@ -345,7 +361,7 @@ class SideBar extends HTMLElement {
                 <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start flex-1 min-w-0">
                     <span id="sidebar-banner" class="font-bold text-lg" style="color: var(--od-text);">OpenDesk</span>
-                    <p class="text-xs mt-0.5 text-gray-500">一站式智慧办公空间</p>
+                    <p class="text-xs mt-0.5 text-gray-500 whitespace-nowrap">一站式智慧办公空间</p>
                 </div>
                 <button
                     id="collapse-sidebar-btn"
@@ -396,14 +412,15 @@ class SideBar extends HTMLElement {
                 </button>
             </div>
 
-            <div id="app-popover" class="sb-app-popover sb-app-popover-hidden"></div>
-
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
 
             <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center py-3">
             </div>
         </div>
+
+        <!-- App popover（独立于展开/折叠容器，避免折叠时父容器 display:none 导致不可见） -->
+        <div id="app-popover" class="sb-app-popover sb-app-popover-hidden"></div>
 
         <!-- 折叠窄条 -->
         <div class="sb-collapsed-wrapper h-full flex flex-col items-center">

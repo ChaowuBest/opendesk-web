@@ -107,7 +107,7 @@ class SplitterWidget extends HTMLElement {
                     opacity 0.14s ease;
             }
             :host([collapsed]) #leftPanel {
-                width: 60px !important;
+                width: 50px !important;
                 overflow: hidden !important;
             }
             :host([collapsed]) .resizer {
