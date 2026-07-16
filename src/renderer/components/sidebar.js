@@ -49,6 +49,15 @@ class SideBar extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
+            this._dismissAppPopover();
+            this.dispatchEvent(
+                new CustomEvent('sidebar-collapse-request', {
+                    detail: { collapsed: true },
+                    bubbles: true
+                })
+            );
+        });
         window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
@@ -286,10 +295,21 @@ class SideBar extends HTMLElement {
         <div class="h-full flex flex-col">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
-                <div class="flex flex-col items-start">
+                <div class="flex flex-col items-start flex-1 min-w-0">
                     <span id="sidebar-banner" class="font-bold text-lg" style="color: var(--od-text);">OpenDesk</span>
                     <p class="text-xs mt-0.5 text-gray-500">一站式智慧办公空间</p>
                 </div>
+                <button
+                    id="collapse-sidebar-btn"
+                    class="sidebar-collapse-btn flex-shrink-0"
+                    type="button"
+                    title="${this._t('renderer.sidebar.collapse')}"
+                    aria-label="${this._t('renderer.sidebar.collapse')}"
+                    aria-controls="leftPanel"
+                    aria-expanded="true"
+                >
+                    <i class="fa-solid fa-table-columns"></i>
+                </button>
             </header>
 
             <!-- Search -->
@@ -406,6 +426,12 @@ class SideBar extends HTMLElement {
             if (el) {
                 el.textContent = label;
             }
+        }
+        const collapseButton = this.querySelector('#collapse-sidebar-btn');
+        if (collapseButton) {
+            const label = this._t('renderer.sidebar.collapse');
+            collapseButton.setAttribute('title', label);
+            collapseButton.setAttribute('aria-label', label);
         }
         const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
         if (toolbar?.setButtons) {

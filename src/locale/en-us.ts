@@ -965,6 +965,8 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.newTask': 'New Task',
     'renderer.sidebar.apps': 'Apps',
     'renderer.sidebar.skills': 'Skills',
+    'renderer.sidebar.collapse': 'Collapse sidebar',
+    'renderer.sidebar.expand': 'Expand sidebar',
     'renderer.toolbar.memory': 'Memory',
     'renderer.toolbar.fileSystem': 'File System',
     'renderer.toolbar.settings': 'Settings',

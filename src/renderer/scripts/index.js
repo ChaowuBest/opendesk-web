@@ -35,6 +35,7 @@ import '../components/agentgate-floating-window.js';
 import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';
 import { showConfirmModal } from '../components/confirmModal.ts';
+import { initializeSidebarLayout } from '../sidebarLayout.ts';
 
 // 本地化字符串映射
 const LOCALE_STRINGS = {
@@ -198,6 +199,7 @@ function installBrowserFocusDomainIsolation() {
 }
 
 installBrowserFocusDomainIsolation();
+initializeSidebarLayout();
 
 // 窗口可见性标志：组件可据此跳过非必要渲染以省电
 window.__isWindowVisible = true;

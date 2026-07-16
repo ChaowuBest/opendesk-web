@@ -22,7 +22,7 @@ class SplitterWidget extends HTMLElement {
     }
 
     static get observedAttributes() {
-        return ['initial-width'];
+        return ['initial-width', 'collapsed'];
     }
 
     connectedCallback() {
@@ -44,6 +44,18 @@ class SplitterWidget extends HTMLElement {
                 }
             }
         }
+        if (name === 'collapsed' && oldValue !== newValue && this.shadowRoot) {
+            this._syncCollapsedState();
+        }
+    }
+
+    isCollapsed() {
+        return this.hasAttribute('collapsed');
+    }
+
+    setCollapsed(collapsed) {
+        this.toggleAttribute('collapsed', !!collapsed);
+        this._syncCollapsedState();
     }
 
     render() {
@@ -65,6 +77,10 @@ class SplitterWidget extends HTMLElement {
                 min-width: 6px;
                 cursor: col-resize;
                 flex-shrink: 0;
+                transition:
+                    width 0.22s ease,
+                    min-width 0.22s ease,
+                    opacity 0.16s ease;
             }
             .resizer-center {
                 position: absolute;
@@ -83,6 +99,34 @@ class SplitterWidget extends HTMLElement {
             }
             .resizer:hover .resizer-indicator {
                 opacity: 1;
+            }
+            #leftPanel {
+                opacity: 1;
+                transition:
+                    width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+                    opacity 0.14s ease;
+            }
+            :host([collapsed]) #leftPanel {
+                width: 0 !important;
+                overflow: hidden !important;
+                opacity: 0;
+                pointer-events: none;
+            }
+            :host([collapsed]) .resizer {
+                width: 0;
+                min-width: 0;
+                opacity: 0;
+                pointer-events: none;
+            }
+            :host([resizing]) #leftPanel,
+            :host([resizing]) .resizer {
+                transition: none;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                #leftPanel,
+                .resizer {
+                    transition: none;
+                }
             }
         </style>
         <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: ${initialWidth}px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
@@ -111,6 +155,12 @@ class SplitterWidget extends HTMLElement {
             e.stopPropagation();
             this._resetToDefault();
         });
+
+        this._syncCollapsedState();
+    }
+
+    _syncCollapsedState() {
+        this.setAttribute('aria-expanded', String(!this.isCollapsed()));
     }
 
     _resetToDefault() {
@@ -131,8 +181,9 @@ class SplitterWidget extends HTMLElement {
     }
 
     _startResize() {
-        if (this._isResizing) return;
+        if (this._isResizing || this.isCollapsed()) return;
         this._isResizing = true;
+        this.setAttribute('resizing', '');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
         document.addEventListener('mousemove', this._onMouseMove);
@@ -147,6 +198,7 @@ class SplitterWidget extends HTMLElement {
     _stopResize() {
         if (!this._isResizing) return;
         this._isResizing = false;
+        this.removeAttribute('resizing');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         document.removeEventListener('mousemove', this._onMouseMove);

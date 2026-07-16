@@ -476,6 +476,21 @@ html[data-theme='dark'] .sb-nav-btn:hover,
 html[data-theme='dark'] .sb-nav-btn-active {
     background: var(--od-bg-muted) !important;
 }
+html[data-theme='dark'] .sidebar-collapse-btn:hover {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .sidebar-expand-rail:hover {
+    background: rgba(255, 255, 255, 0.035) !important;
+}
+html[data-theme='dark'] .sidebar-expand-rail-indicator {
+    background: rgba(255, 255, 255, 0.24) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32) !important;
+}
+html[data-theme='dark'] .sidebar-expand-rail:hover .sidebar-expand-rail-indicator {
+    background: rgba(255, 255, 255, 0.48) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+}
 html[data-theme='dark'] .sb-app-popover-visible {
     background: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border-strong) !important;

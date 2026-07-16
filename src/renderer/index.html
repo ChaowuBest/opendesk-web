@@ -73,6 +73,16 @@
                 <!-- 右侧面板 -->
                 <div id="rightPanel" slot="right" class="p-0 overflow-auto w-full h-full">
                     <div id="rightPanelInner" style="position: relative; width: 100%; height: 100%">
+                        <button
+                            id="expand-sidebar-btn"
+                            class="sidebar-expand-rail"
+                            type="button"
+                            aria-controls="leftPanel"
+                            aria-expanded="false"
+                            hidden
+                        >
+                            <span class="sidebar-expand-rail-indicator" aria-hidden="true"></span>
+                        </button>
                         <div id="nonAppSlot" class="w-full h-full">
                             <home-page id="home-page" class="h-full w-full" />
                         </div>
