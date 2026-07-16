@@ -16,7 +16,6 @@ import {
 } from './manager.js';
 import { MANAGE_APPS_SKILL } from './skills.js';
 import { APPMGR_APPGUIDE_SKILL } from './skills/appguide.js';
-import { GetAppInfoTool, InstallAppTool, ListAppsTool } from './tools.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { getPlatform } from '../../../platforms/base.js';
@@ -54,22 +53,12 @@ export class AppMgrApplication extends BaseApplication {
 
     async getSkills(): Promise<Skill[]> {
         const skill = Skill.parseMd(MANAGE_APPS_SKILL);
-        const toolset = new BaseToolset('manage-apps');
-        toolset.addTool(new InstallAppTool(this));
-        toolset.addTool(new ListAppsTool(this));
-        toolset.addTool(new GetAppInfoTool(this));
-        skill.toolsets = [toolset];
-
         const appguide = Skill.parseMd(APPMGR_APPGUIDE_SKILL);
         return [skill, appguide];
     }
 
     async getToolsets(): Promise<BaseToolset[]> {
-        const toolset = new BaseToolset('appmgr');
-        toolset.addTool(new InstallAppTool(this));
-        toolset.addTool(new ListAppsTool(this));
-        toolset.addTool(new GetAppInfoTool(this));
-        return [toolset];
+        return [];
     }
 
     installFromZip(zipPath: string) {
