@@ -899,6 +899,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.placeholder.enter': 'Type a message, press Enter to send',
     'renderer.agentInput.placeholder.ctrlEnter': 'Type a message, press Ctrl+Enter to send',
     'renderer.agentInput.modelRequired': 'Please choose a model before chatting',
+    'renderer.agentInput.model.visionTag': 'vision',
     'renderer.agentInput.submit.sendLabel': 'Send',
     'renderer.agentInput.submit.enterTitle': 'Send (Enter)',
     'renderer.agentInput.submit.ctrlEnterTitle': 'Send (Ctrl+Enter)',
