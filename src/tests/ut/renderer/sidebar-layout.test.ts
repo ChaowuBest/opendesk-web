@@ -6,6 +6,7 @@ describe('desktop sidebar layout', () => {
         const { window, document } = parseHTML(`
             <div id="app-root">
                 <splitter-widget></splitter-widget>
+                <main-sidebar id="main-sidebar"></main-sidebar>
                 <button id="expand-sidebar-btn" class="sidebar-expand-rail" hidden></button>
             </div>
         `);
@@ -26,7 +27,7 @@ describe('desktop sidebar layout', () => {
         (window as any).settingAPI = undefined;
     });
 
-    test('collapses from the sidebar request and expands from the floating toolbar', async () => {
+    test('collapses from the sidebar request and expands from the rail button', async () => {
         const { initializeSidebarLayout } = await import('../../../renderer/sidebarLayout.js');
         const splitter = document.querySelector('splitter-widget') as HTMLElement & {
             setCollapsed: jest.Mock;
@@ -35,6 +36,7 @@ describe('desktop sidebar layout', () => {
 
         const controller = initializeSidebarLayout();
         const appRoot = document.getElementById('app-root')!;
+        const sidebar = document.getElementById('main-sidebar')!;
         const expandButton = document.getElementById('expand-sidebar-btn')!;
 
         document.dispatchEvent(
@@ -46,13 +48,14 @@ describe('desktop sidebar layout', () => {
 
         expect(splitter.setCollapsed).toHaveBeenLastCalledWith(true);
         expect(appRoot.classList.contains('sidebar-collapsed')).toBe(true);
+        expect(sidebar.hasAttribute('data-collapsed')).toBe(true);
         expect(expandButton.hidden).toBe(false);
-        expect(expandButton.getAttribute('title')).toBe('展开侧边栏');
 
         expandButton.click();
 
         expect(splitter.setCollapsed).toHaveBeenLastCalledWith(false);
         expect(appRoot.classList.contains('sidebar-collapsed')).toBe(false);
+        expect(sidebar.hasAttribute('data-collapsed')).toBe(false);
         expect(expandButton.hidden).toBe(true);
         controller?.destroy();
     });

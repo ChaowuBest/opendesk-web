@@ -1342,11 +1342,98 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
     outline-offset: 2px;
 }
 
+/* icon 内的 <i> 不拦截鼠标事件，确保 title 提示正常 */
+.sidebar-collapse-btn i,
+.sb-nav-btn i {
+    pointer-events: none;
+}
+
+/* ---- Collapsed sidebar narrow strip ---- */
+#app-root.sidebar-collapsed #leftPanel {
+    padding: 0 !important;
+}
+
+main-sidebar .sb-full-wrapper {
+    display: flex;
+}
+main-sidebar .sb-collapsed-wrapper {
+    display: none;
+}
+main-sidebar[data-collapsed] .sb-full-wrapper {
+    display: none;
+}
+main-sidebar[data-collapsed] .sb-collapsed-wrapper {
+    display: flex;
+}
+
+.sb-collapsed-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--od-text-muted);
+    font-size: 15px;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+.sb-collapsed-btn i {
+    pointer-events: none;
+}
+.sb-collapsed-btn:hover {
+    background: var(--od-bg-elevated);
+    color: var(--od-text);
+}
+.sb-collapsed-btn:active {
+    transform: scale(0.92);
+}
+
+.sb-collapsed-logo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
+}
+.sb-collapsed-logo-btn:hover {
+    background: var(--od-bg-elevated);
+}
+.sb-collapsed-logo-btn:active {
+    transform: scale(0.92);
+}
+.sb-collapsed-logo-btn img {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: block;
+}
+
+.sb-collapsed-top {
+    padding-top: 12px;
+}
+.sb-collapsed-bottom {
+    padding-bottom: 12px;
+}
+
 .sidebar-expand-rail {
     position: absolute;
     top: 0;
     bottom: 0;
-    left: -14px;
+    left: 0;
     z-index: 70;
     display: flex;
     align-items: center;
@@ -1393,9 +1480,6 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
 #rightPanel {
     box-sizing: border-box;
     transition: padding-left 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#app-root.sidebar-collapsed #rightPanel {
-    padding-left: 14px !important;
 }
 @keyframes sidebar-rail-enter {
     from {

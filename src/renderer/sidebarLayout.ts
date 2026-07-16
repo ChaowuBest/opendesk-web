@@ -9,8 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { createRendererTranslator } from './locale.js';
-
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'opendesk-sidebar-collapsed';
 
 type CollapsibleSplitter = HTMLElement & {
@@ -41,17 +39,12 @@ function storeCollapsedState(collapsed: boolean): void {
 export function initializeSidebarLayout(root: Document = document): SidebarLayoutController | null {
     const appRoot = root.getElementById('app-root');
     const splitter = root.querySelector('splitter-widget') as CollapsibleSplitter | null;
+    const sidebar = root.getElementById('main-sidebar');
     const expandButton = root.getElementById('expand-sidebar-btn');
 
-    if (!appRoot || !splitter || !expandButton) {
+    if (!appRoot || !splitter || !sidebar) {
         return null;
     }
-
-    const updateExpandButtonLabel = (setting?: Parameters<typeof createRendererTranslator>[0]): void => {
-        const label = createRendererTranslator(setting)('renderer.sidebar.expand');
-        expandButton.setAttribute('title', label);
-        expandButton.setAttribute('aria-label', label);
-    };
 
     const applyCollapsedState = (collapsed: boolean, persist = true): void => {
         if (typeof splitter.setCollapsed === 'function') {
@@ -60,8 +53,16 @@ export function initializeSidebarLayout(root: Document = document): SidebarLayou
             splitter.toggleAttribute('collapsed', collapsed);
         }
         appRoot.classList.toggle('sidebar-collapsed', collapsed);
-        expandButton.hidden = !collapsed;
-        expandButton.setAttribute('aria-expanded', String(!collapsed));
+        if (collapsed) {
+            sidebar.setAttribute('data-collapsed', '');
+        } else {
+            sidebar.removeAttribute('data-collapsed');
+        }
+        if (expandButton) {
+            expandButton.hidden = !collapsed;
+            expandButton.setAttribute('aria-expanded', String(!collapsed));
+            expandButton.setAttribute('title', '展开侧边栏');
+        }
         if (persist) {
             storeCollapsedState(collapsed);
         }
@@ -79,26 +80,18 @@ export function initializeSidebarLayout(root: Document = document): SidebarLayou
     const expandClickHandler = (): void => applyCollapsedState(false);
 
     root.addEventListener('sidebar-collapse-request', collapseRequestHandler);
-    expandButton.addEventListener('click', expandClickHandler);
+    if (expandButton) {
+        expandButton.addEventListener('click', expandClickHandler);
+    }
 
-    updateExpandButtonLabel();
     applyCollapsedState(readStoredCollapsedState(), false);
-
-    window.settingAPI
-        ?.loadSettingObject?.()
-        .then((setting) => updateExpandButtonLabel(setting))
-        .catch(() => {});
-    const unsubscribeSetting = window.settingAPI?.onSettingChanged?.((setting) => {
-        updateExpandButtonLabel(setting);
-    });
 
     return {
         setCollapsed: applyCollapsedState,
         destroy: () => {
             root.removeEventListener('sidebar-collapse-request', collapseRequestHandler);
-            expandButton.removeEventListener('click', expandClickHandler);
-            if (typeof unsubscribeSetting === 'function') {
-                unsubscribeSetting();
+            if (expandButton) {
+                expandButton.removeEventListener('click', expandClickHandler);
             }
         }
     };
