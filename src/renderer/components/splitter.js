@@ -9,13 +9,20 @@
  * See the Mulan PSL v2 for more details.
  */
 
+const DEFAULT_SIDEBAR_WIDTH = 340;
+
 class SplitterWidget extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
         this._isResizing = false;
+        this._defaultWidth = DEFAULT_SIDEBAR_WIDTH;
         this._onMouseMove = this._onMouseMove.bind(this);
         this._onMouseUp = this._onMouseUp.bind(this);
+    }
+
+    static get observedAttributes() {
+        return ['initial-width', 'collapsed'];
     }
 
     connectedCallback() {
@@ -26,8 +33,34 @@ class SplitterWidget extends HTMLElement {
         this._stopResize();
     }
 
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'initial-width' && oldValue !== newValue) {
+            const width = parseInt(newValue, 10);
+            if (!isNaN(width)) {
+                this._defaultWidth = width;
+                const leftPanel = this.shadowRoot.getElementById('leftPanel');
+                if (leftPanel) {
+                    leftPanel.style.width = width + 'px';
+                }
+            }
+        }
+        if (name === 'collapsed' && oldValue !== newValue && this.shadowRoot) {
+            this._syncCollapsedState();
+        }
+    }
+
+    isCollapsed() {
+        return this.hasAttribute('collapsed');
+    }
+
+    setCollapsed(collapsed) {
+        this.toggleAttribute('collapsed', !!collapsed);
+        this._syncCollapsedState();
+    }
+
     render() {
-        const initialWidth = this.getAttribute('initial-width') || '350';
+        this._defaultWidth = parseInt(this.getAttribute('initial-width'), 10) || DEFAULT_SIDEBAR_WIDTH;
+        const initialWidth = this._defaultWidth;
 
         this.shadowRoot.innerHTML = `
         <style>
@@ -44,6 +77,10 @@ class SplitterWidget extends HTMLElement {
                 min-width: 6px;
                 cursor: col-resize;
                 flex-shrink: 0;
+                transition:
+                    width 0.22s ease,
+                    min-width 0.22s ease,
+                    opacity 0.16s ease;
             }
             .resizer-center {
                 position: absolute;
@@ -62,6 +99,32 @@ class SplitterWidget extends HTMLElement {
             }
             .resizer:hover .resizer-indicator {
                 opacity: 1;
+            }
+            #leftPanel {
+                opacity: 1;
+                transition:
+                    width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+                    opacity 0.14s ease;
+            }
+            :host([collapsed]) #leftPanel {
+                width: 60px !important;
+                overflow: hidden !important;
+            }
+            :host([collapsed]) .resizer {
+                width: 0;
+                min-width: 0;
+                opacity: 0;
+                pointer-events: none;
+            }
+            :host([resizing]) #leftPanel,
+            :host([resizing]) .resizer {
+                transition: none;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                #leftPanel,
+                .resizer {
+                    transition: none;
+                }
             }
         </style>
         <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: ${initialWidth}px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
@@ -83,11 +146,42 @@ class SplitterWidget extends HTMLElement {
             e.stopPropagation();
             this._startResize();
         });
+
+        // 双击分割线恢复默认宽度
+        resizer.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._resetToDefault();
+        });
+
+        this._syncCollapsedState();
+    }
+
+    _syncCollapsedState() {
+        this.setAttribute('aria-expanded', String(!this.isCollapsed()));
+    }
+
+    _resetToDefault() {
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        if (!leftPanel) return;
+
+        const currentWidth = parseInt(leftPanel.style.width, 10);
+        if (currentWidth === this._defaultWidth) return;
+
+        leftPanel.style.width = this._defaultWidth + 'px';
+        this.dispatchEvent(
+            new CustomEvent('splitter-resize', {
+                detail: { width: this._defaultWidth },
+                bubbles: true,
+                composed: true
+            })
+        );
     }
 
     _startResize() {
-        if (this._isResizing) return;
+        if (this._isResizing || this.isCollapsed()) return;
         this._isResizing = true;
+        this.setAttribute('resizing', '');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
         document.addEventListener('mousemove', this._onMouseMove);
@@ -102,6 +196,7 @@ class SplitterWidget extends HTMLElement {
     _stopResize() {
         if (!this._isResizing) return;
         this._isResizing = false;
+        this.removeAttribute('resizing');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         document.removeEventListener('mousemove', this._onMouseMove);
@@ -109,6 +204,21 @@ class SplitterWidget extends HTMLElement {
         const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
         if (rightWrapper) {
             rightWrapper.style.pointerEvents = '';
+        }
+
+        // 拖拽结束时通知宽度变更
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        if (leftPanel) {
+            const width = parseInt(leftPanel.style.width, 10);
+            if (!isNaN(width)) {
+                this.dispatchEvent(
+                    new CustomEvent('splitter-resize', {
+                        detail: { width },
+                        bubbles: true,
+                        composed: true
+                    })
+                );
+            }
         }
     }
 

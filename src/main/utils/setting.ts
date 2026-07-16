@@ -207,6 +207,7 @@ const GUIConfigSchema = z.object({
     window_bounds: WindowBoundsSchema.optional()
         .default(null)
         .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存'),
+    sidebar_width: z.number().min(200).max(800).optional().default(320).describe('侧边栏宽度 (px)'),
     gui_reason_display: z
         .enum(['inline', 'bubble'])
         .optional()
@@ -310,6 +311,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             font_preset: 'default',
             ctrl_enter_send: false,
             window_bounds: null,
+            sidebar_width: 320,
             gui_reason_display: 'inline'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({

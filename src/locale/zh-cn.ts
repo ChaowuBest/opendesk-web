@@ -946,6 +946,8 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.newTask': '新任务',
     'renderer.sidebar.apps': '应用',
     'renderer.sidebar.skills': '技能',
+    'renderer.sidebar.collapse': '收起侧边栏',
+    'renderer.sidebar.expand': '展开侧边栏',
     'renderer.toolbar.memory': '记忆',
     'renderer.toolbar.fileSystem': '文件系统',
     'renderer.toolbar.settings': '设置',

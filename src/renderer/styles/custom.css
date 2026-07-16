@@ -1330,6 +1330,202 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
    Sidebar search bar
    ========================================= */
 
+.sidebar-collapse-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-top: 10px;
+    padding: 0;
+    color: color-mix(in srgb, var(--od-text-muted) 58%, transparent);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition:
+        color 0.15s ease,
+        background-color 0.15s ease,
+        border-color 0.15s ease,
+        transform 0.15s ease;
+}
+.sidebar-collapse-btn:hover {
+    color: var(--od-text-muted);
+    background: var(--od-bg-elevated);
+    border-color: var(--od-border);
+}
+.sidebar-collapse-btn i {
+    font-size: 13px;
+}
+.sidebar-collapse-btn:active {
+    transform: scale(0.94);
+}
+.sidebar-collapse-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: 2px;
+}
+
+/* icon 内的 <i> 不拦截鼠标事件，确保 title 提示正常 */
+.sidebar-collapse-btn i,
+.sb-nav-btn i {
+    pointer-events: none;
+}
+
+/* ---- Collapsed sidebar narrow strip ---- */
+#app-root.sidebar-collapsed #leftPanel {
+    padding: 0 !important;
+}
+
+main-sidebar .sb-full-wrapper {
+    display: flex;
+}
+main-sidebar .sb-collapsed-wrapper {
+    display: none;
+}
+main-sidebar[data-collapsed] .sb-full-wrapper {
+    display: none;
+}
+main-sidebar[data-collapsed] .sb-collapsed-wrapper {
+    display: flex;
+}
+
+.sb-collapsed-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--od-text-muted);
+    font-size: 15px;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+.sb-collapsed-btn i {
+    pointer-events: none;
+}
+.sb-collapsed-btn:hover {
+    background: var(--od-bg-elevated);
+    color: var(--od-text);
+}
+.sb-collapsed-btn:active {
+    transform: scale(0.92);
+}
+
+.sb-collapsed-logo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
+}
+.sb-collapsed-logo-btn:hover {
+    background: var(--od-bg-elevated);
+}
+.sb-collapsed-logo-btn:active {
+    transform: scale(0.92);
+}
+.sb-collapsed-logo-btn img {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: block;
+}
+
+.sb-collapsed-top {
+    padding-top: 12px;
+}
+.sb-collapsed-bottom {
+    padding-bottom: 12px;
+}
+
+.sidebar-expand-rail {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 100%;
+    padding: 0;
+    color: var(--od-text-muted);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    transition: background-color 0.18s ease;
+    animation: sidebar-rail-enter 0.18s ease-out;
+}
+.sidebar-expand-rail[hidden] {
+    display: none !important;
+}
+.sidebar-expand-rail-indicator {
+    width: 3px;
+    height: 48px;
+    background: color-mix(in srgb, var(--od-text-muted) 42%, transparent);
+    border-radius: 999px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    transition:
+        height 0.18s ease,
+        background-color 0.18s ease,
+        box-shadow 0.18s ease;
+}
+.sidebar-expand-rail:hover {
+    background: color-mix(in srgb, var(--od-text) 4%, transparent);
+}
+.sidebar-expand-rail:hover .sidebar-expand-rail-indicator {
+    height: 64px;
+    background: color-mix(in srgb, var(--od-text-muted) 72%, transparent);
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14);
+}
+.sidebar-expand-rail:active .sidebar-expand-rail-indicator {
+    height: 58px;
+}
+.sidebar-expand-rail:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--od-accent) 55%, transparent);
+}
+#rightPanel {
+    box-sizing: border-box;
+    transition: padding-left 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes sidebar-rail-enter {
+    from {
+        opacity: 0;
+        transform: translateX(-3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-expand-rail {
+        animation: none;
+    }
+    .sidebar-expand-rail-indicator {
+        transition: none;
+    }
+    #rightPanel {
+        transition: none;
+    }
+}
+
 /* ---- Search bar v2 ---- */
 .sb-search-v2 {
     display: flex;

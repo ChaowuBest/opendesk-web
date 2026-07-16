@@ -17,6 +17,10 @@ import { createRendererTranslator } from '../locale.ts';
 const TASK_PAGE_SIZE = 30;
 
 class SideBar extends HTMLElement {
+    static get observedAttributes() {
+        return ['data-collapsed'];
+    }
+
     constructor() {
         super();
 
@@ -45,10 +49,30 @@ class SideBar extends HTMLElement {
         this._developerMode = false;
         this._experimentalFeature = false;
         this._t = createRendererTranslator();
+        this._collapsed = false;
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'data-collapsed') {
+            const collapsed = newValue !== null;
+            if (collapsed !== this._collapsed) {
+                this._collapsed = collapsed;
+                this._updateBannerForTheme();
+            }
+        }
     }
 
     connectedCallback() {
         this.render();
+        this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
+            this._dismissAppPopover();
+            this.dispatchEvent(
+                new CustomEvent('sidebar-collapse-request', {
+                    detail: { collapsed: true },
+                    bubbles: true
+                })
+            );
+        });
         window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
@@ -158,6 +182,10 @@ class SideBar extends HTMLElement {
         if (iconEl) {
             iconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
         }
+        const collapsedIconEl = this.querySelector('#sidebar-icon-collapsed');
+        if (collapsedIconEl) {
+            collapsedIconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
+        }
     }
 
     setUpEventListeners() {
@@ -229,7 +257,12 @@ class SideBar extends HTMLElement {
         });
         this._appPopoverDismissHandler = (e) => {
             const path = e.composedPath();
-            if (!path.includes(popover) && !path.includes(appsBtn)) {
+            const collapsedAppsBtn = this.querySelector('#sb-collapsed-apps');
+            if (
+                !path.includes(popover) &&
+                !path.includes(appsBtn) &&
+                !(collapsedAppsBtn && path.includes(collapsedAppsBtn))
+            ) {
                 this._dismissAppPopover();
             }
         };
@@ -269,6 +302,29 @@ class SideBar extends HTMLElement {
         });
     }
 
+    _showAppPopoverAt(anchorBtn) {
+        const popover = this.querySelector('#app-popover');
+        if (!popover || !anchorBtn) return;
+
+        popover.classList.remove('sb-app-popover-hidden');
+        popover.classList.add('sb-app-popover-visible');
+
+        const btnRect = anchorBtn.getBoundingClientRect();
+        popover.style.position = 'fixed';
+        popover.style.left = `${btnRect.right + 4}px`;
+        popover.style.top = `${btnRect.top}px`;
+
+        requestAnimationFrame(() => {
+            const popRect = popover.getBoundingClientRect();
+            if (popRect.right > window.innerWidth) {
+                popover.style.left = `${btnRect.left - popRect.width - 4}px`;
+            }
+            if (popRect.bottom > window.innerHeight) {
+                popover.style.top = `${window.innerHeight - popRect.height - 8}px`;
+            }
+        });
+    }
+
     _dismissAppPopover() {
         const popover = this.querySelector('#app-popover');
         const appsBtn = this.querySelector('#open-apps-btn');
@@ -283,13 +339,25 @@ class SideBar extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="h-full flex flex-col">
+        <!-- 完整侧边栏 -->
+        <div class="sb-full-wrapper h-full flex flex-col">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
-                <div class="flex flex-col items-start">
+                <div class="flex flex-col items-start flex-1 min-w-0">
                     <span id="sidebar-banner" class="font-bold text-lg" style="color: var(--od-text);">OpenDesk</span>
                     <p class="text-xs mt-0.5 text-gray-500">一站式智慧办公空间</p>
                 </div>
+                <button
+                    id="collapse-sidebar-btn"
+                    class="sidebar-collapse-btn flex-shrink-0"
+                    type="button"
+                    title="${this._t('renderer.sidebar.collapse')}"
+                    aria-label="${this._t('renderer.sidebar.collapse')}"
+                    aria-controls="leftPanel"
+                    aria-expanded="true"
+                >
+                    <i class="fa-solid fa-table-columns"></i>
+                </button>
             </header>
 
             <!-- Search -->
@@ -305,6 +373,7 @@ class SideBar extends HTMLElement {
                 <button
                     id="create-task-btn"
                     class="sb-nav-btn"
+                    title="${this._t('renderer.sidebar.newTask')}"
                 >
                     <i class="fa-solid fa-house" style="font-size: 12px;"></i>
                     <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
@@ -312,6 +381,7 @@ class SideBar extends HTMLElement {
                 <button
                     id="open-apps-btn"
                     class="sb-nav-btn"
+                    title="${this._t('renderer.sidebar.apps')}"
                 >
                     <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
                     <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
@@ -319,6 +389,7 @@ class SideBar extends HTMLElement {
                 <button
                     id="open-skills-btn"
                     class="sb-nav-btn"
+                    title="${this._t('renderer.sidebar.skills')}"
                 >
                     <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
                     <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
@@ -333,10 +404,37 @@ class SideBar extends HTMLElement {
             <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center py-3">
             </div>
         </div>
+
+        <!-- 折叠窄条 -->
+        <div class="sb-collapsed-wrapper h-full flex flex-col items-center">
+            <div class="sb-collapsed-top flex flex-col items-center gap-3 flex-1 pt-4">
+                <button id="sb-collapsed-logo" class="sb-collapsed-logo-btn" title="${this._t('renderer.sidebar.expand')}">
+                    <img id="sidebar-icon-collapsed" src="./images/icon_round.png" alt="OpenDesk" />
+                </button>
+                <button id="sb-collapsed-new-task" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.newTask')}">
+                    <i class="fa-solid fa-house"></i>
+                </button>
+                <button id="sb-collapsed-apps" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.apps')}">
+                    <i class="fa-solid fa-th-large"></i>
+                </button>
+                <button id="sb-collapsed-skills" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.skills')}">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                </button>
+            </div>
+            <div class="sb-collapsed-bottom flex flex-col items-center gap-3 pb-4">
+                <button id="sb-collapsed-settings" class="sb-collapsed-btn" title="${this._t('renderer.toolbar.settings')}">
+                    <i class="fa-solid fa-cog"></i>
+                </button>
+                <button id="sb-collapsed-personal" class="sb-collapsed-btn" title="${this._t('renderer.toolbar.personalCenter')}">
+                    <i class="fa-solid fa-user-circle"></i>
+                </button>
+            </div>
+        </div>
         `;
         this._createBottomToolbar();
         this.reloadApplicationList();
         this._updateBannerForTheme();
+        this._bindCollapsedButtons();
     }
 
     _getBottomToolbarButtons() {
@@ -395,17 +493,73 @@ class SideBar extends HTMLElement {
         }
     }
 
+    _bindCollapsedButtons() {
+        this.querySelector('#sb-collapsed-logo')?.addEventListener('click', () => {
+            this.dispatchEvent(
+                new CustomEvent('sidebar-collapse-request', {
+                    detail: { collapsed: false },
+                    bubbles: true
+                })
+            );
+        });
+
+        this.querySelector('#sb-collapsed-new-task')?.addEventListener('click', () => {
+            this.currentTaskId = null;
+            window.globalControlAPI.openHomePage();
+        });
+
+        this.querySelector('#sb-collapsed-apps')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const popover = this.querySelector('#app-popover');
+            const btn = this.querySelector('#sb-collapsed-apps');
+            if (!popover || !btn) return;
+            const isVisible = !popover.classList.contains('sb-app-popover-hidden');
+            if (isVisible) {
+                this._dismissAppPopover();
+            } else {
+                this._showAppPopoverAt(btn);
+            }
+        });
+
+        this.querySelector('#sb-collapsed-skills')?.addEventListener('click', () => {
+            window.globalControlAPI.openApplication('skillmgr');
+        });
+
+        this.querySelector('#sb-collapsed-settings')?.addEventListener('click', () => {
+            window.globalControlAPI.openSettingEditor();
+        });
+
+        this.querySelector('#sb-collapsed-personal')?.addEventListener('click', () => {
+            window.globalControlAPI.openPersonalCenter();
+        });
+    }
+
     _updateLocalizedChrome() {
         const labelMap = {
             'new-task': this._t('renderer.sidebar.newTask'),
             apps: this._t('renderer.sidebar.apps'),
             skills: this._t('renderer.sidebar.skills')
         };
+        const btnIdMap = {
+            'new-task': 'create-task-btn',
+            apps: 'open-apps-btn',
+            skills: 'open-skills-btn'
+        };
         for (const [key, label] of Object.entries(labelMap)) {
             const el = this.querySelector(`[data-sidebar-label="${key}"]`);
             if (el) {
                 el.textContent = label;
             }
+            const btn = this.querySelector(`#${btnIdMap[key]}`);
+            if (btn) {
+                btn.setAttribute('title', label);
+            }
+        }
+        const collapseButton = this.querySelector('#collapse-sidebar-btn');
+        if (collapseButton) {
+            const label = this._t('renderer.sidebar.collapse');
+            collapseButton.setAttribute('title', label);
+            collapseButton.setAttribute('aria-label', label);
         }
         const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
         if (toolbar?.setButtons) {
