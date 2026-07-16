@@ -9,13 +9,20 @@
  * See the Mulan PSL v2 for more details.
  */
 
+const DEFAULT_SIDEBAR_WIDTH = 320;
+
 class SplitterWidget extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
         this._isResizing = false;
+        this._defaultWidth = DEFAULT_SIDEBAR_WIDTH;
         this._onMouseMove = this._onMouseMove.bind(this);
         this._onMouseUp = this._onMouseUp.bind(this);
+    }
+
+    static get observedAttributes() {
+        return ['initial-width'];
     }
 
     connectedCallback() {
@@ -26,8 +33,22 @@ class SplitterWidget extends HTMLElement {
         this._stopResize();
     }
 
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'initial-width' && oldValue !== newValue) {
+            const width = parseInt(newValue, 10);
+            if (!isNaN(width)) {
+                this._defaultWidth = width;
+                const leftPanel = this.shadowRoot.getElementById('leftPanel');
+                if (leftPanel) {
+                    leftPanel.style.width = width + 'px';
+                }
+            }
+        }
+    }
+
     render() {
-        const initialWidth = this.getAttribute('initial-width') || '350';
+        this._defaultWidth = parseInt(this.getAttribute('initial-width'), 10) || DEFAULT_SIDEBAR_WIDTH;
+        const initialWidth = this._defaultWidth;
 
         this.shadowRoot.innerHTML = `
         <style>
@@ -83,6 +104,30 @@ class SplitterWidget extends HTMLElement {
             e.stopPropagation();
             this._startResize();
         });
+
+        // 双击分割线恢复默认宽度
+        resizer.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._resetToDefault();
+        });
+    }
+
+    _resetToDefault() {
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        if (!leftPanel) return;
+
+        const currentWidth = parseInt(leftPanel.style.width, 10);
+        if (currentWidth === this._defaultWidth) return;
+
+        leftPanel.style.width = this._defaultWidth + 'px';
+        this.dispatchEvent(
+            new CustomEvent('splitter-resize', {
+                detail: { width: this._defaultWidth },
+                bubbles: true,
+                composed: true
+            })
+        );
     }
 
     _startResize() {
@@ -109,6 +154,21 @@ class SplitterWidget extends HTMLElement {
         const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
         if (rightWrapper) {
             rightWrapper.style.pointerEvents = '';
+        }
+
+        // 拖拽结束时通知宽度变更
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        if (leftPanel) {
+            const width = parseInt(leftPanel.style.width, 10);
+            if (!isNaN(width)) {
+                this.dispatchEvent(
+                    new CustomEvent('splitter-resize', {
+                        detail: { width },
+                        bubbles: true,
+                        composed: true
+                    })
+                );
+            }
         }
     }
 
