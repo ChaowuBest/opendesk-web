@@ -1292,8 +1292,6 @@ ${preScanSection}`;
 > ${testCase.prompt}
 
 请务必调用该技能提供的工具来完成上述任务，不要仅做文字分析。
-若该技能提供了内部工具，通过 CallSkillTool 工具调用来完成任务，
-- 参数：bundleName="${bundleName}", skillName="${skillName}"，toolName 和 toolArgs 根据 SKILL.md 中列出的内部工具确定。
 如果技能所需要的二进制命令或者Python包，NPM包等三方依赖找不到，请尽量尝试自主安装。
 如果技能所需要的环境变量不存在则直接报错。
 
