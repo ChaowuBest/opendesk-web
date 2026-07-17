@@ -20,8 +20,6 @@ import FileManagerWorker from './worker';
 import { extractText as extractFileTextDirect } from './parser/extract.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
-import { buildFileNavigationSkill } from './skills.js';
-import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 import './harness/index.js';
 
@@ -174,11 +172,6 @@ class FileMgrApplication extends BaseApplication {
         );
 
         return [toolset];
-    }
-
-    async getSkills() {
-        const semanticSearchAvailable = Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
-        return [Skill.parseMd(buildFileNavigationSkill({ semanticSearchAvailable }))];
     }
 
     openPath(filePath) {

@@ -1004,8 +1004,6 @@ export const zhCn: Record<string, string> = {
     'filemgr.semanticSearch.result.chunk': '片段',
     'filemgr.semanticSearch.result.noChunk': '未命中内容片段，标题或路径匹配',
     'filemgr.semanticSearch.result.more': '已显示 ${shown} 条结果，索引中还有更多候选（总命中 ${total}）',
-    'filemgr.semanticSearch.result.readHint':
-        '如果需要获取某个匹配文件的文本内容，请使用完整文件路径调用 extractText。',
     'filemgr.semanticSearch.result.countSuffix': '条结果',
     'filemgr.semanticSearch.result.found': '找到 ${count} 条结果',
     'filemgr.search.partial': '部分文件搜索路径暂不可用，已显示可用结果。',

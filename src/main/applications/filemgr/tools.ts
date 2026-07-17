@@ -3330,8 +3330,6 @@ export function formatSemanticSearchMarkdown(result: SemanticSearchResult, maxRe
         );
     }
 
-    lines.push('');
-    lines.push(t('filemgr.semanticSearch.result.readHint'));
     return lines.join('\n');
 }
 

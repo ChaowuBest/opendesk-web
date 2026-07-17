@@ -1032,8 +1032,6 @@ export const enUs: Record<string, string> = {
     'filemgr.semanticSearch.result.noChunk': 'No content chunk matched; title or path matched',
     'filemgr.semanticSearch.result.more':
         'Showing ${shown} results; more candidates exist in the index (${total} total hits)',
-    'filemgr.semanticSearch.result.readHint':
-        'If you need the text content of a matched file, call extractText with the full file path.',
     'filemgr.semanticSearch.result.countSuffix': 'results',
     'filemgr.semanticSearch.result.found': 'Found ${count} results',
     'filemgr.search.partial': 'Some file search routes are unavailable. Available results are shown.',

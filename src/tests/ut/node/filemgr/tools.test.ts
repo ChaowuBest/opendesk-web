@@ -119,7 +119,7 @@ test('extractText rejects unsupported file types before extraction', async () =>
     }
 });
 
-test('semanticSearch returns at most 30 markdown bullet results with path, title, chunk, and read hint', async () => {
+test('semanticSearch returns at most 30 markdown bullet results without suggesting full-file reads', async () => {
     const items = Array.from({ length: 35 }, (_, index) => ({
         path: `/workspace/report-${index + 1}.md`,
         filename: `report-${index + 1}.md`,
@@ -145,7 +145,7 @@ test('semanticSearch returns at most 30 markdown bullet results with path, title
     assert.match(output, /\/workspace\/report-1\.md/);
     assert.match(output, /Title: report-1\.md/);
     assert.match(output, /Chunk: matching chunk 1/);
-    assert.match(output, /extractText/);
+    assert.doesNotMatch(output, /extractText/);
 });
 
 test('semanticSearch forwards scope and renders snippets within the shared budget', async () => {
