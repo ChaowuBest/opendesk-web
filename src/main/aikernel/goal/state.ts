@@ -253,6 +253,7 @@ export interface GoalCommandResult {
     startedScheduler?: boolean;
     interruptedRunner?: boolean;
     clearedTaskTodos?: boolean;
+    clearedActiveGoal?: boolean;
     summary?: GoalRenderSummary;
     errorCode?: string;
     conflict?: GoalEditConflict;

@@ -11,6 +11,7 @@ export interface GoalCommandResultLike {
     ok?: boolean;
     messageKey?: string;
     messageArgs?: Record<string, unknown>;
+    clearedActiveGoal?: boolean;
 }
 
 export interface GoalCommandMessage {

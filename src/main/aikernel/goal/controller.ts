@@ -438,6 +438,22 @@ export class GoalController {
         if (goal.status === 'complete') {
             return { ok: false, status: goal.status, messageKey: 'goal.pause.complete', errorCode: 'goal_complete' };
         }
+        if (goal.status === 'paused') {
+            return {
+                ok: false,
+                status: goal.status,
+                messageKey: 'goal.pause.already_paused',
+                errorCode: 'goal_paused'
+            };
+        }
+        if (goal.status === 'blocked') {
+            return {
+                ok: false,
+                status: goal.status,
+                messageKey: 'goal.pause.blocked',
+                errorCode: 'goal_blocked'
+            };
+        }
 
         const at = nowIso();
         goal.status = 'paused';
@@ -508,7 +524,12 @@ export class GoalController {
     static clear(task: TaskState, source: GoalEvent['source'] = 'api'): GoalCommandResult {
         const goal = ensureExistingGoal(task);
         if (!goal) {
-            return { ok: true, status: 'cleared', messageKey: 'goal.clear.none' };
+            return {
+                ok: false,
+                status: task.goal_state?.status,
+                messageKey: 'goal.clear.none',
+                errorCode: 'no_goal'
+            };
         }
         const at = nowIso();
         goal.status = 'cleared';

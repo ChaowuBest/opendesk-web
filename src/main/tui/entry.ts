@@ -40,7 +40,6 @@ import { TodoList } from './components/todolist';
 import type { GoalPanelData } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
 import { GoalService } from '../aikernel/goal/service.js';
-import { GoalStates } from '../aikernel/goal/state.js';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -1593,13 +1592,6 @@ export class OpenDeskTUI {
         while (this.inputArea.hasQueuedMessages() && this.activeTaskId === taskId) {
             // 每次出队后更新任务的队列
             const currentTask = this.taskManagerState.getTask(taskId!);
-            if (GoalStates.isTerminal(currentTask?.goal_state?.status)) {
-                this.inputArea.clearMessageQueue();
-                if (currentTask) {
-                    currentTask.message_queue = [];
-                }
-                break;
-            }
             if (currentTask) {
                 currentTask.message_queue = this.inputArea.getQueueSnapshot();
             }
