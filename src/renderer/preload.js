@@ -13,14 +13,18 @@ import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
 
-/** 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效 */
+/**
+ * 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效。
+ * @returns {boolean} 当前 preload 是否实际完成了暴露。
+ */
 function safeExposeInMainWorld(apiKey, api) {
     try {
         contextBridge.exposeInMainWorld(apiKey, api);
+        return true;
     } catch (err) {
         const msg = String(err?.message ?? err);
         if (/existing property|already been registered/i.test(msg)) {
-            return;
+            return false;
         }
         throw err;
     }
@@ -63,7 +67,7 @@ function exposeTaskManagerAPI() {
         }
     });
 
-    safeExposeInMainWorld('taskManagerAPI', {
+    const taskManagerExposed = safeExposeInMainWorld('taskManagerAPI', {
         createTask: async (modeIdOrOptions, maybeOptions) => {
             const options =
                 modeIdOrOptions && typeof modeIdOrOptions === 'object'
@@ -354,6 +358,12 @@ function exposeTaskManagerAPI() {
             return 0;
         }
     });
+
+    // 重复 preload 会拥有独立的空回调表；若继续监听 callTool，会与真正暴露 API
+    // 的实例竞态并错误返回 "No toolset callback"。
+    if (!taskManagerExposed) {
+        return;
+    }
 
     ipcRenderer.on('taskManager:callTool', async (_event, taskId, toolCallId, toolsetName, toolName, args) => {
         try {

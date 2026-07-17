@@ -18,8 +18,18 @@ describe('application floating agent shell', () => {
         expect(panel).not.toBeNull();
         expect(trigger?.parentElement).toBe(document.body);
         expect(panel?.parentElement).toBe(document.body);
-        expect(applicationHtml).toContain('right: 5.75rem');
+        expect(applicationHtml).toContain('right: 4.75rem');
         expect(applicationHtml).toContain('translate-x-8 scale-95 opacity-0');
+    });
+
+    test('uses a compact proportional trigger and shorter default panel', () => {
+        const triggerImage = document.querySelector('#floating-ai-trigger img');
+
+        expect(applicationHtml).toContain('width: 3rem');
+        expect(applicationHtml).toContain('height: 3rem');
+        expect(applicationHtml).toContain('height: min(32rem, calc(100vh - 2rem))');
+        expect(triggerImage?.classList.contains('w-9')).toBe(true);
+        expect(triggerImage?.classList.contains('h-9')).toBe(true);
     });
 
     test('provides new-task, maximize, and collapse controls', () => {
@@ -52,5 +62,7 @@ describe('application floating agent shell', () => {
             expect(zhCn[key]).toBeTruthy();
             expect(enUs[key]).toBeTruthy();
         }
+        expect(zhCn['renderer.applicationAgent.title']).toBe('OpenDesk');
+        expect(enUs['renderer.applicationAgent.title']).toBe('OpenDesk');
     });
 });

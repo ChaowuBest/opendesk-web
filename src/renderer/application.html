@@ -30,10 +30,10 @@
             }
 
             #floating-ai-chat-panel {
-                right: 5.75rem;
+                right: 4.75rem;
                 bottom: 1rem;
-                width: min(32rem, calc(100vw - 7.75rem));
-                height: min(42rem, calc(100vh - 2rem));
+                width: min(32rem, calc(100vw - 6.75rem));
+                height: min(32rem, calc(100vh - 2rem));
                 transform-origin: right bottom;
             }
 
@@ -85,8 +85,8 @@
             #floating-ai-trigger {
                 right: 1rem;
                 bottom: 1rem;
-                width: 4rem;
-                height: 4rem;
+                width: 3rem;
+                height: 3rem;
                 border: 1px solid rgba(255, 255, 255, 0.76);
                 background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(238, 240, 255, 0.92));
                 box-shadow:
@@ -213,7 +213,7 @@
             :class="{ 'is-running': isTaskRunning && !showFloatingChatPanel }"
             class="fixed z-50 rounded-full flex items-center justify-center transition-transform duration-200 hover:scale-105 active:scale-95"
         >
-            <img src="./images/icon_round.png" alt="" class="w-12 h-12 rounded-full pointer-events-none" />
+            <img src="./images/icon_round.png" alt="" class="w-9 h-9 rounded-full pointer-events-none" />
         </button>
     </body>
 </html>

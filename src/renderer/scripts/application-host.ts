@@ -211,9 +211,7 @@ const taskSession = new ApplicationTaskSession({
     }
 });
 
-async function submitRequest(request: { message: string }): Promise<void> {
-    const taskId = await taskSession.ensureTask();
-    await configureTask(taskId);
+async function submitRequestToTask(taskId: string, request: { message: string }): Promise<void> {
     if (taskSession.isCurrent(taskId)) {
         setCurrentTaskRunning(true);
         setFloatingChatOpen(true);
@@ -235,6 +233,15 @@ async function submitRequest(request: { message: string }): Promise<void> {
     taskView?.reload?.();
 }
 
+async function submitRequest(request: { message: string }): Promise<void> {
+    const existingTaskId = taskSession.taskId;
+    const taskId = await taskSession.ensureTask();
+    if (existingTaskId === taskId) {
+        await configureTask(taskId);
+    }
+    await submitRequestToTask(taskId, request);
+}
+
 let newTaskSubmissionPromise: Promise<void> | null = null;
 
 function submitRequestInNewTask(request: string): Promise<void> {
@@ -242,8 +249,8 @@ function submitRequestInNewTask(request: string): Promise<void> {
         return newTaskSubmissionPromise;
     }
     const submissionPromise = (async () => {
-        await taskSession.startNewTask();
-        await submitRequest({ message: request });
+        const taskId = await taskSession.startNewTask();
+        await submitRequestToTask(taskId, { message: request });
     })();
     newTaskSubmissionPromise = submissionPromise;
     void submissionPromise.then(
