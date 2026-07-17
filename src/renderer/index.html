@@ -483,7 +483,7 @@
                 el.setAttribute('data-task-view-cached', '1');
                 el.setAttribute('data-background', '1');
                 el.style.cssText =
-                    'position:absolute;left:0;top:0;width:1280px;height:800px;opacity:0;pointer-events:none;z-index:-1;';
+                    'position:fixed;left:0;top:0;width:1280px;height:800px;opacity:0;pointer-events:none;z-index:-1;';
                 nonAppSlot.appendChild(el);
                 taskViewCache[taskId] = el;
             }

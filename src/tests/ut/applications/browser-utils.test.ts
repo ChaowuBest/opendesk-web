@@ -66,6 +66,8 @@ describe('browser utils', () => {
         expect((document.getElementById('nonAppSlot') as HTMLElement).style.display).toBe('');
         // offscreen rendering
         expect(taskView.getAttribute('data-background')).toBe('1');
+        // fixed 宿主不参与 rightPanel 的滚动范围，避免后台 1280px 视口挤动前台布局
+        expect(taskView.style.position).toBe('fixed');
         expect(taskView.style.height).toBe('800px');
         expect(taskView.style.zIndex).toBe('-1');
         // task-artifacts 保持 1280x800 与 task-view offscreen 模式一致，不重置尺寸
@@ -77,10 +79,9 @@ describe('browser utils', () => {
         expect(panel.style.display).toBe('');
         expect(panel.style.minHeight).toBe('800px');
         expect(webview.style.minHeight).toBe('800px');
-        // 后台任务不调用 _forceExpandRightSidebar（避免修改全局 rightSidebarExpanded 状态，
-        // 影响前台任务的侧边栏布局）
+        // 后台任务也调用 _ensureRightSidebarOpen，保持与前台一致的侧边栏交互逻辑
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
-        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
@@ -113,9 +114,9 @@ describe('browser utils', () => {
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
         expect(taskView.getAttribute('data-background')).toBe('1');
-        // 后台任务不调用 _forceExpandRightSidebar（避免修改全局 rightSidebarExpanded 状态）
+        // 后台任务也调用 _ensureRightSidebarOpen，保持与前台一致的侧边栏交互逻辑
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
-        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });

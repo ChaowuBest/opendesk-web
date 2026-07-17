@@ -84,7 +84,9 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 不调用 resetOversizedArtifact，避免宿主与内部 webview-wrap 尺寸错位。
                 tv.setAttribute('data-background', '1');
                 tv.style.display = '';
-                tv.style.position = 'absolute';
+                // 使用 fixed 脱离 rightPanel 的滚动范围；absolute 的 1280px 宽度会扩大
+                // 共享宿主的 scrollWidth，导致前台任务横向偏移并出现底部滚动条。
+                tv.style.position = 'fixed';
                 tv.style.left = '0';
                 tv.style.top = '0';
                 tv.style.width = '1280px';
@@ -105,14 +107,9 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 恢复为侧边栏正常宽度。
                 resetOversizedArtifact();
             }
-            if (tv && taskViewIsHidden) {
-                // 后台任务：task-artifacts 已被设置为 offscreen 可见状态（1280x800），
-                // webview 无需额外展开侧边栏即可正常渲染。
-                // 不调用 _forceExpandRightSidebar，避免修改全局 rightSidebarExpanded 状态
-                // 影响前台任务的侧边栏布局（导致布局突然向左平移）。
-            } else if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
-                // 前台任务：确保侧边栏已展开（尊重画中画状态，不强制展开），
-                // 确保 webview 以正确尺寸渲染，避免页面插件检测到 height=0 弹窗报错。
+            // 无论前台还是后台任务：确保侧边栏已展开（尊重画中画状态，不强制展开），
+            // 确保 webview 以正确尺寸渲染，避免页面插件检测到 height=0 弹窗报错。
+            if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
                 tv._ensureRightSidebarOpen();
             }
             forceBrowserActive(true);

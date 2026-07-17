@@ -2003,6 +2003,24 @@ class TaskView extends HTMLElement {
         const targetWidth = this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
+        // 后台/隐藏任务跳过 width 0→targetWidth 的过渡动画，直接落到终态。
+        // 动画会触发布局回流并通过共享合成影响其他可见任务窗口（界面向左平移）。
+        const suppressAnimation = this._shouldSuppressIncrementalRender();
+        if (suppressAnimation) {
+            rightSidebar.style.width = targetWidth + 'px';
+            rightSidebar.style.opacity = '1';
+            rightSidebar.style.overflow = '';
+            if (resizer) {
+                resizer.style.display = '';
+                resizer.style.opacity = '1';
+            }
+            this._rightSidebarExpanded = true;
+            this._autoSwitchTabIfEmpty(rightSidebar);
+            if (this._browserPip) {
+                this._browserPip.hide();
+            }
+            return;
+        }
         rightSidebar.style.width = '0px';
         rightSidebar.style.opacity = '0';
         rightSidebar.style.overflow = 'hidden';
