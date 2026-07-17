@@ -34,13 +34,6 @@ interface BrowserTab {
     openerTabId?: number;
 }
 
-interface BrowserViewportSnapshot {
-    containerWidth: number;
-    containerHeight: number;
-    webviewWidth: number;
-    webviewHeight: number;
-}
-
 /**
  * Browser tab component for OpenDesk.
  * Supports multiple tabs within a single browser panel.
@@ -663,118 +656,6 @@ export class EmbeddedBrowser extends BrowserInstance {
         }
     }
 
-    private _getComposedParent(element: Element): Element | null {
-        if (element.parentElement) return element.parentElement;
-        const root = element.getRootNode();
-        return root && 'host' in root ? (root.host as Element) : null;
-    }
-
-    private _isComposedTreeRenderable(element: HTMLElement): boolean {
-        if (!element.isConnected) return false;
-        let current: Element | null = element;
-        while (current) {
-            if (window.getComputedStyle(current).display === 'none') return false;
-            current = this._getComposedParent(current);
-        }
-        return true;
-    }
-
-    private _readHostViewport(tab: BrowserTab): BrowserViewportSnapshot | null {
-        const webview = tab.webview as unknown as HTMLElement | null;
-        const wrap = tab.wrapEl;
-        if (!this.container || !this.webviewContainer || !wrap || !webview) return null;
-
-        const elements = [this.container, this.webviewContainer, wrap, webview];
-        if (elements.some((element) => !this._isComposedTreeRenderable(element))) return null;
-
-        const containerRect = this.webviewContainer.getBoundingClientRect();
-        const webviewRect = webview.getBoundingClientRect();
-        if (
-            containerRect.width <= 0 ||
-            containerRect.height <= 0 ||
-            webviewRect.width <= 0 ||
-            webviewRect.height <= 0
-        ) {
-            return null;
-        }
-
-        return {
-            containerWidth: containerRect.width,
-            containerHeight: containerRect.height,
-            webviewWidth: webviewRect.width,
-            webviewHeight: webviewRect.height
-        };
-    }
-
-    private _sameViewport(a: BrowserViewportSnapshot, b: BrowserViewportSnapshot): boolean {
-        return (
-            Math.abs(a.containerWidth - b.containerWidth) < 1 &&
-            Math.abs(a.containerHeight - b.containerHeight) < 1 &&
-            Math.abs(a.webviewWidth - b.webviewWidth) < 1 &&
-            Math.abs(a.webviewHeight - b.webviewHeight) < 1
-        );
-    }
-
-    private _nextAnimationFrame(): Promise<void> {
-        return new Promise((resolve) => {
-            if (typeof window.requestAnimationFrame === 'function') {
-                window.requestAnimationFrame(() => resolve());
-            } else {
-                window.setTimeout(resolve, 16);
-            }
-        });
-    }
-
-    /**
-     * Wait until the host has a stable, non-zero viewport before loading a
-     * target page. Old layout libraries inspect their container synchronously
-     * during startup and cannot recover from an initial 0 height.
-     *
-     * Do not wait for the initial about:blank guest to emit dom-ready here.
-     * navigateTo() already queues the target in pendingUrl while a cold webview
-     * is attaching, so guest readiness is not a navigation prerequisite.
-     */
-    public async waitUntilReadyForNavigation(timeoutMs: number = 5000): Promise<void> {
-        const deadline = Date.now() + timeoutMs;
-        let previousViewport: BrowserViewportSnapshot | null = null;
-        let stableFrames = 0;
-
-        while (Date.now() < deadline) {
-            const tab = this.getActiveTab();
-            const viewport = tab ? this._readHostViewport(tab) : null;
-
-            if (tab && viewport) {
-                // Apply the virtual viewport immediately instead of waiting for
-                // the debounced ResizeObserver callback.
-                this._applyViewportScaling(viewport.containerWidth, viewport.containerHeight);
-                stableFrames =
-                    previousViewport && this._sameViewport(previousViewport, viewport) ? stableFrames + 1 : 1;
-                previousViewport = viewport;
-
-                if (stableFrames >= 2) {
-                    await this._nextAnimationFrame();
-                    const confirmedViewport = this._readHostViewport(tab);
-                    if (
-                        this.getActiveTab() === tab &&
-                        confirmedViewport &&
-                        this._sameViewport(viewport, confirmedViewport)
-                    ) {
-                        return;
-                    }
-                    stableFrames = 0;
-                    previousViewport = null;
-                }
-            } else {
-                stableFrames = 0;
-                previousViewport = null;
-            }
-
-            await this._nextAnimationFrame();
-        }
-
-        throw new Error('BROWSER_VIEWPORT_NOT_READY');
-    }
-
     // ==== Tab bar events ====
 
     private bindTabBarEvents(): void {
@@ -1127,12 +1008,11 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     /**
-     * 检查是否有活跃内容或等待冷启动加载的标签页。
-     * pendingUrl 必须视为活跃，否则初始 about:blank 的 did-navigate
-     * 会在目标导航开始前将浏览器面板重新隐藏。
+     * 检查是否有活跃内容的标签页（非 about:blank）。
+     * 当所有标签页都已关闭或只剩 about:blank 时返回 false。
      */
     public hasActiveContent(): boolean {
-        return this.tabs.some((t) => t.url !== HOME_PAGE || (t.pendingUrl !== null && t.pendingUrl !== HOME_PAGE));
+        return this.tabs.some((t) => t.url !== HOME_PAGE);
     }
 
     /** 标签页状态变更回调（新增/关闭/导航），用于通知外部更新活跃状态 */

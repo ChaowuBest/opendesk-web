@@ -1075,7 +1075,6 @@ export const zhCn: Record<string, string> = {
     'renderer.taskartifacts.tab.goalExecution': '目标执行',
     'renderer.taskartifacts.tab.taskProgress': '任务进展',
     'renderer.taskartifacts.todo.title': '当前待办',
-    'renderer.browser.viewport_not_ready': '浏览器显示区域尚未完成布局，已停止加载页面，请重试。',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',

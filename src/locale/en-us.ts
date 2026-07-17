@@ -1095,8 +1095,6 @@ export const enUs: Record<string, string> = {
     'renderer.taskartifacts.tab.goalExecution': 'Goal Execution',
     'renderer.taskartifacts.tab.taskProgress': 'Task Progress',
     'renderer.taskartifacts.todo.title': 'Current Todos',
-    'renderer.browser.viewport_not_ready':
-        'The browser viewport did not finish layout, so the page was not loaded. Please try again.',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
