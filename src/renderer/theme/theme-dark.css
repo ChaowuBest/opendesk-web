@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 深色模式覆盖（语义字色 + 主壳 + 子应用）。由 theme.css @import。
  * 勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
  */
@@ -88,7 +88,6 @@ html[data-theme='dark']
         main-sidebar,
         home-page,
         task-view,
-        embedded-task-view,
         setting-panel,
         setting-editor,
         log-view,
@@ -658,59 +657,33 @@ html[data-theme='dark'] agent-input .agent-input-queue-hint {
     border-bottom-color: rgba(251, 191, 36, 0.2) !important;
 }
 
-/* ========== 任务对话框（task-view / embedded-task-view）========== */
-html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'],
-html[data-theme='dark'] #app-root embedded-task-view [class*='bg-gray-30'] {
+/* ========== 任务对话框（task-view，含 embedded 模式）========== */
+html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'] {
     background: transparent !important;
 }
 
 html[data-theme='dark'] #app-root task-view .reasoning-block-od,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details,
-html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details,
-html[data-theme='dark'] #app-root task-view .subtask-pool-card,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
     color: var(--od-text);
 }
 
 html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-header,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-header,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary,
-html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary,
-html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary,
-html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary {
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary {
     color: var(--od-text-muted) !important;
 }
 /* Expanded/active header keeps amber tint even in dark mode */
 html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header span,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od.reasoning-active .reasoning-header span,
-html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-content-visible .reasoning-header span,
-html[data-theme='dark']
-    #app-root
-    embedded-task-view
-    .reasoning-block-od.reasoning-content-visible
-    .reasoning-header
-    span {
+html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-content-visible .reasoning-header span {
     color: #fbbf24 !important;
 }
 html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header i.fa-lightbulb,
 html[data-theme='dark']
     #app-root
-    embedded-task-view
-    .reasoning-block-od.reasoning-active
-    .reasoning-header
-    i.fa-lightbulb,
-html[data-theme='dark']
-    #app-root
     task-view
-    .reasoning-block-od.reasoning-content-visible
-    .reasoning-header
-    i.fa-lightbulb,
-html[data-theme='dark']
-    #app-root
-    embedded-task-view
     .reasoning-block-od.reasoning-content-visible
     .reasoning-header
     i.fa-lightbulb {
@@ -718,147 +691,115 @@ html[data-theme='dark']
 }
 
 html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary:hover,
-html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary:hover,
-html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover,
-html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary:hover {
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover {
     background: var(--od-bg-muted) !important;
     color: var(--od-text) !important;
 }
 
 html[data-theme='dark'] #app-root task-view .reasoning-content,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-content,
-html[data-theme='dark'] #app-root task-view .reasoning-preview-content,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-preview-content {
+html[data-theme='dark'] #app-root task-view .reasoning-preview-content {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-preview-area,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-preview-area {
+html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-preview-area {
     border-left-color: rgba(96, 165, 250, 0.3) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-full-area,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-full-area {
+html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-full-area {
     border-left-color: var(--od-border) !important;
 }
 
 /* Reasoning bubble dark mode */
-html[data-theme='dark'] #app-root task-view .reasoning-bubble,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble {
+html[data-theme='dark'] #app-root task-view .reasoning-bubble {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.5),
         0 2px 8px rgba(0, 0, 0, 0.35) !important;
 }
-html[data-theme='dark'] #app-root task-view .reasoning-bubble-content,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble-content {
+html[data-theme='dark'] #app-root task-view .reasoning-bubble-content {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble::-webkit-scrollbar-thumb {
+html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;
 }
-html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover {
+html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'],
-html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='bg-gray-50'] {
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'] {
     background: var(--od-bg-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='border-gray-100'],
-html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='border-gray-100'] {
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='border-gray-100'] {
     border-color: var(--od-border) !important;
 }
 
-html[data-theme='dark'] #app-root task-view [class*='bg-white'],
-html[data-theme='dark'] #app-root embedded-task-view [class*='bg-white'] {
+html[data-theme='dark'] #app-root task-view [class*='bg-white'] {
     background-color: var(--od-bg-elevated) !important;
 }
 
 html[data-theme='dark'] #app-root task-view [class*='border-gray'],
-html[data-theme='dark'] #app-root embedded-task-view [class*='border-gray'],
-html[data-theme='dark'] #app-root task-view [class*='border-[#e2e8f0]'],
-html[data-theme='dark'] #app-root embedded-task-view [class*='border-[#e2e8f0]'] {
+html[data-theme='dark'] #app-root task-view [class*='border-[#e2e8f0]'] {
     border-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body {
+html[data-theme='dark'] #app-root task-view .markdown-body {
     color: var(--od-text) !important;
     background: transparent !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em),
-html[data-theme='dark']
-    #app-root
-    embedded-task-view
-    .markdown-body
-    :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em) {
+html[data-theme='dark'] #app-root task-view .markdown-body :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em) {
     color: inherit;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body a,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body a {
+html[data-theme='dark'] #app-root task-view .markdown-body a {
     color: var(--od-accent) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body blockquote,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body blockquote {
+html[data-theme='dark'] #app-root task-view .markdown-body blockquote {
     border-left-color: var(--od-accent) !important;
     color: var(--od-text-muted) !important;
 }
 
 /* 内联代码块 */
-html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code),
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body code:not(pre code) {
+html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code) {
     background: rgba(255, 255, 255, 0.08) !important;
     color: #f0a0c0 !important;
     border-color: rgba(255, 255, 255, 0.12) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper {
     border-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-header {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header {
     background: var(--od-bg-muted) !important;
     border-bottom-color: var(--od-border) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-lang {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-ln {
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln {
     background: var(--od-bg-muted) !important;
     border-right-color: var(--od-border) !important;
     color: var(--od-text-disabled) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table tr:hover {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover {
     background: var(--od-bg-muted) !important;
 }
 
 /* ========== 深色模式：highlight.js 语法高亮适配 (GitHub Dark 主题) ========== */
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs {
     color: #c9d1d9 !important;
     background: transparent !important;
 }
@@ -869,25 +810,14 @@ html[data-theme='dark'] #app-root task-view .markdown-body .hljs-meta .hljs-keyw
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-template-tag,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-template-variable,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-type,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable.language_,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-doctag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-keyword,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta .hljs-keyword,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-template-tag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-template-variable,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-type,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-variable.language_ {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable.language_ {
     color: #ff7b72 !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.class_,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.class_.inherited__,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.function_,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.class_,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.class_.inherited__,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.function_ {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.function_ {
     color: #d2a8ff !important;
 }
 
@@ -900,359 +830,266 @@ html[data-theme='dark'] #app-root task-view .markdown-body .hljs-operator,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-attr,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-class,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-id,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-attr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-attribute,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-literal,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-number,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-operator,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-attr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-class,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-id,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-variable {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable {
     color: #79c0ff !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-meta .hljs-string,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-regexp,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-string,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta .hljs-string,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-regexp,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-string {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-string {
     color: #a5d6ff !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-built_in,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-symbol,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-built_in,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-symbol {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-symbol {
     color: #ffa657 !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-code,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-comment,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-formula,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-code,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-comment,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-formula {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-formula {
     color: #8b949e !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-name,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-quote,
 html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-pseudo,
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-tag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-name,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-quote,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-pseudo,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-tag {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-tag {
     color: #7ee787 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-subst,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-subst {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-subst {
     color: #c9d1d9 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-section,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-section {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-section {
     color: #79c0ff !important;
     font-weight: 700 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-bullet,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-bullet {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-bullet {
     color: #d29922 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-emphasis,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-emphasis {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-emphasis {
     color: #c9d1d9 !important;
     font-style: italic !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-strong,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-strong {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-strong {
     color: #c9d1d9 !important;
     font-weight: 700 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-addition,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-addition {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-addition {
     color: #7ee787 !important;
     background-color: #1a3f2c !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .hljs-deletion,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-deletion {
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-deletion {
     color: #f85149 !important;
     background-color: #3d1e23 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table thead tr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead tr {
+html[data-theme='dark'] #app-root task-view .markdown-body table thead tr {
     background: var(--od-bg-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:hover,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr:hover {
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:hover {
     background: var(--od-bg-muted) !important;
 }
 
 /* ========== 深色模式：表格完整适配 ========== */
-html[data-theme='dark'] #app-root task-view .markdown-body table,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table {
+html[data-theme='dark'] #app-root task-view .markdown-body table {
     border-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table thead th,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead th {
+html[data-theme='dark'] #app-root task-view .markdown-body table thead th {
     color: var(--od-text-muted) !important;
     border-bottom-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr {
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr {
     background-color: var(--od-bg-elevated) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table tbody td,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody td {
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody td {
     color: var(--od-text) !important;
     border-bottom-color: var(--od-border) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:last-child td,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr:last-child td {
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:last-child td {
     border-bottom-color: transparent !important;
 }
 
 /* ========== 深色模式：代码块完整适配 ========== */
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper {
     border-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-header {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header {
     background: var(--od-bg-muted) !important;
     border-bottom-color: var(--od-border) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-lang {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-ln {
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln {
     background: var(--od-bg-muted) !important;
     border-right-color: var(--od-border) !important;
     color: var(--od-text-disabled) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body td.code-line,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-line {
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-line {
     color: var(--od-text) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table tr:hover {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover {
     background: var(--od-bg-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre {
+html[data-theme='dark'] #app-root task-view .markdown-body pre {
     background: var(--od-bg-subtle) !important;
     border-color: var(--od-border-strong) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre code.hljs,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre code.hljs {
+html[data-theme='dark'] #app-root task-view .markdown-body pre code.hljs {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text) !important;
 }
 
 /* 深色模式：代码高亮颜色适配 */
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-keyword,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-keyword,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-built_in,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-built_in,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-name,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-name,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-tag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-tag,
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-tag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-tag {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-tag {
     color: #c792ea !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-string,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-string,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-addition,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-addition,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-attribute,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-attribute,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-literal,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-literal,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-section,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-section,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-template-tag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-template-tag,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-template-variable,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-template-variable,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-title,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-title,
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-type,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-type {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-type {
     color: #c3e88d !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-comment,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-comment,
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-quote,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-quote {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-quote {
     color: #546e7a !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-variable,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-variable {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-variable {
     color: #f78c6c !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-number,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-number {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-number {
     color: #f78c6c !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-meta,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-meta,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-deletion,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-deletion,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-attr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-attr,
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-pseudo,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-pseudo {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-pseudo {
     color: #ff5370 !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-doctag,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-doctag {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-doctag {
     color: #82aaff !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-attr,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-attr {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-attr {
     color: #c792ea !important;
 }
 
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-bullet,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-bullet,
 html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-link,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-link,
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-symbol,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-symbol {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-symbol {
     color: #82aaff !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-params,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-params {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-params {
     color: #eeffff !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-regexp,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-regexp {
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-regexp {
     color: #89ddff !important;
 }
 
 /* 深色模式：代码块滚动条 */
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-thumb,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body::-webkit-scrollbar-thumb {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-track,
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body::-webkit-scrollbar-track {
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-track {
     background: transparent !important;
 }
 
 /* 深色模式：行内代码 */
-html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code),
-html[data-theme='dark'] #app-root embedded-task-view .markdown-body code:not(pre code) {
+html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code) {
     background: rgba(255, 255, 255, 0.08) !important;
     color: #f0a0c0 !important;
     border-color: rgba(255, 255, 255, 0.12) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .pool-seg,
-html[data-theme='dark'] #app-root embedded-task-view .pool-seg {
+html[data-theme='dark'] #app-root task-view .pool-seg {
     background: var(--od-bg-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .pool-seg-indicator,
-html[data-theme='dark'] #app-root embedded-task-view .pool-seg-indicator {
+html[data-theme='dark'] #app-root task-view .pool-seg-indicator {
     background: var(--od-bg-elevated) !important;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .pool-seg-btn,
-html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn {
+html[data-theme='dark'] #app-root task-view .pool-seg-btn {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] #app-root task-view .pool-seg-btn.active,
-html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn.active {
+html[data-theme='dark'] #app-root task-view .pool-seg-btn.active {
     color: var(--od-text) !important;
 }
 
 /* 子任务池卡片内部元素 */
 html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='bg-[#f8fafc]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='bg-[#f8fafc]'],
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='hover:bg-[#f8fafc]']:hover,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='hover:bg-[#f8fafc]']:hover {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='hover:bg-[#f8fafc]']:hover {
     background: var(--od-bg-muted) !important;
 }
 html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='border-[#f1f5f9]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='border-[#f1f5f9]'],
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='border-[#f8fafc]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='border-[#f8fafc]'] {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='border-[#f8fafc]'] {
     border-color: var(--od-border-strong) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#475569]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#475569]'] {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#475569]'] {
     color: var(--od-text) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#64748b]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#64748b]'] {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#64748b]'] {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#94a3b8]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#94a3b8]'] {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#94a3b8]'] {
     color: #787878 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#334155]'],
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#334155]'] {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#334155]'] {
     color: var(--od-text) !important;
 }
 /* 子任务池状态文字：success/fail 保留原色调但适当调暗背景 */
-html[data-theme='dark'] #app-root task-view .subtask-pool-card .pool-task-list,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card .pool-task-list {
+html[data-theme='dark'] #app-root task-view .subtask-pool-card .pool-task-list {
     background: var(--od-bg-elevated) !important;
 }
 
 html[data-theme='dark'] #app-root task-view permission-prompt [id*='-panel'],
 html[data-theme='dark'] #app-root task-view ask-user-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root task-view exit-plan-mode-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root embedded-task-view permission-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root embedded-task-view ask-user-prompt [id*='-panel'],
-html[data-theme='dark'] #app-root embedded-task-view exit-plan-mode-prompt [id*='-panel'] {
+html[data-theme='dark'] #app-root task-view exit-plan-mode-prompt [id*='-panel'] {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
     background-image: none !important;
@@ -1725,9 +1562,9 @@ html[data-theme='dark'] #application-container {
     background-color: var(--od-bg);
 }
 
-html[data-theme='dark'] #floating-ai-task-view-container {
+html[data-theme='dark'] #floating-ai-chat-surface {
     background-color: var(--od-bg-elevated) !important;
-    border: 1px solid var(--od-border-strong) !important;
+    border-color: var(--od-border-strong) !important;
 }
 
 /* 子应用文字色见上文语义映射（随 data-theme 自动切换） */
@@ -1793,157 +1630,124 @@ html[data-theme='dark'] .terminal-tool .terminal-tool-summary:hover {
 
 /* 子任务工具 GUI 渲染卡片 (createSubTask / waitSubTask / attachToSubTask / attemptCompletion) */
 /* 注意：选择器必须包含 #app-root task-view 前缀以覆盖全局 :where(.text-gray-*) 规则的 ID 选择器特异性 */
-html[data-theme='dark'] #app-root task-view .subtask-tool,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool {
+html[data-theme='dark'] #app-root task-view .subtask-tool {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .bg-gray-50\/40,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .bg-gray-50\/40 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .bg-gray-50\/40 {
     background: var(--od-bg-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-100,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .border-gray-100 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-100 {
     border-color: var(--od-border-strong) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-700,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-700 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-700 {
     color: var(--od-text) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-600,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-600 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-600 {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-500,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-500 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-500 {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-400,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-400 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-400 {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool summary:hover,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool summary:hover {
+html[data-theme='dark'] #app-root task-view .subtask-tool summary:hover {
     background: var(--od-bg-muted) !important;
 }
 /* 子任务工具：错误状态红色文字 */
-html[data-theme='dark'] #app-root task-view .subtask-tool .text-red-600,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-red-600 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-red-600 {
     color: #fca5a5 !important;
 }
 /* 子任务工具：状态徽章深色适配 */
-html[data-theme='dark'] #app-root task-view .subtask-badge--info,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--info {
+html[data-theme='dark'] #app-root task-view .subtask-badge--info {
     background: rgba(96, 165, 250, 0.12) !important;
     color: #93c5fd !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-badge--success,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--success {
+html[data-theme='dark'] #app-root task-view .subtask-badge--success {
     background: rgba(16, 185, 129, 0.1) !important;
     color: #6ee7b7 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-badge--error,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--error {
+html[data-theme='dark'] #app-root task-view .subtask-badge--error {
     background: rgba(244, 63, 94, 0.1) !important;
     color: #fda4af !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-badge--warn,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--warn {
+html[data-theme='dark'] #app-root task-view .subtask-badge--warn {
     background: rgba(251, 191, 36, 0.1) !important;
     color: #fcd34d !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-badge--purple,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--purple {
+html[data-theme='dark'] #app-root task-view .subtask-badge--purple {
     background: rgba(168, 85, 247, 0.1) !important;
     color: #d8b4fe !important;
 }
 /* 子任务工具：图标背景深色适配 */
-html[data-theme='dark'] #app-root task-view .subtask-icon--info,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--info {
+html[data-theme='dark'] #app-root task-view .subtask-icon--info {
     background: rgba(96, 165, 250, 0.12) !important;
     color: #93c5fd !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-icon--success,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--success {
+html[data-theme='dark'] #app-root task-view .subtask-icon--success {
     background: rgba(16, 185, 129, 0.1) !important;
     color: #6ee7b7 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-icon--error,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--error {
+html[data-theme='dark'] #app-root task-view .subtask-icon--error {
     background: rgba(244, 63, 94, 0.1) !important;
     color: #fda4af !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-icon--warn,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--warn {
+html[data-theme='dark'] #app-root task-view .subtask-icon--warn {
     background: rgba(251, 191, 36, 0.1) !important;
     color: #fcd34d !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-icon--violet,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--violet {
+html[data-theme='dark'] #app-root task-view .subtask-icon--violet {
     background: rgba(139, 92, 246, 0.1) !important;
     color: #c4b5fd !important;
 }
 /* 子任务结果卡片 (attemptCompletion) 深色适配 */
-html[data-theme='dark'] #app-root task-view .subtask-result,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result {
+html[data-theme='dark'] #app-root task-view .subtask-result {
     border-color: var(--od-border-strong) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--success,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success {
+html[data-theme='dark'] #app-root task-view .subtask-result--success {
     border-color: rgba(16, 185, 129, 0.3) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result-header,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result-header {
+html[data-theme='dark'] #app-root task-view .subtask-result-header {
     background: var(--od-bg-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-icon,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--fail .subtask-result-icon {
+html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-icon {
     background: rgba(244, 63, 94, 0.1) !important;
     color: #fca5a5 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-icon,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--ask .subtask-result-icon {
+html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-icon {
     background: rgba(251, 191, 36, 0.1) !important;
     color: #fcd34d !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-icon,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-icon {
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-icon {
     background: rgba(16, 185, 129, 0.1) !important;
     color: #6ee7b7 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result-title,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result-title {
+html[data-theme='dark'] #app-root task-view .subtask-result-title {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-title,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-title {
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-title {
     color: #6ee7b7 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result-taskid,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result-taskid {
+html[data-theme='dark'] #app-root task-view .subtask-result-taskid {
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-taskid,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-taskid {
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-taskid {
     color: #86efac !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-badge,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--fail .subtask-result-badge {
+html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-badge {
     background: rgba(244, 63, 94, 0.1) !important;
     color: #fca5a5 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-badge,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--ask .subtask-result-badge {
+html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-badge {
     background: rgba(251, 191, 36, 0.1) !important;
     color: #fcd34d !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-badge,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-badge {
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-badge {
     background: rgba(16, 185, 129, 0.1) !important;
     color: #6ee7b7 !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-result-message,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-result-message {
+html[data-theme='dark'] #app-root task-view .subtask-result-message {
     color: var(--od-text) !important;
 }
 
@@ -2470,6 +2274,7 @@ html[data-theme='dark'] mailbox-entry-widget .text-gray-400 {
 html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text) !important;
+    border-color: var(--od-border) !important;
 }
 
 html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder {
@@ -2477,19 +2282,305 @@ html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder 
     opacity: 1;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-100'] {
-    background: var(--od-bg-subtle) !important;
+html[data-theme='dark'] mailbox-entry-widget #account-selector-menu,
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-menu {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-list-header,
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-button,
+html[data-theme='dark'] mailbox-entry-widget #email-list,
+html[data-theme='dark'] mailbox-entry-widget #email-content > elastic-toolbar-widget.mailbox-reader-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-filter-button,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-filter-option {
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-900'] {
-    background: var(--od-accent) !important;
-    color: #fff !important;
+html[data-theme='dark'] mailbox-entry-widget .mailbox-filter-option:hover,
+html[data-theme='dark'] mailbox-entry-widget .account-selector-item:hover,
+html[data-theme='dark'] mailbox-entry-widget .email-item:hover {
+    background: var(--od-bg-subtle) !important;
 }
 
-html[data-theme='dark'] mailbox-entry-widget #account-selector-menu {
+html[data-theme='dark'] mailbox-entry-widget .email-item {
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-item[class*='bg-indigo-50'] {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-elevated)) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .account-selector-item[class*='bg-indigo-50'] {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-elevated)) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-message-heading:hover,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-header-row:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-header-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--from {
+    background: color-mix(in srgb, #71717a 22%, var(--od-bg-elevated)) !important;
+    border-color: #52525b !important;
+    color: #e4e4e7 !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--to {
+    background: color-mix(in srgb, #3b82f6 20%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 45%, var(--od-border-strong)) !important;
+    color: #bfdbfe !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--cc {
+    background: color-mix(in srgb, #22c55e 18%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #4ade80 40%, var(--od-border-strong)) !important;
+    color: #bbf7d0 !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip--bcc {
+    background: color-mix(in srgb, #a855f7 18%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #c084fc 40%, var(--od-border-strong)) !important;
+    color: #e9d5ff !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-chip:hover {
+    filter: brightness(1.12);
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-value,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-action {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-address-action:hover {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-expand-toggle {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .email-expand-toggle:hover {
+    background: color-mix(in srgb, var(--od-accent) 14%, var(--od-bg-subtle)) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item {
+    background: color-mix(in srgb, #3b82f6 20%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 45%, var(--od-border-strong)) !important;
+    color: #bfdbfe !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item:hover,
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item:focus-visible {
+    background: color-mix(in srgb, #3b82f6 28%, var(--od-bg-elevated)) !important;
+    border-color: color-mix(in srgb, #60a5fa 60%, var(--od-border-strong)) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button:hover,
+html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button i {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item .mailbox-attachment-file-icon {
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] .mailbox-attachment-menu button:hover i,
+html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible i {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-accent) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button:active {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-accent) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-scroll,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-fields,
+html[data-theme='dark'] mail-editor-widget > elastic-toolbar-widget.mailbox-compose-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-fields {
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-row {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-row:focus-within {
+    background: color-mix(in srgb, var(--od-accent) 7%, var(--od-bg-elevated)) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-field-label,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-recipient-actions,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-date {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-recipient-actions span:hover {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget #subject {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tagify {
+    --tag-bg: #27272a;
+    --tag-hover: #3f3f46;
+    --tag-text-color: #e4e4e7;
+    --tag-remove-bg: #52525b;
+    --tag-remove-btn-color: #a1a1aa;
+    --tag-remove-btn-bg--hover: #ef4444;
+    --input-color: #e4e4e7;
+    --placeholder-color: #71717a;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tagify__input,
+html[data-theme='dark'] mail-editor-widget .tagify__tag-text {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tagify__dropdown__wrapper {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tagify__dropdown__item--active {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachments {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item {
+    background: #27272a !important;
+    border-color: transparent !important;
+    color: #e4e4e7 !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item:hover,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item:focus-visible {
+    background: #3f3f46 !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .mailbox-attachment-file-icon,
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .remove-attachment {
+    color: #a1a1aa !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .mailbox-compose-attachment-item .remove-attachment:hover {
+    background: color-mix(in srgb, #ef4444 20%, transparent) !important;
+    color: #fca5a5 !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox-tinymce {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-editor-header,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar-overlord,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar__primary,
+html[data-theme='dark'] mail-editor-widget .tox .tox-toolbar__overflow,
+html[data-theme='dark'] mail-editor-widget .tox .tox-statusbar {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn,
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn__select-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn svg {
+    fill: currentColor !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn:hover,
+html[data-theme='dark'] mail-editor-widget .tox .tox-tbtn--enabled {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mail-editor-widget .tox .tox-edit-area__iframe {
+    background: #18181b !important;
+}
+
+html[data-theme='dark'] .tox .tox-menu,
+html[data-theme='dark'] .tox .tox-collection--list,
+html[data-theme='dark'] .tox .tox-dialog,
+html[data-theme='dark'] .tox .tox-dialog__header,
+html[data-theme='dark'] .tox .tox-dialog__body,
+html[data-theme='dark'] .tox .tox-dialog__footer {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tox .tox-collection__item,
+html[data-theme='dark'] .tox .tox-collection__item-label,
+html[data-theme='dark'] .tox .tox-dialog__title,
+html[data-theme='dark'] .tox .tox-label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .tox .tox-collection__item--active,
+html[data-theme='dark'] .tox .tox-collection__item:hover {
+    background: var(--od-bg-subtle) !important;
 }
 
 html[data-theme='dark'] mailbox-entry-widget main#email-content,

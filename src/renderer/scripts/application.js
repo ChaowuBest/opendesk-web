@@ -17,6 +17,9 @@ import '../styles/custom.css';
 
 import '../components/loading.js';
 import '../components/agentinput.js';
+import '../components/permissionPrompt.ts';
+import '../components/askUserPrompt.ts';
+import '../components/exitPlanModePrompt.ts';
 import '../components/taskview.js';
 import '../components/splitter.js';
 

@@ -86,7 +86,6 @@ export const MAIN_AGENT_READONLY_MODE: ModeDecl = {
         'addSkillFromRegistry',
         'deleteSkills',
         'refreshSkills',
-        'installApp',
         'createNote',
         'editNote',
         'deleteNotes',

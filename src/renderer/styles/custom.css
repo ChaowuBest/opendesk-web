@@ -1288,6 +1288,168 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
     background: rgba(0, 0, 0, 0.22);
 }
 
+/* 邮件：紧凑双栏布局 */
+mailbox-entry-widget {
+    font-size: 13px;
+    line-height: 1.35;
+    color: #1f2937;
+}
+
+mailbox-entry-widget #mailbox-list-header {
+    background: rgba(255, 255, 255, 0.96);
+    padding-top: 36px;
+}
+
+mailbox-entry-widget #email-list {
+    background: #fff;
+}
+
+mailbox-entry-widget .account-selector-item,
+mailbox-entry-widget #add-new-mailbox-btn {
+    font-size: 12px !important;
+}
+
+mailbox-entry-widget .email-item {
+    min-height: 68px;
+}
+
+mailbox-entry-widget #email-content > elastic-toolbar-widget.mailbox-reader-toolbar {
+    flex: none;
+    padding: 36px 12px 8px;
+    border-bottom: 1px solid #e5e7eb;
+    background: rgba(255, 255, 255, 0.96);
+}
+
+mailbox-entry-widget .mailbox-address-chip {
+    transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease;
+}
+
+mailbox-entry-widget .mailbox-address-chip:hover {
+    filter: saturate(1.08);
+}
+
+mailbox-entry-widget .mailbox-open-attachment-item {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e40af;
+}
+
+mailbox-entry-widget .mailbox-open-attachment-item:hover,
+mailbox-entry-widget .mailbox-open-attachment-item:focus-visible {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    outline: none;
+}
+
+mailbox-entry-widget .mailbox-open-attachment-item .mailbox-attachment-file-icon {
+    color: #3b82f6;
+}
+
+.mailbox-attachment-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 148px;
+    padding: 4px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+}
+
+.mailbox-attachment-menu button {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 9px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #374151;
+    font-size: 12px;
+    line-height: 1.25;
+    text-align: left;
+}
+
+.mailbox-attachment-menu button:hover,
+.mailbox-attachment-menu button:focus-visible {
+    background: #f3f4f6;
+    color: #2563eb;
+    outline: none;
+}
+
+.mailbox-attachment-menu button:hover i,
+.mailbox-attachment-menu button:focus-visible i {
+    color: #2563eb;
+}
+
+.mailbox-attachment-menu button i {
+    width: 14px;
+    color: #6b7280;
+    text-align: center;
+}
+
+mailbox-entry-widget .mailbox-address-action:focus-visible,
+mailbox-entry-widget .email-expand-toggle:focus-visible {
+    outline: 2px solid rgba(99, 102, 241, 0.45);
+    outline-offset: 1px;
+}
+
+mail-editor-widget > elastic-toolbar-widget.mailbox-compose-toolbar {
+    flex: none;
+    padding: 36px 12px 8px;
+    border-bottom: 1px solid #e5e7eb;
+    background: rgba(255, 255, 255, 0.96);
+}
+
+mail-editor-widget .mailbox-compose-field-row {
+    min-height: 40px !important;
+}
+
+mail-editor-widget .mailbox-compose-field-label,
+mail-editor-widget .mailbox-compose-recipient-actions,
+mail-editor-widget .mailbox-compose-date {
+    font-size: 12px !important;
+}
+
+mail-editor-widget #subject,
+mail-editor-widget .tagify,
+mail-editor-widget .tagify__input,
+mail-editor-widget .tagify__tag-text {
+    font-size: 13px !important;
+}
+
+mail-editor-widget .mailbox-compose-attachments {
+    margin-top: 10px;
+}
+
+mail-editor-widget .mailbox-compose-attachment-item {
+    padding: 0.3em 0.5em;
+    border-color: transparent;
+    border-radius: 3px;
+    background: #e5e5e5;
+    color: #111827;
+    box-shadow: none;
+}
+
+mail-editor-widget .mailbox-compose-attachment-item:hover,
+mail-editor-widget .mailbox-compose-attachment-item:focus-visible {
+    background: #d3e2e2;
+    outline: none;
+    box-shadow: none;
+}
+
+mail-editor-widget .mailbox-compose-attachment-item .mailbox-attachment-file-icon {
+    color: #6b7280;
+}
+
+mailbox-entry-widget #email-body-content {
+    font-size: 13px;
+}
+
 /* 邮件列表 & 邮件内容区滚动条（一级：主导航/主内容） */
 #email-list::-webkit-scrollbar,
 #email-content::-webkit-scrollbar {

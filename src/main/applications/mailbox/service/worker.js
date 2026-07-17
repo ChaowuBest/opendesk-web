@@ -13,6 +13,10 @@ import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, Ema
 import { BaseWorker } from '../../base';
 import { logger } from '../../../utils/logger.js';
 import { NotificationManager } from '../../../utils/notificationmgr.js';
+import {
+    saveAttachmentFile as copyAttachmentFile,
+    saveAllAttachmentFiles as copyAllAttachmentFiles
+} from './attachment-files.js';
 
 import Pop3Command from 'node-pop3';
 import Imap from 'node-imap';
@@ -2897,6 +2901,14 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         if (!storage) throw new Error('No active profile');
         return await storage.getEmailMeta(uid);
+    }
+
+    async saveAttachmentFile(sourcePath, destinationPath) {
+        return await copyAttachmentFile(sourcePath, destinationPath);
+    }
+
+    async saveAllAttachmentFiles(attachments, destinationDirectory) {
+        return await copyAllAttachmentFiles(attachments, destinationDirectory);
     }
 }
 

@@ -83,22 +83,41 @@ elastic-toolbar-widget.sidebar-bottom button:disabled:hover {
     background: transparent !important;
 }
 
-/* ===== 邮箱头部工具栏变体：透明悬停效果 ===== */
+/* ===== 邮箱头部工具栏变体：与侧边栏底部一致的扁平悬停效果 ===== */
 elastic-toolbar-widget.mailbox-header header {
     height: auto !important;
-    padding: 0.75rem 0 0 0 !important;
+    padding: 0 !important;
 }
 
 elastic-toolbar-widget.mailbox-header header > div {
     background: transparent !important;
     box-shadow: none !important;
     padding: 0 !important;
-    gap: 0.5rem !important;
+    gap: 0.125rem !important;
+}
+
+elastic-toolbar-widget.mailbox-header button {
+    padding: 0.375rem 0.5rem !important;
+    border-radius: 0.375rem !important;
+    font-size: 0.75rem !important;
+    transition:
+        background-color 150ms ease,
+        color 150ms ease !important;
+}
+
+elastic-toolbar-widget.mailbox-header .elastic-label {
+    font-size: 0.75rem !important;
 }
 
 elastic-toolbar-widget.mailbox-header button:hover {
-    background: rgba(255, 255, 255, 0.6) !important;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+    background: #f3f4f6 !important;
+    color: #2563eb !important;
+    box-shadow: none !important;
+}
+
+elastic-toolbar-widget.mailbox-header button:active {
+    background: #e5e7eb !important;
+    box-shadow: none !important;
 }
 
 /* ===== 左对齐变体 ===== */

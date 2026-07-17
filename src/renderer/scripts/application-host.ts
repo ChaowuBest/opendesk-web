@@ -5,6 +5,8 @@
 import Alpine from 'alpinejs';
 import { installApplicationFrameProxies } from './application-frame-proxy.js';
 import { initApplicationThemeHost, initApplicationThemeFromAPI } from '../theme/theme-iframe-bridge.js';
+import { createRendererTranslator } from '../locale.js';
+import { ApplicationTaskSession } from './application-task-session.js';
 
 /** 将 iframe 内键盘/鼠标事件转发给父窗口，使 magic pointer 在子应用中仍可用 */
 function installParentInputForwarding(): void {
@@ -83,92 +85,213 @@ function installParentInputForwarding(): void {
     document.addEventListener('mouseup', (e) => forwardMouseEvent('mouseup', e));
 }
 
-let currentTaskId: string | null = null;
+let applicationHostT = createRendererTranslator();
 
-async function clearTask(): Promise<void> {
-    currentTaskId = null;
+type FloatingChatState = {
+    showFloatingChatPanel: boolean;
+    isMaximized: boolean;
+    isTaskRunning: boolean;
+    isTaskChanging: boolean;
+};
+
+function getFloatingChatState(): FloatingChatState {
+    return Alpine.$data(document.body) as FloatingChatState;
 }
 
-async function submitRequest(request: { message: string }): Promise<void> {
-    const applicationEntryWidget = document.querySelector('#application-entry-widget');
+function setFloatingChatOpen(open: boolean): void {
+    getFloatingChatState().showFloatingChatPanel = open;
+}
 
-    if (currentTaskId === null) {
-        currentTaskId = await window.taskManagerAPI.createTask();
-        const taskViewContainer = document.querySelector('#floating-ai-task-view-container');
-        if (!taskViewContainer) {
-            throw new Error('floating-ai-task-view-container not found');
-        }
-        taskViewContainer.innerHTML = `
-                    <header class="w-full px-2.5 py-1.5 text-xs flex justify-left items-center text-center">
-                        <button id='floating-ai-chat-panel-maximize-button' class="group flex items-center px-2 py-1 rounded-full
-                            bg-transparent hover:bg-white/60 hover:shadow-md
-                            transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                            text-gray-700 hover:text-blue-600"
-                            @click="isMaximized = !isMaximized"
-                        >
-                            <i class="fa-solid fa-maximize"></i>
-                            <span class="max-w-0 overflow-hidden opacity-0
-                                group-hover:max-w-[120px] group-hover:opacity-100
-                                group-hover:ml-2 transition-all duration-500 ease-in-out
-                                whitespace-nowrap font-medium tracking-tight"
-                                x-text="isMaximized ? '还原' : '最大化'"
-                            >
-                            </span>
-                        </button>
-                    </header>
-                    <embedded-task-view id='task-view-${currentTaskId}' task_id="${currentTaskId}" class="flex-1 overflow-y-auto" />
-                    `;
+function setCurrentTaskRunning(running: boolean): void {
+    getFloatingChatState().isTaskRunning = running;
+}
 
-        const taskView = document.querySelector(`#task-view-${currentTaskId}`);
-        const agentInput = document.querySelector('#application-agent-input');
-        if (taskView && agentInput) {
-            taskView.addEventListener('task-status-changed', (e: Event) => {
-                const { taskId, status } = (e as CustomEvent).detail;
-                if (taskId === currentTaskId) {
-                    if (status === 'running') {
-                        (agentInput as HTMLElement & { setTaskStatus: (...args: unknown[]) => void }).setTaskStatus(
-                            'running',
-                            async () => {
-                                try {
-                                    await window.taskManagerAPI.stopTask(currentTaskId!);
-                                } catch (error) {
-                                    console.error('Failed to stop task:', error);
-                                }
-                            }
-                        );
-                    } else {
-                        (agentInput as HTMLElement & { setTaskStatus: (...args: unknown[]) => void }).setTaskStatus(
-                            status
-                        );
-                    }
-                }
-            });
-        }
+async function runTaskControlAction(action: () => Promise<void>): Promise<void> {
+    const state = getFloatingChatState();
+    if (state.isTaskChanging) return;
+    state.isTaskChanging = true;
+    try {
+        await action();
+    } catch (error) {
+        console.error('Floating task control failed:', error);
+    } finally {
+        state.isTaskChanging = false;
     }
+}
 
-    const widget = applicationEntryWidget as HTMLElement & {
-        getToolset?: () => { toJSON: () => unknown; callTool: (...args: unknown[]) => unknown };
-        getAgentInstruct?: () => string;
-    };
+function updateMaximizeButtonTranslation(): void {
+    const maximizeButton = document.querySelector('#floating-ai-chat-panel-maximize-button');
+    if (!maximizeButton) return;
+    const key = getFloatingChatState().isMaximized
+        ? 'renderer.applicationAgent.restore'
+        : 'renderer.applicationAgent.maximize';
+    const label = applicationHostT(key);
+    maximizeButton.setAttribute('aria-label', label);
+    maximizeButton.setAttribute('title', label);
+}
+
+function updateFloatingChatTranslations(): void {
+    const title = applicationHostT('renderer.applicationAgent.title');
+    const newTask = applicationHostT('renderer.applicationAgent.newTask');
+    const open = applicationHostT('renderer.applicationAgent.open');
+    const close = applicationHostT('renderer.applicationAgent.close');
+
+    const titleElement = document.querySelector('#floating-ai-title');
+    const newTaskLabel = document.querySelector('#floating-ai-new-task-label');
+    const trigger = document.querySelector('#floating-ai-trigger');
+    const newTaskButton = document.querySelector('#floating-ai-new-task-button');
+    const closeButton = document.querySelector('#floating-ai-chat-panel-close-button');
+
+    if (titleElement) titleElement.textContent = title;
+    if (newTaskLabel) newTaskLabel.textContent = newTask;
+    trigger?.setAttribute('aria-label', open);
+    trigger?.setAttribute('title', open);
+    newTaskButton?.setAttribute('aria-label', newTask);
+    newTaskButton?.setAttribute('title', newTask);
+    updateMaximizeButtonTranslation();
+    closeButton?.setAttribute('aria-label', close);
+    closeButton?.setAttribute('title', close);
+}
+
+function getApplicationEntryWidget(): HTMLElement & {
+    getToolset?: () => { toJSON: () => unknown; callTool: (...args: unknown[]) => unknown };
+    getAgentInstruct?: () => string;
+} {
+    const widget = document.querySelector('#application-entry-widget');
+    if (!(widget instanceof HTMLElement)) {
+        throw new Error('application-entry-widget not found');
+    }
+    return widget;
+}
+
+async function configureTask(taskId: string): Promise<void> {
+    const widget = getApplicationEntryWidget();
     const currentToolset = widget.getToolset?.();
     if (currentToolset) {
         await window.taskManagerAPI.attachToolset(
-            currentTaskId,
+            taskId,
             currentToolset.toJSON(),
             currentToolset.callTool.bind(currentToolset)
         );
     }
     const agentInstruct = widget.getAgentInstruct?.();
     if (agentInstruct) {
-        await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
+        await window.taskManagerAPI.setSystemPrompt(taskId, agentInstruct);
+    }
+}
+
+async function mountTask(taskId: string): Promise<void> {
+    const taskViewContainer = document.querySelector('#floating-ai-task-view-container');
+    if (!taskViewContainer) {
+        throw new Error('floating-ai-task-view-container not found');
     }
 
-    await window.taskManagerAPI.submitMessage(currentTaskId, request);
-    const taskView = document.querySelector(`#task-view-${currentTaskId}`) as HTMLElement & {
+    const taskView = document.createElement('task-view');
+    taskView.id = `task-view-${taskId}`;
+    taskView.setAttribute('task_id', taskId);
+    taskView.setAttribute('embedded', '');
+    taskView.setAttribute('data-od-widget', '');
+    taskView.className = 'block w-full h-full';
+    taskViewContainer.replaceChildren(taskView);
+
+    await configureTask(taskId);
+}
+
+function unmountTask(): void {
+    setCurrentTaskRunning(false);
+    document.querySelector('#floating-ai-task-view-container')?.replaceChildren();
+}
+
+const taskSession = new ApplicationTaskSession({
+    createTask: () => window.taskManagerAPI.createTask(),
+    mountTask,
+    unmountTask,
+    discardTask: async (taskId) => {
+        await window.taskManagerAPI.removeTask(taskId);
+    }
+});
+
+async function submitRequestToTask(taskId: string, request: { message: string }): Promise<void> {
+    if (taskSession.isCurrent(taskId)) {
+        setCurrentTaskRunning(true);
+        setFloatingChatOpen(true);
+    }
+    try {
+        await window.taskManagerAPI.submitMessage(taskId, request);
+    } catch (error) {
+        if (taskSession.isCurrent(taskId)) {
+            setCurrentTaskRunning(false);
+        }
+        throw error;
+    }
+    if (!taskSession.isCurrent(taskId)) {
+        return;
+    }
+    const taskView = document.querySelector(`#task-view-${taskId}`) as HTMLElement & {
         reload?: () => void;
     };
     taskView?.reload?.();
-    Alpine.$data(document.body).showFloatingChatPanel = true;
+}
+
+async function submitRequest(request: { message: string }): Promise<void> {
+    const existingTaskId = taskSession.taskId;
+    const taskId = await taskSession.ensureTask();
+    if (existingTaskId === taskId) {
+        await configureTask(taskId);
+    }
+    await submitRequestToTask(taskId, request);
+}
+
+let newTaskSubmissionPromise: Promise<void> | null = null;
+
+function submitRequestInNewTask(request: string): Promise<void> {
+    if (newTaskSubmissionPromise) {
+        return newTaskSubmissionPromise;
+    }
+    const submissionPromise = (async () => {
+        const taskId = await taskSession.startNewTask();
+        await submitRequestToTask(taskId, { message: request });
+    })();
+    newTaskSubmissionPromise = submissionPromise;
+    void submissionPromise.then(
+        () => {
+            if (newTaskSubmissionPromise === submissionPromise) {
+                newTaskSubmissionPromise = null;
+            }
+        },
+        () => {
+            if (newTaskSubmissionPromise === submissionPromise) {
+                newTaskSubmissionPromise = null;
+            }
+        }
+    );
+    return submissionPromise;
+}
+
+function bindFloatingChatControls(): void {
+    document.querySelector('#floating-ai-trigger')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void runTaskControlAction(async () => {
+            await taskSession.ensureTask();
+            setFloatingChatOpen(!getFloatingChatState().showFloatingChatPanel);
+        });
+    });
+    document.querySelector('#floating-ai-new-task-button')?.addEventListener('click', () => {
+        void runTaskControlAction(async () => {
+            await taskSession.startNewTask();
+            setFloatingChatOpen(true);
+        });
+    });
+    document.querySelector('#floating-ai-chat-panel-maximize-button')?.addEventListener('click', () => {
+        queueMicrotask(updateMaximizeButtonTranslation);
+    });
+    document.addEventListener('task-status-changed', (event) => {
+        const detail = (event as CustomEvent<{ taskId?: string; status?: string }>).detail;
+        if (!detail || !detail.taskId || !taskSession.isCurrent(detail.taskId)) {
+            return;
+        }
+        setCurrentTaskRunning(detail.status === 'running');
+    });
 }
 
 function showBootstrapError(message: string): void {
@@ -236,26 +359,9 @@ async function bootstrapApplication(): Promise<void> {
 
     const entryName = `${applicationBundleName}-entry-widget`;
 
-    let showAgentBar = false;
-    try {
-        showAgentBar = await window.applicationAPI.callMainWorld('needAgentBar');
-    } catch (err) {
-        console.warn('Failed to check needAgentBar:', err);
-    }
-
-    if (showAgentBar) {
-        const agentInputWrapper = document.querySelector('#agent-input-wrapper');
-        if (agentInputWrapper) {
-            (agentInputWrapper as HTMLElement).style.display = '';
-        }
-    }
-
     window.aiBarAPI = {
         submitRequest: (request: string) => submitRequest({ message: request }),
-        submitRequestInNewTask: async (request: string) => {
-            await clearTask();
-            await submitRequest({ message: request });
-        }
+        submitRequestInNewTask
     };
 
     const container = document.querySelector('#application-container');
@@ -263,17 +369,8 @@ async function bootstrapApplication(): Promise<void> {
         throw new Error('application-container not found');
     }
     container.innerHTML = `<${entryName} id="application-entry-widget" class="w-full h-full" data-od-widget></${entryName}>`;
-
-    if (showAgentBar) {
-        document.querySelector('#application-agent-input')?.addEventListener('focus', () => {
-            if (currentTaskId !== null) {
-                Alpine.$data(document.body).showFloatingChatPanel = true;
-            }
-        });
-        document.querySelector('#application-agent-input')?.addEventListener('submit', (e: Event) => {
-            void submitRequest((e as CustomEvent).detail);
-        });
-    }
+    bindFloatingChatControls();
+    updateFloatingChatTranslations();
 }
 
 void (async () => {
@@ -284,6 +381,7 @@ void (async () => {
             const settings = await window.settingAPI.loadSettingObject();
             const fontPreset = settings?.gui_config?.font_preset || 'default';
             document.documentElement.setAttribute('data-font-preset', fontPreset);
+            applicationHostT = createRendererTranslator(settings);
         }
     } catch {
         /* optional */
@@ -293,6 +391,11 @@ void (async () => {
         if (e.data?.type === 'FONT_SETTINGS') {
             document.documentElement.setAttribute('data-font-preset', e.data.fontPreset);
         }
+    });
+
+    window.settingAPI?.onSettingChanged?.((settings) => {
+        applicationHostT = createRendererTranslator(settings);
+        updateFloatingChatTranslations();
     });
 
     try {
