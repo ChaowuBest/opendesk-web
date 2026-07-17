@@ -354,7 +354,7 @@ HTML 侧只需添加 `.terminal-tool` 类：
 
 **1. 详细卡片风格工具（可折叠 details）**
 
-- **根元素**：语义类 + `#app-root task-view` / `#app-root embedded-task-view` 前缀，确保 CSS 特异性足够覆盖全局 `:where(.text-gray-*)` 规则
+- **根元素**：语义类 + `#app-root task-view` 前缀（嵌入式对话使用 `task-view[embedded]`），确保 CSS 特异性足够覆盖全局 `:where(.text-gray-*)` 规则
 - **背景覆盖**：`bg-white` → `var(--od-bg-elevated)`，`bg-gray-50/40` → `var(--od-bg-muted)`
 - **边框覆盖**：`border-gray-100` / `border-gray-200` → `var(--od-border-strong)`
 - **文字覆盖**：
@@ -372,7 +372,7 @@ HTML 侧只需添加 `.terminal-tool` 类：
 
 **3. 内联行内风格工具（`.od-inline-toolcall-container`）**
 
-- 通常依赖全局的 `#app-root task-view` / `#app-root embedded-task-view` 覆盖规则
+- 通常依赖全局的 `#app-root task-view` 覆盖规则；嵌入模式也复用该组件和规则
 - 如有特殊颜色需求，在语义类下单独覆盖
 - `text-slate-*` 系列统一映射到 `var(--od-text-muted)`
 
@@ -394,7 +394,7 @@ html[data-theme='dark'] .subtask-tool .text-gray-600 {
 
 /* ✅ 正确：包含 #app-root task-view 前缀，特异性足够 */
 html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-600,
-html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-600 {
+html[data-theme='dark'] #app-root task-view[embedded] .subtask-tool .text-gray-600 {
     color: var(--od-text-muted) !important;
 }
 ```

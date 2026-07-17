@@ -14,6 +14,10 @@ describe('task-view message queue', () => {
             customElements: window.customElements,
             MutationObserver: window.MutationObserver,
             Node: window.Node,
+            sessionStorage: {
+                getItem: () => null,
+                removeItem: () => undefined
+            },
             requestAnimationFrame: (callback: FrameRequestCallback) => {
                 callback(0);
                 return 0;
@@ -59,6 +63,22 @@ describe('task-view message queue', () => {
             loadSettingObject: async () => ({}),
             onSettingChanged: () => undefined
         };
+
+        customElements.define(
+            'agent-input',
+            class extends HTMLElement {
+                setDisabled() {}
+                setStopMode() {}
+                setSlashCommandContext() {}
+            }
+        );
+        customElements.define(
+            'message-queue-panel',
+            class extends HTMLElement {
+                setCallbacks() {}
+                setQueue() {}
+            }
+        );
 
         await import('../../../renderer/components/taskview.js');
     });
@@ -122,6 +142,111 @@ describe('task-view message queue', () => {
         });
         expect(taskView.messageQueue).toHaveLength(0);
         expect(taskView.task_status).toBe('running');
+    });
+
+    test('uses the shared task view with an input in embedded mode', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            render: () => void;
+        };
+        taskView.setAttribute('task_id', 'embedded-task');
+        taskView.setAttribute('embedded', '');
+        taskView.task_id = 'embedded-task';
+
+        taskView.render();
+
+        expect(taskView.querySelector('#task-embedded-task-input')).not.toBeNull();
+        expect(taskView.querySelector('#taskview-chat-history')).not.toBeNull();
+        expect(taskView.querySelector('#taskview-toolbar')).toBeNull();
+        expect(taskView.querySelector('task-artifacts')).toBeNull();
+    });
+
+    test('emits task status changes for embedded hosts', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            messageQueue: unknown[];
+            _handleTaskStatusUpdate: (status: string) => boolean;
+            updateStopButtonVisibility: jest.Mock;
+            _startBrowserIdleTimer: jest.Mock;
+        };
+        taskView.task_id = 'embedded-task';
+        taskView.task_status = 'running';
+        taskView.messageQueue = [];
+        taskView.updateStopButtonVisibility = jest.fn();
+        taskView._startBrowserIdleTimer = jest.fn();
+        const statuses: string[] = [];
+        taskView.addEventListener('task-status-changed', (event) => {
+            statuses.push((event as CustomEvent<{ status: string }>).detail.status);
+        });
+
+        expect(taskView._handleTaskStatusUpdate('stopped')).toBe(true);
+        expect(statuses).toEqual(['stopped']);
+    });
+
+    test('does not subscribe after an embedded view is removed during reload', async () => {
+        let resolveTask!: (task: Record<string, unknown>) => void;
+        const taskState = new Promise<Record<string, unknown>>((resolve) => {
+            resolveTask = resolve;
+        });
+        const subscribeTaskUpdate = jest.fn(async () => 'subscription-1');
+        const unsubscribeTaskUpdate = jest.fn(async () => undefined);
+        window.taskManagerAPI = {
+            getFullTask: jest.fn(() => taskState),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => []),
+            subscribeTaskUpdate,
+            unsubscribeTaskUpdate
+        };
+        const taskView = document.createElement('task-view');
+        taskView.setAttribute('task_id', 'embedded-task');
+        taskView.setAttribute('embedded', '');
+        document.body.appendChild(taskView);
+
+        taskView.remove();
+        resolveTask({
+            task_status: 'waiting',
+            chat_context: { messages: [] }
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(subscribeTaskUpdate).not.toHaveBeenCalled();
+        expect(unsubscribeTaskUpdate).not.toHaveBeenCalled();
+    });
+
+    test('unsubscribes when removal races with subscription setup', async () => {
+        let resolveSubscription!: (subscriptionId: string) => void;
+        const subscription = new Promise<string>((resolve) => {
+            resolveSubscription = resolve;
+        });
+        const subscribeTaskUpdate = jest.fn(() => subscription);
+        const unsubscribeTaskUpdate = jest.fn(async () => undefined);
+        window.taskManagerAPI = {
+            getFullTask: jest.fn(async () => ({
+                task_status: 'waiting',
+                chat_context: { messages: [] }
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => []),
+            subscribeTaskUpdate,
+            unsubscribeTaskUpdate
+        };
+        const taskView = document.createElement('task-view');
+        taskView.setAttribute('task_id', 'embedded-task');
+        taskView.setAttribute('embedded', '');
+        document.body.appendChild(taskView);
+        for (let index = 0; index < 6 && subscribeTaskUpdate.mock.calls.length === 0; index += 1) {
+            await Promise.resolve();
+        }
+
+        expect(subscribeTaskUpdate).toHaveBeenCalledTimes(1);
+        taskView.remove();
+        resolveSubscription('subscription-late');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(unsubscribeTaskUpdate).toHaveBeenCalledWith('embedded-task', 'subscription-late');
     });
 
     test('shows a thinking placeholder while waiting for the first assistant part', async () => {

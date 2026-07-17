@@ -36,10 +36,42 @@ type ProxyStreamMessage = {
     error?: string;
 };
 
-const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+type ProxyTaskUpdate = {
+    channel: typeof CHANNEL;
+    type: 'taskUpdate';
+    requestId: string;
+    progress: unknown;
+};
+
+type ProxyToolCall = {
+    channel: typeof CHANNEL;
+    type: 'toolCall';
+    callbackId: string;
+    callId: string;
+    toolName: string;
+    args: unknown;
+};
+
+type ProxyToolCallResult = {
+    channel: typeof CHANNEL;
+    type: 'toolCallResult';
+    callId: string;
+    result?: unknown;
+    error?: string;
+};
+
+const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timeoutId: number }>();
 const pendingStreams = new Map<
     string,
-    { callback: (chunk: unknown) => void; resolve: () => void; reject: (e: Error) => void }
+    { callback: (chunk: unknown) => void; resolve: () => void; reject: (e: Error) => void; timeoutId: number }
+>();
+const taskUpdateCallbacks = new Map<string, (progress: unknown) => void>();
+const taskSubscriptionRequests = new Map<string, string>();
+const toolsetCallbacks = new Map<string, (toolName: string, args: unknown) => unknown>();
+const toolsetCallbackIds = new Map<string, string>();
+const pendingToolCalls = new Map<
+    string,
+    { resolve: (result: unknown) => void; reject: (error: Error) => void; timeoutId: number }
 >();
 
 let currentBundleName: string | null = null;
@@ -75,11 +107,38 @@ function dispatchProxyStreamMessage(msg: ProxyStreamMessage): void {
     }
 
     pendingStreams.delete(msg.requestId);
+    window.clearTimeout(pendingStream.timeoutId);
     if (msg.error) {
         pendingStream.reject(new Error(msg.error));
     } else {
         pendingStream.resolve();
     }
+}
+
+function dispatchTaskUpdate(msg: ProxyTaskUpdate): void {
+    try {
+        taskUpdateCallbacks.get(msg.requestId)?.(msg.progress);
+    } catch (err) {
+        console.error('[application-frame-proxy] task update handler failed', err);
+    }
+}
+
+async function dispatchToolCall(msg: ProxyToolCall): Promise<void> {
+    const callback = toolsetCallbacks.get(msg.callbackId);
+    const reply: ProxyToolCallResult = {
+        channel: CHANNEL,
+        type: 'toolCallResult',
+        callId: msg.callId
+    };
+    try {
+        if (!callback) {
+            throw new Error('Application toolset callback is unavailable');
+        }
+        reply.result = await callback(msg.toolName, msg.args);
+    } catch (err) {
+        reply.error = err instanceof Error ? err.message : String(err);
+    }
+    window.parent.postMessage(reply, '*');
 }
 
 function installProxyListener(): void {
@@ -88,7 +147,13 @@ function installProxyListener(): void {
     }
     (window as Window & { __odFrameProxyListener?: boolean }).__odFrameProxyListener = true;
     window.addEventListener('message', (e: MessageEvent) => {
-        const data = e.data as ProxyReply | ProxyEvent | ProxyStreamMessage | undefined;
+        const data = e.data as
+            | ProxyReply
+            | ProxyEvent
+            | ProxyStreamMessage
+            | ProxyTaskUpdate
+            | ProxyToolCall
+            | undefined;
         if (data?.channel !== CHANNEL) {
             return;
         }
@@ -101,6 +166,14 @@ function installProxyListener(): void {
                 dispatchProxyStreamMessage(data as ProxyStreamMessage);
                 return;
             }
+            if (data.type === 'taskUpdate') {
+                dispatchTaskUpdate(data as ProxyTaskUpdate);
+                return;
+            }
+            if (data.type === 'toolCall') {
+                void dispatchToolCall(data as ProxyToolCall);
+                return;
+            }
         }
         const reply = data as ProxyReply;
         if (!reply.requestId) {
@@ -111,6 +184,7 @@ function installProxyListener(): void {
             return;
         }
         pending.delete(reply.requestId);
+        window.clearTimeout(p.timeoutId);
         if (reply.error) {
             p.reject(new Error(reply.error));
         } else {
@@ -119,11 +193,22 @@ function installProxyListener(): void {
     });
 }
 
-function proxyInvoke(api: ProxyRequest['api'], method: string, args: unknown[], bundleName?: string): Promise<unknown> {
+function proxyInvoke(
+    api: ProxyRequest['api'],
+    method: string,
+    args: unknown[],
+    bundleName?: string,
+    requestId = crypto.randomUUID()
+): Promise<unknown> {
     installProxyListener();
-    const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-        pending.set(requestId, { resolve, reject });
+        const timeoutId = window.setTimeout(() => {
+            if (pending.has(requestId)) {
+                pending.delete(requestId);
+                reject(new Error(`主窗口代理超时: ${api}.${method}`));
+            }
+        }, 120_000);
+        pending.set(requestId, { resolve, reject, timeoutId });
         window.parent.postMessage(
             {
                 channel: CHANNEL,
@@ -135,13 +220,57 @@ function proxyInvoke(api: ProxyRequest['api'], method: string, args: unknown[], 
             } satisfies ProxyRequest,
             '*'
         );
-        window.setTimeout(() => {
-            if (pending.has(requestId)) {
-                pending.delete(requestId);
-                reject(new Error(`主窗口代理超时: ${api}.${method}`));
-            }
-        }, 120_000);
     });
+}
+
+async function proxySubscribeTaskUpdate(taskId: string, callback: (progress: unknown) => void): Promise<string> {
+    const requestId = crypto.randomUUID();
+    taskUpdateCallbacks.set(requestId, callback);
+    try {
+        const subscriptionId = (await proxyInvoke(
+            'taskManager',
+            'subscribeTaskUpdate',
+            [taskId],
+            undefined,
+            requestId
+        )) as string;
+        taskSubscriptionRequests.set(subscriptionId, requestId);
+        return subscriptionId;
+    } catch (error) {
+        taskUpdateCallbacks.delete(requestId);
+        throw error;
+    }
+}
+
+async function proxyUnsubscribeTaskUpdate(taskId: string, subscriptionId: string): Promise<void> {
+    await proxyInvoke('taskManager', 'unsubscribeTaskUpdate', [taskId, subscriptionId]);
+    const requestId = taskSubscriptionRequests.get(subscriptionId);
+    if (requestId) {
+        taskSubscriptionRequests.delete(subscriptionId);
+        taskUpdateCallbacks.delete(requestId);
+    }
+}
+
+async function proxyAttachToolset(
+    taskId: string,
+    toolset: { name?: string },
+    callback: (toolName: string, args: unknown) => unknown
+): Promise<unknown> {
+    const callbackId = crypto.randomUUID();
+    const toolsetKey = `${taskId}:${toolset?.name ?? ''}`;
+    const previousCallbackId = toolsetCallbackIds.get(toolsetKey);
+    toolsetCallbacks.set(callbackId, callback);
+    try {
+        const result = await proxyInvoke('taskManager', 'attachToolset', [taskId, toolset], undefined, callbackId);
+        if (previousCallbackId) {
+            toolsetCallbacks.delete(previousCallbackId);
+        }
+        toolsetCallbackIds.set(toolsetKey, callbackId);
+        return result;
+    } catch (error) {
+        toolsetCallbacks.delete(callbackId);
+        throw error;
+    }
 }
 
 function proxyStreamInvoke(
@@ -153,7 +282,13 @@ function proxyStreamInvoke(
     installProxyListener();
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-        pendingStreams.set(requestId, { callback, resolve, reject });
+        const timeoutId = window.setTimeout(() => {
+            if (pendingStreams.has(requestId)) {
+                pendingStreams.delete(requestId);
+                reject(new Error(`主窗口代理超时: application.${method}`));
+            }
+        }, 120_000);
+        pendingStreams.set(requestId, { callback, resolve, reject, timeoutId });
         window.parent.postMessage(
             {
                 channel: CHANNEL,
@@ -165,12 +300,6 @@ function proxyStreamInvoke(
             } satisfies ProxyRequest,
             '*'
         );
-        window.setTimeout(() => {
-            if (pendingStreams.has(requestId)) {
-                pendingStreams.delete(requestId);
-                reject(new Error(`主窗口代理超时: application.${method}`));
-            }
-        }, 120_000);
     });
 }
 
@@ -182,6 +311,31 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
 
     installProxyListener();
     currentBundleName = applicationBundleName;
+
+    // Built-in application frames are same-origin. Reuse the host's callback-oriented APIs so
+    // prompts, model selectors, skills and notifications keep the same behavior as a full TaskView.
+    try {
+        const child = window as unknown as Record<string, unknown>;
+        const host = window.parent as unknown as Record<string, unknown>;
+        for (const apiName of [
+            'permissionAPI',
+            'askUserAPI',
+            'exitPlanModeAPI',
+            'settingAPI',
+            'modeAPI',
+            'nodeAPI',
+            'applicationRegistryAPI',
+            'notificationAPI',
+            'globalControlAPI',
+            'quickpassAPI'
+        ]) {
+            if (!child[apiName] && host[apiName]) {
+                child[apiName] = host[apiName];
+            }
+        }
+    } catch {
+        // Cross-origin user applications continue through the postMessage proxies below.
+    }
 
     if (!window.applicationAPI?.setApplicationBundleName) {
         window.applicationAPI = {
@@ -217,6 +371,15 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
     if (!window.taskManagerAPI?.createTask) {
         window.taskManagerAPI = new Proxy({} as Window['taskManagerAPI'], {
             get(_target, method: string) {
+                if (method === 'subscribeTaskUpdate') {
+                    return proxySubscribeTaskUpdate;
+                }
+                if (method === 'unsubscribeTaskUpdate') {
+                    return proxyUnsubscribeTaskUpdate;
+                }
+                if (method === 'attachToolset') {
+                    return proxyAttachToolset;
+                }
                 return (...args: unknown[]) => proxyInvoke('taskManager', method, args);
             }
         }) as Window['taskManagerAPI'];
@@ -271,11 +434,26 @@ export function registerApplicationFrameProxyHost(): void {
     }
     (window as Window & { __odFrameProxyHost?: boolean }).__odFrameProxyHost = true;
 
-    const themeListeners = new Set<(resolved: unknown) => void>();
     let themeUnsubscribe: (() => void) | null = null;
 
     window.addEventListener('message', async (event: MessageEvent) => {
-        const data = event.data as ProxyRequest | undefined;
+        const rawData = event.data as ProxyRequest | ProxyToolCallResult | undefined;
+        if (rawData?.channel === CHANNEL && rawData.type === 'toolCallResult') {
+            const toolCall = pendingToolCalls.get(rawData.callId);
+            if (!toolCall) {
+                return;
+            }
+            pendingToolCalls.delete(rawData.callId);
+            window.clearTimeout(toolCall.timeoutId);
+            if (rawData.error) {
+                toolCall.reject(new Error(rawData.error));
+            } else {
+                toolCall.resolve(rawData.result);
+            }
+            return;
+        }
+
+        const data = rawData as ProxyRequest | undefined;
         if (data?.channel !== CHANNEL || !data.requestId || !event.source) {
             return;
         }
@@ -351,7 +529,49 @@ export function registerApplicationFrameProxyHost(): void {
                 if (typeof fn !== 'function') {
                     throw new Error(`taskManagerAPI.${data.method} is not available`);
                 }
-                result = await fn(...data.args);
+                if (data.method === 'subscribeTaskUpdate') {
+                    const [taskId] = data.args as [string];
+                    result = await window.taskManagerAPI.subscribeTaskUpdate(taskId, (progress: unknown) => {
+                        (event.source as Window).postMessage(
+                            {
+                                channel: CHANNEL,
+                                type: 'taskUpdate',
+                                requestId: data.requestId,
+                                progress
+                            } satisfies ProxyTaskUpdate,
+                            '*'
+                        );
+                    });
+                } else if (data.method === 'attachToolset') {
+                    const [taskId, toolset] = data.args as [string, unknown];
+                    result = await window.taskManagerAPI.attachToolset(
+                        taskId,
+                        toolset,
+                        (toolName: string, args: unknown) => {
+                            const callId = crypto.randomUUID();
+                            return new Promise((resolve, reject) => {
+                                const timeoutId = window.setTimeout(() => {
+                                    pendingToolCalls.delete(callId);
+                                    reject(new Error(`Application tool ${toolName} timed out`));
+                                }, 60_000);
+                                pendingToolCalls.set(callId, { resolve, reject, timeoutId });
+                                (event.source as Window).postMessage(
+                                    {
+                                        channel: CHANNEL,
+                                        type: 'toolCall',
+                                        callbackId: data.requestId,
+                                        callId,
+                                        toolName,
+                                        args
+                                    } satisfies ProxyToolCall,
+                                    '*'
+                                );
+                            });
+                        }
+                    );
+                } else {
+                    result = await fn(...data.args);
+                }
             } else if (data.api === 'theme') {
                 if (data.method === 'getResolvedTheme') {
                     result = await window.themeAPI.getResolvedTheme();

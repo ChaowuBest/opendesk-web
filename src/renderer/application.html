@@ -28,35 +28,192 @@
             [x-cloak] {
                 display: none !important;
             }
+
+            #floating-ai-chat-panel {
+                right: 5.75rem;
+                bottom: 1rem;
+                width: min(32rem, calc(100vw - 7.75rem));
+                height: min(42rem, calc(100vh - 2rem));
+                transform-origin: right bottom;
+            }
+
+            #floating-ai-chat-panel.is-maximized {
+                right: 1rem;
+                width: calc(100vw - 2rem);
+                height: calc(100vh - 2rem);
+            }
+
+            #floating-ai-chat-surface {
+                background: color-mix(in srgb, var(--od-bg-elevated, white) 90%, transparent);
+                border-color: color-mix(in srgb, var(--od-border-strong, #d1d5db) 78%, transparent);
+                border-radius: 1.25rem;
+                box-shadow:
+                    0 24px 80px rgba(15, 23, 42, 0.2),
+                    0 0 1px rgba(15, 23, 42, 0.12);
+            }
+
+            .floating-ai-header-button {
+                border-radius: 0.625rem;
+                color: var(--od-text-muted, #6b7280);
+                transition:
+                    color 150ms ease,
+                    background-color 150ms ease,
+                    transform 150ms ease;
+            }
+
+            .floating-ai-header-button:hover:not(:disabled) {
+                color: var(--od-accent, #3b82f6);
+                background: color-mix(in srgb, var(--od-accent, #3b82f6) 10%, transparent);
+            }
+
+            .floating-ai-header-button:active:not(:disabled) {
+                transform: scale(0.96);
+            }
+
+            .floating-ai-header-button:focus-visible,
+            #floating-ai-trigger:focus-visible {
+                outline: 2px solid color-mix(in srgb, var(--od-accent, #3b82f6) 72%, transparent);
+                outline-offset: 2px;
+            }
+
+            .floating-ai-header-button:disabled,
+            #floating-ai-trigger:disabled {
+                cursor: wait;
+                opacity: 0.58;
+            }
+
+            #floating-ai-trigger {
+                right: 1rem;
+                bottom: 1rem;
+                width: 4rem;
+                height: 4rem;
+                border: 1px solid rgba(255, 255, 255, 0.76);
+                background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(238, 240, 255, 0.92));
+                box-shadow:
+                    0 14px 34px rgba(76, 74, 170, 0.3),
+                    0 3px 10px rgba(15, 23, 42, 0.14);
+            }
+
+            #floating-ai-trigger::before,
+            #floating-ai-trigger::after {
+                content: '';
+                position: absolute;
+                inset: -0.35rem;
+                border-radius: 9999px;
+                border: 2px solid rgba(113, 94, 206, 0.62);
+                opacity: 0;
+                pointer-events: none;
+            }
+
+            #floating-ai-trigger.is-running::before,
+            #floating-ai-trigger.is-running::after {
+                animation: floating-agent-running 1.8s ease-out infinite;
+            }
+
+            #floating-ai-trigger.is-running::after {
+                animation-delay: 0.9s;
+            }
+
+            @keyframes floating-agent-running {
+                0% {
+                    transform: scale(0.82);
+                    opacity: 0.86;
+                }
+                75%,
+                100% {
+                    transform: scale(1.35);
+                    opacity: 0;
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                #floating-ai-trigger.is-running::before,
+                #floating-ai-trigger.is-running::after {
+                    animation: none;
+                    opacity: 0.75;
+                }
+            }
         </style>
         <script type="module" src="./scripts/application.js"></script>
     </head>
-    <body x-data="{ showFloatingChatPanel: false, isMaximized: false }">
+    <body
+        id="app-root"
+        x-data="{ showFloatingChatPanel: false, isMaximized: false, isTaskRunning: false, isTaskChanging: false }"
+    >
         <div id="application-container" class="flex w-full h-full"></div>
 
         <div
             id="floating-ai-chat-panel"
             x-ref="chatPanel"
             x-cloak
-            :class="isMaximized ? 'max-w-full h-full pt-20 transition-all duration-500 ease-in-out' : 'max-w-2xl h-96 transition-all duration-500 ease-in-out'"
-            class="fixed bottom-0 left-1/2 z-50 -translate-x-1/2 w-full px-4 mb-3 pointer-events-none flex flex-col items-center"
+            :class="{ 'is-maximized': isMaximized }"
+            class="fixed z-50 pointer-events-none flex flex-col transition-all duration-300 ease-out"
             x-show="showFloatingChatPanel"
             @click.outside="
-            if (!$refs.chatPanel.contains($event.target)) {
+            if (!$refs.chatPanel.contains($event.target) && !$event.target.closest('#floating-ai-trigger')) {
                 showFloatingChatPanel = false
             }
             "
-            x-transition:enter="transition ease-out duration-300 transform"
-            x-transition:enter-start="translate-y-full"
-            x-transition:enter-end="translate-y-0"
-            x-transition:leave="transition ease-in duration-300 transform"
-            x-transition:leave-start="translate-y-0"
-            x-transition:leave-end="translate-y-full"
+            x-transition:enter="transition ease-out duration-300 transform opacity"
+            x-transition:enter-start="translate-x-8 scale-95 opacity-0"
+            x-transition:enter-end="translate-x-0 scale-100 opacity-100"
+            x-transition:leave="transition ease-in duration-200 transform opacity"
+            x-transition:leave-start="translate-x-0 scale-100 opacity-100"
+            x-transition:leave-end="translate-x-8 scale-95 opacity-0"
         >
             <div
-                id="floating-ai-task-view-container"
-                class="w-full h-full bg-white/60 backdrop-blur-md shadow-xl rounded-3xl border border-gray-200 pb-14 pt-1 flex flex-col overflow-hidden pointer-events-auto"
-            ></div>
+                id="floating-ai-chat-surface"
+                class="w-full h-full backdrop-blur-xl border flex flex-col overflow-hidden pointer-events-auto"
+            >
+                <header
+                    class="h-12 shrink-0 px-3 border-b flex items-center justify-between gap-2"
+                    style="color: var(--od-text); border-color: var(--od-border)"
+                >
+                    <div class="min-w-0 flex items-center gap-2 text-sm font-semibold">
+                        <img src="./images/icon_round.png" alt="" class="w-6 h-6 rounded-full" />
+                        <span id="floating-ai-title"></span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button
+                            id="floating-ai-new-task-button"
+                            type="button"
+                            :disabled="isTaskChanging"
+                            class="floating-ai-header-button h-8 px-2.5 flex items-center gap-1.5 text-xs"
+                        >
+                            <i :class="isTaskChanging ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-plus'"></i>
+                            <span id="floating-ai-new-task-label"></span>
+                        </button>
+                        <button
+                            id="floating-ai-chat-panel-maximize-button"
+                            type="button"
+                            class="floating-ai-header-button w-8 h-8 inline-flex items-center justify-center"
+                            @click="isMaximized = !isMaximized"
+                        >
+                            <i :class="isMaximized ? 'fa-solid fa-compress' : 'fa-solid fa-expand'"></i>
+                        </button>
+                        <button
+                            id="floating-ai-chat-panel-close-button"
+                            type="button"
+                            class="floating-ai-header-button w-8 h-8 inline-flex items-center justify-center"
+                            @click="showFloatingChatPanel = false"
+                        >
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </header>
+                <div id="floating-ai-task-view-container" class="flex-1 min-h-0"></div>
+            </div>
         </div>
+
+        <button
+            id="floating-ai-trigger"
+            type="button"
+            x-cloak
+            :disabled="isTaskChanging"
+            :class="{ 'is-running': isTaskRunning && !showFloatingChatPanel }"
+            class="fixed z-50 rounded-full flex items-center justify-center transition-transform duration-200 hover:scale-105 active:scale-95"
+        >
+            <img src="./images/icon_round.png" alt="" class="w-12 h-12 rounded-full pointer-events-none" />
+        </button>
     </body>
 </html>
