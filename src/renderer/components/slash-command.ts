@@ -205,7 +205,7 @@ async function executeGoalSubcommand(
     if (subcommand === 'clear') {
         const result = await ctx.taskManagerAPI?.clearGoal?.(taskId);
         showGoalResult(result);
-        if (result?.ok !== false) {
+        if (result?.ok !== false && result?.clearedActiveGoal === true) {
             ctx.clearMessageQueue?.();
         }
     }

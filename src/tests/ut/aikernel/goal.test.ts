@@ -957,6 +957,7 @@ describe('goal controller and scheduler', () => {
         const result = await GoalService.clear(task, 'gui');
 
         expect(result.ok).toBe(true);
+        expect(result.clearedActiveGoal).toBe(true);
         expect(task.goal_state?.status).toBe('cleared');
         expect(getTaskTodosForDisplay(task.task_id)[0]).toEqual({
             id: 'todo-running',
@@ -967,6 +968,143 @@ describe('goal controller and scheduler', () => {
             created_at: now,
             updated_at: expect.any(String)
         });
+        deleteTaskTodos(task.task_id);
+    });
+
+    test('clear leaves a running task unchanged when the goal is already complete', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'goal', source: 'gui' });
+        const goal = task.goal_state!;
+        GoalController.recordEvaluation(task, {
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: [],
+            evaluatedAt: new Date().toISOString()
+        });
+        const now = '2026-01-01T00:00:00.000Z';
+        setTaskTodos(task.task_id, [
+            {
+                id: 'todo-running',
+                task_id: task.task_id,
+                title: 'Running todo',
+                content: 'Running todo',
+                status: 'in_progress',
+                created_at: now,
+                updated_at: now,
+                started_at: now
+            }
+        ]);
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+        const result = await GoalService.clear(task, 'gui');
+
+        expect(result.ok).toBe(true);
+        expect(result.interruptedRunner).toBe(false);
+        expect(result.clearedActiveGoal).toBe(false);
+        expect(task.goal_state?.status).toBe('cleared');
+        expect(task.task_status).toBe('running');
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(getTaskTodosForDisplay(task.task_id)[0]?.status).toBe('in_progress');
+        deleteTaskTodos(task.task_id);
+    });
+
+    test.each(['paused', 'blocked'] as const)(
+        'clear leaves a running task unchanged when the goal is %s',
+        async (status) => {
+            const task = createTask();
+            GoalController.create(task, { objective: 'goal', source: 'gui' });
+            if (status === 'paused') {
+                GoalController.pause(task, 'gui');
+            } else {
+                GoalController.blockActiveGoal(task, 'waiting for user', 'system');
+            }
+            const now = '2026-01-01T00:00:00.000Z';
+            setTaskTodos(task.task_id, [
+                {
+                    id: 'todo-running',
+                    task_id: task.task_id,
+                    title: 'Running todo',
+                    content: 'Running todo',
+                    status: 'in_progress',
+                    created_at: now,
+                    updated_at: now,
+                    started_at: now
+                }
+            ]);
+            task.task_status = 'running';
+            const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+            const result = await GoalService.clear(task, 'gui');
+
+            expect(result.ok).toBe(true);
+            expect(result.interruptedRunner).toBe(false);
+            expect(result.clearedActiveGoal).toBe(false);
+            expect(task.goal_state?.status).toBe('cleared');
+            expect(task.task_status).toBe('running');
+            expect(interruptSpy).not.toHaveBeenCalled();
+            expect(getTaskTodosForDisplay(task.task_id)[0]?.status).toBe('in_progress');
+            deleteTaskTodos(task.task_id);
+        }
+    );
+
+    test('clear rejects a task without a goal before applying task side effects', async () => {
+        const task = createTask();
+        const now = '2026-01-01T00:00:00.000Z';
+        setTaskTodos(task.task_id, [
+            {
+                id: 'todo-running',
+                task_id: task.task_id,
+                title: 'Running todo',
+                content: 'Running todo',
+                status: 'in_progress',
+                created_at: now,
+                updated_at: now,
+                started_at: now
+            }
+        ]);
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+        const result = await GoalService.clear(task, 'gui');
+
+        expect(result).toMatchObject({ ok: false, errorCode: 'no_goal' });
+        expect(task.goal_state).toBeUndefined();
+        expect(task.task_status).toBe('running');
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(getTaskTodosForDisplay(task.task_id)[0]?.status).toBe('in_progress');
+        deleteTaskTodos(task.task_id);
+    });
+
+    test('clear rejects an already cleared goal before applying task side effects', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'goal', source: 'gui' });
+        GoalController.clear(task, 'gui');
+        const now = '2026-01-01T00:00:00.000Z';
+        setTaskTodos(task.task_id, [
+            {
+                id: 'todo-running',
+                task_id: task.task_id,
+                title: 'Running todo',
+                content: 'Running todo',
+                status: 'in_progress',
+                created_at: now,
+                updated_at: now,
+                started_at: now
+            }
+        ]);
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+        const result = await GoalService.clear(task, 'gui');
+
+        expect(result).toMatchObject({ ok: false, status: 'cleared', errorCode: 'no_goal' });
+        expect(task.goal_state?.status).toBe('cleared');
+        expect(task.task_status).toBe('running');
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(getTaskTodosForDisplay(task.task_id)[0]?.status).toBe('in_progress');
         deleteTaskTodos(task.task_id);
     });
 
@@ -1206,6 +1344,41 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pauseReason).toBeUndefined();
         expect(task.task_status).toBe('stopped');
         expect(task.runtimeInterrupt).toBeUndefined();
+    });
+
+    test('pause rejects an already paused goal without interrupting a running task', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'goal', source: 'gui' });
+        GoalController.pause(task, 'gui');
+        const eventCount = GoalEvents.getTail(task.goal_event_log).length;
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+        const result = await GoalService.pause(task, 'gui');
+
+        expect(result).toMatchObject({ ok: false, status: 'paused', errorCode: 'goal_paused' });
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('running');
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(GoalEvents.getTail(task.goal_event_log)).toHaveLength(eventCount);
+    });
+
+    test('pause rejects a blocked goal without interrupting a running task', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'goal', source: 'gui' });
+        GoalController.blockActiveGoal(task, 'waiting for user', 'system');
+        const eventCount = GoalEvents.getTail(task.goal_event_log).length;
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
+
+        const result = await GoalService.pause(task, 'gui');
+
+        expect(result).toMatchObject({ ok: false, status: 'blocked', errorCode: 'goal_blocked' });
+        expect(task.goal_state?.status).toBe('blocked');
+        expect(task.goal_state?.blockedReason).toBe('waiting for user');
+        expect(task.task_status).toBe('running');
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(GoalEvents.getTail(task.goal_event_log)).toHaveLength(eventCount);
     });
 
     test('resume settles a stale pause interrupt after the task has stopped', async () => {

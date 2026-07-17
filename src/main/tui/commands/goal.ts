@@ -258,9 +258,18 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                     return;
                 }
                 if (command.subcommand === 'clear') {
+                    if (task.goal_state?.status === 'complete') {
+                        showResult(tui, {
+                            ok: false,
+                            status: task.goal_state.status,
+                            messageKey: 'goal.clear.complete',
+                            errorCode: 'goal_complete'
+                        });
+                        return;
+                    }
                     const result = await GoalService.clear(task, 'tui');
                     showResult(tui, result);
-                    if (result.ok) {
+                    if (result.ok && result.clearedActiveGoal === true) {
                         clearInputQueueForTask(tui, task);
                     }
                     return;

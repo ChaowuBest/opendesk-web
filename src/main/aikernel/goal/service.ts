@@ -437,10 +437,14 @@ export class GoalService {
     }
 
     static async clear(task: TaskState, source: GoalEvent['source'] = 'api'): Promise<GoalCommandResult> {
+        const wasActive = task.goal_state?.status === 'active';
         const result = GoalController.clear(task, source);
-        resetInProgressTaskTodos(task.task_id);
+        if (!result.ok) return result;
+        if (wasActive) {
+            resetInProgressTaskTodos(task.task_id);
+        }
         let interruptedRunner = false;
-        if (task.task_status === 'running') {
+        if (wasActive && task.task_status === 'running') {
             await task.interruptRunningTurn({
                 reason: 'goal_clear',
                 stopRunningTools: true,
@@ -449,6 +453,6 @@ export class GoalService {
             });
             interruptedRunner = true;
         }
-        return { ...result, interruptedRunner };
+        return { ...result, interruptedRunner, clearedActiveGoal: wasActive };
     }
 }

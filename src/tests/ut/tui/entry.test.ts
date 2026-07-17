@@ -139,6 +139,50 @@ describe('OpenDeskTUI active task view state', () => {
         });
     });
 
+    test.each(['complete', 'cleared'] as const)(
+        'processes queued task messages after a goal becomes %s',
+        async (status) => {
+            const queue = ['continue with ordinary task work'];
+            const goal = GoalStates.create('task-1', { objective: 'goal' });
+            goal.status = status;
+            const task = {
+                task_id: 'task-1',
+                task_status: 'stopped',
+                goal_state: goal,
+                message_queue: [...queue]
+            };
+            const communicate = jest.fn(async () => {});
+            const clearMessageQueue = jest.fn();
+            const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+                activeTaskId: task.task_id,
+                taskManagerState: {
+                    getTask: jest.fn(() => task)
+                },
+                taskView: {
+                    communicate
+                },
+                inputArea: {
+                    hasQueuedMessages: jest.fn(() => queue.length > 0),
+                    getQueueSnapshot: jest.fn(() => [...queue]),
+                    dequeueMessage: jest.fn(() => queue.shift()),
+                    clearMessageQueue,
+                    setStatus: jest.fn(),
+                    statusBar: {
+                        startTimer: jest.fn(),
+                        stopTimer: jest.fn()
+                    }
+                },
+                undoStacks: new Map()
+            }) as any;
+
+            await tui.processQueue();
+
+            expect(communicate).toHaveBeenCalledWith('continue with ordinary task work');
+            expect(clearMessageQueue).not.toHaveBeenCalled();
+            expect(task.message_queue).toEqual([]);
+        }
+    );
+
     test('goal evaluation end immediately moves terminal goal panel into task history', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         goal.createdAt = '2026-01-01T00:00:00.000Z';

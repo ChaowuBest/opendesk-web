@@ -381,4 +381,35 @@ describe('renderer slash commands', () => {
         expect(clearGoal).not.toHaveBeenCalled();
         expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('clear'));
     });
+
+    test.each([
+        { clearedActiveGoal: true, expectedQueueClears: 1 },
+        { clearedActiveGoal: false, expectedQueueClears: 0 }
+    ])(
+        'goal clear only clears the message queue when clearedActiveGoal is $clearedActiveGoal',
+        async ({ clearedActiveGoal, expectedQueueClears }) => {
+            const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+            const clearGoal = jest.fn(async () => ({
+                ok: true,
+                status: 'cleared',
+                clearedActiveGoal
+            }));
+            const clearMessageQueue = jest.fn();
+
+            await executeSlashCommand(
+                'goal',
+                {
+                    globalControlAPI: {},
+                    taskManagerAPI: { clearGoal },
+                    currentTaskId: 'task-1',
+                    stopCallback: null,
+                    clearMessageQueue
+                },
+                'clear'
+            );
+
+            expect(clearGoal).toHaveBeenCalledWith('task-1');
+            expect(clearMessageQueue).toHaveBeenCalledTimes(expectedQueueClears);
+        }
+    );
 });

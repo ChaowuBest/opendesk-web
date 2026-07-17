@@ -421,6 +421,59 @@ describe('/goal command', () => {
         expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
     });
 
+    test('rejects /goal clear for a completed goal without clearing the input queue', async () => {
+        const { tui, registry, task } = await createTui();
+        GoalController.create(task, { objective: 'completed goal', source: 'tui' });
+        const goal = task.goal_state!;
+        GoalController.recordEvaluation(task, {
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: [],
+            evaluatedAt: new Date().toISOString()
+        });
+        task.message_queue = ['keep this message'];
+
+        expect(await registry.execute('/goal clear')).toBe(true);
+
+        expect(task.goal_state?.status).toBe('complete');
+        expect(task.message_queue).toEqual(['keep this message']);
+        expect(tui.inputArea.clearMessageQueue).not.toHaveBeenCalled();
+        expect(overlayShows.at(-1)?.message).toContain('cannot be cleared');
+    });
+
+    test.each(['paused', 'blocked'] as const)('clearing a %s goal preserves the task message queue', async (status) => {
+        const { tui, registry, task } = await createTui();
+        GoalController.create(task, { objective: `${status} goal`, source: 'tui' });
+        if (status === 'paused') {
+            GoalController.pause(task, 'tui');
+        } else {
+            GoalController.blockActiveGoal(task, 'waiting for user', 'system');
+        }
+        task.message_queue = ['keep this message'];
+
+        expect(await registry.execute('/goal clear')).toBe(true);
+
+        expect(task.goal_state?.status).toBe('cleared');
+        expect(task.message_queue).toEqual(['keep this message']);
+        expect(tui.inputArea.clearMessageQueue).not.toHaveBeenCalled();
+    });
+
+    test('rejects /goal pause for a blocked goal', async () => {
+        const { registry, task } = await createTui();
+        GoalController.create(task, { objective: 'blocked goal', source: 'tui' });
+        GoalController.blockActiveGoal(task, 'waiting for user', 'system');
+        const eventCount = GoalEvents.getTail(task.goal_event_log).length;
+
+        expect(await registry.execute('/goal pause')).toBe(true);
+
+        expect(task.goal_state?.status).toBe('blocked');
+        expect(task.goal_state?.blockedReason).toBe('waiting for user');
+        expect(GoalEvents.getTail(task.goal_event_log)).toHaveLength(eventCount);
+        expect(overlayShows.at(-1)?.message).toContain('cannot be paused');
+    });
+
     test('/stop pauses a running active goal without calling ordinary task stop', async () => {
         const { registry, task, tui } = await createTui();
         await registry.execute('/goal active work');
