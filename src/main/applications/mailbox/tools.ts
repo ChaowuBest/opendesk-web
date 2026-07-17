@@ -14,7 +14,6 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { escapeHtml } from '../../../common/utils/escape.js';
-import { t } from '../../../locale/index.js';
 import { ApplicationRegistry } from '../registry';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
@@ -22,6 +21,45 @@ import { z } from 'zod';
 import fs from 'fs';
 import nodePath from 'path';
 import type { MailboxApplication } from './app';
+
+// ============================================================
+// 工具调用渲染辅助函数
+// ============================================================
+
+/**
+ * 单行内联工具渲染：图标 + 标题 + 状态点 + 关键信息
+ */
+function renderMailboxInlineTool(opts: { icon: string; title: string; status: string; detail?: string }): string {
+    const statusIcon =
+        opts.status === 'running'
+            ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+            : opts.status === 'error'
+              ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+              : '';
+
+    const detailHtml = opts.detail
+        ? `<span class="truncate text-xs text-slate-600">${escapeHtml(opts.detail)}</span>`
+        : '';
+
+    return `<div class="od-inline-toolcall-container">
+        <div class="flex items-center gap-1.5 min-w-0">
+            <i class="${opts.icon} shrink-0 text-slate-400 text-xs"></i>
+            <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(opts.title)}</span>
+            ${statusIcon}
+            ${detailHtml}
+        </div>
+    </div>`;
+}
+
+/** 解析工具结果中的 success / 数量等通用字段 */
+function parseMailboxResult(result: string | undefined): { success?: boolean; total?: number; message?: string } {
+    if (!result) return {};
+    try {
+        return JSON.parse(result);
+    } catch {
+        return {};
+    }
+}
 
 // ============================================================
 // 常见邮箱服务商预设配置
@@ -171,6 +209,25 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         );
         this.mailApp = mailApp;
         this.executor = this.addAccount.bind(this);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const email = args?.email || '';
+        const protocol = args?.protocol || '';
+        const detailParts: string[] = [];
+        if (email) detailParts.push(email);
+        if (protocol) detailParts.push(protocol.toUpperCase());
+        if (toolcall.status === 'success') {
+            const r = parseMailboxResult(toolcall.result);
+            detailParts.push(r.success ? '配置成功' : r.message || '');
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-plus-circle',
+            title: '添加邮箱账号',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -502,6 +559,20 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
         this.executor = this.listAccounts.bind(this);
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const detailParts: string[] = [];
+        if (toolcall.status === 'success' && toolcall.result) {
+            const r = parseMailboxResult(toolcall.result);
+            if (r.total !== undefined) detailParts.push(`${r.total} 个账号`);
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-list',
+            title: '邮箱账号列表',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
 
@@ -580,6 +651,16 @@ export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgs
         super('removeMailAccount', '删除已配置的邮箱账号', RemoveMailAccountArgsSchema);
         this.mailApp = mailApp;
         this.executor = this.removeAccount.bind(this);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        return renderMailboxInlineTool({
+            icon: 'fas fa-user-minus',
+            title: '删除邮箱账号',
+            status: toolcall.status,
+            detail: args?.email ? args.email : undefined
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -676,6 +757,16 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
         );
         this.mailApp = mailApp;
         this.executor = this.switchAccount.bind(this);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        return renderMailboxInlineTool({
+            icon: 'fas fa-exchange-alt',
+            title: '切换邮箱账号',
+            status: toolcall.status,
+            detail: args?.email ? args.email : undefined
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1010,6 +1101,38 @@ export class GetEmailListTool extends BaseTool<typeof GetEmailListSchema> {
             return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
         });
     }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const detailParts: string[] = [];
+        if (args?.limit) detailParts.push(`最多 ${args.limit} 封`);
+        if (toolcall.status === 'success' && toolcall.result) {
+            const r = parseMailboxResult(toolcall.result);
+            detailParts.push(`${r.total ?? 0} 封邮件`);
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-inbox',
+            title: '获取邮件列表',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        if (args?.limit) lines.push(chalk.dim('数量: ') + chalk.cyan(String(args.limit)));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在获取邮件列表…'));
+        else if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const r = JSON.parse(toolcall.result);
+                lines.push(chalk.dim(`  ✓ 共 ${r.total ?? 0} 封邮件`));
+            } catch {
+                lines.push(chalk.dim('  ✓ 已获取邮件列表'));
+            }
+        } else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '获取失败')));
+        return lines.length > 0 ? lines : undefined;
+    }
 }
 
 export class GetEmailContentTool extends BaseTool<typeof GetEmailContentSchema> {
@@ -1025,6 +1148,27 @@ export class GetEmailContentTool extends BaseTool<typeof GetEmailContentSchema> 
                 fullLength: text.length
             });
         });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const uid = args?.uid || '';
+        return renderMailboxInlineTool({
+            icon: 'fas fa-envelope-open-text',
+            title: '获取邮件内容',
+            status: toolcall.status,
+            detail: uid ? `邮件 ID: ${uid}` : undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        if (args?.uid) lines.push(chalk.dim('邮件 ID: ') + chalk.cyan(String(args.uid)));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在获取邮件内容…'));
+        else if (toolcall.status === 'success') lines.push(chalk.dim('  ✓ 已获取邮件内容'));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '获取失败')));
+        return lines.length > 0 ? lines : undefined;
     }
 }
 
@@ -1057,30 +1201,35 @@ export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as any;
         const query = args?.subject || args?.general || args?.from || '';
-        const statusIcon =
-            toolcall.status === 'running'
-                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
-                : toolcall.status === 'error'
-                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
-                  : '';
         const detailParts: string[] = [];
-        if (query) detailParts.push(`"${escapeHtml(String(query))}"`);
+        if (query) detailParts.push(`"${String(query)}"`);
         if (toolcall.status === 'success' && toolcall.result) {
+            const r = parseMailboxResult(toolcall.result);
+            if (r.total !== undefined) detailParts.push(`${r.total} 条结果`);
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-search',
+            title: '搜索邮件',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const query = args?.subject || args?.general || args?.from || '';
+        const lines: string[] = [];
+        if (query) lines.push(chalk.dim('搜索: ') + chalk.cyan(String(query)));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在搜索邮件…'));
+        else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const r = JSON.parse(toolcall.result);
-                detailParts.push(`${r.total || 0} 条结果`);
-            } catch {}
-        }
-        const detail = detailParts.join(' · ');
-        const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${detail}</span>` : '';
-        return `<div class="od-inline-toolcall-container">
-            <div class="flex items-center gap-1.5 min-w-0">
-                <i class="fas fa-envelope-open-text shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.email.name'))}</span>
-                ${statusIcon}
-                ${detailHtml}
-            </div>
-        </div>`;
+                lines.push(chalk.dim(`  ✓ 共 ${r.total ?? 0} 条结果`));
+            } catch {
+                lines.push(chalk.dim('  ✓ 搜索完成'));
+            }
+        } else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '搜索失败')));
+        return lines.length > 0 ? lines : undefined;
     }
 }
 
@@ -1118,6 +1267,36 @@ export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
                 return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
             }
         });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const detailParts: string[] = [];
+        const recipients = [args?.to, args?.cc].filter(Boolean).join(', ');
+        if (recipients) detailParts.push(`收件人: ${recipients}`);
+        if (args?.subject) detailParts.push(`主题: ${args.subject}`);
+        if (toolcall.status === 'success') {
+            const r = parseMailboxResult(toolcall.result);
+            detailParts.push(r.success ? '发送成功' : '发送失败');
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-paper-plane',
+            title: '发送邮件',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        const recipients = [args?.to, args?.cc].filter(Boolean).join(', ');
+        if (recipients) lines.push(chalk.dim('收件人: ') + chalk.cyan(recipients));
+        if (args?.subject) lines.push(chalk.dim('主题: ') + chalk.cyan(args.subject));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在发送邮件…'));
+        else if (toolcall.status === 'success') lines.push(chalk.green('  ✓ 邮件已发送'));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '发送失败')));
+        return lines.length > 0 ? lines : undefined;
     }
 }
 
@@ -1168,6 +1347,34 @@ export class ReplyEmailTool extends BaseTool<typeof ReplyEmailSchema> {
             }
         });
     }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const detailParts: string[] = [];
+        if (args?.uid) detailParts.push(`原邮件 ID: ${args.uid}`);
+        if (args?.replyAll) detailParts.push('回复所有人');
+        if (toolcall.status === 'success') {
+            const r = parseMailboxResult(toolcall.result);
+            detailParts.push(r.success ? '回复成功' : '回复失败');
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-reply',
+            title: '回复邮件',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        if (args?.uid) lines.push(chalk.dim('原邮件 ID: ') + chalk.cyan(String(args.uid)));
+        if (args?.replyAll) lines.push(chalk.dim('  回复所有人'));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在回复邮件…'));
+        else if (toolcall.status === 'success') lines.push(chalk.green('  ✓ 邮件已回复'));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '回复失败')));
+        return lines.length > 0 ? lines : undefined;
+    }
 }
 
 export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
@@ -1189,6 +1396,28 @@ export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
             }
         });
     }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const status = args?.read === false ? '标记为未读' : '标记为已读';
+        return renderMailboxInlineTool({
+            icon: 'fas fa-envelope-open',
+            title: '标记邮件状态',
+            status: toolcall.status,
+            detail: args?.uid ? `邮件 ID: ${args.uid} · ${status}` : undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const status = args?.read === false ? '标记为未读' : '标记为已读';
+        const lines: string[] = [];
+        if (args?.uid) lines.push(chalk.dim('邮件 ID: ') + chalk.cyan(String(args.uid)));
+        if (toolcall.status === 'running') lines.push(chalk.dim(`  ⏳ 正在${status}…`));
+        else if (toolcall.status === 'success') lines.push(chalk.green(`  ✓ 已${status}`));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '操作失败')));
+        return lines.length > 0 ? lines : undefined;
+    }
 }
 
 export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
@@ -1209,6 +1438,28 @@ export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
             }
         });
     }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const action = args?.starred === false ? '取消收藏' : '收藏';
+        return renderMailboxInlineTool({
+            icon: 'fas fa-star',
+            title: '收藏邮件',
+            status: toolcall.status,
+            detail: args?.uid ? `邮件 ID: ${args.uid} · ${action}` : undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const action = args?.starred === false ? '取消收藏' : '收藏';
+        const lines: string[] = [];
+        if (args?.uid) lines.push(chalk.dim('邮件 ID: ') + chalk.cyan(String(args.uid)));
+        if (toolcall.status === 'running') lines.push(chalk.dim(`  ⏳ 正在${action}…`));
+        else if (toolcall.status === 'success') lines.push(chalk.green(`  ✓ 已${action}`));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '操作失败')));
+        return lines.length > 0 ? lines : undefined;
+    }
 }
 
 export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
@@ -1222,6 +1473,26 @@ export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
                 return JSON.stringify({ success: false, error: error.message || '删除邮件失败' });
             }
         });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        return renderMailboxInlineTool({
+            icon: 'fas fa-trash',
+            title: '删除邮件',
+            status: toolcall.status,
+            detail: args?.uid ? `邮件 ID: ${args.uid}` : undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        if (args?.uid) lines.push(chalk.dim('邮件 ID: ') + chalk.cyan(String(args.uid)));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在删除邮件…'));
+        else if (toolcall.status === 'success') lines.push(chalk.green('  ✓ 邮件已删除'));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '删除失败')));
+        return lines.length > 0 ? lines : undefined;
     }
 }
 

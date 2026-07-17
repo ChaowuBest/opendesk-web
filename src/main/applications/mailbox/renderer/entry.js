@@ -79,6 +79,54 @@ const MailboxFilters = Object.freeze({
     sent: { labelKey: 'renderer.mailbox.filter.sent', icon: 'fa-paper-plane' }
 });
 
+/**
+ * 将 EmailAddress 数组格式化为可读字符串
+ * @param {Array<{ name?: string; address?: string }>} addrs
+ * @returns {string}
+ */
+function formatEmailAddresses(addrs) {
+    if (!Array.isArray(addrs) || addrs.length === 0) return '未知';
+    return addrs
+        .map((a) => {
+            const name = a?.name?.trim() || '';
+            const address = a?.address?.trim() || '';
+            if (name && address) return `${name} <${address}>`;
+            return name || address || '未知';
+        })
+        .join(', ');
+}
+
+/**
+ * 从 HTML 内容中提取纯文本
+ * @param {string} html
+ * @returns {string}
+ */
+function stripHtmlToText(html) {
+    if (!html) return '';
+    const div = document.createElement('div');
+    div.innerHTML = html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+    const text = div.textContent || div.innerText || '';
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 根据 bodyType 获取邮件正文
+ * @param {import('../common.js').EmailContent} content
+ * @param {'text' | 'html'} bodyType
+ * @returns {string}
+ */
+function getEmailBodyText(content, bodyType) {
+    if (!content) return '';
+    if (bodyType === 'html') {
+        return content.htmlContent || content.textContent || '';
+    }
+    if (content.textContent) return content.textContent;
+    if (content.htmlContent) return stripHtmlToText(content.htmlContent);
+    return '';
+}
+
 let activeAttachmentMenu = null;
 let activeAttachmentMenuDismissHandler = null;
 let activeAttachmentMenuKeyHandler = null;
@@ -546,14 +594,21 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             const getSelectedEmailTool = new RendererTool(
                 'getSelectedEmail',
                 '获取用户当前正在浏览的邮件内容',
-                z.object({})
+                z.object({
+                    bodyType: z
+                        .enum(['text', 'html'])
+                        .optional()
+                        .describe('返回正文类型：text 表示纯文本，html 表示原始 HTML；默认为 html')
+                })
             );
             getSelectedEmailTool.setExecutor(async (args) => {
+                const bodyType = args.bodyType || 'html';
                 let result = '当前用户正在浏览的邮件内容为: \n';
-                result += `主题: ${this.selectedEmailHeader.subject}\n`;
-                result += `发送至: ${this.selectedEmailHeader.to}\n`;
+                result += `主题: ${this.selectedEmailHeader.subject || '(无主题)'}\n`;
+                result += `发送者: ${formatEmailAddresses(this.selectedEmailHeader.from)}\n`;
+                result += `发送至: ${formatEmailAddresses(this.selectedEmailHeader.to)}\n`;
                 result += `发送时间: ${new Date(this.selectedEmailHeader.date).toLocaleString()}\n`;
-                result += `邮件内容: ${this.selectedEmailContent.textContent || this.selectedEmailContent.htmlContent}\n`;
+                result += `邮件内容: ${getEmailBodyText(this.selectedEmailContent, bodyType)}\n`;
                 return result;
             });
             toolset.addTool(getSelectedEmailTool);
@@ -563,10 +618,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         getEmailListTool.setExecutor(async (args) => {
             let result = '';
             for (const email of this.emailHeaderList.values()) {
-                result += `- 主题: ${email.subject}\n`;
+                result += `- 主题: ${email.subject || '(无主题)'}\n`;
                 result += `  - 邮件ID: ${email.uid}\n`;
-                result += `  - 发送者: ${email.from}\n`;
-                result += `  - 发送至: ${email.to}\n`;
+                result += `  - 发送者: ${formatEmailAddresses(email.from)}\n`;
+                result += `  - 发送至: ${formatEmailAddresses(email.to)}\n`;
                 result += `  - 发送时间: ${new Date(email.date).toLocaleString()}\n`;
             }
             console.info(result);

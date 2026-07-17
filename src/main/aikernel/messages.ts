@@ -12,6 +12,7 @@
 import { Marked } from 'marked';
 import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
@@ -594,7 +595,7 @@ export class ToolCall {
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(displayName)}</span>
                 ${statusIcon}
             </div>
         </div>`;
