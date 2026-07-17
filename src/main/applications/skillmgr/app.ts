@@ -193,9 +193,16 @@ export class SkillMgrApplication extends BaseApplication {
             .command('list')
             .description('列出所有已安装的技能')
             .option('--json', '以 JSON 格式输出')
-            .action((opts: { json?: boolean }) => {
+            .action((opts: { json?: boolean }, command: Command) => {
                 useCliTransport();
                 useConsoleTransport();
+                const globalOpts = command.optsWithGlobals() as Record<string, unknown>;
+                const mounted = globalOpts.skillmgrMountSkill;
+                const mountedDirs = Array.isArray(mounted) ? mounted : mounted ? [mounted] : [];
+                for (const dir of mountedDirs) {
+                    if (typeof dir === 'string') SkillRegistry.addMountedDir(dir);
+                }
+                if (mountedDirs.length > 0) SkillRegistry.refresh();
                 const skills = SkillRegistry.listSkills();
                 const skillsDir = SkillRegistry.getSkillsDirectory();
 
