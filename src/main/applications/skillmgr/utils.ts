@@ -724,6 +724,11 @@ function getSkillBody(skillId) {
     return skill || null;
 }
 
+function isMountedSkill(skillId) {
+    if (skillsCache.size === 0) loadAll();
+    return skillsCache.get(skillId)?.source === 'mount';
+}
+
 /**
  * 获取技能的完整详情，包括资源列表
  * @param {string} skillId - 技能 id
@@ -993,6 +998,7 @@ export const SkillRegistry = {
     deleteSkill,
     getSkillBody,
     getSkillDetail,
+    isMountedSkill,
     skillExists,
     getConfiguredSkillDirectories,
     getSkillSearchDirectories,

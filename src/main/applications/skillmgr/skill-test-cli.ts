@@ -44,6 +44,7 @@ import {
 
 interface SkillTestGenOptions {
     all?: boolean;
+    mountOnly?: boolean;
     autoRun?: boolean;
     concurrency?: string | number;
     export?: string;
@@ -53,6 +54,7 @@ interface SkillTestGenOptions {
 
 interface SkillTestRunOptions {
     all?: boolean;
+    mountOnly?: boolean;
     unpassed?: boolean;
     cases?: string;
     concurrency?: string | number;
@@ -90,6 +92,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .command('gen [names]')
         .description('生成技能测试用例')
         .option('--all', '为全部用户安装的技能生成测试用例')
+        .option('--mount-only', '只显示通过 --skillmgr-mount-skill 挂载的技能')
         .option('--auto-run', '生成完成后自动运行测试用例')
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
@@ -98,7 +101,10 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .action(async (names: string | undefined, opts: SkillTestGenOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const skills = opts.mountOnly
+                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'gen');
                 const concurrency = parseConcurrency(opts.concurrency);
                 const exportDir = resolveSkillTestExportDir(opts.export);
@@ -140,6 +146,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .command('run [names]')
         .description('运行技能测试用例')
         .option('--all', '运行全部用户安装的技能测试用例')
+        .option('--mount-only', '只显示通过 --skillmgr-mount-skill 挂载的技能')
         .option('--unpassed', '只运行未通过的测试用例')
         .option('--cases <indices>', '逗号分隔的用例序号（1-based），仅限一个技能')
         .option('--concurrency <n>', '并发数，默认 5', '5')
@@ -149,7 +156,10 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .action(async (names: string | undefined, opts: SkillTestRunOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const skills = opts.mountOnly
+                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'run');
                 const concurrency = parseConcurrency(opts.concurrency);
                 const testCaseIndices = parseTestCaseIndices(opts.cases);
