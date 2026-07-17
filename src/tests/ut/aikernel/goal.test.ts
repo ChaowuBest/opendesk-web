@@ -777,6 +777,26 @@ describe('goal controller and scheduler', () => {
         expect(question.getPlainText()).toContain('请用中文填写 reason、evidence 和 nextPrompt');
     });
 
+    test('goal evaluator sets evaluatedAt from the runtime clock', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-17T12:34:56.789Z'));
+        const task = createTask();
+        GoalController.create(task, { objective: 'record evaluation time', source: 'api' });
+        const goal = task.goal_state!;
+        jest.spyOn(LLM, 'askForObjectWithSchema').mockResolvedValue({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: [],
+            evaluatedAt: '2000-01-01T00:00:00.000Z'
+        });
+
+        const evaluation = await GoalEvaluator.evaluate(task, goal);
+
+        expect(evaluation.evaluatedAt).toBe('2026-07-17T12:34:56.789Z');
+    });
+
     test('stale goal evaluation cannot complete a newer goal revision', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'old goal', source: 'tui' });

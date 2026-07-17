@@ -13,8 +13,7 @@ const GoalEvaluationSchema = z.object({
     status: z.enum(['met', 'not_met', 'blocked']),
     reason: z.string(),
     evidence: z.array(z.string()),
-    nextPrompt: z.string().optional(),
-    evaluatedAt: z.string()
+    nextPrompt: z.string().optional()
 });
 
 export class GoalEvaluator {
@@ -49,10 +48,12 @@ export class GoalEvaluator {
                 reasoningEffort: 'none'
             })
         );
-        const parsed = result as GoalEvaluation;
-        parsed.goalId = goalSnapshot.id;
-        parsed.goalRevision = goalSnapshot.revision;
-        if (!parsed.evaluatedAt) parsed.evaluatedAt = new Date().toISOString();
+        const parsed: GoalEvaluation = {
+            ...(result as Omit<GoalEvaluation, 'evaluatedAt'>),
+            goalId: goalSnapshot.id,
+            goalRevision: goalSnapshot.revision,
+            evaluatedAt: new Date().toISOString()
+        };
         if (parsed.status !== 'not_met') {
             delete parsed.nextPrompt;
         }
