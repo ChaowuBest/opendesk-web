@@ -364,21 +364,15 @@ export class ToastManager {
 
         const offsetY = this.activeToasts.length * 6;
 
-        // showOverlay 会自动将焦点转移到 overlay 组件，需要先保存当前焦点
-        const previousFocus = this.openDeskTUI.tui['focusedComponent'] as Component | null;
-
+        // Toast 是纯展示型组件，使用 nonCapturing 避免抢占输入焦点
         const handle = this.openDeskTUI.tui.showOverlay(component, {
             width: toastWidth,
             maxHeight: 8,
             anchor: 'top-left',
             offsetX: 0,
-            offsetY: offsetY
+            offsetY: offsetY,
+            nonCapturing: true
         });
-
-        // Toast 是纯展示型组件，不应抢占焦点，立即恢复之前的焦点
-        if (previousFocus) {
-            this.openDeskTUI.tui.setFocus(previousFocus);
-        }
 
         // 自动消失时间根据优先级调整
         const durations: Record<NotificationPriority, number> = {

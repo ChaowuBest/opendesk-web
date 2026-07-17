@@ -57,6 +57,17 @@ export class VerticalLayout implements Component {
     private alignHorizontal: HorizontalAlign;
     private alignVertical: VerticalAlign;
 
+    /**
+     * 渲染缓存：存储每个子组件的原始输出和对应的已处理行。
+     * 当子组件输出未变化时直接复用已处理行，跳过 visibleWidth 调用。
+     */
+    private cache?: {
+        childOutputs: string[][];
+        processedLines: string[][];
+        width: number;
+        minLines: number;
+    };
+
     constructor(options: VerticalLayoutOptions = {}) {
         this.minLines = options.minLines ?? 0;
         this.padding = normalizePadding(options.padding);
@@ -67,40 +78,49 @@ export class VerticalLayout implements Component {
 
     addChild(component: Component): void {
         this.children.push(component);
+        this.cache = undefined;
     }
 
     removeChild(component: Component): void {
         const index = this.children.indexOf(component);
         if (index !== -1) {
             this.children.splice(index, 1);
+            this.cache = undefined;
         }
     }
 
     clear(): void {
         this.children.length = 0;
+        this.cache = undefined;
     }
 
     setMinLines(lines: number): void {
         this.minLines = Math.max(0, lines);
+        this.cache = undefined;
     }
 
     setPadding(padding: number | VerticalLayoutPadding): void {
         this.padding = normalizePadding(padding);
+        this.cache = undefined;
     }
 
     setSpacing(lines: number): void {
-        this.spacing = Math.max(0, lines);
+        this.spacing = Math.max(0, lines ?? 0);
+        this.cache = undefined;
     }
 
     setHorizontalAlign(align: HorizontalAlign): void {
         this.alignHorizontal = align;
+        this.cache = undefined;
     }
 
     setVerticalAlign(align: VerticalAlign): void {
         this.alignVertical = align;
+        this.cache = undefined;
     }
 
     invalidate(): void {
+        this.cache = undefined;
         for (const child of this.children) {
             child.invalidate?.();
         }
@@ -111,50 +131,92 @@ export class VerticalLayout implements Component {
         const contentWidth = Math.max(1, width - padL - padR);
         const emptyLine = ' '.repeat(width);
 
-        const contentLines: string[] = [];
-
-        // 上 padding
-        for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
-
-        const isLeftAligned = this.alignHorizontal === 'left';
-        const leftPrefix = padL > 0 ? ' '.repeat(padL) : '';
-
+        // 渲染所有子组件，收集原始输出
+        const childOutputs: string[][] = [];
         for (let c = 0; c < this.children.length; c++) {
-            if (c > 0 && this.spacing > 0) {
-                for (let i = 0; i < this.spacing; i++) contentLines.push(emptyLine);
-            }
-            const childLines = this.children[c].render(contentWidth);
-            if (isLeftAligned) {
-                for (const line of childLines) {
-                    const combined = leftPrefix + line;
-                    // 安全截断：防止子组件输出超过总宽度
-                    if (visibleWidth(combined) > width) {
-                        contentLines.push(truncateToWidth(combined, width));
-                    } else {
-                        contentLines.push(combined);
-                    }
-                }
+            childOutputs.push(this.children[c].render(contentWidth));
+        }
+
+        const cache = this.cache;
+        const configMatch =
+            cache?.width === width &&
+            cache?.minLines === this.minLines &&
+            cache.childOutputs.length === this.children.length;
+
+        // 逐子组件检测输出是否变化，未变化则复用缓存的已处理行
+        const processedLines: string[][] = [];
+        for (let c = 0; c < childOutputs.length; c++) {
+            const cur = childOutputs[c];
+            const old = configMatch && cache && c < cache.childOutputs.length ? cache.childOutputs[c] : undefined;
+            if (old && cur.length === old.length && cur.every((line, i) => line === old[i])) {
+                processedLines.push(cache.processedLines[c]);
             } else {
-                for (const line of childLines) {
-                    const vis = visibleWidth(line);
-                    let leftPad: number;
-                    if (this.alignHorizontal === 'center') {
-                        leftPad = padL + Math.max(0, Math.floor((contentWidth - vis) / 2));
-                    } else {
-                        leftPad = width - padR - vis;
-                    }
-                    const rightPad = Math.max(0, width - leftPad - vis);
-                    const assembled = ' '.repeat(leftPad) + line + ' '.repeat(rightPad);
-                    if (visibleWidth(assembled) > width) {
-                        contentLines.push(truncateToWidth(assembled, width));
-                    } else {
-                        contentLines.push(assembled);
-                    }
-                }
+                processedLines.push(this.processChildLines(cur, width, padL, padR, contentWidth));
             }
         }
 
-        // 下 padding
+        const result = this.assembleFinalLines(processedLines, emptyLine, padT, padB);
+        this.cache = { childOutputs, processedLines, width, minLines: this.minLines };
+        return result;
+    }
+
+    /** 处理单个子组件的输出行：应用前缀、对齐、安全截断。 */
+    private processChildLines(
+        childLines: string[],
+        width: number,
+        padL: number,
+        padR: number,
+        contentWidth: number
+    ): string[] {
+        const isLeftAligned = this.alignHorizontal === 'left';
+        const leftPrefix = padL > 0 ? ' '.repeat(padL) : '';
+        const result: string[] = [];
+
+        if (isLeftAligned) {
+            for (const line of childLines) {
+                const combined = leftPrefix + line;
+                // 安全截断：防止子组件输出超过总宽度
+                if (visibleWidth(combined) > width) {
+                    result.push(truncateToWidth(combined, width));
+                } else {
+                    result.push(combined);
+                }
+            }
+        } else {
+            for (const line of childLines) {
+                const vis = visibleWidth(line);
+                let leftPad: number;
+                if (this.alignHorizontal === 'center') {
+                    leftPad = padL + Math.max(0, Math.floor((contentWidth - vis) / 2));
+                } else {
+                    leftPad = width - padR - vis;
+                }
+                const rightPad = Math.max(0, width - leftPad - vis);
+                const assembled = ' '.repeat(leftPad) + line + ' '.repeat(rightPad);
+                if (visibleWidth(assembled) > width) {
+                    result.push(truncateToWidth(assembled, width));
+                } else {
+                    result.push(assembled);
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 将各子组件的已处理行拼接为最终输出，加上 padding、spacing 和 minLines 补齐。 */
+    private assembleFinalLines(processedLines: string[][], emptyLine: string, padT: number, padB: number): string[] {
+        const contentLines: string[] = [];
+        for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
+
+        for (let c = 0; c < processedLines.length; c++) {
+            if (c > 0 && this.spacing > 0) {
+                for (let i = 0; i < this.spacing; i++) contentLines.push(emptyLine);
+            }
+            for (const line of processedLines[c]) {
+                contentLines.push(line);
+            }
+        }
+
         for (let i = 0; i < padB; i++) contentLines.push(emptyLine);
 
         const minPad = Math.max(0, this.minLines - contentLines.length);
