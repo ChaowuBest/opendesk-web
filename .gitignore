@@ -6,6 +6,7 @@
 .cursor
 .plan
 .atomcode
+.trae
 
 **/.DS_Store
 **/__pycache__

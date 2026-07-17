@@ -805,6 +805,108 @@ export class AssistantMessageView implements Component {
 }
 
 /**
+ * 增量渲染容器：与 Box(0, 0) 行为一致，但在宽度不变时
+ * 只对变化的行重新计算 visibleWidth + padding，
+ * 不变的行直接从缓存复制。避免每次有一行变化就全量重算 N 行的 visibleWidth。
+ */
+class IncrementalBox implements Component {
+    children: Component[] = [];
+    private cache?: { childLines: string[]; width: number; lines: string[] };
+
+    addChild(component: Component): void {
+        this.children.push(component);
+        this.cache = undefined;
+    }
+
+    removeChild(component: Component): void {
+        const index = this.children.indexOf(component);
+        if (index !== -1) {
+            this.children.splice(index, 1);
+            this.cache = undefined;
+        }
+    }
+
+    clear(): void {
+        this.children = [];
+        this.cache = undefined;
+    }
+
+    invalidate(): void {
+        this.cache = undefined;
+        for (const child of this.children) {
+            child.invalidate?.();
+        }
+    }
+
+    render(width: number): string[] {
+        if (this.children.length === 0) return [];
+
+        // 渲染所有 children（大部分返回缓存，开销极低）
+        const childLines: string[] = [];
+        for (const child of this.children) {
+            const lines = child.render(width);
+            for (const line of lines) childLines.push(line);
+        }
+
+        if (childLines.length === 0) return [];
+
+        const cache = this.cache;
+
+        // 无缓存或宽度变化 → 全量 padding
+        if (!cache || cache.width !== width) {
+            const result = childLines.map((line) => this.padLine(line, width));
+            this.cache = { childLines, width, lines: result };
+            return result;
+        }
+
+        // 宽度不变 → 增量更新：只对变化行重新 padding
+        let firstChanged = -1;
+        let lastChanged = -1;
+        const oldLen = cache.childLines.length;
+        const newLen = childLines.length;
+        const minLen = Math.min(oldLen, newLen);
+
+        for (let i = 0; i < minLen; i++) {
+            if (cache.childLines[i] !== childLines[i]) {
+                if (firstChanged === -1) firstChanged = i;
+                lastChanged = i;
+            }
+        }
+        // 新增的行
+        if (newLen > oldLen) {
+            if (firstChanged === -1) firstChanged = oldLen;
+            lastChanged = newLen - 1;
+        }
+        // 减少的行
+        if (newLen < oldLen) {
+            if (firstChanged === -1) firstChanged = newLen;
+            lastChanged = newLen - 1;
+        }
+
+        // 完全无变化（长度也一致）
+        if (firstChanged === -1) {
+            return cache.lines;
+        }
+
+        // 从旧缓存复制，只重算变化范围
+        const result = cache.lines.slice(0, newLen);
+        while (result.length < newLen) result.push('');
+        for (let i = firstChanged; i <= lastChanged; i++) {
+            result[i] = this.padLine(childLines[i], width);
+        }
+
+        this.cache = { childLines, width, lines: result };
+        return result;
+    }
+
+    private padLine(line: string, width: number): string {
+        const visLen = visibleWidth(line);
+        const padNeeded = Math.max(0, width - visLen);
+        return padNeeded > 0 ? line + ' '.repeat(padNeeded) : line;
+    }
+}
+
+/**
  * 任务视图
  * 用于显示任务的对话历史
  */
@@ -831,8 +933,7 @@ export class TaskView implements Component {
     private retryStatusView?: RetryStatusView;
 
     private tui: TUI;
-    private messageLayout: Box = new Box(0, 0);
-    private mainLayout: Box = new Box(0, 0);
+    private messageLayout: IncrementalBox = new IncrementalBox();
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
@@ -848,7 +949,6 @@ export class TaskView implements Component {
     constructor(tui: TUI, renderIntervalMs?: number) {
         this.tui = tui;
         this.renderIntervalMs = renderIntervalMs ?? 100;
-        this.mainLayout.addChild(this.messageLayout);
         this.goalController = new TaskViewGoalController({
             getTaskState: () => this.taskState,
             appendPendingUserMessage: (text) => this.appendLocalUserMessage(text),
@@ -1506,7 +1606,7 @@ export class TaskView implements Component {
 
         this.lastWidth = width;
         const now = Date.now();
-        this.cachedOutput = this.mainLayout.render(width);
+        this.cachedOutput = this.messageLayout.render(width);
         this._lastRenderDurationMs = Date.now() - now;
         this.invalidated = false;
         return this.cachedOutput;
