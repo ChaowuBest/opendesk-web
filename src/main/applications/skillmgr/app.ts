@@ -117,6 +117,7 @@ export class SkillMgrApplication extends BaseApplication {
             {
                 name: 'mount-skill',
                 description: '从指定目录加载 skill，可多次指定',
+                repeated: true,
                 parse: (v) => v
             }
         ];

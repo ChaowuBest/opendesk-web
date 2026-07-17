@@ -93,7 +93,7 @@ export interface CommandLineArgs {
     /** 恢复/继续指定任务 ID */
     resume?: string;
     /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
-    appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
+    appCliOptions?: Record<string, Record<string, string | boolean | string[] | undefined>>;
 }
 
 export class OpenDeskTUI {

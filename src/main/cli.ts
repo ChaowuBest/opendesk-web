@@ -170,7 +170,12 @@ function parseCommandLineArgs() {
             if (opt.defaultValue !== undefined) {
                 optDef.default(opt.defaultValue);
             }
-            if (opt.parse) {
+            if (opt.repeated) {
+                optDef.argParser((value: string, previous: unknown[] | undefined) => {
+                    const parsed = opt.parse ? opt.parse(value) : value;
+                    return [...(Array.isArray(previous) ? previous : []), parsed];
+                });
+            } else if (opt.parse) {
                 optDef.argParser(opt.parse as any);
             }
             prog.addOption(optDef);
@@ -261,7 +266,7 @@ function parseCommandLineArgs() {
 
         // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）
         // Commander 会将 --bundle-name-opt 转换为 camelCase，我们直接匹配带有 bundleName 前缀的 key
-        const appCliOptions: Record<string, Record<string, string | boolean | undefined>> = {};
+        const appCliOptions: Record<string, Record<string, string | boolean | string[] | undefined>> = {};
         for (const AppClass of new CliPlatform().getApplicationClasses()) {
             const bundleName = (AppClass as any).bundleName || (AppClass as any).prototype?.bundleName;
             if (!bundleName) continue;
@@ -274,7 +279,7 @@ function parseCommandLineArgs() {
             // 同时考虑 Commander 的 camelCase 转换：bundle-name-opt -> bundleNameOpt
             const camelPrefix = bundleName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase() + '-';
 
-            const appOpts: Record<string, string | boolean | undefined> = {};
+            const appOpts: Record<string, string | boolean | string[] | undefined> = {};
             for (const key of Object.keys(kwargs)) {
                 if (kwargs[key] === undefined) continue;
 
@@ -299,7 +304,7 @@ function parseCommandLineArgs() {
                 for (const opt of options) {
                     const optNameVariants = [opt.name, opt.name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
                     if (optNameVariants.includes(matchedOptName)) {
-                        appOpts[opt.name] = kwargs[key] as string | boolean;
+                        appOpts[opt.name] = kwargs[key] as string | boolean | string[];
                         break;
                     }
                 }
