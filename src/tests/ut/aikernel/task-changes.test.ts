@@ -117,6 +117,22 @@ describe('TaskState.getTaskChanges()', () => {
         expect(changes.files[0].changes[0].addedLines).toBe(2);
         expect(changes.files[0].changes[0].removedLines).toBe(2);
     });
+
+    test('stringifies non-string paths from historical tool calls', () => {
+        const created = createTaskWithWorkspace();
+        const task = created.task;
+        workspace = created.workspace;
+
+        appendSuccessfulToolCall(task, 'writeFile', {
+            path: 42,
+            content: 'content\n'
+        });
+
+        const changes = task.getTaskChanges();
+
+        expect(changes.files).toHaveLength(1);
+        expect(changes.files[0].filePath).toBe('42');
+    });
 });
 
 describe('TaskState.rewindToUserMessage()', () => {
