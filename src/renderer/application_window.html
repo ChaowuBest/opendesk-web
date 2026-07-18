@@ -1,10 +1,22 @@
 <!doctype html>
 <html lang="zh-CN">
     <head>
+        <script>
+            // 防止深色模式 FOUC：在首帧渲染前同步设置 data-theme
+            (function () {
+                var stored = localStorage.getItem('opendesk-theme-effective');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.dataset.theme = stored;
+                } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.dataset.theme = 'dark';
+                }
+            })();
+        </script>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>OpenDesk</title>
 
+        <link rel="stylesheet" href="./theme/theme.css" />
         <link rel="stylesheet" href="./styles/titlebar.css" />
         <link rel="stylesheet" href="./styles/common.css" />
         <style>
@@ -17,12 +29,12 @@
             }
             #app-iframe {
                 position: absolute;
-                top: 32px;
+                top: 0;
                 left: 0;
                 width: 100%;
-                height: calc(100% - 32px);
+                height: 100%;
                 border: 0;
-                background: #fff;
+                background: var(--od-bg, #fff);
             }
         </style>
     </head>
@@ -75,7 +87,7 @@
                     window.windowControlAPI.isMaximized().then(function (maximized) {
                         var icon = document.getElementById('app-maximize-icon');
                         if (icon) {
-                            icon.className = maximized ? 'far fa-clone' : 'far fa-square';
+                            icon.className = maximized ? 'fas fa-window-restore' : 'far fa-square';
                         }
                     });
                 }
