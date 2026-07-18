@@ -54,6 +54,63 @@ function formatToolValidationError(error: z.ZodError): string {
     return translateToolValidation('tool.validation.invalidArgs', { details });
 }
 
+/**
+ * 递归剥离 ZodOptional / ZodDefault / ZodNullable / ZodCatch / ZodReadonly 等包装层，
+ * 返回最内层的核心类型（如 ZodBoolean、ZodNumber）。
+ */
+function unwrapZodType(schema: z.ZodType): z.ZodType {
+    let current: z.ZodType = schema;
+    while (
+        current instanceof z.ZodOptional ||
+        current instanceof z.ZodDefault ||
+        current instanceof z.ZodNullable ||
+        current instanceof z.ZodCatch ||
+        current instanceof z.ZodReadonly
+    ) {
+        current = (current as z.ZodOptional<z.ZodType> | z.ZodDefault<z.ZodType>).unwrap();
+    }
+    return current;
+}
+
+/**
+ * 部分模型会将 boolean / number 参数输出为字符串（如 "false"、"0"），
+ * 导致 Zod 校验失败。此函数根据 schema 的期望类型做入口处强制转换，
+ * 使下游 safeParse 和工具执行逻辑无需重复处理此问题。
+ */
+function coerceScalarArgs(params: z.ZodType, args: unknown): unknown {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        return args;
+    }
+    if (!(params instanceof z.ZodObject)) {
+        return args;
+    }
+    const shape = params.shape;
+    const result: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+    let modified = false;
+    for (const [key, fieldSchema] of Object.entries(shape)) {
+        if (!(key in result)) continue;
+        const value = result[key];
+        if (typeof value !== 'string') continue;
+        const innerType = unwrapZodType(fieldSchema as z.ZodType);
+        if (innerType instanceof z.ZodBoolean) {
+            if (value === 'true') {
+                result[key] = true;
+                modified = true;
+            } else if (value === 'false') {
+                result[key] = false;
+                modified = true;
+            }
+        } else if (innerType instanceof z.ZodNumber) {
+            const trimmed = value.trim();
+            if (trimmed !== '' && !isNaN(Number(trimmed))) {
+                result[key] = Number(trimmed);
+                modified = true;
+            }
+        }
+    }
+    return modified ? result : args;
+}
+
 export type ToolArgsValidationResult<T extends z.ZodType> =
     | {
           success: true;
@@ -200,7 +257,11 @@ export class BaseTool<T extends z.ZodType> {
      * 执行工具
      */
     validateArgs(args: unknown): ToolArgsValidationResult<T> {
-        const parsedArgs = this.params.safeParse(args);
+        const coercedArgs = coerceScalarArgs(this.params, args);
+        if (coercedArgs !== args) {
+            console.warn(`[tool] "${this.name}": coerced string args to expected scalar types before validation`);
+        }
+        const parsedArgs = this.params.safeParse(coercedArgs);
         if (!parsedArgs.success) {
             return {
                 success: false,

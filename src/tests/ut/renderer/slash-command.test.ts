@@ -1,10 +1,28 @@
 import { describe, expect, jest, test, beforeEach } from '@jest/globals';
+import { enUs } from '../../../locale/en-us.js';
 
 const showConfirmModal = jest.fn();
 
 jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
     showConfirmModal
 }));
+
+// 锁定 en-US locale，使测试不依赖运行环境的 navigator.language
+jest.unstable_mockModule('../../../renderer/locale.js', () => {
+    const translate = (key: string, params?: Record<string, string | number>): string => {
+        let text: string = enUs[key] ?? key;
+        if (params) {
+            for (const [k, v] of Object.entries(params)) {
+                text = text.replace(new RegExp(`\\$\\{${k}\\}`, 'g'), String(v));
+            }
+        }
+        return text;
+    };
+    return {
+        createRendererTranslator: () => translate,
+        resolveRendererLocale: () => 'en-US'
+    };
+});
 
 describe('renderer slash commands', () => {
     beforeEach(() => {
