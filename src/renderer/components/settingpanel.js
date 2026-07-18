@@ -2554,6 +2554,21 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
+        // 提前检查别名是否重复，避免验证通过后才发现无法保存
+        const existingIdx = this.currentData.models?.findIndex((m) => m.alias === alias);
+        if (existingIdx !== undefined && existingIdx !== -1 && existingIdx !== this._editingModelIndex) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('config.model.validation.alias_exists'),
+                message: this._t('config.model.validation.alias_exists'),
+                confirmText: this._t('common.confirm'),
+                cancelText: null
+            });
+            return;
+        }
+
         // 从键值对列表收集自定义 headers
         const headersItems = this.querySelectorAll('.header-item');
         const custom_headers = {};
@@ -2609,7 +2624,7 @@ class SettingPanel extends HTMLElement {
                     'mx-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200 max-h-48 overflow-y-auto';
                 resultDiv.innerHTML = `<i class="fas fa-check-circle mr-2"></i>${this.escapeHtml(this._t('config.model.verify.status.saving'))}`;
             }
-            this.saveModel();
+            await this.saveModel();
         } catch (error) {
             if (resultDiv) {
                 resultDiv.className =
@@ -2624,7 +2639,7 @@ class SettingPanel extends HTMLElement {
         }
     }
 
-    saveModel() {
+    async saveModel() {
         const alias = this.querySelector('#model-alias-input')?.value?.trim();
         const provider_name = this.querySelector('#model-provider-input')?.value || '';
         const model_name = this.querySelector('#model-name-input')?.value?.trim();
@@ -2655,11 +2670,15 @@ class SettingPanel extends HTMLElement {
         // 检查别名是否重复
         const existingIndex = this.currentData.models?.findIndex((m) => m.alias === alias);
         if (existingIndex !== undefined && existingIndex !== -1 && existingIndex !== this._editingModelIndex) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
-                this._t('config.model.validation.alias_exists')
-            );
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: this._t('config.model.validation.alias_exists'),
+                message: this._t('config.model.validation.alias_exists'),
+                confirmText: this._t('common.confirm'),
+                cancelText: null
+            });
             return;
         }
 

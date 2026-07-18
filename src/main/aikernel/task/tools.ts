@@ -19,7 +19,8 @@ import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
-import type { TaskManagerState, TaskState } from './tasks.js';
+import type { TaskManagerState } from './manager.js';
+import type { TaskState } from '../states/tasks.js';
 
 // ═══════════════════ Helpers ═══════════════════
 

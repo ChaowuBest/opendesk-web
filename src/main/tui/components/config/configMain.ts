@@ -38,7 +38,7 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         icon: '💰',
         titleKey: 'config.model.title',
         hintKey: 'config.model.title.hint',
-        create: (openDeskTUI, onBack) => new ModelConfigPage(openDeskTUI.tui, onBack)
+        create: (openDeskTUI, onBack) => new ModelConfigPage(openDeskTUI, onBack)
     },
     {
         value: 'default-model',
