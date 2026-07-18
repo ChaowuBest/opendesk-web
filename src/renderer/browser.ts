@@ -91,7 +91,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                         // 恢复渲染：设置正帧率
                         tab.webview.setWindowOpenHandler(null);
                     } else {
-                        // 隐藏时不做额外操作，backgroundThrottling 已由 Electron 自动处理
+                        // 隐藏时不做额外操作，浏览器 webview 已关闭 backgroundThrottling 保持全速渲染
                     }
                 } catch {
                     /* ignore */
@@ -869,7 +869,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.setAttribute('tabindex', '0');
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
-        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes,backgroundThrottling=yes');
+        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes,backgroundThrottling=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 
@@ -1009,7 +1009,7 @@ export class EmbeddedBrowser extends BrowserInstance {
 
     /**
      * 检查是否有活跃内容的标签页（非 about:blank）。
-     * 当所有标签页都被关闭或只剩 about:blank 时返回 false。
+     * 当所有标签页都已关闭或只剩 about:blank 时返回 false。
      */
     public hasActiveContent(): boolean {
         return this.tabs.some((t) => t.url !== HOME_PAGE);

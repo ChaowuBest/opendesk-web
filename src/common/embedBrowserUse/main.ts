@@ -116,7 +116,7 @@ const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 /**
- * 生成在 renderer 中调用浏览器元素同步方法的 IIFE 脚本。
+ * 生成在 renderer 中调用浏览器元素方法的 IIFE 脚本。
  * 不包含 UI 布局逻辑（如展开侧边栏），由调用方显式处理。
  */
 export function makeCallBrowserScript(id: string, method: string, args: unknown[]): string {
@@ -127,9 +127,21 @@ export function makeCallBrowserScript(id: string, method: string, args: unknown[
         var el = document.getElementById('task-${safeId}-artifacts');
         if (!el) return { error: 'Browser not available for task ${safeId}' };
         if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
-        var r = el.${safeMethod}(${argsStr});
-        el._suppressBrowserAutoSwitch = false;
-        return r instanceof Promise ? null : { result: r };
+        try {
+            var r = el.${safeMethod}(${argsStr});
+            return Promise.resolve(r)
+                .then(function(result) {
+                    el._suppressBrowserAutoSwitch = false;
+                    return { result: result };
+                })
+                .catch(function(error) {
+                    el._suppressBrowserAutoSwitch = false;
+                    return { error: error && error.message ? error.message : String(error) };
+                });
+        } catch (error) {
+            el._suppressBrowserAutoSwitch = false;
+            return { error: error && error.message ? error.message : String(error) };
+        }
     })()`;
 }
 
@@ -424,7 +436,8 @@ export class BrowserController {
     // ---- Renderer Bridge Methods ----
 
     /**
-     * Call a synchronous method on the task's <task-artifacts> element.
+     * Call a method on the task's <task-artifacts> element.
+     * Both synchronous return values and Promises are supported.
      */
     async callRendererBrowser(method: string, ...args: any[]): Promise<any> {
         if (!this._mainWindow || this._mainWindow.isDestroyed()) {

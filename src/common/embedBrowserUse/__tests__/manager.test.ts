@@ -201,6 +201,53 @@ describe('embedBrowserUse/main', () => {
             expect(script).not.toContain('ensureTaskViewExists');
         });
 
+        it('makeCallBrowserScript should await asynchronous renderer methods', async () => {
+            const element = {
+                _suppressBrowserAutoSwitch: true,
+                browserNavigate: jest.fn(async () => {
+                    await Promise.resolve();
+                    return 'navigated';
+                })
+            };
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = {
+                getElementById: jest.fn(() => element)
+            };
+
+            try {
+                const result = await eval(
+                    makeCallBrowserScript('task-1', 'browserNavigate', [' `https://example.com` '])
+                );
+                expect(result).toEqual({ result: 'navigated' });
+                expect(element._suppressBrowserAutoSwitch).toBe(false);
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
+        });
+
+        it('makeCallBrowserScript should serialize asynchronous renderer errors', async () => {
+            const element = {
+                _suppressBrowserAutoSwitch: true,
+                browserNavigate: jest.fn(async () => {
+                    throw new Error('layout not ready');
+                })
+            };
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = {
+                getElementById: jest.fn(() => element)
+            };
+
+            try {
+                const result = await eval(
+                    makeCallBrowserScript('task-1', 'browserNavigate', [' `https://example.com` '])
+                );
+                expect(result).toEqual({ error: 'layout not ready' });
+                expect(element._suppressBrowserAutoSwitch).toBe(false);
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
+        });
+
         it('makeExecuteScriptOnBrowser should produce valid IIFE', () => {
             const script = makeExecuteScriptOnBrowser('task-1', 'document.title');
             expect(script).toContain('browserExecuteScript');

@@ -2003,6 +2003,24 @@ class TaskView extends HTMLElement {
         const targetWidth = this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
+        // 后台/隐藏任务跳过 width 0→targetWidth 的过渡动画，直接落到终态。
+        // 动画会触发布局回流并通过共享合成影响其他可见任务窗口（界面向左平移）。
+        const suppressAnimation = this._shouldSuppressIncrementalRender();
+        if (suppressAnimation) {
+            rightSidebar.style.width = targetWidth + 'px';
+            rightSidebar.style.opacity = '1';
+            rightSidebar.style.overflow = '';
+            if (resizer) {
+                resizer.style.display = '';
+                resizer.style.opacity = '1';
+            }
+            this._rightSidebarExpanded = true;
+            this._autoSwitchTabIfEmpty(rightSidebar);
+            if (this._browserPip) {
+                this._browserPip.hide();
+            }
+            return;
+        }
         rightSidebar.style.width = '0px';
         rightSidebar.style.opacity = '0';
         rightSidebar.style.overflow = 'hidden';
@@ -2538,10 +2556,15 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
-
-        if (!this._rightSidebarExpanded) {
-            // 侧边栏未展开：先展开侧边栏
-            this._ensureRightSidebarOpen();
+        // 尊重用户当前侧边栏状态：已展开则保持，已收起则通过画中画显示。
+        // 不调用 _forceExpandRightSidebar，避免每次浏览器事件都强制展开侧边栏，
+        // 导致聊天区域被向左挤压，造成布局突然向左平移。
+        this._ensureRightSidebarOpen();
+        sidebar._suppressBrowserAutoSwitch = false;
+        if (typeof sidebar.forceBrowserActive === 'function') {
+            sidebar.forceBrowserActive();
+        } else if (typeof sidebar.ensureBrowserReady === 'function') {
+            sidebar.ensureBrowserReady(true);
         }
         sidebar[method](...args);
 

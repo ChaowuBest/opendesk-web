@@ -894,6 +894,15 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：由 use-browser 触发时强制右侧栏显示浏览器 tab。
+     */
+    forceBrowserActive(): void {
+        this._suppressBrowserAutoSwitch = false;
+        this.restoreBrowserPanelLayout();
+        this.ensureBrowserReady(true);
+    }
+
+    /**
      * 销毁浏览器实例并释放关联资源（webview、CDP 等）。
      * 任务空闲超时后由 TaskView 调用，减少持续内存开销。
      * 下次工具调用时 ensureBrowserReady() 会重新创建。
@@ -935,7 +944,7 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
      * 自动切换到浏览器标签并展开侧边栏。
      */
-    browserNavigate(url: string): void {
+    async browserNavigate(url: string): Promise<void> {
         this.ensureBrowserReady();
         if (this._browser) {
             this._browser.navigateTo(url);
@@ -1015,10 +1024,12 @@ class TaskArtifacts extends HTMLElement {
     /**
      * 外部调用：新建标签页并导航到指定 URL。
      */
-    browserAddTab(url: string): number {
+    async browserAddTab(url: string): Promise<number> {
         this.ensureBrowserReady();
         if (!this._browser) return -1;
-        return this._browser.addTab(url);
+        const tabId = this._browser.addTab();
+        this._browser.navigateTo(url);
+        return tabId;
     }
 
     /**
