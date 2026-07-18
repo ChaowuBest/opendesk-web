@@ -13,16 +13,21 @@ const path = require('path');
 
 const LAYER_DEPS = {
     utils: [],
-    aikernel: ['utils', 'tui'],
-    services: ['utils', 'aikernel'],
-    applications: ['aikernel', 'services', 'tui', 'utils', 'plugins']
+    telemetry: ['utils'],
+    aikernel: ['utils', 'tui', 'telemetry'],
+    services: ['utils', 'aikernel', 'telemetry'],
+    applications: ['aikernel', 'services', 'tui', 'utils', 'plugins', 'telemetry']
 };
 
 // 文件级例外：允许特定文件依赖白名单之外的层。
 // 仅用于无法通过重构避免的合理跨层依赖，每条需注明理由。
 const FILE_EXCEPTIONS = {
     // 导出功能需要读取 aikernel 的 GoalStates 来渲染目标状态，属于合理的跨层读取
-    'src/main/utils/export.ts': ['aikernel']
+    'src/main/utils/export.ts': ['aikernel'],
+    // model-network.ts 是所有 LLM HTTP 请求的汇聚点，在此层插桩 span 最合理
+    'src/main/utils/model-network.ts': ['telemetry'],
+    // model-context.ts 通过 fetchModelUrl 查询模型元数据，包裹 withSpan 用于 trace
+    'src/main/utils/model-context.ts': ['telemetry']
 };
 
 // 核心任务状态只能依赖通用 extension 生命周期，具体领域功能反向依赖 TaskState。

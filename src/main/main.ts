@@ -80,7 +80,9 @@ import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/c
 import { readUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
-import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './aikernel/telemetry/usage.js';
+import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/index.js';
+import { initTelemetry, shutdownTelemetry, reloadTelemetry, withSpan } from './telemetry/index.js';
+import { StartupTrace } from './telemetry/startup-tracer.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
@@ -2016,6 +2018,12 @@ const registerSettingAPIHandlers = () => {
             } catch (themeErr) {
                 logger.warn('[theme] applyFromSettings after save failed', themeErr);
             }
+            // 遥测配置变更时热重载 OTel SDK
+            const oldTelemetryJson = JSON.stringify(oldSettings?.telemetry);
+            const newTelemetryJson = JSON.stringify(Setting.getInstance().getData().telemetry);
+            if (oldTelemetryJson !== newTelemetryJson) {
+                void reloadTelemetry().catch((err) => logger.warn('[telemetry] hot reload failed', err));
+            }
             // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
             const updatedData = withResolvedLocale(Setting.getInstance().getData());
             for (const win of BrowserWindow.getAllWindows()) {
@@ -2165,39 +2173,41 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle(
         'setting:fetchProviderModels',
         async (_event, { base_url, api_key, provider_type, no_proxy, no_ssl }) => {
-            try {
-                const headers: Record<string, string> = {
-                    Authorization: `Bearer ${api_key}`,
-                    'Content-Type': 'application/json'
-                };
-                if (provider_type === 'anthropic') {
-                    headers['x-api-key'] = api_key;
-                    headers['anthropic-version'] = '2023-06-01';
-                }
-                const resp = await fetchModelUrl(
-                    { base_url, no_proxy: !!no_proxy, no_ssl: !!no_ssl },
-                    joinProviderModelsPath(base_url, provider_type),
-                    {
-                        headers,
-                        signal: AbortSignal.timeout(8000)
+            return withSpan('llm.list_models', async () => {
+                try {
+                    const headers: Record<string, string> = {
+                        Authorization: `Bearer ${api_key}`,
+                        'Content-Type': 'application/json'
+                    };
+                    if (provider_type === 'anthropic') {
+                        headers['x-api-key'] = api_key;
+                        headers['anthropic-version'] = '2023-06-01';
                     }
-                );
-                if (!resp.ok) {
+                    const resp = await fetchModelUrl(
+                        { base_url, no_proxy: !!no_proxy, no_ssl: !!no_ssl },
+                        joinProviderModelsPath(base_url, provider_type),
+                        {
+                            headers,
+                            signal: AbortSignal.timeout(8000)
+                        }
+                    );
+                    if (!resp.ok) {
+                        return { status: 'ok', data: [] };
+                    }
+                    const body = await resp.json();
+                    const models: any[] = body.data ?? body;
+                    if (!Array.isArray(models) || models.length > 20) {
+                        return { status: 'ok', data: [] };
+                    }
+                    const names = models
+                        .map((m: any) => m.id || m.name || '')
+                        .filter((n: string) => n.length > 0)
+                        .sort();
+                    return { status: 'ok', data: names };
+                } catch {
                     return { status: 'ok', data: [] };
                 }
-                const body = await resp.json();
-                const models: any[] = body.data ?? body;
-                if (!Array.isArray(models) || models.length > 20) {
-                    return { status: 'ok', data: [] };
-                }
-                const names = models
-                    .map((m: any) => m.id || m.name || '')
-                    .filter((n: string) => n.length > 0)
-                    .sort();
-                return { status: 'ok', data: names };
-            } catch {
-                return { status: 'ok', data: [] };
-            }
+            });
         }
     );
     async function _applyWorkspaceSelection(selectedPath: string) {
@@ -2832,8 +2842,12 @@ function startApplication() {
     }
 
     // 在 app.whenReady() 之前初始化 Registry 和协议 schemes
+    initTelemetry();
+    const startupTrace = new StartupTrace('startup.gui');
+    const t = startupTrace.createPhase('startup.pre_ready.registry');
     initializeRegistry();
     initializeRegistryProtocols();
+    t.end();
 
     app.on('before-quit', () => {
         isAppQuitting = true;
@@ -2851,18 +2865,33 @@ function startApplication() {
     });
 
     app.whenReady().then(async () => {
+        const p1a = startupTrace.createPhase('startup.ready.global_state.init');
         GlobalState.initialize();
+        p1a.end();
+
+        const p1b = startupTrace.createPhase('startup.ready.global_state.toolset_provider');
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
+        p1b.end();
+
+        const p1c = startupTrace.createPhase('startup.ready.global_state.memory_review_hook');
         registerMemoryReviewHook({
             taskManagerState: GlobalState.getInstance().taskManagerState,
             initializeReviewTask: initializeMemoryReviewTask
         });
+        p1c.end();
+
+        const p1d = startupTrace.createPhase('startup.ready.global_state.goal_hooks');
         registerGoalHooks();
+        p1d.end();
+
+        const p1e = startupTrace.createPhase('startup.ready.global_state.harnesses');
         initializeHarnesses();
+        p1e.end();
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
+        const p2 = startupTrace.createPhase('startup.ready.restore_tasks');
         // getInstance() 已内置容错，不会抛异常
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
@@ -2885,8 +2914,10 @@ function startApplication() {
                 }
             }
         }
+        p2.end();
 
         // 刷新证书缓存（不依赖 session，直接从文件加载）
+        const p3 = startupTrace.createPhase('startup.ready.browser_session');
         try {
             const browserApp = ApplicationRegistry.getApplication('browser') as any;
             if (browserApp?.constructor?._refreshCertCache) {
@@ -2908,8 +2939,11 @@ function startApplication() {
 
         // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
         new ElectronExitPlanModeProvider();
+        p3.end();
 
+        const p4 = startupTrace.createPhase('startup.ready.create_window');
         createWindow();
+        p4.end();
 
         // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
         powerMonitor.on('suspend', () => {
@@ -2963,12 +2997,15 @@ function startApplication() {
         }
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
+        const p5 = startupTrace.createPhase('startup.ready.skills');
         try {
             await installBundledSkillsIfNeeded();
         } catch (err) {
             logger.error('installBundledSkillsIfNeeded error', err);
         }
+        p5.end();
 
+        const p6 = startupTrace.createPhase('startup.ready.ipc_handlers');
         initializeScreenAdaption();
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
@@ -3084,9 +3121,13 @@ function startApplication() {
         } catch {
             /* ignore */
         }
+        p6.end();
+
+        const p7 = startupTrace.createPhase('startup.ready.finalize');
         initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
         initializeProtocolHandlers();
         initializeUpdater();
+        p7.end();
 
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
@@ -3187,6 +3228,11 @@ function startApplication() {
             }
         });
 
+        // 所有 onReady 回调注册完毕后，追加最后一个回调来结束 root trace
+        ApplicationRegistry.onReady(() => {
+            startupTrace.end();
+        });
+
         // 启动完成后异步清理过期日志，不阻塞主流程
         dropDeprecatedLogs().catch(() => {});
     });
@@ -3243,6 +3289,7 @@ function startApplication() {
             }
         }
         closeTempDir();
+        await shutdownTelemetry();
     });
 }
 

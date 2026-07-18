@@ -618,6 +618,19 @@ export const enUs: Record<string, string> = {
     'config.debug.field.developer_mode': 'Developer Mode',
     'config.debug.field.log_raw_llm_request': 'Log Raw LLM Response',
 
+    // Config - Telemetry
+    'config.telemetry.title': 'Telemetry',
+    'config.telemetry.title.hint': 'OpenTelemetry tracing',
+    'config.telemetry.field.enabled': 'Enable this endpoint',
+    'config.telemetry.endpoints': 'OTLP Endpoints',
+    'config.telemetry.add': 'Add Endpoint',
+    'config.telemetry.add_title': 'Add OTLP Endpoint',
+    'config.telemetry.edit': 'Edit Endpoint',
+    'config.telemetry.endpoint': 'Endpoint URL',
+    'config.telemetry.protocol': 'Protocol',
+    'config.telemetry.empty': 'No endpoints',
+    'config.telemetry.hint': 'Select to edit, ESC to go back',
+
     // Config - File Manager
     'config.filemgr.title': 'File Scan Config',
     'config.filemgr.title.hint': 'Manage file scan directories',
@@ -893,6 +906,16 @@ export const enUs: Record<string, string> = {
     'renderer.settings.experimentalFeature': 'Enable experimental features',
     'renderer.settings.logRawLlmRequest': 'Log Raw LLM Response',
     'renderer.settings.debugMode': 'Debug Mode',
+    'renderer.settings.telemetry': 'Telemetry',
+    'renderer.settings.telemetryEndpoints': 'OTLP Endpoints',
+    'renderer.settings.telemetryEndpointsHint':
+        'Each endpoint can be toggled independently, e.g. http://localhost:4318/v1/traces',
+    'renderer.settings.telemetryAddEndpoint': 'Add Endpoint',
+    'renderer.settings.telemetryConfirmAdd': 'Confirm',
+    'renderer.settings.telemetryCancelAdd': 'Cancel',
+    'renderer.settings.telemetryDeleteEndpoint': 'Delete',
+    'renderer.settings.telemetryEmpty': 'No endpoints yet. Click the button below to add one.',
+    'renderer.settings.telemetryEndpointPlaceholder': 'http://localhost:4318/v1/traces',
     'renderer.settings.configManagement': 'Config Management',
     'renderer.settings.exportConfigJson': 'Export Config (JSON)',
     'renderer.settings.importConfigJson': 'Import Config (JSON)',

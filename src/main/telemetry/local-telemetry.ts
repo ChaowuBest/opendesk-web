@@ -11,9 +11,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getOpendeskDirectory } from '../../utils/setting.js';
-import { logger } from '../../utils/logger.js';
-import type { Usage, UsageFields } from '../messages.js';
+import { getOpendeskDirectory } from '../utils/setting.js';
+import { logger } from '../utils/logger.js';
+import type { Usage, UsageFields } from '../aikernel/messages.js';
 
 const USAGE_EVENT_VERSION = 1;
 const USAGE_EVENTS_FILE_PREFIX = 'usage-events-';

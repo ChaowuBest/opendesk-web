@@ -58,7 +58,7 @@ const pendingSubTasks = new Map<string, PendingSubTask>();
 
 // ─── Progress Extraction ───────────────────────────────────────────────────────
 
-const PROGRESS_THROTTLE_MS = 300;
+const PROGRESS_THROTTLE_MS = 1000;
 
 export function extractSubTaskProgress(chunk: TaskUpdateAssistantChunk, progress: SubTaskProgressInfo): void {
     const part = chunk.last_part;

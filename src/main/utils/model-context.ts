@@ -1,4 +1,5 @@
 ﻿import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
+import { withSpan } from '../telemetry/index.js';
 
 /**
  * 已知模型的信息记录，合并了上下文窗口大小、最大输出 token 和视觉支持。
@@ -400,44 +401,46 @@ export async function fetchContextSizeFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<number> {
-    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
-    const headers: Record<string, string> = {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-    };
+    return withSpan('llm.metadata_query', async () => {
+        const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+        const headers: Record<string, string> = {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        };
 
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
-            headers,
-            signal: AbortSignal.timeout(5000)
-        });
-        if (resp.ok) {
-            const size = extractContextSize(await resp.json());
-            if (size > 0) return size;
-        }
-    } catch {
-        /* 忽略单模型端点错误 */
-    }
-
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
-            headers,
-            signal: AbortSignal.timeout(8000)
-        });
-        if (resp.ok) {
-            const body = await resp.json();
-            const models: any[] = body.data ?? body;
-            const match = findModelInList(models, modelName);
-            if (match) {
-                const size = extractContextSize(match);
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+                headers,
+                signal: AbortSignal.timeout(5000)
+            });
+            if (resp.ok) {
+                const size = extractContextSize(await resp.json());
                 if (size > 0) return size;
             }
+        } catch {
+            /* 忽略单模型端点错误 */
         }
-    } catch {
-        /* 忽略列表端点错误 */
-    }
 
-    return 0;
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
+                headers,
+                signal: AbortSignal.timeout(8000)
+            });
+            if (resp.ok) {
+                const body = await resp.json();
+                const models: any[] = body.data ?? body;
+                const match = findModelInList(models, modelName);
+                if (match) {
+                    const size = extractContextSize(match);
+                    if (size > 0) return size;
+                }
+            }
+        } catch {
+            /* 忽略列表端点错误 */
+        }
+
+        return 0;
+    });
 }
 
 /**
@@ -451,44 +454,46 @@ export async function fetchMaxOutputTokensFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<number> {
-    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
-    const headers: Record<string, string> = {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-    };
+    return withSpan('llm.metadata_query', async () => {
+        const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+        const headers: Record<string, string> = {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        };
 
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
-            headers,
-            signal: AbortSignal.timeout(5000)
-        });
-        if (resp.ok) {
-            const size = extractMaxOutputTokens(await resp.json());
-            if (size > 0) return size;
-        }
-    } catch {
-        /* 忽略单模型端点错误 */
-    }
-
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
-            headers,
-            signal: AbortSignal.timeout(8000)
-        });
-        if (resp.ok) {
-            const body = await resp.json();
-            const models: any[] = body.data ?? body;
-            const match = findModelInList(models, modelName);
-            if (match) {
-                const size = extractMaxOutputTokens(match);
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+                headers,
+                signal: AbortSignal.timeout(5000)
+            });
+            if (resp.ok) {
+                const size = extractMaxOutputTokens(await resp.json());
                 if (size > 0) return size;
             }
+        } catch {
+            /* 忽略单模型端点错误 */
         }
-    } catch {
-        /* 忽略列表端点错误 */
-    }
 
-    return 0;
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
+                headers,
+                signal: AbortSignal.timeout(8000)
+            });
+            if (resp.ok) {
+                const body = await resp.json();
+                const models: any[] = body.data ?? body;
+                const match = findModelInList(models, modelName);
+                if (match) {
+                    const size = extractMaxOutputTokens(match);
+                    if (size > 0) return size;
+                }
+            }
+        } catch {
+            /* 忽略列表端点错误 */
+        }
+
+        return 0;
+    });
 }
 
 /**
@@ -502,44 +507,46 @@ export async function fetchVisionSupportFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<boolean | undefined> {
-    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
-    const headers: Record<string, string> = {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-    };
+    return withSpan('llm.metadata_query', async () => {
+        const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+        const headers: Record<string, string> = {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        };
 
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
-            headers,
-            signal: AbortSignal.timeout(5000)
-        });
-        if (resp.ok) {
-            const result = extractVisionSupport(await resp.json());
-            if (result !== undefined) return result;
-        }
-    } catch {
-        /* 忽略单模型端点错误 */
-    }
-
-    try {
-        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
-            headers,
-            signal: AbortSignal.timeout(8000)
-        });
-        if (resp.ok) {
-            const body = await resp.json();
-            const models: any[] = body.data ?? body;
-            const match = findModelInList(models, modelName);
-            if (match) {
-                const result = extractVisionSupport(match);
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+                headers,
+                signal: AbortSignal.timeout(5000)
+            });
+            if (resp.ok) {
+                const result = extractVisionSupport(await resp.json());
                 if (result !== undefined) return result;
             }
+        } catch {
+            /* 忽略单模型端点错误 */
         }
-    } catch {
-        /* 忽略列表端点错误 */
-    }
 
-    return undefined;
+        try {
+            const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
+                headers,
+                signal: AbortSignal.timeout(8000)
+            });
+            if (resp.ok) {
+                const body = await resp.json();
+                const models: any[] = body.data ?? body;
+                const match = findModelInList(models, modelName);
+                if (match) {
+                    const result = extractVisionSupport(match);
+                    if (result !== undefined) return result;
+                }
+            }
+        } catch {
+            /* 忽略列表端点错误 */
+        }
+
+        return undefined;
+    });
 }
 
 // ═══════════════════════════════════════════════

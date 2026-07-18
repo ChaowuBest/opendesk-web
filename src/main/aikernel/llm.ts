@@ -27,6 +27,7 @@ import { AnthropicAdapter } from './adapters/anthropic.js';
 import type { AdapterMessageBuildOptions } from './adapters/context.js';
 import { t } from '../../locale/index.js';
 import { fetchModelUrl } from '../utils/model-network.js';
+import { getTracer, withSpan, context, trace, SpanStatusCode, type Span } from '../telemetry/index.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -278,8 +279,16 @@ class LLM {
         if (!modelInstance) {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
-        const data = await LLM.__embedRequest(modelInstance, text, dimensions);
-        return data.data[0].embedding;
+
+        return withSpan('llm.embed', async (span) => {
+            span.setAttribute('llm.model', modelInstance.model_name);
+            span.setAttribute('llm.provider', modelInstance.getProviderName());
+            span.setAttribute('llm.request_type', 'embed');
+
+            const data = await LLM.__embedRequest(modelInstance, text, dimensions);
+            span.setAttribute('llm.usage.embedding_dimensions', data.data[0].embedding?.length ?? 0);
+            return data.data[0].embedding;
+        });
     }
 
     static async batchEmbed(texts: string[], batchSize: number = 64, dimensions?: number): Promise<number[][]> {
@@ -287,19 +296,28 @@ class LLM {
         if (!modelInstance) {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
-        const embeddings: number[][] = [];
-        for (let i = 0; i < texts.length; i += batchSize) {
-            logger.info(`progress ${i} / ${texts.length}`);
-            const batch = texts.slice(i, i + batchSize);
-            const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
-            embeddings.push(
-                ...data.data
-                    .slice()
-                    .sort((a: any, b: any) => a.index - b.index)
-                    .map((d: any) => d.embedding)
-            );
-        }
-        return embeddings;
+
+        return withSpan('llm.batchEmbed', async (span) => {
+            span.setAttribute('llm.model', modelInstance.model_name);
+            span.setAttribute('llm.provider', modelInstance.getProviderName());
+            span.setAttribute('llm.request_type', 'batchEmbed');
+            span.setAttribute('llm.embed.text_count', texts.length);
+            span.setAttribute('llm.embed.batch_size', batchSize);
+
+            const embeddings: number[][] = [];
+            for (let i = 0; i < texts.length; i += batchSize) {
+                logger.info(`progress ${i} / ${texts.length}`);
+                const batch = texts.slice(i, i + batchSize);
+                const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
+                embeddings.push(
+                    ...data.data
+                        .slice()
+                        .sort((a: any, b: any) => a.index - b.index)
+                        .map((d: any) => d.embedding)
+                );
+            }
+            return embeddings;
+        });
     }
 
     /**
@@ -322,34 +340,46 @@ class LLM {
         }
         const modelInstance = LLM.__getModelInstance(model, undefined);
 
-        // Reranker 使用自定义 REST API 而非 OpenAI SDK
-        const headers: Record<string, string> = {
-            Authorization: `Bearer ${modelInstance.api_key}`,
-            'Content-Type': 'application/json'
-        };
-        // 合并自定义 headers
-        if (modelInstance.custom_headers) {
-            Object.assign(headers, modelInstance.custom_headers);
-        }
-        const response = await fetchModelUrl(modelInstance, modelInstance.base_url.replace(/\/+$/, '') + '/rerank', {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify({
-                model: modelInstance.model_name,
-                query: query,
-                documents: items.map((item) => stringifier(item))
-            })
-        });
+        return withSpan('llm.rerank', async (span) => {
+            span.setAttribute('llm.model', modelInstance.model_name);
+            span.setAttribute('llm.provider', modelInstance.getProviderName());
+            span.setAttribute('llm.request_type', 'rerank');
+            span.setAttribute('llm.rerank.document_count', items.length);
 
-        const rerankResult: RerankApiResponse = await response.json();
-        const rerankedItems: T[] = [];
-        for (const { index, relevance_score } of rerankResult.results) {
-            console.info(`reranked item ${stringifier(items[index])} with relevance score ${relevance_score}`);
-            if (relevance_score >= 0.01) {
-                rerankedItems.push(items[index]);
+            // Reranker 使用自定义 REST API 而非 OpenAI SDK
+            const headers: Record<string, string> = {
+                Authorization: `Bearer ${modelInstance.api_key}`,
+                'Content-Type': 'application/json'
+            };
+            // 合并自定义 headers
+            if (modelInstance.custom_headers) {
+                Object.assign(headers, modelInstance.custom_headers);
             }
-        }
-        return rerankedItems;
+            const response = await fetchModelUrl(
+                modelInstance,
+                modelInstance.base_url.replace(/\/+$/, '') + '/rerank',
+                {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({
+                        model: modelInstance.model_name,
+                        query: query,
+                        documents: items.map((item) => stringifier(item))
+                    })
+                }
+            );
+
+            const rerankResult: RerankApiResponse = await response.json();
+            const rerankedItems: T[] = [];
+            for (const { index, relevance_score } of rerankResult.results) {
+                console.info(`reranked item ${stringifier(items[index])} with relevance score ${relevance_score}`);
+                if (relevance_score >= 0.01) {
+                    rerankedItems.push(items[index]);
+                }
+            }
+            span.setAttribute('llm.rerank.result_count', rerankedItems.length);
+            return rerankedItems;
+        });
     }
 
     /**
@@ -400,40 +430,49 @@ class LLM {
         const adapter = LLM.__getAdapter(modelInstance);
         const visionSupported = await LLM.supportsVision(options.model);
 
-        let finalResponse: string | object | undefined = undefined;
-        let numRetries = 0;
-        const chatContext = new ChatContext();
-        chatContext.appendMessage(options.question);
+        return withSpan('llm.ask', async (span) => {
+            span.setAttribute('llm.model', modelInstance.model_name);
+            span.setAttribute('llm.provider', modelInstance.getProviderName());
+            span.setAttribute('llm.request_type', 'completeText');
 
-        while (finalResponse === undefined && numRetries < 5) {
-            let content = await adapter.completeText(chatContext, visionSupported, {}, options.requestOptions);
-            content = LLM.__stripThinkTags(content, modelInstance);
+            let finalResponse: string | object | undefined = undefined;
+            let numRetries = 0;
+            const chatContext = new ChatContext();
+            chatContext.appendMessage(options.question);
 
-            const assistantMessage = new AssistantMessage([], {
-                allowThinkTagParsing: modelInstance.auto_parse_think_tags
-            });
-            assistantMessage.appendText(content);
-            chatContext.appendMessage(assistantMessage);
+            const wrappedRequestOptions = LLM.__wrapOnUsage(options.requestOptions, span);
 
-            if (options.validator === undefined) {
-                finalResponse = content;
-            } else {
-                const validationResult = options.validator(content);
-                if (validationResult.validated_content !== undefined) {
-                    finalResponse = validationResult.validated_content as string | object;
+            while (finalResponse === undefined && numRetries < 5) {
+                let content = await adapter.completeText(chatContext, visionSupported, {}, wrappedRequestOptions);
+                content = LLM.__stripThinkTags(content, modelInstance);
+
+                const assistantMessage = new AssistantMessage([], {
+                    allowThinkTagParsing: modelInstance.auto_parse_think_tags
+                });
+                assistantMessage.appendText(content);
+                chatContext.appendMessage(assistantMessage);
+
+                if (options.validator === undefined) {
+                    finalResponse = content;
                 } else {
-                    // 验证失败，把错误信息作为新的 user 消息追加，触发 LLM 重试
-                    chatContext.appendMessage(new UserMessage(validationResult.message));
-                    numRetries++;
+                    const validationResult = options.validator(content);
+                    if (validationResult.validated_content !== undefined) {
+                        finalResponse = validationResult.validated_content as string | object;
+                    } else {
+                        // 验证失败，把错误信息作为新的 user 消息追加，触发 LLM 重试
+                        chatContext.appendMessage(new UserMessage(validationResult.message));
+                        numRetries++;
+                    }
                 }
             }
-        }
 
-        if (finalResponse === undefined) {
-            throw new Error('failed to get a valid response after all retries');
-        }
+            if (finalResponse === undefined) {
+                throw new Error('failed to get a valid response after all retries');
+            }
 
-        return finalResponse;
+            span.setAttribute('llm.retry_count', numRetries);
+            return finalResponse;
+        });
     }
 
     /**
@@ -451,6 +490,36 @@ class LLM {
             .map((part) => (part.type === 'text' ? part.text : ''))
             .join('')
             .trim();
+    }
+
+    /**
+     * 包装 onUsage 回调，在原有回调基础上将 token 用量写入 OTel span 属性。
+     */
+    private static __wrapOnUsage(
+        requestOptions: LLMRequestOptions | undefined,
+        span: Span
+    ): LLMRequestOptions | undefined {
+        if (!requestOptions) {
+            return undefined;
+        }
+        const originalOnUsage = requestOptions.onUsage;
+        return {
+            ...requestOptions,
+            onUsage: async (usage: Usage, ctx) => {
+                span.setAttribute('llm.usage.prompt_tokens', usage.prompt_tokens ?? usage.input_tokens ?? 0);
+                span.setAttribute('llm.usage.completion_tokens', usage.completion_tokens ?? usage.output_tokens ?? 0);
+                span.setAttribute('llm.usage.total_tokens', usage.total_tokens ?? 0);
+                if (usage.cache_creation_input_tokens !== undefined) {
+                    span.setAttribute('llm.usage.cache_creation_input_tokens', usage.cache_creation_input_tokens);
+                }
+                if (usage.cache_read_input_tokens !== undefined) {
+                    span.setAttribute('llm.usage.cache_read_input_tokens', usage.cache_read_input_tokens);
+                }
+                if (originalOnUsage) {
+                    await originalOnUsage(usage, ctx);
+                }
+            }
+        };
     }
 
     static async ask(
@@ -540,7 +609,20 @@ class LLM {
         const modelInstance = this.__getModelInstance(model, 'chat');
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
-        return await this.__getAdapter(modelInstance).complete(chatContext, visionSupported, options, requestOptions);
+
+        return withSpan('llm.complete', async (span) => {
+            span.setAttribute('llm.model', modelInstance.model_name);
+            span.setAttribute('llm.provider', modelInstance.getProviderName());
+            span.setAttribute('llm.request_type', 'complete');
+
+            const wrappedOptions = LLM.__wrapOnUsage(requestOptions, span);
+            return await this.__getAdapter(modelInstance).complete(
+                chatContext,
+                visionSupported,
+                options,
+                wrappedOptions
+            );
+        });
     }
 
     static async *streamComplete(
@@ -552,7 +634,49 @@ class LLM {
         const modelInstance = this.__getModelInstance(model, 'chat');
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
-        yield* this.__getAdapter(modelInstance).streamComplete(chatContext, visionSupported, options, requestOptions);
+
+        const span = getTracer().startSpan('llm.streamComplete');
+        span.setAttribute('llm.model', modelInstance.model_name);
+        span.setAttribute('llm.provider', modelInstance.getProviderName());
+        span.setAttribute('llm.request_type', 'streamComplete');
+        // async generator 无法用 withSpan 回调包裹，手动管理 span 生命周期。
+        // 用 context.bind 将 span context 绑定到迭代器 next 方法，
+        // 使 adapter 内部的 fetchModelUrl → withSpan('llm.http_request') 成为子 span。
+        const ctx = trace.setSpan(context.active(), span);
+        const boundNext = context.bind(ctx, (innerIter: AsyncIterator<AssistantResponse>) => innerIter.next());
+
+        const wrappedOptions = LLM.__wrapOnUsage(requestOptions, span);
+        const streamGen = this.__getAdapter(modelInstance).streamComplete(
+            chatContext,
+            visionSupported,
+            options,
+            wrappedOptions
+        );
+        const innerIter = streamGen[Symbol.asyncIterator]();
+
+        try {
+            try {
+                let result = await boundNext(innerIter);
+                while (!result.done) {
+                    yield result.value;
+                    result = await boundNext(innerIter);
+                }
+            } finally {
+                // 确保调用方 break 时内部迭代器资源（HTTP 连接等）被清理
+                if (innerIter.return) {
+                    await innerIter.return();
+                }
+            }
+        } catch (err: unknown) {
+            span.recordException(err as Error);
+            span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: err instanceof Error ? err.message : String(err)
+            });
+            throw err;
+        } finally {
+            span.end();
+        }
     }
 
     /**
@@ -563,7 +687,9 @@ class LLM {
         if (modelInstance.getModelType() !== 'chat') {
             throw new Error(t('error.model.not_chat'));
         }
-        await this.__getAdapter(modelInstance).verify();
+        await withSpan('llm.verify', async () => {
+            await this.__getAdapter(modelInstance).verify();
+        });
     }
 
     /**
@@ -574,11 +700,13 @@ class LLM {
         if (modelInstance.getModelType() !== 'embedding') {
             throw new Error(t('error.model.not_embedding'));
         }
-        const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
-        const embedding = data?.data?.[0]?.embedding;
-        if (!Array.isArray(embedding) || embedding.length === 0) {
-            throw new Error(t('error.model.invalid_embedding_response', { shape: 'non-empty embedding array' }));
-        }
+        await withSpan('llm.verify', async () => {
+            const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
+            const embedding = data?.data?.[0]?.embedding;
+            if (!Array.isArray(embedding) || embedding.length === 0) {
+                throw new Error(t('error.model.invalid_embedding_response', { shape: 'non-empty embedding array' }));
+            }
+        });
     }
 }
 

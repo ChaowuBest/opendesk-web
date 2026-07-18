@@ -12,7 +12,8 @@
 import type { TaskState } from './states/tasks';
 import type { ToolCall, AssistantMessage } from './messages.js';
 import type { LLMRequestOptions } from './llm.js';
-import { logger } from '../utils/logger';
+import { logger } from '../utils/logger.js';
+import { withSpan } from '../telemetry/index.js';
 
 /******************************************************************************
  * Finish Turn Callbacks
@@ -553,25 +554,27 @@ export class TaskHooks {
     }
 
     async checkBeforeFinishTurn(task: TaskState, modelRequestOptions?: LLMRequestOptions): Promise<FinishTurnFeedback> {
-        const taskCallbacks = this.beforeFinishTurnCallbacks.map((item, index) =>
-            normalizeBeforeFinishRegistration(item, 'task', index)
-        );
-        const globalOffset = taskCallbacks.length;
-        const globalCallbacks = HookRegistry.beforeFinishTurnCallbacks.map((item, index) =>
-            normalizeBeforeFinishRegistration(item, 'global', globalOffset + index)
-        );
-        const callbacks = sortBeforeFinishRegistrations([...taskCallbacks, ...globalCallbacks]);
-        for (const entry of callbacks) {
-            try {
-                const feedback = await entry.callback(task, modelRequestOptions);
-                if (feedback.operation === 'reject') {
-                    return feedback;
+        return withSpan('hook.before_finish_turn', async () => {
+            const taskCallbacks = this.beforeFinishTurnCallbacks.map((item, index) =>
+                normalizeBeforeFinishRegistration(item, 'task', index)
+            );
+            const globalOffset = taskCallbacks.length;
+            const globalCallbacks = HookRegistry.beforeFinishTurnCallbacks.map((item, index) =>
+                normalizeBeforeFinishRegistration(item, 'global', globalOffset + index)
+            );
+            const callbacks = sortBeforeFinishRegistrations([...taskCallbacks, ...globalCallbacks]);
+            for (const entry of callbacks) {
+                try {
+                    const feedback = await entry.callback(task, modelRequestOptions);
+                    if (feedback.operation === 'reject') {
+                        return feedback;
+                    }
+                } catch (err) {
+                    logger.error('TaskHooks.checkBeforeFinishTurn: callback error', err);
                 }
-            } catch (err) {
-                logger.error('TaskHooks.checkBeforeFinishTurn: callback error', err);
             }
-        }
-        return { operation: 'finish' };
+            return { operation: 'finish' };
+        });
     }
 
     async noticeAfterFinishTurn(task: TaskState): Promise<void> {
@@ -620,6 +623,8 @@ export class TaskHooks {
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
+        // afterParseToolcall 在流式解析期间每个 tool call 参数完成时触发，
+        // 不创建 span 以避免噪声
         for (const callback of this.afterParseToolcallCallbacks) {
             try {
                 const feedback = await callback(task, tool_call);
@@ -634,50 +639,61 @@ export class TaskHooks {
     }
 
     async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<BeforeToolCallFeedback> {
-        for (const callback of this.beforeToolCallCallbacks) {
-            try {
-                const feedback = await callback(task, tool_call);
-                if (feedback.operation === 'deny') {
-                    return feedback;
+        return withSpan('hook.before_tool_call', async (span) => {
+            span.setAttribute('tool.name', tool_call.tool_name);
+            for (const callback of this.beforeToolCallCallbacks) {
+                try {
+                    const feedback = await callback(task, tool_call);
+                    if (feedback.operation === 'deny') {
+                        return feedback;
+                    }
+                } catch (err) {
+                    logger.error('TaskHooks.checkBeforeToolCall: callback error', err);
                 }
-            } catch (err) {
-                logger.error('TaskHooks.checkBeforeToolCall: callback error', err);
             }
-        }
-        return HookRegistry.checkBeforeToolCall(task, tool_call);
+            return HookRegistry.checkBeforeToolCall(task, tool_call);
+        });
     }
 
     async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
-        for (const callback of this.afterToolCallCallbacks) {
-            try {
-                await callback(task, tool_call);
-            } catch (err) {
-                logger.error('TaskHooks.noticeAfterToolCall: callback error', err);
+        await withSpan('hook.after_tool_call', async (span) => {
+            span.setAttribute('tool.name', tool_call.tool_name);
+            span.setAttribute('tool.status', tool_call.status);
+            for (const callback of this.afterToolCallCallbacks) {
+                try {
+                    await callback(task, tool_call);
+                } catch (err) {
+                    logger.error('TaskHooks.noticeAfterToolCall: callback error', err);
+                }
             }
-        }
-        await HookRegistry.noticeAfterToolCall(task, tool_call);
+            await HookRegistry.noticeAfterToolCall(task, tool_call);
+        });
     }
 
     async noticeBeforeTurnStart(task: TaskState): Promise<void> {
-        for (const callback of this.beforeTurnStartCallbacks) {
-            try {
-                await callback(task);
-            } catch (err) {
-                logger.error('TaskHooks.noticeBeforeTurnStart: callback error', err);
+        await withSpan('hook.before_turn_start', async () => {
+            for (const callback of this.beforeTurnStartCallbacks) {
+                try {
+                    await callback(task);
+                } catch (err) {
+                    logger.error('TaskHooks.noticeBeforeTurnStart: callback error', err);
+                }
             }
-        }
-        await HookRegistry.noticeBeforeTurnStart(task);
+            await HookRegistry.noticeBeforeTurnStart(task);
+        });
     }
 
     async noticeAfterProcessCompletion(task: TaskState, assistantMessage: AssistantMessage): Promise<void> {
-        for (const callback of this.afterProcessCompletionCallbacks) {
-            try {
-                await callback(task, assistantMessage);
-            } catch (err) {
-                logger.error('TaskHooks.noticeAfterProcessCompletion: callback error', err);
+        await withSpan('hook.after_completion', async () => {
+            for (const callback of this.afterProcessCompletionCallbacks) {
+                try {
+                    await callback(task, assistantMessage);
+                } catch (err) {
+                    logger.error('TaskHooks.noticeAfterProcessCompletion: callback error', err);
+                }
             }
-        }
-        await HookRegistry.noticeAfterProcessCompletion(task, assistantMessage);
+            await HookRegistry.noticeAfterProcessCompletion(task, assistantMessage);
+        });
     }
 
     async checkBeforeToolcallCreated(
@@ -686,6 +702,7 @@ export class TaskHooks {
         chunkHasNewToolCall: boolean,
         requestToolCalls: readonly ToolCall[]
     ): Promise<BeforeToolcallCreatedFeedback> {
+        // beforeToolcallCreated 在流式输出中每个 chunk 都会触发一次，不创建 span 以避免噪声
         for (const callback of this.beforeToolcallCreatedCallbacks) {
             try {
                 const feedback = await callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
