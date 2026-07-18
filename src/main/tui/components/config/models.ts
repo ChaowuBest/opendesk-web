@@ -2,6 +2,8 @@ import { type Component, SelectList, type TUI } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
+import { InfoOverlay } from '../notice.js';
+import type { OpenDeskTUI } from '../../entry.js';
 import chalk from 'chalk';
 import { getReasoningEffortLabels, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
 import { t } from '../../../../locale/index.js';
@@ -33,6 +35,7 @@ interface HeaderItem {
  */
 export class ModelConfigPage implements Component {
     private tui: TUI;
+    private openDeskTUI: OpenDeskTUI;
     private onClose: () => void;
     private state: 'list' | 'edit' | 'headers' | 'header-edit' = 'list';
 
@@ -48,8 +51,9 @@ export class ModelConfigPage implements Component {
     // 从编辑模型表单进入 headers 时保存的表单值，用于返回时恢复
     private savedFormValues?: Record<string, any>;
 
-    constructor(tui: TUI, onClose: () => void) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI, onClose: () => void) {
+        this.openDeskTUI = openDeskTUI;
+        this.tui = openDeskTUI.tui;
         this.onClose = onClose;
         this.showList();
     }
@@ -346,6 +350,26 @@ export class ModelConfigPage implements Component {
         const setting = Setting.getInstance();
         const data = { ...(setting.getData() as any) };
         data.models = [...(data.models ?? [])];
+
+        const alias = (values.alias ?? '').trim();
+
+        // 检查别名是否重复（新增时检查所有模型，编辑时排除自身）
+        const existingIndex = data.models.findIndex((m: ModelData) => m.alias === alias);
+        if (existingIndex !== -1 && existingIndex !== this.editingIndex) {
+            this.form?.deactivate();
+            const info = new InfoOverlay(this.openDeskTUI, {
+                title: t('config.model.validation.alias_exists'),
+                message: chalk.red(alias),
+                type: 'error',
+                allowDuringConfig: true,
+                closeLabel: t('common.close')
+            });
+            info.show(() => {
+                this.form?.activate();
+                this.tui.requestRender();
+            });
+            return;
+        }
 
         const parsedContextLength = parseInt(values.context_length, 10);
 

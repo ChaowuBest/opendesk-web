@@ -116,6 +116,10 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
                     tui.setGlobalDefaultModel(alias);
                     tui.resolveModelInfo();
                 }
+                // 如果 setGlobalDefaultModel 触发了 confirm overlay（切换默认模型提示），
+                // 则不再显示 InfoOverlay，避免两个 overlay 叠加导致焦点问题
+                if (tui.isInputBlocked()) return;
+
                 const info = new InfoOverlay(tui, {
                     title: t('model.description'),
                     message: chalk.gray(`已是当前模型: ${alias}`),
@@ -134,6 +138,10 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
 
             // 刷新状态栏显示
             tui.resolveModelInfo();
+
+            // 如果 setGlobalDefaultModel 触发了 confirm overlay（切换默认模型提示），
+            // 则不再显示 InfoOverlay，避免两个 overlay 叠加导致焦点问题
+            if (tui.isInputBlocked()) return;
 
             // 显示成功提示
             const info = new InfoOverlay(tui, {
