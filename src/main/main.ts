@@ -2616,6 +2616,75 @@ const registerMagicPointerHandlers = () => {
     });
 };
 
+/**
+ * 鸿蒙平台启动时校验华为账号登录。
+ * 若未登录则拉起登录窗口阻塞启动，登录成功或用户关闭窗口后继续。
+ * 非鸿蒙平台直接跳过。
+ */
+async function ensureHuaweiAuthOnStartup(): Promise<void> {
+    if (process.platform !== 'openharmony') {
+        return;
+    }
+
+    const authService = getHuaweiAuthService();
+    const available = await authService.isAvailable();
+    if (!available) {
+        logger.warn('[auth] Huawei account login is not available, skipping startup auth');
+        return;
+    }
+
+    // 已有有效会话则跳过
+    const existing = authService.getSession();
+    if (existing) {
+        logger.info('[auth] Valid Huawei auth session found, skipping login');
+        return;
+    }
+
+    logger.info('[auth] No valid Huawei auth session, launching login window...');
+
+    // 隐藏主窗口，避免用户在登录校验期间操作应用
+    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+        globalMainWindow.hide();
+        // 等待主窗口内容加载完成，确保鸿蒙侧 UIAbility 已进入 active 状态，
+        // ArkTS 创建登录窗口时才能拿到合法的 window context。
+        try {
+            await new Promise<void>((resolve) => {
+                if (globalMainWindow!.webContents.isLoadingMainFrame()) {
+                    globalMainWindow!.webContents.once('did-finish-load', () => resolve());
+                } else {
+                    resolve();
+                }
+            });
+        } catch {
+            /* ignore - 即使加载未完成也继续尝试登录 */
+        }
+    }
+
+    try {
+        await authService.login();
+        logger.info('[auth] Huawei account login succeeded on startup');
+    } catch (err: any) {
+        logger.error(`[auth] Huawei account login failed on startup: ${err?.message || err}`);
+        // 登录失败/取消，立即退出应用；同时使用 app.quit() + process.exit(1) 强制终止，
+        // 避免在鸿蒙 Electron 下 app.exit 未能真正结束进程导致悬挂空白窗口。
+        // 主动尝试关闭鸿蒙侧登录窗口，避免悬挂
+        try {
+            await authService.logout();
+        } catch {
+            /* ignore */
+        }
+        app.quit();
+        process.exit(1);
+        return;
+    }
+
+    // 登录成功，显示主窗口
+    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+        globalMainWindow.show();
+        globalMainWindow.focus();
+    }
+}
+
 const registerAuthAPIHandlers = () => {
     ipcMain.handle('auth:isAvailable', async () => {
         try {
@@ -2965,9 +3034,19 @@ function startApplication() {
         new ElectronExitPlanModeProvider();
         p3.end();
 
+        // 注册原生桥 + 探测 ArkData 可用性
+        // 必须在 createWindow 之前注册，主窗口加载后会使用 native bridge
+        registerNativeBridge();
+        await probeArkdataAvailability();
+
+        // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
+        // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
         const p4 = startupTrace.createPhase('startup.ready.create_window');
         createWindow();
         p4.end();
+
+        // 鸿蒙平台：启动时校验华为账号登录，未登录则阻塞直到登录成功或退出
+        await ensureHuaweiAuthOnStartup();
 
         // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
         powerMonitor.on('suspend', () => {
@@ -3122,8 +3201,6 @@ function startApplication() {
             }
         });
 
-        registerNativeBridge();
-        await probeArkdataAvailability();
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
