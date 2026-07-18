@@ -22,15 +22,15 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
     {
         name: 'z-ai-code',
-        displayName: '智谱开放平台(CodingPlan)',
+        displayName: '智谱开放平台 GLM (CodingPlan)',
         base_url: 'https://open.bigmodel.cn/api/coding/paas/v4'
     },
     {
         name: 'kimi-code',
-        displayName: 'Kimi(CodingPlan)',
+        displayName: '月之暗面 Kimi (CodingPlan)',
         base_url: 'https://api.kimi.com/coding/v1'
     },
-    { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
+    { name: 'minimaxi', displayName: '稀宇 MiniMax', base_url: 'https://api.minimaxi.com/v1' },
     {
         name: 'aliyun-cn',
         displayName: '阿里云百炼',
@@ -38,7 +38,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     },
     {
         name: 'aliyun-code-cn',
-        displayName: '阿里云百炼(CodingPlan)',
+        displayName: '阿里云百炼 (CodingPlan)',
         base_url: 'https://coding.dashscope.aliyuncs.com/v1'
     },
     {
@@ -53,7 +53,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     },
     {
         name: 'baidubce-code',
-        displayName: '百度云千帆(CodingPlan)',
+        displayName: '百度云千帆 (CodingPlan)',
         base_url: 'https://qianfan.baidubce.com/v2/coding'
     },
     {
@@ -63,8 +63,13 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     },
     {
         name: 'volcengine-code',
-        displayName: '火山引擎(CodingPlan)',
+        displayName: '火山引擎 (CodingPlan)',
         base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3'
+    },
+    {
+        name: 'volcengine-agent',
+        displayName: '火山引擎 (AgentPlan)',
+        base_url: 'https://ark.cn-beijing.volces.com/api/plan/v3'
     },
     {
         name: 'huaweicloud-maas',

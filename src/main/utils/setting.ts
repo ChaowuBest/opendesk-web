@@ -284,6 +284,40 @@ const DebugModeSchema = z.object({
     log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志')
 });
 
+const TelemetryEndpointSchema = z.object({
+    url: z.string().describe('OTLP HTTP 端点地址，如 http://localhost:4318/v1/traces'),
+    protocol: z.enum(['opentelemetry']).default('opentelemetry').describe('遥测协议，当前仅支持 OpenTelemetry'),
+    enabled: z.boolean().default(false).describe('是否启用此端点')
+});
+
+// 旧格式 string 端点不再兼容，在数组层面直接过滤掉
+const TelemetryEndpointCompatSchema = z.preprocess((val) => {
+    if (typeof val === 'object' && val !== null && !('protocol' in val)) {
+        return { ...val, protocol: 'opentelemetry' };
+    }
+    return val;
+}, TelemetryEndpointSchema);
+
+const TelemetrySchema = z
+    .object({
+        opentelemetry: z
+            .object({
+                endpoints: z
+                    .preprocess(
+                        (val) => (Array.isArray(val) ? val.filter((ep: unknown) => typeof ep !== 'string') : val),
+                        z.array(TelemetryEndpointCompatSchema)
+                    )
+                    .default([])
+                    .describe('OTLP HTTP 端点列表')
+            })
+            .describe('OpenTelemetry 配置')
+            .default({ endpoints: [] })
+    })
+    .describe('遥测设置')
+    .default({});
+
+type TelemetryConfig = z.infer<typeof TelemetrySchema>;
+
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
@@ -303,6 +337,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             experimental_feature: false,
             log_raw_llm_request: false
         }),
+        telemetry: TelemetrySchema,
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
@@ -984,6 +1019,8 @@ export {
     isDeveloperModeEnabled,
     setDeveloperModeEnabled,
     isLogRawLlmRequestEnabled,
+    TelemetrySchema,
+    type TelemetryConfig,
     normalizeProviderType,
     normalizeModelType,
     isChatModel,

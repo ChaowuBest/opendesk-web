@@ -16,7 +16,7 @@ import { AutoCompactStates } from '../compaction/auto-compact.js';
 import { MicrocompactStates } from '../compaction/microcompact-state.js';
 import { SessionMemoryStates } from '../compaction/session-memory-compact.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
-import { normalizeTaskUsageSummary } from '../telemetry/usage.js';
+import { normalizeTaskUsageSummary } from '../../telemetry/local-telemetry.js';
 import type { ReasoningEffort } from '../../utils/setting.js';
 import { TaskState } from '../states/tasks.js';
 import type { TaskManagerState } from './manager.js';

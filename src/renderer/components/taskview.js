@@ -10,6 +10,7 @@
  */
 
 import { ElasticToolbarWidget } from './toolbar.ts';
+import { morphDomChildren } from '../utils/dom-morph.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -745,6 +746,9 @@ class TaskView extends HTMLElement {
         if (icon) icon.classList.remove('reasoning-icon-breathing');
     }
 
+    // DOM morph 逻辑已提取到 ../utils/dom-morph.js，此处保留静态方法以兼容现有调用
+    static morphDomChildren = morphDomChildren;
+
     renderAssistantPart(part, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
         if (part.type === 'reasoning') {
             return TaskView.createReasoningPartHtml(part.rendered, false, part.elapsedSeconds);
@@ -1227,6 +1231,8 @@ class TaskView extends HTMLElement {
 
         if (progress.last_part.type === 'reasoning') {
             TaskView.updateReasoningPreview(last_part_element, progress.last_part.rendered || '');
+        } else if (progress.last_part.type === 'tool_call') {
+            TaskView.morphDomChildren(last_part_element, progress.last_part.rendered || '');
         } else {
             last_part_element.innerHTML = progress.last_part.rendered || '';
         }

@@ -24,9 +24,7 @@ import {
 import {
     ChatContext,
     UserMessage,
-    UserMessagePart,
     AssistantMessage,
-    AssistantMessagePart,
     TextMessagePart,
     FileMessagePart,
     ImageMessagePart,
@@ -45,7 +43,7 @@ import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { LLM, type LLMRequestOptions } from '../llm.js';
+import { LLM } from '../llm.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { jsonrepair } from 'jsonrepair';
@@ -63,7 +61,8 @@ import {
     recordTaskUsage,
     type TaskUsageSummary,
     type UsageRequestType
-} from '../telemetry/usage.js';
+} from '../../telemetry/local-telemetry.js';
+import { withSpan } from '../../telemetry/index.js';
 import { getPlatform } from '../../../platforms/base.js';
 import type { TaskSkillExposure } from '../agents/common.js';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
@@ -1604,26 +1603,34 @@ export class TaskState {
     }
 
     async generateTaskName(user_message: string, modelRequestOptions?: TaskModelRequestOptions) {
-        const model = this.ensureValidModelOrFallback();
-        const prompt = `
+        await withSpan(
+            'task.generate_name',
+            async (span) => {
+                span.setAttribute('task.id', this.task_id);
+                const model = this.ensureValidModelOrFallback();
+                const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const output = await LLM.ask(prompt.trim(), model, {
-            reasoningEffort: 'none',
-            ...modelRequestOptions
-        }).catch((err) => {
-            logger.error(err);
-            return null;
-        });
+                const output = await LLM.ask(prompt.trim(), model, {
+                    reasoningEffort: 'none',
+                    ...modelRequestOptions
+                }).catch((err) => {
+                    logger.error(err);
+                    return null;
+                });
 
-        if (output) {
-            const lines = output.trim().split('\n');
-            if (lines.length > 0) {
-                this.task_name = lines[lines.length - 1].trim();
-            }
-        }
+                if (output) {
+                    const lines = output.trim().split('\n');
+                    if (lines.length > 0) {
+                        this.task_name = lines[lines.length - 1].trim();
+                        span.setAttribute('task.name', this.task_name);
+                    }
+                }
+            },
+            { 'task.id': this.task_id }
+        );
     }
 
     /**
@@ -1928,15 +1935,20 @@ export class TaskState {
                 return;
             }
 
-            const result = await tool.execute(
-                args,
-                async (result) => {
-                    tool_call.result = result.result;
-                    tool_call.result_object = result.result_object;
-                    await this.sendSubscriptionFeedback();
-                },
-                this
-            );
+            const result = await withSpan('tool.execute', async (toolSpan) => {
+                toolSpan.setAttribute('tool.name', tool_call.tool_name);
+                const r = await tool.execute(
+                    args,
+                    async (result) => {
+                        tool_call.result = result.result;
+                        tool_call.result_object = result.result_object;
+                        await this.sendSubscriptionFeedback();
+                    },
+                    this
+                );
+                toolSpan.setAttribute('tool.status', r.status);
+                return r;
+            });
             tool_call.status = result.status;
             tool_call.result = result.result;
             tool_call.result_object = result.result_object;
@@ -2060,51 +2072,50 @@ export class TaskState {
     async processTaskTurn(generation?: number, modelRequestOptions?: TaskModelRequestOptions) {
         const myGeneration = generation ?? ++this._turnGeneration;
         this._turnRunning = true;
-        let hookRejectCount = 0;
-        this._currentTurn = 0;
-        await this.hooks.noticeBeforeTurnStart(this);
-        let shouldScheduleSessionMemoryUpdate = false;
 
-        try {
-            while (this.task_status !== 'stopped') {
-                // 在每次异步操作后检查是否被新的 turn 取代
-                if (this._turnGeneration !== myGeneration) return;
+        await withSpan('task.turn', async (turnSpan) => {
+            turnSpan.setAttribute('task.id', this.task_id);
+            turnSpan.setAttribute('task.name', this.task_name ?? '');
+            turnSpan.setAttribute('task.parent_id', this.parent_id ?? '');
 
-                try {
-                    const abortedByToolcallHook = await this.processCompletion(modelRequestOptions);
+            // 提取触发本轮的用户消息文本，截断到 200 字符
+            for (let i = this.chat_context.messages.length - 1; i >= 0; i--) {
+                const msg = this.chat_context.messages[i];
+                if (msg instanceof UserMessage) {
+                    const text = msg.getPlainText();
+                    turnSpan.setAttribute('task.user_prompt', text.substring(0, 200));
+                    break;
+                }
+            }
+
+            let hookRejectCount = 0;
+            this._currentTurn = 0;
+            await this.hooks.noticeBeforeTurnStart(this);
+            let shouldScheduleSessionMemoryUpdate = false;
+
+            try {
+                while (this.task_status !== 'stopped') {
+                    // 在每次异步操作后检查是否被新的 turn 取代
                     if (this._turnGeneration !== myGeneration) return;
-                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                    if (this.task_status === 'stopped') {
-                        break;
-                    }
 
-                    // 钩子：通知 afterProcessCompletion
-                    {
-                        const lastMsg = this.chat_context.lastMessage();
-                        if (lastMsg instanceof AssistantMessage) {
-                            this.applyRuntimeMetadataToAssistant(lastMsg);
-                            await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
+                    try {
+                        const abortedByToolcallHook = await this.processCompletion(modelRequestOptions);
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
                         }
-                    }
 
-                    const materializedExtensionEvents = await this.extensions.checkpoint('after_completion', {
-                        includeSupplements: false
-                    });
-                    if (this._turnGeneration !== myGeneration) return;
-                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                    if (this.task_status === 'stopped') {
-                        break;
-                    }
-                    if (materializedExtensionEvents) {
-                        hookRejectCount = 0;
-                        this._currentTurn++;
-                        continue;
-                    }
+                        // 钩子：通知 afterProcessCompletion
+                        {
+                            const lastMsg = this.chat_context.lastMessage();
+                            if (lastMsg instanceof AssistantMessage) {
+                                this.applyRuntimeMetadataToAssistant(lastMsg);
+                                await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
+                            }
+                        }
 
-                    const hasToolCalls = await this.processToolCalls();
-                    if (this._turnGeneration !== myGeneration) return;
-                    if (hasToolCalls) {
-                        const materializedExtensionEventsAfterTools = await this.extensions.checkpoint('after_tools', {
+                        const materializedExtensionEvents = await this.extensions.checkpoint('after_completion', {
                             includeSupplements: false
                         });
                         if (this._turnGeneration !== myGeneration) return;
@@ -2112,153 +2123,175 @@ export class TaskState {
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedExtensionEventsAfterTools) {
+                        if (materializedExtensionEvents) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
                         }
-                        hookRejectCount = 0;
-                        this._currentTurn++;
-                        await this.extensions.checkpoint('after_tool_turn');
+
+                        const hasToolCalls = await this.processToolCalls();
                         if (this._turnGeneration !== myGeneration) return;
-                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                        if (this.task_status === 'stopped') {
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    const materializedExtensionEventsBeforeFinish = await this.extensions.checkpoint('before_finish');
-                    if (this._turnGeneration !== myGeneration) return;
-                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                    if (this.task_status === 'stopped') {
-                        break;
-                    }
-                    if (materializedExtensionEventsBeforeFinish) {
-                        hookRejectCount = 0;
-                        this._currentTurn++;
-                        continue;
-                    }
-
-                    // 检查是否需要拒绝当前 turn
-                    let turnRejected: boolean;
-                    let turnRejectedReason: string = '';
-
-                    if (abortedByToolcallHook) {
-                        turnRejected = true;
-                        turnRejectedReason = '';
-                    } else {
-                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
-                        if (this._turnGeneration !== myGeneration) return;
-                        const materializedExtensionEventsAfterHooks =
-                            await this.extensions.checkpoint('after_finish_hooks');
-                        if (this._turnGeneration !== myGeneration) return;
-                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                        if (this.task_status === 'stopped') {
-                            break;
-                        }
-                        if (materializedExtensionEventsAfterHooks) {
-                            hookRejectCount = 0;
-                            this._currentTurn++;
-                            continue;
-                        }
-                        if (checkHooks.operation === 'finish') {
-                            turnRejected = false;
-                        } else {
-                            turnRejected = true;
-                            turnRejectedReason = checkHooks.message;
-                        }
-                    }
-
-                    if (turnRejected === false) {
-                        shouldScheduleSessionMemoryUpdate = true;
-                        break;
-                    } else {
-                        hookRejectCount++;
-                        if (hookRejectCount >= 10) {
-                            logger.warn(
-                                `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
+                        if (hasToolCalls) {
+                            const materializedExtensionEventsAfterTools = await this.extensions.checkpoint(
+                                'after_tools',
+                                {
+                                    includeSupplements: false
+                                }
                             );
-                            this.extensions.onTurnIterationFailed('hook_reject_safety_cap', false);
+                            if (this._turnGeneration !== myGeneration) return;
+                            // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                            if (this.task_status === 'stopped') {
+                                break;
+                            }
+                            if (materializedExtensionEventsAfterTools) {
+                                hookRejectCount = 0;
+                                this._currentTurn++;
+                                continue;
+                            }
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            await this.extensions.checkpoint('after_tool_turn');
+                            if (this._turnGeneration !== myGeneration) return;
+                            // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                            if (this.task_status === 'stopped') {
+                                break;
+                            }
+
+                            continue;
+                        }
+
+                        const materializedExtensionEventsBeforeFinish =
+                            await this.extensions.checkpoint('before_finish');
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedExtensionEventsBeforeFinish) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
+
+                        // 检查是否需要拒绝当前 turn
+                        let turnRejected: boolean;
+                        let turnRejectedReason: string = '';
+
+                        if (abortedByToolcallHook) {
+                            turnRejected = true;
+                            turnRejectedReason = '';
+                        } else {
+                            const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
+                            if (this._turnGeneration !== myGeneration) return;
+                            const materializedExtensionEventsAfterHooks =
+                                await this.extensions.checkpoint('after_finish_hooks');
+                            if (this._turnGeneration !== myGeneration) return;
+                            // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                            if (this.task_status === 'stopped') {
+                                break;
+                            }
+                            if (materializedExtensionEventsAfterHooks) {
+                                hookRejectCount = 0;
+                                this._currentTurn++;
+                                continue;
+                            }
+                            if (checkHooks.operation === 'finish') {
+                                turnRejected = false;
+                            } else {
+                                turnRejected = true;
+                                turnRejectedReason = checkHooks.message;
+                            }
+                        }
+
+                        if (turnRejected === false) {
                             shouldScheduleSessionMemoryUpdate = true;
                             break;
-                        }
-                        const backoffMs = 5_000;
-                        logger.info(
-                            `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
-                        );
-                        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-                        if (this._turnGeneration !== myGeneration) return;
-                        const materializedExtensionEventsAfterBackoff =
-                            await this.extensions.checkpoint('after_hook_backoff');
-                        if (this._turnGeneration !== myGeneration) return;
-                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                        if (this.task_status === 'stopped') {
-                            break;
-                        }
-                        if (materializedExtensionEventsAfterBackoff) {
-                            hookRejectCount = 0;
-                            this._currentTurn++;
+                        } else {
+                            hookRejectCount++;
+                            if (hookRejectCount >= 10) {
+                                logger.warn(
+                                    `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
+                                );
+                                this.extensions.onTurnIterationFailed('hook_reject_safety_cap', false);
+                                shouldScheduleSessionMemoryUpdate = true;
+                                break;
+                            }
+                            const backoffMs = 5_000;
+                            logger.info(
+                                `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
+                            );
+                            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                            if (this._turnGeneration !== myGeneration) return;
+                            const materializedExtensionEventsAfterBackoff =
+                                await this.extensions.checkpoint('after_hook_backoff');
+                            if (this._turnGeneration !== myGeneration) return;
+                            // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                            if (this.task_status === 'stopped') {
+                                break;
+                            }
+                            if (materializedExtensionEventsAfterBackoff) {
+                                hookRejectCount = 0;
+                                this._currentTurn++;
+                                continue;
+                            }
+                            await this.appendInternalUserMessage(turnRejectedReason);
+                            const autoParseThinkTags = this.model
+                                ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ??
+                                  false)
+                                : false;
+                            const assistant_message = new AssistantMessage([], {
+                                allowThinkTagParsing: autoParseThinkTags
+                            });
+                            this.chat_context.appendMessage(assistant_message);
                             continue;
                         }
-                        await this.appendInternalUserMessage(turnRejectedReason);
-                        const autoParseThinkTags = this.model
-                            ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ??
-                              false)
-                            : false;
-                        const assistant_message = new AssistantMessage([], {
-                            allowThinkTagParsing: autoParseThinkTags
-                        });
-                        this.chat_context.appendMessage(assistant_message);
-                        continue;
+                    } catch (iterationErr) {
+                        logger.error(
+                            `task ${this.task_id}: turn iteration crashed: ${(iterationErr as Error)?.message || String(iterationErr)}`
+                        );
+                        // 异常后任务标记为 stopped，安全退出
+                        this.task_status = 'stopped';
+                        this.finished_at = new Date();
+                        this.extensions.onTurnIterationFailed('turn_iteration_failed');
+                        break;
                     }
-                } catch (iterationErr) {
-                    logger.error(
-                        `task ${this.task_id}: turn iteration crashed: ${(iterationErr as Error)?.message || String(iterationErr)}`
-                    );
-                    // 异常后任务标记为 stopped，安全退出
+                }
+
+                // 即使被新 turn 取代，也先完成当前 turn 的 runtime interrupt 清理
+                const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
+
+                // 清理代码：仅在未被新 turn 取代时执行
+                if (this._turnGeneration !== myGeneration) return;
+
+                if (this.task_status !== 'stopped') {
                     this.task_status = 'stopped';
-                    this.finished_at = new Date();
-                    this.extensions.onTurnIterationFailed('turn_iteration_failed');
-                    break;
+                }
+                if (!skipInterruptedTurnHooks) {
+                    await this.hooks.noticeAfterFinishTurn(this);
+                } else {
+                    shouldScheduleSessionMemoryUpdate = false;
+                }
+                if (this._turnGeneration !== myGeneration) return;
+                const completedAt = new Date();
+                this.finished_at = completedAt;
+                if (shouldScheduleSessionMemoryUpdate) {
+                    this.recordMicrocompactAssistantCompleted(completedAt);
+                }
+                this.extensions.onTurnSettled();
+                this.persistLater();
+                this.sendSubscriptionFeedback();
+                this.task_manager_state.publishTaskListUpdate();
+                this.extensions.afterTurnFinished();
+                if (shouldScheduleSessionMemoryUpdate) {
+                    this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
+                }
+            } finally {
+                if (this._turnGeneration === myGeneration) {
+                    this._turnRunning = false;
+                    this._activeTurnMetadata = undefined;
                 }
             }
-
-            // 即使被新 turn 取代，也先完成当前 turn 的 runtime interrupt 清理
-            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
-
-            // 清理代码：仅在未被新 turn 取代时执行
-            if (this._turnGeneration !== myGeneration) return;
-
-            if (this.task_status !== 'stopped') {
-                this.task_status = 'stopped';
-            }
-            if (!skipInterruptedTurnHooks) {
-                await this.hooks.noticeAfterFinishTurn(this);
-            } else {
-                shouldScheduleSessionMemoryUpdate = false;
-            }
-            if (this._turnGeneration !== myGeneration) return;
-            const completedAt = new Date();
-            this.finished_at = completedAt;
-            if (shouldScheduleSessionMemoryUpdate) {
-                this.recordMicrocompactAssistantCompleted(completedAt);
-            }
-            this.extensions.onTurnSettled();
-            this.persistLater();
-            this.sendSubscriptionFeedback();
-            this.task_manager_state.publishTaskListUpdate();
-            this.extensions.afterTurnFinished();
-            if (shouldScheduleSessionMemoryUpdate) {
-                this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
-            }
-        } finally {
-            if (this._turnGeneration === myGeneration) {
-                this._turnRunning = false;
-                this._activeTurnMetadata = undefined;
-            }
-        }
+        });
     }
 
     async render() {

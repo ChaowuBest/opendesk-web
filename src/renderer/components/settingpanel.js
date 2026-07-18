@@ -249,12 +249,12 @@ class SettingPanel extends HTMLElement {
             .sp-toggle-row {
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
+                gap: 12px;
                 padding: 10px 0;
                 border-bottom: 1px solid var(--sp-color-border-light);
             }
             .sp-toggle-row:last-child { border-bottom: none; }
-            .sp-toggle-info { flex: 1; }
+            .sp-toggle-info { flex: 1; min-width: 0; }
             .sp-toggle-label {
                 font-size: 13px;
                 font-weight: 600;
@@ -448,6 +448,78 @@ class SettingPanel extends HTMLElement {
                 background: #f0fdfa;
                 color: #0d9488;
                 border: 1px solid #99f6e4;
+            }
+            html[data-theme='dark'] .sp-tag-teal {
+                background: rgba(13, 148, 136, 0.12);
+                color: #5eead4;
+                border-color: rgba(13, 148, 136, 0.3);
+            }
+            html[data-theme='dark'] .sp-tag-blue {
+                background: rgba(59, 130, 246, 0.12);
+                color: #93c5fd;
+                border-color: rgba(59, 130, 246, 0.3);
+            }
+            html[data-theme='dark'] .sp-tag-emerald {
+                background: rgba(5, 150, 105, 0.12);
+                color: #6ee7b7;
+                border-color: rgba(5, 150, 105, 0.3);
+            }
+
+            /* ── Telemetry URL Input ── */
+            .sp-telemetry-url {
+                flex: 1;
+                min-width: 0;
+                font-family: var(--sp-font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace);
+                font-size: 13px;
+                color: var(--sp-color-text);
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: var(--sp-radius-sm, 6px);
+                padding: 4px 8px;
+                outline: none;
+                transition: border-color 0.15s, background 0.15s;
+            }
+            .sp-telemetry-url:hover {
+                background: rgba(0,0,0,0.03);
+            }
+            html[data-theme='dark'] .sp-telemetry-url:hover {
+                background: rgba(255,255,255,0.04);
+            }
+            .sp-telemetry-url:focus {
+                border-color: var(--sp-color-primary);
+                background: var(--sp-color-bg);
+                box-shadow: 0 0 0 2px var(--sp-color-primary-light, rgba(129,140,248,0.15));
+            }
+            .sp-telemetry-delete-btn:hover {
+                color: var(--sp-color-danger, #ef4444) !important;
+                background: rgba(239, 68, 68, 0.08) !important;
+            }
+
+            /* ── Telemetry Endpoint Row ── */
+            .sp-telemetry-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 10px 14px;
+                border-radius: var(--sp-radius-md, 8px);
+                border: 1px solid var(--sp-color-border-light);
+                background: var(--sp-color-bg-page, #f9fafb);
+                transition: border-color 0.15s, box-shadow 0.15s;
+            }
+            .sp-telemetry-row:hover {
+                border-color: var(--sp-color-border);
+                box-shadow: var(--sp-shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+            }
+            html[data-theme='dark'] .sp-telemetry-row {
+                background: rgba(255,255,255,0.03);
+                border-color: var(--od-border, #1f2937);
+            }
+            html[data-theme='dark'] .sp-telemetry-row:hover {
+                border-color: var(--od-border-strong, #374151);
+                background: rgba(255,255,255,0.05);
+            }
+            .sp-telemetry-row .sp-toggle-switch {
+                margin-left: 0;
             }
             .sp-tag-purple {
                 background: #faf5ff;
@@ -1148,6 +1220,8 @@ class SettingPanel extends HTMLElement {
         ${this.renderConfigManagementSection()}
 
         ${this.renderDebugModeSection()}
+
+        ${this.renderTelemetrySection()}
         `;
     }
 
@@ -1213,6 +1287,183 @@ class SettingPanel extends HTMLElement {
             </div>
         </section>
         `;
+    }
+
+    renderTelemetrySection() {
+        const telemetryConfig = this.currentData?.telemetry?.opentelemetry || {};
+        const endpoints = Array.isArray(telemetryConfig.endpoints) ? telemetryConfig.endpoints : [];
+
+        const getProtocolLabel = (protocol) => {
+            switch (protocol) {
+                case 'opentelemetry':
+                    return 'OpenTelemetry';
+                default:
+                    return protocol || 'OpenTelemetry';
+            }
+        };
+
+        const endpointRows = endpoints
+            .map((ep, i) => {
+                // string 格式的旧端点已在 schema 层面过滤，无需兼容处理
+                const url = ep.url || '';
+                const protocol = ep.protocol || 'opentelemetry';
+                const enabled = !!ep.enabled;
+                return `
+            <div class="sp-telemetry-row" data-telemetry-row="${i}">
+                <span class="sp-tag sp-tag-teal">${this.escapeHtml(getProtocolLabel(protocol))}</span>
+                <input type="text" class="sp-telemetry-url" value="${this.escapeHtml(url)}" data-telemetry-url="${i}" spellcheck="false" autocomplete="off">
+                <label class="sp-toggle-switch">
+                    <input type="checkbox" ${enabled ? 'checked' : ''} data-telemetry-toggle="${i}" class="telemetry-endpoint-toggle-hidden">
+                    <span class="sp-toggle-track" style="cursor:pointer"></span>
+                </label>
+                <button type="button" class="sp-telemetry-delete-btn" data-telemetry-delete="${i}" title="${this._t('renderer.settings.telemetryDeleteEndpoint')}" style="border:none;background:transparent;color:var(--sp-color-text-tertiary);cursor:pointer;padding:4px 8px;font-size:14px;border-radius:var(--sp-radius-sm);transition:color 0.15s,background 0.15s">
+                    <i class="fas fa-trash-can"></i>
+                </button>
+            </div>`;
+            })
+            .join('');
+
+        return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('renderer.settings.telemetry')}</h2>
+            <div class="sp-section-card">
+                ${endpoints.length > 0 ? `<div style="display:flex;flex-direction:column;gap:8px">${endpointRows}</div>` : `<div class="sp-toggle-desc" style="text-align:center;padding:16px 0">${this._t('renderer.settings.telemetryEmpty')}</div>`}
+                <div id="telemetry-add-row" style="display:none;margin-top:12px;gap:8px;align-items:center">
+                    <select id="telemetry-add-protocol" class="sp-form-input" style="flex-shrink:0;width:auto;min-width:140px;font-size:13px">
+                        <option value="opentelemetry">OpenTelemetry</option>
+                    </select>
+                    <input type="text" id="telemetry-add-input" class="sp-form-input" style="flex:1;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace);font-size:13px" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
+                    <button type="button" id="telemetry-add-confirm" class="sp-add-btn" style="margin:0;flex-shrink:0">${this._t('renderer.settings.telemetryConfirmAdd')}</button>
+                    <button type="button" id="telemetry-add-cancel" style="border:1px solid var(--sp-color-border);background:transparent;color:var(--sp-color-text-secondary);border-radius:var(--sp-radius-md);padding:8px 14px;cursor:pointer;font-size:13px;flex-shrink:0">${this._t('renderer.settings.telemetryCancelAdd')}</button>
+                </div>
+            </div>
+            <button id="telemetry-add-btn" class="sp-add-btn" style="margin-top:12px">
+                <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('renderer.settings.telemetryAddEndpoint')}
+            </button>
+        </section>
+        `;
+    }
+
+    escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    _bindTelemetryEvents() {
+        // 添加端点按钮
+        this.querySelector('#telemetry-add-btn')?.addEventListener('click', () => {
+            const addRow = this.querySelector('#telemetry-add-row');
+            const addBtn = this.querySelector('#telemetry-add-btn');
+            if (addRow) addRow.style.display = 'flex';
+            if (addBtn) addBtn.style.display = 'none';
+            this.querySelector('#telemetry-add-input')?.focus();
+        });
+
+        // 取消添加
+        this.querySelector('#telemetry-add-cancel')?.addEventListener('click', () => {
+            const addRow = this.querySelector('#telemetry-add-row');
+            const addBtn = this.querySelector('#telemetry-add-btn');
+            if (addRow) addRow.style.display = 'none';
+            if (addBtn) addBtn.style.display = '';
+            const input = this.querySelector('#telemetry-add-input');
+            if (input) input.value = '';
+        });
+
+        // 确认添加
+        const confirmAdd = () => {
+            const input = this.querySelector('#telemetry-add-input');
+            const url = input?.value?.trim();
+            if (!url) return;
+            const protocolSelect = this.querySelector('#telemetry-add-protocol');
+            const protocol = protocolSelect?.value || 'opentelemetry';
+            if (!this.currentData.telemetry) this.currentData.telemetry = {};
+            if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+            if (!Array.isArray(this.currentData.telemetry.opentelemetry.endpoints)) {
+                this.currentData.telemetry.opentelemetry.endpoints = [];
+            }
+            this.currentData.telemetry.opentelemetry.endpoints.push({ url, protocol, enabled: true });
+            this.saveImmediately();
+            this.refreshTelemetrySection();
+        };
+        this.querySelector('#telemetry-add-confirm')?.addEventListener('click', confirmAdd);
+        this.querySelector('#telemetry-add-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmAdd();
+            }
+        });
+
+        // 每个端点的开关
+        this.querySelectorAll('[data-telemetry-toggle]').forEach((toggle) => {
+            toggle.addEventListener('change', (e) => {
+                const idx = parseInt(e.target.dataset.telemetryToggle, 10);
+                if (!this.currentData.telemetry) this.currentData.telemetry = {};
+                if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
+                    endpoints[idx].enabled = e.target.checked;
+                    this.saveImmediately();
+                    this.refreshTelemetrySection();
+                }
+            });
+        });
+
+        // 删除端点
+        this.querySelectorAll('[data-telemetry-delete]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.currentTarget.dataset.telemetryDelete, 10);
+                if (!this.currentData.telemetry) this.currentData.telemetry = {};
+                if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
+                    endpoints.splice(idx, 1);
+                    this.saveImmediately();
+                    this.refreshTelemetrySection();
+                }
+            });
+        });
+
+        // 编辑端点 URL
+        this.querySelectorAll('[data-telemetry-url]').forEach((input) => {
+            const saveUrl = () => {
+                const idx = parseInt(input.dataset.telemetryUrl, 10);
+                const newUrl = input.value.trim();
+                if (!this.currentData.telemetry?.opentelemetry?.endpoints) return;
+                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
+                    if (endpoints[idx].url !== newUrl && newUrl) {
+                        endpoints[idx].url = newUrl;
+                        this.saveImmediately();
+                    }
+                    this.refreshTelemetrySection();
+                }
+            };
+            input.addEventListener('blur', saveUrl);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    input.blur();
+                }
+                if (e.key === 'Escape') {
+                    input.blur();
+                }
+            });
+        });
+    }
+
+    refreshTelemetrySection() {
+        const telemetrySection = this.querySelector('#tab-general .sp-section:last-child');
+        if (!telemetrySection) return;
+        const next = telemetrySection.nextElementSibling;
+        const parent = telemetrySection.parentElement;
+        if (!parent) return;
+        telemetrySection.remove();
+        const html = this.renderTelemetrySection();
+        if (next) {
+            next.insertAdjacentHTML('beforebegin', html);
+        } else {
+            parent.insertAdjacentHTML('beforeend', html);
+        }
+        this._bindTelemetryEvents();
     }
 
     renderProvidersSection() {
@@ -1568,6 +1819,8 @@ class SettingPanel extends HTMLElement {
             this.currentData.debug.log_raw_llm_request = e.target.checked;
             this.saveImmediately();
         });
+
+        this._bindTelemetryEvents();
 
         this._bindConfigManagementEvents();
 
@@ -2851,6 +3104,8 @@ class SettingPanel extends HTMLElement {
                 this.currentData.debug.log_raw_llm_request = e.target.checked;
                 this.saveImmediately();
             });
+
+            this._bindTelemetryEvents();
 
             this._bindConfigManagementEvents();
 

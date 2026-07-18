@@ -23,7 +23,7 @@ import {
     cleanupOldUsageEvents,
     type TokenUsageCounters,
     type UsageTelemetryEvent
-} from '../../../../main/aikernel/telemetry/usage.js';
+} from '../../../../main/telemetry/local-telemetry.js';
 import { setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 
 function counters(input: number, output: number): TokenUsageCounters {
