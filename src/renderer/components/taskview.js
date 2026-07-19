@@ -11,6 +11,7 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
+import { getContextMenuPalette } from '../utils/context-menu-theme.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -3455,6 +3456,11 @@ class TaskView extends HTMLElement {
         const taskView = bubble.closest('task-view');
         const messageId = messageContainer?.dataset?.messageId || '';
         const canRewind = !!taskView?.task_id && !!messageId && !!window.taskManagerAPI?.rewindToUserMessage;
+        const dark =
+            taskView?.dataset?.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const palette = getContextMenuPalette(dark);
         const menu = document.createElement('div');
         menu.id = 'od-user-msg-ctx';
         Object.assign(menu.style, {
@@ -3464,12 +3470,11 @@ class TaskView extends HTMLElement {
             maxWidth: '280px',
             padding: '4px',
             borderRadius: '10px',
-            background: 'rgba(255, 255, 255, 0.88)',
+            background: palette.background,
             backdropFilter: 'blur(40px) saturate(1.8)',
             WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: '0.5px solid rgba(0, 0, 0, 0.08)',
-            boxShadow:
-                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            border: `0.5px solid ${palette.border}`,
+            boxShadow: palette.shadow,
             animation: 'od-ctx-appear 0.12s ease-out',
             fontFamily: 'system-ui, -apple-system, sans-serif',
             left: `${x}px`,
@@ -3497,14 +3502,14 @@ class TaskView extends HTMLElement {
             }
         ];
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:#1f2937;`;
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:${palette.text};`;
         const disabledBtnStyle = `opacity:0.45; cursor:not-allowed;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0; color:#6b7280;';
+        const iconStyle = `width:16px; text-align:center; font-size:12px; flex-shrink:0; color:${palette.secondary};`;
 
         const buttonsHtml = items
             .map((item) => {
                 const sep = item.separatorBefore
-                    ? '<div style="height:1px;background:rgba(0,0,0,0.08);margin:4px 2px;"></div>'
+                    ? `<div style="height:1px;background:${palette.separator};margin:4px 2px;"></div>`
                     : '';
                 const disabled = item.disabled ? ' disabled aria-disabled="true"' : '';
                 const hint = item.hint ? ` data-hint="${escapeHtml(item.hint)}"` : '';
@@ -3512,7 +3517,7 @@ class TaskView extends HTMLElement {
                 return `${sep}<button data-action="${item.id}"${hint}${disabled} style="${btnStyle}${extraStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${escapeHtml(item.label)}</span></button>`;
             })
             .join('');
-        menu.innerHTML = `${buttonsHtml}<div data-role="hint" style="display:none;margin:4px 4px 2px;padding:6px 8px;border-top:1px solid rgba(0,0,0,0.08);font-size:11px;line-height:1.45;color:#6b7280;"></div>`;
+        menu.innerHTML = `${buttonsHtml}<div data-role="hint" style="display:none;margin:4px 4px 2px;padding:6px 8px;border-top:1px solid ${palette.separator};font-size:11px;line-height:1.45;color:${palette.secondary};"></div>`;
 
         document.body.appendChild(menu);
 
@@ -3541,9 +3546,9 @@ class TaskView extends HTMLElement {
             btn.addEventListener('mouseleave', () => {
                 if (btn.disabled) return;
                 btn.style.background = 'transparent';
-                btn.style.color = '#1f2937';
+                btn.style.color = palette.text;
                 const icon = btn.querySelector('i');
-                if (icon) icon.style.color = '#6b7280';
+                if (icon) icon.style.color = palette.secondary;
                 if (btn.dataset.hint && hintEl) {
                     hintEl.textContent = '';
                     hintEl.style.display = 'none';

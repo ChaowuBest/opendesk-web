@@ -4,6 +4,7 @@
  */
 
 import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 
@@ -108,17 +109,6 @@ const REGISTRY_TABS = [
     { id: 'clawhub', label: 'ClawHub', icon: '🐾', slogan: DEFAULT_SLOGAN },
     { id: 'skillhub', label: 'SkillHub', icon: '💎', slogan: DEFAULT_SLOGAN },
     { id: 'modelscope', label: 'ModelScope', icon: '🔮', slogan: DEFAULT_SLOGAN }
-];
-
-const PASTEL_COLORS = [
-    { bg: '#EBF3FE', text: '#5B8DEF' },
-    { bg: '#FEF1E6', text: '#E8935A' },
-    { bg: '#E7F6EA', text: '#4CAF6E' },
-    { bg: '#F2E8FD', text: '#9B6DD7' },
-    { bg: '#FDE9E9', text: '#E06060' },
-    { bg: '#E5F7F4', text: '#3DB49E' },
-    { bg: '#FFF7E0', text: '#D4A028' },
-    { bg: '#FBE5EE', text: '#D45D8A' }
 ];
 
 const STYLE = `
@@ -247,6 +237,29 @@ const STYLE = `
 }
 :host([data-theme="dark"]) .add-dropdown-item .item-hint {
     color: #787878;
+}
+:host([data-theme="dark"]) .add-dropdown-item .item-name {
+    color: #e5e7eb;
+}
+:host([data-theme="dark"]) .add-dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+:host([data-theme="dark"]) .add-dropdown-section + .add-dropdown-section {
+    border-top-color: rgba(255, 255, 255, 0.1);
+}
+:host([data-theme="dark"]) .add-dropdown-item .icon.folder { background: rgba(91,141,239,0.18); }
+:host([data-theme="dark"]) .add-dropdown-item .icon.zip { background: rgba(232,147,90,0.18); }
+:host([data-theme="dark"]) .add-dropdown-item .icon.url,
+:host([data-theme="dark"]) .add-dropdown-item .icon.import { background: rgba(76,175,110,0.18); }
+:host([data-theme="dark"]) .search-clear,
+:host([data-theme="dark"]) .analyze-filter-bar .search-clear {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.62);
+}
+:host([data-theme="dark"]) .search-clear:hover,
+:host([data-theme="dark"]) .analyze-filter-bar .search-clear:hover {
+    background: rgba(255,255,255,0.17);
+    color: #fff;
 }
 :host([data-theme="dark"]) .add-dropdown,
 :host([data-theme="dark"]) .modal-dialog,
@@ -422,6 +435,7 @@ const STYLE = `
 .add-dropdown-item .icon.folder { background: #EBF3FE; color: #5B8DEF; }
 .add-dropdown-item .icon.zip { background: #FEF1E6; color: #E8935A; }
 .add-dropdown-item .icon.url { background: #E7F6EA; color: #4CAF6E; }
+.add-dropdown-item .icon.import { background: #E7F6EA; color: #4CAF6E; }
 .add-dropdown-item .item-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .add-dropdown-item .item-name { font-weight: 600; font-size: 13px; line-height: 1.3; color: #1d1d1f; }
 .add-dropdown-item .item-hint { font-size: 11px; color: #aaa; line-height: 1.35; }
@@ -1553,6 +1567,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         };
         this._onThemeChange = (e) => {
             syncShadowHostTheme(this, e.detail?.effective);
+            const detailCard = this.shadowRoot?.getElementById('detail-overlay');
+            if (detailCard && e.detail?.effective) detailCard.dataset.theme = e.detail.effective;
         };
     }
 
@@ -2380,14 +2396,6 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     _renderDetailModal(detail, opts = {}) {
         this._removeDetailModal();
-        const overlay = document.createElement('div');
-        overlay.className = 'detail-overlay visible';
-        overlay.id = 'detail-overlay';
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this._removeDetailModal();
-        });
-
-        const color = this._getSkillPastel(detail.name || detail.id);
         const metaItems = [];
         if (detail.author) metaItems.push({ label: '作者', value: detail.author });
         if (detail.source)
@@ -2402,11 +2410,6 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (detail.skillDir)
             metaItems.push({ label: opts.isExternal ? '外部路径' : '安装路径', value: detail.skillDir });
         if (opts.isBuiltin && detail.directory) metaItems.push({ label: '技能目录', value: detail.directory });
-
-        const metaHtml =
-            metaItems.length > 0
-                ? `<div class="detail-section"><div class="detail-section-label">元信息</div><div class="detail-meta-grid">${metaItems.map((m) => `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(m.label)}</div><div class="meta-value">${escapeHtml(m.value)}</div></div>`).join('')}</div></div>`
-                : '';
 
         const res = detail.resources || {};
         const hasRes = (res.references?.length || 0) + (res.scripts?.length || 0) + (res.assets?.length || 0) > 0;
@@ -2424,58 +2427,45 @@ class SkillMgrEntryWidget extends HTMLElement {
                 ? `<div style="display:flex;gap:6px;margin-top:4px">${detail.stars ? `<span class="tag-pill tag-star">★ ${detail.stars}</span>` : ''}${downloadsStr ? `<span class="tag-pill tag-download">↓ ${downloadsStr}</span>` : ''}</div>`
                 : '';
 
-        let footerHtml;
+        let actions;
         if (opts.isBuiltin || opts.isExternal) {
-            footerHtml = `<button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
+            actions = [{ id: 'close', label: '完成' }];
         } else if (opts.isInstalled) {
-            footerHtml = `<button type="button" class="btn btn-danger btn-sm" id="detail-delete-btn">删除技能</button><button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
+            actions = [
+                { id: 'delete', label: '删除技能', variant: 'danger' },
+                { id: 'close', label: '完成' }
+            ];
         } else {
-            footerHtml = `<button type="button" class="btn btn-sm" id="detail-done-btn">关闭</button>${opts.canInstall !== false ? `<button type="button" class="btn btn-primary btn-sm" id="detail-install-btn" data-install-url="${escapeHtml(opts.installUrl || '')}">安装技能</button>` : ''}`;
+            actions = [{ id: 'close', label: '关闭' }];
+            if (opts.canInstall !== false) {
+                actions.push({ id: 'install', label: '安装技能', variant: 'primary', data: opts.installUrl || '' });
+            }
         }
 
-        overlay.innerHTML = `
-          <div class="detail-dialog">
-            <div class="detail-header">
-              <div class="detail-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(detail.name || detail.id)}</div>
-              <div class="detail-header-info">
-                <div class="detail-name">${escapeHtml(detail.name || detail.id)}</div>
-                <div class="detail-id">${escapeHtml(detail.id)}</div>
-                ${opts.isBuiltin && detail.bundleName ? `<div style="font-size:11px;color:#8E8E93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>` : ''}
-                ${statsPills}
-              </div>
-              <button type="button" class="detail-close" id="detail-close-btn">×</button>
-            </div>
-            <div class="detail-body">
-              ${detail.description ? `<div class="detail-section"><div class="detail-section-label">简介</div><div class="detail-desc">${escapeHtml(detail.description)}</div></div>` : ''}
-              ${detail.body ? `<div class="detail-section"><div class="detail-section-label">技能内容</div><div class="detail-body-content markdown-body">${marked.parse(detail.body)}</div></div>` : ''}
-              ${metaHtml}${resourceHtml}${toolsHtml}
-            </div>
-            <div class="detail-footer">${footerHtml}</div>
-          </div>`;
-        this.shadowRoot.appendChild(overlay);
-        overlay.querySelector('#detail-close-btn')?.addEventListener('click', () => this._removeDetailModal());
-        overlay.querySelector('#detail-done-btn')?.addEventListener('click', () => this._removeDetailModal());
-        overlay.querySelector('#detail-delete-btn')?.addEventListener('click', () => {
+        const card = document.createElement('skill-detail-card');
+        card.id = 'detail-overlay';
+        card.dataset.theme = this.dataset.theme || document.documentElement.dataset.theme || 'light';
+        card.model = {
+            id: detail.id,
+            name: detail.name || detail.id,
+            closeLabel: '关闭',
+            description: detail.description,
+            descriptionLabel: '简介',
+            bodyHtml: detail.body ? marked.parse(detail.body) : undefined,
+            bodyLabel: '技能内容',
+            metadata: metaItems,
+            metadataLabel: '元信息',
+            headerExtraHtml: `${opts.isBuiltin && detail.bundleName ? `<div style="font-size:11px;color:#8e8e93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>` : ''}${statsPills}`,
+            extraSectionsHtml: `${resourceHtml}${toolsHtml}`,
+            actions
+        };
+        card.addEventListener('skill-detail-action', (event) => {
+            const action = event.detail;
             this._removeDetailModal();
-            this.deleteSkill(detail.id);
+            if (action.id === 'delete') this.deleteSkill(detail.id);
+            if (action.id === 'install' && action.data) this.installFromRegistry(action.data, detail.id);
         });
-        overlay.querySelector('#detail-install-btn')?.addEventListener('click', (e) => {
-            const url = e.currentTarget.getAttribute('data-install-url');
-            this._removeDetailModal();
-            if (url) this.installFromRegistry(url, detail.id);
-        });
-
-        // 绑定工具参数展开/折叠
-        overlay.querySelectorAll('.detail-tool-params-toggle').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const idx = btn.getAttribute('data-tool-toggle');
-                const paramsEl = overlay.querySelector(`[data-tool-params="${idx}"]`);
-                if (!paramsEl) return;
-                const isHidden = paramsEl.style.display === 'none';
-                paramsEl.style.display = isHidden ? 'block' : 'none';
-                btn.classList.toggle('expanded', isHidden);
-            });
-        });
+        this.shadowRoot.appendChild(card);
     }
 
     _removeDetailModal() {
@@ -3133,15 +3123,11 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     _getSkillInitial(name) {
-        if (!name) return '⚡';
-        const first = name.charAt(0).toUpperCase();
-        return /[A-Z0-9\u4e00-\u9fff]/.test(first) ? first : '⚡';
+        return getSkillInitial(name || '');
     }
 
     _getSkillPastel(name) {
-        let hash = 0;
-        for (let i = 0; i < (name || '').length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-        return PASTEL_COLORS[Math.abs(hash) % PASTEL_COLORS.length];
+        return getSkillPastel(name || '');
     }
 
     _getSkillColor(name) {
@@ -3872,7 +3858,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                                     <span class="item-info"><span class="item-name">从 ZIP 安装</span><span class="item-hint">选择 .zip 技能压缩包</span></span>
                                 </label>
                                 <button type="button" class="add-dropdown-item" id="batch-import-item">
-                                    <span class="icon" style="background:#E7F6EA;color:#4CAF6E;">📥</span>
+                                    <span class="icon import">📥</span>
                                     <span class="item-info"><span class="item-name">批量导入</span><span class="item-hint">从目录批量扫描并导入技能</span></span>
                                 </button>
                             </div>

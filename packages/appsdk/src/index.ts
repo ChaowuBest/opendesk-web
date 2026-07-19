@@ -185,12 +185,19 @@ export abstract class BaseApplication {
         return false;
     }
 
-    toJSON(): { bundleName: string; name: string; showIcon: boolean; isExperimental: boolean } {
+    toJSON(): {
+        bundleName: string;
+        name: string;
+        showIcon: boolean;
+        isExperimental: boolean;
+        needAgentBar: boolean;
+    } {
         return {
             bundleName: this.bundleName,
             name: this.name,
             showIcon: this.showIcon,
-            isExperimental: this.isExperimental()
+            isExperimental: this.isExperimental(),
+            needAgentBar: this.needAgentBar()
         };
     }
 

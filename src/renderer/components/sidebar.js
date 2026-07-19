@@ -13,6 +13,7 @@ import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import { createRendererTranslator } from '../locale.ts';
+import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 
 const TASK_PAGE_SIZE = 30;
 
@@ -589,11 +590,7 @@ class SideBar extends HTMLElement {
         if (!popover) return;
         popover.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        const visibleApps = appList.filter((app) => {
-            if (app.showIcon === false) return false;
-            if (app.isExperimental && !this._experimentalFeature) return false;
-            return true;
-        });
+        const visibleApps = appList.filter((app) => isApplicationVisibleInMenu(app, this._experimentalFeature));
 
         let gridHtml = '<div class="sb-app-popover-grid">';
         for (const app of visibleApps) {
@@ -684,7 +681,7 @@ class SideBar extends HTMLElement {
     }
 
     _isTaskVisible(task) {
-        return this._developerMode || !task?.internal;
+        return this._developerMode || task?.internal !== true;
     }
 
     buildTaskRenderList() {

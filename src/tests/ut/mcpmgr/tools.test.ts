@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import { jest } from '@jest/globals';
 import { McpMgrApplication } from '../../../main/applications/mcpmgr/app.js';
 import {

@@ -7,6 +7,12 @@ class TestApplication extends BaseApplication {
     }
 }
 
+class AgentBarApplication extends TestApplication {
+    needAgentBar(): boolean {
+        return true;
+    }
+}
+
 describe('BaseApplication event subscribers', () => {
     test('keeps same-frame event subscription until every listener unsubscribes', () => {
         const app = new TestApplication();
@@ -28,5 +34,15 @@ describe('BaseApplication event subscribers', () => {
         app.sendEventToSubscribers('updated', { value: 2 });
 
         expect(senderFrame.send).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('BaseApplication GUI config', () => {
+    test('hides the floating agent bar by default', () => {
+        expect(new TestApplication().toJSON()).toMatchObject({ needAgentBar: false });
+    });
+
+    test('serializes an application agent bar opt-in', () => {
+        expect(new AgentBarApplication().toJSON()).toMatchObject({ needAgentBar: true });
     });
 });

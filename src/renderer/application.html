@@ -144,6 +144,7 @@
 
         <div
             id="floating-ai-chat-panel"
+            hidden
             x-ref="chatPanel"
             x-cloak
             :class="{ 'is-maximized': isMaximized }"
@@ -207,6 +208,7 @@
 
         <button
             id="floating-ai-trigger"
+            hidden
             type="button"
             x-cloak
             :disabled="isTaskChanging"

@@ -1,4 +1,15 @@
 /**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * 子应用 iframe 宿主：主题初始化 → 动态加载 entry → 挂载 entry-widget。
  */
 
@@ -294,6 +305,20 @@ function bindFloatingChatControls(): void {
     });
 }
 
+async function configureFloatingAgentBar(applicationBundleName: string): Promise<void> {
+    let enabled = false;
+    try {
+        const config = (await window.applicationRegistryAPI.getApplicationGUIConfig(applicationBundleName)) as
+            | { needAgentBar?: boolean }
+            | undefined;
+        enabled = config?.needAgentBar === true;
+    } catch (error) {
+        console.warn(`Failed to load floating agent bar config for ${applicationBundleName}:`, error);
+    }
+    document.querySelector('#floating-ai-trigger')?.toggleAttribute('hidden', !enabled);
+    document.querySelector('#floating-ai-chat-panel')?.toggleAttribute('hidden', !enabled);
+}
+
 function showBootstrapError(message: string): void {
     const container = document.querySelector('#application-container');
     if (!container) {
@@ -346,6 +371,7 @@ async function bootstrapApplication(): Promise<void> {
     }
 
     await window.applicationAPI.setApplicationBundleName(applicationBundleName);
+    await configureFloatingAgentBar(applicationBundleName);
 
     const entryJSPath = `../../main/applications/${applicationBundleName}/renderer/entry.js`;
     const entryTSPath = `../../main/applications/${applicationBundleName}/renderer/entry.ts`;
