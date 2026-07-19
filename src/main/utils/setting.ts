@@ -262,7 +262,8 @@ const TerminalCliSchema = z.object({
 const TaskSettingSchema = z.object({
     auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试'),
     generate_taskname: z.boolean().default(true).describe('创建任务时是否自动生成任务名称'),
-    termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务')
+    termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务'),
+    evidence_card: z.boolean().default(false).describe('是否启用 EvidenceCard 节省 Token 功能')
 });
 
 const NetworkConfigSchema = z.object({

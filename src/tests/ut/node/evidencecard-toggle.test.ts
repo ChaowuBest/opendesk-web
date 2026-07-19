@@ -17,11 +17,13 @@ test.afterEach(() => {
     Setting.clearCache();
 });
 
-test('EvidenceCard task state follows debug.experimental_feature', () => {
+test('EvidenceCard task state follows task_config.evidence_card', () => {
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: false
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: false
         }
     });
 
@@ -35,9 +37,11 @@ test('EvidenceCard task state follows debug.experimental_feature', () => {
     assert.equal(task.evidencecard_state.enabled, false);
 
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: true
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: true
         }
     });
 
@@ -46,7 +50,7 @@ test('EvidenceCard task state follows debug.experimental_feature', () => {
     assert.equal(task.evidencecard_state.enabled, true);
 });
 
-test('EvidenceCard ledger records tool calls only when experimental feature is enabled', () => {
+test('EvidenceCard ledger records tool calls only when evidence_card is enabled', () => {
     const task = {
         enableEvidenceCard: false,
         evidencecard_state: createEvidenceCardState(false)
@@ -67,9 +71,11 @@ test('EvidenceCard ledger records tool calls only when experimental feature is e
     } as any;
 
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: false
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: false
         }
     });
 
@@ -78,9 +84,11 @@ test('EvidenceCard ledger records tool calls only when experimental feature is e
     assert.equal(task.evidencecard_state.ledger.length, 0);
 
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: true
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: true
         }
     });
 
@@ -92,9 +100,11 @@ test('EvidenceCard ledger records tool calls only when experimental feature is e
 
 test('EvidenceCard state is not serialized into task JSON', () => {
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: true
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: true
         }
     });
 
@@ -125,9 +135,11 @@ test('EvidenceCard state is not serialized into task JSON', () => {
 
 test('EvidenceCard state resets after task rewind', async () => {
     Setting.updateInstanceData({
-        debug: {
-            developer_mode: false,
-            experimental_feature: true
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: true
         }
     });
 

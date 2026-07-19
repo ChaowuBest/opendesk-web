@@ -784,6 +784,7 @@ class SettingPanel extends HTMLElement {
         const autoRetry = taskConfig.auto_retry !== false;
         const generateTaskname = taskConfig.generate_taskname !== false;
         const terminationCheck = taskConfig.termination_check !== false;
+        const evidenceCardEnabled = taskConfig.evidence_card === true;
 
         return `
         <section class="sp-section">
@@ -816,6 +817,16 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-termination-check-toggle" type="checkbox" ${terminationCheck ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">使用 EvidenceCard 节省 Tokens</div>
+                    <div class="sp-toggle-desc">节省约80%输入 Token，同时显著降低工具调用次数，在控制成本的同时任务完成率基本不下降。</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-evidence-card-toggle" type="checkbox" ${evidenceCardEnabled ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
                 </label>
             </div>
@@ -1675,6 +1686,12 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#task-termination-check-toggle')?.addEventListener('change', (e) => {
             if (!this.currentData.task_config) this.currentData.task_config = {};
             this.currentData.task_config.termination_check = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#task-evidence-card-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.task_config) this.currentData.task_config = {};
+            this.currentData.task_config.evidence_card = e.target.checked;
             this.saveImmediately();
         });
 
