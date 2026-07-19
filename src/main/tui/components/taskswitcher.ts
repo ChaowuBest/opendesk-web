@@ -286,16 +286,9 @@ export class TaskSwitcher implements Component, Focusable {
         const taskId = this.getSelectedTaskId();
         if (!taskId) return;
 
-        const task = this.openDeskTUI.taskManagerState.getTask(taskId);
-        if (!task) return;
-
-        if (task.task_status === 'running') {
-            task.stop();
-        }
-
         const isActiveTask = this.openDeskTUI.getActiveTaskId() === taskId;
-
-        this.openDeskTUI.taskManagerState.removeTask(taskId);
+        const removedTaskIds = this.openDeskTUI.taskManagerState.removeTask(taskId);
+        if (removedTaskIds.length === 0) return;
 
         if (isActiveTask) {
             this.openDeskTUI.clearActiveTask();
@@ -318,7 +311,7 @@ export class TaskSwitcher implements Component, Focusable {
         if (matchesKey(keyData, 'delete')) {
             const taskId = this.getSelectedTaskId();
             if (!taskId) return;
-            const task = this.openDeskTUI.taskManagerState.getTask(taskId);
+            const task = this.openDeskTUI.taskManagerState.tasks.find((candidate) => candidate.task_id === taskId);
             const taskName = task?.task_name || '未命名任务';
 
             const confirm = new ConfirmOverlay(this.openDeskTUI, {
@@ -352,10 +345,7 @@ export class TaskSwitcher implements Component, Focusable {
             const taskId = this.getSelectedTaskId();
             if (taskId) {
                 this.close();
-                const task = this.openDeskTUI.taskManagerState.getTask(taskId);
-                if (task) {
-                    this.openDeskTUI.switchToTask(task);
-                }
+                this.openDeskTUI.switchToTaskById(taskId);
             }
             return;
         }
@@ -388,10 +378,7 @@ export class TaskSwitcher implements Component, Focusable {
 
         this.table.onSelect = (taskID: string) => {
             this.close();
-            const task = this.openDeskTUI.taskManagerState.getTask(taskID);
-            if (task) {
-                this.openDeskTUI.switchToTask(task);
-            }
+            this.openDeskTUI.switchToTaskById(taskID);
         };
 
         this.table.onCancel = () => {

@@ -19,6 +19,12 @@ export const enUs: Record<string, string> = {
     'cli.resume.hint': 'Resume/continue the task with the following command:',
     'cli.resume.not_found': 'Task Not Found',
     'cli.resume.not_found.detail': 'Cannot find task with ID ${taskId}, unable to resume.',
+    'task.corrupted.title': 'Task Data Could Not Be Loaded',
+    'task.corrupted.detail':
+        'Task ${taskId} was removed from the task list because its data could not be loaded. The original task file, artifacts, and todos were preserved. Repair the data, then run /recover tasks to restore it.',
+    'task.corrupted.acknowledge': 'Got it',
+    'renderer.task.corrupted.message':
+        'The task was removed from the task list because its data could not be loaded.<br>The original task file, artifacts, and todos were preserved. You can repair the data and run /recover tasks to restore it.',
 
     // Banner
     'banner.workspace': 'Current workspace: ',
@@ -208,6 +214,12 @@ export const enUs: Record<string, string> = {
         'Current in-memory task list will be overwritten.\n\n' +
         'Continue?',
     'recover.task.scanning': 'Scanning task files and rebuilding task list...',
+    'recover.task.complete.title': 'Rebuild Complete',
+    'recover.task.complete.message': 'Recovered ${count} task(s).',
+    'recover.task.empty.title': 'Rebuild Result',
+    'recover.task.empty.message': 'No recoverable task files found.',
+    'recover.task.failed.title': 'Rebuild Failed',
+    'recover.task.failed.message': 'Error during task list rebuild: ${message}',
 
     // Commands - Tools subcommand
     'tools.description': 'Tool management and debugging',

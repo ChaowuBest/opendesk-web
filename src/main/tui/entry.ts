@@ -1066,6 +1066,11 @@ export class OpenDeskTUI {
     }
 
     public async switchToTask(task: TaskState) {
+        if (task._corrupted) {
+            this.handleCorruptedTask(task.task_id);
+            return;
+        }
+
         task.ensureValidModelOrFallback();
 
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
@@ -1394,7 +1399,8 @@ export class OpenDeskTUI {
      * @param command - 可选的追加消息
      */
     resumeTask(taskId: string, command?: string): void {
-        const task = this.taskManagerState.getTask(taskId);
+        const result = this.taskManagerState.getTaskLoadResult(taskId);
+        const task = result.task;
         if (!task) {
             const errorOverlay = new InfoOverlay(this, {
                 title: t('cli.resume.not_found'),
@@ -1403,6 +1409,10 @@ export class OpenDeskTUI {
                 type: 'error'
             });
             errorOverlay.show();
+            return;
+        }
+        if (result.corrupted) {
+            this.handleCorruptedTask(taskId);
             return;
         }
         // harnessContext 不落盘，resume 时需要重新初始化
@@ -1418,6 +1428,31 @@ export class OpenDeskTUI {
             .catch((err) => {
                 logger.error(`Failed to resume task ${taskId}: ${err}`);
             });
+    }
+
+    switchToTaskById(taskId: string): void {
+        const result = this.taskManagerState.getTaskLoadResult(taskId);
+        if (result.corrupted) {
+            this.handleCorruptedTask(taskId);
+            return;
+        }
+        if (result.task) {
+            void this.switchToTask(result.task);
+        }
+    }
+
+    private handleCorruptedTask(taskId: string): void {
+        this.taskManagerState.removeCorruptedTaskEntry(taskId);
+        if (this.activeTaskId === taskId) {
+            this.clearActiveTask();
+        }
+        const errorOverlay = new InfoOverlay(this, {
+            title: t('task.corrupted.title'),
+            message: t('task.corrupted.detail', { taskId }),
+            closeLabel: t('task.corrupted.acknowledge'),
+            type: 'error'
+        });
+        errorOverlay.show();
     }
 
     /**

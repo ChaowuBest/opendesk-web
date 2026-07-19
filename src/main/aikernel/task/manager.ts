@@ -22,6 +22,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
 import { TaskState } from '../states/tasks.js';
+import { deserializeTaskFromIndex, indexEntryHasMetadata, normalizeTaskIndexEntry } from './serializer.js';
 
 /**
  * 原子写入文件：先写入临时文件，再 rename 覆盖目标文件。
@@ -58,7 +59,10 @@ export class TaskManagerState {
     private _deletedTaskIds: Set<string> = new Set();
 
     /**
-     * Load the task manager state from the file system
+     * Load the task manager state from the file system.
+     * 懒加载策略：仅读取 task_list.json 索引（1 次 I/O），用其中的简化元数据创建
+     * 轻量 TaskState。chat_context 等重字段延迟到 getTask() -> ensureLoaded() 时加载。
+     * 旧格式索引条目（仅有 task_id）回退到全量加载。
      * @returns the task manager state, or null if the files does not exist
      */
     static load(): TaskManagerState | null {
@@ -70,26 +74,43 @@ export class TaskManagerState {
         }
 
         const taskManagerState = new TaskManagerState();
-        let taskList: { task_id: string }[];
+        let needsIndexUpgrade = false;
+        let taskList: Record<string, unknown>[];
         try {
             taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
         } catch (err) {
             logger.error(`failed to parse task_list.json: ${err}, falling back to directory scan...`);
             return TaskManagerState.rebuildTaskListFromDirectory();
         }
-        for (const task of taskList) {
+        for (const entry of taskList) {
+            const taskId = entry.task_id as string;
+            if (!taskId) continue;
+            const taskFilePath = path.join(taskDirectory, `${taskId}.json`);
             try {
-                taskManagerState.tasks.push(
-                    TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState)
-                );
+                if (indexEntryHasMetadata(entry)) {
+                    // 新格式索引：含简化元数据，创建懒加载 TaskState
+                    taskManagerState.tasks.push(deserializeTaskFromIndex(entry, taskFilePath, taskManagerState));
+                } else {
+                    // 旧格式索引：仅有 task_id，回退到全量加载。
+                    const task = TaskState.load(taskFilePath, taskManagerState);
+                    if (task.task_id !== taskId) {
+                        taskManagerState._deletedTaskIds.add(taskId);
+                        needsIndexUpgrade = true;
+                        throw new Error(
+                            `task ID mismatch while loading ${taskFilePath}: expected ${taskId}, got ${task.task_id}`
+                        );
+                    }
+                    taskManagerState.tasks.push(task);
+                    needsIndexUpgrade = true;
+                }
             } catch (err) {
-                logger.warn(`error loading task ${task.task_id}: ${err}`);
+                logger.warn(`error loading task ${taskId}: ${err}`);
                 continue;
             }
         }
         if (taskManagerState.tasks.length > 0) {
-            if (taskManagerState.tasks.some((task) => task._dirty)) {
-                taskManagerState.save();
+            if (needsIndexUpgrade) {
+                taskManagerState.saveTaskListSync();
             }
             return taskManagerState;
         }
@@ -105,6 +126,7 @@ export class TaskManagerState {
      */
     static rebuildTaskListFromDirectory(): TaskManagerState | null {
         const taskDirectory = getTaskDirectory();
+        const taskListFile = path.join(taskDirectory, 'task_list.json');
         let files: string[];
         try {
             files = fs.readdirSync(taskDirectory);
@@ -122,6 +144,12 @@ export class TaskManagerState {
             const filePath = path.join(taskDirectory, file);
             try {
                 const task = TaskState.load(filePath, taskManagerState);
+                const expectedTaskId = path.basename(file, '.json');
+                if (task.task_id !== expectedTaskId) {
+                    throw new Error(
+                        `task ID mismatch while recovering ${filePath}: expected ${expectedTaskId}, got ${task.task_id}`
+                    );
+                }
                 taskManagerState.tasks.push(task);
                 logger.info(`recovered task: ${task.task_id} (${task.task_name ?? 'unnamed'})`);
             } catch (err) {
@@ -131,6 +159,7 @@ export class TaskManagerState {
         }
 
         if (taskManagerState.tasks.length === 0) {
+            _atomicWriteFileSync(taskListFile, JSON.stringify([], null, 4));
             return null;
         }
 
@@ -140,7 +169,12 @@ export class TaskManagerState {
             return aTime - bTime;
         });
 
-        taskManagerState.saveSync();
+        // 重建结果必须严格来自本次目录扫描，不能再把旧 task_list.json 中
+        // 无法反序列化的条目通过多进程合并逻辑带回来。
+        for (const task of taskManagerState.tasks) {
+            task._dirty = false;
+        }
+        taskManagerState.saveTaskListSync({ mergeDiskEntries: false });
         logger.info(`task list rebuilt: ${taskManagerState.tasks.length} task(s) recovered`);
         return taskManagerState;
     }
@@ -185,10 +219,21 @@ export class TaskManagerState {
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
         // 只写入在本进程中被修改过的任务文件，防止多进程互相覆盖。
+        // 跳过未完全加载的懒加载任务：其 chat_context 为空，写入会覆盖磁盘上的真实数据。
         // 先快照脏任务并立即清除 _dirty 标记：如果在异步写入期间 persistLater()
         // 被调用，_dirty 会被重新设为 true，不会被本方法的后续逻辑意外覆盖。
-        const dirtyTasks = this.tasks.filter((t) => t._dirty);
+        const dirtyTasks = this.tasks.filter((t) => t._dirty && t._fullyLoaded);
         for (const task of dirtyTasks) {
+            task._dirty = false;
+        }
+        // 防御性检查：懒加载任务不应被标记为脏。如果出现，说明有代码路径
+        // 绕过了 ensureLoaded() 保护直接修改了懒加载任务的状态。
+        for (const task of this.tasks.filter((t) => t._dirty && !t._fullyLoaded)) {
+            logger.warn(
+                `lazy task ${task.task_id} is dirty — this indicates a code path that ` +
+                    `modifies a lazy task without calling ensureLoaded() first. ` +
+                    `Clearing dirty flag to prevent flushAllPendingSaves dead loop.`
+            );
             task._dirty = false;
         }
 
@@ -219,18 +264,19 @@ export class TaskManagerState {
      */
     private _buildMergedTaskList(taskDirectory: string, taskListFile: string): object[] {
         const inMemoryIds = new Set(this.tasks.map((t) => t.task_id));
-        const mergedList: object[] = this.tasks.map((t) => t.toSimplifiedJSON());
+        const mergedList: object[] = this.tasks.map((t) => t.toIndexJSON());
 
         try {
             if (!fs.existsSync(taskListFile)) return mergedList;
-            const diskEntries: { task_id: string }[] = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
+            const diskEntries: Record<string, unknown>[] = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
             for (const entry of diskEntries) {
-                if (inMemoryIds.has(entry.task_id) || this._deletedTaskIds.has(entry.task_id)) {
+                const taskId = entry.task_id as string;
+                if (inMemoryIds.has(taskId) || this._deletedTaskIds.has(taskId)) {
                     continue;
                 }
-                const taskFile = path.join(taskDirectory, `${entry.task_id}.json`);
+                const taskFile = path.join(taskDirectory, `${taskId}.json`);
                 if (fs.existsSync(taskFile)) {
-                    mergedList.push(entry);
+                    mergedList.push(normalizeTaskIndexEntry(entry));
                 }
             }
         } catch {
@@ -240,16 +286,27 @@ export class TaskManagerState {
         return mergedList;
     }
 
+    /** Persist only task_list.json without treating any full task file as modified. */
+    private saveTaskListSync(options: { mergeDiskEntries?: boolean } = {}): void {
+        const taskDirectory = getTaskDirectory();
+        const taskListFile = path.join(taskDirectory, 'task_list.json');
+        const mergedList =
+            options.mergeDiskEntries === false
+                ? this.tasks.map((task) => task.toIndexJSON())
+                : this._buildMergedTaskList(taskDirectory, taskListFile);
+        _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
+    }
+
     /**
      * Synchronous write for operations that require immediate persistence
      * (e.g. rebuild, clear, remove — user may exit right after).
      */
-    saveSync(): void {
+    saveSync(options: { mergeDiskEntries?: boolean } = {}): void {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
-        // 只写入在本进程中被修改过的任务文件
-        const dirtyTasks = this.tasks.filter((t) => t._dirty);
+        // 只写入在本进程中被修改过的任务文件（跳过懒加载任务，防止空数据覆盖）
+        const dirtyTasks = this.tasks.filter((t) => t._dirty && t._fullyLoaded);
         for (const task of dirtyTasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
             try {
@@ -260,9 +317,22 @@ export class TaskManagerState {
                 logger.error(`failed to persist task ${task.task_id} synchronously: ${err}`);
             }
         }
+        // 防御性检查：懒加载任务不应被标记为脏。如果出现，说明有代码路径
+        // 绕过了 ensureLoaded() 保护直接修改了懒加载任务的状态。
+        for (const task of this.tasks.filter((t) => t._dirty && !t._fullyLoaded)) {
+            logger.warn(
+                `lazy task ${task.task_id} is dirty during saveSync — this indicates a code path that ` +
+                    `modifies a lazy task without calling ensureLoaded() first. ` +
+                    `Clearing dirty flag.`
+            );
+            task._dirty = false;
+        }
 
         // 构建合并后的 task_list.json
-        const mergedList = this._buildMergedTaskList(taskDirectory, taskListFile);
+        const mergedList =
+            options.mergeDiskEntries === false
+                ? this.tasks.map((task) => task.toIndexJSON())
+                : this._buildMergedTaskList(taskDirectory, taskListFile);
         _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
@@ -468,7 +538,7 @@ export class TaskManagerState {
      * @param {string} taskId
      */
     removeTask(taskId: string): string[] {
-        const taskToRemove = this.getTask(taskId);
+        const taskToRemove = this.tasks.find((task) => task.task_id === taskId);
         if (!taskToRemove) {
             logger.warn(`Task ${taskId} not found for deletion.`);
             return [];
@@ -485,11 +555,32 @@ export class TaskManagerState {
         return Array.from(removedIds);
     }
 
+    /**
+     * Remove a corrupted task from task_list.json without touching its task JSON,
+     * artifacts, todos, or child tasks. The preserved files can be recovered later
+     * with /recover tasks after the underlying data issue is repaired.
+     */
+    removeCorruptedTaskEntry(taskId: string): boolean {
+        const task = this.tasks.find((candidate) => candidate.task_id === taskId);
+        if (!task || !task._corrupted) {
+            return false;
+        }
+
+        this.tasks = this.tasks.filter((candidate) => candidate.task_id !== taskId);
+        this._deletedTaskIds.add(taskId);
+        this.publishTaskListUpdate();
+        this.saveSync();
+        return true;
+    }
+
     private _removeTaskRecursive(taskId: string, removedIds: Set<string>) {
-        const task = this.getTask(taskId);
+        const task = this.tasks.find((candidate) => candidate.task_id === taskId);
         if (!task || removedIds.has(taskId)) return;
 
-        task.stop('system');
+        task.ensureLoaded();
+        if (!task._corrupted) {
+            task.stop('system');
+        }
 
         const children = this.tasks.filter((t) => t.parent_id === taskId);
         for (const child of children) {
@@ -509,7 +600,12 @@ export class TaskManagerState {
         const removedIds = this.tasks.map((task) => task.task_id);
         for (const task of this.tasks) {
             this._deletedTaskIds.add(task.task_id);
-            task.stop('system');
+            // 懒加载任务并未实际运行（status 已转为 failed），跳过 stop()
+            // 以避免不必要的 ensureLoaded() 触发全量磁盘读取。
+            // cleanup() 和 deleteTaskTodos() 仍会正常清理磁盘文件。
+            if (task._fullyLoaded) {
+                task.stop('system');
+            }
             task.cleanup();
             deleteTaskTodos(task.task_id);
         }
@@ -521,11 +617,25 @@ export class TaskManagerState {
     }
 
     /**
-     * Find a task by its id
+     * Find a task by its id.
+     * 返回前会触发懒加载，确保调用方拿到的是含 chat_context 的完整 TaskState。
      * @returns the task, or undefined if the task is not found
      */
+    getTaskLoadResult(taskId: string): { task: TaskState | undefined; corrupted: boolean } {
+        const task = this.tasks.find((task) => task.task_id === taskId);
+        if (task) {
+            task.ensureLoaded();
+        }
+        return { task, corrupted: task?._corrupted === true };
+    }
+
     getTask(taskId: string): TaskState | undefined {
-        return this.tasks.find((task) => task.task_id === taskId);
+        const result = this.getTaskLoadResult(taskId);
+        if (result.corrupted) {
+            this.removeCorruptedTaskEntry(taskId);
+            return undefined;
+        }
+        return result.task;
     }
 
     publishTaskListUpdate() {

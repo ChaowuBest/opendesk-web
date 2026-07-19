@@ -15,6 +15,7 @@ import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
+import { showConfirmModal } from './confirmModal.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
@@ -1517,6 +1518,24 @@ class TaskView extends HTMLElement {
             if (this.task_status !== 'running' && this.messageQueue.length > 0 && !this._immediateQueueSending) {
                 shouldAutoSendQueuedMessage = true;
             }
+        } catch (error) {
+            if (error.code === 'TASK_CORRUPTED') {
+                await showConfirmModal({
+                    icon: 'fa-circle-exclamation',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: taskViewT('task.corrupted.title'),
+                    message: taskViewT('renderer.task.corrupted.message'),
+                    confirmText: taskViewT('task.corrupted.acknowledge'),
+                    cancelText: null
+                });
+                if (window.globalControlAPI) {
+                    window.globalControlAPI.removeTaskViewCache(this.task_id);
+                    window.globalControlAPI.openTask(null);
+                }
+                return;
+            }
+            throw error;
         } finally {
             // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
             if (version === this._reloadVersion) {
