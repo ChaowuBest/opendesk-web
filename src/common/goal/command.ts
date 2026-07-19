@@ -136,11 +136,11 @@ export function goalResultToMessageKey(result: GoalCommandResultLike | undefined
 
 export function getGoalSubcommandCompletions(argPrefix: string): GoalSubcommand[] {
     const trimmed = argPrefix.trim();
-    if (trimmed.length === 0) {
-        return [];
-    }
     if (argPrefix.includes(' ') && !argPrefix.endsWith(' ')) {
         return [];
+    }
+    if (trimmed.length === 0) {
+        return [...GOAL_SUBCOMMANDS];
     }
     return GOAL_SUBCOMMANDS.filter((cmd) => cmd.startsWith(trimmed));
 }
