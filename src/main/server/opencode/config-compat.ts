@@ -360,6 +360,11 @@ async function refreshOpenDeskTaskContexts(): Promise<void> {
     await Promise.allSettled(
         tasks.map(async (task) => {
             try {
+                // 跳过懒加载任务：它们未运行，chat_context 为空，
+                // 刷新 system prompt 无意义且会导致数据不一致。
+                // 恢复任务时 getTask()->ensureLoaded() 会从磁盘加载完整数据。
+                if (!task._fullyLoaded) return;
+
                 const toolsets = await task.buildToolsets();
                 task.chat_context.attachToolsets(...toolsets);
 

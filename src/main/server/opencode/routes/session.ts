@@ -1156,17 +1156,21 @@ export function SessionRoutes() {
         const sessionID = c.req.param('sessionID');
         const taskId = toInternalId(sessionID);
         const tms = GlobalState.getInstance().taskManagerState;
-        const task = tms.getTask(taskId);
+        const task = tms.tasks.find((candidate) => candidate.task_id === taskId);
 
         if (!task) {
             return c.json({ error: 'Session not found' }, 404);
         }
 
-        tms.removeTask(taskId);
+        const workspace = getTaskWorkspace(task);
+        const removedTaskIds = tms.removeTask(taskId);
+        if (removedTaskIds.length === 0) {
+            return c.json({ error: 'Session not found' }, 404);
+        }
 
         EventBus.publish({
             type: 'session.deleted',
-            directory: getTaskWorkspace(task),
+            directory: workspace,
             properties: { sessionID }
         });
 

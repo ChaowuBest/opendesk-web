@@ -1167,14 +1167,13 @@ const registerTaskManagerAPIHandlers = () => {
         }
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
+        const removedTaskIds = globalState.taskManagerState.removeTask(taskId);
+        if (removedTaskIds.length === 0) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
-        const removedTaskIds = globalState.taskManagerState.removeTask(taskId);
         publishTaskTodosCleared(removedTaskIds);
-        return { status: 'ok', data: task.task_id };
+        return { status: 'ok', data: taskId };
     });
     ipcMain.handle('taskManager:forkTask', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -1259,9 +1258,14 @@ const registerTaskManagerAPIHandlers = () => {
         };
     });
     ipcMain.handle('taskManager:getFullTask', async (event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
+        const result = globalState.taskManagerState.getTaskLoadResult(taskId);
+        const task = result.task;
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
+        }
+        if (result.corrupted) {
+            globalState.taskManagerState.removeCorruptedTaskEntry(taskId);
+            return { status: 'error', code: 'TASK_CORRUPTED', message: t('task.corrupted.detail', { taskId }) };
         }
 
         task.ensureValidModelOrFallback();

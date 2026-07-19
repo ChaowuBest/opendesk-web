@@ -132,13 +132,22 @@ export class HeadlessRunner {
 
         let task: TaskState;
         if (this.args.resume) {
-            const existingTask = this.taskManagerState.getTask(this.args.resume);
+            const result = this.taskManagerState.getTaskLoadResult(this.args.resume);
+            const existingTask = result.task;
             if (!existingTask) {
                 process.stderr.write(
                     chalk.red(`[error] ${t('cli.resume.not_found.detail', { taskId: this.args.resume })}\n`)
                 );
                 process.exit(1);
                 return; // for type checker
+            }
+            if (result.corrupted) {
+                this.taskManagerState.removeCorruptedTaskEntry(this.args.resume);
+                process.stderr.write(
+                    chalk.red(`[error] ${t('task.corrupted.detail', { taskId: this.args.resume })}\n`)
+                );
+                process.exit(1);
+                return;
             }
             task = existingTask;
         } else {

@@ -19,6 +19,12 @@ export const zhCn: Record<string, string> = {
     'cli.resume.hint': '通过下面的命令恢复/继续任务:',
     'cli.resume.not_found': '任务不存在',
     'cli.resume.not_found.detail': '找不到任务 ID 为 ${taskId} 的任务，无法恢复。',
+    'task.corrupted.title': '任务数据无法加载',
+    'task.corrupted.detail':
+        '任务 ${taskId} 的数据无法加载，已仅从任务列表中移除。原始任务文件、产物和待办事项均已保留；修复数据后可运行 /recover tasks 恢复。',
+    'task.corrupted.acknowledge': '知道了',
+    'renderer.task.corrupted.message':
+        '任务数据无法加载，已仅从任务列表中移除。<br>原始任务文件、产物和待办事项均已保留；修复数据后可运行 /recover tasks 恢复。',
 
     // Banner
     'banner.workspace': '当前工作空间为: ',
@@ -202,6 +208,12 @@ export const zhCn: Record<string, string> = {
         '当前内存中的任务列表将被覆盖。\n\n' +
         '确定要继续吗？',
     'recover.task.scanning': '正在扫描任务文件并重建任务列表...',
+    'recover.task.complete.title': '重建完成',
+    'recover.task.complete.message': '已恢复 ${count} 个任务。',
+    'recover.task.empty.title': '重建结果',
+    'recover.task.empty.message': '未找到可恢复的任务文件。',
+    'recover.task.failed.title': '重建失败',
+    'recover.task.failed.message': '重建任务列表时出错：${message}',
 
     // Commands - Tools subcommand
     'tools.description': '工具管理与调试',

@@ -75,7 +75,8 @@ body {
     color: var(--od-text);
 }
 
-.drag-overlay #close-drag-overlay-btn:hover {
+.drag-overlay #close-drag-overlay-btn:hover,
+.drag-overlay #app-close-btn:hover {
     background-color: var(--od-titlebar-btn-close-hover) !important;
     color: #fff !important;
 }

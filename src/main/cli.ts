@@ -538,9 +538,16 @@ async function main(args: CommandLineArgs) {
             ApplicationRegistry.onReady(() => {
                 if (args.resume) {
                     // -c 模式下 resume：找不到任务直接报错退出
-                    const task = tui.taskManagerState.getTask(args.resume);
+                    const result = tui.taskManagerState.getTaskLoadResult(args.resume);
+                    const task = result.task;
                     if (!task) {
                         process.stderr.write(`[error] ${t('cli.resume.not_found.detail', { taskId: args.resume })}\n`);
+                        process.exit(1);
+                        return;
+                    }
+                    if (result.corrupted) {
+                        tui.taskManagerState.removeCorruptedTaskEntry(args.resume);
+                        process.stderr.write(`[error] ${t('task.corrupted.detail', { taskId: args.resume })}\n`);
                         process.exit(1);
                         return;
                     }

@@ -72,8 +72,11 @@ import type { TaskManagerState } from '../task/manager.js';
 import {
     serializeTask,
     serializeTaskSimplified,
+    serializeTaskForIndex,
+    normalizeTaskIndexEntry,
     serializeTaskForRender,
     deserializeTask,
+    loadFullTaskData,
     forkTask
 } from '../task/serializer.js';
 import { getTaskChangesFromTask } from '../task/changes.js';
@@ -205,6 +208,20 @@ export class TaskState {
      */
     _dirty: boolean = true;
 
+    /**
+     * 懒加载状态：当任务从 task_list.json 索引创建时，仅加载元数据字段，
+     * chat_context 等重字段延迟到 ensureLoaded() 时才从磁盘读取。
+     * _fullyLoaded = false 时，toSimplifiedJSON() 返回 _lazySimplifiedJSON 缓存，
+     * 避免访问空 chat_context 导致数据不一致。
+     */
+    _fullyLoaded: boolean = true;
+    _lazyFilePath?: string;
+    _lazySimplifiedJSON?: object;
+    /** 防止 ensureLoaded() 递归：applyTaskJson 中会访问 chat_context，此时 _fullyLoaded 尚为 false */
+    private _loading: boolean = false;
+    /** 任务数据文件已损坏（缺失或无法解析）。ensureLoaded() 降级时标记为 true。 */
+    _corrupted: boolean = false;
+
     model?: string;
     reasoningEffort?: ReasoningEffort;
     message_queue: string[] = [];
@@ -278,7 +295,21 @@ export class TaskState {
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
     /** 与任务执行生命周期集成的可选领域功能。 */
-    readonly extensions: TaskExtensionManager;
+    private _extensions: TaskExtensionManager;
+
+    get extensions(): TaskExtensionManager {
+        // 与 chat_context getter 同：懒加载任务不应在 ensureLoaded() 之前通过
+        // extensions 访问内部状态。此处作为防御性检查，防止绕过保护的代码路径。
+        // _loading 标志防止 ensureLoaded() → applyTaskJson() 内部的 extensions 访问触发递归。
+        if (!this._fullyLoaded && !this._loading) {
+            logger.warn(
+                `extensions accessed on not-fully-loaded task ${this.task_id} — ` +
+                    `this indicates a code path that bypasses ensureLoaded(). Forcing load.`
+            );
+            this.ensureLoaded();
+        }
+        return this._extensions;
+    }
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
@@ -300,6 +331,17 @@ export class TaskState {
     static TASK_REVIEW_IDLE_MS = 10 * 60 * 1000;
 
     get chat_context(): ChatContext {
+        // 懒加载任务在 ensureLoaded() 之前不应访问 chat_context。
+        // 所有修改路径（stop、interruptRunningTurn 等）在入口处已调用 ensureLoaded()，
+        // 此处作为防御性检查，帮助在开发阶段尽早发现绕过保护的代码路径。
+        // _loading 标志防止 ensureLoaded() → applyTaskJson() 内部的 chat_context 访问触发递归。
+        if (!this._fullyLoaded && !this._loading) {
+            logger.warn(
+                `chat_context accessed on not-fully-loaded task ${this.task_id} — ` +
+                    `this indicates a code path that bypasses ensureLoaded(). Forcing load.`
+            );
+            this.ensureLoaded();
+        }
         return this._chat_context;
     }
 
@@ -395,7 +437,7 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
-        this.extensions = new TaskExtensionManager(this);
+        this._extensions = new TaskExtensionManager(this);
         this.bindChatContextMessageAppend();
     }
 
@@ -562,8 +604,46 @@ export class TaskState {
         return deserializeTask(task_json_path, task_manager_state);
     }
 
+    /**
+     * 懒加载：如果任务仅从索引加载了元数据，此时从磁盘读取完整 JSON 文件，
+     * 填充 chat_context 等重字段。多次调用安全（已加载时为 no-op）。
+     */
+    ensureLoaded(): void {
+        if (this._fullyLoaded) return;
+        if (!this._lazyFilePath) return;
+        this._loading = true;
+        try {
+            loadFullTaskData(this, this._lazyFilePath);
+        } catch (err) {
+            logger.warn(
+                `failed to load full task data for ${this.task_id} from ${this._lazyFilePath}: ` +
+                    `${(err as Error)?.message || String(err)}. Degrading to empty task state.`
+            );
+            this._corrupted = true;
+            // 显式重置为干净的 ChatContext，确保后续访问不会拿到半初始化的脏数据。
+            // （虽然 _chat_context 在字段声明处有 new ChatContext() 默认值，
+            // 但此处显式重置可防止未来有人修改默认值后引入空指针崩溃。）
+            this._chat_context = new ChatContext();
+        } finally {
+            this._loading = false;
+        }
+        this._fullyLoaded = true;
+        this._lazySimplifiedJSON = undefined;
+        this._lazyFilePath = undefined;
+    }
+
     toSimplifiedJSON() {
+        if (!this._fullyLoaded && this._lazySimplifiedJSON) {
+            return this._lazySimplifiedJSON;
+        }
         return serializeTaskSimplified(this);
+    }
+
+    toIndexJSON() {
+        if (!this._fullyLoaded && this._lazySimplifiedJSON) {
+            return normalizeTaskIndexEntry(this._lazySimplifiedJSON as Record<string, unknown>);
+        }
+        return serializeTaskForIndex(this);
     }
 
     getTaskCompletionStatus(): TaskCompletionStatus | null {
@@ -1292,6 +1372,10 @@ export class TaskState {
      * Stop the task execution
      */
     stop(reason: 'user' | 'system' = 'user') {
+        // 确保任务已完全加载，否则 markInterruptedToolCalls 会访问空的 chat_context。
+        // stop() 可能从 clearAllTasks() 直接遍历 this.tasks 调用（绕过 getTask()），
+        // 此时任务可能处于懒加载状态。
+        this.ensureLoaded();
         if (this.task_status === 'stopped') {
             return;
         }
@@ -1324,6 +1408,8 @@ export class TaskState {
     }
 
     async interruptRunningTurn(options: InterruptRunningTurnOptions): Promise<void> {
+        // 与 stop() 同理：确保任务已完全加载，防止访问空的 chat_context
+        this.ensureLoaded();
         const requestedAt = new Date().toISOString();
         this.runtimeInterrupt = {
             requested: true,

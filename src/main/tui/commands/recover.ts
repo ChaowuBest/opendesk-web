@@ -59,22 +59,25 @@ function executeRecoverTasks(tui: OpenDeskTUI): void {
                     for (const task of tui.taskManagerState.tasks) {
                         task.task_manager_state = tui.taskManagerState;
                     }
-                    tui.taskManagerState.save();
                     tui.taskManagerState.publishTaskListUpdate();
 
                     tui.clearActiveTask();
 
                     logger.info(`/recover tasks: ${recovered.tasks.length} task(s) recovered`);
                     const info = new InfoOverlay(tui, {
-                        title: 'Rebuild Complete',
-                        message: `Recovered ${recovered.tasks.length} tasks.`,
+                        title: t('recover.task.complete.title'),
+                        message: t('recover.task.complete.message', { count: recovered.tasks.length }),
                         closeLabel: t('common.close')
                     });
                     info.show();
                 } else {
+                    tui.taskManagerState.tasks = [];
+                    tui.clearActiveTask();
+                    tui.taskManagerState.publishTaskListUpdate();
+
                     const info = new InfoOverlay(tui, {
-                        title: 'Rebuild Result',
-                        message: 'No recoverable task files found.',
+                        title: t('recover.task.empty.title'),
+                        message: t('recover.task.empty.message'),
                         closeLabel: t('common.close')
                     });
                     info.show();
@@ -84,8 +87,8 @@ function executeRecoverTasks(tui: OpenDeskTUI): void {
                 const msg = err instanceof Error ? err.message : String(err);
                 logger.error(`/recover tasks failed: ${msg}`);
                 const info = new InfoOverlay(tui, {
-                    title: 'Rebuild Failed',
-                    message: `Error during task list rebuild: ${msg}`,
+                    title: t('recover.task.failed.title'),
+                    message: t('recover.task.failed.message', { message: msg }),
                     closeLabel: t('common.close')
                 });
                 info.show();

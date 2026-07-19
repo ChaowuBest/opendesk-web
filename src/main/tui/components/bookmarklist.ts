@@ -126,10 +126,7 @@ export class BookmarkList implements Component {
 
             // 如果不是空状态占位符，切换到对应任务
             if (taskID !== '__empty__') {
-                const task = this.openDeskTUI.taskManagerState.getTask(taskID);
-                if (task) {
-                    this.openDeskTUI.switchToTask(task);
-                }
+                this.openDeskTUI.switchToTaskById(taskID);
             }
         };
 

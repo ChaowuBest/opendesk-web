@@ -298,6 +298,7 @@ describe('opencode config routes', () => {
         task = {
             parent_id: null,
             activeModeId: 'standard',
+            _fullyLoaded: true,
             chat_context: {
                 system_prompt: {
                     content: 'before <available_skills><skill>old</skill></available_skills> after'

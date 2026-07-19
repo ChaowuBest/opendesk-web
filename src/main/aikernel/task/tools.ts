@@ -558,12 +558,11 @@ class DeleteTasksTool extends BaseTool<typeof DeleteTasksSchema> {
         const notFound: string[] = [];
 
         for (const taskId of args.taskIds) {
-            const task = this.taskManagerState.getTask(taskId);
-            if (!task) {
+            const removedTaskIds = this.taskManagerState.removeTask(taskId);
+            if (removedTaskIds.length === 0) {
                 notFound.push(taskId);
                 continue;
             }
-            this.taskManagerState.removeTask(taskId);
             results.push(taskId);
         }
 

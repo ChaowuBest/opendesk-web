@@ -167,7 +167,9 @@ function exposeTaskManagerAPI() {
                 return result.data;
             } else {
                 console.error('getting full task failed', result.message);
-                throw new Error(result.message);
+                const err = new Error(result.message);
+                if (result.code) err.code = result.code;
+                throw err;
             }
         },
         getTaskInfo: async (taskId) => {
