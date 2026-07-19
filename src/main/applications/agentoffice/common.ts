@@ -1,0 +1,200 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You may use this software according to the terms and conditions of the MulanPSL2.
+ */
+
+import { z } from 'zod';
+import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
+
+export const StaffDefinitionSchema = z.object({
+    name: z.string().trim().min(1),
+    vendor_name: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    specialties: z.array(z.string().trim().min(1)).default([])
+});
+
+export const StaffDirectoryPermissionSchema = z.object({
+    path: z.string().trim().min(1),
+    access: z.enum(['read', 'readwrite'])
+});
+
+export const StaffPermissionSchema = z.object({
+    directories: z.array(StaffDirectoryPermissionSchema).default([]),
+    network_access: z.boolean().default(true)
+});
+
+export const StaffResourceContentSchema = z.object({
+    type: z.literal('resource'),
+    resource_id: z.string().min(1),
+    media_type: z.enum(['image', 'video', 'audio', 'file']),
+    mime_type: z.string().min(1),
+    name: z.string().min(1),
+    path: z.string().min(1)
+});
+
+export const StaffMessageSchema = z.object({
+    id: z.string().min(1),
+    role: z.enum(['user', 'assistant']),
+    task_id: z.string().min(1),
+    created_at: z.string().datetime(),
+    status: z.enum(['sent', 'failed']).optional(),
+    kind: z.enum(['message', 'error']).optional(),
+    content: z.array(z.union([z.object({ type: z.literal('text'), text: z.string() }), StaffResourceContentSchema]))
+});
+
+export type StaffDefinition = z.output<typeof StaffDefinitionSchema>;
+export type StaffPermission = z.output<typeof StaffPermissionSchema>;
+export type StaffResourceContent = z.output<typeof StaffResourceContentSchema>;
+export type StaffMessage = z.output<typeof StaffMessageSchema>;
+
+export interface StaffMetadata {
+    id: string;
+    hired_at: string;
+    enabled: boolean;
+    model?: string;
+    usage_summary?: TaskUsageSummary;
+}
+
+export interface StaffTaskRecord {
+    task_id: string;
+    message_ids: string[];
+    status: string;
+    created_at: string;
+    updated_at: string;
+    usage_summary?: TaskUsageSummary;
+}
+
+export interface StaffListItem extends StaffDefinition {
+    id: string;
+    hired_at: string;
+    enabled: boolean;
+    portrait_url?: string;
+    message_count: number;
+    task_count: number;
+    usage_summary?: TaskUsageSummary;
+    active_task_id?: string;
+}
+
+export interface StaffDetail extends StaffListItem {
+    model?: string;
+    agents_md: string;
+    mcp: { servers: unknown[] };
+    permission: StaffPermission;
+    tasks: StaffTaskRecord[];
+}
+
+export interface StaffSkillSummary {
+    name: string;
+    directory_name: string;
+    path: string;
+    description: string;
+    body: string;
+    license?: string;
+    compatibility?: string;
+    allowed_tools?: string[];
+}
+
+export interface InstalledSkillSummary {
+    id: string;
+    name: string;
+    description: string;
+    directory_name: string;
+    already_added: boolean;
+}
+
+export interface StaffSkillImportCandidate {
+    path: string;
+    name: string;
+    type: 'directory' | 'zip';
+}
+
+export interface StaffSkillBatchImportResult {
+    added: Array<{ path: string; name: string }>;
+    errors: Array<{ path: string; message: string }>;
+}
+
+export interface StaffUpdateInput {
+    definition?: StaffDefinition;
+    agents_md?: string;
+    mcp?: { servers: unknown[] };
+    permission?: StaffPermission;
+    enabled?: boolean;
+    model?: string | null;
+    portrait_path?: string | null;
+    portrait_data_uri?: string | null;
+}
+
+export type HistoryQuery =
+    | { mode: 'recent'; limit: number; cursor?: string }
+    | { mode: 'time_range'; start_time: string; end_time: string; limit?: number; cursor?: string };
+
+export interface HistoryResult {
+    messages: StaffMessage[];
+    has_more: boolean;
+    next_cursor?: string;
+}
+
+export interface MessageAttachmentInput {
+    path: string;
+    name?: string;
+}
+
+export interface SendStaffMessageInput {
+    text?: string;
+    attachments?: MessageAttachmentInput[];
+    image_data_uris?: string[];
+}
+
+export interface PreparedMessage {
+    message: StaffMessage;
+    image_data_uris: string[];
+}
+
+export interface PresetStaffDefinition {
+    key: string;
+    definition: StaffDefinition;
+    agents_md: string;
+}
+
+export function unwrapAgentOfficeCallResult<T>(result: unknown, fallbackMessage: string): T {
+    if (result && typeof result === 'object' && 'status' in result) {
+        const wrapped = result as { status?: string; data?: T; message?: string };
+        if (wrapped.status === 'error') throw new Error(wrapped.message || fallbackMessage);
+        if (wrapped.status === 'ok') return wrapped.data as T;
+    }
+    return result as T;
+}
+
+export function emptyUsageSummary(): TaskUsageSummary {
+    return {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        request_count: 0
+    };
+}
+
+export function sumTaskUsage(tasks: StaffTaskRecord[]): TaskUsageSummary {
+    const result = emptyUsageSummary();
+    for (const task of tasks) {
+        const usage = task.usage_summary;
+        if (!usage) continue;
+        result.prompt_tokens += usage.prompt_tokens;
+        result.completion_tokens += usage.completion_tokens;
+        result.total_tokens += usage.total_tokens;
+        result.input_tokens += usage.input_tokens;
+        result.output_tokens += usage.output_tokens;
+        result.cache_creation_input_tokens += usage.cache_creation_input_tokens;
+        result.cache_read_input_tokens += usage.cache_read_input_tokens;
+        result.request_count += usage.request_count;
+        if (usage.updated_at && (!result.updated_at || usage.updated_at > result.updated_at)) {
+            result.updated_at = usage.updated_at;
+        }
+    }
+    return result;
+}

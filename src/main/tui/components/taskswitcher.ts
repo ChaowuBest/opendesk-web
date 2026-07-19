@@ -22,7 +22,7 @@ import {
 } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
-import type { TaskState } from '../../states/tasks';
+import { type TaskState, isTaskVisibleForDeveloperMode } from '../../aikernel/states/tasks';
 import { SelectTable, type SelectRow } from './selecttable';
 import { ConfirmOverlay } from './notice';
 import { isDeveloperModeEnabled } from '../../utils/setting.js';
@@ -95,10 +95,8 @@ export class TaskSwitcher implements Component, Focusable {
 
     getTasks(): TaskState[] {
         const tasks = [...this.openDeskTUI.taskManagerState.tasks];
-        if (isDeveloperModeEnabled()) {
-            return tasks;
-        }
-        return tasks.filter((task) => task.internal !== true);
+        const developerMode = isDeveloperModeEnabled();
+        return tasks.filter((task) => isTaskVisibleForDeveloperMode(task, developerMode));
     }
 
     constructor(openDeskTUI: OpenDeskTUI) {

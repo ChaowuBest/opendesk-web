@@ -2409,4 +2409,11 @@ export class TaskState {
     }
 }
 
+export function isTaskVisibleForDeveloperMode(
+    task: Pick<TaskState, 'internal'> | null | undefined,
+    developerMode: boolean
+): boolean {
+    return developerMode || task?.internal !== true;
+}
+
 export { TaskManagerState, BaseTaskManagerUpdateSubscriber } from '../task/manager.js';

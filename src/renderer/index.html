@@ -118,6 +118,7 @@
             syncThemeToAppFrame
         } from './theme/theme-iframe-bridge.ts';
         import { registerApplicationFrameProxyHost } from './scripts/application-frame-proxy.ts';
+        import { isExperimentalApplicationEnabled } from './utils/application-visibility.ts';
 
         registerApplicationFrameProxyHost();
         initRendererTheme().catch((err) => console.warn('[theme] init failed', err));
@@ -572,6 +573,22 @@
                     } catch (err) {
                         console.warn('Failed to get application GUI config', bundleName, err);
                     }
+                    if (appGuiConfig && appGuiConfig.isExperimental) {
+                        try {
+                            var setting = await window.settingAPI.loadSettingObject();
+                            if (
+                                !isExperimentalApplicationEnabled(
+                                    appGuiConfig,
+                                    setting && setting.debug && setting.debug.experimental_feature === true
+                                )
+                            ) {
+                                return;
+                            }
+                        } catch (err) {
+                            console.warn('Failed to check experimental application access', bundleName, err);
+                            return;
+                        }
+                    }
                     // 通知 sidebar 清除任务高亮（因为切换到了其他应用）
                     document.dispatchEvent(
                         new CustomEvent('application-opened', { detail: { bundleName: bundleName, options: options } })
@@ -724,12 +741,34 @@
 
             // 监听 setting locale 变化，向 agentgate iframe 发送 LOCALE_CHANGED
             if (window.settingAPI && window.settingAPI.onSettingChanged) {
-                window.settingAPI.onSettingChanged(function (data) {
+                window.settingAPI.onSettingChanged(async function (data) {
                     var resolvedLocale = data && data.resolved_locale;
                     if (resolvedLocale && appFrameCache['agentgate']) {
                         var cw = getAppSubFrameWindow(appFrameCache['agentgate']);
                         if (cw) {
                             cw.postMessage({ type: 'LOCALE_CHANGED', locale: resolvedLocale }, '*');
+                        }
+                    }
+                    if (currentOpenAppBundleName) {
+                        try {
+                            var openAppConfig =
+                                await window.applicationRegistryAPI.getApplicationGUIConfig(currentOpenAppBundleName);
+                            if (
+                                openAppConfig &&
+                                !isExperimentalApplicationEnabled(
+                                    openAppConfig,
+                                    data && data.debug && data.debug.experimental_feature === true
+                                )
+                            ) {
+                                var hiddenBundleName = currentOpenAppBundleName;
+                                if (appFrameCache[hiddenBundleName]) {
+                                    appFrameCache[hiddenBundleName].remove();
+                                    delete appFrameCache[hiddenBundleName];
+                                }
+                                openHomePage(true);
+                            }
+                        } catch (err) {
+                            console.warn('[app-visibility] failed to close disabled experimental app', err);
                         }
                     }
                 });

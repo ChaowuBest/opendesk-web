@@ -294,6 +294,20 @@ function bindFloatingChatControls(): void {
     });
 }
 
+async function configureFloatingAgentBar(applicationBundleName: string): Promise<void> {
+    let enabled = false;
+    try {
+        const config = (await window.applicationRegistryAPI.getApplicationGUIConfig(applicationBundleName)) as
+            | { needAgentBar?: boolean }
+            | undefined;
+        enabled = config?.needAgentBar === true;
+    } catch (error) {
+        console.warn(`Failed to load floating agent bar config for ${applicationBundleName}:`, error);
+    }
+    document.querySelector('#floating-ai-trigger')?.toggleAttribute('hidden', !enabled);
+    document.querySelector('#floating-ai-chat-panel')?.toggleAttribute('hidden', !enabled);
+}
+
 function showBootstrapError(message: string): void {
     const container = document.querySelector('#application-container');
     if (!container) {
@@ -346,6 +360,7 @@ async function bootstrapApplication(): Promise<void> {
     }
 
     await window.applicationAPI.setApplicationBundleName(applicationBundleName);
+    await configureFloatingAgentBar(applicationBundleName);
 
     const entryJSPath = `../../main/applications/${applicationBundleName}/renderer/entry.js`;
     const entryTSPath = `../../main/applications/${applicationBundleName}/renderer/entry.ts`;

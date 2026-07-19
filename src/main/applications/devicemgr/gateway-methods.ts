@@ -19,10 +19,11 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
-import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
+import { BaseTaskUpdateSubscriber, isTaskVisibleForDeveloperMode } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
 import type { BaseToolset } from '../../aikernel/tool.js';
+import { isDeveloperModeEnabled } from '../../utils/setting.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -466,13 +467,16 @@ const handleChatAbortStub: GatewayMethodHandler = (_conn, _frame, _params, respo
 function makeSessionsListHandler(ctx: GatewayMethodContext): GatewayMethodHandler {
     return (_conn, _frame, _params, respond) => {
         const taskList = ctx.taskManagerState.getTaskList();
-        const sessions = taskList.map((t: any) => ({
-            sessionKey: t.task_id,
-            sessionId: t.task_id,
-            title: t.task_name || '未命名',
-            createdAt: t.started_at,
-            updatedAt: t.finished_at || t.started_at
-        }));
+        const developerMode = isDeveloperModeEnabled();
+        const sessions = taskList
+            .filter((task) => isTaskVisibleForDeveloperMode(task, developerMode))
+            .map((t: any) => ({
+                sessionKey: t.task_id,
+                sessionId: t.task_id,
+                title: t.task_name || '未命名',
+                createdAt: t.started_at,
+                updatedAt: t.finished_at || t.started_at
+            }));
         respond(true, { sessions });
     };
 }

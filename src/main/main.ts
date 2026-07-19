@@ -28,7 +28,8 @@ import {
     ModelInstance,
     getOpendeskDirectory,
     getTaskDirectory,
-    getTaskArtifactDirectory
+    getTaskArtifactDirectory,
+    isDeveloperModeEnabled
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
@@ -99,7 +100,7 @@ import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/prot
 import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
-import type { TaskState } from './aikernel/states/tasks.js';
+import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 
@@ -967,9 +968,10 @@ const registerUsageAPIHandlers = () => {
             summary.week.task_count = countTasksCreatedBetween(weekStart, tomorrowStart);
 
             const existingRankItems: typeof summary.month_top_tasks = [];
+            const developerMode = isDeveloperModeEnabled();
             for (const item of summary.month_top_tasks) {
                 const task = taskManagerState.getTask(item.task_id);
-                if (!task) {
+                if (!task || !isTaskVisibleForDeveloperMode(task, developerMode)) {
                     continue;
                 }
                 existingRankItems.push({
@@ -992,9 +994,10 @@ const registerUsageAPIHandlers = () => {
             const rankings = await getUsageRankings(params?.rankPeriod ?? 'month', 30);
             const taskManagerState = GlobalState.getInstance().taskManagerState;
             const enrichedTasks: typeof rankings.tasks = [];
+            const developerMode = isDeveloperModeEnabled();
             for (const item of rankings.tasks) {
                 const task = taskManagerState.getTask(item.task_id);
-                if (!task) {
+                if (!task || !isTaskVisibleForDeveloperMode(task, developerMode)) {
                     continue;
                 }
                 enrichedTasks.push({
