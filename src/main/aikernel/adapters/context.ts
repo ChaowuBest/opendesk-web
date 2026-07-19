@@ -9,7 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AssistantMessage, ChatContext, ToolCall, type AssistantMessagePart, type ChatMessage } from '../messages.js';
+import {
+    AssistantMessage,
+    ChatContext,
+    ToolCall,
+    UserMessage,
+    type AssistantMessagePart,
+    type ChatMessage
+} from '../messages.js';
 import { buildActiveContextView } from '../compaction/context-view.js';
 import type { ActiveContextView, AssistantRoundRef } from '../compaction/types.js';
 
@@ -17,6 +24,7 @@ export interface AdapterMessageBuildOptions {
     activeContext?: ActiveContextView;
     toolResultOverrides?: Map<string, string>;
     assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
+    requestTailText?: string;
 }
 
 export interface AssistantReplayInstruction {
@@ -42,6 +50,7 @@ export function buildContextProjection(
     options: AdapterMessageBuildOptions = {}
 ): AdapterContextProjection {
     const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
+    const messages = [...activeContext.messages];
     const assistantReplayByMessageId = new Map(options.assistantReplayByMessageId ?? []);
 
     if (
@@ -53,9 +62,13 @@ export function buildContextProjection(
         });
     }
 
+    if (typeof options.requestTailText === 'string' && options.requestTailText.trim().length > 0) {
+        messages.push(new UserMessage(options.requestTailText));
+    }
+
     return {
         systemPrompt: chatContext.system_prompt,
-        messages: activeContext.messages,
+        messages,
         toolResultOverrides: options.toolResultOverrides,
         assistantReplayByMessageId
     };

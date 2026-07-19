@@ -26,6 +26,7 @@ import { getLocale } from '../../../../locale/index.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 import { readUserPortrait } from '../../memory/user_portrait.js';
+import { getEvidenceCardSystemSection, isEvidenceCardFeatureEnabled } from '../../../utils/evidencecard.js';
 import { Setting } from '../../../utils/setting.js';
 import { listExecutionNodes } from '../../security/harness.js';
 
@@ -293,6 +294,10 @@ export class MainAgentDecl extends AgentDecl {
             getLanguageSection(),
             getOutputEfficiencySection()
         ].filter((s): s is string => s !== null);
+
+        if (isEvidenceCardFeatureEnabled()) {
+            staticSections.push(getEvidenceCardSystemSection());
+        }
 
         // Mode-specific sub-prompt 作为静态部分的一部分（用于 prompt cache 的考虑将来可以调整）
         const modeSubPrompt = activeMode?.getSubPrompt?.(taskCtx);

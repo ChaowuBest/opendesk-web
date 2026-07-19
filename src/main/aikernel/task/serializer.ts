@@ -21,6 +21,7 @@ import type { ReasoningEffort } from '../../utils/setting.js';
 import { TaskState } from '../states/tasks.js';
 import type { TaskManagerState } from './manager.js';
 import { logger } from '../../utils/logger.js';
+import { normalizeEvidenceCardState } from '../../utils/evidencecard.js';
 
 // ═══════════════════ Helpers ═══════════════════
 
@@ -353,6 +354,7 @@ export function indexEntryHasMetadata(entry: Record<string, unknown>): boolean {
 // ═══════════════════ Fork ═══════════════════
 
 export function forkTask(task: TaskState): TaskState {
+    task.refreshEvidenceCardFeatureState();
     const forkedTask = new TaskState(task.task_manager_state, null);
     const toolResultReplacementState = task.getSynchronizedToolResultReplacementState();
 
@@ -364,6 +366,8 @@ export function forkTask(task: TaskState): TaskState {
     // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。
     forkedTask.session_memory_state = SessionMemoryStates.create();
     forkedTask.benchmark_usage = undefined;
+    forkedTask.enableEvidenceCard = task.enableEvidenceCard;
+    forkedTask.evidencecard_state = normalizeEvidenceCardState(task.evidencecard_state, task.enableEvidenceCard);
 
     // Copy model and reasoning effort
     forkedTask.model = task.model;
