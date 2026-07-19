@@ -1,9 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- * You may use this software according to the terms and conditions of the MulanPSL2.
- */
-
 import { describe, expect, test } from '@jest/globals';
 import { getContextMenuPalette } from '../../../renderer/utils/context-menu-theme.js';
 

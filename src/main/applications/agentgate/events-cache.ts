@@ -1,4 +1,15 @@
 /**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * AgentGate Events Cache — 在主进程中缓存 AgentGate 的拦截/放行事件，
  * 并通过回调定期推送给渲染进程，供浮窗组件显示。
  *
@@ -41,7 +52,9 @@ class AgentGateEventsCache {
     private _polling = false;
     private _timer: ReturnType<typeof setInterval> | null = null;
     /** 推送回调（由 main.ts 提供，负责 IPC 推送到 renderer） */
-    private _pushCallback: ((events: AgentGateEvent[], counts: { totalCount: number; denyCount: number; allowCount: number }) => void) | null = null;
+    private _pushCallback:
+        | ((events: AgentGateEvent[], counts: { totalCount: number; denyCount: number; allowCount: number }) => void)
+        | null = null;
 
     static getInstance(): AgentGateEventsCache {
         if (!AgentGateEventsCache.instance) {
@@ -51,7 +64,12 @@ class AgentGateEventsCache {
     }
 
     /** 设置推送回调（由 main.ts 在主进程环境中调用） */
-    setPushCallback(callback: (events: AgentGateEvent[], counts: { totalCount: number; denyCount: number; allowCount: number }) => void): void {
+    setPushCallback(
+        callback: (
+            events: AgentGateEvent[],
+            counts: { totalCount: number; denyCount: number; allowCount: number }
+        ) => void
+    ): void {
         this._pushCallback = callback;
     }
 
@@ -124,7 +142,11 @@ class AgentGateEventsCache {
 
             const eventsData = await eventsResp.json();
             // API may return array (old format) or {total, data} (pagination format)
-            const events: AgentGateEvent[] = Array.isArray(eventsData) ? eventsData : Array.isArray(eventsData.data) ? eventsData.data : [];
+            const events: AgentGateEvent[] = Array.isArray(eventsData)
+                ? eventsData
+                : Array.isArray(eventsData.data)
+                  ? eventsData.data
+                  : [];
 
             // 提取全量统计数字（不受 limit=50 限制）
             this._totalCount = typeof eventsData.total === 'number' ? eventsData.total : events.length;
