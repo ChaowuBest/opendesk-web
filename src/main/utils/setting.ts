@@ -367,7 +367,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         task_config: TaskSettingSchema.describe('任务设置').default({
             auto_retry: true,
             generate_taskname: true,
-            termination_check: true
+            termination_check: true,
+            evidence_card: false
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,

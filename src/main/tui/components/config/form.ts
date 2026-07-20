@@ -11,6 +11,7 @@
 
 import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
+import { t } from '../../../../locale/index.js';
 
 export interface TextFieldDef {
     type: 'text';
@@ -295,7 +296,7 @@ export class ConfigForm implements Component {
         }
 
         lines.push('');
-        lines.push(chalk.dim('  ↑↓ 切换字段  Enter 确认  Esc 返回'));
+        lines.push(chalk.dim(t('config.common.navigation_hint')));
 
         return lines;
     }
@@ -314,7 +315,7 @@ export class ConfigForm implements Component {
             if (displayValue) {
                 lines.push('    ' + chalk.dim(truncateValue(displayValue, width - 6)));
             } else {
-                lines.push('    ' + chalk.dim.italic('(空)'));
+                lines.push('    ' + chalk.dim.italic(t('config.common.empty')));
             }
         }
         lines.push('');
@@ -323,18 +324,18 @@ export class ConfigForm implements Component {
     private renderBooleanField(lines: string[], item: FormItem & { type: 'boolean' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
-        const value = item.value ? chalk.green('是') : chalk.red('否');
+        const value = item.value ? chalk.green(t('config.common.yes')) : chalk.red(t('config.common.no'));
         lines.push(`${indicator}${label}: ${value}`);
     }
 
     private renderSelectField(lines: string[], item: FormItem & { type: 'select' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
-        const displayValue = item.optionLabels?.[item.value] ?? (item.value || '(未选择)');
+        const displayValue = item.optionLabels?.[item.value] ?? (item.value || t('config.common.unselected'));
         const value = active ? chalk.cyan.bold(displayValue) : chalk.dim(displayValue);
         lines.push(`${indicator}${label}: ${value}`);
         if (active) {
-            lines.push(chalk.dim('    ←→ / Enter 切换'));
+            lines.push(chalk.dim(t('config.common.select_hint')));
         }
     }
 

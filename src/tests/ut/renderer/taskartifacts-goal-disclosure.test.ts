@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 describe('task artifacts goal disclosure state', () => {
@@ -64,6 +64,14 @@ describe('task artifacts goal disclosure state', () => {
         await import('../../../renderer/components/taskartifacts.ts');
     });
 
+    afterEach(() => {
+        for (const artifacts of document.querySelectorAll<HTMLElement>('task-artifacts')) {
+            artifacts.remove();
+        }
+        document.body.replaceChildren();
+        jest.useRealTimers();
+    });
+
     function createArtifacts(): HTMLElement & {
         setGoalState: (goal: any) => void;
         setGoalEvalProgress: (progress: any) => void;
@@ -77,7 +85,6 @@ describe('task artifacts goal disclosure state', () => {
             showGoalCreationForm: () => void;
         };
         document.body.appendChild(artifacts);
-        artifacts.connectedCallback?.();
         return artifacts;
     }
 
@@ -92,9 +99,27 @@ describe('task artifacts goal disclosure state', () => {
         artifacts.setAttribute('task-id', 'task-1');
         taskView.appendChild(artifacts);
         document.body.appendChild(taskView);
-        artifacts.connectedCallback?.();
         return artifacts;
     }
+
+    test('disconnecting the component clears duration and delayed layout timers', () => {
+        jest.useFakeTimers();
+        const baselineTimers = jest.getTimerCount();
+        const artifacts = createArtifacts();
+
+        artifacts.setTaskTodos([
+            {
+                id: 'todo-running',
+                title: 'Running todo',
+                status: 'in_progress',
+                updated_at: '2026-07-08T10:01:00.000Z'
+            }
+        ]);
+
+        expect(jest.getTimerCount()).toBeGreaterThan(baselineTimers);
+        artifacts.remove();
+        expect(jest.getTimerCount()).toBe(baselineTimers);
+    });
 
     function terminalGoal(id: string) {
         return {

@@ -219,46 +219,82 @@ export function decodeShellOutput(buffer: Buffer): string {
 // 维护一个全局 PID 集合，在 Node.js 退出时统一杀掉整个进程组，防止泄漏。
 
 const detachedPids = new Set<number>();
+const TERMINATION_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'] as const;
+type TerminationSignal = (typeof TERMINATION_SIGNALS)[number];
 let exitHandlerInstalled = false;
+let exitHandler: (() => void) | undefined;
+const terminationHandlers = new Map<TerminationSignal, () => void>();
 
-function cleanupDetachedProcesses(): void {
+function signalDetachedProcesses(signal: NodeJS.Signals): void {
     for (const pid of detachedPids) {
         try {
-            process.kill(-pid, 'SIGTERM');
+            process.kill(-pid, signal);
         } catch {
             /* already dead */
         }
     }
+}
+
+function forceCleanupDetachedProcesses(): void {
+    signalDetachedProcesses('SIGKILL');
     detachedPids.clear();
+    uninstallExitHandlersIfIdle();
+}
+
+function uninstallExitHandlersIfIdle(): void {
+    if (!exitHandlerInstalled || detachedPids.size > 0) return;
+    if (exitHandler) process.removeListener('exit', exitHandler);
+    for (const [signal, handler] of terminationHandlers) {
+        process.removeListener(signal, handler);
+    }
+    exitHandler = undefined;
+    terminationHandlers.clear();
+    exitHandlerInstalled = false;
+}
+
+function handleTerminationSignal(signal: TerminationSignal, handler: () => void): void {
+    signalDetachedProcesses('SIGTERM');
+
+    // 若已有上层信号处理器，由上层负责异步保存、遥测刷新和最终退出；这里不能提前 process.exit()。
+    // 若本处理器是唯一监听者，则移除自身并重放原始信号，以保留默认信号退出状态。
+    if (process.listenerCount(signal) === 1) {
+        forceCleanupDetachedProcesses();
+        process.removeListener(signal, handler);
+        process.kill(process.pid, signal);
+        return;
+    }
+
+    // 上层优雅退出若迟迟没有结束，最终强制清理仍存活的进程组；unref 避免该定时器阻止正常退出。
+    const forceTimer = setTimeout(forceCleanupDetachedProcesses, 1000);
+    forceTimer.unref();
 }
 
 function ensureExitHandler(): void {
     if (exitHandlerInstalled) return;
     exitHandlerInstalled = true;
-    // exit 事件在正常退出时触发，但不覆盖 SIGKILL 等强制终止；
-    // 额外监听 SIGTERM / SIGINT 在优雅终止信号到达时也能清理
-    process.on('exit', cleanupDetachedProcesses);
-    process.on('SIGTERM', () => {
-        cleanupDetachedProcesses();
-        process.exit();
-    });
-    process.on('SIGINT', () => {
-        cleanupDetachedProcesses();
-        process.exit();
-    });
+    exitHandler = forceCleanupDetachedProcesses;
+    process.on('exit', exitHandler);
+    for (const signal of TERMINATION_SIGNALS) {
+        const handler = () => handleTerminationSignal(signal, handler);
+        terminationHandlers.set(signal, handler);
+        process.on(signal, handler);
+    }
 }
 
 /**
  * 跟踪一个 detached 子进程，确保 OpenDesk 退出时杀掉其整个进程组。
- * 进程正常退出或出错后自动从跟踪列表中移除。
+ * close 事件确认进程及其 stdio 均已关闭后，自动从跟踪列表中移除。
  */
 export function trackDetachedProcess(proc: ChildProcess): void {
     if (process.platform === 'win32' || !proc.pid) return;
+    const pid = proc.pid;
     ensureExitHandler();
-    detachedPids.add(proc.pid);
-    const remove = () => detachedPids.delete(proc.pid);
+    detachedPids.add(pid);
+    const remove = () => {
+        detachedPids.delete(pid);
+        uninstallExitHandlersIfIdle();
+    };
     proc.on('close', remove);
-    proc.on('error', remove);
 }
 
 // ── 非交互式环境变量防御表 ───────────────────────────────────────────────
@@ -357,6 +393,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
         let timedOut = false;
+        let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
 
         const timer = options.timeout
             ? setTimeout(() => {
@@ -372,6 +409,20 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
                   } else {
                       proc.kill('SIGTERM');
                   }
+                  forceKillTimer = setTimeout(() => {
+                      if (proc.pid) {
+                          try {
+                              if (process.platform === 'win32') {
+                                  proc.kill('SIGKILL');
+                              } else {
+                                  process.kill(-proc.pid, 'SIGKILL');
+                              }
+                          } catch {
+                              /* process already dead */
+                          }
+                      }
+                  }, 1000);
+                  forceKillTimer.unref();
               }, options.timeout)
             : null;
 
@@ -384,6 +435,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 
         proc.on('close', (code) => {
             if (timer) clearTimeout(timer);
+            if (forceKillTimer) clearTimeout(forceKillTimer);
             const stderr = decodeShellOutput(Buffer.concat(stderrChunks));
             const stdout = decodeShellOutput(Buffer.concat(stdoutChunks));
             if (timedOut) {
@@ -401,6 +453,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 
         proc.on('error', (err) => {
             if (timer) clearTimeout(timer);
+            if (forceKillTimer) clearTimeout(forceKillTimer);
             reject(err);
         });
     });

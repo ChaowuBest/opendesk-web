@@ -519,6 +519,12 @@ export const enUs: Record<string, string> = {
     'config.common.save': 'OK Save',
     'config.common.delete': 'Delete',
     'config.common.cancel': 'Back',
+    'config.common.yes': 'Yes',
+    'config.common.no': 'No',
+    'config.common.empty': '(empty)',
+    'config.common.unselected': '(not selected)',
+    'config.common.navigation_hint': '  ↑↓ Switch fields  Enter Confirm  Esc Back',
+    'config.common.select_hint': '    ←→ / Enter Switch',
     'config.enter.select': 'Enter select',
     'config.esc.back': 'Esc back',
 

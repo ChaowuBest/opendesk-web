@@ -29,7 +29,12 @@ export class TaskConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const taskConfig = data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true };
+        const taskConfig = data.task_config ?? {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: false
+        };
         const cliConfig = data.cli_config ?? { use_isolated_python: true, inherit_venv: true };
 
         const fields: FieldDef[] = [
@@ -95,7 +100,12 @@ export class TaskConfigPage implements Component {
         const setting = Setting.getInstance();
         const data = setting.getData();
         data.task_config = {
-            ...(data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true }),
+            ...(data.task_config ?? {
+                auto_retry: true,
+                generate_taskname: true,
+                termination_check: true,
+                evidence_card: false
+            }),
             auto_retry: values.auto_retry !== false,
             generate_taskname: values.generate_taskname !== false,
             termination_check: values.termination_check !== false,

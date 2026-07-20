@@ -506,6 +506,12 @@ export const zhCn: Record<string, string> = {
     'config.common.save': '🆗 保存',
     'config.common.delete': '🗑️  删除',
     'config.common.cancel': '↩  返回',
+    'config.common.yes': '是',
+    'config.common.no': '否',
+    'config.common.empty': '(空)',
+    'config.common.unselected': '(未选择)',
+    'config.common.navigation_hint': '  ↑↓ 切换字段  Enter 确认  Esc 返回',
+    'config.common.select_hint': '    ←→ / Enter 切换',
     'config.enter.select': 'Enter 选择',
     'config.esc.back': 'Esc 返回',
 
