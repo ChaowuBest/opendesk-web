@@ -285,6 +285,7 @@ const DebugModeSchema = z.object({
 });
 
 const TelemetryEndpointSchema = z.object({
+    name: z.string().default('').describe('端点名称，用于标识'),
     url: z.string().describe('OTLP HTTP 端点地址，如 http://localhost:4318/v1/traces'),
     protocol: z.enum(['opentelemetry']).default('opentelemetry').describe('遥测协议，当前仅支持 OpenTelemetry'),
     enabled: z.boolean().default(false).describe('是否启用此端点')

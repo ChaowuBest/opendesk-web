@@ -1293,55 +1293,161 @@ class SettingPanel extends HTMLElement {
         const telemetryConfig = this.currentData?.telemetry?.opentelemetry || {};
         const endpoints = Array.isArray(telemetryConfig.endpoints) ? telemetryConfig.endpoints : [];
 
-        const getProtocolLabel = (protocol) => {
-            switch (protocol) {
-                case 'opentelemetry':
-                    return 'OpenTelemetry';
-                default:
-                    return protocol || 'OpenTelemetry';
-            }
-        };
-
-        const endpointRows = endpoints
-            .map((ep, i) => {
-                // string 格式的旧端点已在 schema 层面过滤，无需兼容处理
-                const url = ep.url || '';
-                const protocol = ep.protocol || 'opentelemetry';
-                const enabled = !!ep.enabled;
-                return `
-            <div class="sp-telemetry-row" data-telemetry-row="${i}">
-                <span class="sp-tag sp-tag-teal">${this.escapeHtml(getProtocolLabel(protocol))}</span>
-                <input type="text" class="sp-telemetry-url" value="${this.escapeHtml(url)}" data-telemetry-url="${i}" spellcheck="false" autocomplete="off">
-                <label class="sp-toggle-switch">
-                    <input type="checkbox" ${enabled ? 'checked' : ''} data-telemetry-toggle="${i}" class="telemetry-endpoint-toggle-hidden">
-                    <span class="sp-toggle-track" style="cursor:pointer"></span>
-                </label>
-                <button type="button" class="sp-telemetry-delete-btn" data-telemetry-delete="${i}" title="${this._t('renderer.settings.telemetryDeleteEndpoint')}" style="border:none;background:transparent;color:var(--sp-color-text-tertiary);cursor:pointer;padding:4px 8px;font-size:14px;border-radius:var(--sp-radius-sm);transition:color 0.15s,background 0.15s">
-                    <i class="fas fa-trash-can"></i>
-                </button>
-            </div>`;
-            })
-            .join('');
-
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">${this._t('renderer.settings.telemetry')}</h2>
-            <div class="sp-section-card">
-                ${endpoints.length > 0 ? `<div style="display:flex;flex-direction:column;gap:8px">${endpointRows}</div>` : `<div class="sp-toggle-desc" style="text-align:center;padding:16px 0">${this._t('renderer.settings.telemetryEmpty')}</div>`}
-                <div id="telemetry-add-row" style="display:none;margin-top:12px;gap:8px;align-items:center">
-                    <select id="telemetry-add-protocol" class="sp-form-input" style="flex-shrink:0;width:auto;min-width:140px;font-size:13px">
-                        <option value="opentelemetry">OpenTelemetry</option>
-                    </select>
-                    <input type="text" id="telemetry-add-input" class="sp-form-input" style="flex:1;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace);font-size:13px" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
-                    <button type="button" id="telemetry-add-confirm" class="sp-add-btn" style="margin:0;flex-shrink:0">${this._t('renderer.settings.telemetryConfirmAdd')}</button>
-                    <button type="button" id="telemetry-add-cancel" style="border:1px solid var(--sp-color-border);background:transparent;color:var(--sp-color-text-secondary);border-radius:var(--sp-radius-md);padding:8px 14px;cursor:pointer;font-size:13px;flex-shrink:0">${this._t('renderer.settings.telemetryCancelAdd')}</button>
-                </div>
+            <h2 class="sp-section-title">${this._t('renderer.settings.telemetry')}<span class="sp-section-subtitle">${endpoints.length} 个端点</span></h2>
+            <div id="telemetry-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+                ${endpoints.map((ep, i) => this.renderTelemetryCard(ep, i)).join('')}
             </div>
-            <button id="telemetry-add-btn" class="sp-add-btn" style="margin-top:12px">
+            <button id="telemetry-add-btn" class="sp-add-btn" style="margin-top:16px">
                 <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('renderer.settings.telemetryAddEndpoint')}
             </button>
         </section>
         `;
+    }
+
+    renderTelemetryCard(endpoint, index) {
+        const protocol = endpoint.protocol || 'opentelemetry';
+        const enabled = !!endpoint.enabled;
+        const url = endpoint.url || '';
+        const name = endpoint.name || '';
+        const protocolLabel = protocol === 'opentelemetry' ? 'OpenTelemetry' : protocol;
+        const displayName = name || url || '未设置端点';
+
+        return `
+        <div class="sp-card" data-telemetry-index="${index}">
+            <div class="flex items-start justify-between">
+                <div class="flex-1 min-w-0">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text);word-break:break-all">${this.escapeHtml(displayName)}</h3>
+                        <span class="sp-tag sp-tag-teal">${this.escapeHtml(protocolLabel)}</span>
+                        ${enabled ? '<span class="sp-tag sp-tag-success">已启用</span>' : '<span class="sp-tag sp-tag-neutral">已禁用</span>'}
+                    </div>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace)">${this.escapeHtml(url || 'http://localhost:4318/v1/traces')}</p>
+                </div>
+                <div class="sp-card-actions">
+                    <button class="edit-telemetry-btn sp-card-action-btn" data-index="${index}" title="${this._t('renderer.settings.telemetryEdit')}">
+                        <i class="fas fa-pen" style="font-size:12px"></i>
+                    </button>
+                    <button class="delete-telemetry-btn sp-card-action-btn sp-delete-btn" data-index="${index}" title="${this._t('renderer.settings.telemetryDeleteEndpoint')}">
+                        <i class="fas fa-trash" style="font-size:12px"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
+    showTelemetryEditModal(index) {
+        const isEdit = index >= 0;
+        const endpoint = isEdit
+            ? this.currentData?.telemetry?.opentelemetry?.endpoints?.[index] || {
+                  name: '',
+                  url: '',
+                  protocol: 'opentelemetry',
+                  enabled: true
+              }
+            : { name: '', url: '', protocol: 'opentelemetry', enabled: true };
+
+        this._editingTelemetryIndex = index;
+
+        this.showModal(`
+            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? this._t('config.telemetry.edit') : this._t('config.telemetry.add_title')}</h3>
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.field.name')}</label>
+                        <input id="telemetry-name-input" type="text" value="${this.escapeHtml(endpoint.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('config.telemetry.field.name')}">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.endpoint')}</label>
+                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all font-mono" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.protocol')}</label>
+                        <select id="telemetry-protocol-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="opentelemetry" ${endpoint.protocol === 'opentelemetry' ? 'selected' : ''}>OpenTelemetry (OTLP)</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input id="telemetry-enabled-input" type="checkbox" ${endpoint.enabled ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
+                        <label for="telemetry-enabled-input" class="text-sm text-gray-600">${this._t('config.telemetry.field.enabled')}</label>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+                    <button id="telemetry-modal-cancel" class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors">${this._t('renderer.settings.telemetryCancelAdd')}</button>
+                    <button id="telemetry-modal-save" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all">${this._t('renderer.settings.telemetryConfirmAdd')}</button>
+                </div>
+            </div>
+        `);
+
+        // 绑定事件
+        this.querySelector('.modal-close-btn')?.addEventListener('click', () => this.closeModal());
+        this.querySelector('#telemetry-modal-cancel')?.addEventListener('click', () => this.closeModal());
+        this.querySelector('#telemetry-modal-save')?.addEventListener('click', () => this.saveTelemetryEndpoint());
+        this.querySelector('#telemetry-url-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.saveTelemetryEndpoint();
+            }
+        });
+    }
+
+    saveTelemetryEndpoint() {
+        const name = this.querySelector('#telemetry-name-input')?.value?.trim() || '';
+        const url = this.querySelector('#telemetry-url-input')?.value?.trim();
+        if (!url) return;
+
+        const protocol = this.querySelector('#telemetry-protocol-input')?.value || 'opentelemetry';
+        const enabled = this.querySelector('#telemetry-enabled-input')?.checked ?? true;
+        const index = this._editingTelemetryIndex;
+
+        if (!this.currentData.telemetry) this.currentData.telemetry = {};
+        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+        if (!Array.isArray(this.currentData.telemetry.opentelemetry.endpoints)) {
+            this.currentData.telemetry.opentelemetry.endpoints = [];
+        }
+
+        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+
+        if (index >= 0 && index < endpoints.length) {
+            // 编辑现有端点
+            endpoints[index] = { name, url, protocol, enabled };
+        } else {
+            // 添加新端点
+            endpoints.push({ name, url, protocol, enabled });
+        }
+
+        this.closeModal();
+        this.saveImmediately();
+        this.refreshTelemetrySection();
+    }
+
+    deleteTelemetryEndpoint(index) {
+        if (!this.currentData.telemetry) this.currentData.telemetry = {};
+        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+        if (Array.isArray(endpoints) && index >= 0 && index < endpoints.length) {
+            endpoints.splice(index, 1);
+            this.saveImmediately();
+            this.refreshTelemetrySection();
+        }
+    }
+
+    toggleTelemetryEndpoint(index, enabled) {
+        if (!this.currentData.telemetry) this.currentData.telemetry = {};
+        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+        if (Array.isArray(endpoints) && index >= 0 && index < endpoints.length) {
+            endpoints[index].enabled = enabled;
+            this.saveImmediately();
+            this.refreshTelemetrySection();
+        }
     }
 
     escapeHtml(str) {
@@ -1351,101 +1457,22 @@ class SettingPanel extends HTMLElement {
     _bindTelemetryEvents() {
         // 添加端点按钮
         this.querySelector('#telemetry-add-btn')?.addEventListener('click', () => {
-            const addRow = this.querySelector('#telemetry-add-row');
-            const addBtn = this.querySelector('#telemetry-add-btn');
-            if (addRow) addRow.style.display = 'flex';
-            if (addBtn) addBtn.style.display = 'none';
-            this.querySelector('#telemetry-add-input')?.focus();
+            this.showTelemetryEditModal(-1);
         });
 
-        // 取消添加
-        this.querySelector('#telemetry-add-cancel')?.addEventListener('click', () => {
-            const addRow = this.querySelector('#telemetry-add-row');
-            const addBtn = this.querySelector('#telemetry-add-btn');
-            if (addRow) addRow.style.display = 'none';
-            if (addBtn) addBtn.style.display = '';
-            const input = this.querySelector('#telemetry-add-input');
-            if (input) input.value = '';
-        });
-
-        // 确认添加
-        const confirmAdd = () => {
-            const input = this.querySelector('#telemetry-add-input');
-            const url = input?.value?.trim();
-            if (!url) return;
-            const protocolSelect = this.querySelector('#telemetry-add-protocol');
-            const protocol = protocolSelect?.value || 'opentelemetry';
-            if (!this.currentData.telemetry) this.currentData.telemetry = {};
-            if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
-            if (!Array.isArray(this.currentData.telemetry.opentelemetry.endpoints)) {
-                this.currentData.telemetry.opentelemetry.endpoints = [];
-            }
-            this.currentData.telemetry.opentelemetry.endpoints.push({ url, protocol, enabled: true });
-            this.saveImmediately();
-            this.refreshTelemetrySection();
-        };
-        this.querySelector('#telemetry-add-confirm')?.addEventListener('click', confirmAdd);
-        this.querySelector('#telemetry-add-input')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                confirmAdd();
-            }
-        });
-
-        // 每个端点的开关
-        this.querySelectorAll('[data-telemetry-toggle]').forEach((toggle) => {
-            toggle.addEventListener('change', (e) => {
-                const idx = parseInt(e.target.dataset.telemetryToggle, 10);
-                if (!this.currentData.telemetry) this.currentData.telemetry = {};
-                if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
-                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
-                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
-                    endpoints[idx].enabled = e.target.checked;
-                    this.saveImmediately();
-                    this.refreshTelemetrySection();
-                }
+        // 编辑端点
+        this.querySelectorAll('.edit-telemetry-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.showTelemetryEditModal(index);
             });
         });
 
         // 删除端点
-        this.querySelectorAll('[data-telemetry-delete]').forEach((btn) => {
+        this.querySelectorAll('.delete-telemetry-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
-                const idx = parseInt(e.currentTarget.dataset.telemetryDelete, 10);
-                if (!this.currentData.telemetry) this.currentData.telemetry = {};
-                if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
-                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
-                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
-                    endpoints.splice(idx, 1);
-                    this.saveImmediately();
-                    this.refreshTelemetrySection();
-                }
-            });
-        });
-
-        // 编辑端点 URL
-        this.querySelectorAll('[data-telemetry-url]').forEach((input) => {
-            const saveUrl = () => {
-                const idx = parseInt(input.dataset.telemetryUrl, 10);
-                const newUrl = input.value.trim();
-                if (!this.currentData.telemetry?.opentelemetry?.endpoints) return;
-                const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
-                if (Array.isArray(endpoints) && idx >= 0 && idx < endpoints.length) {
-                    if (endpoints[idx].url !== newUrl && newUrl) {
-                        endpoints[idx].url = newUrl;
-                        this.saveImmediately();
-                    }
-                    this.refreshTelemetrySection();
-                }
-            };
-            input.addEventListener('blur', saveUrl);
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    input.blur();
-                }
-                if (e.key === 'Escape') {
-                    input.blur();
-                }
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.deleteTelemetryEndpoint(index);
             });
         });
     }
