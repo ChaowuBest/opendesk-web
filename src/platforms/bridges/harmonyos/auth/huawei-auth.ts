@@ -17,7 +17,6 @@ import { loadSession, saveSession, deleteSession } from './token-store.js';
 import type { UserSession } from './types';
 
 const POLL_INTERVAL_MS = 200;
-const POLL_TIMEOUT_MS = 60_000;
 
 function getClientId(): string {
     return process.env.HUAWEI_CLIENT_ID ?? '';
@@ -158,23 +157,15 @@ export class HuaweiAuthService {
         logger.info('Huawei auth session cleared');
     }
 
-    /** 轮询获取登录结果 */
+    /** 轮询获取登录结果（不超时，弹窗保持直到用户完成登录或主动退出应用） */
     private async pollLoginResult(kit: HuaweiAccountKit): Promise<HuaweiLoginResult> {
-        const deadline = Date.now() + POLL_TIMEOUT_MS;
-        while (Date.now() < deadline) {
+        for (;;) {
             const result = await kit.peekLogin();
             if (result) {
                 return result;
             }
             await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         }
-        // 超时，关闭登录窗口
-        try {
-            await kit.closeLogin();
-        } catch {
-            /* ignore */
-        }
-        throw new Error('Huawei login timed out');
     }
 }
 
