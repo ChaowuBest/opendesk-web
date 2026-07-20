@@ -75,7 +75,15 @@ export class HuaweiAuthService {
         // 2. 轮询获取登录结果
         const loginResult = await this.pollLoginResult(kit);
         if (!loginResult.status) {
+            // 登录失败/取消：保留弹窗，由用户选择重试或点击"退出应用"
             throw new Error('Huawei login failed or was cancelled');
+        }
+
+        // 2.1 登录成功才关闭弹窗，避免残留
+        try {
+            await kit.closeLogin();
+        } catch {
+            /* ignore */
         }
 
         logger.info('Huawei login successful, exchanging authCode for access token...');
