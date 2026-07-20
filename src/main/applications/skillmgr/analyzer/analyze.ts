@@ -1037,7 +1037,7 @@ ${preScanSection}`;
 
     /**
      * 执行单个测试用例：创建 Agent 任务 → 发送测试 Prompt → 等待完成 →
-     * 追加验证消息 → 解析 JSON → 更新状态 → 生成运行时依赖元数据
+     * 追加验证消息 → 解析 JSON → 更新状态
      */
     private async _runTestForCase(plan: TestCasePlan): Promise<void> {
         if (!this.state.running) return;
@@ -1106,22 +1106,6 @@ ${preScanSection}`;
                 if (parseResult.success) {
                     // 更新状态
                     await this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
-
-                    // 第三步：生成运行时依赖元数据
-                    if (this.state.running) {
-                        try {
-                            const testrunDir = path.join(skillDir, 'testrun');
-                            fs.mkdirSync(testrunDir, { recursive: true });
-                            await task.submitUserMessage(
-                                this._buildRuntimeDependencyAnalysisPrompt(skillDir, skillName, testCase)
-                            );
-                            await task.waitUntilFinished();
-                        } catch (err) {
-                            logger.error(
-                                `[SkillAnalyzer] runtime_dependency_analysis 生成失败 ${skillName}#${tcIndex}: ${this._formatError(err)}`
-                            );
-                        }
-                    }
 
                     break;
                 }
