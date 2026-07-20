@@ -634,6 +634,7 @@ export const enUs: Record<string, string> = {
     'config.telemetry.title': 'Telemetry',
     'config.telemetry.title.hint': 'OpenTelemetry tracing',
     'config.telemetry.field.enabled': 'Enable this endpoint',
+    'config.telemetry.field.name': 'Endpoint Name',
     'config.telemetry.endpoints': 'OTLP Endpoints',
     'config.telemetry.add': 'Add Endpoint',
     'config.telemetry.add_title': 'Add OTLP Endpoint',

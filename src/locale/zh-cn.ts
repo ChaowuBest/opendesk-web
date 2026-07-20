@@ -621,6 +621,7 @@ export const zhCn: Record<string, string> = {
     'config.telemetry.title': '遥测设置',
     'config.telemetry.title.hint': 'OpenTelemetry 链路追踪',
     'config.telemetry.field.enabled': '启用此端点',
+    'config.telemetry.field.name': '端点名称',
     'config.telemetry.endpoints': 'OTLP 端点列表',
     'config.telemetry.add': '添加端点',
     'config.telemetry.add_title': '添加 OTLP 端点',
