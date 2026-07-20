@@ -26,6 +26,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import {
     buildContextProjection,
@@ -113,7 +114,9 @@ function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record
         return {};
     }
     return {
-        ...extraHeaders,
+        ...Object.fromEntries(
+            Object.entries(extraHeaders).map(([k, v]) => [k, iconv.encode(v, 'latin1').toString('latin1')])
+        ),
         span_id: crypto.randomBytes(8).toString('hex')
     };
 }
@@ -129,13 +132,26 @@ export class AnthropicAdapter {
     }
 
     private headers(extraHeaders?: Record<string, string>): Record<string, string> {
+        const sanitizedCustom = this.modelInstance.custom_headers
+            ? Object.fromEntries(
+                  Object.entries(this.modelInstance.custom_headers).map(([k, v]) => [
+                      k,
+                      iconv.encode(v, 'latin1').toString('latin1')
+                  ])
+              )
+            : {};
+        const sanitizedExtra = extraHeaders
+            ? Object.fromEntries(
+                  Object.entries(extraHeaders).map(([k, v]) => [k, iconv.encode(v, 'latin1').toString('latin1')])
+              )
+            : {};
         return {
             'Content-Type': 'application/json',
             'x-api-key': this.modelInstance.api_key,
             Authorization: `Bearer ${this.modelInstance.api_key}`,
             'anthropic-version': '2023-06-01',
-            ...(this.modelInstance.custom_headers ?? {}),
-            ...(extraHeaders ?? {})
+            ...sanitizedCustom,
+            ...sanitizedExtra
         };
     }
 

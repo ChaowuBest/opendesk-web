@@ -23,6 +23,7 @@ import { ensureMcpWorkspace } from '../mcp.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
 import { Setting } from '../../../utils/setting.js';
+import iconv from 'iconv-lite';
 import {
     getRequestOrTaskWorkspace,
     getRequestWorkspace,
@@ -100,8 +101,8 @@ function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, st
 
     return {
         extraHeaders: {
-            cookie: cookie,
-            trace_id: traceHeader.value
+            cookie: iconv.encode(cookie, 'latin1').toString('latin1'),
+            trace_id: iconv.encode(traceHeader.value, 'latin1').toString('latin1')
         }
     };
 }

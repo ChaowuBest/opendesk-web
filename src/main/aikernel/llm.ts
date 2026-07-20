@@ -28,6 +28,7 @@ import type { AdapterMessageBuildOptions } from './adapters/context.js';
 import { t } from '../../locale/index.js';
 import { fetchModelUrl } from '../utils/model-network.js';
 import { getTracer, withSpan, context, trace, SpanStatusCode, type Span } from '../telemetry/index.js';
+import iconv from 'iconv-lite';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -232,7 +233,11 @@ class LLM {
             Authorization: `Bearer ${modelInstance.api_key}`
         };
         if (modelInstance.custom_headers) {
-            Object.assign(headers, modelInstance.custom_headers);
+            const sanitized: Record<string, string> = {};
+            for (const [k, v] of Object.entries(modelInstance.custom_headers)) {
+                sanitized[k] = iconv.encode(v, 'latin1').toString('latin1');
+            }
+            Object.assign(headers, sanitized);
         }
         return headers;
     }
@@ -351,9 +356,13 @@ class LLM {
                 Authorization: `Bearer ${modelInstance.api_key}`,
                 'Content-Type': 'application/json'
             };
-            // 合并自定义 headers
+            // 合并自定义 headers，sanitize 非 ASCII 字符防止 ByteString 编码错误
             if (modelInstance.custom_headers) {
-                Object.assign(headers, modelInstance.custom_headers);
+                const sanitized: Record<string, string> = {};
+                for (const [k, v] of Object.entries(modelInstance.custom_headers)) {
+                    sanitized[k] = iconv.encode(v, 'latin1').toString('latin1');
+                }
+                Object.assign(headers, sanitized);
             }
             const response = await fetchModelUrl(
                 modelInstance,

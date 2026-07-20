@@ -11,6 +11,8 @@ export interface CliOption {
     boolean?: boolean;
     defaultValue?: string | boolean;
     parse?: (value: string) => string | boolean;
+    /** 是否允许在 CLI 上重复指定多次（如 --opt a --opt b），Commander 会收集为数组 */
+    repeated?: boolean;
 }
 
 export interface EventDecl {

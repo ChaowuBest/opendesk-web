@@ -18,7 +18,8 @@ import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
-import { MANAGE_SKILLS_SKILL, loadHarmonyosFallbackSkill } from './skills.js';
+import { MANAGE_SKILLS_SKILL } from './skills.js';
+import { loadHarmonyosFallbackSkill } from '../../aikernel/harnesses/platform/harmonyos/skills.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
@@ -30,7 +31,7 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import { getSkillStatus } from './status.js';
-import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
+import { SkillAnalyzer, type ExportMetaOptions, type RunTestOptions } from './analyzer/analyze.js';
 import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
 import { registerSkillTestCliSubcommands } from './skill-test-cli.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
@@ -47,6 +48,9 @@ import {
     installSkillFromRegistryByName
 } from './utils.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
+
+const HARMONYOS_FALLBACK_SKILL_NAME = 'harmonyos-fallback-skill';
+const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -114,6 +118,7 @@ export class SkillMgrApplication extends BaseApplication {
             {
                 name: 'mount-skill',
                 description: '从指定目录加载 skill，可多次指定',
+                repeated: true,
                 parse: (v) => v
             }
         ];
@@ -189,9 +194,16 @@ export class SkillMgrApplication extends BaseApplication {
             .command('list')
             .description('列出所有已安装的技能')
             .option('--json', '以 JSON 格式输出')
-            .action((opts: { json?: boolean }) => {
+            .action((opts: { json?: boolean }, command: Command) => {
                 useCliTransport();
                 useConsoleTransport();
+                const globalOpts = command.optsWithGlobals() as Record<string, unknown>;
+                const mounted = globalOpts.skillmgrMountSkill;
+                const mountedDirs = Array.isArray(mounted) ? mounted : mounted ? [mounted] : [];
+                for (const dir of mountedDirs) {
+                    if (typeof dir === 'string') SkillRegistry.addMountedDir(dir);
+                }
+                if (mountedDirs.length > 0) SkillRegistry.refresh();
                 const skills = SkillRegistry.listSkills();
                 const skillsDir = SkillRegistry.getSkillsDirectory();
 
@@ -285,16 +297,16 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.generateTests(skillIds, concurrency);
     }
 
-    async runSkillTests(skillIds: string[], concurrency: number = 5) {
-        return this.analyzer.runTests(skillIds, concurrency);
+    async runSkillTests(skillIds: string[], concurrency: number = 5, options: RunTestOptions = {}) {
+        return this.analyzer.runTests(skillIds, concurrency, options);
     }
 
-    async runUnpassedSkillTests(skillIds: string[], concurrency: number = 5) {
-        return this.analyzer.runUnpassedTests(skillIds, concurrency);
+    async runUnpassedSkillTests(skillIds: string[], concurrency: number = 5, options: RunTestOptions = {}) {
+        return this.analyzer.runUnpassedTests(skillIds, concurrency, options);
     }
 
-    async runSingleSkillTest(skillId: string, testCaseIndex: number) {
-        return this.analyzer.runSingleTest(skillId, testCaseIndex);
+    async runSingleSkillTest(skillId: string, testCaseIndex: number, options: RunTestOptions = {}) {
+        return this.analyzer.runSingleTest(skillId, testCaseIndex, options);
     }
 
     async stopAnalysis() {
@@ -366,9 +378,11 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsSkill.toolsets = [manageSkillsToolset];
         skills.push(manageSkillsSkill);
 
-        const harmonyosSkill = loadHarmonyosFallbackSkill();
-        if (harmonyosSkill) {
-            skills.push(harmonyosSkill);
+        if (isHarmonyosRuntime) {
+            const harmonyosSkill = loadHarmonyosFallbackSkill();
+            if (harmonyosSkill) {
+                skills.push(harmonyosSkill);
+            }
         }
 
         return skills;
@@ -430,9 +444,11 @@ export class SkillMgrApplication extends BaseApplication {
         }> = [];
         for (const [bundleName, skills] of allSkills) {
             for (const skill of skills) {
-                // skillmgr bundle：只暴露 harmonyos-fallback-skill 为内置技能，
+                // skillmgr bundle：只在 HarmonyOS PC 运行时暴露 harmonyos-fallback-skill 为内置技能，
                 // 其他技能（用户安装的 + manage-skills）不在此 Tab 显示
-                if (bundleName === 'skillmgr' && skill.frontmatter.name !== 'harmonyos-fallback-skill') continue;
+                if (bundleName === 'skillmgr') {
+                    if (!isHarmonyosRuntime || skill.frontmatter.name !== HARMONYOS_FALLBACK_SKILL_NAME) continue;
+                }
                 const tools: Array<{
                     name: string;
                     description: string;
@@ -540,8 +556,8 @@ export class SkillMgrApplication extends BaseApplication {
         return result;
     }
 
-    async installFromRegistry(installUrl: string, force: boolean = false) {
-        const result = await installFromRegistryInstallUrl(installUrl, force);
+    async installFromRegistry(installUrl: string, force: boolean = false, customName?: string) {
+        const result = await installFromRegistryInstallUrl(installUrl, force, customName);
         if (!result.success) {
             throw new Error(result.error);
         }

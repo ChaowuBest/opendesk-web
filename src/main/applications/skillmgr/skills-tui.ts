@@ -79,7 +79,9 @@ type ViewState =
     | 'skill-detail'
     | 'skill-content'
     | 'skill-resources'
-    | 'confirm-delete';
+    | 'confirm-delete'
+    | 'confirm-duplicate'
+    | 'install-custom-name';
 
 type DetailTab = 'info' | 'body' | 'resources';
 
@@ -104,6 +106,8 @@ export class SkillsOverlay implements Component {
     private previousState: ViewState = 'main';
     private contentScrollOffset = 0;
     private readonly detailMaxVisibleLines = 12;
+    private pendingInstallSkill: RegistrySkill | null = null;
+    private duplicateDefaultName = '';
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -639,6 +643,75 @@ export class SkillsOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
+    private showConfirmDuplicate() {
+        this.cleanup();
+        this.state = 'confirm-duplicate';
+        const name = this.pendingInstallSkill?.name || '未知技能';
+        this.header = new Text(chalk.yellow.bold(` 技能「${name}」已安装，如何处理?`));
+
+        const items = [
+            { value: 'overwrite', label: chalk.yellow('覆盖安装') },
+            { value: 'install-as-new', label: chalk.cyan('以新名称安装') },
+            { value: 'cancel', label: chalk.green('取消') }
+        ];
+
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private showInstallCustomName() {
+        this.cleanup();
+        this.state = 'install-custom-name';
+        this.list = undefined;
+        this.header = new Text(chalk.bold(' 以新名称安装'));
+
+        this.input = new Input();
+        this.input.setValue(this.duplicateDefaultName);
+        this.input.onSubmit = () => {
+            this.performInstallWithCustomName().catch((err) => {
+                console.error('Install with custom name error:', err);
+            });
+        };
+
+        this.setupInputHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.input);
+    }
+
+    private async performInstallWithCustomName() {
+        const name = this.input?.getValue().trim() || '';
+        if (!name) {
+            this.showMessage('请输入技能名称', true);
+            return;
+        }
+
+        if (!this.pendingInstallSkill) return;
+
+        this.setLoading(true);
+        try {
+            const result = await installFromRegistryInstallUrl(this.pendingInstallSkill.installUrl, false, name);
+
+            if (result && result.success) {
+                SkillMgrApplication.notifySkillsChanged();
+                this.showMessage(`成功安装技能: ${result.name ?? ''}`, false, 'main');
+                await this.loadInstalledSkills();
+                this.pendingInstallSkill = null;
+                this.duplicateDefaultName = '';
+                this.showMain();
+            } else {
+                this.showMessage(result?.error || '安装失败', true);
+                this.showInstallCustomName();
+            }
+        } catch (e: any) {
+            this.showMessage(e?.message || '安装失败', true);
+            this.showInstallCustomName();
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
     private formatSkillDetailContent(detail: SkillDetail, contentWidth: number): string[] {
         const lines: string[] = [];
         const indent = '  ';
@@ -796,6 +869,9 @@ export class SkillsOverlay implements Component {
                 case 'confirm-delete':
                     this.handleDetailSelection(value);
                     break;
+                case 'confirm-duplicate':
+                    this.handleDuplicateSelection(value);
+                    break;
             }
         };
 
@@ -813,6 +889,46 @@ export class SkillsOverlay implements Component {
             this.deleteSkill(this.currentSkillDetail.id);
         } else if (value === 'cancel') {
             this.renderSkillDetail();
+        }
+    }
+
+    private handleDuplicateSelection(value: string) {
+        switch (value) {
+            case 'overwrite':
+                this.performOverwriteInstall();
+                break;
+            case 'install-as-new':
+                this.showInstallCustomName();
+                break;
+            case 'cancel':
+                this.pendingInstallSkill = null;
+                this.duplicateDefaultName = '';
+                this.showSearchResults();
+                break;
+        }
+    }
+
+    private async performOverwriteInstall() {
+        if (!this.pendingInstallSkill) return;
+
+        this.setLoading(true);
+        try {
+            const result = await installFromRegistryInstallUrl(this.pendingInstallSkill.installUrl, true);
+
+            if (result && result.success) {
+                SkillMgrApplication.notifySkillsChanged();
+                this.showMessage(`成功覆盖安装技能: ${result.name ?? ''}`, false, 'main');
+                await this.loadInstalledSkills();
+                this.pendingInstallSkill = null;
+                this.duplicateDefaultName = '';
+                this.showMain();
+            } else {
+                this.showMessage(result?.error || '安装失败', true);
+            }
+        } catch (e: any) {
+            this.showMessage(e?.message || '安装失败', true);
+        } finally {
+            this.setLoading(false);
         }
     }
 
@@ -850,6 +966,15 @@ export class SkillsOverlay implements Component {
             return;
         }
 
+        // 检测到已安装的同名技能，提示用户选择处理方式
+        const skillNameToCheck = skill.name;
+        if (skillNameToCheck && SkillRegistry.skillExists(skillNameToCheck)) {
+            this.pendingInstallSkill = skill;
+            this.duplicateDefaultName = `${skillNameToCheck}-1`;
+            this.showConfirmDuplicate();
+            return;
+        }
+
         this.setLoading(true);
         try {
             const result = await installFromRegistryInstallUrl(skill.installUrl);
@@ -860,7 +985,14 @@ export class SkillsOverlay implements Component {
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
-                this.showMessage(result?.error || '安装失败', true);
+                const conflictSkillName = result?.error?.match(/^技能「(.+?)」已存在(?:，.*)?$/)?.[1];
+                if (conflictSkillName) {
+                    this.pendingInstallSkill = { ...skill, name: conflictSkillName };
+                    this.duplicateDefaultName = `${conflictSkillName}-1`;
+                    this.showConfirmDuplicate();
+                } else {
+                    this.showMessage(result?.error || '安装失败', true);
+                }
             }
         } catch (e: any) {
             this.showMessage(e?.message || '安装失败', true);
@@ -918,6 +1050,14 @@ export class SkillsOverlay implements Component {
                 break;
             case 'confirm-delete':
                 this.renderSkillDetail();
+                break;
+            case 'confirm-duplicate':
+                this.pendingInstallSkill = null;
+                this.duplicateDefaultName = '';
+                this.showSearchResults();
+                break;
+            case 'install-custom-name':
+                this.showConfirmDuplicate();
                 break;
             case 'main':
                 this.close();
@@ -1092,6 +1232,8 @@ export class SkillsOverlay implements Component {
                 return '输入本地 zip 文件路径:';
             case 'install-url':
                 return '输入 zip URL:';
+            case 'install-custom-name':
+                return '输入新的技能名称:';
             default:
                 return '';
         }
@@ -1119,6 +1261,10 @@ export class SkillsOverlay implements Component {
                 return '←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回';
             case 'confirm-delete':
                 return '↑↓ 选择  Enter 确认  Esc 返回';
+            case 'confirm-duplicate':
+                return '↑↓ 选择  Enter 确认  Esc 返回';
+            case 'install-custom-name':
+                return '输入新名称  Enter 安装  Esc 返回';
             default:
                 return '';
         }

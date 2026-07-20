@@ -53,6 +53,7 @@ describe('skillmgr registry tools helpers', () => {
 
     afterEach(() => {
         SkillRegistry.clearRuntimeConfig();
+        SkillRegistry.clearMountedDirs();
         allRegistries.splice(0, allRegistries.length, ...originalRegistries);
         for (const tempDir of tempDirs) {
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -84,15 +85,7 @@ describe('skillmgr registry tools helpers', () => {
 
         fs.writeFileSync(
             path.join(tempDir, 'SKILL.md'),
-            [
-                '---',
-                `name: ${rootName}`,
-                'description: Root external skill',
-                '---',
-                '',
-                '# Root Skill',
-                ''
-            ].join('\n'),
+            ['---', `name: ${rootName}`, 'description: Root external skill', '---', '', '# Root Skill', ''].join('\n'),
             'utf8'
         );
 
@@ -100,15 +93,7 @@ describe('skillmgr registry tools helpers', () => {
         fs.mkdirSync(skillDir, { recursive: true });
         fs.writeFileSync(
             path.join(skillDir, 'SKILL.md'),
-            [
-                '---',
-                `name: ${deepName}`,
-                'description: Deep external skill',
-                '---',
-                '',
-                '# Deep Skill',
-                ''
-            ].join('\n'),
+            ['---', `name: ${deepName}`, 'description: Deep external skill', '---', '', '# Deep Skill', ''].join('\n'),
             'utf8'
         );
 
@@ -193,15 +178,9 @@ describe('skillmgr registry tools helpers', () => {
         fs.mkdirSync(skillDir, { recursive: true });
         fs.writeFileSync(
             path.join(skillDir, 'SKILL.md'),
-            [
-                '---',
-                `name: ${skillName}`,
-                'description: Dedupe external skill',
-                '---',
-                '',
-                '# Dedupe Skill',
-                ''
-            ].join('\n'),
+            ['---', `name: ${skillName}`, 'description: Dedupe external skill', '---', '', '# Dedupe Skill', ''].join(
+                '\n'
+            ),
             'utf8'
         );
 
@@ -223,6 +202,24 @@ describe('skillmgr registry tools helpers', () => {
                 skillDir
             })
         );
+    });
+
+    test('identifies skills loaded from mounted directories', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-mounted-skill-'));
+        tempDirs.push(tempDir);
+        const skillName = `mounted-skill-${path.basename(tempDir).slice(-6).toLowerCase()}`;
+
+        fs.writeFileSync(
+            path.join(tempDir, 'SKILL.md'),
+            ['---', `name: ${skillName}`, 'description: Mounted skill', '---', '', '# Mounted Skill', ''].join('\n'),
+            'utf8'
+        );
+
+        SkillRegistry.addMountedDir(tempDir);
+        SkillRegistry.refresh();
+
+        expect(SkillRegistry.isMountedSkill(skillName)).toBe(true);
+        expect(SkillRegistry.isMountedSkill('missing-skill')).toBe(false);
     });
 
     test('searches all registries and returns GUI card install metadata', async () => {

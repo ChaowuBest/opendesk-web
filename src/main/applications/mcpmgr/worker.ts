@@ -11,6 +11,7 @@
 
 import { BaseWorker } from '../base';
 import { logger } from '../../utils/logger.js';
+import iconv from 'iconv-lite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
@@ -340,15 +341,31 @@ export default class McpMgrWorker extends BaseWorker {
             }
             case 'sse': {
                 const proxyFetch = this.createProxyFetch();
+                const serverHeaders = server.headers
+                    ? Object.fromEntries(
+                          Object.entries(server.headers).map(([k, v]) => [
+                              k,
+                              iconv.encode(v, 'latin1').toString('latin1')
+                          ])
+                      )
+                    : {};
                 return new SSEClientTransport(new URL(server.url!), {
-                    requestInit: { headers: server.headers || {} },
+                    requestInit: { headers: serverHeaders },
                     fetch: proxyFetch
                 });
             }
             case 'streamableHttp': {
                 const proxyFetch = this.createProxyFetch();
+                const serverHeaders = server.headers
+                    ? Object.fromEntries(
+                          Object.entries(server.headers).map(([k, v]) => [
+                              k,
+                              iconv.encode(v, 'latin1').toString('latin1')
+                          ])
+                      )
+                    : {};
                 return new StreamableHTTPClientTransport(new URL(server.url!), {
-                    requestInit: { headers: server.headers || {} },
+                    requestInit: { headers: serverHeaders },
                     fetch: proxyFetch
                 });
             }

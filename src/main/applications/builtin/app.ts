@@ -9,10 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from '../../aikernel/tool.js';
 import { Skill } from '../../aikernel/skill.js';
-import { BaseApplication } from '../base';
-import { POOL_SKILL, CreateSubTaskPoolTool } from './pool.js';
+import { BaseApplication } from '../base.js';
+import { loadPoolSkill } from './pool.js';
+import { loadAnalysisResultVisualizerSkill } from './analysis-result-visualizer.js';
 
 export class BuiltinApplication extends BaseApplication {
     constructor() {
@@ -20,10 +20,10 @@ export class BuiltinApplication extends BaseApplication {
     }
 
     async getSkills(): Promise<Skill[]> {
-        const skill = Skill.parseMd(POOL_SKILL);
-        const toolset = new BaseToolset('pool');
-        toolset.addTool(new CreateSubTaskPoolTool());
-        skill.toolsets = [toolset];
-        return [skill];
+        const skills: Skill[] = [];
+        skills.push(loadPoolSkill());
+        skills.push(loadAnalysisResultVisualizerSkill());
+
+        return skills;
     }
 }

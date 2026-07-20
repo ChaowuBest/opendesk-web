@@ -44,6 +44,7 @@ import {
 
 interface SkillTestGenOptions {
     all?: boolean;
+    mountOnly?: boolean;
     autoRun?: boolean;
     concurrency?: string | number;
     export?: string;
@@ -53,9 +54,11 @@ interface SkillTestGenOptions {
 
 interface SkillTestRunOptions {
     all?: boolean;
+    mountOnly?: boolean;
     unpassed?: boolean;
     cases?: string;
     concurrency?: string | number;
+    timeout?: string | number;
     export?: string;
     silent?: boolean;
     appendPrompt?: string;
@@ -90,6 +93,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .command('gen [names]')
         .description('生成技能测试用例')
         .option('--all', '为全部用户安装的技能生成测试用例')
+        .option('--mount-only', '只显示通过 --skillmgr-mount-skill 挂载的技能')
         .option('--auto-run', '生成完成后自动运行测试用例')
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
@@ -98,7 +102,10 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .action(async (names: string | undefined, opts: SkillTestGenOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const skills = opts.mountOnly
+                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'gen');
                 const concurrency = parseConcurrency(opts.concurrency);
                 const exportDir = resolveSkillTestExportDir(opts.export);
@@ -140,18 +147,24 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .command('run [names]')
         .description('运行技能测试用例')
         .option('--all', '运行全部用户安装的技能测试用例')
+        .option('--mount-only', '只显示通过 --skillmgr-mount-skill 挂载的技能')
         .option('--unpassed', '只运行未通过的测试用例')
         .option('--cases <indices>', '逗号分隔的用例序号（1-based），仅限一个技能')
         .option('--concurrency <n>', '并发数，默认 5', '5')
+        .option('--timeout <minutes>', '单个测试用例超时时间（分钟），默认无限制')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
         .option('--no-silent', '关闭静默模式，显示全部日志输出')
         .option('--append-prompt <text>', '追加提示词，拼入测试运行的 prompt 末尾')
         .action(async (names: string | undefined, opts: SkillTestRunOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const skills = opts.mountOnly
+                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'run');
                 const concurrency = parseConcurrency(opts.concurrency);
+                const timeoutMs = parseTimeout(opts.timeout);
                 const testCaseIndices = parseTestCaseIndices(opts.cases);
 
                 if (testCaseIndices.length > 0 && selectedSkillIds.length !== 1) {
@@ -168,12 +181,14 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
                         '运行',
                         (runner) => {
                             if (testCaseIndices.length > 0) {
-                                return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency);
+                                return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency, {
+                                    timeoutMs
+                                });
                             }
                             if (opts.unpassed) {
-                                return runner.runUnpassedTests(selectedSkillIds, concurrency);
+                                return runner.runUnpassedTests(selectedSkillIds, concurrency, { timeoutMs });
                             }
-                            return runner.runTests(selectedSkillIds, concurrency);
+                            return runner.runTests(selectedSkillIds, concurrency, { timeoutMs });
                         },
                         { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
                     );
@@ -280,6 +295,15 @@ async function resolveCliSkillIds(
         throw new Error('没有可操作的用户安装技能');
     }
     return skillIds;
+}
+
+function parseTimeout(raw: string | number | undefined): number | undefined {
+    if (raw === undefined) return undefined;
+    const minutes = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        throw new Error('超时时间（分钟）必须是大于 0 的有限数值');
+    }
+    return minutes * 60_000;
 }
 
 function parseConcurrency(raw: string | number | undefined): number {

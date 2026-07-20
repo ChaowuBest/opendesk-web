@@ -1407,23 +1407,29 @@ export class TaskState {
         // stop() 可能从 clearAllTasks() 直接遍历 this.tasks 调用（绕过 getTask()），
         // 此时任务可能处于懒加载状态。
         this.ensureLoaded();
-        if (this.task_status === 'stopped') {
-            return;
-        }
-        this.task_status = 'stopped';
-        this.stop_requested_by_user = reason === 'user';
-        this.finished_at = new Date();
-        logger.info(`task ${this.task_id} stopped (reason=${reason})`);
-        this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
-        this.markInterruptedToolCalls('任务已停止');
-        // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
-        // 改回 'running' 后继续发送 scheduled 状态
-        this._retryDelayPending = false;
+        const alreadyStopped = this.task_status === 'stopped';
 
+        if (!alreadyStopped) {
+            this.task_status = 'stopped';
+            this.stop_requested_by_user = reason === 'user';
+            this.finished_at = new Date();
+            logger.info(`task ${this.task_id} stopped (reason=${reason})`);
+            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            this.markInterruptedToolCalls('任务已停止');
+            // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
+            // 改回 'running' 后继续发送 scheduled 状态
+            this._retryDelayPending = false;
+        }
+
+        // 级联停止子任务：即使父任务已经 stopped，也要确保子任务被停止
         for (const task of this.task_manager_state.tasks) {
             if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
                 task.stop(reason);
             }
+        }
+
+        if (alreadyStopped) {
+            return;
         }
 
         for (const resolver of this._stopResolvers) {

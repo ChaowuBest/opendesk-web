@@ -2,9 +2,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import AdmZip from 'adm-zip';
-import { SkillRegistry } from '../../../main/applications/skillmgr/utils';
-import { installSkillFromLocalZip } from '../../../main/applications/skillmgr/utils';
+import {
+    SkillRegistry,
+    installFromRegistryInstallUrl,
+    installSkillFromLocalZip,
+    installSkillFromUrl
+} from '../../../main/applications/skillmgr/utils';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
+import { setPlatform } from '../../../platforms/base';
 
 describe('skillmgr skill package installation', () => {
     let tempDir: string;
@@ -161,4 +166,150 @@ describe('skillmgr skill package installation', () => {
             'Rust-powered browser automation that rips through DOMs 10x faster than Puppeteer.'
         );
     });
+
+    test('keeps local zip auto-renaming but supports explicit registry conflict policies', () => {
+        const zipPath = path.join(tempDir, 'conflict-skill.zip');
+        const zip = new AdmZip();
+        zip.addFile(
+            'conflict-skill/SKILL.md',
+            Buffer.from(
+                [
+                    '---',
+                    'name: conflict-skill',
+                    'description: Skill used to verify installation conflict policies',
+                    '---',
+                    '',
+                    '# Conflict Skill'
+                ].join('\n'),
+                'utf8'
+            )
+        );
+        zip.writeZip(zipPath);
+
+        expect(installSkillFromLocalZip(zipPath).name).toBe('conflict-skill');
+        expect(installSkillFromLocalZip(zipPath).name).toBe('conflict-skill-1');
+
+        const rejected = installSkillFromLocalZip(zipPath, undefined, false, true, { action: 'reject' });
+        expect(rejected.success).toBe(false);
+        expect(rejected.error).toContain('已存在');
+        expect(fs.existsSync(path.join(tempDir, 'apps', 'skills', 'resources', 'conflict-skill-2'))).toBe(false);
+
+        const renamed = installSkillFromLocalZip(zipPath, undefined, false, true, {
+            action: 'rename',
+            name: 'renamed-conflict-skill'
+        });
+        expect(renamed).toEqual({ success: true, name: 'renamed-conflict-skill' });
+        expect(
+            fs.readFileSync(
+                path.join(tempDir, 'apps', 'skills', 'resources', 'renamed-conflict-skill', 'SKILL.md'),
+                'utf8'
+            )
+        ).toContain('name: renamed-conflict-skill');
+    });
+
+    test('rejects duplicate remote installs while local zip installs auto-rename', async () => {
+        const zip = new AdmZip();
+        zip.addFile(
+            'remote-conflict-skill/SKILL.md',
+            Buffer.from(
+                [
+                    '---',
+                    'name: remote-conflict-skill',
+                    'description: Skill used to verify remote installation conflict behavior',
+                    '---',
+                    '',
+                    '# Remote Conflict Skill'
+                ].join('\n'),
+                'utf8'
+            )
+        );
+        const zipBuffer = zip.toBuffer();
+        setPlatform({
+            fetch: async () => new Response(zipBuffer),
+            getEffectiveWorkspace: () => tempDir,
+            initPlatformHarness: async () => {}
+        } as any);
+
+        const first = await installSkillFromUrl('https://example.com/remote-conflict-skill.zip');
+        const duplicate = await installSkillFromUrl('https://example.com/remote-conflict-skill.zip');
+
+        expect(first).toEqual({ success: true, name: 'remote-conflict-skill' });
+        expect(duplicate.success).toBe(false);
+        expect(duplicate.error).toContain('已存在');
+        expect(fs.existsSync(path.join(tempDir, 'apps', 'skills', 'resources', 'remote-conflict-skill-1'))).toBe(false);
+    });
+
+    test.each([
+        ['matrix', 'matrix:market-conflict-matrix'],
+        ['clawhub', 'clawhub:market-conflict-clawhub'],
+        ['modelscope', 'modelscope:owner/market-conflict-modelscope'],
+        ['skillhub', 'skillhub:market-conflict-skillhub']
+    ])('uses the same conflict policies for the %s registry', async (_registry, installUrl) => {
+        const skillName = `market-conflict-${_registry}`;
+        const zipPath = path.join(tempDir, `${skillName}.zip`);
+        const zip = new AdmZip();
+        zip.addFile(
+            `${skillName}/SKILL.md`,
+            Buffer.from(
+                [
+                    '---',
+                    `name: ${skillName}`,
+                    'description: Skill used to verify registry conflict behavior',
+                    '---',
+                    '',
+                    '# Registry Conflict Skill'
+                ].join('\n'),
+                'utf8'
+            )
+        );
+        zip.writeZip(zipPath);
+        const zipBuffer = zip.toBuffer();
+        setPlatform({
+            fetch: async () => new Response(zipBuffer),
+            getEffectiveWorkspace: () => tempDir,
+            initPlatformHarness: async () => {}
+        } as any);
+
+        expect(installSkillFromLocalZip(zipPath)).toEqual({ success: true, name: skillName });
+
+        const rejected = await installFromRegistryInstallUrl(installUrl);
+        expect(rejected).toEqual({ success: false, error: `技能「${skillName}」已存在` });
+
+        const overwritten = await installFromRegistryInstallUrl(installUrl, true);
+        expect(overwritten).toEqual({ success: true, name: skillName });
+
+        const customName = `${skillName}-custom`;
+        const renamed = await installFromRegistryInstallUrl(installUrl, false, customName);
+        expect(renamed).toEqual({ success: true, name: customName });
+    });
+
+    test.each(['../escaped-skill', 'nested/skill', 'nested\\skill', '.', '..'])(
+        'rejects unsafe custom skill name %s',
+        (customName) => {
+            const zipPath = path.join(tempDir, 'unsafe-name-skill.zip');
+            const zip = new AdmZip();
+            zip.addFile(
+                'unsafe-name-skill/SKILL.md',
+                Buffer.from(
+                    [
+                        '---',
+                        'name: unsafe-name-skill',
+                        'description: Skill used to verify custom name validation',
+                        '---',
+                        '',
+                        '# Unsafe Name Skill'
+                    ].join('\n'),
+                    'utf8'
+                )
+            );
+            zip.writeZip(zipPath);
+
+            const result = installSkillFromLocalZip(zipPath, undefined, false, true, {
+                action: 'rename',
+                name: customName
+            });
+
+            expect(result.success).toBe(false);
+        }
+    );
 });

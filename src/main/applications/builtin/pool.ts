@@ -128,6 +128,14 @@ Agent思路：
 4. **考虑幂等性**：由于可能重试，子任务应当设计为幂等操作
 `;
 
+export function loadPoolSkill(): Skill {
+    const skill = Skill.parseMd(POOL_SKILL);
+    const toolset = new BaseToolset('pool');
+    toolset.addTool(new CreateSubTaskPoolTool());
+    skill.toolsets = [toolset];
+    return skill;
+}
+
 // ─── SubTask Pool State ────────────────────────────────────────────────────────
 
 type PoolTaskStatus = 'pending' | 'running' | 'success' | 'fail' | 'retrying';

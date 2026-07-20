@@ -10,6 +10,7 @@
  */
 
 import { Setting, type SettingData } from '../../utils/setting.js';
+import iconv from 'iconv-lite';
 import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
@@ -236,7 +237,14 @@ export function toOpenCodeModel(model: SettingData['models'][number], providerNa
         },
         status: 'active',
         options: {},
-        headers: model.custom_headers || {},
+        headers: model.custom_headers
+            ? Object.fromEntries(
+                  Object.entries(model.custom_headers).map(([k, v]) => [
+                      k,
+                      iconv.encode(v, 'latin1').toString('latin1')
+                  ])
+              )
+            : {},
         release_date: ''
     };
 }
