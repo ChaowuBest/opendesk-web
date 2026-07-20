@@ -62,6 +62,21 @@ export const DEFAULT_EXPORT_OPTIONS: ExportMetaOptions = {
     includeTestResults: true
 };
 
+export const DEFAULT_TEST_CASE_TIMEOUT_MS = 60 * 60_000;
+const TEST_CASE_TIMEOUT_STOP_GRACE_MS = 5_000;
+
+type TestCasePhase = 'initialization' | 'execution' | 'verification';
+
+class SkillTestTimeoutError extends Error {
+    constructor(
+        readonly timeoutMs: number,
+        readonly phase: TestCasePhase
+    ) {
+        super(`测试用例执行超时（${timeoutMs}ms，阶段：${phase}）`);
+        this.name = 'SkillTestTimeoutError';
+    }
+}
+
 // ── 单条测试用例执行计划 ──
 
 interface TestCasePlan {
@@ -70,6 +85,10 @@ interface TestCasePlan {
     skillName: string;
     bundleName: string;
     testCase: TestCase;
+}
+
+export interface RunTestOptions {
+    timeoutMs?: number;
 }
 
 // ── 分析状态类型 ──
@@ -163,23 +182,35 @@ export class SkillAnalyzer {
 
     // ── 运行测试 ──
 
-    async runTests(skillIds: string[], concurrency: number = 5): Promise<AnalyzeStatus> {
-        return this._startTestRun(skillIds, concurrency, () => true, '所选技能没有可运行的测试用例');
+    async runTests(skillIds: string[], concurrency: number = 5, options: RunTestOptions = {}): Promise<AnalyzeStatus> {
+        return this._startTestRun(
+            skillIds,
+            concurrency,
+            () => true,
+            '所选技能没有可运行的测试用例',
+            this._resolveTestCaseTimeout(options)
+        );
     }
 
-    async runUnpassedTests(skillIds: string[], concurrency: number = 5): Promise<AnalyzeStatus> {
+    async runUnpassedTests(
+        skillIds: string[],
+        concurrency: number = 5,
+        options: RunTestOptions = {}
+    ): Promise<AnalyzeStatus> {
         return this._startTestRun(
             skillIds,
             concurrency,
             (testCase) => testCase.status !== 'passed',
-            '所选技能没有未通过的测试用例'
+            '所选技能没有未通过的测试用例',
+            this._resolveTestCaseTimeout(options)
         );
     }
 
     async runSelectedTests(
         skillId: string,
         testCaseIndices: number[],
-        concurrency: number = 5
+        concurrency: number = 5,
+        options: RunTestOptions = {}
     ): Promise<AnalyzeStatus> {
         const selected = new Set(testCaseIndices);
         if (selected.size === 0) throw new Error('请至少指定一个测试用例');
@@ -187,7 +218,8 @@ export class SkillAnalyzer {
             [skillId],
             concurrency,
             (testCase) => selected.has(testCase.index),
-            '指定技能没有匹配的测试用例'
+            '指定技能没有匹配的测试用例',
+            this._resolveTestCaseTimeout(options)
         );
     }
 
@@ -195,7 +227,8 @@ export class SkillAnalyzer {
         skillIds: string[],
         concurrency: number,
         shouldRunTestCase: (testCase: TestCase) => boolean,
-        emptyMessage: string
+        emptyMessage: string,
+        timeoutMs: number
     ): Promise<AnalyzeStatus> {
         if (!Array.isArray(skillIds) || skillIds.length === 0) throw new Error('请至少选择一个技能');
         if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
@@ -244,7 +277,7 @@ export class SkillAnalyzer {
         const maxConcurrency = Math.max(1, concurrency);
 
         this._notifyStatusChange();
-        void this._runTestsInBackground(testPlan, maxConcurrency).catch((err) =>
+        void this._runTestsInBackground(testPlan, maxConcurrency, timeoutMs).catch((err) =>
             this._handleBackgroundFailure('测试运行', err)
         );
         return this.getStatus();
@@ -252,7 +285,7 @@ export class SkillAnalyzer {
 
     // ── 单条测试执行 ──
 
-    async runSingleTest(skillId: string, testCaseIndex: number): Promise<AnalyzeStatus> {
+    async runSingleTest(skillId: string, testCaseIndex: number, options: RunTestOptions = {}): Promise<AnalyzeStatus> {
         if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
 
         const detail = SkillRegistry.getSkillDetail(skillId);
@@ -299,7 +332,7 @@ export class SkillAnalyzer {
         this._notifyStatusChange();
 
         try {
-            await this._runTestForCase(plan);
+            await this._runTestForCase(plan, this._resolveTestCaseTimeout(options));
             const latestMeta = tryLoadOpendeskMeta(detail.skillDir);
             if (latestMeta.success) {
                 const existing = this.state.results[skillId] || {};
@@ -1007,7 +1040,41 @@ ${preScanSection}`;
 
     // ── 测试运行（内部） ──
 
-    private async _runTestsInBackground(testPlan: TestCasePlan[], concurrency: number): Promise<void> {
+    private _resolveTestCaseTimeout(options: RunTestOptions): number {
+        const timeoutMs = options.timeoutMs ?? DEFAULT_TEST_CASE_TIMEOUT_MS;
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+            throw new Error('timeoutMs 必须是大于 0 的有限数值');
+        }
+        return timeoutMs;
+    }
+
+    private async _awaitTestPhase<T>(
+        operation: Promise<T>,
+        deadline: number,
+        phase: TestCasePhase,
+        timeoutMs: number
+    ): Promise<T> {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) throw new SkillTestTimeoutError(timeoutMs, phase);
+
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                operation,
+                new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new SkillTestTimeoutError(timeoutMs, phase)), remainingMs);
+                })
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    private async _runTestsInBackground(
+        testPlan: TestCasePlan[],
+        concurrency: number,
+        timeoutMs: number
+    ): Promise<void> {
         const queue = [...testPlan];
         this._currentQueue = queue;
 
@@ -1016,7 +1083,7 @@ ${preScanSection}`;
                 const plan = queue.shift();
                 if (!plan || !this.state.running) break;
                 try {
-                    await this._runTestForCase(plan);
+                    await this._runTestForCase(plan, timeoutMs);
                 } catch (err) {
                     logger.error(
                         `[SkillAnalyzer] 测试用例 ${plan.skillName} #${plan.testCase.index} 异常: ${this._formatError(err)}`
@@ -1039,7 +1106,7 @@ ${preScanSection}`;
      * 执行单个测试用例：创建 Agent 任务 → 发送测试 Prompt → 等待完成 →
      * 追加验证消息 → 解析 JSON → 更新状态
      */
-    private async _runTestForCase(plan: TestCasePlan): Promise<void> {
+    private async _runTestForCase(plan: TestCasePlan, timeoutMs: number): Promise<void> {
         if (!this.state.running) return;
 
         this.state.currentSkill = plan.skillId;
@@ -1047,6 +1114,7 @@ ${preScanSection}`;
 
         const { skillId, skillDir, skillName, bundleName, testCase } = plan;
         const tcIndex = testCase.index;
+        const deadline = Date.now() + timeoutMs;
         let task: any = null;
         let tempWorkspace: string | null = null;
 
@@ -1071,13 +1139,25 @@ ${preScanSection}`;
             // 为每个测试用例创建独立的临时工作空间，避免并行任务之间的文件冲突
             tempWorkspace = fs.mkdtempSync(path.join(getTempDir(), 'skill-test-'));
 
-            await tm.initHarness(task, tempWorkspace, mode);
-            task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
-            await task.hooks.noticeBeforeTaskStart(task);
+            await this._awaitTestPhase(
+                tm.initHarness(task, tempWorkspace, mode),
+                deadline,
+                'initialization',
+                timeoutMs
+            );
+            task.setSystemPrompt(
+                await this._awaitTestPhase(agent.createSystemPrompt(mode, task), deadline, 'initialization', timeoutMs)
+            );
+            await this._awaitTestPhase(task.hooks.noticeBeforeTaskStart(task), deadline, 'initialization', timeoutMs);
 
             // 第一步：发送测试执行 Prompt
-            await task.submitUserMessage(this._buildTestRunPrompt(skillDir, skillName, bundleName, testCase));
-            await task.waitUntilFinished();
+            await this._awaitTestPhase(
+                task.submitUserMessage(this._buildTestRunPrompt(skillDir, skillName, bundleName, testCase)),
+                deadline,
+                'execution',
+                timeoutMs
+            );
+            await this._awaitTestPhase(task.waitUntilFinished(), deadline, 'execution', timeoutMs);
 
             if (!this.state.running) {
                 this.state.runningTaskIds.delete(task.task_id);
@@ -1091,8 +1171,13 @@ ${preScanSection}`;
                     return;
                 }
 
-                await task.submitUserMessage(this._buildTestVerifyPrompt(skillName, testCase, attempt > 0));
-                await task.waitUntilFinished();
+                await this._awaitTestPhase(
+                    task.submitUserMessage(this._buildTestVerifyPrompt(skillName, testCase, attempt > 0)),
+                    deadline,
+                    'verification',
+                    timeoutMs
+                );
+                await this._awaitTestPhase(task.waitUntilFinished(), deadline, 'verification', timeoutMs);
 
                 if (!this.state.running) {
                     this.state.runningTaskIds.delete(task.task_id);
@@ -1106,7 +1191,6 @@ ${preScanSection}`;
                 if (parseResult.success) {
                     // 更新状态
                     await this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
-
                     break;
                 }
 
@@ -1127,7 +1211,43 @@ ${preScanSection}`;
                 }
             }
         } catch (err) {
-            await this._failTestCase(plan, `Agent 执行异常: ${this._formatErrorMessage(err)}`, task?.task_id);
+            if (err instanceof SkillTestTimeoutError) {
+                if (task) {
+                    try {
+                        const interrupted = await Promise.race([
+                            task
+                                .interruptRunningTurn({
+                                    reason: 'skill_test_timeout',
+                                    stopRunningTools: true,
+                                    cancelPermissionPrompts: true,
+                                    skipFinishHooks: true
+                                })
+                                .then(() => true),
+                            new Promise<boolean>((resolve) =>
+                                setTimeout(() => resolve(false), TEST_CASE_TIMEOUT_STOP_GRACE_MS)
+                            )
+                        ]);
+                        if (!interrupted && typeof task.stop === 'function') {
+                            task.stop('skill_test_timeout');
+                        }
+                    } catch (interruptError) {
+                        logger.warn(`[SkillAnalyzer] 超时中断测试任务失败: ${this._formatError(interruptError)}`);
+                    }
+                }
+                await this._updateTestCaseStatus(
+                    skillId,
+                    skillDir,
+                    tcIndex,
+                    {
+                        result: 'failed',
+                        message: err.message,
+                        failureReasonCategory: TestFailureReasonCategory.ExternalService
+                    },
+                    task?.task_id
+                );
+            } else {
+                await this._failTestCase(plan, `Agent 执行异常: ${this._formatErrorMessage(err)}`, task?.task_id);
+            }
         } finally {
             // 清理临时工作空间
             if (tempWorkspace) {

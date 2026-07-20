@@ -31,7 +31,7 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import { getSkillStatus } from './status.js';
-import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
+import { SkillAnalyzer, type ExportMetaOptions, type RunTestOptions } from './analyzer/analyze.js';
 import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
 import { registerSkillTestCliSubcommands } from './skill-test-cli.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
@@ -297,16 +297,16 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.generateTests(skillIds, concurrency);
     }
 
-    async runSkillTests(skillIds: string[], concurrency: number = 5) {
-        return this.analyzer.runTests(skillIds, concurrency);
+    async runSkillTests(skillIds: string[], concurrency: number = 5, options: RunTestOptions = {}) {
+        return this.analyzer.runTests(skillIds, concurrency, options);
     }
 
-    async runUnpassedSkillTests(skillIds: string[], concurrency: number = 5) {
-        return this.analyzer.runUnpassedTests(skillIds, concurrency);
+    async runUnpassedSkillTests(skillIds: string[], concurrency: number = 5, options: RunTestOptions = {}) {
+        return this.analyzer.runUnpassedTests(skillIds, concurrency, options);
     }
 
-    async runSingleSkillTest(skillId: string, testCaseIndex: number) {
-        return this.analyzer.runSingleTest(skillId, testCaseIndex);
+    async runSingleSkillTest(skillId: string, testCaseIndex: number, options: RunTestOptions = {}) {
+        return this.analyzer.runSingleTest(skillId, testCaseIndex, options);
     }
 
     async stopAnalysis() {

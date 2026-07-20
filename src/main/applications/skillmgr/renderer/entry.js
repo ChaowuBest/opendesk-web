@@ -48,12 +48,12 @@ function getSkillsAPI() {
             window.applicationAPI.callMainWorld('analyzeSkillDependencies', skillIds, concurrency),
         generateSkillTests: (skillIds, concurrency) =>
             window.applicationAPI.callMainWorld('generateSkillTests', skillIds, concurrency),
-        runSkillTests: (skillIds, concurrency) =>
-            window.applicationAPI.callMainWorld('runSkillTests', skillIds, concurrency),
-        runUnpassedSkillTests: (skillIds, concurrency) =>
-            window.applicationAPI.callMainWorld('runUnpassedSkillTests', skillIds, concurrency),
-        runSingleSkillTest: (skillId, testCaseIndex) =>
-            window.applicationAPI.callMainWorld('runSingleSkillTest', skillId, testCaseIndex),
+        runSkillTests: (skillIds, concurrency, options) =>
+            window.applicationAPI.callMainWorld('runSkillTests', skillIds, concurrency, options),
+        runUnpassedSkillTests: (skillIds, concurrency, options) =>
+            window.applicationAPI.callMainWorld('runUnpassedSkillTests', skillIds, concurrency, options),
+        runSingleSkillTest: (skillId, testCaseIndex, options) =>
+            window.applicationAPI.callMainWorld('runSingleSkillTest', skillId, testCaseIndex, options),
         stopAnalysis: () => window.applicationAPI.callMainWorld('stopAnalysis'),
         getExistingSkillMetadatas: () => window.applicationAPI.callMainWorld('getExistingSkillMetadatas'),
         exportSkillMetadatas: (skillIds, zipFilePath, options) =>
@@ -1475,6 +1475,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             activeDropdown: null,
             filtered: [],
             concurrency: 5,
+            timeoutMinutes: 60,
             // Worker 分析状态
             workerStatus: null,
             // 模态弹窗
@@ -3759,6 +3760,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                         <input type="number" class="analyze-concurrency-input" data-analyze-concurrency
                             value="${state.concurrency}" min="1" max="10"
                             ${isAnalyzing ? 'disabled' : ''} />
+                        <label class="analyze-concurrency-label">超时（分钟）</label>
+                        <input type="number" class="analyze-concurrency-input" data-analyze-timeout-minutes
+                            value="${state.timeoutMinutes}" min="1" step="1"
+                            ${isAnalyzing ? 'disabled' : ''} />
                     </div>
                 </div>
             </div>
@@ -4411,6 +4416,16 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
         });
 
+        // Timeout input (minutes)
+        $('[data-analyze-timeout-minutes]')?.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value, 10);
+            if (Number.isSafeInteger(val) && val > 0) {
+                this.analyzeState.timeoutMinutes = val;
+            } else {
+                e.target.value = this.analyzeState.timeoutMinutes;
+            }
+        });
+
         this._syncAnalyzeToolbarState();
         this._bindAnalyzeScrollAreaEvents();
         this._bindAnalyzeModalEvents();
@@ -4608,7 +4623,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 try {
                     btn.disabled = true;
                     btn.textContent = '⏳ 执行中...';
-                    const status = await api.runSingleSkillTest(skillId, testCaseIndex);
+                    const timeoutMs = this.analyzeState.timeoutMinutes * 60_000;
+                    const status = await api.runSingleSkillTest(skillId, testCaseIndex, { timeoutMs });
                     // 合并结果到当前状态
                     const existing = this.analyzeState.workerStatus?.results || {};
                     this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
@@ -4894,7 +4910,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.render();
                 return;
             }
-            const status = await fn(skillIds, this.analyzeState.concurrency);
+            const timeoutMs = this.analyzeState.timeoutMinutes * 60_000;
+            const status = await fn(skillIds, this.analyzeState.concurrency, { timeoutMs });
             console.log(
                 `[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'} returned:`,
                 JSON.stringify(status)
