@@ -17,7 +17,7 @@
  * 从而兼容 OpenHarmony 等受限平台。
  */
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import iconv from 'iconv-lite';
@@ -214,6 +214,53 @@ export function decodeShellOutput(buffer: Buffer): string {
     }
 }
 
+// ── detached 进程退出清理 ──────────────────────────────────────────────────
+// detached 子进程经过 setsid() 后在新会话中运行，不会随父进程退出而终止。
+// 维护一个全局 PID 集合，在 Node.js 退出时统一杀掉整个进程组，防止泄漏。
+
+const detachedPids = new Set<number>();
+let exitHandlerInstalled = false;
+
+function cleanupDetachedProcesses(): void {
+    for (const pid of detachedPids) {
+        try {
+            process.kill(-pid, 'SIGTERM');
+        } catch {
+            /* already dead */
+        }
+    }
+    detachedPids.clear();
+}
+
+function ensureExitHandler(): void {
+    if (exitHandlerInstalled) return;
+    exitHandlerInstalled = true;
+    // exit 事件在正常退出时触发，但不覆盖 SIGKILL 等强制终止；
+    // 额外监听 SIGTERM / SIGINT 在优雅终止信号到达时也能清理
+    process.on('exit', cleanupDetachedProcesses);
+    process.on('SIGTERM', () => {
+        cleanupDetachedProcesses();
+        process.exit();
+    });
+    process.on('SIGINT', () => {
+        cleanupDetachedProcesses();
+        process.exit();
+    });
+}
+
+/**
+ * 跟踪一个 detached 子进程，确保 OpenDesk 退出时杀掉其整个进程组。
+ * 进程正常退出或出错后自动从跟踪列表中移除。
+ */
+export function trackDetachedProcess(proc: ChildProcess): void {
+    if (process.platform === 'win32' || !proc.pid) return;
+    ensureExitHandler();
+    detachedPids.add(proc.pid);
+    const remove = () => detachedPids.delete(proc.pid);
+    proc.on('close', remove);
+    proc.on('error', remove);
+}
+
 // ── 非交互式环境变量防御表 ───────────────────────────────────────────────
 // 子进程的 stdin 已关闭，但部分工具会绕过 stdin/stdout pipe 直接打开
 // /dev/tty 做交互式提示，导致进程永久阻塞。以下变量告知这些工具：
@@ -235,7 +282,11 @@ const NON_INTERACTIVE_ENV: Record<string, string> = {
     DOCKER_SCAN_SUGGEST: 'false',
     HGPLAIN: '1',
     PYTHONINSPECT: '0',
-    GPG_TTY: ''
+    GPG_TTY: '',
+    // OpenSSH 8.4+：禁止 askpass 弹窗，覆盖直接调用 ssh 的场景（GIT_SSH_COMMAND 仅覆盖 git 调用的 ssh）
+    SSH_ASKPASS_REQUIRE: 'never',
+    POETRY_NO_INTERACTION: '1',
+    CONAN_NON_INTERACTIVE: '1'
 };
 
 /**
@@ -291,12 +342,17 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
         const env = mergeGlobalEnviron(options.env);
+        // detached 让子进程在新会话中运行（POSIX setsid），使其没有控制终端。
+        // 这样 open("/dev/tty") 直接失败（ENXIO），所有工具自动回退非交互模式，
+        // 不依赖逐个工具的环境变量兼容性。Windows 无 /dev/tty 问题，跳过。
         const proc = spawn(shellPath, [...shellArgs, command], {
             cwd: options.cwd,
             env: env,
-            stdio: 'pipe'
+            stdio: 'pipe',
+            detached: process.platform !== 'win32'
         });
         proc.stdin?.end();
+        trackDetachedProcess(proc);
 
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
@@ -305,7 +361,17 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
         const timer = options.timeout
             ? setTimeout(() => {
                   timedOut = true;
-                  proc.kill('SIGTERM');
+                  // detached 模式下 proc.pid = PGID，向进程组发信号可杀掉整个子进程树，避免子进程泄漏
+                  // Windows 不支持负 PID，detached 也为 false，直接 fallback 到单进程 kill
+                  if (proc.pid) {
+                      try {
+                          process.kill(-proc.pid, 'SIGTERM');
+                      } catch {
+                          proc.kill('SIGTERM');
+                      }
+                  } else {
+                      proc.kill('SIGTERM');
+                  }
               }, options.timeout)
             : null;
 
