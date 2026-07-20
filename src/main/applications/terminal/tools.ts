@@ -37,7 +37,12 @@ import {
     type BackgroundProcessStatus
 } from './background';
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
-import { findExecutableInPath, decodeShellOutput, injectNonInteractiveEnv } from '../../utils/shellExec.js';
+import {
+    findExecutableInPath,
+    decodeShellOutput,
+    injectNonInteractiveEnv,
+    trackDetachedProcess
+} from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -415,8 +420,9 @@ async function executeShellCommand(opts: {
 
     const env = buildSpawnEnv(taskState);
     const startTime = Date.now();
-    const proc = spawn(shellPath, shellArgs, { cwd, env });
+    const proc = spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });
     proc.stdin?.end();
+    trackDetachedProcess(proc);
     runningProcesses.add(proc);
 
     let output = '';

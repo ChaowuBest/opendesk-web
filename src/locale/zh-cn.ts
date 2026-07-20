@@ -506,6 +506,12 @@ export const zhCn: Record<string, string> = {
     'config.common.save': '🆗 保存',
     'config.common.delete': '🗑️  删除',
     'config.common.cancel': '↩  返回',
+    'config.common.yes': '是',
+    'config.common.no': '否',
+    'config.common.empty': '(空)',
+    'config.common.unselected': '(未选择)',
+    'config.common.navigation_hint': '  ↑↓ 切换字段  Enter 确认  Esc 返回',
+    'config.common.select_hint': '    ←→ / Enter 切换',
     'config.enter.select': 'Enter 选择',
     'config.esc.back': 'Esc 返回',
 
@@ -590,6 +596,7 @@ export const zhCn: Record<string, string> = {
     'config.task.field.auto_retry': 'LLM 请求失败时自动重试',
     'config.task.field.generate_taskname': '自动生成任务名称',
     'config.task.field.termination_check': '自动恢复异常中断任务',
+    'config.task.field.evidence_card': '使用 EvidenceCard 节省 Tokens',
     'config.task.field.use_isolated_python': '使用隔离的 Python 环境',
     'config.task.field.inherit_venv': '继承当前虚拟环境',
 

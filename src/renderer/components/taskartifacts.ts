@@ -188,6 +188,7 @@ class TaskArtifacts extends HTMLElement {
     private _sessionMemoryVisible = false;
     private _sessionMemoryRefreshTimer: number | null = null;
     private _tabScrollResizeObserver: ResizeObserver | null = null;
+    private _tabScrollInitTimer: number | null = null;
 
     // Changes panel
     private _changesData: any = null; // TaskChangesResult | null
@@ -256,7 +257,11 @@ class TaskArtifacts extends HTMLElement {
         });
 
         // 额外延迟检测，以防初始渲染时机问题
-        setTimeout(() => {
+        if (this._tabScrollInitTimer !== null) {
+            window.clearTimeout(this._tabScrollInitTimer);
+        }
+        this._tabScrollInitTimer = window.setTimeout(() => {
+            this._tabScrollInitTimer = null;
             this._updateTabScrollButtons();
         }, 100);
     }
@@ -265,6 +270,10 @@ class TaskArtifacts extends HTMLElement {
         if (this._tabScrollResizeObserver) {
             this._tabScrollResizeObserver.disconnect();
             this._tabScrollResizeObserver = null;
+        }
+        if (this._tabScrollInitTimer !== null) {
+            window.clearTimeout(this._tabScrollInitTimer);
+            this._tabScrollInitTimer = null;
         }
     }
 

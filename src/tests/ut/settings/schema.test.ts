@@ -44,6 +44,12 @@ describe('设置 schema', () => {
         expect(setting.cli_config.inherit_venv).toBe(false);
     });
 
+    test('EvidenceCard 在任务配置整体缺省时也默认为关闭', () => {
+        const setting = Setting.getSettingSchema().parse({});
+
+        expect(setting.task_config.evidence_card).toBe(false);
+    });
+
     test('旧模型缺省为对话模型', () => {
         const setting = Setting.getSettingSchema().parse({
             models: [{ alias: 'legacy', provider_name: 'p', model_name: 'm' }]

@@ -17,7 +17,7 @@
  * 从而兼容 OpenHarmony 等受限平台。
  */
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import iconv from 'iconv-lite';
@@ -214,6 +214,89 @@ export function decodeShellOutput(buffer: Buffer): string {
     }
 }
 
+// ── detached 进程退出清理 ──────────────────────────────────────────────────
+// detached 子进程经过 setsid() 后在新会话中运行，不会随父进程退出而终止。
+// 维护一个全局 PID 集合，在 Node.js 退出时统一杀掉整个进程组，防止泄漏。
+
+const detachedPids = new Set<number>();
+const TERMINATION_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'] as const;
+type TerminationSignal = (typeof TERMINATION_SIGNALS)[number];
+let exitHandlerInstalled = false;
+let exitHandler: (() => void) | undefined;
+const terminationHandlers = new Map<TerminationSignal, () => void>();
+
+function signalDetachedProcesses(signal: NodeJS.Signals): void {
+    for (const pid of detachedPids) {
+        try {
+            process.kill(-pid, signal);
+        } catch {
+            /* already dead */
+        }
+    }
+}
+
+function forceCleanupDetachedProcesses(): void {
+    signalDetachedProcesses('SIGKILL');
+    detachedPids.clear();
+    uninstallExitHandlersIfIdle();
+}
+
+function uninstallExitHandlersIfIdle(): void {
+    if (!exitHandlerInstalled || detachedPids.size > 0) return;
+    if (exitHandler) process.removeListener('exit', exitHandler);
+    for (const [signal, handler] of terminationHandlers) {
+        process.removeListener(signal, handler);
+    }
+    exitHandler = undefined;
+    terminationHandlers.clear();
+    exitHandlerInstalled = false;
+}
+
+function handleTerminationSignal(signal: TerminationSignal, handler: () => void): void {
+    signalDetachedProcesses('SIGTERM');
+
+    // 若已有上层信号处理器，由上层负责异步保存、遥测刷新和最终退出；这里不能提前 process.exit()。
+    // 若本处理器是唯一监听者，则移除自身并重放原始信号，以保留默认信号退出状态。
+    if (process.listenerCount(signal) === 1) {
+        forceCleanupDetachedProcesses();
+        process.removeListener(signal, handler);
+        process.kill(process.pid, signal);
+        return;
+    }
+
+    // 上层优雅退出若迟迟没有结束，最终强制清理仍存活的进程组；unref 避免该定时器阻止正常退出。
+    const forceTimer = setTimeout(forceCleanupDetachedProcesses, 1000);
+    forceTimer.unref();
+}
+
+function ensureExitHandler(): void {
+    if (exitHandlerInstalled) return;
+    exitHandlerInstalled = true;
+    exitHandler = forceCleanupDetachedProcesses;
+    process.on('exit', exitHandler);
+    for (const signal of TERMINATION_SIGNALS) {
+        const handler = () => handleTerminationSignal(signal, handler);
+        terminationHandlers.set(signal, handler);
+        process.on(signal, handler);
+    }
+}
+
+/**
+ * 跟踪一个 detached 子进程，确保 OpenDesk 退出时杀掉其整个进程组。
+ * close 事件确认进程及其 stdio 均已关闭后，自动从跟踪列表中移除。
+ */
+export function trackDetachedProcess(proc: ChildProcess): void {
+    if (process.platform === 'win32' || !proc.pid) return;
+    const pid = proc.pid;
+    ensureExitHandler();
+    detachedPids.add(pid);
+    const remove = () => {
+        detachedPids.delete(pid);
+        uninstallExitHandlersIfIdle();
+    };
+    proc.on('close', remove);
+}
+
 // ── 非交互式环境变量防御表 ───────────────────────────────────────────────
 // 子进程的 stdin 已关闭，但部分工具会绕过 stdin/stdout pipe 直接打开
 // /dev/tty 做交互式提示，导致进程永久阻塞。以下变量告知这些工具：
@@ -235,7 +318,11 @@ const NON_INTERACTIVE_ENV: Record<string, string> = {
     DOCKER_SCAN_SUGGEST: 'false',
     HGPLAIN: '1',
     PYTHONINSPECT: '0',
-    GPG_TTY: ''
+    GPG_TTY: '',
+    // OpenSSH 8.4+：禁止 askpass 弹窗，覆盖直接调用 ssh 的场景（GIT_SSH_COMMAND 仅覆盖 git 调用的 ssh）
+    SSH_ASKPASS_REQUIRE: 'never',
+    POETRY_NO_INTERACTION: '1',
+    CONAN_NON_INTERACTIVE: '1'
 };
 
 /**
@@ -291,21 +378,51 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
         const env = mergeGlobalEnviron(options.env);
+        // detached 让子进程在新会话中运行（POSIX setsid），使其没有控制终端。
+        // 这样 open("/dev/tty") 直接失败（ENXIO），所有工具自动回退非交互模式，
+        // 不依赖逐个工具的环境变量兼容性。Windows 无 /dev/tty 问题，跳过。
         const proc = spawn(shellPath, [...shellArgs, command], {
             cwd: options.cwd,
             env: env,
-            stdio: 'pipe'
+            stdio: 'pipe',
+            detached: process.platform !== 'win32'
         });
         proc.stdin?.end();
+        trackDetachedProcess(proc);
 
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
         let timedOut = false;
+        let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
 
         const timer = options.timeout
             ? setTimeout(() => {
                   timedOut = true;
-                  proc.kill('SIGTERM');
+                  // detached 模式下 proc.pid = PGID，向进程组发信号可杀掉整个子进程树，避免子进程泄漏
+                  // Windows 不支持负 PID，detached 也为 false，直接 fallback 到单进程 kill
+                  if (proc.pid) {
+                      try {
+                          process.kill(-proc.pid, 'SIGTERM');
+                      } catch {
+                          proc.kill('SIGTERM');
+                      }
+                  } else {
+                      proc.kill('SIGTERM');
+                  }
+                  forceKillTimer = setTimeout(() => {
+                      if (proc.pid) {
+                          try {
+                              if (process.platform === 'win32') {
+                                  proc.kill('SIGKILL');
+                              } else {
+                                  process.kill(-proc.pid, 'SIGKILL');
+                              }
+                          } catch {
+                              /* process already dead */
+                          }
+                      }
+                  }, 1000);
+                  forceKillTimer.unref();
               }, options.timeout)
             : null;
 
@@ -318,6 +435,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 
         proc.on('close', (code) => {
             if (timer) clearTimeout(timer);
+            if (forceKillTimer) clearTimeout(forceKillTimer);
             const stderr = decodeShellOutput(Buffer.concat(stderrChunks));
             const stdout = decodeShellOutput(Buffer.concat(stdoutChunks));
             if (timedOut) {
@@ -335,6 +453,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 
         proc.on('error', (err) => {
             if (timer) clearTimeout(timer);
+            if (forceKillTimer) clearTimeout(forceKillTimer);
             reject(err);
         });
     });

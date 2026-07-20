@@ -519,6 +519,12 @@ export const enUs: Record<string, string> = {
     'config.common.save': 'OK Save',
     'config.common.delete': 'Delete',
     'config.common.cancel': 'Back',
+    'config.common.yes': 'Yes',
+    'config.common.no': 'No',
+    'config.common.empty': '(empty)',
+    'config.common.unselected': '(not selected)',
+    'config.common.navigation_hint': '  ↑↓ Switch fields  Enter Confirm  Esc Back',
+    'config.common.select_hint': '    ←→ / Enter Switch',
     'config.enter.select': 'Enter select',
     'config.esc.back': 'Esc back',
 
@@ -603,6 +609,7 @@ export const enUs: Record<string, string> = {
     'config.task.field.auto_retry': 'Auto retry failed LLM requests',
     'config.task.field.generate_taskname': 'Auto generate task name',
     'config.task.field.termination_check': 'Auto recover interrupted tasks',
+    'config.task.field.evidence_card': 'Use EvidenceCard to save tokens',
     'config.task.field.use_isolated_python': 'Use isolated Python environment',
     'config.task.field.inherit_venv': 'Auto Inherit Virtual Environment',
 

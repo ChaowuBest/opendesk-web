@@ -59,6 +59,7 @@ interface BackgroundProcessEntry {
 
 // 已完成的进程条目最多保留 5 分钟，防止无限增长
 const FINISHED_ENTRY_TTL_MS = 5 * 60 * 1000;
+const PROCESS_TERMINATION_GRACE_MS = 1000;
 
 // ── BackgroundProcessManager ─────────────────────────────────────────────────
 
@@ -174,19 +175,34 @@ export class BackgroundProcessManager {
 /**
  * 杀死进程及其整个子进程树。
  * Windows: 使用 taskkill /F /T 强制终止进程树
- * Unix:    向进程组发送 SIGTERM，若无进程组则直接 kill
+ * Unix:    向进程组发送 SIGTERM，宽限期后以 SIGKILL 兜底；若无进程组则直接 kill
  */
 export function killProcessTree(proc: ChildProcess): void {
     if (!proc.pid) return;
+    const pid = proc.pid;
     try {
         if (process.platform === 'win32') {
-            execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
+            execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
         } else {
+            let killedProcessGroup = false;
             try {
-                process.kill(-proc.pid, 'SIGTERM');
+                process.kill(-pid, 'SIGTERM');
+                killedProcessGroup = true;
             } catch {
                 proc.kill('SIGTERM');
             }
+            const forceTimer = setTimeout(() => {
+                try {
+                    if (killedProcessGroup) {
+                        process.kill(-pid, 'SIGKILL');
+                    } else if (proc.exitCode === null && proc.signalCode === null) {
+                        proc.kill('SIGKILL');
+                    }
+                } catch {
+                    /* process already dead */
+                }
+            }, PROCESS_TERMINATION_GRACE_MS);
+            forceTimer.unref();
         }
     } catch {
         /* process already dead */
@@ -226,11 +242,13 @@ export function installTimeoutBackgrounding(opts: {
 
     let timedOut = false;
     let settled = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
     return new Promise<boolean>((resolve) => {
         const settle = (backgrounded: boolean) => {
             if (settled) return;
             settled = true;
+            if (timeoutTimer) clearTimeout(timeoutTimer);
             onFinish();
             resolve(backgrounded);
         };
@@ -254,7 +272,7 @@ export function installTimeoutBackgrounding(opts: {
         proc.on('error', onError);
 
         if (timeout > 0) {
-            setTimeout(() => {
+            timeoutTimer = setTimeout(() => {
                 if (settled) return;
                 timedOut = true;
 

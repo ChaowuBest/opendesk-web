@@ -29,7 +29,12 @@ export class TaskConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const taskConfig = data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true };
+        const taskConfig = data.task_config ?? {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: false
+        };
         const cliConfig = data.cli_config ?? { use_isolated_python: true, inherit_venv: true };
 
         const fields: FieldDef[] = [
@@ -50,6 +55,12 @@ export class TaskConfigPage implements Component {
                 key: 'termination_check',
                 label: t('config.task.field.termination_check'),
                 value: taskConfig.termination_check !== false
+            },
+            {
+                type: 'boolean',
+                key: 'evidence_card',
+                label: t('config.task.field.evidence_card'),
+                value: taskConfig.evidence_card === true
             },
             {
                 type: 'boolean',
@@ -89,10 +100,16 @@ export class TaskConfigPage implements Component {
         const setting = Setting.getInstance();
         const data = setting.getData();
         data.task_config = {
-            ...(data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true }),
+            ...(data.task_config ?? {
+                auto_retry: true,
+                generate_taskname: true,
+                termination_check: true,
+                evidence_card: false
+            }),
             auto_retry: values.auto_retry !== false,
             generate_taskname: values.generate_taskname !== false,
-            termination_check: values.termination_check !== false
+            termination_check: values.termination_check !== false,
+            evidence_card: values.evidence_card === true
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),
