@@ -603,6 +603,7 @@ export const enUs: Record<string, string> = {
     'config.task.field.auto_retry': 'Auto retry failed LLM requests',
     'config.task.field.generate_taskname': 'Auto generate task name',
     'config.task.field.termination_check': 'Auto recover interrupted tasks',
+    'config.task.field.evidence_card': 'Use EvidenceCard to save tokens',
     'config.task.field.use_isolated_python': 'Use isolated Python environment',
     'config.task.field.inherit_venv': 'Auto Inherit Virtual Environment',
 

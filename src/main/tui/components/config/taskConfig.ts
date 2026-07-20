@@ -53,6 +53,12 @@ export class TaskConfigPage implements Component {
             },
             {
                 type: 'boolean',
+                key: 'evidence_card',
+                label: t('config.task.field.evidence_card'),
+                value: taskConfig.evidence_card === true
+            },
+            {
+                type: 'boolean',
                 key: 'use_isolated_python',
                 label: t('config.task.field.use_isolated_python'),
                 value: cliConfig.use_isolated_python !== false
@@ -92,7 +98,8 @@ export class TaskConfigPage implements Component {
             ...(data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true }),
             auto_retry: values.auto_retry !== false,
             generate_taskname: values.generate_taskname !== false,
-            termination_check: values.termination_check !== false
+            termination_check: values.termination_check !== false,
+            evidence_card: values.evidence_card === true
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),
