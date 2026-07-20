@@ -21,6 +21,16 @@ test('sendReply forwards content and declares read permission for every file', a
     ]);
 });
 
+test('sendReply getDeclaredPermissions does not crash when files is missing', async () => {
+    const toolset = createAgentOfficeTaskToolset({
+        sendReply: async () => undefined,
+        getHistory: async () => ({ messages: [], has_more: false })
+    });
+    const tool = toolset.getTool('sendReply');
+    assert.ok(tool);
+    assert.deepEqual(tool.getDeclaredPermissions({ text: 'hi' }), []);
+});
+
 test('getHistoryMessages forwards recent and time range queries unchanged', async () => {
     const received: HistoryQuery[] = [];
     const toolset = createAgentOfficeTaskToolset({
