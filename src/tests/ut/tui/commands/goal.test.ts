@@ -185,8 +185,18 @@ describe('/goal command', () => {
         const { registry, task } = await createTui();
         const goalCommand = registry.get('goal');
 
-        expect(goalCommand?.getArgumentCompletions?.('')).toEqual([]);
-        expect(goalCommand?.getArgumentCompletions?.('   ')).toEqual([]);
+        expect(goalCommand?.getArgumentCompletions?.('')?.map((item) => item.label)).toEqual([
+            'help',
+            'pause',
+            'resume',
+            'clear'
+        ]);
+        expect(goalCommand?.getArgumentCompletions?.('   ')?.map((item) => item.label)).toEqual([
+            'help',
+            'pause',
+            'resume',
+            'clear'
+        ]);
         expect(goalCommand?.getArgumentCompletions?.('he')?.map((item) => item.label)).toContain('help');
         expect(goalCommand?.getArgumentCompletions?.('sta')?.map((item) => item.label)).not.toContain('status');
 

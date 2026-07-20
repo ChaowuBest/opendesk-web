@@ -177,7 +177,7 @@ function readEvidenceCardEnv(suffix: string): string | undefined {
 
 export function isEvidenceCardFeatureEnabled(): boolean {
     try {
-        return Setting.getInstance().getData().debug?.experimental_feature === true;
+        return Setting.getInstance().getData().task_config?.evidence_card === true;
     } catch {
         return false;
     }

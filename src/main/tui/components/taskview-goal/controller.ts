@@ -185,6 +185,7 @@ export class TaskViewGoalController {
     }
 
     syncFinalGoalSnapshot(snapshot: GoalFinalSnapshot): boolean {
+        if (snapshot.status === 'cleared') return false;
         this.clearStalePendingGoalEdit();
         const key = snapshot.id || `goal-final:${snapshot.goalId}`;
         const data = getGoalPanelDataFromFinalSnapshot(snapshot);
@@ -228,7 +229,16 @@ export class TaskViewGoalController {
         const goal = data.goalState;
         if (!goal) return false;
         this.clearStalePendingGoalEdit();
-        if (goal.status === 'cleared') this.clearPendingGoalSupplementViews();
+        if (goal.status === 'cleared') {
+            this.clearPendingGoalSupplementViews();
+            this.removeLiveGoalPanel(goal.id);
+            const snapshot = this.getFinalSnapshotForGoal(goal.id);
+            if (snapshot) {
+                const finalKey = snapshot.id || `goal-final:${snapshot.goalId}`;
+                this.removeGoalPanelByKey(finalKey);
+            }
+            return true;
+        }
 
         const snapshot = this.getFinalSnapshotForGoal(goal.id);
         const finalSnapshotKey = snapshot && (snapshot.id || `goal-final:${snapshot.goalId}`);

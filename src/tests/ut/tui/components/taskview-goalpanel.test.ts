@@ -206,6 +206,36 @@ describe('TaskView goal panel history placement', () => {
         expect((taskView as any).goalPanelViews.has(`goal-final:${goal.id}`)).toBe(true);
     });
 
+    test('removes live and final snapshot panels when goal is cleared', () => {
+        const goal = createCompletedGoal();
+        goal.status = 'active';
+        delete goal.completedAt;
+        const snapshot = createFinalSnapshot(goal);
+        snapshot.status = 'cleared';
+        snapshot.clearedAt = '2026-01-01T00:00:05.000Z';
+        delete (snapshot as any).completedAt;
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: goal,
+            goal_final_snapshots: [snapshot],
+            chat_context: {
+                messages: [],
+                lastMessage: () => undefined
+            }
+        } as any;
+
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 1_000 });
+        expect((taskView as any).goalPanelViews.has(`goal:${goal.id}`)).toBe(true);
+
+        goal.status = 'cleared';
+        goal.clearedAt = '2026-01-01T00:00:05.000Z';
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 1_000 });
+
+        expect((taskView as any).goalPanelViews.has(`goal:${goal.id}`)).toBe(false);
+        expect((taskView as any).goalPanelViews.has(`goal-final:${goal.id}`)).toBe(false);
+    });
+
     test('keeps a late final snapshot above user messages sent after completion', async () => {
         const goal = createCompletedGoal();
         const snapshot = createFinalSnapshot(goal);
