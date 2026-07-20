@@ -1,4 +1,10 @@
 import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
+import {
+    clearInterval as nativeClearInterval,
+    clearTimeout as nativeClearTimeout,
+    setInterval as nativeSetInterval,
+    setTimeout as nativeSetTimeout
+} from 'node:timers';
 import { parseHTML } from 'linkedom';
 
 describe('task artifacts goal disclosure state', () => {
@@ -27,6 +33,10 @@ describe('task artifacts goal disclosure state', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
+        (window as any).setTimeout = nativeSetTimeout;
+        (window as any).clearTimeout = nativeClearTimeout;
+        (window as any).setInterval = nativeSetInterval;
+        (window as any).clearInterval = nativeClearInterval;
 
         await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
             FileExplorer: class {
@@ -70,6 +80,10 @@ describe('task artifacts goal disclosure state', () => {
         }
         document.body.replaceChildren();
         jest.useRealTimers();
+        (window as any).setTimeout = nativeSetTimeout;
+        (window as any).clearTimeout = nativeClearTimeout;
+        (window as any).setInterval = nativeSetInterval;
+        (window as any).clearInterval = nativeClearInterval;
     });
 
     function createArtifacts(): HTMLElement & {
@@ -104,6 +118,10 @@ describe('task artifacts goal disclosure state', () => {
 
     test('disconnecting the component clears duration and delayed layout timers', () => {
         jest.useFakeTimers();
+        (window as any).setTimeout = globalThis.setTimeout;
+        (window as any).clearTimeout = globalThis.clearTimeout;
+        (window as any).setInterval = globalThis.setInterval;
+        (window as any).clearInterval = globalThis.clearInterval;
         const baselineTimers = jest.getTimerCount();
         const artifacts = createArtifacts();
 
