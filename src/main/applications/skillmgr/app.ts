@@ -18,7 +18,8 @@ import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
-import { MANAGE_SKILLS_SKILL, loadHarmonyosFallbackSkill } from './skills.js';
+import { MANAGE_SKILLS_SKILL } from './skills.js';
+import { loadHarmonyosFallbackSkill } from '../../aikernel/harnesses/platform/harmonyos/skills.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
