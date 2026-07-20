@@ -151,7 +151,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .option('--unpassed', '只运行未通过的测试用例')
         .option('--cases <indices>', '逗号分隔的用例序号（1-based），仅限一个技能')
         .option('--concurrency <n>', '并发数，默认 5', '5')
-        .option('--timeout <minutes>', '单个测试用例超时时间（分钟），默认 60')
+        .option('--timeout <minutes>', '单个测试用例超时时间（分钟），默认无限制')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
         .option('--no-silent', '关闭静默模式，显示全部日志输出')
         .option('--append-prompt <text>', '追加提示词，拼入测试运行的 prompt 末尾')

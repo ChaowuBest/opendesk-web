@@ -1475,7 +1475,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             activeDropdown: null,
             filtered: [],
             concurrency: 5,
-            timeoutMinutes: 60,
+            timeoutMinutes: null,
             // Worker 分析状态
             workerStatus: null,
             // 模态弹窗
@@ -3762,7 +3762,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                             ${isAnalyzing ? 'disabled' : ''} />
                         <label class="analyze-concurrency-label">超时（分钟）</label>
                         <input type="number" class="analyze-concurrency-input" data-analyze-timeout-minutes
-                            value="${state.timeoutMinutes}" min="1" step="1"
+                            value="${state.timeoutMinutes ?? ''}" min="1" step="1" placeholder="无限制"
                             ${isAnalyzing ? 'disabled' : ''} />
                     </div>
                 </div>
@@ -4418,11 +4418,16 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // Timeout input (minutes)
         $('[data-analyze-timeout-minutes]')?.addEventListener('change', (e) => {
-            const val = parseInt(e.target.value, 10);
-            if (Number.isSafeInteger(val) && val > 0) {
+            const raw = e.target.value.trim();
+            if (raw === '') {
+                this.analyzeState.timeoutMinutes = null;
+                return;
+            }
+            const val = Number(raw);
+            if (Number.isFinite(val) && val > 0) {
                 this.analyzeState.timeoutMinutes = val;
             } else {
-                e.target.value = this.analyzeState.timeoutMinutes;
+                e.target.value = this.analyzeState.timeoutMinutes ?? '';
             }
         });
 
@@ -4623,7 +4628,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                 try {
                     btn.disabled = true;
                     btn.textContent = '⏳ 执行中...';
-                    const timeoutMs = this.analyzeState.timeoutMinutes * 60_000;
+                    const timeoutMs =
+                        this.analyzeState.timeoutMinutes === null
+                            ? undefined
+                            : this.analyzeState.timeoutMinutes * 60_000;
                     const status = await api.runSingleSkillTest(skillId, testCaseIndex, { timeoutMs });
                     // 合并结果到当前状态
                     const existing = this.analyzeState.workerStatus?.results || {};
@@ -4910,7 +4918,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.render();
                 return;
             }
-            const timeoutMs = this.analyzeState.timeoutMinutes * 60_000;
+            const timeoutMs =
+                this.analyzeState.timeoutMinutes === null ? undefined : this.analyzeState.timeoutMinutes * 60_000;
             const status = await fn(skillIds, this.analyzeState.concurrency, { timeoutMs });
             console.log(
                 `[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'} returned:`,

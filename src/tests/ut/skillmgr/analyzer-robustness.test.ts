@@ -30,6 +30,13 @@ describe('SkillAnalyzer robustness boundaries', () => {
         jest.restoreAllMocks();
     });
 
+    test('uses unlimited timeout when no timeout is configured', () => {
+        const analyzer = new SkillAnalyzer();
+
+        expect((analyzer as any)._resolveTestCaseTimeout({})).toBeUndefined();
+        expect((analyzer as any)._resolveTestCaseTimeout({ timeoutMs: 60_000 })).toBe(60_000);
+    });
+
     test('stop clears pending queue even before any task is created', async () => {
         const taskManagerState = { getTask: jest.fn() };
         const analyzer = makeAnalyzerWithTaskManager(taskManagerState);

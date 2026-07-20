@@ -62,7 +62,8 @@ export const DEFAULT_EXPORT_OPTIONS: ExportMetaOptions = {
     includeTestResults: true
 };
 
-export const DEFAULT_TEST_CASE_TIMEOUT_MS = 60 * 60_000;
+/** 未配置时不限制单个测试用例的执行时间。 */
+export const DEFAULT_TEST_CASE_TIMEOUT_MS: number | undefined = undefined;
 const TEST_CASE_TIMEOUT_STOP_GRACE_MS = 5_000;
 
 type TestCasePhase = 'initialization' | 'execution' | 'verification';
@@ -228,7 +229,7 @@ export class SkillAnalyzer {
         concurrency: number,
         shouldRunTestCase: (testCase: TestCase) => boolean,
         emptyMessage: string,
-        timeoutMs: number
+        timeoutMs: number | undefined
     ): Promise<AnalyzeStatus> {
         if (!Array.isArray(skillIds) || skillIds.length === 0) throw new Error('请至少选择一个技能');
         if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
@@ -1040,9 +1041,9 @@ ${preScanSection}`;
 
     // ── 测试运行（内部） ──
 
-    private _resolveTestCaseTimeout(options: RunTestOptions): number {
+    private _resolveTestCaseTimeout(options: RunTestOptions): number | undefined {
         const timeoutMs = options.timeoutMs ?? DEFAULT_TEST_CASE_TIMEOUT_MS;
-        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
             throw new Error('timeoutMs 必须是大于 0 的有限数值');
         }
         return timeoutMs;
@@ -1050,10 +1051,12 @@ ${preScanSection}`;
 
     private async _awaitTestPhase<T>(
         operation: Promise<T>,
-        deadline: number,
+        deadline: number | undefined,
         phase: TestCasePhase,
-        timeoutMs: number
+        timeoutMs: number | undefined
     ): Promise<T> {
+        if (deadline === undefined || timeoutMs === undefined) return operation;
+
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) throw new SkillTestTimeoutError(timeoutMs, phase);
 
@@ -1073,7 +1076,7 @@ ${preScanSection}`;
     private async _runTestsInBackground(
         testPlan: TestCasePlan[],
         concurrency: number,
-        timeoutMs: number
+        timeoutMs: number | undefined
     ): Promise<void> {
         const queue = [...testPlan];
         this._currentQueue = queue;
@@ -1106,7 +1109,7 @@ ${preScanSection}`;
      * 执行单个测试用例：创建 Agent 任务 → 发送测试 Prompt → 等待完成 →
      * 追加验证消息 → 解析 JSON → 更新状态
      */
-    private async _runTestForCase(plan: TestCasePlan, timeoutMs: number): Promise<void> {
+    private async _runTestForCase(plan: TestCasePlan, timeoutMs: number | undefined): Promise<void> {
         if (!this.state.running) return;
 
         this.state.currentSkill = plan.skillId;
@@ -1114,7 +1117,7 @@ ${preScanSection}`;
 
         const { skillId, skillDir, skillName, bundleName, testCase } = plan;
         const tcIndex = testCase.index;
-        const deadline = Date.now() + timeoutMs;
+        const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
         let task: any = null;
         let tempWorkspace: string | null = null;
 
