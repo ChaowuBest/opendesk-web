@@ -63,7 +63,7 @@ class SendReplyTool extends BaseTool<typeof SendReplySchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof SendReplySchema>): PermissionRequest[] {
-        return args.files.map((filePath) => ({
+        return (args.files ?? []).map((filePath) => ({
             resourceType: 'file',
             action: 'read',
             resourcePath: filePath
