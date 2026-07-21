@@ -3044,6 +3044,30 @@ function startApplication() {
         // 否则华为登录校验期间 renderer 调用会失败，导致引导页面不显示。
         registerSettingAPIHandlers();
 
+        // 提前注册任务管理 IPC handler，确保主窗口加载期间 renderer 的
+        // sidebar.connectedCallback 调用 taskManagerAPI.getTaskList() 能正常返回，
+        // 否则 setUpEventListeners() 不会执行，导致"新任务/应用/技能"按钮无 click 事件绑定。
+        registerTaskManagerAPIHandlers();
+
+        // 提前注册应用注册器 IPC handler，确保主窗口加载期间 renderer 的
+        // sidebar 调用 applicationRegistry:getApplicationList 能正常返回，
+        // 否则应用按钮下的菜单列表为空，显示异常。
+        registerApplicationRegistryHandlers(ipcMain);
+
+        // 提前注册通知 IPC handler，确保主窗口加载期间 renderer 的
+        // notification-panel.connectedCallback 调用 notificationAPI.subscribeNotification 能正常返回。
+        registerNotificationAPIHandlers();
+
+        // 提前注册主题 IPC handler，确保主窗口加载期间 renderer 的
+        // initRendererTheme 调用 themeAPI.getResolvedTheme 能正常返回。
+        // 注意：不在此处调用 getMainThemeService().init()，因为 init() 内部会触发
+        // refreshOhosSystemDarkMode()/refreshOhosSystemLanguage() 等 callArkTS 调用，
+        // 在 createWindow() 之前调用 callArkTS 会干扰 ArkTS 侧事件循环，
+        // 导致 WebAbility 的 KVStore NAPI 类型断言 crash。
+        // init() 已在 registerThemeHandlers() 注册的 IPC handler 内部懒调用，
+        // renderer 调用 theme:getResolvedTheme 时 createWindow() 已完成，安全。
+        registerThemeHandlers();
+
         // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
         // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
         const p4 = startupTrace.createPhase('startup.ready.create_window');
@@ -3118,13 +3142,14 @@ function startApplication() {
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
-        registerTaskManagerAPIHandlers();
+        // registerTaskManagerAPIHandlers() 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 的 sidebar 需调用 taskManager:getTaskList
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         // registerSettingAPIHandlers() 已在 createWindow 之前提前注册，
         // 鸿蒙登录校验期间 renderer 需要调用 setting:loadSettingObject 判断是否显示引导页
-
-        registerApplicationRegistryHandlers(ipcMain);
+        // registerApplicationRegistryHandlers(ipcMain) 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 的 sidebar 需调用 applicationRegistry:getApplicationList
 
         // 通用窗口控制 IPC（通过 event.sender 定位当前窗口）
         ipcMain.handle('window:close', async (event) => {
@@ -3207,12 +3232,17 @@ function startApplication() {
             }
         });
 
-        registerNotificationAPIHandlers();
+        // registerNotificationAPIHandlers() 已在 createWindow 之前提前注册，
+        // 确保主窗口加载期间 renderer 的 notification-panel 能正常订阅通知。
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
         registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
-        registerThemeHandlers();
+        // registerThemeHandlers() 已在 createWindow 之前提前注册，
+        // getMainThemeService().init() 在 IPC handler 内部懒调用，避免 createWindow
+        // 之前触发 callArkTS 导致 ArkTS 侧 NAPI 类型断言 crash。
+        // 此处 createWindow() 已完成、ArkTS 侧已 active，显式 init() 安全，
+        // 确保窗口背景色等主题效果在显示前就绪。
         getMainThemeService().init();
         registerHotKeys();
         registerTray();
