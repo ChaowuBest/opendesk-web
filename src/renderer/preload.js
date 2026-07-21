@@ -1300,28 +1300,15 @@ if (shouldExposeMainWindowAPIs()) {
         removeEventsUpdateListener: () => {
             ipcRenderer.removeAllListeners('agentgate:eventsUpdate');
         },
-        getFloatingWindowConfig: async () => {
-            const result = await ipcRenderer.invoke('agentgate:getFloatingWindowConfig');
-            if (result.status !== 'ok') throw new Error(result.message);
-            return result.data;
+        onAttributionStart: (callback) => {
+            ipcRenderer.on('agentgate:attributionStart', (_, data) => callback(data));
         },
-        setFloatingWindowEnabled: async (enabled) => {
-            const result = await ipcRenderer.invoke('agentgate:setFloatingWindowEnabled', enabled);
-            if (result.status !== 'ok') throw new Error(result.message);
+        onAttributionEnd: (callback) => {
+            ipcRenderer.on('agentgate:attributionEnd', (_, data) => callback(data));
         },
-        setFloatingWindowOpacity: async (opacity) => {
-            const result = await ipcRenderer.invoke('agentgate:setFloatingWindowOpacity', opacity);
-            if (result.status !== 'ok') throw new Error(result.message);
-        },
-        getDashboardUrl: async () => {
-            const result = await ipcRenderer.invoke('agentgate:openDashboard');
-            if (result.status !== 'ok') throw new Error(result.message);
-            return result.data;
-        },
-        getRecentEvents: async () => {
-            const result = await ipcRenderer.invoke('agentgate:getRecentEvents');
-            if (result.status !== 'ok') throw new Error(result.message);
-            return result.data;
+        removeAttributionListeners: () => {
+            ipcRenderer.removeAllListeners('agentgate:attributionStart');
+            ipcRenderer.removeAllListeners('agentgate:attributionEnd');
         }
     });
 
@@ -1547,6 +1534,27 @@ if (shouldExposeMainWindowAPIs()) {
         },
         offSettingLoadError: (callback) => {
             settingErrorCallbacks.delete(callback);
+        }
+    });
+
+    // 恶意技能黑名单提示 API
+    /** @type {Set<(data: object) => void>} */
+    const skillBlacklistCallbacks = new Set();
+    ipcRenderer.on('skill:blacklistPrompt', (_event, data) => {
+        for (const cb of skillBlacklistCallbacks) cb(data);
+    });
+    safeExposeInMainWorld('skillBlacklistAPI', {
+        onBlacklistPrompt: (callback) => {
+            skillBlacklistCallbacks.add(callback);
+        },
+        offBlacklistPrompt: (callback) => {
+            skillBlacklistCallbacks.delete(callback);
+        },
+        addToBlacklist: (items) => {
+            ipcRenderer.send('skill:blacklist:add', items);
+        },
+        dismissBlacklist: (taskId) => {
+            ipcRenderer.send('skill:blacklist:dismiss', taskId);
         }
     });
 

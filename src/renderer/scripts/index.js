@@ -36,6 +36,7 @@ import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';
 import { showConfirmModal } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
+import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 
 // 本地化字符串映射
 const LOCALE_STRINGS = {
@@ -229,6 +230,13 @@ if (window.settingErrorAPI) {
             confirmText: getLocalizedString('setting.load.error.ok', locale),
             cancelText: null // 只显示确认按钮
         });
+    });
+}
+
+// 监听恶意技能黑名单提示
+if (window.skillBlacklistAPI) {
+    window.skillBlacklistAPI.onBlacklistPrompt((data) => {
+        showBlacklistPrompt(data);
     });
 }
 

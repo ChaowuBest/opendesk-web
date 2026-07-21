@@ -11,77 +11,26 @@
 
 import { z } from 'zod';
 import path from 'path';
-import fs from 'fs';
-import os from 'os';
-import { spawn } from 'child_process';
-import { createRequire } from 'module';
-import { findExecutableInPath } from '../../utils/shellExec.js';
 import { BaseApplication } from '../base';
-import { AgentGateBridge } from '../../services/agent-gate-bridge';
+import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
+import { attributeBatchInterceptions, confidenceWeight, sortByConfidenceDesc } from './skillAttribution.js';
+import { readInterceptionRecords } from '../skillmgr/blacklist.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
 import { getExtensionsDir } from '../../plugins/manager';
 import { logger } from '../../utils/logger.js';
+import AgentGateWorker from './worker';
 
 // 依赖 agent-gate@0.5.4 的存储格式：tool_calls 表 / tool_calls/<session>.json 文件布局。
-
-/**
- * 纯 node 子进程删除脚本（内联，运行时写入临时文件执行）。
- * 主进程是 Electron，加载了 canvas，其旧 libstdc++.so.6 劫持 better-sqlite3 native binding
- * 依赖解析（GLIBCXX_3.4.29 not found）。纯 node 子进程不加载 canvas，能正常加载 better-sqlite3。
- * 脚本枚举多个 binding 路径，逐个尝试 process.dlopen，绕过 bindings 模块的 ABI 自动选择
- * （binding 可能放错目录）。输出 JSON 到 stdout：{ ok, deleted, binding?, error? }
- */
-const DELETE_HELPER_SCRIPT = `'use strict';
-const args = process.argv.slice(2);
-const dbPath = args[0];
-const idsJson = args[1] || '[]';
-const bsDir = args[2] || '';
-const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
-if (!dbPath) out({ ok: false, deleted: 0, error: 'missing dbPath' });
-let ids;
-try { ids = JSON.parse(idsJson); } catch (e) { out({ ok: false, deleted: 0, error: 'bad ids' }); }
-const deleteAll = !Array.isArray(ids) || ids.length === 0;
-const cleanIds = deleteAll ? [] : Array.from(new Set(ids.map(Number).filter((n) => Number.isInteger(n))));
-const fs = require('fs');
-const path = require('path');
-if (!fs.existsSync(dbPath)) out({ ok: false, deleted: 0, error: 'db not found' });
-// 候选 better-sqlite3 包入口（走 JS 包装层，不要直接 dlopen .node——会跳过 Database 类的校验逻辑）。
-// 优先 agent-moss nested（版本 11，ABI 可能与系统 node 匹配），再 OpenDesk 根（版本 12，Electron ABI）。
-const pkgCandidates = [];
-if (bsDir) {
-  // bsDir = .../node_modules/better-sqlite3；dirname 上跳到 node_modules 层
-  const nmDir = path.dirname(path.dirname(bsDir));
-  pkgCandidates.push(path.join(nmDir, '@kenhkl', 'agent-moss', 'node_modules', 'better-sqlite3', 'lib', 'index.js'));
-  pkgCandidates.push(path.join(bsDir, 'lib', 'index.js'));
-}
-// 也试标准 require（让 node 自己解析）
-pkgCandidates.push('better-sqlite3');
-let DatabaseCtor = null, loadedFrom = '', lastErr = '';
-for (const c of pkgCandidates) {
-  try {
-    const mod = c === 'better-sqlite3' ? require('better-sqlite3') : require(c);
-    // better-sqlite3 导出 Database 类本身（函数），可能附加 .SqliteError
-    const Ctor = typeof mod === 'function' ? mod : (mod && mod.Database);
-    if (typeof Ctor === 'function') { DatabaseCtor = Ctor; loadedFrom = c; break; }
-    lastErr = 'no Database ctor in ' + c;
-  } catch (e) { lastErr = String(e).split(String.fromCharCode(10))[0]; continue; }
-}
-if (!DatabaseCtor) out({ ok: false, deleted: 0, error: 'no usable better-sqlite3: ' + lastErr });
-let db = null;
-try {
-  db = new DatabaseCtor(dbPath);
-  let r;
-  if (deleteAll) r = db.prepare('DELETE FROM tool_calls').run();
-  else { const ph = cleanIds.map(() => '?').join(','); r = db.prepare('DELETE FROM tool_calls WHERE id IN (' + ph + ')').run(...cleanIds); }
-  out({ ok: true, deleted: Number(r.changes || 0), binding: loadedFrom });
-} catch (e) { out({ ok: false, deleted: 0, error: 'db op: ' + String(e).split(String.fromCharCode(10))[0], binding: loadedFrom }); }
-finally { try { db && db.close(); } catch (e) {} }
-`;
 
 class AgentGateApplication extends BaseApplication {
     constructor() {
         super('agentgate', '安全网关');
+    }
+
+    static getWorkerClass() {
+        return AgentGateWorker;
     }
 
     isExperimental(): boolean {
@@ -115,8 +64,12 @@ class AgentGateApplication extends BaseApplication {
                 .describe('存储类型：sqlite 或 json（鸿蒙默认 json）'),
             dbPath: z.string().default('').describe('SQLite 数据库路径（空则使用默认值）'),
             jsonDataDir: z.string().default('').describe('JSON 文件存储目录（空则使用默认值）'),
-            floatingWindowEnabled: z.boolean().default(false).describe('浮窗显示开关'),
-            floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度')
+            floatingWindowEnabled: z.boolean().default(true).describe('浮窗显示开关'),
+            floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度'),
+            maliciousSkillDetection: z
+                .boolean()
+                .default(true)
+                .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）')
         });
     }
 
@@ -225,6 +178,213 @@ class AgentGateApplication extends BaseApplication {
         this._syncBridgeState();
     }
 
+    /** 获取恶意技能检测开关（拦截归因 + 弹窗 + 黑名单），默认 true */
+    getMaliciousSkillDetection(): boolean {
+        const cfg = this.getConfig() as any;
+        return cfg?.maliciousSkillDetection !== false;
+    }
+
+    /** 设置恶意技能检测开关（不启停服务，仅控制恶意 skill 分析链路） */
+    setMaliciousSkillDetection(enabled: boolean): void {
+        this._updateAppConfig({ maliciousSkillDetection: enabled });
+    }
+
+    /**
+     * 会话结束后的恶意 skill 归因分析 + 弹窗推送。
+     *
+     * 流程：终止状态过滤 → 开关判定 → 读取拦截记录 → 确定性归因 → LLM 批量归因 →
+     * 补充上下文嫌疑 skill → 按置信度排序 → 推送黑名单弹窗。
+     *
+     * 主窗口事件推送（attributionStart/End、blacklistPrompt）由调用方通过回调注入，
+     * 因为只有 main.ts 持有 globalMainWindow；本方法只負責歸因計算與時機判定。
+     *
+     * @param task  当前会话的 TaskState
+     * @param hooks  可选的事件回调：归因开始/结束/弹窗
+     */
+    async analyzeAndPromptMaliciousSkills(
+        task: TaskState,
+        hooks: {
+            onAttributionStart?: (taskId: string) => void;
+            onAttributionEnd?: (taskId: string) => void;
+            onPrompt?: (taskId: string, skills: object[]) => void;
+        } = {}
+    ): Promise<void> {
+        // 仅在会话真正结束时触发（finished / 用户主动停止），
+        // 跳过 question（等待用户回复）和 interrupted（被截断需继续）等中间态
+        const terminationState = (task as any).lastTerminationState || 'finished';
+        if (terminationState === 'question' || terminationState === 'interrupted') {
+            logger.info(
+                `[AgentGate] Skipping malicious skill detection: session not ended (terminationState=${terminationState})`
+            );
+            return;
+        }
+        // 恶意技能检测开关关闭时不弹窗（拦截归因在 hook.ts 已被门控，interceptions 不会有新记录，
+        // 这里二次校验防止历史记录或开关切换时序导致的误弹）
+        if (!this.getMaliciousSkillDetection()) return;
+
+        const allRecords = readInterceptionRecords(task.task_id);
+        if (allRecords.length === 0) return;
+
+        // 会话结束时分析整个会话的所有拦截记录，排除 AgentMoss 超时/服务不可用导致的 fail-closed 记录
+        const records = allRecords.filter(
+            (r) => r.riskType !== 'analysis_timeout' && r.riskType !== 'service_unavailable'
+        );
+        if (records.length === 0) return;
+
+        // 整理拦截记录中的有归因的 skill 列表
+        // 同时收集每个 skill 关联的拦截详情（用于弹窗可折叠展示）
+        const skillMap = new Map<
+            string,
+            {
+                reason: string;
+                evidence: string;
+                confidence: string;
+                interceptions: Array<{ toolName: string; reason: string; riskLevel: string }>;
+            }
+        >();
+
+        // 第一步：确定性归因（CallSkillTool 路径）——直接从记录中读取
+        for (const rec of records) {
+            const interceptions = [{ toolName: rec.toolName, reason: rec.reason, riskLevel: rec.riskLevel }];
+            for (const c of rec.certain || []) {
+                const key = `${c.bundleName}/${c.skillName}`;
+                if (!skillMap.has(key)) {
+                    skillMap.set(key, {
+                        reason: rec.reason,
+                        evidence: `确定性: 该 skill 的 CallSkillTool 调用被拦截（${rec.toolName}）`,
+                        confidence: 'certain',
+                        interceptions: []
+                    });
+                }
+                skillMap.get(key)!.interceptions.push(...interceptions);
+            }
+        }
+
+        // 第二步：LLM 批量归因——将所有拦截记录一次性送入 LLM
+        const loadedSkills = task.getLoadedSkillsFromContext();
+        const maxInterceptTurn = Math.max(...records.map((r) => r.turn));
+        // 加载 turn > 最大拦截 turn 的 skill 不可能驱动任何拦截，完全不传给 LLM（不提、不传内容）
+        const llmSkills = loadedSkills.filter((s) => typeof s.bundleName === 'string' && s.turn <= maxInterceptTurn);
+        if (llmSkills.length > 0) {
+            // 通知 renderer 显示归因分析状态
+            hooks.onAttributionStart?.(task.task_id);
+            const batchResult = await attributeBatchInterceptions(
+                records.map((r) => ({
+                    toolName: r.toolName,
+                    command: r.command,
+                    reason: r.reason,
+                    riskLevel: r.riskLevel,
+                    turn: r.turn
+                })),
+                llmSkills.map((s) => ({ bundleName: s.bundleName, skillName: s.skillName, turn: s.turn })),
+                task
+            );
+
+            // 将批量归因结果写入 skillMap，同时基于 coveredIndices 建立拦截→skill 的精确映射
+            const indexToSkillKeys = new Map<number, string[]>(); // 拦截索引 → 哪些 skill 的 key 覆盖了它
+            for (const c of batchResult.candidates) {
+                const key = `${c.bundleName}/${c.skillName}`;
+                const existing = skillMap.get(key);
+                if (!existing || confidenceWeight(c.confidence) > confidenceWeight(existing.confidence)) {
+                    skillMap.set(key, {
+                        reason: `AgentGate 拦截报告`,
+                        evidence: c.evidence,
+                        confidence: c.confidence,
+                        interceptions: existing?.interceptions || []
+                    });
+                } else if (existing) {
+                    // 置信度相同或更低，只累积证据
+                    if (c.evidence && !existing.evidence.includes(c.evidence)) {
+                        existing.evidence += '\n' + c.evidence;
+                    }
+                }
+                // 记录覆盖关系：coveredIndices 中每条拦截都关联到该 skill
+                for (const idx of c.coveredIndices) {
+                    const keys = indexToSkillKeys.get(idx);
+                    if (keys) {
+                        keys.push(key);
+                    } else {
+                        indexToSkillKeys.set(idx, [key]);
+                    }
+                }
+            }
+
+            // 第三步：基于 coveredIndices 精确关联拦截记录到对应的 skill
+            // 确定性归因的 skill 保留第一步已关联的拦截
+            // LLM 归因的 skill 只关联 coveredIndices 指定的拦截
+            // 未被任何 skill 覆盖的拦截，兜底关联到最高置信度的 skill
+            const highestConfidenceKey =
+                batchResult.candidates.length > 0
+                    ? `${batchResult.candidates[0].bundleName}/${batchResult.candidates[0].skillName}`
+                    : null;
+
+            for (let i = 0; i < records.length; i++) {
+                const rec = records[i];
+                const interception = { toolName: rec.toolName, reason: rec.reason, riskLevel: rec.riskLevel };
+                const coveringKeys = indexToSkillKeys.get(i);
+
+                if (coveringKeys && coveringKeys.length > 0) {
+                    // 该拦截被 LLM 明确归因到某些 skill
+                    for (const key of coveringKeys) {
+                        const entry = skillMap.get(key);
+                        if (entry && entry.confidence !== 'contextual') {
+                            entry.interceptions.push(interception);
+                        }
+                    }
+                } else if (highestConfidenceKey) {
+                    // 未被覆盖的拦截，兜底关联到最高置信度的 skill
+                    const entry = skillMap.get(highestConfidenceKey);
+                    if (entry) {
+                        entry.interceptions.push(interception);
+                    }
+                }
+            }
+        }
+
+        if (skillMap.size === 0) return;
+
+        // 补充上下文关联嫌疑 skill：本会话已加载、且加载 turn 不晚于拦截 turn 的 skill
+        const loadedKeys = new Set(
+            loadedSkills.filter((s) => s.turn <= maxInterceptTurn).map((s) => `${s.bundleName}/${s.skillName}`)
+        );
+        const coveredKeys = new Set(skillMap.keys());
+        for (const key of loadedKeys) {
+            if (!coveredKeys.has(key)) {
+                skillMap.set(key, {
+                    reason: '',
+                    evidence: '该 skill 在本会话中加载，可能作为攻击前驱参与',
+                    confidence: 'contextual',
+                    interceptions: []
+                });
+            }
+        }
+
+        const entries = Array.from(skillMap.entries()).map(([key, val]) => ({
+            key,
+            bundleName: key.split('/')[0],
+            skillName: key.split('/')[1],
+            ...val
+        }));
+        // 按置信度排序：certain > high > medium > low > contextual
+        sortByConfidenceDesc(entries);
+
+        // 通知 renderer 归因分析结束
+        hooks.onAttributionEnd?.(task.task_id);
+
+        // 发送到 renderer 显示弹窗
+        hooks.onPrompt?.(
+            task.task_id,
+            entries.map((e) => ({
+                bundleName: e.bundleName,
+                skillName: e.skillName,
+                confidence: e.confidence,
+                evidence: e.evidence,
+                reason: e.reason,
+                interceptions: e.interceptions
+            }))
+        );
+    }
+
     /** 获取安全拦截级别 */
     getSecurityLevel(): string {
         const cfg = this.getConfig() as any;
@@ -236,9 +396,33 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ securityLevel: level });
     }
 
+    /** 获取 LLM 深度分析开关状态（默认 true） */
+    getEnableLLM(): boolean {
+        const cfg = this.getConfig() as any;
+        return cfg?.enableLLM !== false;
+    }
+
     /** 启用/禁用 LLM 分析 */
     setEnableLLM(enabled: boolean): void {
         this._updateAppConfig({ enableLLM: enabled });
+    }
+
+    /** 获取 LLM 分析模型 alias（空字符串表示用全局默认模型） */
+    getLLMModel(): string {
+        const cfg = this.getConfig() as any;
+        return cfg?.llmModel || '';
+    }
+
+    /** 设置 LLM 分析模型 alias（空字符串恢复为全局默认模型） */
+    setLLMModel(model: string): void {
+        this._updateAppConfig({ llmModel: model || '' });
+    }
+
+    /** 获取 LLM 超时（秒），默认 300 */
+    getLLMTimeout(): number {
+        const cfg = this.getConfig() as any;
+        const t = cfg?.llmTimeout;
+        return typeof t === 'number' && t >= 10 ? t : 300;
     }
 
     /** 设置 LLM 超时 */
@@ -281,203 +465,27 @@ class AgentGateApplication extends BaseApplication {
 
     /**
      * 删除指定 id 的 tool_call 记录（真实从 sqlite/json 删除）。
-     * 直接操作 agent-gate 的存储（依赖 agent-gate@0.5.4 存储格式）。
-     * 返回实际删除条数。
-     *
-     * sqlite 删除走 spawn 纯 node 子进程：主进程是 Electron，加载了 canvas，其自带旧
-     * libstdc++.so.6 劫持 better-sqlite3 native binding 依赖解析（GLIBCXX_3.4.29 not found）。
-     * 改用 Electron-as-node 子进程（ABI 匹配 binding + 纯 node 模式不加载 canvas）执行删除。
-     * json 删除是纯文件操作，主进程直接做。两边都试，合并命中数。
+     * 实际删除链路迁至 AgentGateWorker（spawn 子进程 + better-sqlite3 阻塞 IO 不在主进程跑）。
+     * 这里只负责收集 dbPath/jsonDataDir 喂给 Worker。
      */
     async deleteToolCalls(ids: number[]): Promise<number> {
         if (!Array.isArray(ids) || ids.length === 0) return 0;
         const clean = Array.from(new Set(ids.map(Number).filter((n) => Number.isInteger(n))));
         if (clean.length === 0) return 0;
-        let deleted = 0;
-        try {
-            deleted += await this._deleteSqliteViaSpawn(clean);
-        } catch (e) {
-            logger.warn(`[AgentGate] deleteToolCalls sqlite threw: ${String(e)}`);
-        }
-        deleted += this._deleteToolCallsJson(clean);
-        logger.info(`[AgentGate] deleteToolCalls ids=${JSON.stringify(clean)} deleted=${deleted}`);
-        return deleted;
+        return await this.callWorker('deleteToolCalls', clean, {
+            dbPath: this.getDbPath(),
+            jsonDataDir: this.getJsonDataDir()
+        });
     }
 
     /**
-     * 删除全部 tool_call 记录（真实从 sqlite/json 删除）。两边都尝试。
+     * 删除全部 tool_call 记录（真实从 sqlite/json 删除）。委托 Worker。
      */
     async deleteAllToolCalls(): Promise<number> {
-        let deleted = 0;
-        try {
-            deleted += await this._deleteSqliteViaSpawn([]);
-        } catch (e) {
-            logger.warn(`[AgentGate] deleteAllToolCalls sqlite threw: ${String(e)}`);
-        }
-        deleted += this._deleteAllToolCallsJson();
-        logger.info(`[AgentGate] deleteAllToolCalls deleted=${deleted}`);
-        return deleted;
-    }
-
-    /**
-     * spawn 纯 node 子进程执行 sqlite 删除（绕开主进程 canvas libstdc++ 冲突）。
-     * ids 为空数组表示删除全部。返回实际删除条数。
-     */
-    private _deleteSqliteViaSpawn(ids: number[]): Promise<number> {
-        const dbPath = this.getDbPath();
-        if (!fs.existsSync(dbPath)) return Promise.resolve(0);
-        const idsJson = JSON.stringify(ids);
-        // 解析 OpenDesk 根 better-sqlite3 目录，传给子进程作为 binding 搜索起点
-        let bsDir = '';
-        try {
-            const req = createRequire(import.meta.url);
-            bsDir = path.dirname(req.resolve('better-sqlite3/package.json'));
-        } catch {
-            bsDir = '';
-        }
-        return this._spawnNodeDelete(dbPath, idsJson, bsDir).then((result) => {
-            if (!result.ok) {
-                logger.warn(`[AgentGate] delete-helper failed: ${result.error || 'unknown'}`);
-                return 0;
-            }
-            return Number(result.deleted || 0);
+        return await this.callWorker('deleteAllToolCalls', {
+            dbPath: this.getDbPath(),
+            jsonDataDir: this.getJsonDataDir()
         });
-    }
-
-    /**
-     * spawn 一个纯 node 子进程跑内联删除脚本，解析其 stdout JSON 输出。
-     *
-     * node 选择：better-sqlite3 的 binding 都是 Electron ABI（140/141），系统 node（ABI 137）
-     * 一个都加载不了，所以必须用 Electron-as-node（ELECTRON_RUN_AS_NODE=1，ABI 141 匹配）。
-     * Electron-as-node 是纯 node 模式，不初始化 Chromium/不加载 canvas，无 GLIBCXX 冲突。
-     * 系统 node 仅作备选（理论上加载不了任何 binding，但保留以防 ABI 重新编译过）。
-     */
-    private _spawnNodeDelete(dbPath: string, idsJson: string, bsDir: string): Promise<any> {
-        return new Promise((resolve) => {
-            // 写内联脚本到临时文件
-            let helperPath = '';
-            try {
-                helperPath = path.join(os.tmpdir(), `ag-delete-${process.pid}-${Date.now()}.js`);
-                fs.writeFileSync(helperPath, DELETE_HELPER_SCRIPT, 'utf-8');
-            } catch (e) {
-                resolve({ ok: false, deleted: 0, error: `write helper failed: ${String(e)}` });
-                return;
-            }
-            const cleanup = () => {
-                try {
-                    fs.unlinkSync(helperPath);
-                } catch {}
-            };
-            // 候选 node：Electron-as-node 优先（ABI 匹配 binding），系统 node 备选
-            const nodeCandidates: { path: string; env: Record<string, string> }[] = [];
-            if (process.execPath && fs.existsSync(process.execPath)) {
-                nodeCandidates.push({ path: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } });
-            }
-            const sysNode = process.env.NODE_BINARY || findExecutableInPath('node');
-            if (sysNode && fs.existsSync(sysNode)) {
-                nodeCandidates.push({ path: sysNode, env: {} });
-            }
-            if (nodeCandidates.length === 0) {
-                cleanup();
-                resolve({ ok: false, deleted: 0, error: 'no node available' });
-                return;
-            }
-            const tryCandidate = (idx: number) => {
-                if (idx >= nodeCandidates.length) {
-                    cleanup();
-                    resolve({ ok: false, deleted: 0, error: 'all node candidates failed' });
-                    return;
-                }
-                const { path: nodePath, env } = nodeCandidates[idx];
-                const isLast = idx === nodeCandidates.length - 1;
-                const child = spawn(nodePath, [helperPath, dbPath, idsJson, bsDir], {
-                    env: { ...process.env, ...env },
-                    stdio: ['ignore', 'pipe', 'pipe']
-                });
-                let stdout = '';
-                let stderr = '';
-                child.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
-                child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
-                child.on('error', () => {
-                    if (!isLast) tryCandidate(idx + 1);
-                    else {
-                        cleanup();
-                        resolve({ ok: false, deleted: 0, error: 'spawn error' });
-                    }
-                });
-                child.on('close', (code) => {
-                    // 脚本成功时 stdout 有 JSON（即使 binding 加载失败也返回 JSON with ok:false）。
-                    // 只有 spawn 本身失败（非 0 且无 stdout）才换下一个 node 候选。
-                    if (stdout.trim()) {
-                        cleanup();
-                        try {
-                            resolve(JSON.parse(stdout.trim()));
-                        } catch (e) {
-                            resolve({ ok: false, deleted: 0, error: `parse stdout failed: ${String(e)}` });
-                        }
-                        return;
-                    }
-                    if (!isLast) {
-                        logger.info(`[AgentGate] delete-helper node ${nodePath} failed, trying next`);
-                        tryCandidate(idx + 1);
-                    } else {
-                        cleanup();
-                        resolve({
-                            ok: false,
-                            deleted: 0,
-                            error: `exit ${code} stderr=${stderr.slice(0, 300)}`
-                        });
-                    }
-                });
-            };
-            tryCandidate(0);
-        });
-    }
-
-    /** json：扫描 tool_calls/<session>.json，按 id 过滤后原子写回（先 .tmp 再 rename）。 */
-    private _deleteToolCallsJson(ids: number[]): number {
-        const dir = path.join(this.getJsonDataDir(), 'tool_calls');
-        if (!fs.existsSync(dir)) return 0;
-        const idSet = new Set(ids);
-        let deleted = 0;
-        for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-            const fp = path.join(dir, file);
-            try {
-                const records = JSON.parse(fs.readFileSync(fp, 'utf-8'));
-                if (!Array.isArray(records)) continue;
-                const after = records.filter((r: any) => !idSet.has(Number(r.id)));
-                const removed = records.length - after.length;
-                if (removed === 0) continue;
-                const tmp = fp + '.tmp';
-                fs.writeFileSync(tmp, JSON.stringify(after, null, 2), 'utf-8');
-                fs.renameSync(tmp, fp);
-                deleted += removed;
-            } catch {
-                /* 跳过损坏文件 */
-            }
-        }
-        return deleted;
-    }
-
-    /** json：把每个 session 文件清空为 []。 */
-    private _deleteAllToolCallsJson(): number {
-        const dir = path.join(this.getJsonDataDir(), 'tool_calls');
-        if (!fs.existsSync(dir)) return 0;
-        let deleted = 0;
-        for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-            const fp = path.join(dir, file);
-            try {
-                const arr = JSON.parse(fs.readFileSync(fp, 'utf-8'));
-                if (!Array.isArray(arr)) continue;
-                deleted += arr.length;
-                const tmp = fp + '.tmp';
-                fs.writeFileSync(tmp, '[]', 'utf-8');
-                fs.renameSync(tmp, fp);
-            } catch {
-                /* 跳过损坏文件 */
-            }
-        }
-        return deleted;
     }
 
     /** 获取 AgentGate Dashboard URL（供浮窗跳转） */
@@ -517,6 +525,55 @@ class AgentGateApplication extends BaseApplication {
             bridge.stop();
             // Bridge 停止时同步停止 events-cache
             AgentGateEventsCache.getInstance().stopPolling();
+        }
+    }
+
+    // ── 主进程生命周期入口（供 main.ts 在 app.whenReady / will-quit / 设置变更时调用） ──
+    // 这组方法让主框架不再直接持有 AgentGateBridge / AgentGateEventsCache 单例，
+    // 仅经 application 实例方法驱动安全网关运行时。
+
+    /**
+     * 启动安全网关运行时（bridge + events-cache 轮询）。
+     * 由 main.ts 在 app.whenReady 后调用；是否真正启停由当前配置决定（见 _syncBridgeState）。
+     * @param pushCallback  事件推送回调，由调用方注入（main.ts 持有主窗口 webContents）。
+     *                       仅在首次启动时设置一次，运行期由缓存内部循环调用。
+     */
+    startRuntime(
+        pushCallback?: (
+            events: AgentGateEvent[],
+            counts: { totalCount: number; denyCount: number; allowCount: number }
+        ) => void
+    ): void {
+        if (pushCallback) {
+            AgentGateEventsCache.getInstance().setPushCallback(pushCallback);
+        }
+        this._syncBridgeState();
+        this._syncEventsCacheState();
+    }
+
+    /**
+     * 根据当前配置同步安全网关运行时状态（bridge + events-cache）。
+     * 由 main.ts 在试验性功能或安全网关总开关变更时调用，等价于让 application 读取最新配置决定启停。
+     */
+    syncRuntimeState(): void {
+        this._syncBridgeState();
+        this._syncEventsCacheState();
+    }
+
+    /**
+     * 停止安全网关运行时（bridge 子进程 + events-cache 轮询）。
+     * 由 main.ts 在 app.will-quit 时调用，best-effort。
+     */
+    stopRuntime(): void {
+        try {
+            AgentGateBridge.getInstance().stop();
+        } catch {
+            /* best-effort */
+        }
+        try {
+            AgentGateEventsCache.getInstance().stopPolling();
+        } catch {
+            /* best-effort */
         }
     }
 

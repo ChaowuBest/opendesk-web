@@ -16,6 +16,7 @@ const T = {
     floatingTitle: { zh: '安全网关', en: 'AgentGate' },
     floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
     securityGatewaySwitch: { zh: '安全网关', en: 'Security Gateway' },
+    maliciousSkillSwitch: { zh: '恶意技能检测', en: 'Malicious Skill Detection' },
     floatingWindowOpacity: { zh: '透明度', en: 'Opacity' },
     floatingWindowResetPosition: { zh: '重置初始位置', en: 'Reset Position' },
     floatingWindowDetail: { zh: '详情', en: 'Details' },
@@ -306,6 +307,30 @@ const CSS = `
     color: inherit;
 }
 
+/* Moss health indicator dot */
+.moss-health-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 6px;
+    background: #9CA3AF;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+.moss-health-dot.ok {
+    background: #22C55E;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+.moss-health-dot.err {
+    background: #EF4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+.moss-health-dot.warn {
+    background: #EAB308;
+    box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+}
+
 .count-tag {
     display: inline-flex;
     align-items: center;
@@ -353,7 +378,7 @@ const CSS = `
 .settings-btn {
     height: 24px;
     width: 24px;
-    display: inline-flex;
+    display: none;
     align-items: center;
     justify-content: center;
     border: none;
@@ -363,6 +388,13 @@ const CSS = `
     font-size: 14px;
     cursor: pointer;
     transition: background 0.15s ease;
+}
+
+.agentgate-floating:hover .settings-btn,
+.agentgate-floating:focus-within .settings-btn,
+.agentgate-floating.is-auto-expanded .settings-btn,
+.agentgate-floating.is-pinned .settings-btn {
+    display: inline-flex;
 }
 
 :host([data-theme="dark"]) .settings-btn {
@@ -579,7 +611,7 @@ const CSS = `
 }
 
 .floating-settings.is-open {
-    max-height: 120px;
+    max-height: 150px;
     opacity: 1;
     padding: 10px 12px;
     border-top-color: rgba(200, 200, 210, 0.7);
@@ -598,6 +630,39 @@ const CSS = `
 
 .setting-row:last-child {
     margin-bottom: 0;
+}
+
+/* 三个开关（安全网关/恶意技能检测/显示浮窗）铺平一行 */
+.toggles-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.toggle-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.toggle-cell .setting-label {
+    min-width: 0;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.toggle-cell .toggle-switch {
+    flex-shrink: 0;
 }
 
 .setting-label {
@@ -736,6 +801,8 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._gateEnabled = true; // 安全网关总开关
         this._gateToggling = false;
         this._gateActionUntil = 0; // 总开关操作后的抑制期截止时间戳（避免服务启停触发的自动展开/折叠）
+        this._malEnabled = true; // 恶意技能检测开关
+        this._malToggling = false;
         this._settingsOpen = false;
         this._loading = true;
         this._dashboardUrl = '';
@@ -758,6 +825,10 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._denyCount = 0;
         this._allowCount = 0;
         this._prevTotalCount = 0;
+
+        // Moss health
+        this._mossDot = null;
+        this._mossHealthTimer = null;
 
         // Build initial DOM
         this._buildDOM();
@@ -844,7 +915,9 @@ class AgentGateFloatingWindow extends HTMLElement {
         api.onEventsUpdate(this._eventsCallback);
 
         // Load initial config
-        api.getFloatingWindowConfig()
+        const registry = window.applicationRegistryAPI;
+        const callAG = (methodName, ...args) => registry?.callMainWorld('agentgate', methodName, ...args);
+        callAG('getFloatingWindowConfig')
             .then(async (config) => {
                 // Also check experimental mode from setting
                 let experimentalEnabled = false;
@@ -855,11 +928,18 @@ class AgentGateFloatingWindow extends HTMLElement {
                 // 读取安全网关总开关真实状态（区别于浮窗显示开关）
                 let gateEnabled = true;
                 try {
-                    gateEnabled = await window.applicationRegistryAPI?.callMainWorld('agentgate', 'getEnabled');
+                    gateEnabled = await registry?.callMainWorld('agentgate', 'getEnabled');
                 } catch {}
                 this._globalEnabledBase = experimentalEnabled;
                 this._gateEnabled = gateEnabled !== false;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
+
+                // 读取恶意技能检测开关真实状态（默认 true）
+                let malEnabled = true;
+                try {
+                    malEnabled = await registry?.callMainWorld('agentgate', 'getMaliciousSkillDetection');
+                } catch {}
+                this._malEnabled = malEnabled !== false;
 
                 this._enabled = experimentalEnabled && config.enabled;
                 this._opacity = config.opacity;
@@ -868,6 +948,7 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._updateOpacity();
                 this._updateToggleSwitch();
                 this._updateGateSwitch();
+                this._updateMalSwitch();
                 this._updateHeader();
             })
             .catch((err) => {
@@ -875,7 +956,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             });
 
         // Load initial events (set prevEventCount so first load doesn't trigger auto-expand)
-        api.getRecentEvents()
+        callAG('getRecentEvents')
             .then((events) => {
                 this._events = events || [];
                 this._prevEventCount = this._events.length;
@@ -888,13 +969,16 @@ class AgentGateFloatingWindow extends HTMLElement {
             });
 
         // Get dashboard URL for navigation
-        api.getDashboardUrl()
+        callAG('getDashboardUrl')
             .then((url) => {
                 this._dashboardUrl = url;
             })
             .catch(() => {
                 this._dashboardUrl = 'http://127.0.0.1:9100/dashboard/';
             });
+
+        // Start moss health check polling (runs in background, won't block)
+        this._startMossHealthCheck();
 
         // Listen for global setting changes to sync visibility
         if (window.settingAPI) {
@@ -907,6 +991,9 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._globalEnabledBase = experimentalEnabled;
                 this._gateEnabled = agentgateEnabled;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
+
+                // 同步恶意技能检测开关（默认 true）
+                this._malEnabled = agConfig.maliciousSkillDetection !== false;
 
                 // Floating window should only show when experimental mode is on
                 const floatingWindowEnabled = agConfig.floatingWindowEnabled === true;
@@ -933,9 +1020,11 @@ class AgentGateFloatingWindow extends HTMLElement {
                 }
                 this._updateToggleSwitch();
                 this._updateGateSwitch();
+                this._updateMalSwitch();
                 this._updateHeader();
-                // Locale 变化时重新同步翻译
-                const newLocale = data?.locale || data?.resolved_locale;
+                // Locale 变化时重新同步翻译（locale='auto' 时取 resolved_locale，与 resolveFloatingLocale 一致）
+                let newLocale = data?.locale;
+                if (!newLocale || newLocale === 'auto') newLocale = data?.resolved_locale;
                 if (newLocale && newLocale !== _floatingLocale) {
                     _floatingLocale = newLocale;
                     this._reRenderAll();
@@ -949,11 +1038,14 @@ class AgentGateFloatingWindow extends HTMLElement {
     _reRenderAll() {
         this._updateHeader();
         this._renderRecords();
-        // 重新渲染设置面板文本
-        if (this._settingsOpen) {
-            this._opacityLabel.textContent = t('floatingWindowOpacity');
-            this._toggleLabel.textContent = t('floatingWindowSwitch');
-        }
+        // 标题（无论设置面板是否打开都要同步，元素始终在 DOM 中）
+        if (this._titleLabel) this._titleLabel.textContent = t('floatingTitle');
+        if (this._container) this._container.setAttribute('aria-label', t('floatingTitle'));
+        // 重新渲染设置面板文本（去掉 _settingsOpen 条件：元素已在 DOM，下次打开即为新文案）
+        if (this._gateLabel) this._gateLabel.textContent = t('securityGatewaySwitch');
+        if (this._malLabel) this._malLabel.textContent = t('maliciousSkillSwitch');
+        if (this._toggleLabel) this._toggleLabel.textContent = t('floatingWindowSwitch');
+        if (this._opacityLabel) this._opacityLabel.textContent = t('floatingWindowOpacity');
         // 重新渲染详情链接
         if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
     }
@@ -976,6 +1068,11 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
         if (this._dragEndHandler) {
             document.removeEventListener('mouseup', this._dragEndHandler);
+        }
+        // Clean up moss health timer
+        if (this._mossHealthTimer) {
+            clearInterval(this._mossHealthTimer);
+            this._mossHealthTimer = null;
         }
     }
 
@@ -1000,7 +1097,14 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         const titleDiv = document.createElement('div');
         titleDiv.className = 'floating-title';
-        titleDiv.innerHTML = `${SHIELD_ICON}<span class="floating-title-label">${t('floatingTitle')}</span>`;
+        titleDiv.innerHTML = `${SHIELD_ICON}<span class="floating-title-label"></span>`;
+        this._titleLabel = titleDiv.querySelector('.floating-title-label');
+        this._titleLabel.textContent = t('floatingTitle');
+        // Moss health dot (appended after title text)
+        this._mossDot = document.createElement('span');
+        this._mossDot.className = 'moss-health-dot';
+        this._mossDot.title = 'AgentMoss';
+        titleDiv.appendChild(this._mossDot);
 
         this._actionsDiv = document.createElement('div');
         this._actionsDiv.className = 'floating-actions';
@@ -1101,9 +1205,13 @@ class AgentGateFloatingWindow extends HTMLElement {
     }
 
     _buildSettingsPanel() {
-        // Security gateway master switch row (总开关)
+        // 三个开关（安全网关/恶意技能检测/显示浮窗）铺平一行的容器
+        const togglesRow = document.createElement('div');
+        togglesRow.className = 'toggles-row';
+
+        // Security gateway master switch cell (总开关)
         const gateRow = document.createElement('div');
-        gateRow.className = 'setting-row';
+        gateRow.className = 'toggle-cell';
 
         const gateLabel = document.createElement('span');
         gateLabel.className = 'setting-label';
@@ -1149,6 +1257,46 @@ class AgentGateFloatingWindow extends HTMLElement {
         gateRow.appendChild(gateLabel);
         gateRow.appendChild(this._gateSwitch);
 
+        // Malicious skill detection switch cell（恶意技能检测：拦截归因+弹窗+黑名单）
+        const malRow = document.createElement('div');
+        malRow.className = 'toggle-cell';
+
+        const malLabel = document.createElement('span');
+        malLabel.className = 'setting-label';
+        malLabel.textContent = t('maliciousSkillSwitch');
+        this._malLabel = malLabel;
+
+        this._malSwitch = document.createElement('div');
+        this._malSwitch.className = 'toggle-switch';
+        this._malSwitch.setAttribute('tabindex', '0');
+        this._malSwitch.setAttribute('role', 'switch');
+        this._malSwitch.innerHTML = '<div class="toggle-thumb"></div>';
+        this._malSwitch.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            try {
+                this._malSwitch.focus();
+            } catch {}
+            if (this._malToggling) return;
+            this._malToggling = true;
+            const next = !this._malEnabled;
+            // 乐观更新 UI
+            this._malEnabled = next;
+            this._updateMalSwitch();
+            try {
+                await window.applicationRegistryAPI?.callMainWorld('agentgate', 'setMaliciousSkillDetection', next);
+                // 后端 setMaliciousSkillDetection 会触发 setting 广播，_settingCallback 回填真实状态
+            } catch (err) {
+                console.warn('[agentgate-floating-window] setMaliciousSkillDetection failed:', err);
+                this._malEnabled = !next;
+                this._updateMalSwitch();
+            } finally {
+                this._malToggling = false;
+            }
+        });
+
+        malRow.appendChild(malLabel);
+        malRow.appendChild(this._malSwitch);
+
         // Opacity row
         const opacityRow = document.createElement('div');
         opacityRow.className = 'setting-row';
@@ -1170,7 +1318,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._opacity = val;
             this._opacityValue.textContent = val.toFixed(2);
             this._updateOpacity();
-            window.agentGateFloatingAPI?.setFloatingWindowOpacity(val);
+            window.applicationRegistryAPI?.callMainWorld('agentgate', 'setFloatingWindowOpacity', val);
         });
 
         this._opacityValue = document.createElement('span');
@@ -1181,9 +1329,9 @@ class AgentGateFloatingWindow extends HTMLElement {
         opacityRow.appendChild(this._opacitySlider);
         opacityRow.appendChild(this._opacityValue);
 
-        // Toggle row
+        // Toggle cell (显示浮窗)
         const toggleRow = document.createElement('div');
-        toggleRow.className = 'setting-row';
+        toggleRow.className = 'toggle-cell';
 
         const toggleLabel = document.createElement('span');
         toggleLabel.className = 'setting-label';
@@ -1203,7 +1351,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._enabled = !this._enabled;
             this._updateToggleSwitch();
             this.style.display = this._enabled ? '' : 'none';
-            window.agentGateFloatingAPI?.setFloatingWindowEnabled(this._enabled);
+            window.applicationRegistryAPI?.callMainWorld('agentgate', 'setFloatingWindowEnabled', this._enabled);
         });
 
         toggleRow.appendChild(toggleLabel);
@@ -1225,13 +1373,17 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         resetRow.appendChild(resetBtn);
 
-        this._settingsEl.appendChild(gateRow);
+        // 三个开关铺平一行，opacity 与 reset 各占一行
+        togglesRow.appendChild(gateRow);
+        togglesRow.appendChild(malRow);
+        togglesRow.appendChild(toggleRow);
+        this._settingsEl.appendChild(togglesRow);
         this._settingsEl.appendChild(opacityRow);
-        this._settingsEl.appendChild(toggleRow);
         this._settingsEl.appendChild(resetRow);
 
         this._updateToggleSwitch();
         this._updateGateSwitch();
+        this._updateMalSwitch();
     }
 
     // ── Update Methods ────────────────────────────────────────────────
@@ -1272,6 +1424,37 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._container.style.setProperty('--floating-opacity-hover', String(hoverOpacity));
     }
 
+    // ── Moss Health Check ────────────────────────────────────────────
+    _startMossHealthCheck() {
+        this._checkMossHealth();
+        this._mossHealthTimer = setInterval(() => this._checkMossHealth(), 10000);
+    }
+
+    async _checkMossHealth() {
+        try {
+            const status = await window.applicationRegistryAPI?.callMainWorld('agentgate', 'getBridgeStatus');
+            if (!status) return;
+            const dot = this._mossDot;
+            if (!dot) return;
+            if (status?.mossRunning === true && status?.llmAvailable !== false) {
+                dot.className = 'moss-health-dot ok';
+                dot.title = '安全网关正常';
+            } else if (status?.mossRunning === true && status?.llmAvailable === false) {
+                dot.className = 'moss-health-dot warn';
+                dot.title = 'AgentMoss 服务不可用';
+            } else {
+                dot.className = 'moss-health-dot err';
+                dot.title = '安全网关不可达';
+            }
+        } catch {
+            const dot = this._mossDot;
+            if (dot) {
+                dot.className = 'moss-health-dot err';
+                dot.title = 'AgentMoss 不可达';
+            }
+        }
+    }
+
     _updateToggleSwitch() {
         this._toggleSwitch.className = this._enabled ? 'toggle-switch is-on' : 'toggle-switch';
     }
@@ -1279,6 +1462,11 @@ class AgentGateFloatingWindow extends HTMLElement {
     _updateGateSwitch() {
         if (!this._gateSwitch) return;
         this._gateSwitch.className = this._gateEnabled ? 'toggle-switch is-on' : 'toggle-switch';
+    }
+
+    _updateMalSwitch() {
+        if (!this._malSwitch) return;
+        this._malSwitch.className = this._malEnabled ? 'toggle-switch is-on' : 'toggle-switch';
     }
 
     _toggleSettings() {
@@ -1380,6 +1568,11 @@ class AgentGateFloatingWindow extends HTMLElement {
         } else if (!this._autoExpandTimer) {
             // 自动展开状态但 timer 已被清除（hover 时取消了 timer），立即收回
             this._collapseAutoExpand();
+        }
+        // 折叠时同时关闭设置面板，避免残留
+        if (this._settingsOpen) {
+            this._settingsOpen = false;
+            this._settingsEl.className = 'floating-settings';
         }
     }
 

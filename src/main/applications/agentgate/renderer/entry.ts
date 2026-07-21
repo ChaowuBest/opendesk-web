@@ -11,9 +11,35 @@
 
 import { showConfirmModal } from '../../../../renderer/components/confirmModal';
 
-const BASE_URL = (typeof process !== 'undefined' && process.env?.AGENT_GATE_URL) || 'http://127.0.0.1:9100';
-const DASHBOARD_URL = `${BASE_URL}/dashboard/`;
-const HEALTH_URL = `${BASE_URL}/api/v1/health`;
+// AgentGate 服务地址。
+// bridge 用 findFreePort 给 agent-gate 分配动态端口（9100 被占则递增），
+// renderer 必须运行时查 bridge 拿真实端口，否则 9100 被占时 dashboard 健康检测连不上 → 显示"未连接"。
+// 优先级：AGENT_GATE_URL 环境变量 > bridge 动态端口 > 兜底 9100
+const FALLBACK_BASE_URL = 'http://127.0.0.1:9100';
+
+/** 缓存最近一次从 bridge 拿到的端口，供同步代码路径（如 _loadDash）使用 */
+let _cachedGatePort: number | null = null;
+
+async function resolveBaseUrl(): Promise<string> {
+    if (typeof process !== 'undefined' && process.env?.AGENT_GATE_URL) return process.env.AGENT_GATE_URL;
+    try {
+        const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
+        if (status?.gatePort && status.gatePort > 0) {
+            _cachedGatePort = status.gatePort;
+            return `http://127.0.0.1:${status.gatePort}`;
+        }
+    } catch {
+        /* renderer 早期无 applicationAPI，走兜底 */
+    }
+    return FALLBACK_BASE_URL;
+}
+
+/** 同步版：用缓存的端口拼 URL（用于无法 await 的路径，端口未知时兜底 9100） */
+function baseUrlSync(): string {
+    if (typeof process !== 'undefined' && process.env?.AGENT_GATE_URL) return process.env.AGENT_GATE_URL;
+    if (_cachedGatePort && _cachedGatePort > 0) return `http://127.0.0.1:${_cachedGatePort}`;
+    return FALLBACK_BASE_URL;
+}
 
 // ── Theme & Locale Helpers ───────────────────────────────────────────────────
 
@@ -104,6 +130,15 @@ const T: Record<string, { zh: string; en: string }> = {
     llmModelDefault: { zh: '默认模型', en: 'Default Model' },
     llmTimeout: { zh: '超时', en: 'Timeout' },
     llmTimeoutUnit: { zh: '秒', en: 's' },
+    maliciousSkillTitle: { zh: '恶意技能检测', en: 'Malicious Skill Detection' },
+    maliciousSkillEnable: {
+        zh: '启用恶意技能检测',
+        en: 'Enable malicious skill detection'
+    },
+    maliciousSkillDesc: {
+        zh: '拦截后做 LLM 归因、会话结束弹窗提示、允许加入黑名单。关闭后不再产生新黑名单，已拉黑的技能仍被拦截。',
+        en: 'LLM attribution after interception, end-of-session prompt, and blacklisting. When off, no new blacklist entries are created; already-blacklisted skills remain blocked.'
+    },
     securityTitle: { zh: '安全拦截策略', en: 'Security Interception Policy' },
     securityLevel: { zh: '拦截程度', en: 'Interception Level' },
     securityLevelLow: { zh: '低 — 仅弹窗提醒，不拦截', en: 'Low — Warning only, no interception' },
@@ -197,7 +232,16 @@ const T: Record<string, { zh: string; en: string }> = {
         en: 'This will permanently delete all <b>{count}</b> record(s). This cannot be undone.'
     },
     deleteSuccess: { zh: '已删除 {count} 条', en: 'Deleted {count} record(s)' },
-    deleteFailed: { zh: '删除失败', en: 'Delete failed' }
+    deleteFailed: { zh: '删除失败', en: 'Delete failed' },
+    copyRecord: { zh: '复制记录', en: 'Copy Records' },
+    copySelected: { zh: '复制所选', en: 'Copy Selected' },
+    copyCurrentPage: { zh: '复制当前页', en: 'Copy Current Page' },
+    copyFormatTsv: { zh: 'TSV', en: 'TSV' },
+    copyFormatJson: { zh: 'JSON', en: 'JSON' },
+    copySuccess: { zh: '已复制 {count} 条', en: 'Copied {count} record(s)' },
+    copySuccessPage: { zh: '已复制当前页 {count} 条', en: 'Copied {count} record(s) on this page' },
+    copyFailed: { zh: '复制失败', en: 'Copy failed' },
+    copyNoneSelected: { zh: '未选择记录', en: 'No records selected' }
 };
 
 function tr(key: string): string {
@@ -759,10 +803,17 @@ const DASH_LIGHT = `
 .ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
 .ag-dash-panel .ag-th-check input[type='checkbox'], .ag-dash-panel .ag-check-cell input[type='checkbox'] { cursor: pointer; margin: 0; }
 .ag-dash-panel .ag-toolbar-spacer { flex: 1; }
-/* tabs 行内的「删除记录」入口按钮：推到行末右对齐，垂直居中避开 tabs 底边框线 */
-.ag-dash-panel .ag-tab-action.ag-btn-danger {
+/* tabs 行内的入口按钮组（删除记录/复制记录）：容器 margin-left:auto 推到行末右对齐成组 */
+.ag-dash-panel .ag-tab-actions {
     margin-left: auto; align-self: center; margin-bottom: 4px;
+    display: inline-flex; align-items: center; gap: 8px;
 }
+.ag-dash-panel .ag-tab-actions .ag-tab-action { margin-left: 0; }
+/* 复制格式切换器（TSV/JSON segmented control）+ 工具栏内 delete/copy 按钮组 */
+.ag-dash-panel .ag-copy-fmt { display: inline-flex; border: 1px solid var(--ag-input-border); border-radius: 6px; overflow: hidden; }
+.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: 12px; border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
+.ag-dash-panel .ag-fmt-btn.active { background: var(--ag-accent); color: #fff; }
+.ag-dash-panel .ag-bar-group { display: inline-flex; align-items: center; gap: 8px; }
 .ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
     padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
 }
@@ -1079,10 +1130,17 @@ const DASH_DARK = `
 .ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
 .ag-dash-panel .ag-th-check input[type='checkbox'], .ag-dash-panel .ag-check-cell input[type='checkbox'] { cursor: pointer; margin: 0; }
 .ag-dash-panel .ag-toolbar-spacer { flex: 1; }
-/* tabs 行内的「删除记录」入口按钮：推到行末右对齐，复用 danger 样式 */
-.ag-dash-panel .ag-tab-action.ag-btn-danger {
+/* tabs 行内的入口按钮组（删除记录/复制记录）：容器 margin-left:auto 推到行末右对齐成组 */
+.ag-dash-panel .ag-tab-actions {
     margin-left: auto; align-self: center; margin-bottom: 4px;
+    display: inline-flex; align-items: center; gap: 8px;
 }
+.ag-dash-panel .ag-tab-actions .ag-tab-action { margin-left: 0; }
+/* 复制格式切换器（TSV/JSON segmented control）+ 工具栏内 delete/copy 按钮组 */
+.ag-dash-panel .ag-copy-fmt { display: inline-flex; border: 1px solid var(--ag-input-border); border-radius: 6px; overflow: hidden; }
+.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: 12px; border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
+.ag-dash-panel .ag-fmt-btn.active { background: var(--ag-accent); color: #fff; }
+.ag-dash-panel .ag-bar-group { display: inline-flex; align-items: center; gap: 8px; }
 .ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
     padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
 }
@@ -1266,6 +1324,17 @@ function configHTML(): string {
 </div>
 
 <div class="ag-card">
+    <h3 class="ag-section-title" style="margin-top:0;">${tr('maliciousSkillTitle')}</h3>
+    <div class="ag-toggle-row">
+        <div>
+            <span class="ag-toggle-row-label">${tr('maliciousSkillEnable')}</span>
+            <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('maliciousSkillDesc')}</div>
+        </div>
+        <button id="ag-malskill-toggle" class="ag-toggle on" role="switch" aria-checked="true"><span class="ag-toggle-knob"></span></button>
+    </div>
+</div>
+
+<div class="ag-card">
     <h3 class="ag-section-title" style="margin-top:0;">${tr('securityTitle')}</h3>
     <div class="ag-form-row">
         <label class="ag-label">${tr('securityLevel')}</label>
@@ -1402,7 +1471,11 @@ class AgentGateEntryWidget extends HTMLElement {
     _settingUnsub: (() => void) | null = null;
     _selectedIds: Set<number> = new Set();
     _deleting = false;
-    _selectMode = false; // false=默认浏览模式；true=多选删除模式（显示勾选框列+工具栏）
+    // none=默认浏览模式；delete=多选删除模式；copy=多选复制模式（均显示勾选框列+工具栏）
+    _selectMode: 'none' | 'delete' | 'copy' = 'none';
+    _copyFormat: 'tsv' | 'json' = 'tsv'; // 复制格式：TSV（可直粘表格）/ JSON（原始字段）
+    _copying = false; // 复制进行中（禁用复制按钮，避免并发）
+    _currentPageRows: any[] = []; // 当前页原始记录（复制时取数，不依赖 DOM 列宽）
 
     constructor() {
         super();
@@ -1471,11 +1544,12 @@ class AgentGateEntryWidget extends HTMLElement {
         `;
 
         // Tabs
-        this.shadow.querySelectorAll('.ag-tab').forEach((t) => {
-            t.addEventListener('click', () => {
+        this.shadow.querySelectorAll('.ag-tab').forEach((t: Element) => {
+            const tab = t as HTMLElement;
+            tab.addEventListener('click', () => {
                 this.shadow.querySelectorAll('.ag-tab').forEach((x) => x.classList.remove('active'));
-                t.classList.add('active');
-                const target = t.dataset.tab;
+                tab.classList.add('active');
+                const target = tab.dataset.tab;
                 (this.shadow.querySelector('#ag-dash') as HTMLElement).classList.toggle(
                     'hidden',
                     target !== 'dashboard'
@@ -1530,7 +1604,8 @@ class AgentGateEntryWidget extends HTMLElement {
 
         let healthData: any = null;
         try {
-            const r = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+            const healthUrl = `${await resolveBaseUrl()}/api/v1/health`;
+            const r = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) });
             if (r.ok) {
                 healthData = await r.json();
                 this._loadDash(panel, healthData);
@@ -1598,7 +1673,8 @@ class AgentGateEntryWidget extends HTMLElement {
 
     async _loadDash(panel: HTMLElement, healthData?: any) {
         try {
-            const r = await fetch(DASHBOARD_URL);
+            const dashboardUrl = `${await resolveBaseUrl()}/dashboard/`;
+            const r = await fetch(dashboardUrl);
             if (r.ok) {
                 panel.innerHTML = await r.text();
                 injectDashTheme(panel);
@@ -1675,11 +1751,12 @@ class AgentGateEntryWidget extends HTMLElement {
                     this._refreshFn = refresh;
                     try {
                         const offset = (this._currentPage - 1) * this._pageSize;
+                        const _b = baseUrlSync();
                         const [tc, tcAll, ag, tl] = await Promise.all([
-                            fetch(`${BASE_URL}/api/v1/tool_calls?limit=${this._pageSize}&offset=${offset}`),
-                            fetch(`${BASE_URL}/api/v1/tool_calls?limit=200`),
-                            fetch(`${BASE_URL}/api/v1/agents`),
-                            fetch(`${BASE_URL}/api/v1/timeline?minutes=60`)
+                            fetch(`${_b}/api/v1/tool_calls?limit=${this._pageSize}&offset=${offset}`),
+                            fetch(`${_b}/api/v1/tool_calls?limit=200`),
+                            fetch(`${_b}/api/v1/agents`),
+                            fetch(`${_b}/api/v1/timeline?minutes=60`)
                         ]);
                         const tcData = await tc.json();
                         // API may return array or {data, total} object
@@ -1746,7 +1823,7 @@ class AgentGateEntryWidget extends HTMLElement {
                             const newOffset = (this._currentPage - 1) * this._pageSize;
                             try {
                                 const pageR = await fetch(
-                                    `${BASE_URL}/api/v1/tool_calls?limit=${this._pageSize}&offset=${newOffset}`
+                                    `${baseUrlSync()}/api/v1/tool_calls?limit=${this._pageSize}&offset=${newOffset}`
                                 );
                                 const pageData = await pageR.json();
                                 arr = Array.isArray(pageData)
@@ -1758,6 +1835,8 @@ class AgentGateEntryWidget extends HTMLElement {
                         }
                         const hlId = this._highlightedRowId;
                         const displayArr = arr;
+                        // 缓存当前页原始记录，供「复制当前页/复制所选」取数（绕过列宽裁剪，拿完整字段）
+                        this._currentPageRows = Array.isArray(displayArr) ? displayArr.slice() : [];
                         const tbody = panel.querySelector('#recent-table');
                         if (tbody) {
                             const loc = isZh() ? 'zh-CN' : 'en-US';
@@ -1976,7 +2055,7 @@ class AgentGateEntryWidget extends HTMLElement {
 
                         // Fetch versions from health API (dashboard.html <script> won't execute via innerHTML)
                         try {
-                            const hR = await fetch(`${BASE_URL}/api/v1/health`);
+                            const hR = await fetch(`${baseUrlSync()}/api/v1/health`);
                             const hData = await hR.json();
                             const gateV = hData.version || 'N/A';
                             const mossV = hData.moss_version || 'N/A';
@@ -2017,26 +2096,62 @@ class AgentGateEntryWidget extends HTMLElement {
         if (!tableWrap) return;
         const tabs = panel.querySelector('.tabs');
 
-        // ① 默认模式入口：塞进 .tabs 行末尾（右对齐），不单独占行
-        if (tabs && !tabs.querySelector('#ag-enter-select')) {
-            const enterBtn = document.createElement('button');
-            enterBtn.id = 'ag-enter-select';
-            enterBtn.className = 'ag-tab-action ag-btn-danger';
-            enterBtn.textContent = tr('deleteRecord');
-            tabs.appendChild(enterBtn);
+        // ① 默认模式入口：塞进 .tabs 行末尾（右对齐成组），不单独占行
+        //    「删除记录」「复制记录」两个入口包进 .ag-tab-actions 容器，容器 margin-left:auto 推到行末
+        if (tabs && !tabs.querySelector('#ag-tab-actions')) {
+            const actions = document.createElement('div');
+            actions.id = 'ag-tab-actions';
+            actions.className = 'ag-tab-actions';
+            const delBtn = document.createElement('button');
+            delBtn.id = 'ag-enter-select';
+            delBtn.className = 'ag-tab-action ag-btn-danger';
+            delBtn.textContent = tr('deleteRecord');
+            const copyBtn = document.createElement('button');
+            copyBtn.id = 'ag-enter-copy';
+            copyBtn.className = 'ag-tab-action ag-btn-ghost';
+            copyBtn.textContent = tr('copyRecord');
+            actions.appendChild(delBtn);
+            actions.appendChild(copyBtn);
+            tabs.appendChild(actions);
+        } else if (tabs && !tabs.querySelector('#ag-enter-copy')) {
+            // 旧版本只建了 #ag-enter-select 单按钮，补一个 actions 容器把复制入口纳入
+            const oldDel = tabs.querySelector('#ag-enter-select');
+            const actions = document.createElement('div');
+            actions.id = 'ag-tab-actions';
+            actions.className = 'ag-tab-actions';
+            const copyBtn = document.createElement('button');
+            copyBtn.id = 'ag-enter-copy';
+            copyBtn.className = 'ag-tab-action ag-btn-ghost';
+            copyBtn.textContent = tr('copyRecord');
+            if (oldDel && oldDel.parentElement === tabs) {
+                tabs.insertBefore(actions, oldDel);
+                actions.appendChild(oldDel);
+                actions.appendChild(copyBtn);
+            }
         }
 
         // ② 多选模式工具栏：表格上方一行，仅多选模式才显示（默认 display:none）
         //    全选框不放这里——改放 thead 第一列 th（与每行 checkbox 同列，天然对齐）
+        //    工具栏含删除组与复制组两套按钮，由 _applySelectMode 按当前模式切换显隐
         if (!callsPanel.querySelector('#ag-calls-bar')) {
             const bar = document.createElement('div');
             bar.id = 'ag-calls-bar';
             bar.className = 'ag-calls-bar';
             bar.innerHTML = `
                 <span id="ag-selected-count" class="ag-selected-count">${tr('selectedCount').replace('{count}', '0')}</span>
+                <span id="ag-copy-fmt" class="ag-copy-fmt">
+                    <button id="ag-fmt-tsv" class="ag-fmt-btn active">${tr('copyFormatTsv')}</button>
+                    <button id="ag-fmt-json" class="ag-fmt-btn">${tr('copyFormatJson')}</button>
+                </span>
                 <span class="ag-toolbar-spacer"></span>
-                <button id="ag-delete-selected" class="ag-btn-danger" disabled>${tr('deleteSelected')}</button>
-                <button id="ag-delete-all" class="ag-btn-danger">${tr('deleteAll')}</button>
+                <span class="ag-bar-group" data-group="delete">
+                    <button id="ag-delete-selected" class="ag-btn-danger" disabled>${tr('deleteSelected')}</button>
+                    <button id="ag-delete-all" class="ag-btn-danger">${tr('deleteAll')}</button>
+                </span>
+                <span class="ag-bar-group" data-group="copy">
+                    <button id="ag-copy-selected" class="ag-btn-ghost" disabled>${tr('copySelected')}</button>
+                    <button id="ag-copy-page" class="ag-btn-ghost">${tr('copyCurrentPage')}</button>
+                </span>
                 <button id="ag-exit-select" class="ag-btn-ghost">${tr('cancel')}</button>
             `;
             callsPanel.insertBefore(bar, tableWrap);
@@ -2063,17 +2178,26 @@ class AgentGateEntryWidget extends HTMLElement {
     /** 绑定控制条按钮事件（幂等，重复调用安全） */
     _bindCallsBar(panel: HTMLElement): void {
         const enterSelect = panel.querySelector('#ag-enter-select') as HTMLButtonElement | null;
+        const enterCopy = panel.querySelector('#ag-enter-copy') as HTMLButtonElement | null;
         const exitSelect = panel.querySelector('#ag-exit-select') as HTMLButtonElement | null;
         const selectAll = panel.querySelector('#ag-select-all') as HTMLInputElement | null;
         const btnDeleteSel = panel.querySelector('#ag-delete-selected') as HTMLButtonElement | null;
         const btnDeleteAll = panel.querySelector('#ag-delete-all') as HTMLButtonElement | null;
+        const btnCopySel = panel.querySelector('#ag-copy-selected') as HTMLButtonElement | null;
+        const btnCopyPage = panel.querySelector('#ag-copy-page') as HTMLButtonElement | null;
+        const fmtTsv = panel.querySelector('#ag-fmt-tsv') as HTMLButtonElement | null;
+        const fmtJson = panel.querySelector('#ag-fmt-json') as HTMLButtonElement | null;
         if (enterSelect && !enterSelect.dataset.agBound) {
             enterSelect.dataset.agBound = '1';
-            enterSelect.addEventListener('click', () => this._setSelectMode(panel, true));
+            enterSelect.addEventListener('click', () => this._setSelectMode(panel, 'delete'));
+        }
+        if (enterCopy && !enterCopy.dataset.agBound) {
+            enterCopy.dataset.agBound = '1';
+            enterCopy.addEventListener('click', () => this._setSelectMode(panel, 'copy'));
         }
         if (exitSelect && !exitSelect.dataset.agBound) {
             exitSelect.dataset.agBound = '1';
-            exitSelect.addEventListener('click', () => this._setSelectMode(panel, false));
+            exitSelect.addEventListener('click', () => this._setSelectMode(panel, 'none'));
         }
         if (selectAll && !selectAll.dataset.agBound) {
             selectAll.dataset.agBound = '1';
@@ -2102,15 +2226,41 @@ class AgentGateEntryWidget extends HTMLElement {
             btnDeleteAll.dataset.agBound = '1';
             btnDeleteAll.addEventListener('click', () => this._deleteAll(panel));
         }
+        if (btnCopySel && !btnCopySel.dataset.agBound) {
+            btnCopySel.dataset.agBound = '1';
+            btnCopySel.addEventListener('click', () => this._copySelected(panel));
+        }
+        if (btnCopyPage && !btnCopyPage.dataset.agBound) {
+            btnCopyPage.dataset.agBound = '1';
+            btnCopyPage.addEventListener('click', () => this._copyCurrentPage(panel));
+        }
+        if (fmtTsv && !fmtTsv.dataset.agBound) {
+            fmtTsv.dataset.agBound = '1';
+            fmtTsv.addEventListener('click', () => this._setCopyFormat(panel, 'tsv'));
+        }
+        if (fmtJson && !fmtJson.dataset.agBound) {
+            fmtJson.dataset.agBound = '1';
+            fmtJson.addEventListener('click', () => this._setCopyFormat(panel, 'json'));
+        }
     }
 
-    /** 切换多选/默认模式 */
-    _setSelectMode(panel: HTMLElement, on: boolean): void {
-        this._selectMode = on;
-        if (!on) this._selectedIds.clear();
+    /** 切换多选模式：'none'=退出 / 'delete'=删除多选 / 'copy'=复制多选 */
+    _setSelectMode(panel: HTMLElement, mode: 'none' | 'delete' | 'copy'): void {
+        this._selectMode = mode;
+        if (mode === 'none') this._selectedIds.clear();
+        if (mode === 'copy') this._setCopyFormat(panel, this._copyFormat); // 同步格式按钮选中态
         this._applySelectMode(panel);
         // 重新渲染行以补/收勾选框列单元格
         this._refreshFn?.();
+    }
+
+    /** 切换复制格式（TSV/JSON），并同步 segmented control 选中态 */
+    _setCopyFormat(panel: HTMLElement, fmt: 'tsv' | 'json'): void {
+        this._copyFormat = fmt;
+        const tsv = panel.querySelector('#ag-fmt-tsv');
+        const json = panel.querySelector('#ag-fmt-json');
+        if (tsv) tsv.classList.toggle('active', fmt === 'tsv');
+        if (json) json.classList.toggle('active', fmt === 'json');
     }
 
     /** 当前激活的 dashboard 内部 tab 是否为「近期调用」(calls) */
@@ -2119,16 +2269,24 @@ class AgentGateEntryWidget extends HTMLElement {
         return activeTab?.dataset.panel === 'calls';
     }
 
-    /** 根据 _selectMode 显隐：tabs 行的「删除记录」按钮 + 多选工具栏行 + 勾选框列 */
+    /** 根据 _selectMode 显隐：tabs 行的入口按钮 + 多选工具栏行（含 delete/copy 组切换）+ 勾选框列 */
     _applySelectMode(panel: HTMLElement): void {
-        const isSelect = this._selectMode;
+        const mode = this._selectMode;
+        const isSelect = mode !== 'none';
         const isCalls = this._isCallsTabActive(panel);
-        // tabs 行的入口按钮：多选模式隐藏；非多选时仅在 calls tab 显示
-        const enterBtn = panel.querySelector('#ag-enter-select') as HTMLElement | null;
-        if (enterBtn) enterBtn.style.display = isSelect ? 'none' : isCalls ? '' : 'none';
+        // tabs 行的入口按钮组：多选模式隐藏整组；非多选时仅在 calls tab 显示
+        const actions = panel.querySelector('#ag-tab-actions') as HTMLElement | null;
+        if (actions) actions.style.display = isSelect ? 'none' : isCalls ? '' : 'none';
         // 多选工具栏行：默认隐藏，多选模式显示
         const bar = panel.querySelector('#ag-calls-bar') as HTMLElement | null;
         if (bar) bar.style.display = isSelect ? '' : 'none';
+        // 工具栏内 delete/copy 按钮组 + 格式切换器：按当前模式切换
+        const fmtWrap = panel.querySelector('#ag-copy-fmt') as HTMLElement | null;
+        if (fmtWrap) fmtWrap.style.display = mode === 'copy' ? '' : 'none';
+        panel.querySelectorAll('.ag-bar-group').forEach((g) => {
+            const el = g as HTMLElement;
+            el.style.display = el.dataset.group === mode ? '' : 'none';
+        });
         // 勾选框列：thead th + tbody td
         const thCheck = panel.querySelector('.ag-th-check') as HTMLElement | null;
         if (thCheck) thCheck.style.display = isSelect ? '' : 'none';
@@ -2138,7 +2296,7 @@ class AgentGateEntryWidget extends HTMLElement {
         this._updateCallsToolbar(panel);
     }
 
-    /** 更新工具栏状态：已选计数、按钮 disabled、全选框三态 */
+    /** 更新工具栏状态：已选计数、删除/复制按钮 disabled、全选框三态 */
     _updateCallsToolbar(panel: HTMLElement): void {
         const countEl = panel.querySelector('#ag-selected-count');
         if (countEl) countEl.textContent = tr('selectedCount').replace('{count}', String(this._selectedIds.size));
@@ -2146,6 +2304,11 @@ class AgentGateEntryWidget extends HTMLElement {
         if (btnSel) btnSel.disabled = this._selectedIds.size === 0 || this._deleting;
         const btnAll = panel.querySelector('#ag-delete-all') as HTMLButtonElement | null;
         if (btnAll) btnAll.disabled = this._deleting;
+        // 复制按钮：复制所选需至少选中一条且非复制中；复制当前页仅受复制中状态约束
+        const btnCopySel = panel.querySelector('#ag-copy-selected') as HTMLButtonElement | null;
+        if (btnCopySel) btnCopySel.disabled = this._selectedIds.size === 0 || this._copying;
+        const btnCopyPage = panel.querySelector('#ag-copy-page') as HTMLButtonElement | null;
+        if (btnCopyPage) btnCopyPage.disabled = this._copying;
         // 全选框：当前页是否全选
         const selectAll = panel.querySelector('#ag-select-all') as HTMLInputElement | null;
         if (selectAll) {
@@ -2184,7 +2347,7 @@ class AgentGateEntryWidget extends HTMLElement {
         this._deleting = true;
         this._updateCallsToolbar(panel);
         try {
-            const deleted = await (window as any).applicationAPI?.callMainWorld('deleteToolCalls', ids);
+            const deleted = await (window as any).applicationAPI?.call('deleteToolCalls', ids);
             this._selectedIds.clear();
             this._toast(panel, tr('deleteSuccess').replace('{count}', String(deleted ?? 0)), false);
         } catch (err) {
@@ -2214,7 +2377,7 @@ class AgentGateEntryWidget extends HTMLElement {
         this._deleting = true;
         this._updateCallsToolbar(panel);
         try {
-            const deleted = await (window as any).applicationAPI?.callMainWorld('deleteAllToolCalls');
+            const deleted = await (window as any).applicationAPI?.call('deleteAllToolCalls');
             this._selectedIds.clear();
             this._toast(panel, tr('deleteSuccess').replace('{count}', String(deleted ?? 0)), false);
         } catch (err) {
@@ -2223,6 +2386,130 @@ class AgentGateEntryWidget extends HTMLElement {
             this._deleting = false;
             this._updateCallsToolbar(panel);
             this._refreshFn?.();
+        }
+    }
+
+    /**
+     * 复制所选记录：取当前页数据中 id ∈ _selectedIds 的行 → 按当前格式写剪贴板 → toast
+     * （逻辑与 _deleteSelected 平行：复用同一多选模式的选择集，只是动作从删除改为复制）
+     */
+    async _copySelected(panel: HTMLElement): Promise<void> {
+        if (this._copying || this._selectedIds.size === 0) return;
+        const want = new Set(this._selectedIds);
+        const rows = this._currentPageRows.filter((x: any) => {
+            const id = Number(x?.id);
+            return !Number.isNaN(id) && want.has(id);
+        });
+        if (rows.length === 0) {
+            this._toast(panel, tr('copyNoneSelected'), true);
+            return;
+        }
+        await this._doCopy(panel, rows, tr('copySuccess').replace('{count}', String(rows.length)));
+    }
+
+    /** 复制当前页全部记录：取当前页数据 → 按当前格式写剪贴板 → toast */
+    async _copyCurrentPage(panel: HTMLElement): Promise<void> {
+        if (this._copying) return;
+        const rows = Array.isArray(this._currentPageRows) ? this._currentPageRows.slice() : [];
+        if (rows.length === 0) {
+            this._toast(panel, tr('copyNoneSelected'), true);
+            return;
+        }
+        await this._doCopy(panel, rows, tr('copySuccessPage').replace('{count}', String(rows.length)));
+    }
+
+    /** 把记录数组按 _copyFormat 序列化成文本：TSV（表头+可读文本，可直粘表格）/ JSON（原始字段） */
+    _buildCopyPayload(rows: any[], fmt: 'tsv' | 'json'): string {
+        const loc = isZh() ? 'zh-CN' : 'en-US';
+        const riskZh: Record<string, string> = { critical: '极危', high: '高危', medium: '中危', low: '低危' };
+        const fmtTime = (x: any): string =>
+            x.called_at
+                ? new Date(x.called_at + 'Z').toLocaleString(loc, {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                  })
+                : '-';
+        // TSV：把单元格里的 tab/换行替换为空格，避免破坏列结构
+        const cell = (v: any): string => String(v ?? '').replace(/[\t\r\n]+/g, ' ');
+        if (fmt === 'json') {
+            // JSON：保留原始字段，便于程序处理（决策/风险用原始英文枚举值）
+            return JSON.stringify(
+                rows.map((x: any) => ({
+                    id: x.id ?? null,
+                    called_at: x.called_at ?? null,
+                    agent_type: x.agent_type ?? null,
+                    session_id: x.session_id ?? null,
+                    command: x.command ?? x.action_detail ?? null,
+                    decision: x.decision ?? null,
+                    risk_level: x.risk_level ?? null,
+                    analysis_duration_ms: x.analysis_duration_ms ?? null,
+                    reason: x.reason ?? null
+                })),
+                null,
+                2
+            );
+        }
+        // TSV：表头 + 每行可读文本（与表格显示一致，但内容不因列宽被截断）
+        const header = ['Time', 'Agent', 'Session', 'Command', 'Decision', 'Risk', 'Latency', 'Reason'].join('\t');
+        const lines = rows.map((x: any) =>
+            [
+                fmtTime(x),
+                x.agent_type || '-',
+                x.session_id || '-',
+                x.command || x.action_detail || '-',
+                isZh() ? (x.decision === 'Allow' ? '放行' : '拦截') : x.decision || '-',
+                isZh() ? riskZh[x.risk_level] || x.risk_level || '-' : x.risk_level || '-',
+                Math.round(x.analysis_duration_ms || 0) + 'ms',
+                x.reason || '-'
+            ]
+                .map(cell)
+                .join('\t')
+        );
+        return [header, ...lines].join('\n');
+    }
+
+    /** 写文本到剪贴板：优先 navigator.clipboard，不可用时回退 execCommand（临时 textarea） */
+    async _writeClipboard(text: string): Promise<void> {
+        const nav = navigator as any;
+        if (nav?.clipboard?.writeText && window.isSecureContext !== false) {
+            try {
+                await nav.clipboard.writeText(text);
+                return;
+            } catch {
+                // 落到 execCommand 兜底
+            }
+        }
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        ta.style.pointerEvents = 'none';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+            document.execCommand('copy');
+        } finally {
+            document.body.removeChild(ta);
+        }
+    }
+
+    /** 复制执行：锁 _copying → 序列化 → 写剪贴板 → toast（不刷新表格，复制不改数据） */
+    async _doCopy(panel: HTMLElement, rows: any[], okMsg: string): Promise<void> {
+        this._copying = true;
+        this._updateCallsToolbar(panel);
+        try {
+            const text = this._buildCopyPayload(rows, this._copyFormat);
+            await this._writeClipboard(text);
+            this._toast(panel, okMsg, false);
+        } catch (err) {
+            this._toast(panel, `${tr('copyFailed')}: ${String(err)}`, true);
+        } finally {
+            this._copying = false;
+            this._updateCallsToolbar(panel);
         }
     }
 
@@ -2405,9 +2692,13 @@ class AgentGateEntryWidget extends HTMLElement {
         // 刷新服务状态区（显示真实运行状态与错误信息）
         this._refreshServiceStatus();
 
-        // LLM toggle
+        // LLM toggle（初始化从后端读真实状态，避免硬编码默认）
         const llm = this.shadow.querySelector('#ag-llm-toggle') as HTMLElement;
         if (llm) {
+            try {
+                const llmOn = await (window as any).applicationAPI?.callMainWorld('getEnableLLM');
+                _tog(llm, llmOn !== false);
+            } catch {}
             llm.addEventListener('click', () => {
                 const on = !llm.classList.contains('on');
                 _tog(llm, on);
@@ -2417,9 +2708,39 @@ class AgentGateEntryWidget extends HTMLElement {
             });
         }
 
-        // LLM timeout
+        // 恶意技能检测 toggle（初始化从后端读真实状态，避免硬编码默认）
+        const ms2 = this.shadow.querySelector('#ag-malskill-toggle') as HTMLElement;
+        if (ms2) {
+            try {
+                const msOn = await (window as any).applicationAPI?.callMainWorld('getMaliciousSkillDetection');
+                _tog(ms2, msOn !== false);
+            } catch {}
+            ms2.addEventListener('click', () => {
+                const on = !ms2.classList.contains('on');
+                _tog(ms2, on);
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setMaliciousSkillDetection', on);
+                } catch {}
+            });
+        }
+
+        // LLM model 下拉（选中已在 _loadModels 完成，这里挂 change 监听）
+        const lm = this.shadow.querySelector('#ag-llm-model') as HTMLSelectElement;
+        if (lm) {
+            lm.addEventListener('change', () => {
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setLLMModel', lm.value || '');
+                } catch {}
+            });
+        }
+
+        // LLM timeout（初始化从后端读真实值，避免硬编码默认 300）
         const to = this.shadow.querySelector('#ag-llm-timeout') as HTMLInputElement;
         if (to) {
+            try {
+                const tv = await (window as any).applicationAPI?.callMainWorld('getLLMTimeout');
+                if (tv && tv >= 10 && tv <= 600) to.value = String(tv);
+            } catch {}
             to.addEventListener('blur', () => {
                 const v = parseInt(to.value, 10);
                 if (v >= 10 && v <= 600)
@@ -2490,6 +2811,8 @@ class AgentGateEntryWidget extends HTMLElement {
                     }
                     // 同步总开关状态（直接从广播数据读取，避免 IPC 往返时序问题）
                     if (ms) _tog(ms, agCfg.enabled !== false);
+                    // 同步恶意技能检测开关
+                    if (ms2) _tog(ms2, agCfg.maliciousSkillDetection !== false);
                 });
                 // 存储 unsub 以便 disconnectedCallback 时清理
                 this._settingUnsub = unsub;
@@ -2806,6 +3129,11 @@ class AgentGateEntryWidget extends HTMLElement {
                 o.textContent = `${x.alias} (${x.name})`;
                 sel.appendChild(o);
             });
+            // 选中后端配置的 llmModel（空则停在默认项）
+            try {
+                const chosen = await (window as any).applicationAPI?.callMainWorld('getLLMModel');
+                if (chosen) sel.value = chosen;
+            } catch {}
         } catch {}
     }
 

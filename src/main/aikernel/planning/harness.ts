@@ -282,6 +282,8 @@ export function registerMainTaskTerminationHook(): void {
                 logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
             }
         }
+        // 记录终止状态到 task，供 afterFinishTurn 回调判断会话是否真正结束
+        task.lastTerminationState = terminationState as 'finished' | 'interrupted' | 'question';
 
         if (terminationState === 'interrupted') {
             return {

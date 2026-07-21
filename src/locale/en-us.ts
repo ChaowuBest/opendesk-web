@@ -1558,5 +1558,6 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.taskStartFailed': 'Failed to start task: ${message}',
     'agentoffice.error.noReply': 'The staff member completed the task without replying through sendReply.',
     'agentoffice.error.resourceDenied':
-        "Resource is outside this digital staff member's configured permissions: ${path}"
+        "Resource is outside this digital staff member's configured permissions: ${path}",
+    'agentgate.attribution.status': 'Analyzing malicious skill attribution...'
 };

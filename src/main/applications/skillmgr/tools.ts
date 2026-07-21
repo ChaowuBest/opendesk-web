@@ -12,6 +12,7 @@
 import { BaseTool } from '../../aikernel/tool';
 import { z } from 'zod';
 import type { PermissionRequest } from '../../aikernel/security/permission';
+import { isBlacklisted } from './blacklist.js';
 
 const AddSkillFromDirectoryArgsSchema = z.object({
     sourceDirectory: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
@@ -120,7 +121,11 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
 
     private async list(): Promise<string> {
         const skills = this.skillApp.listSkills();
-        return JSON.stringify(skills);
+        // 过滤掉已加入黑名单的 skill：agent 不应看到恶意 skill 出现在已安装列表中，
+        // 否则会顺藤摸瓜用文件工具读其源文件绕过黑名单（黑名单 filter 只守技能加载通道）。
+        // skillmgr 安装的 skill id 即 frontmatter.name，黑名单 key 为 `skillmgr/${name}`。
+        const visible = skills.filter((s: any) => !isBlacklisted('skillmgr', String(s.name ?? s.id)));
+        return JSON.stringify(visible);
     }
 }
 
