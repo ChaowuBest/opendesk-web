@@ -22,6 +22,9 @@ import { getPlatform } from '../../../../platforms/base.js';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
+import type { ApiAdapter, ApiAdapterContext, FetchResult } from './adapters/apiAdapter.js';
+import { GitCodeAdapter } from './adapters/gitCodeAdapter.js';
+import { GitHubAdapter } from './adapters/gitHubAdapter.js';
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 50000;
@@ -59,18 +62,11 @@ const WebFetchArgsSchema = z.object({
     url: z.string().describe('要获取内容的网页URL地址')
 });
 
-/**
- * 抓取结果
- */
-interface FetchResult {
-    content: string;
-    strategy: string;
-    httpStatus?: number;
-}
-
 export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private turndownService: TurndownService;
     private lastHttpStatus: number | undefined;
+    private readonly apiAdapters: ApiAdapter[] = [new GitCodeAdapter(), new GitHubAdapter()];
+    private readonly adapterContext: ApiAdapterContext;
     /** 当纯 HTTP 请求无法抓取完整内容时，根据平台给出下一步建议 */
     private get contentUnavailableHint(): string {
         return getPlatform().getName() === 'electron'
@@ -86,6 +82,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         );
 
         this.turndownService = this.createTurndownService();
+        this.adapterContext = {
+            fetch: (url, headers, onRetry) => this.doFetch(url, headers, onRetry),
+            readBody: (response) => this.readResponseBody(response),
+            truncate: (text) => this.truncate(text)
+        };
         this.setUniversalExecutor(this.fetchPageUniversal.bind(this));
     }
 
@@ -215,6 +216,19 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         let lastHttpStatus: number | undefined;
+
+        // 策略0: API 适配器（针对纯 SPA 站点，通过 REST API 获取结构化数据）
+        for (const adapter of this.apiAdapters) {
+            if (!adapter.canHandle(url)) continue;
+            result.updateResult(`⏳ 正在通过 ${adapter.name} 获取…`);
+            const apiResult = await adapter.fetch(url, this.adapterContext, (attempt) => {
+                result.updateResult(`⏳ 正在重试 ${adapter.name} (第${attempt}次)…`);
+            });
+            if (apiResult) {
+                result.updateResult(this.formatOutput(url, apiResult));
+                return;
+            }
+        }
 
         // 策略1: 直接获取 + Readability 提取
         result.updateResult('⏳ 正在直接获取页面…');
