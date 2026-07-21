@@ -3039,6 +3039,11 @@ function startApplication() {
         registerNativeBridge();
         await probeArkdataAvailability();
 
+        // 提前注册设置 IPC handler，确保主窗口加载期间 renderer 调用
+        // setting:loadSettingObject（如 needsWizard 判断）能正常返回。
+        // 否则华为登录校验期间 renderer 调用会失败，导致引导页面不显示。
+        registerSettingAPIHandlers();
+
         // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
         // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
         const p4 = startupTrace.createPhase('startup.ready.create_window');
@@ -3116,7 +3121,8 @@ function startApplication() {
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
         registerFSAPIHandlers();
-        registerSettingAPIHandlers();
+        // registerSettingAPIHandlers() 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 需要调用 setting:loadSettingObject 判断是否显示引导页
 
         registerApplicationRegistryHandlers(ipcMain);
 
