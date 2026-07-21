@@ -15,7 +15,6 @@
         "start:win32": "chcp 65001 && electron-vite dev",
         "start:darwin": "node scripts/build-darwin-speech-helper.cjs && electron-vite dev",
         "start:linux": "electron-vite dev -- --no-sandbox",
-        "dev:reset-memory": "tsx scripts/reset-test-memory.ts",
         "preview": "run-script-os",
         "preview:win32": "chcp 65001 && electron-vite preview",
         "preview:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-vite preview",
