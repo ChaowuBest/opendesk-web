@@ -308,6 +308,10 @@ export abstract class BaseApplication {
         return [];
     }
 
+    async getAgents(): Promise<any[]> {
+        return [];
+    }
+
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [];
     }

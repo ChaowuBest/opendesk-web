@@ -39,6 +39,8 @@ import {
     searchRegistry,
     type SearchResult
 } from './registry/index.js';
+import { createHash } from 'crypto';
+import { logger } from '../../utils/logger.js';
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
@@ -62,6 +64,45 @@ const McpServerConfigSchema = z.object({
 const McpMgrConfigSchema = z.object({
     servers: z.array(McpServerConfigSchema).describe('MCP 配置列表').default([])
 });
+
+const AgentMcpServerConfigSchema = z
+    .object({
+        id: z.string().optional(),
+        name: z.string().trim().min(1),
+        transport: z.enum(['stdio', 'sse', 'streamableHttp']).default('stdio'),
+        enabled: z.boolean().default(true),
+        command: z.string().optional(),
+        args: z.array(z.string()).default([]),
+        cwd: z.string().optional(),
+        url: z.string().optional(),
+        env: z.record(z.string(), z.string()).default({}),
+        headers: z.record(z.string(), z.string()).default({})
+    })
+    .superRefine((server, context) => {
+        if (server.transport === 'stdio' && !server.command) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'command is required for stdio transport',
+                path: ['command']
+            });
+        }
+        if ((server.transport === 'sse' || server.transport === 'streamableHttp') && !server.url) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `url is required for ${server.transport} transport`,
+                path: ['url']
+            });
+        }
+    });
+
+const AgentMcpConfigSchema = z.object({
+    servers: z.array(AgentMcpServerConfigSchema).default([])
+});
+
+export interface AgentMcpRegistration {
+    agentId: string;
+    config: unknown;
+}
 
 export class McpMgrApplication extends BaseApplication {
     constructor() {
@@ -90,6 +131,49 @@ export class McpMgrApplication extends BaseApplication {
             servers
         };
         setting.setData(fullData);
+    }
+
+    /**
+     * 原子替换所有由 AgentOffice 提供的 agent 专属 MCP server。
+     * 这些配置只存在于运行时，不写入 MCPMgr 的通用用户配置。
+     */
+    async replaceAgentServers(registrations: AgentMcpRegistration[]): Promise<void> {
+        const servers: McpServerConfig[] = [];
+
+        for (const registration of registrations) {
+            try {
+                const parsed = AgentMcpConfigSchema.parse(registration.config);
+                const seenNames = new Set<string>();
+                for (const server of parsed.servers) {
+                    if (!server.enabled) continue;
+                    if (seenNames.has(server.name)) {
+                        logger.warn(
+                            `MCPMgr: duplicate MCP server name "${server.name}" for agent ${registration.agentId}, skipping`
+                        );
+                        continue;
+                    }
+                    seenNames.add(server.name);
+                    const sourceId = server.id?.trim() || server.name;
+                    const id = `agent_${createHash('sha256')
+                        .update(`${registration.agentId}\0${sourceId}`)
+                        .digest('hex')
+                        .slice(0, 24)}`;
+                    servers.push({
+                        ...server,
+                        id,
+                        source: 'Agent',
+                        agentIds: [registration.agentId]
+                    });
+                }
+            } catch (error) {
+                logger.warn(`MCPMgr: invalid MCP config for agent ${registration.agentId}, skipping: ${error}`);
+            }
+        }
+
+        const result = await this.callWorker('replaceAgentServers', servers);
+        if (result.status !== 'ok') {
+            throw new Error(result.message || 'Failed to register custom agent MCP servers');
+        }
     }
 
     public isServerDuplicate(a: McpServerConfig, b: McpServerConfig): boolean {
@@ -355,7 +439,16 @@ export class McpMgrApplication extends BaseApplication {
                 }
 
                 // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑
-                const mcpTool = new MCPTool(tool.serverName, tool.name, tool.description, schema);
+                const toolNamespace =
+                    tool.agentIds === undefined ? tool.serverName : `${tool.serverName}_${tool.serverId.slice(-8)}`;
+                const mcpTool = new MCPTool(
+                    tool.serverName,
+                    tool.name,
+                    tool.description,
+                    schema,
+                    tool.agentIds,
+                    toolNamespace
+                );
 
                 const serverId = tool.serverId;
                 const toolName = tool.name;

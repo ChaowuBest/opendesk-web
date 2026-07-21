@@ -604,6 +604,7 @@ export class TaskManagerState {
 
         // 创建任务
         const task = this.createTask();
+        task.agentId = agentDecl.agentId;
 
         // 设置 origin（需在 submitUserMessage 之前，以便 buildToolsets 中 isAvailable 能读取）
         if (options?.origin) {

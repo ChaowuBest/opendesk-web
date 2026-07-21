@@ -191,15 +191,16 @@ describe('agentoffice management form behavior', () => {
         widget.render();
 
         expect(widget.shadowRoot.querySelector('[data-action="back"] .fa-arrow-left')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('style').textContent).toContain(".fa-arrow-left { --fa:'\\f060'; }");
+        const css = widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '');
+        expect(css).toContain(".fa-arrow-left{--fa:'\\f060';}");
         expect(widget.shadowRoot.querySelector('#f-enabled + .setting-toggle-track')).not.toBeNull();
         widget.detailSection = 'security';
         widget.render();
         expect(widget.shadowRoot.querySelector('#f-network + .setting-toggle-track')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('[data-remove-dir] .fa-xmark')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('.network-setting-row')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('style').textContent).toContain(
-            '.network-setting-row { border-bottom:0; }'
+        expect(widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '')).toContain(
+            '.network-setting-row{border-bottom:0;}'
         );
     });
 
@@ -290,9 +291,9 @@ describe('agentoffice management form behavior', () => {
         const widget = createWidget();
         widget.render();
 
-        const css = widget.shadowRoot.querySelector('style').textContent;
+        const css = widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '');
         expect(css).toContain('background:#1e1e1e');
-        expect(css).toContain('--bg:#1e1e1e; --surface:#252526; --surface2:#333;');
+        expect(css).toContain('--bg:#1e1e1e;--surface:#252526;--surface2:#333;');
     });
 
     test('batch Skill import scans one chosen directory and opens a constrained multi-select list', async () => {

@@ -112,4 +112,29 @@ describe('MCP manager installed list scroll position', () => {
 
         expect(widget.shadowRoot.getElementById('panel-installed').scrollTop).toBe(320);
     });
+
+    test('shows agent-provided servers without mutable configuration controls', () => {
+        const widget = createWidget();
+        widget.servers = [
+            {
+                id: 'agent-server',
+                name: 'Agent Server',
+                transport: 'stdio',
+                enabled: true,
+                status: 'connected',
+                tools: [],
+                source: 'Agent',
+                agentIds: ['/agents/alpha']
+            }
+        ];
+        widget.render();
+
+        expect(widget.shadowRoot.querySelector('.installed-card')?.textContent).toContain('Agent');
+        expect(widget.shadowRoot.querySelector('[data-toggle-id]')).toBeNull();
+
+        widget.shadowRoot.querySelector('.installed-card')?.dispatchEvent(new window.Event('click'));
+        expect(widget.shadowRoot.querySelector('#detail-edit')).toBeNull();
+        expect(widget.shadowRoot.querySelector('#detail-delete')).toBeNull();
+        expect(widget.shadowRoot.querySelector('#detail-reconnect')).not.toBeNull();
+    });
 });

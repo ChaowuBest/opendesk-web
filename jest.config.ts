@@ -5,6 +5,7 @@ const shared: Config = {
     testEnvironment: 'node',
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
+        '^.+\\.css(?:\\?raw)?$': '<rootDir>/src/tests/ut/__mocks__/raw-style.ts',
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@earendil-works/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
     },

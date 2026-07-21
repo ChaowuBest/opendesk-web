@@ -18,13 +18,16 @@ import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js
 import { getPlatform } from '../../../platforms/base.js';
 import { getLocale, t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
-import { getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
+import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
 import { getTempDir } from '../../utils/temp.js';
 import { createAgentOfficeTaskToolset } from './tools.js';
 import { createStaffPermissionEnforcer } from './permission.js';
 import { SkillRegistry } from '../skillmgr/utils.js';
 import AgentOfficeWorker from './worker.js';
 import { unwrapAgentOfficeCallResult } from './common.js';
+import { CustomAgent } from './custom-agent.js';
+import type { McpMgrApplication } from '../mcpmgr/app.js';
+import type { AgentDecl } from '../../aikernel/agents/common.js';
 import type {
     HistoryQuery,
     InstalledSkillSummary,
@@ -148,6 +151,47 @@ export class AgentOfficeApplication extends BaseApplication {
 
     static getWorkerClass() {
         return AgentOfficeWorker;
+    }
+
+    /**
+     * 从 OpenDesk 配置目录加载自定义 Agent，并把其中的 MCP 配置交给 MCPMgr。
+     */
+    async getAgents(): Promise<AgentDecl[]> {
+        const agentsDirectory = path.join(getOpendeskDirectory(), 'agents');
+        const agents: CustomAgent[] = [];
+
+        if (fs.existsSync(agentsDirectory)) {
+            const entries = fs.readdirSync(agentsDirectory, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                const agentDirectory = path.join(agentsDirectory, entry.name);
+                try {
+                    agents.push(await CustomAgent.loadFromPath(agentDirectory));
+                } catch (error) {
+                    logger.warn(`AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`);
+                }
+            }
+        } else {
+            logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
+        }
+
+        const mcpMgr = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
+        if (mcpMgr) {
+            try {
+                await mcpMgr.replaceAgentServers(
+                    agents.map((agent) => ({
+                        agentId: agent.agentId,
+                        config: agent.mcpConfig
+                    }))
+                );
+            } catch (error) {
+                logger.warn(`AgentOffice: failed to register custom agent MCP servers: ${error}`);
+            }
+        } else if (agents.length > 0) {
+            logger.warn('AgentOffice: MCPMgr is unavailable; custom agent MCP servers were not registered');
+        }
+
+        return agents;
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {

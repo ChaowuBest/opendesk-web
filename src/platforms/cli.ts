@@ -37,6 +37,7 @@ import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
+import { AgentOfficeApplication } from '../main/applications/agentoffice/app.js';
 
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
@@ -137,7 +138,8 @@ export class CliPlatform extends AbstractPlatform {
             ChannelMgrApplication,
             KnowledgeBaseApplication,
             DeviceMgrApplication,
-            BuiltinApplication
+            BuiltinApplication,
+            AgentOfficeApplication
         ];
     }
 }

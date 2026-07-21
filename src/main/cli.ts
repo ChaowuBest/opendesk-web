@@ -445,6 +445,7 @@ async function main(args: CommandLineArgs) {
         const t4 = startupTrace.createPhase('startup.cli.registry');
         initializeRegistry();
         initializeRegistryWorker();
+        await ApplicationRegistry.loadAvailableAgents();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
@@ -482,6 +483,7 @@ async function main(args: CommandLineArgs) {
         const t6 = startupTrace.createPhase('startup.cli.registry');
         initializeRegistry();
         initializeRegistryWorker();
+        await ApplicationRegistry.loadAvailableAgents();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };

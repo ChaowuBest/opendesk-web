@@ -96,6 +96,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
 
     initializeRegistry();
     initializeRegistryWorker();
+    await ApplicationRegistry.loadAvailableAgents();
     GlobalState.getInstance().taskManagerState.toolsetProvider = {
         listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
     };

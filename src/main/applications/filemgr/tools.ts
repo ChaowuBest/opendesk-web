@@ -47,7 +47,8 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    | { ok: true }
+    | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -1352,7 +1353,10 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
 
         const message = new UserMessage(question);
         message.appendImageURL(image.dataUrl);
-        return await LLM.ask(message, visionModel, taskState?.createUsageTelemetryRequestOptions());
+        return await LLM.ask(message, visionModel, {
+            reasoningEffort: 'none',
+            ...taskState?.createUsageTelemetryRequestOptions()
+        });
     }
 }
 

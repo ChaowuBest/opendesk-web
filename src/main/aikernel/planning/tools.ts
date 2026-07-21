@@ -127,6 +127,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     }
 
     if (agentDecl) {
+        subTask.agentId = agentDecl.agentId;
         const defaultMode = agentDecl.supportedModes().find((m) => m.id === agentDecl.defaultModeId());
 
         // workspace 优先取父任务的当前值（可能已被用户切换）
@@ -135,6 +136,10 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
             subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
             await subTask.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(subTask.task_id, false));
+            // custom agent 继承父任务的 permissionPrompt，使 ask 权限能正常交互确认
+            if (agentDecl.agentType === 'custom') {
+                subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
+            }
         } else {
             subTask.harnessContext = parentTask.harnessContext;
         }

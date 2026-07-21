@@ -127,7 +127,12 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
-import { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs, errorToMessage } from '../task/types.js';
+import {
+    ATTEMPT_COMPLETION_TOOL_NAME,
+    getLLMRetryDelayMs,
+    errorToMessage,
+    TaskModelRequestOptions
+} from '../task/types.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
 export class BaseTaskUpdateSubscriber {
@@ -247,6 +252,11 @@ export class TaskState {
      * 不参与序列化——Mode 在每次会话时由 TUI/GUI 设定。
      */
     activeModeId?: string;
+
+    /**
+     * 当前任务对应的 Agent ID，用于筛选 agent 专属工具。
+     */
+    agentId?: string;
 
     /**
      * 当前模式需要排除的工具名列表。
@@ -1925,10 +1935,9 @@ export class TaskState {
             async (span) => {
                 span.setAttribute('task.id', this.task_id);
                 const model = this.ensureValidModelOrFallback();
-                const prompt = `
-        你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-        请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
-        `;
+                const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
+                请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
+                `;
 
                 const output = await LLM.ask(prompt.trim(), model, {
                     reasoningEffort: 'none',

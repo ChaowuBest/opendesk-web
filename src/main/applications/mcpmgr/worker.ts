@@ -19,8 +19,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
-import { mergeGlobalEnviron } from '../../utils/shellExec.js';
-import { buildInterpretersEnv } from '../terminal/tools.js';
+import { buildChildProcessEnv } from '../../utils/shellExec.js';
 
 interface McpConnection {
     client: Client;
@@ -34,6 +33,9 @@ interface McpConnection {
 
 export default class McpMgrWorker extends BaseWorker {
     private servers: McpServerConfig[] = [];
+    private configuredServers: McpServerConfig[] = [];
+    private agentServers: McpServerConfig[] = [];
+    private pendingAgentConnections = new Map<string, Promise<void>>();
     private connections: Map<string, McpConnection> = new Map();
     private currentWorkspace?: string;
 
@@ -42,7 +44,8 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async initialize(): Promise<void> {
-        this.servers = this.parseServersFromConfig();
+        this.configuredServers = this.parseServersFromConfig();
+        this.servers = [...this.configuredServers];
         logger.info(`[mcpmgr] Initialized with ${this.servers.length} server configs`);
 
         // 启动时自动连接已启用的 server，失败后延迟重试
@@ -81,10 +84,22 @@ export default class McpMgrWorker extends BaseWorker {
 
     async applicationConfigChanged(config: object): Promise<void> {
         await super.applicationConfigChanged(config);
-        const newServers = this.parseServersFromConfig();
+        this.configuredServers = this.parseServersFromConfig();
+        const newServers = [...this.configuredServers, ...this.agentServers];
         const oldServers = this.servers;
         this.servers = newServers;
         await this.syncConnections(newServers, oldServers);
+        await this.emitEvent('serversUpdated');
+    }
+
+    async replaceAgentServers(servers: McpServerConfig[]): Promise<void> {
+        const oldServers = this.servers;
+        this.agentServers = servers.map((server) => ({
+            ...server,
+            agentIds: server.agentIds ? [...server.agentIds] : []
+        }));
+        this.servers = [...this.configuredServers, ...this.agentServers];
+        await this.syncConnections(this.servers, oldServers);
         await this.emitEvent('serversUpdated');
     }
 
@@ -110,9 +125,17 @@ export default class McpMgrWorker extends BaseWorker {
                 if (this.connections.has(id)) {
                     await this.disconnectServer(id);
                 }
-                this.connectServer(id).catch((err) => {
+                const connection = this.connectServer(id).catch((err) => {
                     logger.error(`[mcpmgr] Connect failed for ${newServer.name}: ${err.message}`);
                 });
+                if (newServer.agentIds !== undefined) {
+                    const trackedConnection: Promise<void> = connection.finally(() => {
+                        if (this.pendingAgentConnections.get(id) === trackedConnection) {
+                            this.pendingAgentConnections.delete(id);
+                        }
+                    });
+                    this.pendingAgentConnections.set(id, trackedConnection);
+                }
             }
         }
     }
@@ -312,22 +335,11 @@ export default class McpMgrWorker extends BaseWorker {
     private createTransport(server: McpServerConfig): any {
         switch (server.transport) {
             case 'stdio': {
-                // 合并全局环境变量（process.env + 平台注入 + 用户配置），再叠加上 MCP 配置的 env
-                const mergedEnv = mergeGlobalEnviron()!;
-                // 应用解释器隔离环境变量（UV_CACHE_DIR / PIP_TARGET / NPM_CONFIG_PREFIX 等），
-                // 确保 uvx、npx 等命令有可写的缓存目录
-                const interpreterEnv = buildInterpretersEnv({
-                    useIsolatedPython: true,
-                    baseEnv: mergedEnv
-                });
                 const env: Record<string, string> = {};
-                for (const [key, value] of Object.entries({ ...mergedEnv, ...interpreterEnv })) {
+                for (const [key, value] of Object.entries(buildChildProcessEnv(server.env))) {
                     if (value !== undefined) {
                         env[key] = value;
                     }
-                }
-                for (const [key, value] of Object.entries(server.env || {})) {
-                    env[key] = value;
                 }
                 const transport = new StdioClientTransport({
                     command: server.command!,
@@ -391,6 +403,7 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async getDiscoveredTools(): Promise<McpToolInfo[]> {
+        await Promise.allSettled(this.pendingAgentConnections.values());
         const tools: McpToolInfo[] = [];
         for (const server of this.servers) {
             if (!server.enabled) continue;
@@ -402,7 +415,8 @@ export default class McpMgrWorker extends BaseWorker {
                     serverName: server.name,
                     name: tool.name,
                     description: tool.description,
-                    inputSchema: tool.inputSchema || {}
+                    inputSchema: tool.inputSchema || {},
+                    agentIds: server.agentIds
                 });
             }
         }

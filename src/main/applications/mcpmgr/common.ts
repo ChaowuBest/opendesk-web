@@ -23,6 +23,11 @@ export interface McpServerConfig {
     source?: string;
     registryId?: string;
     registryMcpId?: string;
+    /**
+     * 限定此 server 发现的工具仅向这些 Agent 暴露。
+     * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
+     */
+    agentIds?: string[];
 }
 
 export interface McpToolInfo {
@@ -31,6 +36,7 @@ export interface McpToolInfo {
     name: string;
     description: string;
     inputSchema: object;
+    agentIds?: string[];
 }
 
 export interface McpServerState extends McpServerConfig {

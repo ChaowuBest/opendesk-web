@@ -18,6 +18,8 @@ import { NotificationManager } from '../utils/notificationmgr.js';
 import { getPlatform, type PlatformFetchOptions } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
+import { AgentRegistry } from '../aikernel/agents/registry.js';
+import type { AgentDecl } from '../aikernel/agents/common.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
@@ -217,6 +219,22 @@ export class ApplicationRegistry {
         }
 
         return result;
+    }
+
+    /**
+     * 重新收集应用提供的 Agent，并交给 AIKernel 注册表管理。
+     */
+    static async loadAvailableAgents(): Promise<void> {
+        await AgentRegistry.unloadCustomAgents();
+        const agents: AgentDecl[] = [];
+        for (const application of this.applications.values()) {
+            try {
+                agents.push(...((await application.getAgents()) as AgentDecl[]));
+            } catch (error) {
+                logger.warn(`Failed to load agents from ${application.bundleName}: ${error}`);
+            }
+        }
+        await AgentRegistry.replaceCustomAgents(agents);
     }
 
     /**

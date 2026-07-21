@@ -87,6 +87,7 @@ export function serializeTask(task: TaskState): object {
         ...(task.internal === true ? { internal: true } : {}),
         model: task.model,
         reasoningEffort: task.reasoningEffort,
+        agentId: task.agentId,
         chat_context: task.chat_context.toJSON(),
         tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
         auto_compact_state: AutoCompactStates.serialize(task.auto_compact_state),
@@ -200,6 +201,7 @@ function applyTaskJson(task: TaskState, task_json: any): void {
     task.model = typeof task_json.model === 'string' ? task_json.model : undefined;
     task.reasoningEffort =
         typeof task_json.reasoningEffort === 'string' ? (task_json.reasoningEffort as ReasoningEffort) : undefined;
+    task.agentId = typeof task_json.agentId === 'string' ? task_json.agentId : undefined;
     task.chat_context = ChatContext.assign(task_json.chat_context);
     // ⚠️ 顺序依赖：chat_context 赋值必须在 extensions.restore() 之前。
     // ensureLoaded() → loadFullTaskData() → applyTaskJson() 中 _loading=true，
@@ -395,6 +397,7 @@ export function forkTask(task: TaskState): TaskState {
     forkedTask.executionNodeId = task.executionNodeId;
     forkedTask.executionNodeLabel = task.executionNodeLabel;
     forkedTask.activeModeId = task.activeModeId;
+    forkedTask.agentId = task.agentId;
     forkedTask.disabledTools = task.disabledTools;
     task.extensions.prepareFork(forkedTask);
 
