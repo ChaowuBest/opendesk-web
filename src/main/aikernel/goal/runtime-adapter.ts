@@ -189,6 +189,7 @@ export class GoalRuntimeAdapter {
             );
             await this.host.materializePromptTurn(prompt, metadata);
             materialized = true;
+            GoalController.markContextEntered(task, event.goalId, event.revision);
             if (reason === 'goal_edit') {
                 GoalController.consumePendingEditContinuation(task, event.goalId, event.revision);
             }

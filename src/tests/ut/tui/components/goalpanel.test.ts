@@ -59,6 +59,31 @@ describe('GoalPanel', () => {
         expect(output).not.toContain('Waiting for first evaluation');
     });
 
+    test('renders an active goal awaiting context as waiting to run', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        goal.awaitingContextEntry = true;
+        const panel = new GoalPanel();
+
+        panel.update({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        const output = stripAnsi(panel.render(100).join('\n'));
+
+        expect(output).toContain('◉ Waiting to run(00:05)');
+        expect(output).not.toContain('◉ Active(00:05)');
+    });
+
+    test('keeps lifecycle status precedence over the awaiting-context marker', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        goal.awaitingContextEntry = true;
+        goal.status = 'blocked';
+        const panel = new GoalPanel();
+
+        panel.update({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        const output = stripAnsi(panel.render(100).join('\n'));
+
+        expect(output).toContain('Blocked(00:05)');
+        expect(output).not.toContain('Waiting to run');
+    });
+
     test('renders evaluating state without a separate evaluation detail', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         const panel = new GoalPanel();

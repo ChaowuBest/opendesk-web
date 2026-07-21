@@ -992,10 +992,6 @@ export class TaskView implements Component {
         return this.goalController.pendingSupplements;
     }
 
-    private get pendingGoalEditView() {
-        return this.goalController.pendingEdit;
-    }
-
     private appendGoalPanelView(view: GoalPanel): void {
         this.messages.push(view);
         this.messageLayout.addChild(view);
@@ -1327,10 +1323,6 @@ export class TaskView implements Component {
         this.goalController.appendPendingGoalSupplementMessage(text, supplementId);
     }
 
-    showPendingGoalEdit(type: 'create' | 'edit', objective: string, goalId: string, goalRevision: number): void {
-        this.goalController.showPendingGoalEdit(type, objective, goalId, goalRevision);
-    }
-
     syncUserMessageFromHistory(messageId: string): boolean {
         if (!this.taskState || this.messageIdToUserView.has(messageId)) {
             return false;
@@ -1343,10 +1335,6 @@ export class TaskView implements Component {
             }
         }
         return false;
-    }
-
-    removePendingGoalEditByGoalId(goalId: string): void {
-        this.goalController.removePendingGoalEditByGoalId(goalId);
     }
 
     removeLiveGoalPanel(goalId: string): void {
@@ -1405,7 +1393,7 @@ export class TaskView implements Component {
         if (chunkUpdate.type === 'user') {
             const view = UserMessageView.fromChunk(chunkUpdate);
             if (!view) return;
-            this.goalController.reconcileUserMessage(view.message, chunkUpdate);
+            this.goalController.reconcileUserMessage(view.message);
             if (this.messageIdToUserView.has(view.message.message_id)) return;
             this.syncGoalPanelForCurrentTask();
             this.messageIdToUserView.set(view.message.message_id, view);

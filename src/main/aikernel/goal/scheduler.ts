@@ -10,6 +10,7 @@
  */
 
 import type { TaskState } from '../states/tasks.js';
+import { GoalController } from './controller.js';
 import { GoalEvents, GoalStates, createGoalEvent, type GoalCommandResult, type GoalSchedulerLease } from './state.js';
 import { buildGoalResumePrompt, buildGoalStartPrompt } from './prompts.js';
 
@@ -92,6 +93,8 @@ export class GoalScheduler {
         if (!prompt) {
             prompt = leaseReason === 'create' ? buildGoalStartPrompt(goal) : buildGoalResumePrompt(goal);
         }
+        const scheduledGoalId = goal.id;
+        const scheduledGoalRevision = goal.revision;
         try {
             task.persistLater();
             await task.startInternalTurn({
@@ -109,8 +112,8 @@ export class GoalScheduler {
                     origin: { source: 'scheduler', reason: leaseReason },
                     execution: {
                         controller: 'goal',
-                        controllerId: goal.id,
-                        controllerRevision: goal.revision,
+                        controllerId: scheduledGoalId,
+                        controllerRevision: scheduledGoalRevision,
                         continuationId
                     }
                 }
@@ -129,6 +132,8 @@ export class GoalScheduler {
                 summary: GoalStates.renderSummary(goal)
             };
         }
+
+        GoalController.markContextEntered(task, scheduledGoalId, scheduledGoalRevision);
 
         if (continuationId && goal.pendingContinuation?.id === continuationId) {
             const consumedAt = new Date().toISOString();

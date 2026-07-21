@@ -210,7 +210,11 @@ export class GoalPanel implements Component {
     private buildStatusIndicator(goal: GoalState): { icon: string; text: string } {
         const statusColor = getGoalStatusColor(goal.status);
         const statusIcon = chalk.hex(statusColor)(getGoalStatusIcon(goal.status));
-        const statusLabel = chalk.hex(statusColor)(getGoalStatusLabel(goal.status));
+        const statusLabelText =
+            goal.status === 'active' && goal.awaitingContextEntry === true
+                ? t('goal.pending.tag')
+                : getGoalStatusLabel(goal.status);
+        const statusLabel = chalk.hex(statusColor)(statusLabelText);
         const elapsed = formatClockDuration(this.data.elapsedMs);
 
         return {

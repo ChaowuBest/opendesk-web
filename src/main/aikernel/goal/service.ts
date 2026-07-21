@@ -180,6 +180,7 @@ async function waitForGoalCreateReadiness(task: TaskState): Promise<GoalCommandR
 function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandResult): GoalCommandResult {
     const goal = task.goal_state;
     if (goal?.status === 'active') {
+        GoalController.markAwaitingContextEntry(task, goal.id, goal.revision);
         task.goalRuntime.injectGoalEditReminder({
             goalId: goal.id,
             goalRevision: goal.revision,
@@ -187,7 +188,11 @@ function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandRes
             reason: 'goal_create'
         });
     }
-    return { ...created, startedScheduler: false };
+    return {
+        ...created,
+        startedScheduler: false,
+        summary: GoalController.getStatus(task).summary
+    };
 }
 
 function schedulerStartFailedResult(task: TaskState): GoalCommandResult {
@@ -267,13 +272,18 @@ export class GoalService {
             return result;
         }
         if (task.task_status === 'running') {
+            GoalController.markAwaitingContextEntry(task, goal.id, goal.revision);
             task.goalRuntime.injectGoalEditReminder({
                 goalId: goal.id,
                 goalRevision: goal.revision,
                 objective: goal.objective,
                 reason: 'goal_edit'
             });
-            return result;
+            return {
+                ...result,
+                startedScheduler: false,
+                summary: GoalController.getStatus(task).summary
+            };
         }
         let started: GoalCommandResult;
         try {
@@ -283,13 +293,18 @@ export class GoalService {
         }
         if (!started.ok) {
             if (started.errorCode === 'task_running' && task.task_status === 'running') {
+                GoalController.markAwaitingContextEntry(task, goal.id, goal.revision);
                 task.goalRuntime.injectGoalEditReminder({
                     goalId: goal.id,
                     goalRevision: goal.revision,
                     objective: goal.objective,
                     reason: 'goal_edit'
                 });
-                return { ...result, startedScheduler: false };
+                return {
+                    ...result,
+                    startedScheduler: false,
+                    summary: GoalController.getStatus(task).summary
+                };
             }
             GoalController.blockActiveGoal(task, 'scheduler_start_failed', 'system');
             return {

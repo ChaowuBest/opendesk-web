@@ -90,47 +90,6 @@ describe('TaskView chunk handling', () => {
         expect(taskView.messages).toHaveLength(0);
     });
 
-    test('removes pending goal edit when the matching internal reminder materializes', async () => {
-        const taskView = new TaskView({ requestRender: jest.fn() } as any);
-        taskView.showPendingGoalEdit('edit', 'replacement goal', 'goal-1');
-
-        expect(taskView.messages).toHaveLength(1);
-
-        await taskView.handleChunkUpdate({
-            type: 'user',
-            task_id: 'task_1',
-            task_status: 'running',
-            message_id: 'message_1',
-            last_part_index: 0,
-            last_part: { type: 'text', text: 'hidden reminder' },
-            internal: true,
-            metadata: {
-                origin: { source: 'internal', reason: 'goal_edit' },
-                execution: { controllerId: 'goal-1' }
-            }
-        } as any);
-
-        expect(taskView.messages).toHaveLength(1);
-        expect((taskView as any).pendingGoalEditView).toBeNull();
-    });
-
-    test('deduplicates the same pending goal revision and replaces it when the revision advances', () => {
-        const taskView = new TaskView({ requestRender: jest.fn() } as any);
-
-        taskView.showPendingGoalEdit('edit', 'first objective', 'goal-1', 2);
-        taskView.showPendingGoalEdit('edit', 'first objective', 'goal-1', 2);
-        expect(taskView.messages).toHaveLength(1);
-
-        taskView.showPendingGoalEdit('edit', 'second objective', 'goal-1', 3);
-
-        expect(taskView.messages).toHaveLength(1);
-        expect((taskView as any).pendingGoalEditView).toMatchObject({
-            goalId: 'goal-1',
-            goalRevision: 3,
-            objective: 'second objective'
-        });
-    });
-
     test('consumes only matching pending goal supplements and resets the rest on task switch', async () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.appendPendingGoalSupplementMessage('first pending', 'supplement-1');

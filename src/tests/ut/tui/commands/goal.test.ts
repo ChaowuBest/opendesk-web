@@ -173,12 +173,8 @@ describe('/goal command', () => {
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
         expect(tui.syncInputStatusFromTask).toHaveBeenCalledWith(task.task_id);
-        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
-            'create',
-            'track current TodoWrite',
-            task.goal_state?.id,
-            task.goal_state?.revision
-        );
+        expect(task.goal_state?.awaitingContextEntry).toBe(true);
+        expect(tui.taskView.showPendingGoalEdit).not.toHaveBeenCalled();
     });
 
     test('completes subcommands only and treats additional text as objective text', async () => {
@@ -260,6 +256,7 @@ describe('/goal command', () => {
         expect(task.goal_state?.objective).toBe('replacement after interrupt');
         expect(task.goal_state?.revision).toBe(2);
         expect(task.goal_state?.status).toBe('active');
+        expect(task.goal_state?.awaitingContextEntry).toBe(true);
         expect(task.task_status).toBe('running');
         expect(task.runtimeInterrupt).toBeUndefined();
         expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
@@ -267,13 +264,9 @@ describe('/goal command', () => {
         expect(interruptSpy).not.toHaveBeenCalled();
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
-        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
-            'edit',
-            'replacement after interrupt',
-            task.goal_state?.id,
-            task.goal_state?.revision
-        );
+        expect(tui.taskView.showPendingGoalEdit).not.toHaveBeenCalled();
         expect(await task.goalRuntime.checkpoint('after_tools', { includeSupplements: false })).toBe(true);
+        expect(task.goal_state?.awaitingContextEntry).toBeUndefined();
         expect(task.chat_context.messages.some((message) => message.metadata?.origin.reason === 'goal_edit')).toBe(
             true
         );
