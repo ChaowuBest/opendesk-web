@@ -96,6 +96,7 @@ function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string
 export class ReadableDirectoryRegistry {
     private static instance: ReadableDirectoryRegistry | null = null;
     private directories: Set<string> = new Set();
+    private _registerListeners: Array<(dirPath: string) => void> = [];
 
     static getInstance(): ReadableDirectoryRegistry {
         if (!ReadableDirectoryRegistry.instance) {
@@ -105,12 +106,31 @@ export class ReadableDirectoryRegistry {
     }
 
     /**
+     * 注册目录变更监听器。返回取消监听的函数。
+     * 当新目录通过 register() 注册时，监听器会被调用。
+     */
+    onRegister(listener: (dirPath: string) => void): () => void {
+        this._registerListeners.push(listener);
+        return () => {
+            const idx = this._registerListeners.indexOf(listener);
+            if (idx >= 0) this._registerListeners.splice(idx, 1);
+        };
+    }
+
+    /**
      * 注册一个可读目录（自动规范化为正斜杠路径）
      */
     register(dirPath: string): void {
         const norm = normalizePath(path.resolve(dirPath));
         this.directories.add(norm);
         logger.info(`readable directory registered: ${norm}`);
+        for (const listener of this._registerListeners) {
+            try {
+                listener(norm);
+            } catch {
+                // 监听器异常不应中断 register 流程
+            }
+        }
     }
 
     /**
@@ -145,9 +165,32 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];
     private askRules: CompiledRule[] = [];
+    private readonly inherited?: GlobPermissionEnforcer;
+
+    private constructor(inherited?: GlobPermissionEnforcer) {
+        this.inherited = inherited;
+    }
 
     static async create(initialRules: PermissionRule[] = []): Promise<GlobPermissionEnforcer> {
+        return GlobPermissionEnforcer.createSync(initialRules);
+    }
+
+    /**
+     * 同步创建权限执行器。
+     * picomatch 规则编译本身是同步操作；延迟任务初始化需要在 getTask() 返回前完成。
+     */
+    static createSync(initialRules: PermissionRule[] = []): GlobPermissionEnforcer {
         const instance = new GlobPermissionEnforcer();
+        instance.initialize(initialRules);
+        return instance;
+    }
+
+    /**
+     * 创建继承当前基础规则的轻量任务级执行器。
+     * inherited 中的已编译规则由多个任务共享，initialRules 和后续 addRule() 仅属于新实例。
+     */
+    createOverlay(initialRules: PermissionRule[] = []): GlobPermissionEnforcer {
+        const instance = new GlobPermissionEnforcer(this);
         instance.initialize(initialRules);
         return instance;
     }
@@ -165,6 +208,18 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
         }
     }
 
+    private matchesRules(
+        ruleType: 'allowRules' | 'denyRules' | 'askRules',
+        resourceType: string,
+        objNorm: string,
+        action: string
+    ): boolean {
+        return (
+            matchesAny(this[ruleType], resourceType, objNorm, action) ||
+            this.inherited?.matchesRules(ruleType, resourceType, objNorm, action) === true
+        );
+    }
+
     async check(request: PermissionRequest): Promise<PermissionCheckResult> {
         const objNorm = normalizePath(request.resourcePath);
 
@@ -174,7 +229,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
         }
 
         // deny 优先
-        if (matchesAny(this.denyRules, request.resourceType, objNorm, request.action)) {
+        if (this.matchesRules('denyRules', request.resourceType, objNorm, request.action)) {
             return {
                 effect: 'deny',
                 reason: `权限被拒绝: ${request.action} ${request.resourcePath}`,
@@ -183,7 +238,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
         }
 
         // 显式 ask（保护规则）优先于 allow
-        if (matchesAny(this.askRules, request.resourceType, objNorm, request.action)) {
+        if (this.matchesRules('askRules', request.resourceType, objNorm, request.action)) {
             return {
                 effect: 'ask',
                 reason: `敏感路径需要用户确认: ${request.action} ${request.resourcePath}`,
@@ -192,7 +247,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
         }
 
         // 然后检查 allow
-        if (matchesAny(this.allowRules, request.resourceType, objNorm, request.action)) {
+        if (this.matchesRules('allowRules', request.resourceType, objNorm, request.action)) {
             return {
                 effect: 'allow',
                 request

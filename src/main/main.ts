@@ -2834,30 +2834,22 @@ function startApplication() {
             skillmgr?.dismissInterceptions(taskId);
         });
 
-        // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
+        // 为恢复的任务设置共享 harness 延迟初始化。
+        // 旧方案在启动时遍历所有 task 创建 HarnessContext（含 GlobPermissionEnforcer），
+        // 每个 enforcer 编译 ~17 条 picomatch 规则（~70KB），814 个 task ≈ 56 MB。
+        // 新方案：按 workspace 创建共享 enforcer，task 被实际访问时才注入 harness。
         const p2 = startupTrace.createPhase('startup.ready.restore_tasks');
-        // getInstance() 已内置容错，不会抛异常
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const defaultMode =
             agentDecl.supportedModes().find((m) => m.id === (_currentElectronModeId || agentDecl.defaultModeId())) ??
             agentDecl.supportedModes()[0];
-        for (const task of GlobalState.getInstance().taskManagerState.tasks) {
-            if (!task.harnessContext.workspace) {
-                const savedExecutionHost = task.harnessContext.executionHost;
-                // 优先用任务自身持久化的 workspace，回退到全局启动 workspace
-                const taskWorkspace = task.workspace || startupWorkspace;
-                try {
-                    task.harnessContext = await HarnessContext.createForMode(taskWorkspace, defaultMode);
-                    task.harnessContext.executionHost = savedExecutionHost;
-                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
-                    await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                } catch (err) {
-                    logger.warn(`Failed to init restored task harness: ${err}`);
-                    task.harnessContext.workspace = taskWorkspace;
-                }
-            }
-        }
+
+        await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
+            defaultMode,
+            startupWorkspace,
+            () => new ElectronPermissionPromptProvider()
+        );
         p2.end();
 
         // 刷新证书缓存（不依赖 session，直接从文件加载）

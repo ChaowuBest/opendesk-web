@@ -475,6 +475,95 @@ describe('GlobPermissionEnforcer', () => {
         });
     });
 
+    describe('共享基础规则与任务级 overlay', () => {
+        test('共享基础编译规则，但隔离任务运行期授权', async () => {
+            const base = GlobPermissionEnforcer.createSync([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const firstTask = base.createOverlay();
+            const secondTask = base.createOverlay();
+
+            await firstTask.addRule({
+                resourceType: 'network',
+                action: 'read',
+                pathPattern: 'https://api.example.com/**',
+                effect: 'allow'
+            });
+
+            expect(
+                (
+                    await firstTask.check({
+                        resourceType: 'file',
+                        action: 'read',
+                        resourcePath: '/workspace/src/main.ts'
+                    })
+                ).effect
+            ).toBe('allow');
+            expect(
+                (
+                    await secondTask.check({
+                        resourceType: 'file',
+                        action: 'read',
+                        resourcePath: '/workspace/src/main.ts'
+                    })
+                ).effect
+            ).toBe('allow');
+            expect(
+                (
+                    await firstTask.check({
+                        resourceType: 'network',
+                        action: 'read',
+                        resourcePath: 'https://api.example.com/v1'
+                    })
+                ).effect
+            ).toBe('allow');
+            expect(
+                (
+                    await secondTask.check({
+                        resourceType: 'network',
+                        action: 'read',
+                        resourcePath: 'https://api.example.com/v1'
+                    })
+                ).effect
+            ).toBe('ask');
+        });
+
+        test('基础保护规则仍优先于 overlay allow，基础后续规则对 overlay 可见', async () => {
+            const base = GlobPermissionEnforcer.createSync([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/.env', effect: 'ask' }
+            ]);
+            const task = base.createOverlay([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+
+            expect(
+                (
+                    await task.check({
+                        resourceType: 'file',
+                        action: 'read',
+                        resourcePath: '/workspace/.env'
+                    })
+                ).effect
+            ).toBe('ask');
+
+            await base.addRule({
+                resourceType: 'file',
+                action: 'read',
+                pathPattern: '/shared-readable/**',
+                effect: 'allow'
+            });
+            expect(
+                (
+                    await task.check({
+                        resourceType: 'file',
+                        action: 'read',
+                        resourcePath: '/shared-readable/skill.md'
+                    })
+                ).effect
+            ).toBe('allow');
+        });
+    });
+
     describe('批量检查', () => {
         test('checkAll 全部 allow 时返回 null', async () => {
             const enforcer = await GlobPermissionEnforcer.create([

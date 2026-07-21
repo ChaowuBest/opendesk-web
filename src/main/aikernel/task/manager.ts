@@ -15,7 +15,9 @@ import { logger } from '../../utils/logger.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { deleteTaskTodos } from '../todos/task-todos.js';
-import { HarnessContext } from '../security/harness.js';
+import { createTaskArtifactPermissionRules, HarnessContext } from '../security/harness.js';
+import { GlobPermissionEnforcer, ReadableDirectoryRegistry } from '../security/enforcer.js';
+import type { PermissionPromptProvider, PermissionRule } from '../security/permission.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -57,6 +59,113 @@ export class TaskManagerState {
     subscribers: BaseTaskManagerUpdateSubscriber[] = [];
     toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
     private _deletedTaskIds: Set<string> = new Set();
+    private _sharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
+    private _disposeReadableDirectoryListener?: () => void;
+    /**
+     * Harness 延迟初始化回调，由宿主环境（Electron main / CLI）设置。
+     * 当 getTaskLoadResult() 发现 task.harnessContext.workspace 为空时调用，
+     * 避免启动时为所有 task 创建 GlobPermissionEnforcer（每个 ~70KB picomatch 编译开销）。
+     */
+    private _harnessInitializer?: (task: TaskState) => void;
+
+    /**
+     * 设置 harness 延迟初始化回调。
+     * 宿主环境应在启动流程中（创建共享 enforcer 之后）调用此方法。
+     */
+    setHarnessInitializer(fn: (task: TaskState) => void): void {
+        this._harnessInitializer = fn;
+    }
+
+    /**
+     * 释放 lazy harness 使用的全局目录监听。
+     * 仅应在 TaskManagerState 不再使用时调用。
+     */
+    disposeLazyHarnessInit(): void {
+        this._disposeReadableDirectoryListener?.();
+        this._disposeReadableDirectoryListener = undefined;
+        this._sharedHarnessBaseEnforcers.clear();
+        this._harnessInitializer = undefined;
+    }
+
+    /**
+     * 为已从磁盘恢复的旧任务设置延迟 harness 初始化。
+     * 按 workspace 去重创建共享的只读基础 GlobPermissionEnforcer，避免重复编译 picomatch 规则。
+     * 每个 task 使用独立 overlay 保存 artifact 和用户授权等运行期规则。
+     * 同时监听 ReadableDirectoryRegistry 变更，将后续注册的可读目录传播到所有基础 enforcer。
+     *
+     * @param mode 用于生成权限规则的 ModeDecl
+     * @param defaultWorkspace 全局默认 workspace（当 task 未指定 workspace 时回退使用）
+     * @param permissionPromptFactory 为每个 task 创建 PermissionPromptProvider 的工厂函数
+     */
+    async setupLazyHarnessInit(
+        mode: ModeDecl,
+        defaultWorkspace: string,
+        permissionPromptFactory: () => PermissionPromptProvider
+    ): Promise<void> {
+        // 收集所有 unique workspace，为每个预热一个共享基础 GlobPermissionEnforcer
+        const uniqueWorkspaces = new Set<string>();
+        for (const task of this.tasks) {
+            if (task.workspace) uniqueWorkspaces.add(task.workspace);
+        }
+        uniqueWorkspaces.add(defaultWorkspace);
+
+        const sharedBaseEnforcers = new Map<string, GlobPermissionEnforcer>();
+        const readableRegistry = ReadableDirectoryRegistry.getInstance();
+        const createSharedBaseEnforcer = (workspace: string): GlobPermissionEnforcer | undefined => {
+            const existing = sharedBaseEnforcers.get(workspace);
+            if (existing) return existing;
+            try {
+                const rules = [...mode.permissionFactory(workspace), ...readableRegistry.getReadRules()];
+                const enforcer = GlobPermissionEnforcer.createSync(rules);
+                sharedBaseEnforcers.set(workspace, enforcer);
+                this._sharedHarnessBaseEnforcers.add(enforcer);
+                return enforcer;
+            } catch (err) {
+                logger.warn(`Failed to create shared permission enforcer for workspace ${workspace}: ${err}`);
+                return undefined;
+            }
+        };
+        for (const workspace of uniqueWorkspaces) {
+            createSharedBaseEnforcer(workspace);
+        }
+
+        // 监听后续注册的可读目录，传播到当前 manager 创建过的所有共享基础 enforcer。
+        // setupLazyHarnessInit() 重复调用时，旧任务仍继承旧基础 enforcer，因此监听器必须覆盖全部历史实例。
+        if (!this._disposeReadableDirectoryListener) {
+            this._disposeReadableDirectoryListener = readableRegistry.onRegister((dirPath: string) => {
+                const rule: PermissionRule = {
+                    resourceType: 'file',
+                    action: 'read',
+                    pathPattern: `${dirPath}{,/**}`,
+                    effect: 'allow'
+                };
+                for (const enforcer of this._sharedHarnessBaseEnforcers) {
+                    enforcer
+                        .addRule(rule)
+                        .catch((err) => logger.warn(`Failed to propagate readable rule to shared enforcer: ${err}`));
+                }
+            });
+        }
+
+        // 设置延迟初始化回调
+        this.setHarnessInitializer((task) => {
+            if (task.harnessContext.workspace) return;
+            const savedExecutionHost = task.harnessContext.executionHost;
+            const taskWorkspace = task.workspace || defaultWorkspace;
+            const sharedBaseEnforcer = createSharedBaseEnforcer(taskWorkspace);
+            if (!sharedBaseEnforcer) {
+                task.harnessContext.workspace = taskWorkspace;
+                return;
+            }
+            task.harnessContext = new HarnessContext();
+            task.harnessContext.workspace = taskWorkspace;
+            task.harnessContext.permission = sharedBaseEnforcer.createOverlay(
+                createTaskArtifactPermissionRules(getTaskArtifactDirectory(task.task_id, false))
+            );
+            task.harnessContext.executionHost = savedExecutionHost;
+            task.harnessContext.permissionPrompt = permissionPromptFactory();
+        });
+    }
 
     /**
      * Load the task manager state from the file system.
@@ -619,12 +728,16 @@ export class TaskManagerState {
     /**
      * Find a task by its id.
      * 返回前会触发懒加载，确保调用方拿到的是含 chat_context 的完整 TaskState。
+     * 同时触发 harness 延迟初始化（如果尚未设置 workspace）。
      * @returns the task, or undefined if the task is not found
      */
     getTaskLoadResult(taskId: string): { task: TaskState | undefined; corrupted: boolean } {
         const task = this.tasks.find((task) => task.task_id === taskId);
         if (task) {
             task.ensureLoaded();
+            if (!task.harnessContext.workspace && this._harnessInitializer) {
+                this._harnessInitializer(task);
+            }
         }
         return { task, corrupted: task?._corrupted === true };
     }
