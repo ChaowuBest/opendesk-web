@@ -48,9 +48,10 @@ import {
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
-// 过滤 bash 在某些受限环境下启动时的 getcwd 噪音警告
+// 过滤 shell 在某些受限环境下启动时的 getcwd/chdir 噪音警告
+// 警告可能出现在输出中的任意位置（行首、行尾、甚至拼接在其他文本后），因此不使用 ^ 锚点
 const SHELL_CWD_WARNING_RE =
-    /^shell-init: error retrieving current directory: getcwd: cannot access parent directories: (?:Permission denied|Not supported)\r?\n?/gm;
+    /(?:shell-init|chdir): error retrieving current directory: getcwd: cannot access parent directories: (?:Permission denied|Not supported|Not a tty|No error information)\r?\n?/g;
 
 function filterShellEnvironmentWarnings(text: string): string {
     return text.replace(SHELL_CWD_WARNING_RE, '');
