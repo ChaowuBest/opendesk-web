@@ -905,15 +905,9 @@ class SideBar extends HTMLElement {
     }
 
     static buildGoalTerminalTag(task, isCurrentTask, t) {
-        const status = task.goal?.status;
-        if (status !== 'complete' && status !== 'blocked') return '';
-        const labelKey = status === 'complete' ? 'goal.label.status.complete' : 'goal.label.status.blocked';
-        const label = t(labelKey);
-        const cls = isCurrentTask
-            ? 'bg-white/25 text-white border-white/30'
-            : status === 'complete'
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              : 'bg-red-50 text-red-700 border-red-200';
+        if (task.goal?.status !== 'blocked') return '';
+        const label = t('goal.label.status.blocked');
+        const cls = isCurrentTask ? 'bg-white/25 text-white border-white/30' : 'bg-red-50 text-red-700 border-red-200';
         return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
     }
 

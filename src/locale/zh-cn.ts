@@ -1185,7 +1185,7 @@ export const zhCn: Record<string, string> = {
     'goal.label.status.pending': '待处理',
     'goal.label.status.active': '进行中',
     'goal.label.status.paused': '已暂停',
-    'goal.label.status.blocked': '已阻塞',
+    'goal.label.status.blocked': '执行受阻',
     'goal.label.status.complete': '已完成',
     'goal.label.status.cleared': '已清除',
     'goal.label.evaluation.met': '已达成',
