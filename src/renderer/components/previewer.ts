@@ -164,6 +164,9 @@ function enhanceBlock(block: HTMLElement): void {
     // -- preview container with shadow DOM --
     const previewContainer = document.createElement('div');
     previewContainer.className = 'code-preview-container';
+    if (lang === 'svg') {
+        previewContainer.classList.add('code-preview-container--auto-height');
+    }
     const shadowHost = document.createElement('div');
     shadowHost.className = 'code-preview-shadow-host';
     const shadowRoot = shadowHost.attachShadow({ mode: 'open' });

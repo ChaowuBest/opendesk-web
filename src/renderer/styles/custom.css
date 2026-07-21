@@ -3143,6 +3143,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
     overflow: auto;
     max-height: 480px;
 }
+.code-preview-container--auto-height {
+    overflow: visible;
+    max-height: none;
+}
 .code-preview-shadow-host {
     width: 100%;
     contain: paint;
