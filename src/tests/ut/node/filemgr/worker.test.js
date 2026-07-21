@@ -209,7 +209,16 @@ if (!OPENROUTER_API_KEY) {
             testAllPausedRootsDoNotFallBackToUnfilteredEmbedding,
             testSourceControlReturnsDegradedAuthoritativeSnapshot,
             testQueuedRootRemovalWinsOverPauseRequest,
-            testEmbeddingConfigChangedKeepsPausedOnlyRowsPending
+            testEmbeddingConfigChangedKeepsPausedOnlyRowsPending,
+            testMultiPathSubsetRunsEachRouteOnce,
+            testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath,
+            testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped,
+            testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped,
+            testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot,
+            testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization,
+            testMultiPathSelectedSourceRemovalDuringSearchFailsClosed,
+            testMultiPathFinalStatWindowReappliesLatestScopePolicy,
+            testMultiPathScopeValidationHasDeterministicErrorPriority
         ].filter((test) => test.name.includes(filter));
         if (filteredTests.length === 0) {
             console.error(`No no-API worker tests matched TEST_FILTER=${filter}`);
@@ -243,6 +252,15 @@ if (!OPENROUTER_API_KEY) {
     await testSearchIndexedFilesKeywordFailureReturnsError();
     await testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage();
     await testSearchIndexedFilesScopedRouteBudgetsAndOutcomes();
+    await testMultiPathSubsetRunsEachRouteOnce();
+    await testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath();
+    await testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped();
+    await testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped();
+    await testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot();
+    await testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization();
+    await testMultiPathSelectedSourceRemovalDuringSearchFailsClosed();
+    await testMultiPathFinalStatWindowReappliesLatestScopePolicy();
+    await testMultiPathScopeValidationHasDeterministicErrorPriority();
     await testTask5StartScannersDedupesRoots();
     await testResetFileSystemStorageUsesManualResetReason();
     await testTask7ReadonlyModeWhenScanLockHeld();
@@ -1686,6 +1704,291 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
     assert.equal(failed.code, CODES.SEARCH_FAILED);
     cleanup(worker.appDataDirectory);
     console.log('  ✅ testSearchIndexedFilesScopedRouteBudgetsAndOutcomes');
+}
+
+function makeMultiPathSearchWorker({ entries, pausedRoots = [], unavailableRoots = {} }) {
+    const worker = Object.create(FileManagerWorker.prototype);
+    const calls = [];
+    worker.status = 'running';
+    worker.config = { entries };
+    worker._lastConfig = { entries };
+    worker._pendingConfigChange = null;
+    worker._getVisibleConfigEntries = FileManagerWorker.prototype._getVisibleConfigEntries;
+    worker._currentWorkspace = null;
+    worker._statFileForSearch = async () => ({ isFile: () => true });
+    worker.storage = {
+        mode: 'full',
+        isDeferred: () => false,
+        scannerState: {
+            roots: Object.fromEntries(
+                entries.map((entry) => [entry.root, { paused: pausedRoots.includes(entry.root) }])
+            ),
+            unavailable_roots: unavailableRoots
+        },
+        searchIndexedFilesByKeyword: async (_query, options) => {
+            calls.push(['keyword', options]);
+            return [];
+        },
+        searchFileByName: async (_query, options) => {
+            calls.push(['name', options]);
+            return { results: [] };
+        },
+        searchIndexedChunks: async (_query, options) => {
+            calls.push(['content', options]);
+            return { results: [] };
+        }
+    };
+    return { worker, calls };
+}
+
+async function testMultiPathSubsetRunsEachRouteOnce() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const { worker, calls } = makeMultiPathSearchWorker({ entries });
+    const scope = { type: 'paths', paths: ['/source/a/one', '/source/b/two'] };
+
+    const result = await worker.searchIndexedFiles('plan', { topK: 5, scope });
+    assert.equal(result.code, undefined);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls, [
+        ['keyword', { limit: 15, scope }],
+        ['name', { topK: 10, scope }],
+        ['content', { topK: 15, scope }]
+    ]);
+}
+
+async function testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const scope = { type: 'path', path: '/source/a/sub' };
+    const accepted = makeMultiPathSearchWorker({ entries });
+    const acceptedResult = await accepted.worker.searchIndexedFiles('plan', { topK: 5, scope });
+    assert.equal(acceptedResult.code, undefined);
+    assert.deepEqual(accepted.calls, [
+        ['keyword', { limit: 15, scope }],
+        ['name', { topK: 10, scope }],
+        ['content', { topK: 15, scope }]
+    ]);
+
+    for (const { candidate, unavailableRoots = {} } of [
+        { candidate: '/outside' },
+        { candidate: '/source/a/sub', unavailableRoots: { '/source/a': { since: 1 } } }
+    ]) {
+        const rejected = makeMultiPathSearchWorker({ entries, unavailableRoots });
+        const result = await rejected.worker.searchIndexedFiles('plan', {
+            scope: { type: 'path', path: candidate }
+        });
+        assert.equal(result.code, CODES.INVALID_SCOPE);
+        assert.equal(rejected.calls.length, 0);
+    }
+}
+
+async function testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+
+    const activeOnly = makeMultiPathSearchWorker({ entries, pausedRoots: ['/source/b'] });
+    await activeOnly.worker.searchIndexedFiles('plan', {
+        topK: 5,
+        scope: { type: 'paths', paths: ['/source/a'] }
+    });
+    assert.ok(activeOnly.calls.every(([, options]) => options.scope?.type === 'paths'));
+
+    const all = makeMultiPathSearchWorker({ entries, pausedRoots: ['/source/b'] });
+    await all.worker.searchIndexedFiles('plan', {
+        topK: 5,
+        scope: { type: 'paths', paths: ['/source/a', '/source/b'] }
+    });
+    assert.equal(all.calls.length, 3);
+    assert.deepEqual(
+        all.calls.map(([route]) => route),
+        ['keyword', 'name', 'content']
+    );
+    assert.ok(all.calls.every(([, options]) => options.scope === undefined));
+}
+
+async function testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped() {
+    const entries = [{ root: '/source/a', exclude_patterns: [] }];
+    for (const scope of [
+        { type: 'paths', paths: [] },
+        { type: 'paths', paths: ['/source/a', '/unknown'] },
+        { type: 'paths', paths: ['/source/a', 'relative/path'] },
+        { type: 'paths', paths: Array.from({ length: 65 }, (_, index) => `/source/a/${index}`) }
+    ]) {
+        const { worker, calls } = makeMultiPathSearchWorker({ entries });
+        const result = await worker.searchIndexedFiles('plan', { scope });
+        assert.equal(result.code, CODES.INVALID_SCOPE);
+        assert.equal(calls.length, 0);
+    }
+}
+
+async function testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const unavailable = makeMultiPathSearchWorker({
+        entries,
+        unavailableRoots: { '/source/b': { since: 1 } }
+    });
+    const rejected = await unavailable.worker.searchIndexedFiles('plan', {
+        scope: { type: 'paths', paths: ['/source/b/sub'] }
+    });
+    assert.equal(rejected.code, CODES.INVALID_SCOPE);
+    assert.equal(unavailable.calls.length, 0);
+
+    const paused = makeMultiPathSearchWorker({ entries, pausedRoots: ['/source/b'] });
+    const accepted = await paused.worker.searchIndexedFiles('plan', {
+        routes: ['keyword'],
+        scope: { type: 'paths', paths: ['/source/b'] }
+    });
+    assert.equal(accepted.code, undefined);
+    assert.equal(paused.calls.length, 1);
+}
+
+async function testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const { worker } = makeMultiPathSearchWorker({ entries });
+    let routedScope = 'not-called';
+    worker.storage.searchFileByName = async (_query, options) => {
+        routedScope = options.scope;
+        const expandedEntries = [...entries, { root: '/source/c', exclude_patterns: [] }];
+        worker.config = { entries: expandedEntries };
+        worker._lastConfig = worker.config;
+        return {
+            results: [
+                { path: '/source/a/in.md', filename: 'in.md', ref_count: 1 },
+                { path: '/source/c/leak.md', filename: 'leak.md', ref_count: 1 }
+            ]
+        };
+    };
+    const result = await worker.searchIndexedFiles('plan', {
+        routes: ['name_semantic'],
+        scope: { type: 'paths', paths: ['/source/a', '/source/b'] }
+    });
+    assert.equal(routedScope, undefined);
+    assert.deepEqual(
+        result.results.map((item) => item.path),
+        ['/source/a/in.md']
+    );
+}
+
+async function testMultiPathSelectedSourceRemovalDuringSearchFailsClosed() {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const { worker } = makeMultiPathSearchWorker({ entries });
+    worker.storage.searchFileByName = async () => {
+        const remainingEntries = [{ root: '/source/b', exclude_patterns: [] }];
+        worker.config = { entries: remainingEntries };
+        worker._lastConfig = worker.config;
+        return {
+            results: [{ path: '/source/a/in.md', filename: 'in.md', ref_count: 1 }]
+        };
+    };
+
+    const result = await worker.searchIndexedFiles('plan', {
+        routes: ['name_semantic'],
+        scope: { type: 'paths', paths: ['/source/a'] }
+    });
+    assert.equal(result.code, CODES.INVALID_SCOPE);
+    assert.deepEqual(result.results, []);
+}
+
+async function runMultiPathFinalStatConfigChange(mutateVisiblePolicy) {
+    const entries = [
+        { root: '/source/a', exclude_patterns: [] },
+        { root: '/source/b', exclude_patterns: [] }
+    ];
+    const { worker } = makeMultiPathSearchWorker({ entries });
+    worker.storage.searchFileByName = async () => ({
+        results: [{ path: '/source/a/in.md', filename: 'in.md', ref_count: 1 }]
+    });
+
+    let releaseStat;
+    let markStatStarted;
+    const statStarted = new Promise((resolve) => {
+        markStatStarted = resolve;
+    });
+    const statBlocked = new Promise((resolve) => {
+        releaseStat = resolve;
+    });
+    worker._statFileForSearch = async () => {
+        markStatStarted();
+        await statBlocked;
+        return { isFile: () => true };
+    };
+
+    const search = worker.searchIndexedFiles('plan', {
+        routes: ['name_semantic'],
+        scope: { type: 'paths', paths: ['/source/a'] }
+    });
+    await statStarted;
+    mutateVisiblePolicy(worker);
+    releaseStat();
+    return await search;
+}
+
+async function testMultiPathFinalStatWindowReappliesLatestScopePolicy() {
+    const removed = await runMultiPathFinalStatConfigChange((worker) => {
+        worker._pendingConfigChange = {
+            entries: [{ root: '/source/b', exclude_patterns: [] }]
+        };
+    });
+    assert.equal(removed.code, CODES.INVALID_SCOPE);
+    assert.deepEqual(removed.results, []);
+
+    const unavailable = await runMultiPathFinalStatConfigChange((worker) => {
+        worker.storage.scannerState.unavailable_roots = { '/source/a': { since: 1 } };
+    });
+    assert.equal(unavailable.code, CODES.INVALID_SCOPE);
+    assert.deepEqual(unavailable.results, []);
+
+    const excluded = await runMultiPathFinalStatConfigChange((worker) => {
+        worker._pendingConfigChange = {
+            entries: [
+                { root: '/source/a', exclude_patterns: ['**/*.md'] },
+                { root: '/source/b', exclude_patterns: [] }
+            ]
+        };
+    });
+    assert.equal(excluded.code, undefined);
+    assert.deepEqual(excluded.results, []);
+}
+
+async function testMultiPathScopeValidationHasDeterministicErrorPriority() {
+    const entries = [{ root: '/source/a', exclude_patterns: [] }];
+
+    const blankUnknown = makeMultiPathSearchWorker({ entries });
+    const blankUnknownResult = await blankUnknown.worker.searchIndexedFiles('   ', {
+        scope: { type: 'paths', paths: ['/unknown'] }
+    });
+    assert.equal(blankUnknownResult.code, CODES.INVALID_SCOPE);
+    assert.equal(blankUnknown.calls.length, 0);
+
+    const missingUnknown = makeMultiPathSearchWorker({ entries });
+    missingUnknown.worker.storage = null;
+    const missingUnknownResult = await missingUnknown.worker.searchIndexedFiles('plan', {
+        scope: { type: 'paths', paths: ['/unknown'] }
+    });
+    assert.equal(missingUnknownResult.code, CODES.INVALID_SCOPE);
+
+    const missingKnown = makeMultiPathSearchWorker({ entries });
+    missingKnown.worker.storage = null;
+    const missingKnownResult = await missingKnown.worker.searchIndexedFiles('plan', {
+        scope: { type: 'paths', paths: ['/source/a'] }
+    });
+    assert.equal(missingKnownResult.code, CODES.INDEX_NOT_READY);
 }
 
 // ── Test: Task 5 duplicate scanner roots are ignored ────────────────
@@ -4882,6 +5185,15 @@ async function main() {
         testSourceControlReturnsDegradedAuthoritativeSnapshot,
         testQueuedRootRemovalWinsOverPauseRequest,
         testEmbeddingConfigChangedKeepsPausedOnlyRowsPending,
+        testMultiPathSubsetRunsEachRouteOnce,
+        testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath,
+        testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped,
+        testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped,
+        testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot,
+        testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization,
+        testMultiPathSelectedSourceRemovalDuringSearchFailsClosed,
+        testMultiPathFinalStatWindowReappliesLatestScopePolicy,
+        testMultiPathScopeValidationHasDeterministicErrorPriority,
         testE2EBaseOnlyToFullCatchUp
     ];
 

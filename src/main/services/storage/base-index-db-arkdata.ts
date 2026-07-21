@@ -34,7 +34,10 @@ import {
     arkDataNonNegativeIntegerLiteral,
     normalizeArkDataResultLimit
 } from './arkdata-result-limit.js';
-import { pathDescendantOrSelfSqlValues } from './path-scope.js';
+import {
+    normalizePathDescendantOrSelfValues,
+    pathDescendantOrSelfSqlValues
+} from './path-scope.js';
 
 const ARKDATA_SELECT_PAGE_ROWS = ARKDATA_MAX_RESULT_ROWS;
 
@@ -838,9 +841,12 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             const op = operator.toLowerCase() as BaseQueryOperator;
             this.validateField(field);
             if (op === 'path_descendant_or_self') {
-                const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(value);
-                clauses.push(`(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`);
-                params.push(normalizedPath, descendantPattern);
+                const pathClauses = normalizePathDescendantOrSelfValues(value).map((pathValue) => {
+                    const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(pathValue);
+                    params.push(normalizedPath, descendantPattern);
+                    return `(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`;
+                });
+                clauses.push(pathClauses.length === 1 ? pathClauses[0] : `(${pathClauses.join(' OR ')})`);
             } else if (op === 'in' || op === 'notin') {
                 if (!Array.isArray(value)) throw new Error(`${operator} requires array`);
                 if (value.length === 0) {

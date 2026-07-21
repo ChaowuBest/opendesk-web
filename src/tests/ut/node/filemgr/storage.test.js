@@ -41,6 +41,23 @@ assert.deepEqual(
         { indexer: 'BaseIndexer', field: 'item_id', operator: 'path_descendant_or_self', value: '/workspace' }
     ]
 );
+assert.deepEqual(
+    buildIndexedFilePreconditions({
+        scope: { type: 'paths', paths: ['/workspace/a', '/workspace/b'] },
+        requireEmbedded: true
+    }),
+    [
+        { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+        { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+        { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+        {
+            indexer: 'BaseIndexer',
+            field: 'item_id',
+            operator: 'path_descendant_or_self',
+            value: ['/workspace/a', '/workspace/b']
+        }
+    ]
+);
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';

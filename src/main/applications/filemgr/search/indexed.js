@@ -44,18 +44,21 @@ export class InvalidFilemgrSearchScopeError extends Error {
     }
 }
 
-export function normalizeFilemgrSearchScope(scope) {
-    if (scope === undefined) return undefined;
-    if (!scope || typeof scope !== 'object' || scope.type !== 'path' || typeof scope.path !== 'string') {
-        throw new InvalidFilemgrSearchScopeError();
-    }
+export const FILEMGR_SEARCH_MAX_PATHS = 64;
 
-    if (!scope.path.trim()) {
+function toFilemgrProtocolPath(value) {
+    const isWin32Drive = /^[A-Za-z]:[\\/]/.test(value);
+    const isWin32Unc = /^\\\\[^\\]+\\[^\\]+/.test(value);
+    return isWin32Drive || isWin32Unc ? value.replace(/\\/g, '/') : value;
+}
+
+function normalizeOneScopePath(value) {
+    if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
         throw new InvalidFilemgrSearchScopeError();
     }
 
     try {
-        const normalizedPath = normalizePathDescendantOrSelfValue(scope.path);
+        const normalizedPath = normalizePathDescendantOrSelfValue(toFilemgrProtocolPath(value));
         const segments = normalizedPath.split('/');
         const hasDotSegment = segments.some((segment) => segment === '.' || segment === '..');
         const isPosix = /^\/(?:[^/]+(?:\/[^/]+)*)?$/.test(normalizedPath);
@@ -64,10 +67,115 @@ export function normalizeFilemgrSearchScope(scope) {
         if (hasDotSegment || (!isPosix && !isDrive && !isUnc)) {
             throw new InvalidFilemgrSearchScopeError();
         }
-        return { type: 'path', path: normalizedPath };
+        return normalizedPath;
     } catch {
         throw new InvalidFilemgrSearchScopeError();
     }
+}
+
+export function isExactPathSameOrDescendant(root, candidate) {
+    const normalizedRoot = normalizeOneScopePath(root);
+    const normalizedCandidate = normalizeOneScopePath(candidate);
+    if (normalizedRoot === '/') return normalizedCandidate.startsWith('/');
+    if (/^[A-Za-z]:\/$/.test(normalizedRoot)) {
+        return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(normalizedRoot);
+    }
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
+}
+
+function collapseScopePaths(rawPaths) {
+    if (!Array.isArray(rawPaths) || rawPaths.length === 0 || rawPaths.length > FILEMGR_SEARCH_MAX_PATHS) {
+        throw new InvalidFilemgrSearchScopeError();
+    }
+    const normalized = [...new Set(Array.from(rawPaths, (value) => normalizeOneScopePath(value)))].sort(
+        (left, right) => left.length - right.length || (left < right ? -1 : left > right ? 1 : 0)
+    );
+    const collapsed = [];
+    for (const candidate of normalized) {
+        if (!collapsed.some((root) => isExactPathSameOrDescendant(root, candidate))) {
+            collapsed.push(candidate);
+        }
+    }
+    return collapsed;
+}
+
+export function normalizeFilemgrSearchScope(scope) {
+    if (scope === undefined) return undefined;
+    if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+        throw new InvalidFilemgrSearchScopeError();
+    }
+    if (scope.type === 'path') {
+        return { type: 'path', path: collapseScopePaths([scope.path])[0] };
+    }
+    if (scope.type === 'paths' && Array.isArray(scope.paths)) {
+        return { type: 'paths', paths: collapseScopePaths(scope.paths) };
+    }
+    throw new InvalidFilemgrSearchScopeError();
+}
+
+export function filemgrSearchScopePaths(scope) {
+    if (!scope) return [];
+    return scope.type === 'path' ? [scope.path] : scope.paths;
+}
+
+export function isPathInFilemgrSearchScope(filePath, scope) {
+    if (!scope) return true;
+    try {
+        return filemgrSearchScopePaths(scope).some((root) => isExactPathSameOrDescendant(root, filePath));
+    } catch {
+        return false;
+    }
+}
+
+function normalizedConfiguredEntries(entries) {
+    return (entries ?? [])
+        .map((entry) => {
+            try {
+                return { entry, root: normalizeOneScopePath(entry?.root) };
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean);
+}
+
+function normalizedUnavailableRoots(unavailableRoots) {
+    return Object.keys(unavailableRoots ?? {}).flatMap((root) => {
+        try {
+            return [normalizeOneScopePath(root)];
+        } catch {
+            return [];
+        }
+    });
+}
+
+export function resolveFilemgrSearchScopeForEntries(scope, { entries = [], unavailableRoots = {} } = {}) {
+    if (!scope) {
+        return { requestedScope: undefined, effectiveScope: undefined, coversAllSources: false };
+    }
+
+    const requestedScope = normalizeFilemgrSearchScope(scope);
+    const paths = filemgrSearchScopePaths(requestedScope);
+    const configured = normalizedConfiguredEntries(entries);
+    if (configured.length === 0) throw new InvalidFilemgrSearchScopeError();
+
+    const unavailable = normalizedUnavailableRoots(unavailableRoots);
+    for (const selectedPath of paths) {
+        const covering = configured.filter(({ root }) => isExactPathSameOrDescendant(root, selectedPath));
+        if (covering.length === 0) throw new InvalidFilemgrSearchScopeError();
+        if (unavailable.some((root) => isExactPathSameOrDescendant(root, selectedPath))) {
+            throw new InvalidFilemgrSearchScopeError();
+        }
+    }
+
+    const coversAllSources = configured.every(({ root }) =>
+        paths.some((selectedPath) => isExactPathSameOrDescendant(selectedPath, root))
+    );
+    return {
+        requestedScope,
+        effectiveScope: coversAllSources ? undefined : requestedScope,
+        coversAllSources
+    };
 }
 
 function normalizeComparablePath(value) {
@@ -260,18 +368,26 @@ export function isCoveredByActiveEntries(filePath, entries = []) {
     return false;
 }
 
+export function filterIndexedResultsByPolicy(items, { entries = [], unavailableRoots = {}, scope } = {}) {
+    return (items ?? []).filter(
+        (item) =>
+            isPathInFilemgrSearchScope(item.path, scope) &&
+            visibleRefCount(item) > 0 &&
+            !isUnavailable(item.path, unavailableRoots) &&
+            isCoveredByActiveEntries(item.path, entries)
+    );
+}
+
 export async function filterIndexedResults(
     items,
-    { entries = [], unavailableRoots = {}, statFile, concurrency = 16 } = {}
+    { entries = [], unavailableRoots = {}, scope, statFile, concurrency = 16 } = {}
 ) {
+    const candidates = filterIndexedResultsByPolicy(items, { entries, unavailableRoots, scope });
     const results = [];
     let cursor = 0;
     const worker = async () => {
-        while (cursor < items.length) {
-            const item = items[cursor++];
-            if (visibleRefCount(item) <= 0) continue;
-            if (isUnavailable(item.path, unavailableRoots)) continue;
-            if (!isCoveredByActiveEntries(item.path, entries)) continue;
+        while (cursor < candidates.length) {
+            const item = candidates[cursor++];
             const stat = statFile ? await statFile(item.path).catch(() => null) : { isFile: () => true };
             if (!stat?.isFile?.()) continue;
             results.push(item);

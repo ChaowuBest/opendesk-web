@@ -5,7 +5,24 @@ export function normalizePathDescendantOrSelfValue(value: unknown): string {
     if (value === '/' || /^[A-Za-z]:\/$/.test(value)) {
         return value;
     }
-    return value.replace(/\/+$/, '');
+    if (/^\/+$/u.test(value) || /^[A-Za-z]:\/+$/u.test(value)) {
+        throw new Error('path_descendant_or_self operator requires a non-empty string value');
+    }
+    const normalized = value.replace(/\/+$/, '');
+    if (!normalized) {
+        throw new Error('path_descendant_or_self operator requires a non-empty string value');
+    }
+    return normalized;
+}
+
+export function normalizePathDescendantOrSelfValues(value: unknown): string[] {
+    const values = Array.isArray(value) ? Array.from(value) : [value];
+    if (values.length === 0) {
+        throw new Error(
+            'path_descendant_or_self operator requires a non-empty string or non-empty string array value'
+        );
+    }
+    return values.map((entry) => normalizePathDescendantOrSelfValue(entry));
 }
 
 export function escapeSqlLikePattern(value: string): string {

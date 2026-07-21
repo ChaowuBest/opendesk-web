@@ -48,12 +48,18 @@ function scopedSearchDiagnosticsEnabled() {
     return process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS === '1';
 }
 
+function scopeOperatorValue(scope) {
+    if (!scope) return undefined;
+    return scope.type === 'path' ? scope.path : scope.paths;
+}
+
 function logScopedSearchDiagnostics(route, scope, result) {
     if (!scope || !scopedSearchDiagnosticsEnabled()) return;
     logger.info(
         `[filemgr] scoped search diagnostics ${JSON.stringify({
             route,
-            scopePath: scope.path,
+            scopeType: scope.type,
+            ...(scope.type === 'path' ? { scopePath: scope.path } : { scopePaths: scope.paths }),
             diagnostics: result?.diagnostics
         })}`
     );
@@ -70,7 +76,7 @@ export function buildIndexedFilePreconditions({ scope, requireEmbedded }) {
                       indexer: 'BaseIndexer',
                       field: 'item_id',
                       operator: 'path_descendant_or_self',
-                      value: scope.path
+                      value: scopeOperatorValue(scope)
                   }
               ]
             : [])
@@ -1831,6 +1837,7 @@ class FSStorage {
      * @param {{ topK?: number }} [opts]
      */
     async searchFileByName(query, { topK = 20, scope } = {}) {
+        scope = normalizeFilemgrSearchScope(scope);
         if (!query?.trim()) {
             return this._wrapResult(query, [], 0, null);
         }
@@ -1968,6 +1975,7 @@ class FSStorage {
      * needed by worker-side final filtering; do not expose directly to renderer callers.
      */
     async searchIndexedFilesByKeyword(keyword, { limit = 150, scope } = {}) {
+        scope = normalizeFilemgrSearchScope(scope);
         const conditions = scope
             ? [
                   { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },

@@ -1233,9 +1233,7 @@ async function testScopedVectorTargetValidationPrecedesBasePrefilter(): Promise<
             await assert.rejects(
                 () =>
                     storage.searchScope({
-                        preconditions: [
-                            { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
-                        ],
+                        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
                         targetCondition
                     }),
                 ScopedSearchValidationError,
@@ -1493,6 +1491,81 @@ async function testNativeScopedVectorUsesExactCandidateTopK(): Promise<void> {
             ['inside-best']
         );
         assert.equal(result.items[0].item.filename, 'inside-best');
+    } finally {
+        storage.close();
+        cleanup(dir);
+    }
+}
+
+async function testNativeScopedVectorRanksAcrossPathUnion(): Promise<void> {
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true }
+        },
+        needIndexers: {
+            filename: [{ indexer: 'VectorIndexer', options: { dim: 4 } }]
+        }
+    };
+    const dir = tmpDir('native-path-union-vector');
+    const storage = new BaseStorage('native-path-union-vector', schema, dir);
+    try {
+        await storage.initialize();
+        await storage.insert([
+            {
+                item_id: '/outside/global-best.md',
+                item_type: 'file',
+                filename: 'outside',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [1, 0, 0, 0] }] }
+            },
+            {
+                item_id: '/source/a/best.md',
+                item_type: 'file',
+                filename: 'a-best',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.99, 0.01, 0, 0] }] }
+            },
+            {
+                item_id: '/source/b/best.md',
+                item_type: 'file',
+                filename: 'b-best',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.95, 0.05, 0, 0] }] }
+            },
+            {
+                item_id: '/source/a/lower.md',
+                item_type: 'file',
+                filename: 'a-lower',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0, 1, 0, 0] }] }
+            }
+        ]);
+
+        const result = await storage.searchScope({
+            preconditions: [
+                { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' },
+                {
+                    indexer: 'BaseIndexer',
+                    field: 'item_id',
+                    operator: 'path_descendant_or_self',
+                    value: ['/source/a', '/source/b']
+                }
+            ],
+            targetCondition: {
+                indexer: 'VectorIndexer',
+                field: 'filename',
+                operator: 'vector_near',
+                value: [1, 0, 0, 0],
+                vectorQuery: { topK: 2, metric: 'cosine' }
+            }
+        });
+
+        assert.deepEqual(
+            result.items.map((item) => item.item.item_id),
+            ['/source/a/best.md', '/source/b/best.md']
+        );
+        assert.equal(
+            result.items.some((item) => item.item.item_id.startsWith('/outside/')),
+            false
+        );
     } finally {
         storage.close();
         cleanup(dir);
@@ -1887,6 +1960,7 @@ async function main(): Promise<void> {
         testSemanticBackendCapabilityIsSynchronousAndDoesNotReinitialize,
         testScopedSearchRejectsMissingOrInvalidBackendCapability,
         testNativeScopedVectorUsesExactCandidateTopK,
+        testNativeScopedVectorRanksAcrossPathUnion,
         testForcedWasmScopedVectorUsesOneCompleteCandidateCall,
         testArkDataScopedSearchRunsExactBatchesAndFailsWholeTarget,
         testVectorBaseCombo,

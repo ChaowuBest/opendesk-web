@@ -21,6 +21,7 @@ assert.equal((ChunkIndexDBHm as any).backend, 'native', 'HM chunk DB is a native
 import {
     escapeSqlLikePattern,
     normalizePathDescendantOrSelfValue,
+    normalizePathDescendantOrSelfValues,
     pathDescendantOrSelfSqlValues
 } from '../../../../../main/services/storage/path-scope.js';
 import { toArkDataDbPath } from '../../../../../main/services/storage/arkdata-path.js';
@@ -320,7 +321,9 @@ const pathScopeRows: Item[] = [
     { item_id: '/a/dir\\name/child.txt', item_type: 'file' },
     { item_id: '/a/dirname/child.txt', item_type: 'file' },
     { item_id: 'C:/', item_type: 'file' },
-    { item_id: 'C:/folder/file.txt', item_type: 'file' }
+    { item_id: 'C:/folder/file.txt', item_type: 'file' },
+    { item_id: '/union/file.txt', item_type: 'file' },
+    { item_id: '/union/memory.txt', item_type: 'memory' }
 ];
 
 async function assertPathOperator(db: {
@@ -344,6 +347,35 @@ async function assertPathOperator(db: {
     assert.equal(await db.count(condition('C:/')), 2);
     await assert.rejects(() => db.search(condition('')), /non-empty string/);
     await assert.rejects(() => db.search(condition(42)), /non-empty string/);
+
+    assert.deepEqual(
+        (await db.search(condition(['/a/b/', 'C:/']))).map((row) => row.item_id).sort(),
+        ['/a/b', '/a/b/file.txt', 'C:/', 'C:/folder/file.txt'].sort()
+    );
+
+    assert.deepEqual(
+        (await db.search(condition(['/a/%_dir', '/a/dir\\name']))).map((row) => row.item_id).sort(),
+        ['/a/%_dir', '/a/%_dir/child.txt', '/a/dir\\name', '/a/dir\\name/child.txt'].sort()
+    );
+
+    const grouped = await db.search([
+        {
+            field: 'item_id',
+            operator: 'path_descendant_or_self',
+            value: ['/a/b', '/union']
+        },
+        { field: 'item_type', operator: '=', value: 'file' }
+    ]);
+    assert.deepEqual(
+        grouped.map((row) => row.item_id).sort(),
+        ['/a/b', '/a/b/file.txt', '/union/file.txt']
+    );
+
+    await assert.rejects(() => db.search(condition([])), /non-empty string/);
+    await assert.rejects(() => db.search(condition(['/a/b', ''])), /non-empty string/);
+    await assert.rejects(() => db.search(condition(['/a/b', 42])), /non-empty string/);
+    await assert.rejects(() => db.search(condition('///')), /non-empty string/);
+    await assert.rejects(() => db.search(condition('C:////')), /non-empty string/);
 }
 
 async function testPathScopeHelpers() {
@@ -357,6 +389,13 @@ async function testPathScopeHelpers() {
     assert.deepEqual(pathDescendantOrSelfSqlValues('C:/'), ['C:/', 'C:/%']);
     assert.throws(() => normalizePathDescendantOrSelfValue(''), /non-empty string/);
     assert.throws(() => normalizePathDescendantOrSelfValue(1), /non-empty string/);
+    assert.deepEqual(normalizePathDescendantOrSelfValues('/a/b///'), ['/a/b']);
+    assert.deepEqual(normalizePathDescendantOrSelfValues(['/a/b///', 'C:/']), ['/a/b', 'C:/']);
+    assert.throws(() => normalizePathDescendantOrSelfValues([]), /non-empty string/);
+    assert.throws(() => normalizePathDescendantOrSelfValues(['/a', '']), /non-empty string/);
+    assert.throws(() => normalizePathDescendantOrSelfValues(['/a', 42]), /non-empty string/);
+    assert.throws(() => normalizePathDescendantOrSelfValues('///'), /non-empty string/);
+    assert.throws(() => normalizePathDescendantOrSelfValues('C:////'), /non-empty string/);
     console.log('  ✅ testPathScopeHelpers');
 }
 
@@ -413,18 +452,61 @@ async function testArkDataPathDescendantOrSelfBindings() {
     const previous = setArkdataDatabaseKit(fakeKit);
     const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-path-scope.db', pathScopeSchema);
     try {
-        const condition = [{ field: 'item_id', operator: 'path_descendant_or_self' as const, value: '/a/%_dir/' }];
+        const condition = [
+            {
+                field: 'item_id',
+                operator: 'path_descendant_or_self' as const,
+                value: ['/a/%_dir/', '/b/_root/']
+            }
+        ];
+
         await db.search(condition);
         await db.count(condition);
+
         const scopedCalls = calls.filter((call) => call.sql.includes('ESCAPE'));
         assert.ok(scopedCalls.length >= 2);
         for (const call of scopedCalls) {
-            assert.ok(call.sql.includes(`(item_id = ? OR item_id LIKE ? ESCAPE '\\')`));
-            assert.deepEqual(call.params.slice(0, 2), [
+            assert.ok(
+                call.sql.includes(
+                    `((item_id = ? OR item_id LIKE ? ESCAPE '\\') OR (item_id = ? OR item_id LIKE ? ESCAPE '\\'))`
+                )
+            );
+            assert.deepEqual(call.params.slice(0, 4), [
                 { t: 'scalar', v: '/a/%_dir' },
-                { t: 'scalar', v: '/a/\\%\\_dir/%' }
+                { t: 'scalar', v: '/a/\\%\\_dir/%' },
+                { t: 'scalar', v: '/b/_root' },
+                { t: 'scalar', v: '/b/\\_root/%' }
             ]);
         }
+
+        const manyRoots = Array.from({ length: 64 }, (_, index) => `/root-${index}`);
+        await db.search([
+            {
+                field: 'item_id',
+                operator: 'path_descendant_or_self' as const,
+                value: manyRoots
+            }
+        ]);
+        const manyCall = calls.filter((call) => call.sql.includes('ESCAPE')).at(-1);
+        assert.ok(manyCall);
+        assert.equal((manyCall.sql.match(/item_id = \?/g) ?? []).length, 64);
+        assert.equal(manyCall.params.length, 128);
+
+        const queryCountBeforeInvalid = calls.length;
+        for (const value of [[], '///', 'C:////']) {
+            await assert.rejects(
+                () =>
+                    db.search([
+                        {
+                            field: 'item_id',
+                            operator: 'path_descendant_or_self' as const,
+                            value
+                        }
+                    ]),
+                /non-empty string/
+            );
+        }
+        assert.equal(calls.length, queryCountBeforeInvalid);
     } finally {
         db.close();
         setArkdataDatabaseKit(previous);

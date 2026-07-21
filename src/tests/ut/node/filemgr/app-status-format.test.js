@@ -422,7 +422,10 @@ async function testSearchIndexedFilesForwardsOptionsAndUnwraps() {
             return { data: { query: 'plan', results: [], totalHits: 0 } };
         }
     };
-    const options = { topK: 5, scope: { type: 'path', path: '/workspace' } };
+    const options = {
+        topK: 5,
+        scope: { type: 'paths', paths: ['/workspace/a', '/workspace/b'] }
+    };
     assert.deepEqual(await app.searchIndexedFiles('plan', options), { query: 'plan', results: [], totalHits: 0 });
     assert.deepEqual(calls, [['filemgr', 'searchIndexedFiles', 'plan', options]]);
 

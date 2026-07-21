@@ -53,10 +53,12 @@ import { getHomeDir } from '../../utils/temp.js';
 import {
     createIndexedSearchContext,
     filterIndexedResults,
+    filterIndexedResultsByPolicy,
     groupIndexedChunksByFile,
     mergeSearchRoutes,
     InvalidFilemgrSearchScopeError,
     rankSearchResults,
+    resolveFilemgrSearchScopeForEntries,
     toIndexedFileSearchResult
 } from './search/indexed.js';
 import { extractText as extractFileTextFromParser } from './parser/extract.js';
@@ -72,6 +74,11 @@ function normalizeSearchArgs(query, topK) {
         query: typeof query === 'string' ? query : '',
         topK: Math.max(1, Math.min(Number(topK) || 20, 100))
     };
+}
+
+function invalidIndexedSearchScopeResult(query) {
+    const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE);
 }
 
 class FSScanner {
@@ -1582,14 +1589,36 @@ class FileManagerWorker extends BaseWorker {
             contentSemantic: byRoute.content_semantic ?? []
         });
         const filtered = await filterIndexedResults(merged, {
-            entries: this._lastConfig?.entries ?? this.config?.entries ?? [],
+            entries: this._getVisibleConfigEntries(),
             unavailableRoots: this.storage.scannerState?.unavailable_roots ?? {},
+            scope: context.requestedScope,
             currentWorkspace: this._currentWorkspace,
             statFile: (filePath) => this._statFileForSearch(filePath),
             concurrency: 16
         });
-        const ranked = rankSearchResults(filtered, { currentWorkspace: this._currentWorkspace }).slice(0, context.topK);
-        return toIndexedFileSearchResult(context.query, ranked, filtered.length, warning, code);
+        const latestEntries = this._getVisibleConfigEntries();
+        const latestUnavailableRoots = this.storage.scannerState?.unavailable_roots ?? {};
+        try {
+            resolveFilemgrSearchScopeForEntries(context.requestedScope, {
+                entries: latestEntries,
+                unavailableRoots: latestUnavailableRoots
+            });
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(context.query);
+            }
+            throw error;
+        }
+        const finalFiltered = filterIndexedResultsByPolicy(filtered, {
+            entries: latestEntries,
+            unavailableRoots: latestUnavailableRoots,
+            scope: context.requestedScope
+        });
+        const ranked = rankSearchResults(finalFiltered, { currentWorkspace: this._currentWorkspace }).slice(
+            0,
+            context.topK
+        );
+        return toIndexedFileSearchResult(context.query, ranked, finalFiltered.length, warning, code);
     }
 
     async searchIndexedFiles(query, options = {}) {
@@ -1598,13 +1627,32 @@ class FileManagerWorker extends BaseWorker {
             context = createIndexedSearchContext(query, options);
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
-                const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-                return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE);
+                return invalidIndexedSearchScopeResult(query);
             }
             throw error;
         }
+
+        try {
+            const resolution = resolveFilemgrSearchScopeForEntries(context.scope, {
+                entries: this._getVisibleConfigEntries(),
+                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+            });
+            context = {
+                ...context,
+                requestedScope: resolution.requestedScope,
+                scope: resolution.effectiveScope,
+                coversAllSources: resolution.coversAllSources
+            };
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(query);
+            }
+            throw error;
+        }
+
         const earlyResult = this._checkIndexedSearchPreconditions(context);
         if (earlyResult) return earlyResult;
+
         const outcomes = [];
         if (context.routes.keyword) outcomes.push(await this._runKeywordRoute(context));
         let warning;
@@ -1618,6 +1666,19 @@ class FileManagerWorker extends BaseWorker {
                 code = CODES.EMBED_UNAVAILABLE;
             }
         }
+
+        try {
+            resolveFilemgrSearchScopeForEntries(context.requestedScope, {
+                entries: this._getVisibleConfigEntries(),
+                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+            });
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(query);
+            }
+            throw error;
+        }
+
         return this._finalizeIndexedSearch(context, outcomes, warning, code);
     }
 

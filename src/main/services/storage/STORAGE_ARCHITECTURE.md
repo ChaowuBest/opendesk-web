@@ -107,7 +107,8 @@ abstract class Indexer {
 - **schema 驱动**：根据 `ColumnSchema.columns` 动态建表，每个 column 成为一个 SQLite 列
 - **1:1 关系**：每个 item_id 对应一行，是 item 的唯一真源
 - **必须存在**：BaseStorage 始终创建 BaseIndexer，用于存在性检查和元数据 join
-- **支持全部标量操作符**：`= != > < >= <= like notlike in notin between notbetween`
+- **支持全部标量操作符**：`= != > < >= <= like notlike in notin between notbetween path_descendant_or_self`
+- **`path_descendant_or_self` 合同**：接受单个非空路径字符串或非空路径字符串数组；数组内各成员在同一个 operator 内部做 OR，不同 FilterCondition 之间仍是 AND。空数组或包含非字符串/空字符串成员一律视为非法，不代表"不限定范围"。`///`、`C:////` 等纯斜杠或畸形盘符根值在进入数据库前即被拒绝。Native/WASM/ArkData 三个 backend 各自负责把该 operator 编译为等价的 SQL `OR` group（`LIKE ... ESCAPE '\'`），FileMgr 不拼接 SQL，只传入 string/string[] value。
 
 ### 3.4 BM25Indexer — 全文搜索
 

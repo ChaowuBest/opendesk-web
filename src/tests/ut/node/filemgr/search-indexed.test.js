@@ -2,14 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     createIndexedSearchContext,
+    FILEMGR_SEARCH_MAX_PATHS,
     InvalidFilemgrSearchScopeError,
+    filemgrSearchScopePaths,
     filterIndexedResults,
     groupIndexedChunksByFile,
     isCoveredByActiveEntries,
+    isExactPathSameOrDescendant,
+    isPathInFilemgrSearchScope,
     mergeSearchRoutes,
     normalizeFilemgrSearchScope,
     normalizeSearchTopK,
-    rankSearchResults
+    rankSearchResults,
+    resolveFilemgrSearchScopeForEntries
 } from '../../../../main/applications/filemgr/search/indexed.js';
 import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
 import { CODES } from '../../../../main/applications/filemgr/storage.js';
@@ -167,16 +172,22 @@ test('mergeSearchRoutes preserves all content snippets', () => {
 });
 
 test('groupIndexedChunksByFile keeps all snippets in vector-score order and limits files', () => {
-    const files = groupIndexedChunksByFile([
-        { chunk: { id: 'low', text: 'low' }, score: 0.2, source: { path: '/a.md', filename: 'a.md' } },
-        { chunk: { id: 'best', text: 'best' }, score: 0.9, source: { path: '/a.md', filename: 'a.md' } },
-        { chunk: { id: 'other', text: 'other' }, score: 0.8, source: { path: '/b.md', filename: 'b.md' } }
-    ], 1);
+    const files = groupIndexedChunksByFile(
+        [
+            { chunk: { id: 'low', text: 'low' }, score: 0.2, source: { path: '/a.md', filename: 'a.md' } },
+            { chunk: { id: 'best', text: 'best' }, score: 0.9, source: { path: '/a.md', filename: 'a.md' } },
+            { chunk: { id: 'other', text: 'other' }, score: 0.8, source: { path: '/b.md', filename: 'b.md' } }
+        ],
+        1
+    );
     assert.equal(files.length, 1);
     assert.equal(files[0].path, '/a.md');
     assert.equal(files[0].snippet, 'best');
     assert.equal(files[0].semanticScore, 0.9);
-    assert.deepEqual(files[0].snippets.map((snippet) => snippet.chunkId), ['best', 'low']);
+    assert.deepEqual(
+        files[0].snippets.map((snippet) => snippet.chunkId),
+        ['best', 'low']
+    );
 });
 
 test('rankSearchResults keeps keyword above semantic-only multi-match', () => {
@@ -327,4 +338,142 @@ test('filterIndexedResults removes invisible, unavailable, excluded, and missing
         filtered.map((it) => it.path),
         ['/workspace/keep.md']
     );
+});
+
+test('normalizeFilemgrSearchScope normalizes, deduplicates, and collapses path unions exactly', () => {
+    assert.equal(FILEMGR_SEARCH_MAX_PATHS, 64);
+    assert.deepEqual(
+        normalizeFilemgrSearchScope({
+            type: 'paths',
+            paths: ['/docs/sub', '/docs/', '/docs', '/selected/A', '/selected/a', '/selected/x\\y', '/selected/x/y']
+        }),
+        {
+            type: 'paths',
+            paths: ['/docs', '/selected/A', '/selected/a', '/selected/x/y', '/selected/x\\y']
+        }
+    );
+    assert.deepEqual(normalizeFilemgrSearchScope({ type: 'path', path: 'C:/Users/Stella/' }), {
+        type: 'path',
+        path: 'C:/Users/Stella'
+    });
+    assert.deepEqual(normalizeFilemgrSearchScope({ type: 'path', path: 'C:\\Users\\Stella\\' }), {
+        type: 'path',
+        path: 'C:/Users/Stella'
+    });
+});
+
+test('normalizeFilemgrSearchScope rejects every fail-closed multi-path shape', () => {
+    const invalidScopes = [
+        { type: 'paths', paths: [] },
+        { type: 'paths', paths: Array.from({ length: 65 }, () => '/docs') },
+        { type: 'paths', paths: ['/docs', ''] },
+        { type: 'paths', paths: ['/docs', 42] },
+        { type: 'paths', paths: ['/docs', 'relative/path'] },
+        { type: 'paths', paths: ['/docs', '/outside/../escape'] },
+        { type: 'paths', paths: ['/docs', '/inside//double'] },
+        { type: 'paths', paths: ['/docs', '///'] },
+        { type: 'paths', paths: ['/docs', 'C:////'] },
+        { type: 'paths', paths: ['/docs', '/bad\0path'] },
+        { type: 'paths', paths: '/docs' },
+        { type: 'path', path: ['/docs'] }
+    ];
+    for (const scope of invalidScopes) {
+        assert.throws(() => normalizeFilemgrSearchScope(scope), InvalidFilemgrSearchScopeError);
+    }
+});
+
+test('exact scope identity preserves case and POSIX backslashes', () => {
+    assert.equal(isExactPathSameOrDescendant('/selected/A', '/selected/A/file.md'), true);
+    assert.equal(isExactPathSameOrDescendant('/selected/A', '/selected/a/file.md'), false);
+    assert.equal(isExactPathSameOrDescendant('/selected/x\\y', '/selected/x\\y/file.md'), true);
+    assert.equal(isExactPathSameOrDescendant('/selected/x\\y', '/selected/x/y/file.md'), false);
+    assert.equal(isExactPathSameOrDescendant('/a/project', '/a/project-next/file.md'), false);
+    assert.equal(isExactPathSameOrDescendant('C:/', 'C:/folder/file.md'), true);
+});
+
+test('resolveFilemgrSearchScopeForEntries keeps subsets and optimizes only complete configured coverage', () => {
+    const entries = [{ root: '/source/a' }, { root: '/source/b' }];
+    const subset = normalizeFilemgrSearchScope({ type: 'paths', paths: ['/source/a'] });
+    assert.deepEqual(resolveFilemgrSearchScopeForEntries(subset, { entries }), {
+        requestedScope: subset,
+        effectiveScope: subset,
+        coversAllSources: false
+    });
+
+    const all = normalizeFilemgrSearchScope({ type: 'paths', paths: ['/source/b/', '/source/a/'] });
+    assert.deepEqual(resolveFilemgrSearchScopeForEntries(all, { entries }), {
+        requestedScope: all,
+        effectiveScope: undefined,
+        coversAllSources: true
+    });
+
+    const windowsSubset = normalizeFilemgrSearchScope({
+        type: 'paths',
+        paths: ['C:/Users/Stella/docs']
+    });
+    assert.deepEqual(
+        resolveFilemgrSearchScopeForEntries(windowsSubset, {
+            entries: [{ root: 'C:\\Users\\Stella' }]
+        }),
+        {
+            requestedScope: windowsSubset,
+            effectiveScope: windowsSubset,
+            coversAllSources: false
+        }
+    );
+});
+
+test('paused entries remain searchable and participate in all-source coverage', () => {
+    const entries = [{ root: '/active' }, { root: '/paused' }];
+    const activeOnly = normalizeFilemgrSearchScope({ type: 'paths', paths: ['/active'] });
+    assert.equal(resolveFilemgrSearchScopeForEntries(activeOnly, { entries }).coversAllSources, false);
+
+    const all = normalizeFilemgrSearchScope({ type: 'paths', paths: ['/active', '/paused'] });
+    const resolution = resolveFilemgrSearchScopeForEntries(all, { entries });
+    assert.equal(resolution.coversAllSources, true);
+    assert.equal(resolution.effectiveScope, undefined);
+});
+
+test('unknown and wholly unavailable explicit paths fail closed', () => {
+    const entries = [{ root: '/source/a' }, { root: '/source/b' }];
+    assert.throws(
+        () =>
+            resolveFilemgrSearchScopeForEntries(normalizeFilemgrSearchScope({ type: 'paths', paths: ['/unknown'] }), {
+                entries
+            }),
+        InvalidFilemgrSearchScopeError
+    );
+    assert.throws(
+        () =>
+            resolveFilemgrSearchScopeForEntries(
+                normalizeFilemgrSearchScope({ type: 'paths', paths: ['/source/b/sub'] }),
+                { entries, unavailableRoots: { '/source/b': { since: 1 } } }
+            ),
+        InvalidFilemgrSearchScopeError
+    );
+    assert.throws(
+        () =>
+            resolveFilemgrSearchScopeForEntries(normalizeFilemgrSearchScope({ type: 'path', path: '/unknown' }), {
+                entries
+            }),
+        InvalidFilemgrSearchScopeError
+    );
+    assert.throws(
+        () =>
+            resolveFilemgrSearchScopeForEntries(normalizeFilemgrSearchScope({ type: 'path', path: '/source/b/sub' }), {
+                entries,
+                unavailableRoots: { '/source/b': { since: 1 } }
+            }),
+        InvalidFilemgrSearchScopeError
+    );
+});
+
+test('requested union predicate excludes sibling prefixes and outside results', () => {
+    const scope = normalizeFilemgrSearchScope({ type: 'paths', paths: ['/a/project', '/b/docs'] });
+    assert.equal(isPathInFilemgrSearchScope('/a/project/file.md', scope), true);
+    assert.equal(isPathInFilemgrSearchScope('/b/docs', scope), true);
+    assert.equal(isPathInFilemgrSearchScope('/a/project-next/file.md', scope), false);
+    assert.equal(isPathInFilemgrSearchScope('/outside/file.md', scope), false);
+    assert.equal(isPathInFilemgrSearchScope('malformed-relative-result.md', scope), false);
+    assert.deepEqual(filemgrSearchScopePaths(scope), ['/b/docs', '/a/project']);
 });
