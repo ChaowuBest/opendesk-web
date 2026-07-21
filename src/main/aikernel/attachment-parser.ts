@@ -258,6 +258,12 @@ export async function parseAttachmentFile(filePath: string): Promise<string> {
         if (SPREADSHEET_ATTACHMENT_EXTENSIONS.has(ext)) {
             return extractSpreadsheetText(filePath);
         }
+        if (ext === 'pdf') {
+            const { extractText } = await import('unpdf');
+            const buffer = readFileSync(filePath);
+            const { text } = await extractText(new Uint8Array(buffer));
+            return text.join('\n\n');
+        }
         return await officeParser.parseOfficeAsync(filePath);
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
