@@ -18,7 +18,17 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     input: {
                         main: path.join(__dirname, 'src', 'main', 'main.ts'),
-                        worker: path.join(__dirname, 'src', 'main', 'worker.ts')
+                        worker: path.join(__dirname, 'src', 'main', 'worker.ts'),
+                        'workflow-runtime-worker': path.join(
+                            __dirname,
+                            'src',
+                            'main',
+                            'applications',
+                            'workflow',
+                            'run',
+                            'runtime',
+                            'worker.ts'
+                        )
                     },
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告

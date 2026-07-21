@@ -40,6 +40,7 @@ import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 import { AgentGateApplication } from '../main/applications/agentgate/app.js';
 import { AgentOfficeApplication } from '../main/applications/agentoffice/app.js';
 import { initAgentGateHook } from '../main/applications/agentgate/hook.js';
+import { WorkflowApplication } from '../main/applications/workflow/app.js';
 
 // Ensure hook is registered in the worker chunk (same bundle as tool execution)
 initAgentGateHook();
@@ -374,7 +375,8 @@ export class WorkerPlatform extends AbstractPlatform {
             DeviceMgrApplication,
             BuiltinApplication,
             AgentGateApplication,
-            AgentOfficeApplication
+            AgentOfficeApplication,
+            WorkflowApplication
         ];
     }
 }

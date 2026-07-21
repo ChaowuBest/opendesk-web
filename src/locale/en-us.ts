@@ -1588,5 +1588,171 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.noReply': 'The staff member completed the task without replying through sendReply.',
     'agentoffice.error.resourceDenied':
         "Resource is outside this digital staff member's configured permissions: ${path}",
-    'agentgate.attribution.status': 'Analyzing malicious skill attribution...'
+    'agentgate.attribution.status': 'Analyzing malicious skill attribution...',
+    'workflow.app.name': 'Workflows',
+    'workflow.error.experimentalDisabled': 'Workflows require experimental features to be enabled in Settings.',
+    'workflow.error.nameInvalid': 'Workflow names must use lowercase letters, numbers, and single hyphens.',
+    'workflow.error.alreadyExists': 'Workflow already exists: ${name}',
+    'workflow.error.descriptionEmpty': 'Workflow description must not be empty.',
+    'workflow.error.phaseNameEmpty': 'Workflow phase names must not be empty.',
+    'workflow.error.phaseNameDuplicate': 'Workflow phase names must be unique.',
+    'workflow.error.phaseNotDeclared': 'Workflow phase “${name}” is not declared in the Definition.',
+    'workflow.error.agentOutsidePhase': 'Workflow agents must run inside a started phase.',
+    'workflow.error.agentRequestPrompt': 'Workflow agent request requires a string prompt.',
+    'workflow.error.agentRequestAllowedTools': 'Workflow agent allowedTools must be an array of tool names.',
+    'workflow.error.agentToolNotAllowed': 'Workflow agents cannot use nested-agent or code-execution tools: ${tools}.',
+    'workflow.error.agentRequestReasoningEffort': 'Workflow agent reasoningEffort must be low, medium, or high.',
+    'workflow.error.agentRequestOutputSchema': 'Workflow agent outputSchema must be an object.',
+    'workflow.error.notFound': 'Workflow not found: ${reference}',
+    'workflow.error.invalidSchema': 'Invalid Workflow input schema: ${message}',
+    'workflow.error.invalidInput': 'Invalid Workflow input: ${message}',
+    'workflow.error.unsupportedStore': 'Unsupported Workflow data store: ${path}',
+    'workflow.error.interrupted': 'OpenDesk stopped before the Workflow run completed.',
+    'workflow.error.scriptEmpty': 'Workflow script must not be empty.',
+    'workflow.error.scriptTooLarge': 'Workflow script exceeds the ${limit}-character limit.',
+    'workflow.error.scriptModuleSyntax': 'Workflow script must not contain import or export declarations.',
+    'workflow.error.reportRequired': 'Workflow finished without publishing a result through report().',
+    'workflow.error.runtimeStartTimeout': 'Workflow runtime did not start within ${timeout} ms.',
+    'workflow.error.runTimeout': 'Workflow run exceeded the ${timeout} ms time limit.',
+    'workflow.error.runtimeExited': 'Workflow runtime exited with code ${code}.',
+    'workflow.error.stopped': 'The Workflow run was stopped.',
+    'workflow.error.runtimeArtifactMissing': 'Workflow runtime artifact was not found near ${path}.',
+    'workflow.error.hostTaskMissing': 'The host Task for this Workflow no longer exists: ${taskId}',
+    'workflow.error.authoringFailed': 'Workflow authoring failed.',
+    'workflow.error.authoringNotFound': 'The Workflow authoring result was not found in the current Task: ${reference}',
+    'workflow.nextAction.collectInput':
+        'Ask the user for ${fields} and end the current turn after the question. After the next user reply, call RunWorkflow with the same reference and a complete input object.',
+    'workflow.error.runNotFound': 'Workflow run not found: ${runId}',
+    'workflow.error.authoringOutputObject': 'Workflow authoring must return an object.',
+    'workflow.error.authoringOutputFields':
+        'Workflow authoring must return string values for name, description, and script.',
+    'workflow.error.authoringOutputSchema': 'Workflow authoring must return an inputSchema object.',
+    'workflow.launch.started': 'Workflow ${name} started.',
+    'workflow.phase.untitled': 'Untitled phase',
+    'workflow.agent.untitled': 'Workflow agent',
+    'workflow.tool.author.description':
+        'Design, generate, and validate a temporary JavaScript Workflow Definition scoped to the current Task from the user’s complete original request, returning its reference, input schema, and exact invocation.',
+    'workflow.tool.author.request':
+        'The user’s complete original request, including goals, inputs, outputs, and explicit constraints.',
+    'workflow.tool.load.description':
+        'Attach Workflow creation, listing, execution, and stop actions to the current Task for natural-language workflow or reusable-process requests.',
+    'workflow.tool.load.loaded':
+        'Workflow tools are available: AuthorWorkflow, ListWorkflows, RunWorkflow, and StopWorkflow.',
+    'workflow.tool.list.description':
+        'List current-Task temporary, saved, and built-in Definitions with source, input schema, and exact invocation. Task entries are newest first.',
+    'workflow.tool.run.description':
+        'Create an asynchronous Workflow run from an exact reference and an input object matching inputSchema, returning a status="started" acknowledgement.',
+    'workflow.tool.run.reference':
+        'The exact Workflow reference: a current-Task reference from AuthorWorkflow, or the name or id of a saved or built-in Definition.',
+    'workflow.tool.run.input':
+        'The current run input object matching Definition.inputSchema, populated from the user request, user reply, or AuthorWorkflow.launchInput.',
+    'workflow.tool.stop.description': 'Stop a running Workflow by its stable run id.',
+    'workflow.tool.stop.runId': 'The stable Workflow run id returned by RunWorkflow.',
+    'workflow.author.ready':
+        'Workflow “${name}” was generated and validated. Start reference “${reference}” with the returned invocation.',
+    'workflow.author.inputRequired':
+        'Workflow “${name}” was generated and validated. Its first run needs user input for: ${fields}. Start it with the same reference after receiving those values.',
+    'workflow.author.terminalFailure':
+        'This AuthorWorkflow creation process has ended. Report the complete failure reason to the user.',
+    'workflow.author.cancelled': 'Workflow creation was stopped.',
+    'workflow.author.card.generateTitle': 'Creating Workflow',
+    'workflow.author.card.generateBody': 'Generating a reusable JavaScript Workflow from the request.',
+    'workflow.author.card.requestRetryTitle': 'Workflow generation request is retrying',
+    'workflow.author.card.requestRetryBody':
+        'The authoring request failed. Request retry ${attempt} starts in ${seconds} seconds.',
+    'workflow.author.card.validateTitle': 'Validating Workflow',
+    'workflow.author.card.validateBody': 'Checking the definition, input schema, phases, and JavaScript source.',
+    'workflow.author.card.reviewTitle': 'Reviewing Workflow',
+    'workflow.author.card.reviewBody': 'Checking requirement coverage and qualitative implementation quality.',
+    'workflow.author.card.succeededTitle': 'Workflow created',
+    'workflow.author.card.succeededBody':
+        'Workflow “${name}” was validated and is waiting for a separate RunWorkflow tool call.',
+    'workflow.author.card.cancelledTitle': 'Workflow creation stopped',
+    'workflow.author.card.cancelledBody': 'Generation, validation, and self-review for this Workflow were stopped.',
+    'workflow.author.card.stepGenerate': 'Generate',
+    'workflow.author.card.stepValidate': 'Validate',
+    'workflow.author.card.stepReview': 'Review',
+    'workflow.author.details.show': 'View generation details',
+    'workflow.author.details.generating': 'Waiting for the authoring agent to submit a definition.',
+    'workflow.author.details.requestRetryScheduled':
+        'The authoring request failed. Retry ${attempt} is scheduled in ${seconds} seconds.',
+    'workflow.author.details.requestRetrying': 'Starting authoring request retry ${attempt}.',
+    'workflow.author.details.rejected': 'Submission ${attempt} did not pass validation. Repair guidance was returned.',
+    'workflow.author.details.validated': 'The definition passed authoring validation.',
+    'workflow.author.details.reviewing':
+        'The authoring agent is reviewing requirement coverage and qualitative quality.',
+    'workflow.author.details.reviewed': 'The definition passed deterministic validation and completed self-review.',
+    'workflow.author.details.cancelled': 'This Workflow creation was stopped by the user.',
+    'workflow.author.details.request': 'Original request',
+    'workflow.author.details.definition': 'Generated definition',
+    'workflow.author.details.phases': 'Phases: ${phases}',
+    'workflow.author.details.script': 'View JavaScript source',
+    'workflow.run.started':
+        'Workflow run ${runId} started asynchronously. The run card is the startup acknowledgement, so the current turn can end after it; OpenDesk will deliver the terminal result in a later turn.',
+    'workflow.stop.stopped': 'Workflow run ${runId} was stopped.',
+    'workflow.stop.alreadyTerminal': 'Workflow run ${runId} is already ${status}.',
+    'workflow.card.started': 'Started',
+    'workflow.skill.description':
+        'Use LoadWorkflowTools to create, discover, run, and stop reusable JavaScript Workflows from natural-language workflow requests.',
+    'workflow.skill.argumentHint': '<request or workflow name>',
+    'workflow.skill.body': `# Workflow
+
+This Skill creates and uses reusable JavaScript Workflows. Call \`LoadWorkflowTools\` to attach the complete Workflow action set to the current Task.
+
+## Capabilities
+
+- \`AuthorWorkflow\`: design, generate, and validate a temporary Definition scoped to the current Task from the user's complete request.
+- \`ListWorkflows\`: list current-Task temporary, saved, and built-in Definitions with source, input schema, and exact invocation.
+- \`RunWorkflow\`: start an asynchronous run with an exact reference and an input object matching inputSchema.
+- \`StopWorkflow\`: stop an active Workflow with its runId.
+
+## Create and run
+
+Creation and execution are two separate tool calls. Start with \`AuthorWorkflow\` to receive the Definition and invocation.
+
+- \`launchReady=true\` means the first-run input is complete and the returned invocation can run in the current turn.
+- \`launchReady=false\` provides a \`nextAction\` for collecting \`missingRequiredInputs\`. After the user's next reply, call \`RunWorkflow\` with the same reference and an input object matching inputSchema.
+
+## Run result
+
+\`status="started"\` and the run card form the startup acknowledgement. End the current turn after that acknowledgement; OpenDesk delivers the terminal result to the host Task later.`,
+    'workflow.skill.definition.whenToUse': 'Use when: ',
+    'workflow.skill.definition.runTitle': 'Run',
+    'workflow.skill.definition.loadTools': 'Call `LoadWorkflowTools` to attach Workflow actions to the current Task.',
+    'workflow.skill.definition.run': 'Then call `RunWorkflow` with reference `${reference}`.',
+    'workflow.skill.definition.started':
+        '`status="started"` and the run card form the startup acknowledgement. OpenDesk delivers the terminal result to the host Task later.',
+    'workflow.skill.definition.inputTitle': 'Input schema',
+    'workflow.skill.definition.input': '`RunWorkflow.input` is an object matching this JSON Schema:',
+    'workflow.detail.empty': 'No Workflow runs yet.',
+    'workflow.detail.phases': 'Phases',
+    'workflow.detail.back': 'Back',
+    'workflow.detail.stop': 'Stop Workflow',
+    'workflow.detail.agentsForPhase': '${phase} · ${count} agents',
+    'workflow.detail.agentsForRun': '${count} agents',
+    'workflow.detail.agents': '${count} agents',
+    'workflow.detail.noAgents': 'This phase has not created any agents.',
+    'workflow.detail.backToPhase': 'Back to phase',
+    'workflow.detail.agentPrompt': 'Prompt',
+    'workflow.detail.agentOutcome': 'Outcome',
+    'workflow.detail.agentNoOutcome': 'No outcome is available yet.',
+    'workflow.status.pending': 'Pending',
+    'workflow.status.running': 'Running',
+    'workflow.status.succeeded': 'Succeeded',
+    'workflow.status.failed': 'Failed',
+    'workflow.status.cancelled': 'Stopped',
+    'workflow.deepResearch.description':
+        'Research a question through scoped search, source reading, verification, and cited synthesis.',
+    'workflow.deepResearch.whenToUse':
+        'When the user needs a deep, multi-source, fact-checked report on a specific topic.',
+    'workflow.deepResearch.phase.scope': 'Scope',
+    'workflow.deepResearch.phase.scopeDescription': 'Decompose the question into focused search angles',
+    'workflow.deepResearch.phase.search': 'Search',
+    'workflow.deepResearch.phase.searchDescription': 'Run parallel searches for each evidence angle',
+    'workflow.deepResearch.phase.fetch': 'Fetch',
+    'workflow.deepResearch.phase.fetchDescription': 'Deduplicate sources, fetch pages, and extract falsifiable claims',
+    'workflow.deepResearch.phase.verify': 'Verify',
+    'workflow.deepResearch.phase.verifyDescription': 'Run independent adversarial verification votes for each claim',
+    'workflow.deepResearch.phase.synthesize': 'Synthesize',
+    'workflow.deepResearch.phase.synthesizeDescription': 'Merge confirmed claims into a source-backed report'
 };

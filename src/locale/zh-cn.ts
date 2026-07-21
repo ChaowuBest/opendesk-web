@@ -1547,5 +1547,163 @@ export const zhCn: Record<string, string> = {
     'agentoffice.error.taskStartFailed': '任务启动失败：${message}',
     'agentoffice.error.noReply': '该员工已完成任务，但没有通过 sendReply 回复。',
     'agentoffice.error.resourceDenied': '资源不在这位数字员工已配置的权限范围内：${path}',
-    'agentgate.attribution.status': '正在进行恶意技能归因分析……'
+    'agentgate.attribution.status': '正在进行恶意技能归因分析……',
+    'workflow.app.name': '工作流',
+    'workflow.error.experimentalDisabled': '请先在设置中启用试验性功能，再使用 Workflow。',
+    'workflow.error.nameInvalid': 'Workflow 名称只能使用小写字母、数字和单个连字符。',
+    'workflow.error.alreadyExists': 'Workflow 已存在：${name}',
+    'workflow.error.descriptionEmpty': 'Workflow 描述不能为空。',
+    'workflow.error.phaseNameEmpty': 'Workflow 阶段名称不能为空。',
+    'workflow.error.phaseNameDuplicate': 'Workflow 阶段名称不能重复。',
+    'workflow.error.phaseNotDeclared': 'Workflow 阶段“${name}”未在 Definition 中声明。',
+    'workflow.error.agentOutsidePhase': 'Workflow Agent 必须在已开始的阶段内运行。',
+    'workflow.error.agentRequestPrompt': 'Workflow agent 请求必须包含字符串 prompt。',
+    'workflow.error.agentRequestAllowedTools': 'Workflow agent allowedTools 必须是工具名称数组。',
+    'workflow.error.agentToolNotAllowed': 'Workflow agent 不能使用嵌套 Agent 或代码执行工具：${tools}。',
+    'workflow.error.agentRequestReasoningEffort': 'Workflow agent reasoningEffort 必须是 low、medium 或 high。',
+    'workflow.error.agentRequestOutputSchema': 'Workflow agent outputSchema 必须是对象。',
+    'workflow.error.notFound': '未找到 Workflow：${reference}',
+    'workflow.error.invalidSchema': 'Workflow 输入结构无效：${message}',
+    'workflow.error.invalidInput': 'Workflow 输入无效：${message}',
+    'workflow.error.unsupportedStore': '不支持的 Workflow 数据文件：${path}',
+    'workflow.error.interrupted': 'OpenDesk 在 Workflow 运行完成前已停止。',
+    'workflow.error.scriptEmpty': 'Workflow 脚本不能为空。',
+    'workflow.error.scriptTooLarge': 'Workflow 脚本超过 ${limit} 字符限制。',
+    'workflow.error.scriptModuleSyntax': 'Workflow 脚本不能包含 import 或 export 声明。',
+    'workflow.error.reportRequired': 'Workflow 未通过 report() 发布结果，不能标记为成功。',
+    'workflow.error.runtimeStartTimeout': 'Workflow runtime 未能在 ${timeout} 毫秒内启动。',
+    'workflow.error.runTimeout': 'Workflow 运行超过 ${timeout} 毫秒时限。',
+    'workflow.error.runtimeExited': 'Workflow runtime 已退出，退出码：${code}。',
+    'workflow.error.stopped': 'Workflow run 已停止。',
+    'workflow.error.runtimeArtifactMissing': '在 ${path} 附近未找到 Workflow runtime 产物。',
+    'workflow.error.hostTaskMissing': '该 Workflow 的宿主 Task 已不存在：${taskId}',
+    'workflow.error.authoringFailed': 'Workflow 创建失败。',
+    'workflow.error.authoringNotFound': '未在当前 Task 中找到 Workflow 创建结果：${reference}',
+    'workflow.nextAction.collectInput':
+        '向用户询问 ${fields}，并在提问后结束当前回合。收到用户下一条回复后，使用同一 reference 和完整 input 对象调用 RunWorkflow。',
+    'workflow.error.runNotFound': '未找到 Workflow run：${runId}',
+    'workflow.error.authoringOutputObject': 'Workflow 创建过程必须返回对象。',
+    'workflow.error.authoringOutputFields': 'Workflow 创建结果必须包含字符串类型的 name、description 和 script。',
+    'workflow.error.authoringOutputSchema': 'Workflow 创建结果必须包含 inputSchema 对象。',
+    'workflow.launch.started': 'Workflow ${name} 已启动。',
+    'workflow.phase.untitled': '未命名阶段',
+    'workflow.agent.untitled': 'Workflow agent',
+    'workflow.tool.author.description':
+        '根据用户的完整原始需求设计、生成并校验一个当前 Task 内的临时 JavaScript Workflow Definition，返回 reference、输入结构和准确 invocation。',
+    'workflow.tool.author.request': '用户提出的完整原始需求，包括目标、输入、输出和明确约束。',
+    'workflow.tool.load.description':
+        '为当前 Task 加载创建、列出、运行和停止 Workflow 的操作工具，适用于“工作流”“workflow”“可复用流程”等自然语言意图。',
+    'workflow.tool.load.loaded':
+        'Workflow 工具已加载，可直接调用 AuthorWorkflow、ListWorkflows、RunWorkflow 和 StopWorkflow。',
+    'workflow.tool.list.description':
+        '列出当前 Task 的临时 Definition、已保存 Definition 和内置 Definition，返回来源、输入结构和准确 invocation；Task 条目按最新优先排列。',
+    'workflow.tool.run.description':
+        '根据准确 reference 和符合 inputSchema 的 input 对象创建一次异步 Workflow run，返回 status="started" 的启动回执。',
+    'workflow.tool.run.reference':
+        'Workflow 的准确引用：AuthorWorkflow 返回的当前 Task reference，或已保存、内置 Definition 的名称或 id。',
+    'workflow.tool.run.input':
+        '符合目标 Definition.inputSchema 的当前运行输入对象，字段值来自用户需求、用户回复或 AuthorWorkflow.launchInput。',
+    'workflow.tool.stop.description': '使用稳定的 run id 停止正在运行的 Workflow。',
+    'workflow.tool.stop.runId': 'RunWorkflow 返回的稳定 Workflow run id。',
+    'workflow.author.ready':
+        'Workflow“${name}”已生成并通过校验。请使用返回的 invocation 启动 reference“${reference}”。',
+    'workflow.author.inputRequired':
+        'Workflow“${name}”已生成并通过校验。首次运行需要用户提供：${fields}。收到输入后请使用同一 reference 启动。',
+    'workflow.author.terminalFailure': '本次 AuthorWorkflow 创建流程已结束，请向用户说明完整失败原因。',
+    'workflow.author.cancelled': 'Workflow 创建已停止。',
+    'workflow.author.card.generateTitle': '正在生成 Workflow',
+    'workflow.author.card.generateBody': '正在根据需求生成可复用的 JavaScript Workflow。',
+    'workflow.author.card.requestRetryTitle': 'Workflow 生成请求正在重试',
+    'workflow.author.card.requestRetryBody': 'Authoring 请求失败，将在 ${seconds} 秒后进行第 ${attempt} 次请求重试。',
+    'workflow.author.card.validateTitle': '正在校验 Workflow',
+    'workflow.author.card.validateBody': '正在检查 definition、输入结构、阶段和 JavaScript 源码。',
+    'workflow.author.card.reviewTitle': '正在自查 Workflow',
+    'workflow.author.card.reviewBody': '正在核对需求覆盖和难以静态判断的实现质量。',
+    'workflow.author.card.succeededTitle': 'Workflow 已创建',
+    'workflow.author.card.succeededBody': 'Workflow“${name}”已完成校验，等待独立的 RunWorkflow Tool Call 启动。',
+    'workflow.author.card.cancelledTitle': 'Workflow 创建已停止',
+    'workflow.author.card.cancelledBody': '已停止当前 Workflow 的生成、校验与自查。',
+    'workflow.author.card.stepGenerate': '生成',
+    'workflow.author.card.stepValidate': '校验',
+    'workflow.author.card.stepReview': '自查',
+    'workflow.author.details.show': '查看生成详情',
+    'workflow.author.details.generating': '正在等待 authoring agent 提交 definition。',
+    'workflow.author.details.requestRetryScheduled':
+        'Authoring 请求失败，将在 ${seconds} 秒后进行第 ${attempt} 次请求重试。',
+    'workflow.author.details.requestRetrying': '正在发起第 ${attempt} 次 authoring 请求重试。',
+    'workflow.author.details.rejected': '第 ${attempt} 次提交未通过校验，已反馈修改方式。',
+    'workflow.author.details.validated': 'Definition 已通过创建阶段校验。',
+    'workflow.author.details.reviewing': 'Authoring agent 正在自查需求覆盖和难以静态判断的实现质量。',
+    'workflow.author.details.reviewed': 'Definition 已通过确定性校验并完成语义自查。',
+    'workflow.author.details.cancelled': '本次 Workflow 创建已由用户停止。',
+    'workflow.author.details.request': '原始需求',
+    'workflow.author.details.definition': '生成的 Definition',
+    'workflow.author.details.phases': '阶段：${phases}',
+    'workflow.author.details.script': '查看 JavaScript source',
+    'workflow.run.started':
+        'Workflow run ${runId} 已异步启动。运行卡片是本次启动回执，当前回合可在回执后结束；OpenDesk 将在后续回合投递最终结果。',
+    'workflow.stop.stopped': 'Workflow run ${runId} 已停止。',
+    'workflow.stop.alreadyTerminal': 'Workflow run ${runId} 已经处于 ${status} 状态。',
+    'workflow.card.started': '已启动',
+    'workflow.skill.description':
+        '通过 LoadWorkflowTools 创建、查找、运行和停止可复用的 JavaScript Workflow；适用于“工作流”“workflow”“可复用流程”等自然语言表达。',
+    'workflow.skill.argumentHint': '<需求或 Workflow 名称>',
+    'workflow.skill.body': `# Workflow 工作流
+
+本技能用于创建和使用可复用的 JavaScript Workflow。调用 \`LoadWorkflowTools\` 后，当前 Task 将获得完整的 Workflow 操作工具。
+
+## 可用能力
+
+- \`AuthorWorkflow\`：根据用户的完整需求设计、生成并校验一个当前 Task 内的临时 Definition。
+- \`ListWorkflows\`：列出当前 Task 的临时 Definition，以及已保存和内置的 Definition，并返回来源、输入结构和准确调用方式。
+- \`RunWorkflow\`：使用准确的 reference 和符合 inputSchema 的 input 对象启动一次异步运行。
+- \`StopWorkflow\`：使用 runId 停止正在运行的 Workflow。
+
+## 创建并运行
+
+创建与运行是两次独立工具调用。先调用 \`AuthorWorkflow\` 获得 Definition 和 invocation。
+
+- \`launchReady=true\` 表示首次运行所需输入已经齐全，可在当前回合继续调用返回的 invocation。
+- \`launchReady=false\` 表示需要按 \`nextAction\` 向用户收集 \`missingRequiredInputs\`。收到用户下一条回复后，使用同一 reference 和符合 inputSchema 的 input 对象调用 \`RunWorkflow\`。
+
+## 运行结果
+
+\`status="started"\` 和运行卡片共同构成启动回执。当前回合在启动回执后结束，OpenDesk 会在 Workflow 到达终态后向宿主 Task 投递结果。`,
+    'workflow.skill.definition.whenToUse': '适用场景：',
+    'workflow.skill.definition.runTitle': '运行方式',
+    'workflow.skill.definition.loadTools': '调用 `LoadWorkflowTools` 为当前 Task 加载 Workflow 操作工具。',
+    'workflow.skill.definition.run': '随后调用 `RunWorkflow`，使用 reference `${reference}`。',
+    'workflow.skill.definition.started':
+        '`status="started"` 和运行卡片共同构成启动回执，最终结果会在 Workflow 到达终态后投递给宿主 Task。',
+    'workflow.skill.definition.inputTitle': '输入结构',
+    'workflow.skill.definition.input': '`RunWorkflow.input` 使用符合以下 JSON Schema 的对象：',
+    'workflow.detail.empty': '还没有 Workflow 运行记录。',
+    'workflow.detail.phases': '阶段',
+    'workflow.detail.back': '返回',
+    'workflow.detail.stop': '停止 Workflow',
+    'workflow.detail.agentsForPhase': '${phase} · ${count} 个 agents',
+    'workflow.detail.agentsForRun': '${count} 个 agents',
+    'workflow.detail.agents': '${count} 个 agents',
+    'workflow.detail.noAgents': '这个阶段还没有生成 agent。',
+    'workflow.detail.backToPhase': '返回阶段',
+    'workflow.detail.agentPrompt': 'Prompt',
+    'workflow.detail.agentOutcome': 'Outcome',
+    'workflow.detail.agentNoOutcome': '暂时还没有可用结果。',
+    'workflow.status.pending': '等待中',
+    'workflow.status.running': '运行中',
+    'workflow.status.succeeded': '已完成',
+    'workflow.status.failed': '失败',
+    'workflow.status.cancelled': '已停止',
+    'workflow.deepResearch.description': '通过问题拆解、资料检索、来源阅读、交叉验证和引用整合完成深度研究。',
+    'workflow.deepResearch.whenToUse': '当用户需要针对具体主题生成多来源、经过事实核查的深度研究报告时。',
+    'workflow.deepResearch.phase.scope': 'Scope',
+    'workflow.deepResearch.phase.scopeDescription': '将问题拆解为聚焦的搜索角度',
+    'workflow.deepResearch.phase.search': 'Search',
+    'workflow.deepResearch.phase.searchDescription': '按搜索角度并行检索资料',
+    'workflow.deepResearch.phase.fetch': 'Fetch',
+    'workflow.deepResearch.phase.fetchDescription': '去重来源、读取页面并提取可验证主张',
+    'workflow.deepResearch.phase.verify': 'Verify',
+    'workflow.deepResearch.phase.verifyDescription': '对每个主张进行独立的对抗性验证投票',
+    'workflow.deepResearch.phase.synthesize': 'Synthesize',
+    'workflow.deepResearch.phase.synthesizeDescription': '合并已确认的主张并生成带来源报告'
 };
