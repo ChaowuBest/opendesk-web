@@ -114,7 +114,7 @@ node {
                                     fi
 
                                     rm -rf dist || true
-                                    npm install --prefer-offline 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
+                                    npm install 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
                                     npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
 
                                     echo "success" > "${CI_LOG_DIR}/build.status"
