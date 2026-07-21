@@ -267,6 +267,12 @@ export class TaskState {
     allowedTools?: string[];
 
     stop_requested_by_user: boolean = false;
+    /**
+     * 最近一次 beforeFinishTurn 计算出的终止状态（finished/interrupted/question）。
+     * 运行时状态，不持久化——会话重启后之前的终止状态无意义。
+     * 用于 afterFinishTurn 回调判断会话是否真正结束（而非 turn 暂停等待用户）。
+     */
+    lastTerminationState: 'finished' | 'interrupted' | 'question' | null = null;
     created_at: Date = new Date();
     started_at?: Date;
     finished_at?: Date;
@@ -682,6 +688,58 @@ export class TaskState {
             }
         }
         return null;
+    }
+
+    /**
+     * 从 chat_context 实时反推本会话已加载的 skill 列表（供安全网关拦截归因）。
+     *
+     * 取代原先持久化的 loadedSkills 字段。每条 LoadSkill 工具调用（含 LLM 主动调用
+     * 与 /skillname 预加载两条路径，二者在 chat_context 中均记为 tool_name
+     * 'skill-manager-LoadSkill'，见 skill.ts:369/977、tasks.ts:1703）都会在
+     * chat_context 留下一条 ToolCall，其 args_object 携带 {bundleName, skillName}；
+     * turn 取自所在 AssistantMessage 的 execution.generation。
+     *
+     * 相对旧字段的两点改进：
+     * 1. /skillname 预加载路径不再漏记（旧 loadedSkills 从不 push 该路径）；
+     * 2. 回退（rewindToUserMessage/rewindMessages 只 splice chat_context）后自动同步——
+     *    旧字段会残留已被回退掉的幽灵 skill，此处随 chat_context 自然变短。
+     *
+     * @returns 按 chat_context 出现顺序、去重后的已加载 skill（含加载 turn）
+     */
+    getLoadedSkillsFromContext(): Array<{ bundleName: string; skillName: string; turn: number }> {
+        const result: Array<{ bundleName: string; skillName: string; turn: number }> = [];
+        const seen = new Set<string>();
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            const turn = message.metadata?.execution?.generation ?? 0;
+            const content = Array.isArray(message.content) ? message.content : [];
+            for (const part of content) {
+                if (!part || part.type !== 'tool_call') continue;
+                const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                for (const tc of toolcalls) {
+                    if (!tc) continue;
+                    // tool_name 两条路径均写 'skill-manager-LoadSkill'；兼容个别 provider
+                    // 可能返回裸名 'LoadSkill'（参考 hook.ts:511 的 endsWith 范式）。
+                    if (tc.tool_name !== 'LoadSkill' && !tc.tool_name.endsWith('-LoadSkill')) continue;
+                    let args: any = tc.args_object;
+                    if (!args && tc.args_string) {
+                        try {
+                            args = JSON.parse(jsonrepair(tc.args_string));
+                        } catch {
+                            continue;
+                        }
+                    }
+                    const bundleName = args?.bundleName;
+                    const skillName = args?.skillName;
+                    if (typeof bundleName !== 'string' || typeof skillName !== 'string') continue;
+                    const key = `${bundleName}/${skillName}`;
+                    if (seen.has(key)) continue; // 去重，对应 skill.ts:453 旧逻辑
+                    seen.add(key);
+                    result.push({ bundleName, skillName, turn });
+                }
+            }
+        }
+        return result;
     }
 
     toJSON() {
@@ -1225,6 +1283,13 @@ export class TaskState {
         // 先构建用户消息并立即推送到前端，避免后续的 prepareContextForModel / replaceSlashSkills
         // 等耗时异步操作阻塞用户消息的显示
         const user_message = new UserMessage(message);
+        // 标记本条用户消息所属的运行代次，与 startInternalTurn 路径一致（tasks.ts:781-782）。
+        // generation 已在上方 1223 行递增，此处将其写入消息元数据，使下游
+        // （安全网关 skill 归因等）能从 message 反查到 turn 归属。
+        user_message.metadata = {
+            ...(user_message.metadata ?? {}),
+            execution: { ...(user_message.metadata?.execution ?? {}), generation }
+        };
 
         const imagePaths = extractImagePaths(message);
         for (const imgPath of imagePaths) {
@@ -1317,6 +1382,12 @@ export class TaskState {
         );
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
         assistant_message.metadata = this.extensions.getAssistantMetadata(user_message.metadata);
+        // 与 user_message 对称：保证 assistant 消息携带本 turn 的 generation，
+        // 同时使 _activeTurnMetadata 非空，applyRuntimeMetadataToAssistant 不再 early-return（tasks.ts:763）。
+        assistant_message.metadata = {
+            ...(assistant_message.metadata ?? {}),
+            execution: { ...(assistant_message.metadata?.execution ?? {}), generation }
+        };
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();

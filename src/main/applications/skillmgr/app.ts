@@ -31,6 +31,14 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import { getSkillStatus } from './status.js';
+import {
+    isBlacklisted,
+    getAllBlacklisted,
+    addToBlacklist,
+    clearInterceptionRecords,
+    isUserInstalledSkill
+} from './blacklist.js';
+import { NotificationManager } from '../../utils/notificationmgr.js';
 import { SkillAnalyzer, type ExportMetaOptions, type RunTestOptions } from './analyzer/analyze.js';
 import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
 import { registerSkillTestCliSubcommands } from './skill-test-cli.js';
@@ -107,6 +115,11 @@ export class SkillMgrApplication extends BaseApplication {
         // 注册 skill filter，按 status.json 过滤禁用的技能
         AISkillRegistry.registerSkillFilter((bundleName: string, skillName: string) =>
             getSkillStatus(`${bundleName}/${skillName}`)
+        );
+
+        // 注册黑名单 filter：被用户加入黑名单的 skill 也被禁用（优先级高于 status.json）
+        AISkillRegistry.registerSkillFilter(
+            (bundleName: string, skillName: string) => !isBlacklisted(bundleName, skillName)
         );
     }
 
@@ -276,7 +289,56 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
-        return [{ eventName: 'analysisStatusChanged', eventDescription: '技能分析状态变更通知' }];
+        return [
+            { eventName: 'analysisStatusChanged', eventDescription: '技能分析状态变更通知' },
+            { eventName: 'skillsChanged', eventDescription: '技能列表变更通知（黑名单增删、启用/禁用等）' }
+        ];
+    }
+
+    // ── 黑名单管理（安全网关归因后由 main.ts 转发调用） ──
+
+    /**
+     * 将若干 skill 加入黑名单，并通知所有订阅者（skillmgr iframe、AI SkillRegistry）刷新。
+     * 恶意技能检测开关的判定由调用方（main.ts IPC handler）负责，此处只做纯写入 + 通知。
+     */
+    addSkillsToBlacklist(
+        items: Array<{ bundleName: string; skillName: string; reason: string; evidence: string }>
+    ): void {
+        let added = 0;
+        let skipped = 0;
+        for (const item of items) {
+            // 内置技能忽略拉黑（addToBlacklist 内部也会再判一次，这里提前过滤避免误导通知）
+            if (!isUserInstalledSkill(item.skillName)) {
+                skipped++;
+                continue;
+            }
+            addToBlacklist(item.bundleName, item.skillName, item.reason, item.evidence);
+            added++;
+            NotificationManager.getInstance().info(
+                '黑名单',
+                '技能已加入黑名单',
+                `已将 ${item.bundleName}/${item.skillName} 加入黑名单，该技能将无法再被加载。`
+            );
+        }
+        if (skipped > 0) {
+            NotificationManager.getInstance().info(
+                '黑名单',
+                '已忽略内置技能',
+                `${skipped} 个内置技能未被加入黑名单（内置技能不参与恶意检测拉黑）。`
+            );
+        }
+        if (added === 0) return; // 全是内置/外部，无需刷新
+        // 清理 AI SkillRegistry 缓存，使黑名单 filter 立即生效
+        SkillMgrApplication.notifySkillsChanged();
+        // 通过 application 事件通道推送 skillsChanged 到订阅的渲染帧（skillmgr iframe 已订阅）
+        this.sendEventToSubscribers('skillsChanged');
+    }
+
+    /**
+     * 清除指定任务的拦截记录（用户在黑名单弹窗选择忽略时调用）。
+     */
+    dismissInterceptions(taskId: string): void {
+        clearInterceptionRecords(taskId);
     }
 
     // ── 技能分析（委托给 SkillAnalyzer） ──
@@ -491,6 +553,10 @@ export class SkillMgrApplication extends BaseApplication {
                     }
                 }
                 const skillId = `${bundleName}/${skill.frontmatter.name}`;
+                const blacklisted = isBlacklisted(bundleName, skill.frontmatter.name);
+                const blacklistData = blacklisted
+                    ? getAllBlacklisted()[`${bundleName}/${skill.frontmatter.name}`]
+                    : null;
                 result.push({
                     id: skillId,
                     name: skill.frontmatter.name,
@@ -500,7 +566,11 @@ export class SkillMgrApplication extends BaseApplication {
                     directory: skill.directory || undefined,
                     license: skill.frontmatter.license || undefined,
                     compatibility: skill.frontmatter.compatibility || undefined,
-                    enabled: getSkillStatus(skillId)
+                    enabled: getSkillStatus(skillId) && !blacklisted,
+                    blacklisted,
+                    blacklistEvidence: blacklistData?.evidence || '',
+                    blacklistReason: blacklistData?.reason || '',
+                    blockedAt: blacklistData?.blockedAt || ''
                 });
             }
         }

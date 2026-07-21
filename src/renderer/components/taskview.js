@@ -528,6 +528,28 @@ class TaskView extends HTMLElement {
         `;
     }
 
+    /**
+     * Create attribution analysis status indicator HTML.
+     * Shown in the chat stream when AgentGate is performing malicious skill attribution analysis,
+     * similar to the "deep thinking" indicator for reasoning.
+     */
+    static createAttributionStatusHtml() {
+        const label = escapeHtml(taskViewT('agentgate.attribution.status'));
+        return `
+        <div class="od-attribution-placeholder od-assistant-msg-container flex items-start" data-attribution-status="active">
+            <div class="px-2 bg-transparent w-full">
+                <div class="od-inline-toolcall-container" role="status" aria-live="polite">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <i class="fa-solid fa-shield-halved shrink-0 text-amber-500 text-xs"></i>
+                        <i class="fa-solid fa-circle-notch fa-spin shrink-0 text-amber-400 text-xs"></i>
+                        <span class="shrink-0 text-slate-500 text-xs">${label}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
     static hasAssistantOutputAfterLatestUser(historyContainer) {
         const children = Array.from(historyContainer.children);
         let latestUserIndex = -1;
@@ -2577,6 +2599,49 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * Subscribe to AgentGate attribution analysis status events.
+     * When attribution starts, show a status indicator in the chat stream.
+     * When attribution ends, remove the indicator.
+     */
+    _subscribeAttributionStatus() {
+        if (!window.agentGateFloatingAPI) return;
+
+        this._handleAttributionStart = (data) => {
+            // Only handle events for the current task
+            if (data?.taskId !== this.task_id) return;
+            const historyContainer = this.getHistoryContainer();
+            if (!historyContainer) return;
+
+            // Don't add if already present
+            if (historyContainer.querySelector('[data-attribution-status="active"]')) return;
+
+            const placeholder = TaskView.createAttributionStatusHtml();
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = placeholder;
+            const el = tempDiv.firstElementChild;
+            if (el) {
+                historyContainer.appendChild(el);
+                historyContainer.scrollTop = historyContainer.scrollHeight;
+            }
+        };
+
+        this._handleAttributionEnd = (data) => {
+            // Only handle events for the current task
+            if (data?.taskId !== this.task_id) return;
+            const historyContainer = this.getHistoryContainer();
+            if (!historyContainer) return;
+
+            const el = historyContainer.querySelector('[data-attribution-status="active"]');
+            if (el) {
+                el.remove();
+            }
+        };
+
+        window.agentGateFloatingAPI.onAttributionStart(this._handleAttributionStart);
+        window.agentGateFloatingAPI.onAttributionEnd(this._handleAttributionEnd);
+    }
+
     /** 处理浏览器事件，只处理当前任务的事件 */
     _handleBrowserEvent(method, taskId, ...args) {
         if (taskId !== this.task_id) return;
@@ -2801,6 +2866,9 @@ class TaskView extends HTMLElement {
 
         // 订阅浏览器事件（agent 工具 → main → renderer → 操作浏览器）
         this._subscribeBrowserEvents();
+
+        // 订阅 AgentGate 归因分析状态事件
+        this._subscribeAttributionStatus();
 
         this._workspaceChangedHandler = async () => {
             const sidebar = this._getRightSidebarEl();
@@ -3046,6 +3114,14 @@ class TaskView extends HTMLElement {
                 }
             }
             this._browserEventUnsubscribes = null;
+        }
+        // Clean up attribution status listeners
+        if (window.agentGateFloatingAPI) {
+            try {
+                window.agentGateFloatingAPI.removeAttributionListeners();
+            } catch {
+                /* ignore */
+            }
         }
         if (this._workspaceChangedHandler) {
             document.removeEventListener('workspace-changed', this._workspaceChangedHandler);

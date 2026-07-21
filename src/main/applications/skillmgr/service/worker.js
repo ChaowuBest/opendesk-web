@@ -39,6 +39,7 @@ import {
     removeSkillStatus,
     setBatchDefaultDisabled
 } from '../status.js';
+import { getAllBlacklisted, removeFromBlacklist } from '../blacklist.js';
 
 function notifyMainSync() {
     parentPort?.postMessage({ type: 'skillsRegistryChanged' });
@@ -62,11 +63,24 @@ class SkillsWorker extends BaseWorker {
     list() {
         const skills = SkillRegistry.listSkills();
         const statuses = getAllStatuses();
-        return skills.map((s) => ({
-            ...s,
-            readonly: s.source === 'config',
-            enabled: statuses[s.id] !== false
-        }));
+        const allBlacklisted = getAllBlacklisted();
+        return skills.map((s) => {
+            // skillmgr 安装的技能 id 即 SKILL.md frontmatter.name（无 bundle 前缀），
+            // 而黑名单 key 形如 `${bundleName}/${skillName}`，写入侧 bundleName 固定为 'skillmgr'。
+            // 直接拼出黑名单 key 查表，避免 split 导致 bundleName/skillName 错位。
+            const blacklistKey = `skillmgr/${s.id}`;
+            const blEntry = allBlacklisted[blacklistKey] ?? null;
+            const bl = blEntry !== null;
+            return {
+                ...s,
+                readonly: s.source === 'config',
+                enabled: statuses[s.id] !== false && !bl,
+                blacklisted: bl,
+                blacklistEvidence: blEntry?.evidence || '',
+                blacklistReason: blEntry?.reason || '',
+                blockedAt: blEntry?.blockedAt || ''
+            };
+        });
     }
 
     refresh() {
@@ -362,6 +376,13 @@ class SkillsWorker extends BaseWorker {
 
     setSkillStatus(skillId, enabled) {
         setSkillStatus(skillId, enabled);
+        notifyMainSync();
+    }
+
+    removeFromBlacklist(skillId) {
+        // skillId 即 SKILL.md frontmatter.name（无 bundle 前缀），黑名单 key 形如 `skillmgr/${skillId}`。
+        // 直接以 'skillmgr' 为 bundleName 调用，避免 split 导致 key 错位、删不掉黑名单条目。
+        removeFromBlacklist('skillmgr', skillId);
         notifyMainSync();
     }
 }

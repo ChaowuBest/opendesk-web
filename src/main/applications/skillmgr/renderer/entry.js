@@ -42,6 +42,7 @@ function getSkillsAPI() {
             window.applicationAPI.streamCall('batchImportSkills', callback, skills),
         getSkillStatus: (skillId) => window.applicationAPI.call('getSkillStatus', skillId),
         setSkillStatus: (skillId, enabled) => window.applicationAPI.call('setSkillStatus', skillId, enabled),
+        removeFromBlacklist: (skillId) => window.applicationAPI.call('removeFromBlacklist', skillId),
         // 分析相关接口走主进程（callMainWorld）
         getAnalyzeStatus: () => window.applicationAPI.callMainWorld('getAnalyzeStatus'),
         analyzeSkillDependencies: (skillIds, concurrency) =>
@@ -1582,12 +1583,27 @@ class SkillMgrEntryWidget extends HTMLElement {
         document.addEventListener('keydown', this._onKeyDown);
         this._autoLoadIfNeeded(this.activeTab);
         this._startAnalysisPolling();
+        // 通过 applicationAPI.subscribe 监听技能列表变更（黑名单增删等），
+        // 收到通知后刷新已安装技能和内置技能列表
+        try {
+            this._skillsChangedSubscriptionId = await window.applicationAPI.subscribe('skillsChanged', () => {
+                this.loadSkills();
+                this.loadBuiltinSkills();
+            });
+        } catch {
+            // subscribe 失败不影响正常功能
+        }
     }
 
     disconnectedCallback() {
         document.removeEventListener('click', this._onDocClick, true);
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
+        // 移除技能列表变更监听
+        if (this._skillsChangedSubscriptionId) {
+            try { window.applicationAPI.unsubscribe('skillsChanged'); } catch {}
+            this._skillsChangedSubscriptionId = null;
+        }
         this._stopAnalysisPolling();
         this._disconnectObservers();
         if (this._segScrollResizeObserver) {
@@ -3304,17 +3320,26 @@ class SkillMgrEntryWidget extends HTMLElement {
                     .map((s) => {
                         const color = this._getSkillPastel(s.name || s.id);
                         const isEnabled = s.enabled !== false;
+                        const isBlacklisted = s.blacklisted === true;
+                        const borderStyle = isBlacklisted ? 'border:1.5px solid #DC2626;box-shadow:0 0 0 1px rgba(220,38,38,0.15);' : '';
+                        const blacklistHint = isBlacklisted && s.blacklistEvidence ? escapeHtml(s.blacklistEvidence) : '';
                         return `
-                <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}">
+                <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}" style="${borderStyle}" title="${blacklistHint}">
                   <div class="card-header">
                     <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
-                    <div class="card-info"><div class="card-title">${escapeHtml(s.name || s.id || '')}</div></div>
+                    <div class="card-info">
+                      <div class="card-title">
+                        ${escapeHtml(s.name || s.id || '')}
+                        ${isBlacklisted ? '<span style="display:inline-block;font-size:10px;font-weight:600;color:#DC2626;background:#FEF2F2;border:1px solid #FECACA;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle;">⚠ 恶意skill</span>' : ''}
+                      </div>
+                    </div>
                   </div>
                   ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
+                  ${isBlacklisted && s.blacklistEvidence ? `<div style="font-size:11px;color:#DC2626;background:#FEF2F2;border-radius:6px;padding:6px 8px;margin-top:2px;line-height:1.4;border:1px solid #FECACA;">${escapeHtml(s.blacklistEvidence).slice(0, 200)}</div>` : ''}
                   <div class="card-footer">
-                    <label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                    <label class="skill-toggle" title="${isBlacklisted ? '已被加入黑名单，点击启用需确认风险' : (isEnabled ? '已启用，点击禁用' : '已禁用，点击启用')}">
                       <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
-                      <span class="skill-toggle-slider"></span>
+                      <span class="skill-toggle-slider" style="${isBlacklisted ? 'opacity:0.4;' : ''}"></span>
                     </label>
                     <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : '删除'}</button>
                   </div>
@@ -4220,9 +4245,47 @@ class SkillMgrEntryWidget extends HTMLElement {
         });
 
         $$('[data-toggle-id]').forEach((el) => {
-            el.addEventListener('change', (e) => {
+            el.addEventListener('change', async (e) => {
                 const skillId = el.getAttribute('data-toggle-id');
-                if (skillId) this._toggleSkillStatus(skillId, el.checked);
+                if (!skillId) return;
+                // 如果是开启被拉黑的 skill，弹确认框
+                if (el.checked) {
+                    const skill = this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
+                    if (skill?.blacklisted) {
+                        const evidence = skill.blacklistEvidence || '该技能因恶意行为被安全网关拦截并加入了黑名单';
+                        const confirmed = await showConfirmModal({
+                            icon: 'fa-shield-halved',
+                            iconBg: '#FEF2F2',
+                            iconColor: '#DC2626',
+                            danger: true,
+                            title: '确认启用恶意技能？',
+                            message: `<div style="font-size:14px;color:#3C3C43;line-height:1.6;">技能 <strong>${escapeHtml(skill.name || skillId)}</strong> 已被标记为恶意技能，原因如下：</div>
+<div style="font-size:13px;color:#DC2626;background:#FEF2F2;border-radius:8px;padding:10px;margin:10px 0;border:1px solid #FECACA;line-height:1.5;">${escapeHtml(evidence)}</div>
+<div style="font-size:14px;color:#3C3C43;line-height:1.6;">启用该技能可能带来安全风险。确定要继续吗？</div>`,
+                            confirmText: '确认启用',
+                            cancelText: '取消'
+                        });
+                        if (!confirmed) {
+                            el.checked = false;
+                            return;
+                        }
+                        // 用户确认：从黑名单移除。黑名单状态变更不只影响 enabled，
+                        // 需重新拉取 list() 拿到 blacklisted=false 并重渲染卡片，
+                        // 否则红边框/恶意skill标签/证据框等旧 DOM 不会刷新。
+                        // 重渲染会重建 toggle，其 checked 依据 status.json（此刻仍是 false），
+                        // 故 _toggleSkillStatus 落定 enabled=true 后需手动同步 toggle 的 checked 视觉。
+                        const api = getSkillsAPI();
+                        if (api?.removeFromBlacklist) {
+                            await api.removeFromBlacklist(skillId);
+                            await this.loadSkills();
+                            await this._toggleSkillStatus(skillId, el.checked);
+                            const newToggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
+                            if (newToggle) newToggle.checked = el.checked;
+                        }
+                        return;
+                    }
+                }
+                this._toggleSkillStatus(skillId, el.checked);
             });
         });
 

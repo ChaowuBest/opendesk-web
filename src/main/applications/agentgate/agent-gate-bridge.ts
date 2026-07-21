@@ -24,11 +24,11 @@ import { execSync } from 'child_process';
 import { createServer } from 'net';
 import path from 'path';
 import fs from 'fs';
-import type { Setting } from '../utils/setting';
-import { getOpendeskDirectory } from '../utils/setting.js';
-import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../utils/shellExec.js';
-import { getOpenDeskAppHost } from '../../../packages/appsdk/src/index.js';
-import { logger } from '../utils/logger.js';
+import type { Setting } from '../../utils/setting';
+import { getOpendeskDirectory } from '../../utils/setting.js';
+import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../../utils/shellExec.js';
+import { getOpenDeskAppHost } from '../../../../packages/appsdk/src/index.js';
+import { logger } from '../../utils/logger.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -42,6 +42,50 @@ function getExtensionsDir(): string {
         fs.mkdirSync(dir, { recursive: true });
     }
     return dir;
+}
+
+/**
+ * 从 OpenDesk 自身 package.json 读取依赖版本（单一来源，避免散落硬编码）。
+ * 查找顺序：process.cwd()/package.json → 向上逐层查找（覆盖 dev 与打包场景）。
+ * 结果缓存，进程内只读一次盘。
+ */
+const _depVersionCache = new Map<string, string>();
+function getDependencyVersion(packageName: string): string {
+    const cached = _depVersionCache.get(packageName);
+    if (cached) return cached;
+
+    const candidates: string[] = [];
+    if (process.cwd()) candidates.push(path.resolve(process.cwd(), 'package.json'));
+    // 从本文件向上找（dev: src/main/services → 仓库根；打包: dist/main/... → app 根）
+    // 用 import.meta.dirname 而非 __dirname，ESM 模块下 __dirname 不可用
+    let dir = import.meta.dirname;
+    for (let i = 0; i < 8 && dir; i++) {
+        candidates.push(path.join(dir, 'package.json'));
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+
+    for (const p of candidates) {
+        try {
+            if (!fs.existsSync(p)) continue;
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
+            const version = pkg?.dependencies?.[packageName] || pkg?.devDependencies?.[packageName];
+            if (typeof version === 'string' && version.length > 0) {
+                // 去掉 ^ ~ 等前缀，ensureInstalled 需要精确版本做相等比较
+                const clean = version.replace(/^[\^~>=< ]+/, '');
+                if (clean) {
+                    _depVersionCache.set(packageName, clean);
+                    return clean;
+                }
+            }
+        } catch {
+            // 继续尝试下一个候选
+        }
+    }
+    // 读不到时回退到一个已知版本，保证启动不中断（但日志告警）
+    logger.warn(`[AgentGateBridge] 无法从 package.json 读取 ${packageName} 版本，使用回退值`);
+    return '';
 }
 
 interface ServiceState {
@@ -59,6 +103,7 @@ interface BridgeStatus {
     gatePort: number;
     mossRunning: boolean;
     gateRunning: boolean;
+    llmAvailable: boolean;
 }
 
 class AgentGateBridge {
@@ -83,6 +128,12 @@ class AgentGateBridge {
         name: 'agent-gate'
     };
 
+    /** LLM 是否已配置（启动时检测 API key 是否有效） */
+    private _llmConfigured = false;
+    /** agent-moss HTTP 健康状态缓存（运行时实时探测） */
+    private _mossHealthy: boolean | null = null;
+    private _lastMossHealthCheck = 0;
+
     static getInstance(): AgentGateBridge {
         if (!AgentGateBridge.instance) {
             AgentGateBridge.instance = new AgentGateBridge();
@@ -92,14 +143,42 @@ class AgentGateBridge {
 
     /** 供 renderer 查询 Bridge 运行状态与最近错误 */
     getStatus(): BridgeStatus {
+        const mossRunning = !!this.mossState.process && !this.mossState.process.killed;
+        const gateRunning = !!this.gateState.process && !this.gateState.process.killed;
+        // 实时探测 agent-moss HTTP 健康状态（缓存 10 秒）
+        const now = Date.now();
+        if (mossRunning && now - this._lastMossHealthCheck > 10000) {
+            this._lastMossHealthCheck = now;
+            this._probeMossHealth();
+        }
+        // 🟢 绿 = agent-gate 运行正常；🟡 黄 = gate 运行但 agent-moss 不健康；🔴 红 = gate 挂了
+        const llmAvailable = !gateRunning ? false : mossRunning ? this._mossHealthy !== false : true;
         return {
             running: this._running,
             lastError: this._lastError,
             mossPort: this.mossState.port,
             gatePort: this.gateState.port,
-            mossRunning: !!this.mossState.process && !this.mossState.process.killed,
-            gateRunning: !!this.gateState.process && !this.gateState.process.killed
+            mossRunning,
+            gateRunning,
+            llmAvailable
         };
+    }
+
+    /** 异步探测 agent-moss HTTP 健康端点，更新缓存 */
+    private async _probeMossHealth(): Promise<void> {
+        try {
+            const port = this.mossState.port;
+            if (!port) return;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3000);
+            const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`, {
+                signal: controller.signal
+            });
+            clearTimeout(timer);
+            this._mossHealthy = res.ok;
+        } catch {
+            this._mossHealthy = false;
+        }
     }
 
     /** 获取 AgentGate 的存储目录（BaseApplication.getDataDirectory + storage 子目录） */
@@ -131,8 +210,25 @@ class AgentGateBridge {
      * 因为 agent-gate/agent-moss 是 bridge 通过 spawn() 启动的子进程，不是 OpenClaw 插件。
      */
     private async ensureInstalled(packageName: string, version: string): Promise<void> {
+        const extensionsDir = getExtensionsDir();
+
+        // 版本号为空（无法从 package.json 读取）时：已装则沿用，不触发安装，
+        // 避免 npm install `<pkg>@` 这种非法 spec 报错
+        if (!version) {
+            const installedPkgJson0 = path.join(extensionsDir, 'node_modules', packageName, 'package.json');
+            if (fs.existsSync(installedPkgJson0)) {
+                try {
+                    const installed = JSON.parse(fs.readFileSync(installedPkgJson0, 'utf-8'));
+                    logger.warn(
+                        `[AgentGateBridge] ${packageName} 版本未知，沿用 extensions 已装 @${installed.version}`
+                    );
+                    return;
+                } catch {}
+            }
+        }
+
         // 检查 extensions 目录已安装的版本
-        const installedPkgJson = path.join(getExtensionsDir(), 'node_modules', packageName, 'package.json');
+        const installedPkgJson = path.join(extensionsDir, 'node_modules', packageName, 'package.json');
         if (fs.existsSync(installedPkgJson)) {
             try {
                 const installed = JSON.parse(fs.readFileSync(installedPkgJson, 'utf-8'));
@@ -146,17 +242,17 @@ class AgentGateBridge {
             } catch {
                 logger.info(`[AgentGateBridge] ${packageName} package.json unreadable, reinstalling...`);
             }
-        }
-
-        // 回退：检查项目 node_modules（本地开发 npm link）——本地开发模式不做版本校验
-        const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
-        if (fs.existsSync(localPath)) {
-            logger.info(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
-            return;
+            // 版本不匹配：fall through 执行 npm install
+        } else {
+            // extensions 无安装：检查项目 node_modules（本地开发 npm link）
+            const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
+            if (fs.existsSync(localPath)) {
+                logger.info(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
+                return;
+            }
         }
 
         // 直接 npm install 到 extensions 目录（不写 plugins.json，不走 installPlugin）
-        const extensionsDir = getExtensionsDir();
         const spec = `${packageName}@${version}`;
         logger.info(`[AgentGateBridge] Installing ${spec} to extensions...`);
 
@@ -370,8 +466,9 @@ class AgentGateBridge {
 
         try {
             // 确保插件已安装（未安装则自动下载）
-            await this.ensureInstalled('@kenhkl/agent-moss', '0.7.1');
-            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.4');
+            // 版本号从 OpenDesk 自身 package.json 读取（单一来源），避免散落硬编码
+            await this.ensureInstalled('@kenhkl/agent-moss', getDependencyVersion('@kenhkl/agent-moss'));
+            await this.ensureInstalled('@kenhkl/agent-gate', getDependencyVersion('@kenhkl/agent-gate'));
         } catch (err) {
             logger.warn('[AgentGateBridge] Failed to ensure plugins:', err);
             this._lastError = String(err);
@@ -551,7 +648,10 @@ class AgentGateBridge {
                 const providers: any[] = data.providers || [];
                 const models: any[] = data.models || [];
                 const defaultModel = data.default_model || '';
-                const model = defaultModel ? models.find((m: any) => m.alias === defaultModel) : models[0];
+                // 模型选择优先级：appCfg.llmModel（安全网关设置页选择）> 全局 default_model > 第一个
+                const appCfg0 = data.applications?.agentgate || {};
+                const chosenAlias = appCfg0.llmModel || defaultModel || '';
+                const model = chosenAlias ? models.find((m: any) => m.alias === chosenAlias) : models[0];
                 const provider = model ? providers.find((p: any) => p.name === model.provider_name) : providers[0];
                 if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
                 if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
@@ -559,6 +659,10 @@ class AgentGateBridge {
                 // 同时设置 OPENAI_* 环境变量，确保 OpenAI SDK 任何版本都能找到凭据
                 if (provider?.api_key) extraEnv['OPENAI_API_KEY'] = provider.api_key;
                 if (provider?.base_url) extraEnv['OPENAI_BASE_URL'] = provider.base_url;
+                // 记录 LLM 配置状态（仅 agent-moss 启动时设置，避免被 agent-gate 覆盖）
+                if (state.name === 'agent-moss') {
+                    this._llmConfigured = !!provider?.api_key;
+                }
                 // AgentGate app config: enableLLM toggle + timeout + custom rules + storage + paths
                 const appCfg = data.applications?.agentgate;
                 if (appCfg) {

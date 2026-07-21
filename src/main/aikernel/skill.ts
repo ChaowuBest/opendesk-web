@@ -447,6 +447,10 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
                 );
             }
 
+            // 已加载技能不再单独 push 到 taskState.loadedSkills 字段：
+            // 安全网关拦截归因改由 TaskState.getLoadedSkillsFromContext() 从
+            // chat_context 的 LoadSkill ToolCall 实时反推，覆盖更全且随回退自动同步。
+
             const fullContent = skill.getFullContent();
             logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + fullContent);
             return fullContent;
