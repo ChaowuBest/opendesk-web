@@ -1585,16 +1585,16 @@ export const zhCn: Record<string, string> = {
     'workflow.error.authoringOutputObject': 'Workflow 创建过程必须返回对象。',
     'workflow.error.authoringOutputFields': 'Workflow 创建结果必须包含字符串类型的 name、description 和 script。',
     'workflow.error.authoringOutputSchema': 'Workflow 创建结果必须包含 inputSchema 对象。',
+    'workflow.error.authoringOriginalRequestMissing': '当前 Task 中没有可用于创建 Workflow 的用户原始输入。',
     'workflow.launch.started': 'Workflow ${name} 已启动。',
     'workflow.phase.untitled': '未命名阶段',
     'workflow.agent.untitled': 'Workflow agent',
     'workflow.tool.author.description':
-        '根据用户的完整原始需求设计、生成并校验一个当前 Task 内的临时 JavaScript Workflow Definition，返回 reference、输入结构和准确 invocation。',
-    'workflow.tool.author.request': '用户提出的完整原始需求，包括目标、输入、输出和明确约束。',
+        '读取当前 Task 内按时间顺序保留的用户真实原始输入，并立即设计、生成和校验一个临时 JavaScript Workflow Definition，返回 reference、输入结构和准确 invocation。',
     'workflow.tool.load.description':
-        '为当前 Task 加载创建、列出、运行和停止 Workflow 的操作工具，适用于“工作流”“workflow”“可复用流程”等自然语言意图。',
+        '当用户表达创建、实现、生成、查找、运行或停止“工作流”“workflow”“可复用流程”时，为当前 Task 加载对应的 Workflow 操作工具。',
     'workflow.tool.load.loaded':
-        'Workflow 工具已加载，可直接调用 AuthorWorkflow、ListWorkflows、RunWorkflow 和 StopWorkflow。',
+        'Workflow 工具已加载。创建意图直接调用 AuthorWorkflow；查找、运行和停止分别调用 ListWorkflows、RunWorkflow 和 StopWorkflow。',
     'workflow.tool.list.description':
         '列出当前 Task 的临时 Definition、已保存 Definition 和内置 Definition，返回来源、输入结构和准确 invocation；Task 条目按最新优先排列。',
     'workflow.tool.run.description':
@@ -1609,7 +1609,8 @@ export const zhCn: Record<string, string> = {
         'Workflow“${name}”已生成并通过校验。请使用返回的 invocation 启动 reference“${reference}”。',
     'workflow.author.inputRequired':
         'Workflow“${name}”已生成并通过校验。首次运行需要用户提供：${fields}。收到输入后请使用同一 reference 启动。',
-    'workflow.author.terminalFailure': '本次 AuthorWorkflow 创建流程已结束，请向用户说明完整失败原因。',
+    'workflow.author.terminalFailure':
+        '本次 AuthorWorkflow 创建流程已结束。当前回合请向用户说明完整失败原因并结束，后续创建尝试由用户的新指令触发。',
     'workflow.author.cancelled': 'Workflow 创建已停止。',
     'workflow.author.card.generateTitle': '正在生成 Workflow',
     'workflow.author.card.generateBody': '正在根据需求生成可复用的 JavaScript Workflow。',
@@ -1636,7 +1637,7 @@ export const zhCn: Record<string, string> = {
     'workflow.author.details.reviewing': 'Authoring agent 正在自查需求覆盖和难以静态判断的实现质量。',
     'workflow.author.details.reviewed': 'Definition 已通过确定性校验并完成语义自查。',
     'workflow.author.details.cancelled': '本次 Workflow 创建已由用户停止。',
-    'workflow.author.details.request': '原始需求',
+    'workflow.author.details.request': '用户真实原始输入',
     'workflow.author.details.definition': '生成的 Definition',
     'workflow.author.details.phases': '阶段：${phases}',
     'workflow.author.details.script': '查看 JavaScript source',
@@ -1646,22 +1647,22 @@ export const zhCn: Record<string, string> = {
     'workflow.stop.alreadyTerminal': 'Workflow run ${runId} 已经处于 ${status} 状态。',
     'workflow.card.started': '已启动',
     'workflow.skill.description':
-        '通过 LoadWorkflowTools 创建、查找、运行和停止可复用的 JavaScript Workflow；适用于“工作流”“workflow”“可复用流程”等自然语言表达。',
+        '处理创建、实现、生成、查找、运行和停止“工作流”“workflow”或“可复用流程”的请求；先调用 LoadWorkflowTools 加载对应工具。',
     'workflow.skill.argumentHint': '<需求或 Workflow 名称>',
     'workflow.skill.body': `# Workflow 工作流
 
-本技能用于创建和使用可复用的 JavaScript Workflow。调用 \`LoadWorkflowTools\` 后，当前 Task 将获得完整的 Workflow 操作工具。
+本技能用于创建和使用可复用的 JavaScript Workflow。用户表达创建、实现、生成、查找、运行或停止工作流时，调用 \`LoadWorkflowTools\`，当前 Task 将获得完整的 Workflow 操作工具。
 
 ## 可用能力
 
-- \`AuthorWorkflow\`：根据用户的完整需求设计、生成并校验一个当前 Task 内的临时 Definition。
+- \`AuthorWorkflow\`：直接读取当前 Task 中按时间顺序保留的用户真实原始输入，完成方案设计、Definition 生成和校验。
 - \`ListWorkflows\`：列出当前 Task 的临时 Definition，以及已保存和内置的 Definition，并返回来源、输入结构和准确调用方式。
 - \`RunWorkflow\`：使用准确的 reference 和符合 inputSchema 的 input 对象启动一次异步运行。
 - \`StopWorkflow\`：使用 runId 停止正在运行的 Workflow。
 
 ## 创建并运行
 
-创建与运行是两次独立工具调用。先调用 \`AuthorWorkflow\` 获得 Definition 和 invocation。
+创建意图的调用顺序是 \`LoadWorkflowTools\`、\`AuthorWorkflow\`。Authoring agent 承担 Workflow 的方案设计和 Definition 实现。创建与运行是两次独立工具调用，\`AuthorWorkflow\` 返回 Definition 和 invocation。
 
 - \`launchReady=true\` 表示首次运行所需输入已经齐全，可在当前回合继续调用返回的 invocation。
 - \`launchReady=false\` 表示需要按 \`nextAction\` 向用户收集 \`missingRequiredInputs\`。收到用户下一条回复后，使用同一 reference 和符合 inputSchema 的 input 对象调用 \`RunWorkflow\`。

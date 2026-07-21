@@ -26,9 +26,12 @@ const hostTask = { task_id: 'task-host' } as TaskState;
 test('AuthorWorkflowTool creates a validated temporary definition with one update per attempt', async () => {
     const hostStages: string[] = [];
     const host: WorkflowToolHost = {
-        authorWorkflow: async (request, task, onProgress) => {
-            assert.equal(request, 'Create a daily brief');
+        authorWorkflow: async (task, onProgress) => {
             assert.equal(task.task_id, 'task-host');
+            onProgress?.({
+                stage: 'generate',
+                userInputs: ['Create a daily brief']
+            });
             onProgress?.({
                 stage: 'validate',
                 attempt: 1,
@@ -82,9 +85,11 @@ test('AuthorWorkflowTool creates a validated temporary definition with one updat
         }
     };
     const tool = new AuthorWorkflowTool(host);
+    const authorSchema = tool.toJSON().params as { required?: string[] };
+    assert.deepEqual(authorSchema.required ?? [], []);
 
     const result = await tool.execute(
-        { request: 'Create a daily brief' },
+        {},
         (update) => {
             const stage = (update.result_object as { stage?: string } | undefined)?.stage;
             if (stage && hostStages.at(-1) !== stage) {
@@ -94,7 +99,7 @@ test('AuthorWorkflowTool creates a validated temporary definition with one updat
         hostTask
     );
     const call = new ToolCall(0, 'call-author', 'workflow-AuthorWorkflow', '');
-    call.args_object = { request: 'Create a daily brief' };
+    call.args_object = {};
     call.result_object = result.result_object;
     call.status = result.status;
     const html = await tool.renderToolCall(call);
@@ -105,7 +110,7 @@ test('AuthorWorkflowTool creates a validated temporary definition with one updat
         reference?: string;
     };
     assert.equal(result.status, 'success');
-    assert.deepEqual(hostStages, ['validate', 'review']);
+    assert.deepEqual(hostStages, ['generate', 'validate', 'review']);
     assert.equal(resultObject.stage, 'review');
     assert.equal(resultObject.workflowName, 'daily-brief');
     assert.equal(resultObject.reference, 'authoring_1');
@@ -113,6 +118,7 @@ test('AuthorWorkflowTool creates a validated temporary definition with one updat
     assert.match(html ?? '', /View generation details|查看生成详情/);
     assert.match(html ?? '', /JavaScript source|JavaScript source/);
     assert.match(html ?? '', /Review|自查/);
+    assert.match(html ?? '', /Create a daily brief/);
 });
 
 test('AuthorWorkflowTool renders a stopped terminal card when authoring is cancelled', async () => {
@@ -130,9 +136,9 @@ test('AuthorWorkflowTool renders a stopped terminal card when authoring is cance
     };
     const tool = new AuthorWorkflowTool(host);
 
-    const result = await tool.execute({ request: 'Create a daily brief' }, undefined, hostTask);
+    const result = await tool.execute({}, undefined, hostTask);
     const call = new ToolCall(0, 'call-cancelled', 'workflow-AuthorWorkflow', '');
-    call.args_object = { request: 'Create a daily brief' };
+    call.args_object = {};
     call.result_object = result.result_object;
     call.status = result.status;
     const html = await tool.renderToolCall(call);
@@ -433,6 +439,8 @@ test('Workflow Skills describe the direct creation and execution flow while disc
     assert.equal(skills[0].toolsets, undefined);
     assert.match(skills[0].frontmatter.description, /LoadWorkflowTools/);
     assert.match(skills[0].frontmatter.description, /工作流|workflow|reusable process/i);
+    assert.match(skills[0].body, /LoadWorkflowTools[\s\S]*AuthorWorkflow/);
+    assert.match(skills[0].body, /真实原始输入|exact original user inputs/i);
     assert.match(skills[0].body, /创建与运行是两次独立工具调用|two separate tool calls/i);
     assert.match(skills[0].body, /AuthorWorkflow/);
     assert.match(skills[0].body, /RunWorkflow/);
@@ -447,7 +455,7 @@ test('Workflow Skills describe the direct creation and execution flow while disc
         const loader = createWorkflowDiscoveryToolset(host).getTool('LoadWorkflowTools');
         assert.ok(loader);
         assert.match(loader.description, /工作流|workflow|reusable process/i);
-        assert.match(loader.description, /创建|creation/i);
+        assert.match(loader.description, /创建|create/i);
         const task = {
             attachToolset: async (toolset: { tools: Map<string, unknown> }) => {
                 attachedToolsets.push([...toolset.tools.keys()]);

@@ -74,7 +74,12 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
         listAvailableToolsets: async () => [searchTools]
     };
     const toolCatalog = await resolveWorkflowToolCatalog(provider);
-    const prompt = buildAuthoringPrompt('Create a stock brief for 600519', toolCatalog);
+    const prompt = buildAuthoringPrompt(
+        {
+            userInputs: ['Create a reusable stock brief', 'Use 600519 for the first run']
+        },
+        toolCatalog
+    );
     const declaredTools = ['WebSearch', 'webFetch'];
 
     assert.deepEqual(new Set(toolCatalog.map((tool) => tool.name)), new Set(['WebSearch', 'webFetch', 'writeFile']));
@@ -95,7 +100,9 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
     assert.match(prompt, /await report\(output\)/);
     assert.match(prompt, /从 result\.output 获取领域数据/);
     assert.match(prompt, /phase 接收一个字符串参数/);
-    assert.match(prompt, /Create a stock brief for 600519/);
+    assert.match(prompt, /# 用户真实原始输入（按时间顺序）/);
+    assert.match(prompt, /## 用户输入 1\nCreate a reusable stock brief/);
+    assert.match(prompt, /## 用户输入 2\nUse 600519 for the first run/);
     assert.doesNotThrow(() =>
         validateAuthoredDefinition(
             {
@@ -202,9 +209,12 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
     assert.equal(searchedQuery, '600519');
 });
 
-test('Workflow authoring self-reviews once and keeps first-run input empty until the host user supplies it', async () => {
+test('Workflow authoring keeps raw user intent through self-review without inventing first-run input', async () => {
     class RepairingRunner extends WorkflowAgentRunner {
         override async run(...args: Parameters<WorkflowAgentRunner['run']>): ReturnType<WorkflowAgentRunner['run']> {
+            assert.match(args[1].prompt, /## 用户输入 1\n创建一个输入股票名称的分析工作流/);
+            assert.match(args[1].prompt, /## 用户输入 2\n请使用 Workflow 创建/);
+            assert.doesNotMatch(args[1].prompt, /处理后的消息内容/);
             const definition = {
                 name: 'stock-brief',
                 description: 'Create a stock brief',
@@ -266,7 +276,8 @@ test('Workflow authoring self-reviews once and keeps first-run input empty until
             assert.equal((review.result_object as { reviewRequired?: boolean }).reviewRequired, true);
             assert.match(review.result, /用户需求一致性/);
             assert.match(review.result, /实现质量/);
-            assert.match(review.result, /创建一个输入股票名称的分析工作流/);
+            assert.match(review.result, /## 用户输入 1\n创建一个输入股票名称的分析工作流/);
+            assert.match(review.result, /## 用户输入 2\n请使用 Workflow 创建/);
 
             await submit(repaired, 'accepted');
             assert.equal(terminalError, undefined);
@@ -287,7 +298,13 @@ test('Workflow authoring self-reviews once and keeps first-run input empty until
         })
     } as unknown as WorkflowManager;
     const chatContext = new ChatContext();
-    chatContext.appendMessage(new UserMessage('创建一个输入股票名称的分析工作流'));
+    const userMessage = new UserMessage('处理后的消息内容');
+    userMessage.rawText = '创建一个输入股票名称的分析工作流';
+    chatContext.appendMessage(userMessage);
+    const internalMessage = new UserMessage('内部消息不能成为 Workflow 原始输入');
+    internalMessage.internal = true;
+    chatContext.appendMessage(internalMessage);
+    chatContext.appendMessage(new UserMessage('请使用 Workflow 创建'));
     const hostTask = {
         task_status: 'running',
         disabledTools: [],
@@ -300,10 +317,7 @@ test('Workflow authoring self-reviews once and keeps first-run input empty until
         waitUntilFinished: async () => await new Promise<never>(() => undefined)
     } as unknown as TaskState;
 
-    const authored = await new WorkflowAuthoringService(new RepairingRunner(), manager).author(
-        '创建一个输入股票名称的分析工作流，例如贵州茅台',
-        hostTask
-    );
+    const authored = await new WorkflowAuthoringService(new RepairingRunner(), manager).author(hostTask);
 
     assert.equal(authored.launchReady, false);
     assert.deepEqual(authored.missingRequiredInputs, ['stock']);
@@ -319,10 +333,13 @@ test('Stopping the host Task cancels its active authoring execution before creat
             throw new Error('definition must not be created after cancellation');
         }
     } as unknown as WorkflowManager;
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('Create a daily brief'));
     let finishHostTask!: () => void;
     const hostTask = {
         task_status: 'running',
         disabledTools: [],
+        chat_context: chatContext,
         task_manager_state: {
             toolsetProvider: {
                 listAvailableToolsets: async () => []
@@ -335,7 +352,7 @@ test('Stopping the host Task cancels its active authoring execution before creat
     } as unknown as TaskState;
     const service = new WorkflowAuthoringService(runner, manager);
 
-    const authoring = service.author('Create a daily brief', hostTask);
+    const authoring = service.author(hostTask);
     await runner.started;
     hostTask.task_status = 'stopped';
     finishHostTask();

@@ -131,9 +131,10 @@ test('AuthorWorkflow, ListWorkflows, and RunWorkflow preserve a Task-local defin
         },
         waitUntilFinished: async () => await new Promise<never>(() => undefined)
     } as TaskState;
+    hostTask.chat_context.appendMessage(new UserMessage('Create a daily brief'));
     const authoring = new WorkflowAuthoringService(new DeterministicAuthoringRunner(), manager);
     const host: WorkflowToolHost = {
-        authorWorkflow: async (request, task, onProgress) => await authoring.author(request, task, onProgress),
+        authorWorkflow: async (task, onProgress) => await authoring.author(task, onProgress),
         listWorkflows: () => manager.listAvailableDefinitions(),
         runWorkflow: async (target, input, task) => {
             assert.equal(typeof target, 'object');
@@ -147,11 +148,7 @@ test('AuthorWorkflow, ListWorkflows, and RunWorkflow preserve a Task-local defin
     };
 
     try {
-        const authored = await new AuthorWorkflowTool(host).execute(
-            { request: 'Create a daily brief' },
-            undefined,
-            hostTask
-        );
+        const authored = await new AuthorWorkflowTool(host).execute({}, undefined, hostTask);
         const authorCall = new ToolCall(0, 'call-author', 'workflow-AuthorWorkflow', '{}');
         authorCall.status = authored.status;
         authorCall.result = authored.result;

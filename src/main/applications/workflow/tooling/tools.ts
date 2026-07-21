@@ -72,14 +72,13 @@ type WorkflowAuthoringRenderState = Omit<Partial<WorkflowAuthoringResult>, 'stat
     attempt?: number;
     definition?: WorkflowDefinition | WorkflowDefinitionInput;
     errors?: string[];
+    userInputs?: string[];
     requestRetry?: WorkflowAuthoringRequestRetry;
 };
 
 const LoadWorkflowToolsSchema = z.object({});
 
-const AuthorWorkflowSchema = z.object({
-    request: z.string().min(1).describe(t('workflow.tool.author.request'))
-});
+const AuthorWorkflowSchema = z.object({});
 
 const ListWorkflowsSchema = z.object({});
 
@@ -93,11 +92,7 @@ const StopWorkflowSchema = z.object({
 });
 
 export interface WorkflowToolHost {
-    authorWorkflow(
-        request: string,
-        hostTask: TaskState,
-        onProgress?: WorkflowAuthoringProgress
-    ): Promise<WorkflowAuthoringResult>;
+    authorWorkflow(hostTask: TaskState, onProgress?: WorkflowAuthoringProgress): Promise<WorkflowAuthoringResult>;
     listWorkflows(): AvailableWorkflowDefinition[];
     runWorkflow(
         target: WorkflowLaunchTarget,
@@ -145,13 +140,13 @@ export class LoadWorkflowToolsTool extends BaseTool<typeof LoadWorkflowToolsSche
 export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
     constructor(private readonly host: WorkflowToolHost) {
         super('AuthorWorkflow', t('workflow.tool.author.description'), AuthorWorkflowSchema);
-        this.setUniversalExecutor(async (args, result, taskState) => {
+        this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
                 throw new Error('AuthorWorkflow requires a host Task');
             }
             let authored: WorkflowAuthoringResult;
             try {
-                authored = await this.host.authorWorkflow(args.request, taskState, (update) => {
+                authored = await this.host.authorWorkflow(taskState, (update) => {
                     updateAuthoringResult(result, update);
                 });
             } catch (error) {
@@ -224,8 +219,7 @@ export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
               ? `<span class="workflow-authoring-status workflow-authoring-status-success"
                     style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-top:2px;border-radius:999px;font-size:11px;font-weight:700;color:#15803d;background:rgba(34,197,94,0.14);">✓</span>`
               : '<span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-top:2px;flex:0 0 16px;"><i class="fa-solid fa-spinner fa-spin text-blue-500 text-xs"></i></span>';
-        const args = toolcall.args_object as z.infer<typeof AuthorWorkflowSchema> | undefined;
-        const details = renderAuthoringDetails(args?.request ?? '', state, succeeded, cancelled);
+        const details = renderAuthoringDetails(state, succeeded, cancelled);
         return `<div class="od-inline-toolcall-container">
             <div class="workflow-authoring-card text-[11px]"
                 style="max-width:100%;min-width:0;padding:10px 12px;border:1px solid var(--od-border-strong,rgba(148,163,184,0.35));border-radius:10px;background:var(--od-bg-elevated,rgba(248,250,252,0.82));color:var(--od-text-muted,#64748b);">
@@ -509,7 +503,6 @@ function renderAuthoringStep(label: string, active: boolean): string {
 }
 
 function renderAuthoringDetails(
-    request: string,
     state: WorkflowAuthoringRenderState | undefined,
     succeeded: boolean,
     cancelled: boolean
@@ -517,6 +510,8 @@ function renderAuthoringDetails(
     const definition = state?.definition;
     const errors = state?.errors ?? [];
     const requestRetry = state?.requestRetry;
+    const userInputs = state?.userInputs ?? [];
+    const originalInput = userInputs.map((input, index) => `${index + 1}. ${input}`).join('\n\n');
     const phaseNames = definition?.phases?.map((phase) => phase.name).join(' → ') ?? '';
     const inputContract = definition
         ? JSON.stringify(
@@ -584,7 +579,7 @@ function renderAuthoringDetails(
             <div style="margin-top:8px;font-weight:600;color:var(--od-text,#334155);">${escapeHtml(
                 t('workflow.author.details.request')
             )}</div>
-            <div style="margin-top:3px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(request)}</div>
+            <div style="margin-top:3px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(originalInput)}</div>
             ${errorDetails}
             ${definitionDetails}
         </div>

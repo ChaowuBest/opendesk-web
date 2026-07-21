@@ -9,6 +9,7 @@ import type { WorkflowDefinitionInput, WorkflowJSONSchema } from '../../../aiker
 import { t } from '../../../../locale/index.js';
 import { WorkflowAgentExecutionError } from '../agent/contract.js';
 import type { WorkflowAgentRunOptions } from '../agent/runner.js';
+import type { WorkflowAuthoringContext } from './context.js';
 import {
     AUTHOR_WORKFLOW_OUTPUT_SCHEMA,
     WorkflowAuthoringValidationError,
@@ -31,7 +32,7 @@ export interface WorkflowAuthoringCompletionProgress {
 }
 
 export interface WorkflowAuthoringCompletionOptions {
-    request: string;
+    authoringContext: WorkflowAuthoringContext;
     hostTask: TaskState;
     toolCatalog: readonly WorkflowToolCatalogEntry[];
     validator: WorkflowDefinitionValidationHost;
@@ -97,7 +98,7 @@ export function createWorkflowAuthoringCompletion(
                             definition: output.definition,
                             errors: []
                         });
-                        const instruction = buildAuthoringSelfReviewPrompt(options.request);
+                        const instruction = buildAuthoringSelfReviewPrompt(options.authoringContext);
                         toolCall.status = 'success';
                         toolCall.result_object = {
                             accepted: false,
@@ -162,7 +163,7 @@ export function createWorkflowAuthoringCompletion(
     };
 }
 
-function buildAuthoringSelfReviewPrompt(request: string): string {
+function buildAuthoringSelfReviewPrompt(context: WorkflowAuthoringContext): string {
     return [
         '# Workflow Definition 自查',
         '当前 Definition 已通过确定性校验。请在最终确认前完成一次建议性语义自查。',
@@ -171,7 +172,8 @@ function buildAuthoringSelfReviewPrompt(request: string): string {
         '请从以下两组目标核对完整 Definition：',
         '',
         '## 用户需求一致性',
-        '- 输入契约、执行过程和最终报告完整覆盖用户原始需求及明确约束。',
+        '- 输入契约、执行过程和最终报告完整覆盖按时间顺序提供的用户真实原始输入及明确约束。',
+        '- 后续用户输入对此前输入的补充或更正已经体现在 Definition 中。',
         '- 每项承诺能力都由脚本或职责明确的 agent prompt 实际实现。',
         '- 示例用于表达设计意图；用户明确提供的首次运行值通过 launchInput 交接。',
         '',
@@ -184,8 +186,8 @@ function buildAuthoringSelfReviewPrompt(request: string): string {
         '发现可改进内容时，先修改 Definition；确认当前实现完整时，保持 Definition 原样。',
         '完成自查后，使用 workflow-agent-CompleteWorkflowAgent 提交完整最终 Definition，随后会再次执行确定性校验。',
         '',
-        '# 用户原始需求',
-        request
+        '# 用户真实原始输入（按时间顺序）',
+        context.userInputs.map((input, index) => `## 用户输入 ${index + 1}\n${input}`).join('\n\n')
     ].join('\n');
 }
 

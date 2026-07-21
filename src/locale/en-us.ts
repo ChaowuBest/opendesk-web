@@ -1627,17 +1627,17 @@ export const enUs: Record<string, string> = {
     'workflow.error.authoringOutputFields':
         'Workflow authoring must return string values for name, description, and script.',
     'workflow.error.authoringOutputSchema': 'Workflow authoring must return an inputSchema object.',
+    'workflow.error.authoringOriginalRequestMissing':
+        'The current Task has no original user input available for Workflow authoring.',
     'workflow.launch.started': 'Workflow ${name} started.',
     'workflow.phase.untitled': 'Untitled phase',
     'workflow.agent.untitled': 'Workflow agent',
     'workflow.tool.author.description':
-        'Design, generate, and validate a temporary JavaScript Workflow Definition scoped to the current Task from the user’s complete original request, returning its reference, input schema, and exact invocation.',
-    'workflow.tool.author.request':
-        'The user’s complete original request, including goals, inputs, outputs, and explicit constraints.',
+        'Read the exact user inputs retained by the current Task in chronological order, then immediately design, generate, and validate a temporary JavaScript Workflow Definition with its reference, input schema, and exact invocation.',
     'workflow.tool.load.description':
-        'Attach Workflow creation, listing, execution, and stop actions to the current Task for natural-language workflow or reusable-process requests.',
+        'Attach the matching Workflow actions when the user asks to create, implement, generate, find, run, or stop a workflow or reusable process.',
     'workflow.tool.load.loaded':
-        'Workflow tools are available: AuthorWorkflow, ListWorkflows, RunWorkflow, and StopWorkflow.',
+        'Workflow tools are loaded. Use AuthorWorkflow directly for creation; use ListWorkflows, RunWorkflow, and StopWorkflow to find, run, and stop Workflows.',
     'workflow.tool.list.description':
         'List current-Task temporary, saved, and built-in Definitions with source, input schema, and exact invocation. Task entries are newest first.',
     'workflow.tool.run.description':
@@ -1653,7 +1653,7 @@ export const enUs: Record<string, string> = {
     'workflow.author.inputRequired':
         'Workflow “${name}” was generated and validated. Its first run needs user input for: ${fields}. Start it with the same reference after receiving those values.',
     'workflow.author.terminalFailure':
-        'This AuthorWorkflow creation process has ended. Report the complete failure reason to the user.',
+        'This AuthorWorkflow creation process has ended. Report the complete failure reason to the user and end the current turn; a later user instruction can start another creation attempt.',
     'workflow.author.cancelled': 'Workflow creation was stopped.',
     'workflow.author.card.generateTitle': 'Creating Workflow',
     'workflow.author.card.generateBody': 'Generating a reusable JavaScript Workflow from the request.',
@@ -1683,7 +1683,7 @@ export const enUs: Record<string, string> = {
         'The authoring agent is reviewing requirement coverage and qualitative quality.',
     'workflow.author.details.reviewed': 'The definition passed deterministic validation and completed self-review.',
     'workflow.author.details.cancelled': 'This Workflow creation was stopped by the user.',
-    'workflow.author.details.request': 'Original request',
+    'workflow.author.details.request': 'Exact original user inputs',
     'workflow.author.details.definition': 'Generated definition',
     'workflow.author.details.phases': 'Phases: ${phases}',
     'workflow.author.details.script': 'View JavaScript source',
@@ -1693,22 +1693,22 @@ export const enUs: Record<string, string> = {
     'workflow.stop.alreadyTerminal': 'Workflow run ${runId} is already ${status}.',
     'workflow.card.started': 'Started',
     'workflow.skill.description':
-        'Use LoadWorkflowTools to create, discover, run, and stop reusable JavaScript Workflows from natural-language workflow requests.',
+        'Handle requests to create, implement, generate, find, run, or stop a workflow or reusable process by loading the matching actions with LoadWorkflowTools.',
     'workflow.skill.argumentHint': '<request or workflow name>',
     'workflow.skill.body': `# Workflow
 
-This Skill creates and uses reusable JavaScript Workflows. Call \`LoadWorkflowTools\` to attach the complete Workflow action set to the current Task.
+This Skill creates and uses reusable JavaScript Workflows. When the user asks to create, implement, generate, find, run, or stop a Workflow, call \`LoadWorkflowTools\` to attach the complete action set to the current Task.
 
 ## Capabilities
 
-- \`AuthorWorkflow\`: design, generate, and validate a temporary Definition scoped to the current Task from the user's complete request.
+- \`AuthorWorkflow\`: read the current Task's exact original user inputs in chronological order and own the design, Definition generation, and validation process.
 - \`ListWorkflows\`: list current-Task temporary, saved, and built-in Definitions with source, input schema, and exact invocation.
 - \`RunWorkflow\`: start an asynchronous run with an exact reference and an input object matching inputSchema.
 - \`StopWorkflow\`: stop an active Workflow with its runId.
 
 ## Create and run
 
-Creation and execution are two separate tool calls. Start with \`AuthorWorkflow\` to receive the Definition and invocation.
+For creation, call \`LoadWorkflowTools\` and then \`AuthorWorkflow\`. The authoring agent owns the Workflow design and Definition implementation. Creation and execution remain separate tool calls; \`AuthorWorkflow\` returns the Definition and invocation.
 
 - \`launchReady=true\` means the first-run input is complete and the returned invocation can run in the current turn.
 - \`launchReady=false\` provides a \`nextAction\` for collecting \`missingRequiredInputs\`. After the user's next reply, call \`RunWorkflow\` with the same reference and an input object matching inputSchema.

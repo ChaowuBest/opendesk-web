@@ -17,6 +17,7 @@ import { t } from '../../../../locale/index.js';
 import { WorkflowAgentRunner } from '../agent/runner.js';
 import { isWorkflowAgentToolAllowed } from '../agent/policy.js';
 import { createWorkflowAuthoringCompletion } from './completion.js';
+import { createWorkflowAuthoringContext, type WorkflowAuthoringContext } from './context.js';
 import {
     AUTHOR_WORKFLOW_OUTPUT_SCHEMA,
     missingRequiredInputNames,
@@ -50,6 +51,7 @@ export interface WorkflowAuthoringProgressUpdate {
     attempt?: number;
     definition?: WorkflowDefinitionInput;
     errors?: string[];
+    userInputs?: string[];
     /** Authoring internal Task 的模型请求重试；与 Definition 校验返修无关。 */
     requestRetry?: WorkflowAuthoringRequestRetry;
 }
@@ -81,11 +83,12 @@ export class WorkflowAuthoringService {
         private readonly excludedToolNames: readonly string[] = []
     ) {}
 
-    async author(
-        request: string,
-        hostTask: TaskState,
-        onProgress?: WorkflowAuthoringProgress
-    ): Promise<WorkflowAuthoringResult> {
+    async author(hostTask: TaskState, onProgress?: WorkflowAuthoringProgress): Promise<WorkflowAuthoringResult> {
+        const authoringContext = createWorkflowAuthoringContext(hostTask);
+        onProgress?.({
+            stage: 'generate',
+            userInputs: [...authoringContext.userInputs]
+        });
         const toolCatalog = await resolveWorkflowToolCatalog(
             hostTask.task_manager_state.toolsetProvider,
             [...(hostTask.disabledTools ?? []), ...this.excludedToolNames],
@@ -93,7 +96,7 @@ export class WorkflowAuthoringService {
         );
         const reference = `authoring_${crypto.randomUUID()}`;
         const completion = createWorkflowAuthoringCompletion({
-            request,
+            authoringContext,
             hostTask,
             toolCatalog,
             validator: this.definitionHost,
@@ -105,7 +108,7 @@ export class WorkflowAuthoringService {
                 title: 'Author Workflow',
                 reasoningEffort: 'high',
                 allowedTools: [],
-                prompt: buildAuthoringPrompt(request, toolCatalog),
+                prompt: buildAuthoringPrompt(authoringContext, toolCatalog),
                 outputSchema: AUTHOR_WORKFLOW_OUTPUT_SCHEMA
             },
             {
@@ -212,7 +215,10 @@ export async function resolveWorkflowToolCatalog(
     return [...entries.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function buildAuthoringPrompt(request: string, toolCatalog: readonly WorkflowToolCatalogEntry[] = []): string {
+export function buildAuthoringPrompt(
+    context: WorkflowAuthoringContext,
+    toolCatalog: readonly WorkflowToolCatalogEntry[] = []
+): string {
     const availableTools =
         toolCatalog.length > 0
             ? toolCatalog.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')
@@ -220,8 +226,9 @@ export function buildAuthoringPrompt(request: string, toolCatalog: readonly Work
     const exampleAllowedTools = toolCatalog.length > 0 ? JSON.stringify([toolCatalog[0].name]) : '[]';
     return [
         '# 目标',
-        '根据用户的完整原始需求，创建一个最小、可执行的 OpenDesk JavaScript Workflow Definition。',
+        '根据当前 Task 中按时间顺序保留的用户真实原始输入，创建一个最小、可执行的 OpenDesk JavaScript Workflow Definition。',
         '直接生成可执行 Definition，保留用户使用的语言和所有明确约束。用户提供的示例默认用于说明设计意图；用户明确给出的首次运行值可进入 launchInput。',
+        '这些原始输入共同确定 Workflow 的目标、输入契约和交付物；后续输入用于补充或更正此前输入。',
         '',
         '# 结构化输出',
         '提交以下完整对象：',
@@ -276,7 +283,11 @@ export function buildAuthoringPrompt(request: string, toolCatalog: readonly Work
         '# 提交前核对',
         '确认输入来自用户需求，宿主保留标识符保持原绑定，每个 agent 结果通过 .output 进入后续流程，agent 返回结构化数据或文档内容，阶段声明与脚本一致，最终结果通过宿主 report 函数发布。',
         '',
-        '# 用户原始需求',
-        request
+        '# 用户真实原始输入（按时间顺序）',
+        formatAuthoringUserInputs(context.userInputs)
     ].join('\n');
+}
+
+function formatAuthoringUserInputs(userInputs: readonly string[]): string {
+    return userInputs.map((input, index) => `## 用户输入 ${index + 1}\n${input}`).join('\n\n');
 }

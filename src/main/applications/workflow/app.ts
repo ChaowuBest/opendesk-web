@@ -88,12 +88,11 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
     }
 
     async authorWorkflow(
-        request: string,
         hostTask: TaskState,
         onProgress?: WorkflowAuthoringProgress
     ): Promise<WorkflowAuthoringResult> {
         assertWorkflowEnabled();
-        return await this.authoring.author(request, hostTask, onProgress);
+        return await this.authoring.author(hostTask, onProgress);
     }
 
     listWorkflows(): AvailableWorkflowDefinition[] {
