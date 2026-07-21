@@ -148,6 +148,9 @@ export class OpenDeskTUI {
     /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
     private configComponent?: Component;
 
+    /** 跟踪是否有全屏文本页面（InfoPage）打开，此时输入区不在布局中 */
+    private textPageActive = false;
+
     public workspace: string;
     private agentDecl: AgentDecl;
     public model?: string;
@@ -910,6 +913,7 @@ export class OpenDeskTUI {
      */
     public showTextPage(title: string, message: string): void {
         const page = new InfoPage(this, title, message, () => {
+            this.textPageActive = false;
             this.shortcutManager.attach(this.tui);
             if (this.modelNotConfiguredMode) {
                 // getInstance() 已内置容错，不会抛异常
@@ -927,6 +931,7 @@ export class OpenDeskTUI {
                     setTimeout(() => {
                         this.tui.setFocus(this.inputArea.input);
                         this.tui.requestRender();
+                        this.processPendingPrompts();
                     }, 10);
                     return;
                 } else {
@@ -949,8 +954,10 @@ export class OpenDeskTUI {
             setTimeout(() => {
                 this.tui.setFocus(this.inputArea.input);
                 this.tui.requestRender();
+                this.processPendingPrompts();
             }, 10);
         });
+        this.textPageActive = true;
         this.shortcutManager.detach();
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
@@ -1574,9 +1581,9 @@ export class OpenDeskTUI {
         // 标记需要处理回车键
         this.modelNotConfiguredMode = true;
 
-        // 如果当前处于配置模式，不破坏配置页面布局；
-        // exitConfigMode() 退出时会根据 modelNotConfiguredMode 标记处理布局。
-        if (this.configComponent) {
+        // 如果当前处于配置模式或文本页面，不破坏已有布局；
+        // 退出时（exitConfigMode / InfoPage 关闭回调）会根据 modelNotConfiguredMode 标记处理布局。
+        if (this.configComponent || this.textPageActive) {
             return;
         }
 
@@ -1605,9 +1612,9 @@ export class OpenDeskTUI {
         this.modelNotConfiguredNotice = undefined;
         this.modelNotConfiguredMode = false;
 
-        // 如果当前处于配置模式，不破坏配置页面布局；
-        // exitConfigMode() 退出时会根据最新状态恢复主界面。
-        if (this.configComponent) {
+        // 如果当前处于配置模式或文本页面，不破坏已有布局；
+        // 退出时会根据最新状态恢复主界面。
+        if (this.configComponent || this.textPageActive) {
             return;
         }
 
@@ -1735,15 +1742,21 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
+     * 检查当前是否处于输入阻塞状态（配置模式、文本页面或 overlay 打开）。
      * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
      */
     isInputBlocked(): boolean {
-        return this.configComponent !== undefined || this.hasOpenOverlay || this.inputArea.hasPromptWidget();
+        return (
+            this.configComponent !== undefined ||
+            this.textPageActive ||
+            this.hasOpenOverlay ||
+            this.inputArea.hasPromptWidget()
+        );
     }
 
     public deferInputPromptIfBlockedByMode(show: () => void, options?: { allowDuringConfig?: boolean }): boolean {
-        if (this.configComponent !== undefined && options?.allowDuringConfig !== true) {
+        const blockedByConfig = this.configComponent !== undefined && options?.allowDuringConfig !== true;
+        if (blockedByConfig || this.textPageActive) {
             this.pendingInputPromptActions.push(show);
             return true;
         }
@@ -1814,6 +1827,7 @@ export class OpenDeskTUI {
         if (
             this.pendingInputPromptActions.length === 0 ||
             this.configComponent !== undefined ||
+            this.textPageActive ||
             this.hasOpenOverlay ||
             this.inputArea.hasPromptWidget()
         ) {
@@ -2099,6 +2113,7 @@ export class OpenDeskTUI {
                 !isKeyRelease(data) &&
                 !this.hasOpenOverlay &&
                 !this.configComponent &&
+                !this.textPageActive &&
                 !this.inputArea.hasPromptWidget()
             ) {
                 const shortcuts = getShortcuts();
@@ -2153,12 +2168,12 @@ export class OpenDeskTUI {
                 }
             }
 
-            // Ctrl+C 在配置模式或 overlay 下的特殊处理
+            // Ctrl+C 在配置模式、文本页面或 overlay 下的特殊处理
             if (matchesKey(data, Key.ctrl('c'))) {
                 if (this.hasOpenOverlay) {
                     return undefined;
                 }
-                if (this.configComponent) {
+                if (this.configComponent || this.textPageActive) {
                     return { consume: true };
                 }
             }
