@@ -26,6 +26,7 @@ import {
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
 import { setRuntimeLocale, t } from '../../../locale/index.js';
 import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { getGoalElapsedMs } from '../../../common/goal/format.js';
 
 let tempRootDir: string | undefined;
 
@@ -172,6 +173,8 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.executionStarted = true;
+        goal.startedAt = '2026-01-01T00:00:00.000Z';
 
         const result = GoalController.recordEvaluation(task, {
             evaluationId: 'eval-1',
@@ -208,6 +211,8 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.executionStarted = true;
+        goal.startedAt = '2026-01-01T00:00:00.000Z';
 
         const result = GoalController.recordEvaluation(task, {
             evaluationId: 'eval-1',
@@ -228,10 +233,13 @@ describe('goal controller and scheduler', () => {
     });
 
     test('records a final snapshot when clearing a goal', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-01-01T00:00:10.000Z'));
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.awaitingContextEntry = true;
 
         const result = GoalController.clear(task, 'tui');
 
@@ -245,9 +253,13 @@ describe('goal controller and scheduler', () => {
             objective: 'ship fix',
             status: 'cleared',
             totalTokens: 0,
+            elapsedMs: 0,
             clearedAt: goal.clearedAt
         });
-        expect(task.goal_final_snapshots[0].elapsedMs).toBeGreaterThanOrEqual(0);
+
+        const restored = GoalStates.deserialize(GoalStates.serialize(goal), task.task_id);
+        expect(restored?.executionStarted).toBe(false);
+        expect(getGoalElapsedMs(restored, { now: Date.parse('2026-01-01T00:00:20.000Z') })).toBe(0);
     });
 
     test('deserializes final snapshots through GoalStates', () => {
@@ -1924,6 +1936,24 @@ describe('goal controller and scheduler', () => {
         expect(goal.awaitingContextEntry).toBeUndefined();
     });
 
+    test('records the first context entry as the goal timer start without resetting it', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+
+        expect(goal.startedAt).toBeUndefined();
+        expect(goal.executionStarted).toBe(false);
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.startedAt).toEqual(expect.any(String));
+        expect(goal.executionStarted).toBe(true);
+
+        const firstStartedAt = goal.startedAt;
+        goal.revision += 1;
+        goal.awaitingContextEntry = true;
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.startedAt).toBe(firstStartedAt);
+    });
+
     test('clears the awaiting-context marker when a goal is cleared', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
@@ -1978,7 +2008,9 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'goal', source: 'tui' });
         const goal = task.goal_state!;
         goal.attempts = 3;
+        goal.executionStarted = true;
         goal.startedAt = '2026-01-01T00:00:00.000Z';
+        const firstStartedAt = goal.startedAt;
         const assistant = new AssistantMessage();
         assistant.usage = Usage.fromRaw({ total_tokens: 1234 });
         task.chat_context.appendMessage(assistant);
@@ -1996,7 +2028,7 @@ describe('goal controller and scheduler', () => {
         expect(goal.status).toBe('complete');
         expect(goal.attempts).toBe(0);
         expect(goal.tokenUsageBaseline).toBe(0);
-        expect(goal.startedAt).toBe(goal.completedAt);
+        expect(goal.startedAt).toBe(firstStartedAt);
         expect(getGoalTokenUsage(task)).toBe(1234);
         const summary = GoalController.getStatus(task).summary;
         expect(summary?.attempts).toBe(0);

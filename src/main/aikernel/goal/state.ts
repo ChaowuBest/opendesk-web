@@ -111,6 +111,8 @@ export interface GoalState {
     // goal 创建时 chat_context 中已累计的 token 总量快照，
     // 用于让每个 goal 独立计量 token 消耗（当前累计 − baseline）
     tokenUsageBaseline?: number;
+    // 新数据显式记录是否已进入过执行上下文；字段缺失表示需要兼容旧数据。
+    executionStarted?: boolean;
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
     evaluationHistory?: GoalEvaluationRecord[];
@@ -615,7 +617,7 @@ export const GoalStates = {
             status: 'active',
             revision: 1,
             attempts: 0,
-            startedAt: now,
+            executionStarted: false,
             evaluationHistory: [],
             pendingSupplements: [],
             editHistory: [],
@@ -645,6 +647,7 @@ export const GoalStates = {
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
             ...(raw.awaitingContextEntry === true ? { awaitingContextEntry: true } : {}),
             ...(tokenUsageBaseline !== undefined ? { tokenUsageBaseline } : {}),
+            ...(typeof raw.executionStarted === 'boolean' ? { executionStarted: raw.executionStarted } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
             ...(lastEvaluation ? { lastEvaluation } : {}),
             evaluationHistory: normalizeEvaluationHistory(raw.evaluationHistory, lastEvaluation),

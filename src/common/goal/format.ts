@@ -29,6 +29,9 @@ export type GoalElapsedStatus = GoalFormatStatus | string;
 
 export interface GoalElapsedLike {
     status?: GoalElapsedStatus;
+    awaitingContextEntry?: boolean;
+    executionStarted?: boolean;
+    startedAt?: string;
     createdAt?: string;
     completedAt?: string;
     clearedAt?: string;
@@ -100,8 +103,10 @@ export function getGoalEvaluationDisplayTimestamp(evaluation: GoalEvaluationTime
 }
 
 export function getGoalElapsedMs(goal: GoalElapsedLike | null | undefined, options: GoalElapsedOptions = {}): number {
-    if (!goal?.createdAt) return 0;
-    const startedAt = Date.parse(goal.createdAt);
+    if (!goal || goal.executionStarted === false) return 0;
+    const timerOrigin = goal.startedAt ?? (goal.awaitingContextEntry === true ? undefined : goal.createdAt);
+    if (!timerOrigin) return 0;
+    const startedAt = Date.parse(timerOrigin);
     if (!Number.isFinite(startedAt)) return 0;
 
     const nowMs = options.now instanceof Date ? options.now.getTime() : (options.now ?? Date.now());

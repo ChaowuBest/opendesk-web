@@ -212,9 +212,7 @@ function computeGoalTokenUsage(task: TaskState, goal: GoalState): number {
 }
 
 function resetCompletedGoalTurnCounters(goal: GoalState): void {
-    const completedAt = goal.completedAt ?? nowIso();
     goal.attempts = 0;
-    goal.startedAt = completedAt;
 }
 
 export interface GoalPausedOrBlockedSnapshot {
@@ -262,22 +260,32 @@ export class GoalController {
 
     static markContextEntered(task: TaskState, goalId: string, goalRevision: number): boolean {
         const goal = task.goal_state;
-        if (
-            !goal ||
-            goal.id !== goalId ||
-            goal.revision !== goalRevision ||
-            goal.status !== 'active' ||
-            goal.awaitingContextEntry !== true
-        ) {
+        if (!goal || goal.id !== goalId || goal.revision !== goalRevision || goal.status !== 'active') {
             return false;
         }
-        if (goal.pendingContinuation?.reason !== 'edit') {
-            // A Goal attached to an existing turn starts consuming tokens only after its first prompt enters context.
-            goal.tokenUsageBaseline = computeTotalTokenUsage(task);
+
+        const at = nowIso();
+        let changed = false;
+        if (goal.executionStarted !== true) {
+            goal.executionStarted = true;
+            changed = true;
         }
-        delete goal.awaitingContextEntry;
-        goal.updatedAt = nowIso();
-        persistGoalChange(task);
+        if (!goal.startedAt) {
+            goal.startedAt = at;
+            changed = true;
+        }
+        if (goal.awaitingContextEntry === true) {
+            if (goal.pendingContinuation?.reason !== 'edit') {
+                // A Goal attached to an existing turn starts consuming tokens only after its first prompt enters context.
+                goal.tokenUsageBaseline = computeTotalTokenUsage(task);
+            }
+            delete goal.awaitingContextEntry;
+            changed = true;
+        }
+        if (changed) {
+            goal.updatedAt = at;
+            persistGoalChange(task);
+        }
         return true;
     }
 
