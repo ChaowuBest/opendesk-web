@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 import { normalizeWorkflowJSONValue } from '../../../aikernel/workflow.js';
+import type { ModeDecl } from '../../../aikernel/agents/common.js';
 import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
 import type { ToolCall } from '../../../aikernel/messages.js';
 import type {
@@ -17,7 +18,7 @@ import type {
     PermissionTaskInfo,
     PermissionUserResponse
 } from '../../../aikernel/security/permission.js';
-import type { TaskState, TaskUpdateRetryChunk } from '../../../aikernel/states/tasks.js';
+import type { TaskState, TaskUpdateChunk, TaskUpdateRetryChunk } from '../../../aikernel/states/tasks.js';
 import { BaseTool, BaseToolset, type ToolResult } from '../../../aikernel/tool.js';
 import { WorkflowAgentExecutionError, type WorkflowAgentRequest, type WorkflowAgentResult } from './contract.js';
 import { isWorkflowAgentToolAllowed } from './policy.js';
@@ -82,6 +83,17 @@ export interface WorkflowAgentCompletionControl {
     parse(toolCall: ToolCall): WorkflowAgentResult;
     accept(task: TaskState, toolCall: ToolCall, completion: WorkflowAgentResult): void;
     fail(task: TaskState, error: Error): void;
+}
+
+interface WorkflowAgentTaskContext {
+    agent: MainAgentDecl;
+    mode: ModeDecl;
+}
+
+interface WorkflowAgentCompletionController {
+    toolset: BaseToolset;
+    control: WorkflowAgentCompletionControl;
+    resolve(): WorkflowAgentResult;
 }
 
 class WorkflowAgentPermissionPrompt implements PermissionPromptProvider {
@@ -153,100 +165,150 @@ export class WorkflowAgentRunner {
         request: WorkflowAgentRequest,
         options: WorkflowAgentRunOptions = {}
     ): Promise<WorkflowAgentResult> {
-        const taskManager = hostTask.task_manager_state;
-        const task = taskManager.createTask(hostTask.model, {
+        const task = this.createInternalTask(hostTask, request);
+        this.trackExecution(options.executionId, task);
+
+        try {
+            const context = await this.prepareTask(task, hostTask, request);
+            const completion = this.attachCompletionProtocol(task, request, options);
+
+            await this.executeTask(task, context, request, options);
+
+            return completion.resolve();
+        } finally {
+            this.cleanupExecution(options.executionId, task, hostTask);
+        }
+    }
+
+    private createInternalTask(hostTask: TaskState, request: WorkflowAgentRequest): TaskState {
+        return hostTask.task_manager_state.createTask(hostTask.model, {
             internal: true,
             taskName: request.title ?? 'Workflow agent'
         });
-        if (options.executionId) {
-            const tasks = this.activeTasks.get(options.executionId) ?? new Set<TaskState>();
-            tasks.add(task);
-            this.activeTasks.set(options.executionId, tasks);
+    }
+
+    private async prepareTask(
+        task: TaskState,
+        hostTask: TaskState,
+        request: WorkflowAgentRequest
+    ): Promise<WorkflowAgentTaskContext> {
+        const agent = new MainAgentDecl();
+        const modes = agent.supportedModes();
+        const modeId = hostTask.activeModeId ?? agent.defaultModeId();
+        const mode = modes.find((candidate) => candidate.id === modeId) ?? modes[0];
+        const workspace = hostTask.getWorkspace();
+        if (!mode || !workspace) {
+            throw new Error('Workflow agent requires the host Task mode and workspace');
         }
-        try {
-            const agent = new MainAgentDecl();
-            const modes = agent.supportedModes();
-            const modeId = hostTask.activeModeId ?? agent.defaultModeId();
-            const mode = modes.find((candidate) => candidate.id === modeId) ?? modes[0];
-            const workspace = hostTask.getWorkspace();
-            if (!mode || !workspace) {
-                throw new Error('Workflow agent requires the host Task mode and workspace');
-            }
-            await taskManager.initHarness(task, workspace, mode);
-            task.harnessContext.executionHost = hostTask.getExecutionHost();
-            task.reasoningEffort = request.reasoningEffort;
-            bindWorkflowAgentAccess(task, hostTask, request.allowedTools);
 
-            let acceptedCompletion: WorkflowAgentResult | undefined;
-            let terminalError: Error | undefined;
-            const usesCustomCompletionHook = options.configureTask !== undefined;
-            const completionToolset = new BaseToolset('workflow-agent');
-            completionToolset.addTool(
-                new CompleteWorkflowAgentTool(request.outputSchema, (completion, result, activeTask) => {
-                    if (usesCustomCompletionHook) {
-                        result.updateResultObject({ submitted: true, ...completion });
-                        result.updateResult(JSON.stringify({ submitted: true, status: completion.status }));
-                        return;
-                    }
-                    acceptedCompletion = completion;
-                    result.updateResultObject({ accepted: true, ...completion });
-                    result.updateResult(JSON.stringify({ accepted: true, status: completion.status }));
-                    activeTask.stop('system');
-                })
-            );
-            task.interactionToolset = completionToolset;
-            options.configureTask?.(task, {
-                toolName: WORKFLOW_AGENT_COMPLETION_TOOL_NAME,
-                parse: (toolCall) => parseWorkflowAgentCompletion(toolCall.args_object, request.outputSchema),
-                accept: (activeTask, toolCall, completion) => {
-                    acceptedCompletion = completion;
-                    toolCall.status = 'success';
-                    toolCall.result_object = { accepted: true, ...completion };
-                    toolCall.result = JSON.stringify({ accepted: true, status: completion.status });
-                    activeTask.stop('system');
-                },
-                fail: (activeTask, error) => {
-                    terminalError = error;
-                    activeTask.stop('system');
-                }
-            });
+        await hostTask.task_manager_state.initHarness(task, workspace, mode);
+        task.harnessContext.executionHost = hostTask.getExecutionHost();
+        task.reasoningEffort = request.reasoningEffort;
+        bindWorkflowAgentAccess(task, hostTask, request.allowedTools);
+        return { agent, mode };
+    }
 
-            const basePrompt = await agent.createSystemPrompt(mode, task);
-            task.setSystemPrompt(
-                [
-                    basePrompt,
-                    '# Workflow agent 职责',
-                    '你是可执行 JavaScript Workflow 中一个职责明确的工作单元。',
-                    '使用当前步骤提供的工具完成指定的检索、判断或内容生成任务，并返回可供 Workflow 脚本继续处理的结构化结果。',
-                    '涉及 workspace 文件时，使用当前步骤提供的文件工具完成读写，并在 output 中返回 workspace 相对路径。',
-                    '# 完成协议',
-                    '最终操作是调用 workflow-agent-CompleteWorkflowAgent，提交 status、summary 和 output。',
-                    '机器可读数据以对象或数组形式直接放入 output。',
-                    '步骤产出可用结果时使用 status="success"；步骤无法产出结果时使用 status="fail" 并在 summary 中说明原因。',
-                    ...(request.outputSchema
-                        ? [
-                              'status="success" 对应的 output 使用以下 JSON Schema：',
-                              JSON.stringify(request.outputSchema)
-                          ]
-                        : [])
-                ].join('\n\n')
-            );
-            const submit = await task.submitUserMessage(buildWorkflowAgentUserMessage(request));
-            if (submit.status === 'error') {
-                throw new Error(submit.messageKey);
+    private attachCompletionProtocol(
+        task: TaskState,
+        request: WorkflowAgentRequest,
+        options: WorkflowAgentRunOptions
+    ): WorkflowAgentCompletionController {
+        const completion = createWorkflowAgentCompletionController(
+            request.outputSchema,
+            options.configureTask !== undefined
+        );
+        task.interactionToolset = completion.toolset;
+        options.configureTask?.(task, completion.control);
+        return completion;
+    }
+
+    private async executeTask(
+        task: TaskState,
+        context: WorkflowAgentTaskContext,
+        request: WorkflowAgentRequest,
+        options: WorkflowAgentRunOptions
+    ): Promise<void> {
+        const basePrompt = await context.agent.createSystemPrompt(context.mode, task);
+        task.setSystemPrompt(buildWorkflowAgentSystemPrompt(basePrompt, request));
+
+        const submit = await task.submitUserMessage(buildWorkflowAgentUserMessage(request));
+        if (submit.status === 'error') {
+            throw new Error(submit.messageKey);
+        }
+
+        await task.waitUntilFinished(createTaskRequestRetryObserver(options.onTaskRequestRetry), true);
+    }
+
+    private trackExecution(executionId: string | undefined, task: TaskState): void {
+        if (!executionId) {
+            return;
+        }
+        const tasks = this.activeTasks.get(executionId) ?? new Set<TaskState>();
+        tasks.add(task);
+        this.activeTasks.set(executionId, tasks);
+    }
+
+    private cleanupExecution(executionId: string | undefined, task: TaskState, hostTask: TaskState): void {
+        if (executionId) {
+            const tasks = this.activeTasks.get(executionId);
+            tasks?.delete(task);
+            if (tasks?.size === 0) {
+                this.activeTasks.delete(executionId);
             }
-            let lastTaskRequestRetryFingerprint = '';
-            await task.waitUntilFinished((update) => {
-                if (update.type !== 'retry' || !options.onTaskRequestRetry) {
-                    return;
-                }
-                const fingerprint = [update.status, update.attempt, update.delay_ms, update.error_message].join('\n');
-                if (fingerprint === lastTaskRequestRetryFingerprint) {
-                    return;
-                }
-                lastTaskRequestRetryFingerprint = fingerprint;
-                return options.onTaskRequestRetry(update);
-            }, true);
+        }
+        if (hostTask.task_manager_state.getTask(task.task_id)) {
+            hostTask.task_manager_state.removeTask(task.task_id);
+        }
+    }
+
+    async stopExecution(executionId: string): Promise<void> {
+        const tasks = [...(this.activeTasks.get(executionId) ?? [])];
+        for (const task of tasks) {
+            task.stop('system');
+        }
+        await Promise.all(tasks.map((task) => task.waitUntilFinished(undefined, true)));
+    }
+}
+
+function createWorkflowAgentCompletionController(
+    outputSchema: Record<string, unknown> | undefined,
+    usesCustomCompletionHook: boolean
+): WorkflowAgentCompletionController {
+    let acceptedCompletion: WorkflowAgentResult | undefined;
+    let terminalError: Error | undefined;
+    const toolset = new BaseToolset('workflow-agent');
+    toolset.addTool(
+        new CompleteWorkflowAgentTool(outputSchema, (completion, result, activeTask) => {
+            if (usesCustomCompletionHook) {
+                result.updateResultObject({ submitted: true, ...completion });
+                result.updateResult(JSON.stringify({ submitted: true, status: completion.status }));
+                return;
+            }
+            acceptedCompletion = completion;
+            result.updateResultObject({ accepted: true, ...completion });
+            result.updateResult(JSON.stringify({ accepted: true, status: completion.status }));
+            activeTask.stop('system');
+        })
+    );
+
+    return {
+        toolset,
+        control: {
+            toolName: WORKFLOW_AGENT_COMPLETION_TOOL_NAME,
+            parse: (toolCall) => parseWorkflowAgentCompletion(toolCall.args_object, outputSchema),
+            accept: (activeTask, toolCall, completion) => {
+                acceptedCompletion = completion;
+                toolCall.status = 'success';
+                toolCall.result_object = { accepted: true, ...completion };
+                toolCall.result = JSON.stringify({ accepted: true, status: completion.status });
+                activeTask.stop('system');
+            },
+            fail: (activeTask, error) => {
+                terminalError = error;
+                activeTask.stop('system');
+            }
+        },
+        resolve: () => {
             if (acceptedCompletion) {
                 return acceptedCompletion;
             }
@@ -258,27 +320,42 @@ export class WorkflowAgentRunner {
                 message:
                     'Workflow agent ended before submitting an accepted workflow-agent-CompleteWorkflowAgent result.'
             });
-        } finally {
-            if (options.executionId) {
-                const tasks = this.activeTasks.get(options.executionId);
-                tasks?.delete(task);
-                if (tasks?.size === 0) {
-                    this.activeTasks.delete(options.executionId);
-                }
-            }
-            if (taskManager.getTask(task.task_id)) {
-                taskManager.removeTask(task.task_id);
-            }
         }
-    }
+    };
+}
 
-    async stopExecution(executionId: string): Promise<void> {
-        const tasks = [...(this.activeTasks.get(executionId) ?? [])];
-        for (const task of tasks) {
-            task.stop('system');
+function buildWorkflowAgentSystemPrompt(basePrompt: string, request: WorkflowAgentRequest): string {
+    return [
+        basePrompt,
+        '# Workflow agent 职责',
+        '你是可执行 JavaScript Workflow 中一个职责明确的工作单元。',
+        '使用当前步骤提供的工具完成指定的检索、判断或内容生成任务，并返回可供 Workflow 脚本继续处理的结构化结果。',
+        '涉及 workspace 文件时，使用当前步骤提供的文件工具完成读写，并在 output 中返回 workspace 相对路径。',
+        '# 完成协议',
+        '最终操作是调用 workflow-agent-CompleteWorkflowAgent，提交 status、summary 和 output。',
+        '机器可读数据以对象或数组形式直接放入 output。',
+        '步骤产出可用结果时使用 status="success"；步骤无法产出结果时使用 status="fail" 并在 summary 中说明原因。',
+        ...(request.outputSchema
+            ? ['status="success" 对应的 output 使用以下 JSON Schema：', JSON.stringify(request.outputSchema)]
+            : [])
+    ].join('\n\n');
+}
+
+function createTaskRequestRetryObserver(
+    onTaskRequestRetry: WorkflowAgentRunOptions['onTaskRequestRetry']
+): (update: TaskUpdateChunk) => void | Promise<void> {
+    let lastFingerprint = '';
+    return (update) => {
+        if (update.type !== 'retry' || !onTaskRequestRetry) {
+            return;
         }
-        await Promise.all(tasks.map((task) => task.waitUntilFinished(undefined, true)));
-    }
+        const fingerprint = [update.status, update.attempt, update.delay_ms, update.error_message].join('\n');
+        if (fingerprint === lastFingerprint) {
+            return;
+        }
+        lastFingerprint = fingerprint;
+        return onTaskRequestRetry(update);
+    };
 }
 
 function buildWorkflowAgentUserMessage(request: WorkflowAgentRequest): string {
