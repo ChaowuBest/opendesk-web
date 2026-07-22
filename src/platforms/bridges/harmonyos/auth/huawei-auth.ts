@@ -47,10 +47,16 @@ export class HuaweiAuthService {
         }
     }
 
-    /** 获取当前会话（内存缓存优先） */
+    /**
+     * 获取当前会话（内存缓存优先）。
+     * 只以 unionId/openId 作为用户身份标识，不做过期检查，
+     * session 永久存在本地。access_token 过期后调用华为开放 API
+     * 的业务方需在调用处自行 refreshToken()。
+     */
     getSession(): UserSession | null {
         if (this.cachedSession) {
-            if (this.cachedSession.expiresAt > Date.now()) {
+            // 只看身份字段是否存在，不校验 expiresAt
+            if (this.cachedSession.unionId || this.cachedSession.openId) {
                 return this.cachedSession;
             }
         }
