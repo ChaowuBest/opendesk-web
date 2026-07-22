@@ -16,6 +16,7 @@ import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { attributeBatchInterceptions, confidenceWeight, sortByConfidenceDesc } from './skillAttribution.js';
 import { readInterceptionRecords } from '../skillmgr/blacklist.js';
+import { HookRegistry } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
 import { getExtensionsDir } from '../../plugins/manager';
@@ -34,7 +35,7 @@ class AgentGateApplication extends BaseApplication {
     }
 
     isExperimental(): boolean {
-        return true;
+        return false;
     }
 
     /** 供 renderer 查询 Bridge 运行状态与最近错误（用于在界面上显示启动失败原因） */
@@ -44,7 +45,7 @@ class AgentGateApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
-            enabled: z.boolean().default(true).describe('安全网关总开关'),
+            enabled: z.boolean().default(false).describe('安全网关总开关'),
             securityLevel: z.enum(['low', 'medium', 'high']).default('medium').describe('安全拦截程度'),
             enableLLM: z.boolean().default(true).describe('启用 LLM 深度分析（Layer 3）'),
             llmModel: z.string().default('').describe('分析模型（留空使用默认模型）'),
@@ -168,7 +169,7 @@ class AgentGateApplication extends BaseApplication {
     /** 获取安全网关总开关状态 */
     getEnabled(): boolean {
         const cfg = this.getConfig() as any;
-        return cfg?.enabled !== false;
+        return cfg?.enabled === true;
     }
 
     /** 设置安全网关总开关 */
@@ -200,6 +201,7 @@ class AgentGateApplication extends BaseApplication {
      *
      * @param task  当前会话的 TaskState
      * @param hooks  可选的事件回调：归因开始/结束/弹窗
+     * @param terminationState  beforeFinishTurn 阶段计算的终止状态
      */
     async analyzeAndPromptMaliciousSkills(
         task: TaskState,
@@ -207,15 +209,14 @@ class AgentGateApplication extends BaseApplication {
             onAttributionStart?: (taskId: string) => void;
             onAttributionEnd?: (taskId: string) => void;
             onPrompt?: (taskId: string, skills: object[]) => void;
-        } = {}
+        } = {},
+        terminationState?: 'finished' | 'interrupted' | 'question' | null
     ): Promise<void> {
         // 仅在会话真正结束时触发（finished / 用户主动停止），
         // 跳过 question（等待用户回复）和 interrupted（被截断需继续）等中间态
-        const terminationState = (task as any).lastTerminationState || 'finished';
-        if (terminationState === 'question' || terminationState === 'interrupted') {
-            logger.info(
-                `[AgentGate] Skipping malicious skill detection: session not ended (terminationState=${terminationState})`
-            );
+        const ts = terminationState || 'finished';
+        if (ts === 'question' || ts === 'interrupted') {
+            logger.info(`[AgentGate] Skipping malicious skill detection: session not ended (terminationState=${ts})`);
             return;
         }
         // 恶意技能检测开关关闭时不弹窗（拦截归因在 hook.ts 已被门控，interceptions 不会有新记录，
@@ -510,18 +511,17 @@ class AgentGateApplication extends BaseApplication {
         }
     }
 
-    /** 根据当前总开关和试验性功能状态启动/停止 bridge */
+    /** 根据当前总开关状态启动/停止 bridge */
     private _syncBridgeState(): void {
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
-        const expEnabled = !!data?.debug?.experimental_feature;
-        const agEnabled = data?.applications?.agentgate?.enabled !== false;
+        const agEnabled = data?.applications?.agentgate?.enabled === true;
         const bridge = AgentGateBridge.getInstance();
-        if (expEnabled && agEnabled && !bridge.isRunning()) {
+        if (agEnabled && !bridge.isRunning()) {
             bridge.start(setting);
             // Bridge 启动后，如果浮窗开关已打开，启动 events-cache
             this._syncEventsCacheState();
-        } else if (!(expEnabled && agEnabled) && bridge.isRunning()) {
+        } else if (!agEnabled && bridge.isRunning()) {
             bridge.stop();
             // Bridge 停止时同步停止 events-cache
             AgentGateEventsCache.getInstance().stopPolling();
@@ -553,7 +553,7 @@ class AgentGateApplication extends BaseApplication {
 
     /**
      * 根据当前配置同步安全网关运行时状态（bridge + events-cache）。
-     * 由 main.ts 在试验性功能或安全网关总开关变更时调用，等价于让 application 读取最新配置决定启停。
+     * 由 onConfigChanged 在安全网关配置变更时调用，等价于让 application 读取最新配置决定启停。
      */
     syncRuntimeState(): void {
         this._syncBridgeState();
@@ -580,6 +580,106 @@ class AgentGateApplication extends BaseApplication {
     onConfigChanged(): void {
         super.onConfigChanged();
         AgentGateBridge.getInstance().updateConfig(Setting.getInstance());
+        // 配置变更时同步 bridge + events-cache 运行时状态（启停由 _syncBridgeState 根据 enabled 决定）
+        this.syncRuntimeState();
+    }
+
+    async beforeExit(): Promise<void> {
+        this.stopRuntime();
+    }
+
+    // ── 平台钩子注册（GUI / CLI 各自调用，将 afterFinishTurn 逻辑收拢到 application 内） ──
+
+    /**
+     * 注册 GUI 侧的 afterFinishTurn 钩子：会话结束时做恶意 skill 归因分析并推送弹窗事件。
+     * @param notify  IPC 事件推送函数，由 main.ts 注入（持有 globalMainWindow）
+     */
+    registerGuiHooks(notify: (channel: string, payload: object) => void): void {
+        HookRegistry.afterFinishTurn(async (task) => {
+            if (task.task_status !== 'stopped') return;
+            await this.analyzeAndPromptMaliciousSkills(task, {
+                onAttributionStart: (taskId: string) => notify('agentgate:attributionStart', { taskId }),
+                onAttributionEnd: (taskId: string) => notify('agentgate:attributionEnd', { taskId }),
+                onPrompt: (taskId: string, skills: object[]) => notify('skill:blacklistPrompt', { taskId, skills })
+            });
+        });
+    }
+
+    /**
+     * 注册 CLI 侧的 afterFinishTurn 钩子：每次 turn 结束展示本 turn 产生的拦截告警。
+     * CLI 无 GUI 弹窗通道，仅做轻量级文本输出。
+     */
+    registerCliHooks(): void {
+        HookRegistry.afterFinishTurn(async (task) => {
+            if (task.task_status !== 'stopped') return;
+            const allRecords = readInterceptionRecords(task.task_id);
+            if (allRecords.length === 0) return;
+
+            // 只取本 turn 新增的拦截记录
+            const currentTurn = task.getTurnGeneration ? task.getTurnGeneration() : 0;
+            const records = allRecords.filter((r) => r.turn === currentTurn);
+            if (records.length === 0) return;
+
+            // 整理 skill 列表（confidenceWeight 与 GUI 侧归因共用，避免散落重复定义）
+            const skillMap = new Map<string, { reason: string; evidence: string; confidence: string }>();
+            for (const rec of records) {
+                for (const c of rec.certain || []) {
+                    const key = `${c.bundleName}/${c.skillName}`;
+                    if (!skillMap.has(key)) {
+                        skillMap.set(key, {
+                            reason: rec.reason,
+                            evidence: `确定性归因: ${rec.toolName} 被拦截`,
+                            confidence: 'certain'
+                        });
+                    }
+                }
+                for (const s of rec.suspected || []) {
+                    const key = `${s.bundleName}/${s.skillName}`;
+                    const existing = skillMap.get(key);
+                    if (!existing || confidenceWeight(s.confidence) > confidenceWeight(existing.confidence)) {
+                        skillMap.set(key, { reason: rec.reason, evidence: s.evidence, confidence: s.confidence });
+                    }
+                }
+            }
+
+            if (skillMap.size === 0) return;
+
+            // 补充上下文关联嫌疑 skill
+            const loadedKeys = new Set(task.getLoadedSkillsFromContext().map((s) => `${s.bundleName}/${s.skillName}`));
+            const coveredKeys = new Set(skillMap.keys());
+            for (const key of loadedKeys) {
+                if (!coveredKeys.has(key)) {
+                    skillMap.set(key, {
+                        reason: '',
+                        evidence: '该 skill 在本会话中加载，可能作为攻击前驱参与',
+                        confidence: 'contextual'
+                    });
+                }
+            }
+
+            const entries = Array.from(skillMap.entries()).sort(
+                (a, b) => confidenceWeight(b[1].confidence) - confidenceWeight(a[1].confidence)
+            );
+
+            console.warn('\n⚠️  检测到疑似恶意技能');
+            console.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            for (const [key, val] of entries) {
+                const tag =
+                    val.confidence === 'certain'
+                        ? '【确定】'
+                        : val.confidence === 'high'
+                          ? '【高置信】'
+                          : val.confidence === 'medium'
+                            ? '【中置信】'
+                            : val.confidence === 'contextual'
+                              ? '【上下文】'
+                              : '【低置信】';
+                console.warn(`  ${tag} ${key}`);
+                console.warn(`     ${val.evidence}`);
+            }
+            console.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.warn('💡 如需查看详情或管理黑名单，请使用 GUI 模式或访问 skill 管理中心。\n');
+        });
     }
 
     /** 获取当前界面语言，供 renderer 使用 */

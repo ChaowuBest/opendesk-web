@@ -17,7 +17,7 @@
 import { initializeAppWorkers } from './applications/worker';
 import { setPlatform } from '../platforms/base.js';
 import { WorkerPlatform } from '../platforms/worker.js';
-import { initAgentGateHook } from './agentgate/hook.js';
+import { initAgentGateHook } from './applications/agentgate/hook.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 
 setPlatform(new WorkerPlatform());
