@@ -26,6 +26,7 @@ import {
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
 import { setRuntimeLocale, t } from '../../../locale/index.js';
 import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { getGoalElapsedMs } from '../../../common/goal/format.js';
 
 let tempRootDir: string | undefined;
 
@@ -109,6 +110,8 @@ describe('goal controller and scheduler', () => {
         expect(result.startedScheduler).toBe(true);
         expect(task.goal_state?.status).toBe('active');
         expect(task.goal_state?.revision).toBe(1);
+        expect(task.goal_state?.awaitingContextEntry).toBeUndefined();
+        expect(result.summary?.awaitingContextEntry).toBeUndefined();
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('created');
         expect(task.task_status).toBe('running');
         expect(processSpy).toHaveBeenCalledTimes(1);
@@ -170,6 +173,8 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.executionStarted = true;
+        goal.startedAt = '2026-01-01T00:00:00.000Z';
 
         const result = GoalController.recordEvaluation(task, {
             evaluationId: 'eval-1',
@@ -206,6 +211,8 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.executionStarted = true;
+        goal.startedAt = '2026-01-01T00:00:00.000Z';
 
         const result = GoalController.recordEvaluation(task, {
             evaluationId: 'eval-1',
@@ -226,10 +233,13 @@ describe('goal controller and scheduler', () => {
     });
 
     test('records a final snapshot when clearing a goal', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-01-01T00:00:10.000Z'));
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
         const goal = task.goal_state!;
         goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.awaitingContextEntry = true;
 
         const result = GoalController.clear(task, 'tui');
 
@@ -243,9 +253,13 @@ describe('goal controller and scheduler', () => {
             objective: 'ship fix',
             status: 'cleared',
             totalTokens: 0,
+            elapsedMs: 0,
             clearedAt: goal.clearedAt
         });
-        expect(task.goal_final_snapshots[0].elapsedMs).toBeGreaterThanOrEqual(0);
+
+        const restored = GoalStates.deserialize(GoalStates.serialize(goal), task.task_id);
+        expect(restored?.executionStarted).toBe(false);
+        expect(getGoalElapsedMs(restored, { now: Date.parse('2026-01-01T00:00:20.000Z') })).toBe(0);
     });
 
     test('deserializes final snapshots through GoalStates', () => {
@@ -1183,12 +1197,27 @@ describe('goal controller and scheduler', () => {
         expect(result.clearedTaskTodos).toBeUndefined();
         expect(task.goal_state?.status).toBe('active');
         expect(task.goal_state?.objective).toBe('track current todo work');
+        expect(task.goal_state?.awaitingContextEntry).toBe(true);
+        expect(result.summary?.awaitingContextEntry).toBe(true);
         expect(task.task_status).toBe('running');
         expect(task.goal_state?.schedulerLease).toBeUndefined();
         expect(processSpy).not.toHaveBeenCalled();
         expect(getTaskTodosForDisplay(task.task_id)).toEqual(runningTodos);
 
+        const preGoalTurn = new AssistantMessage();
+        preGoalTurn.usage = Usage.fromRaw({ total_tokens: 1800 });
+        task.chat_context.appendMessage(preGoalTurn);
+        expect(getGoalTokenUsage(task)).toBe(0);
+
         await task.goalRuntime.checkpoint('after_tools');
+        expect(task.goal_state?.awaitingContextEntry).toBeUndefined();
+        expect(GoalController.getStatus(task).summary?.awaitingContextEntry).toBeUndefined();
+        expect(getGoalTokenUsage(task)).toBe(0);
+
+        const goalTurn = new AssistantMessage();
+        goalTurn.usage = Usage.fromRaw({ total_tokens: 600 });
+        task.chat_context.appendMessage(goalTurn);
+        expect(getGoalTokenUsage(task)).toBe(600);
         const displayMessage = task.chat_context.messages[0] as UserMessage;
         expect(displayMessage.rawText).toBe('/goal track current todo work');
 
@@ -1240,6 +1269,44 @@ describe('goal controller and scheduler', () => {
                 (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_create'
             )
         ).toBe(false);
+    });
+
+    test('keeps a goal awaiting context when its queued create reminder becomes stale', async () => {
+        const task = createTask();
+        task.task_status = 'running';
+        await GoalService.create(task, { objective: 'first objective', source: 'tui' });
+        const goal = task.goal_state!;
+        GoalController.editObjective(task, 'second objective', 'tui');
+
+        expect(await task.goalRuntime.checkpoint('after_tools', { includeSupplements: false })).toBe(false);
+        expect(goal.awaitingContextEntry).toBe(true);
+    });
+
+    test('keeps a goal awaiting context when prompt materialization fails', async () => {
+        const task = createTask();
+        task.task_status = 'running';
+        await GoalService.create(task, { objective: 'ship fix', source: 'tui' });
+        jest.spyOn(task, 'materializeExtensionPromptTurn').mockRejectedValueOnce(new Error('materialize failed'));
+
+        await expect(task.goalRuntime.checkpoint('after_tools', { includeSupplements: false })).rejects.toThrow(
+            'materialize failed'
+        );
+        expect(task.goal_state?.awaitingContextEntry).toBe(true);
+    });
+
+    test('clears a recovered awaiting marker after scheduler prompt creation succeeds', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'resume pending goal', source: 'system' });
+        const goal = task.goal_state!;
+        GoalController.markAwaitingContextEntry(task, goal.id, goal.revision);
+
+        const result = await GoalScheduler.startExecution(task, 'resume');
+
+        expect(result.ok).toBe(true);
+        expect(goal.awaitingContextEntry).toBeUndefined();
+        expect(result.summary?.awaitingContextEntry).toBeUndefined();
     });
 
     test('create treats a scheduler task_running race as attaching to the current turn', async () => {
@@ -1835,6 +1902,87 @@ describe('goal controller and scheduler', () => {
         expect(goal2.status).toBe('active');
     });
 
+    test('persists the optional awaiting-context marker and keeps legacy data compatible', () => {
+        const goal = GoalStates.create('task-awaiting', { objective: 'ship fix' });
+        goal.awaitingContextEntry = true;
+
+        const restored = GoalStates.deserialize(GoalStates.serialize(goal), 'task-awaiting');
+        expect(restored?.awaitingContextEntry).toBe(true);
+        expect(GoalStates.renderSummary(restored)?.awaitingContextEntry).toBe(true);
+
+        const legacy = GoalStates.deserialize(
+            {
+                ...GoalStates.serialize(goal),
+                awaitingContextEntry: undefined
+            },
+            'task-awaiting'
+        );
+        expect(legacy?.awaitingContextEntry).toBeUndefined();
+        expect(GoalStates.renderSummary(legacy)?.awaitingContextEntry).toBeUndefined();
+    });
+
+    test('changes awaiting-context state only for the matching active goal revision', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+
+        expect(GoalController.markAwaitingContextEntry(task, goal.id, goal.revision + 1)).toBe(false);
+        expect(GoalController.markAwaitingContextEntry(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.awaitingContextEntry).toBe(true);
+
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision + 1)).toBe(false);
+        expect(goal.awaitingContextEntry).toBe(true);
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.awaitingContextEntry).toBeUndefined();
+    });
+
+    test('records the first context entry as the goal timer start without resetting it', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+
+        expect(goal.startedAt).toBeUndefined();
+        expect(goal.executionStarted).toBe(false);
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.startedAt).toEqual(expect.any(String));
+        expect(goal.executionStarted).toBe(true);
+
+        const firstStartedAt = goal.startedAt;
+        goal.revision += 1;
+        goal.awaitingContextEntry = true;
+        expect(GoalController.markContextEntered(task, goal.id, goal.revision)).toBe(true);
+        expect(goal.startedAt).toBe(firstStartedAt);
+    });
+
+    test('clears the awaiting-context marker when a goal is cleared', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+        goal.awaitingContextEntry = true;
+
+        GoalController.clear(task, 'tui');
+
+        expect(goal.awaitingContextEntry).toBeUndefined();
+    });
+
+    test('clears the awaiting-context marker when evaluation completes a goal', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+        goal.awaitingContextEntry = true;
+
+        GoalController.recordEvaluation(task, {
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: ['tests pass'],
+            evaluatedAt: new Date().toISOString()
+        });
+
+        expect(goal.awaitingContextEntry).toBeUndefined();
+    });
+
     test('deserialize preserves explicit zero token usage baseline', () => {
         const goal = GoalStates.deserialize({
             version: 1,
@@ -1860,7 +2008,9 @@ describe('goal controller and scheduler', () => {
         GoalController.create(task, { objective: 'goal', source: 'tui' });
         const goal = task.goal_state!;
         goal.attempts = 3;
+        goal.executionStarted = true;
         goal.startedAt = '2026-01-01T00:00:00.000Z';
+        const firstStartedAt = goal.startedAt;
         const assistant = new AssistantMessage();
         assistant.usage = Usage.fromRaw({ total_tokens: 1234 });
         task.chat_context.appendMessage(assistant);
@@ -1878,7 +2028,7 @@ describe('goal controller and scheduler', () => {
         expect(goal.status).toBe('complete');
         expect(goal.attempts).toBe(0);
         expect(goal.tokenUsageBaseline).toBe(0);
-        expect(goal.startedAt).toBe(goal.completedAt);
+        expect(goal.startedAt).toBe(firstStartedAt);
         expect(getGoalTokenUsage(task)).toBe(1234);
         const summary = GoalController.getStatus(task).summary;
         expect(summary?.attempts).toBe(0);

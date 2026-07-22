@@ -593,7 +593,9 @@ export async function processTaskCompletion(
                     const prevPartCount = assistant_message.content.length;
                     const prevPartTypes = assistant_message.content.map((part) => part.type);
                     assistant_message.mergeChunk(chunk_resp.content);
-                    assistant_message.usage = chunk_resp.usage;
+                    if (chunk_resp.usage) {
+                        assistant_message.usage = chunk_resp.usage;
+                    }
                     task.applyRuntimeMetadataToAssistant(assistant_message);
 
                     resolveStreamingToolCallsForTask(task, assistant_message);

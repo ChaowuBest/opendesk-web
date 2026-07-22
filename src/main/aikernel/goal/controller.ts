@@ -203,15 +203,16 @@ function computeTotalTokenUsage(task: TaskState): number {
  * 旧数据无 baseline 时退化为全量统计（保持向后兼容）。
  */
 function computeGoalTokenUsage(task: TaskState, goal: GoalState): number {
+    if (goal.awaitingContextEntry === true && goal.pendingContinuation?.reason !== 'edit') {
+        return 0;
+    }
     const total = computeTotalTokenUsage(task);
     const baseline = goal.tokenUsageBaseline ?? 0;
     return Math.max(0, total - baseline);
 }
 
 function resetCompletedGoalTurnCounters(goal: GoalState): void {
-    const completedAt = goal.completedAt ?? nowIso();
     goal.attempts = 0;
-    goal.startedAt = completedAt;
 }
 
 export interface GoalPausedOrBlockedSnapshot {
@@ -243,6 +244,49 @@ export function getGoalTokenUsage(task: TaskState): number {
 export class GoalController {
     static getStatus(task: TaskState): GoalStatusView {
         return GoalStates.statusView(task.goal_state, task.goal_event_log);
+    }
+
+    static markAwaitingContextEntry(task: TaskState, goalId: string, goalRevision: number): boolean {
+        const goal = task.goal_state;
+        if (!goal || goal.id !== goalId || goal.revision !== goalRevision || goal.status !== 'active') {
+            return false;
+        }
+        if (goal.awaitingContextEntry === true) return true;
+        goal.awaitingContextEntry = true;
+        goal.updatedAt = nowIso();
+        persistGoalChange(task);
+        return true;
+    }
+
+    static markContextEntered(task: TaskState, goalId: string, goalRevision: number): boolean {
+        const goal = task.goal_state;
+        if (!goal || goal.id !== goalId || goal.revision !== goalRevision || goal.status !== 'active') {
+            return false;
+        }
+
+        const at = nowIso();
+        let changed = false;
+        if (goal.executionStarted !== true) {
+            goal.executionStarted = true;
+            changed = true;
+        }
+        if (!goal.startedAt) {
+            goal.startedAt = at;
+            changed = true;
+        }
+        if (goal.awaitingContextEntry === true) {
+            if (goal.pendingContinuation?.reason !== 'edit') {
+                // A Goal attached to an existing turn starts consuming tokens only after its first prompt enters context.
+                goal.tokenUsageBaseline = computeTotalTokenUsage(task);
+            }
+            delete goal.awaitingContextEntry;
+            changed = true;
+        }
+        if (changed) {
+            goal.updatedAt = at;
+            persistGoalChange(task);
+        }
+        return true;
     }
 
     static create(task: TaskState, input: CreateGoalInput): GoalCommandResult {
@@ -545,6 +589,7 @@ export class GoalController {
         const at = nowIso();
         goal.status = 'cleared';
         task.goalRuntime.clearPendingGoalEditReminders();
+        delete goal.awaitingContextEntry;
         goal.pendingContinuation = undefined;
         goal.pendingSupplements = [];
         goal.schedulerLease = undefined;
@@ -591,6 +636,7 @@ export class GoalController {
         if (evaluation.status === 'met') {
             goal.status = 'complete';
             goal.completedAt = normalizeGoalTerminalTimestamp(goal, evaluation.evaluatedAt);
+            delete goal.awaitingContextEntry;
             goal.pendingContinuation = undefined;
             goal.pendingSupplements = [];
             goal.schedulerLease = undefined;
