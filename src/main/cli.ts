@@ -44,7 +44,6 @@ import { registerServeCommand } from './tui/subcommands/serve.js';
 import { setRuntimeLocale, t } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
-import { initAgentGateHook } from './applications/agentgate/hook.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { logger } from './utils/logger.js';
@@ -389,16 +388,6 @@ async function main(args: CommandLineArgs) {
     // 初始化遥测系统（尽早初始化，在任何 LLM 请求之前）
     initTelemetry();
     const startupTrace = new StartupTrace('startup.cli');
-
-    // 初始化 AgentGate Hook（注册 beforeToolCall 安全审查）
-    initAgentGateHook();
-
-    // 注册 CLI 侧 afterFinishTurn 钩子（会话结束时展示拦截告警）
-    {
-        const { AgentGateApplication } = await import('./applications/agentgate/app.js');
-        const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
-        agApp?.registerCliHooks();
-    }
 
     const t1 = startupTrace.createPhase('startup.cli.temp_dir');
     const { initTempDir } = await import('./utils/temp.js');
