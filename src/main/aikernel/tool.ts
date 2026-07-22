@@ -176,6 +176,11 @@ export class BaseTool<T extends z.ZodType> {
     params: T;
     executor?: (args: z.output<T>, taskState?: TaskState) => Promise<string>;
     universalExecutor?: (args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>;
+    /**
+     * 标记此工具是否需要串行执行。
+     * 为 true 时，同一批次中的多个此类工具调用将按顺序执行，避免并发写入同一文件导致竞态条件。
+     */
+    serialExecution: boolean = false;
 
     constructor(name: string, description: string, params: T) {
         this.name = name;

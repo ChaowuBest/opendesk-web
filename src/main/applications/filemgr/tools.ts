@@ -1510,6 +1510,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         super('writeFile', '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式', writeFileSchema);
 
         this.setExecutor(this.executeCommand);
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1680,6 +1681,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1881,6 +1883,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2188,6 +2191,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof applyPatchSchema>, taskState?: TaskState): PermissionRequest[] {

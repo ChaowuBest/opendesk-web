@@ -974,6 +974,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
             NODE_FILE_COMMANDS.writeText
         );
         this.setExecutor(this.run.bind(this));
+        this.serialExecution = true;
     }
 
     private async run(args: z.output<typeof NodeWriteFileSchema>, taskState?: TaskState): Promise<string> {
@@ -1055,6 +1056,7 @@ export class FetchNodeFileTool extends NodeCommandTool<typeof FetchNodeFileSchem
             NODE_FILE_COMMANDS.fetch
         );
         this.setExecutor(this.run.bind(this));
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof FetchNodeFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1185,6 +1187,7 @@ export class SendNodeFileTool extends NodeCommandTool<typeof SendNodeFileSchema>
             NODE_FILE_COMMANDS.write
         );
         this.setExecutor(this.run.bind(this));
+        this.serialExecution = true;
     }
 
     getDeclaredPermissions(args: z.output<typeof SendNodeFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1305,6 +1308,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
             NODE_FILE_COMMANDS.editText
         );
         this.setExecutor(this.run.bind(this));
+        this.serialExecution = true;
     }
 
     private async run(args: z.output<typeof NodeEditFileSchema>, taskState?: TaskState): Promise<string> {
@@ -1384,6 +1388,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
             NODE_FILE_COMMANDS.searchReplace
         );
         this.setExecutor(this.run.bind(this));
+        this.serialExecution = true;
     }
 
     private async run(args: z.output<typeof NodeSearchReplaceSchema>, taskState?: TaskState): Promise<string> {
