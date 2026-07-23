@@ -1,4 +1,15 @@
 /**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * AgentGate Floating Window — 安全网关浮窗组件
  *
  * 显示 AgentGate 的拦截/放行记录，支持：
@@ -926,12 +937,12 @@ class AgentGateFloatingWindow extends HTMLElement {
                     experimentalEnabled = settingData?.debug?.experimental_feature === true;
                 } catch {}
                 // 读取安全网关总开关真实状态（区别于浮窗显示开关）
-                let gateEnabled = true;
+                let gateEnabled = false;
                 try {
                     gateEnabled = await registry?.callMainWorld('agentgate', 'getEnabled');
                 } catch {}
                 this._globalEnabledBase = experimentalEnabled;
-                this._gateEnabled = gateEnabled !== false;
+                this._gateEnabled = gateEnabled === true;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
                 // 读取恶意技能检测开关真实状态（默认 true）
@@ -985,7 +996,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._settingCallback = (data) => {
                 const agConfig = data?.applications?.agentgate || {};
                 const experimentalEnabled = data?.debug?.experimental_feature === true;
-                const agentgateEnabled = agConfig.enabled !== false;
+                const agentgateEnabled = agConfig.enabled === true;
 
                 // AgentGate is only truly active when experimental mode AND its own enabled switch are both on
                 this._globalEnabledBase = experimentalEnabled;
