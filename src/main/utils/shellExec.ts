@@ -365,6 +365,24 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
         result = { ...baseEnv, ...globalEnviron };
     }
 
+    // Windows 上系统 PATH 变量注册为 "Path"（混合大小写），{ ...process.env } 展开为
+    // plain object 后 process.env 的大小写不敏感代理失效，下游 result.PATH 会返回
+    // undefined，导致 spawn 时丢失系统 PATH，子进程找不到 npx/uvx/node 等命令。
+    // 在统一入口处归一化为 "PATH"，所有调用方（asyncShellExec/shellExec/mcpmgr 等）都自动受益。
+    const pathKey = Object.keys(result).find((k) => k.toLowerCase() === 'path');
+    if (pathKey && pathKey !== 'PATH') {
+        result.PATH = result[pathKey];
+        delete result[pathKey];
+    }
+
+    // 鸿蒙平台上 hnp 安装的 node/python/uv/bash 等可执行文件位于 /data/service/hnp/bin，
+    // process.env.PATH 可能不包含该路径，导致 spawn('npx'/'uvx'/'node'/'python') 时 ENOENT。
+    // 显式 prepend 确保子进程能找到这些命令。与 findExecutableInPath 中的 hnp 搜索目录保持一致。
+    if ((process.platform as string) === 'openharmony') {
+        const hnpBin = '/data/service/hnp/bin';
+        result.PATH = result.PATH ? `${hnpBin}:${result.PATH}` : hnpBin;
+    }
+
     injectNonInteractiveEnv(result);
     return result;
 }
