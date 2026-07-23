@@ -740,6 +740,10 @@ export const zhCn: Record<string, string> = {
     'tools.askFromTask.name': '任务追问',
     'tools.deleteTasks.name': '删除任务',
     'tools.createSubTask.name': '子任务',
+    'tools.createSubTask.detached':
+        '子任务因主任务收到新消息而转为后台执行，请使用 planning-waitSubTask 工具获取结果。',
+    'tools.createSubTask.endedWithoutResult': '子任务已结束但未返回结果。',
+    'tools.createSubTask.executionFailed': '子任务执行失败: ${error}',
     'tools.waitSubTask.name': '等待子任务',
     'tools.attachToSubTask.name': '追加消息到子任务',
     'tools.askUser.name': '询问用户',

@@ -137,6 +137,13 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        interruptForNewMessage: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:interruptForNewMessage', taskId);
+            if (result.status !== 'ok') {
+                console.error('interrupting task for new message failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         triggerTaskReview: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:triggerTaskReview', taskId);
             if (result.status !== 'ok') {

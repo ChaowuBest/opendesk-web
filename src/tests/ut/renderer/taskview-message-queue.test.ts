@@ -90,6 +90,57 @@ describe('task-view message queue', () => {
         };
     });
 
+    test('interrupts the current turn without stopping child tasks before sending a queued message immediately', async () => {
+        const interruptForNewMessage = jest.fn(async () => undefined);
+        window.taskManagerAPI = {
+            submitMessage,
+            interruptForNewMessage
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            messageQueue: Array<{
+                id: string;
+                message: string;
+                attachedFilePaths: string[];
+                attachedImages: string[];
+                selectedExecutionNodeId?: string | null;
+            }>;
+            _handleRunningGoalInput: jest.Mock;
+            _updateMessageQueuePanel: jest.Mock;
+            sendQueueMessageImmediately: (id: string) => Promise<void>;
+        };
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
+        taskView.messageQueue = [
+            {
+                id: 'queue-1',
+                message: 'send now',
+                attachedFilePaths: [],
+                attachedImages: [],
+                selectedExecutionNodeId: 'node-1'
+            }
+        ];
+        taskView._handleRunningGoalInput = jest.fn(async () => 'not-goal');
+        taskView._updateMessageQueuePanel = jest.fn();
+
+        await taskView.sendQueueMessageImmediately('queue-1');
+
+        expect(interruptForNewMessage).toHaveBeenCalledWith('task-1');
+        expect(submitMessage).toHaveBeenCalledWith('task-1', {
+            message: 'send now',
+            attachedFilePaths: [],
+            attachedImages: [],
+            selectedModel: undefined,
+            reasoningEffort: undefined,
+            selectedExecutionNodeId: 'node-1'
+        });
+        expect(interruptForNewMessage.mock.invocationCallOrder[0]).toBeLessThan(
+            submitMessage.mock.invocationCallOrder[0]
+        );
+        expect(taskView.messageQueue).toHaveLength(0);
+    });
+
     test('auto-sends queued messages when a hidden running task stops', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

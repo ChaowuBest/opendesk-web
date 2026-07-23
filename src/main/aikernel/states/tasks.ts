@@ -328,6 +328,8 @@ export class TaskState {
     }
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
+    /** 父任务被新消息中断时，仅唤醒允许转为后台执行的等待者 */
+    private _parentInterruptResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     _retryNowResolver: (() => void) | null = null;
     /** LLM 重试等待窗口是否已经对前端可见 */
@@ -1514,10 +1516,71 @@ export class TaskState {
             return;
         }
 
-        for (const resolver of this._stopResolvers) {
+        const stopResolvers = this._stopResolvers;
+        const parentInterruptResolvers = this._parentInterruptResolvers;
+        this._stopResolvers = [];
+        this._parentInterruptResolvers = [];
+        for (const resolver of [...stopResolvers, ...parentInterruptResolvers]) {
             resolver();
         }
+
+        if (!this._turnRunning) {
+            this.sendSubscriptionFeedback();
+        }
+        this.persistLater();
+        this.task_manager_state.publishTaskListUpdate();
+    }
+
+    /**
+     * 唤醒允许因父任务中断而返回的等待者，但不停止任务。
+     * 用于立即发送场景下让 startSubTask 返回而子任务继续在后台运行。
+     */
+    resolveParentInterruptWaiters() {
+        const resolvers = this._parentInterruptResolvers;
+        this._parentInterruptResolvers = [];
+        for (const resolver of resolvers) {
+            resolver();
+        }
+    }
+
+    /**
+     * 中断当前任务以提交新消息（立即发送场景），但不停止正在运行的子任务。
+     * 子任务会被"分离"到后台继续执行，可通过 waitSubTask 获取结果。
+     * 与 stop() 的区别：不级联停止子任务，而是唤醒子任务的等待者让 startSubTask 返回。
+     */
+    interruptForNewMessage() {
+        this.ensureLoaded();
+        const alreadyStopped = this.task_status === 'stopped';
+
+        if (!alreadyStopped) {
+            this.task_status = 'stopped';
+            this.stop_requested_by_user = true;
+            this.finished_at = new Date();
+            logger.info(`task ${this.task_id} interrupted for new message`);
+            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            this.markInterruptedToolCalls('任务已停止');
+            this._retryDelayPending = false;
+        }
+
+        // 不级联停止子任务，只唤醒允许因父任务中断而返回的 startSubTask 等待者
+        // 子任务继续在后台运行，通过 pendingSubTasks 注册后可用 waitSubTask 获取结果
+        for (const task of this.task_manager_state.tasks) {
+            if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
+                task.resolveParentInterruptWaiters();
+            }
+        }
+
+        if (alreadyStopped) {
+            return;
+        }
+
+        const stopResolvers = this._stopResolvers;
+        const parentInterruptResolvers = this._parentInterruptResolvers;
         this._stopResolvers = [];
+        this._parentInterruptResolvers = [];
+        for (const resolver of [...stopResolvers, ...parentInterruptResolvers]) {
+            resolver();
+        }
 
         if (!this._turnRunning) {
             this.sendSubscriptionFeedback();
@@ -1571,10 +1634,22 @@ export class TaskState {
             this.finished_at = new Date();
             this.markInterruptedToolCalls(options.reason, options.reason);
         }
-        for (const resolver of this._stopResolvers) {
+
+        // runtime interruption 用于暂停目标、清除目标或执行超时，必须同时终止
+        // 仍在执行的子任务。只有 interruptForNewMessage 会保留子任务并将其转到后台。
+        for (const task of this.task_manager_state.tasks) {
+            if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
+                task.stop(options.userInitiated === true ? 'user' : 'system');
+            }
+        }
+
+        const stopResolvers = this._stopResolvers;
+        const parentInterruptResolvers = this._parentInterruptResolvers;
+        this._stopResolvers = [];
+        this._parentInterruptResolvers = [];
+        for (const resolver of [...stopResolvers, ...parentInterruptResolvers]) {
             resolver();
         }
-        this._stopResolvers = [];
         if (!this._turnRunning) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
             await this.sendSubscriptionFeedback();
@@ -1672,10 +1747,13 @@ export class TaskState {
      * @param callback  每次收到更新 chunk 时的回调
      * @param resolveOnStop  如果为 true，当 stop() 被调用时立即 resolve（用于父任务等待子任务完成的场景）；
      *                       默认 false，则等待 processTaskTurn 正常结束后通过 sendSubscriptionFeedback 触发 resolve。
+     * @param resolveOnParentInterrupt 如果为 true，父任务因新消息中断时也立即 resolve，
+     *                                 仅供 startSubTask 将同步子任务转为后台执行。
      */
     async waitUntilFinished(
         callback?: (updateChunk: TaskUpdateChunk) => void | Promise<void>,
-        resolveOnStop: boolean = false
+        resolveOnStop: boolean = false,
+        resolveOnParentInterrupt: boolean = false
     ): Promise<void> {
         const activeStatuses: TaskStatus[] = ['running', 'waiting'];
         if (!activeStatuses.includes(this.task_status)) {
@@ -1686,12 +1764,19 @@ export class TaskState {
             const settle = () => {
                 if (settled) return;
                 settled = true;
+                this._stopResolvers = this._stopResolvers.filter((resolver) => resolver !== settle);
+                this._parentInterruptResolvers = this._parentInterruptResolvers.filter(
+                    (resolver) => resolver !== settle
+                );
                 this.removeSubscriber(subscriber.subscription_id);
                 resolve();
             };
 
             if (resolveOnStop) {
                 this._stopResolvers.push(settle);
+            }
+            if (resolveOnParentInterrupt) {
+                this._parentInterruptResolvers.push(settle);
             }
 
             const subscriber = new CallbackTaskUpdateSubscriber((chunkUpdate: TaskUpdateChunk) => {

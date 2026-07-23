@@ -1638,6 +1638,14 @@ const registerTaskManagerAPIHandlers = () => {
         task.stop();
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:interruptForNewMessage', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        task.interruptForNewMessage();
+        return { status: 'ok' };
+    });
     ipcMain.handle('taskManager:skipRetryDelay', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

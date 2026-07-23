@@ -1849,7 +1849,7 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 立即发送队列中的消息（打断当前任务）
+     * 立即发送队列中的消息（中断当前任务，正在执行的子任务转为后台继续运行）
      * @param {string} id 消息 ID
      */
     async sendQueueMessageImmediately(id) {
@@ -1869,12 +1869,12 @@ class TaskView extends HTMLElement {
         this._immediateQueueSending = true;
         this.removeFromMessageQueue(id);
 
-        // 停止当前任务
+        // 中断当前任务（不停止正在运行的子任务，子任务转为后台执行）
         if (this.task_status === 'running') {
             try {
-                await window.taskManagerAPI.stopTask(this.task_id);
+                await window.taskManagerAPI.interruptForNewMessage(this.task_id);
             } catch (error) {
-                console.error('Failed to stop task for queue message:', error);
+                console.error('Failed to interrupt task for queue message:', error);
                 this._immediateQueueSending = false;
                 return;
             }
