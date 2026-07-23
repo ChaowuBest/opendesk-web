@@ -193,9 +193,62 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             criteria: config.criteria
         });
         await subTask.submitUserMessage(userMessage);
-        await subTask.waitUntilFinished(progressCallback, true);
+        await subTask.waitUntilFinished(progressCallback, true, true);
 
-        // 等待一小段时间，让 afterFinishTurn 钩子完成（如果需要追加 synthetic attemptCompletion）
+        // 如果子任务仍在运行（因父任务立即发送消息而被"分离"），转为后台异步子任务
+        if (subTask.task_status === 'running' || subTask.task_status === 'waiting') {
+            const resultPromise = (async (): Promise<SubTaskResult> => {
+                try {
+                    await waitForTaskWithProgress(subTask, undefined);
+                    if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
+                        await appendSubTaskStopCompletion(subTask);
+                    }
+                    const completionResult = extractAttemptCompletionResult(subTask);
+                    if (completionResult) {
+                        return { ...completionResult, subtask_id: subTask.task_id };
+                    }
+                    return {
+                        success: false,
+                        result: t('tools.createSubTask.endedWithoutResult'),
+                        subtask_id: subTask.task_id
+                    };
+                } catch (err: any) {
+                    const error = err?.message ?? String(err);
+                    subTask.stop('system');
+                    logger.warn(`[subtask] detached subtask wait failed subtask=${subTask.task_id} error=${error}`);
+                    return {
+                        success: false,
+                        result: t('tools.createSubTask.executionFailed', { error }),
+                        subtask_id: subTask.task_id
+                    };
+                }
+            })();
+
+            pendingSubTasks.set(subTask.task_id, {
+                promise: resultPromise,
+                taskState: subTask
+            });
+            resultPromise
+                .then(() => {
+                    pendingSubTasks.delete(subTask.task_id);
+                })
+                .catch(() => {
+                    pendingSubTasks.delete(subTask.task_id);
+                });
+
+            logger.info(
+                `[subtask] subtask=${subTask.task_id} detached to background (parent interrupted for new message)`
+            );
+
+            return {
+                subtask_id: subTask.task_id,
+                success: true,
+                result: t('tools.createSubTask.detached'),
+                status: 'success'
+            };
+        }
+
+        // 正常流程：等待 afterFinishTurn 钩子完成（如果需要追加 synthetic attemptCompletion）
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // 兜底：afterFinishTurn 钩子通常已追加，此处防御钩子未触发的极端情况
@@ -215,15 +268,16 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         // 理论上不应该到达这里，因为 hooks 会强制要求 attemptCompletion
         return {
             success: false,
-            result: '子任务已结束但未返回结果。',
+            result: t('tools.createSubTask.endedWithoutResult'),
             subtask_id: subTask.task_id
         };
     } catch (err: any) {
+        const error = err?.message ?? String(err);
         subTask.stop('system');
-        logger.warn(`[subtask] subtask failed subtask=${subTask.task_id} error=${err?.message ?? String(err)}`);
+        logger.warn(`[subtask] subtask failed subtask=${subTask.task_id} error=${error}`);
         return {
             success: false,
-            result: `子任务执行失败: ${err?.message ?? String(err)}`,
+            result: t('tools.createSubTask.executionFailed', { error }),
             subtask_id: subTask.task_id
         };
     }

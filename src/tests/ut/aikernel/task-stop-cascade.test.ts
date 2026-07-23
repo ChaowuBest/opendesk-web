@@ -1,4 +1,6 @@
 import { jest } from '@jest/globals';
+import { startSubTask, waitSubTaskResult } from '../../../main/aikernel/planning/tools.js';
+import { SkillRegistry } from '../../../main/aikernel/skill.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { Setting } from '../../../main/utils/setting.js';
 
@@ -46,6 +48,110 @@ describe('TaskState.stop() child task cascade', () => {
 
         expect(parent.task_status).toBe('stopped');
         expect(child.task_status).toBe('stopped');
+    });
+
+    test('interrupting for a new message does not finish unrelated child waiters', async () => {
+        const { parent, child } = createTaskTree('running');
+        let waiterFinished = false;
+        const waiter = child.waitUntilFinished(undefined, true).then(() => {
+            waiterFinished = true;
+        });
+
+        parent.interruptForNewMessage();
+        const waiterState = await Promise.race([
+            waiter.then(() => 'finished'),
+            new Promise<string>((resolve) => setTimeout(() => resolve('waiting'), 0))
+        ]);
+
+        expect(parent.task_status).toBe('stopped');
+        expect(child.task_status).toBe('running');
+        expect(waiterState).toBe('waiting');
+        expect(waiterFinished).toBe(false);
+
+        child.stop('system');
+        await waiter;
+    });
+
+    test('interrupting for a new message releases the child waiter that opts into detaching', async () => {
+        const { parent, child } = createTaskTree('running');
+        const detachWaiter = child.waitUntilFinished(undefined, true, true);
+
+        parent.interruptForNewMessage();
+
+        await expect(detachWaiter).resolves.toBeUndefined();
+        expect(parent.task_status).toBe('stopped');
+        expect(child.task_status).toBe('running');
+
+        child.stop('system');
+    });
+
+    test('a runtime interruption that stops running tools also stops child tasks', async () => {
+        const { parent, child } = createTaskTree('running');
+
+        await parent.interruptRunningTurn({
+            reason: 'goal_pause',
+            stopRunningTools: true,
+            cancelPermissionPrompts: true
+        });
+
+        expect(parent.task_status).toBe('stopped');
+        expect(child.task_status).toBe('stopped');
+    });
+
+    test('reports a detached child wait failure instead of leaving waitSubTask pending', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task-parent';
+        parent.task_status = 'running';
+        manager.tasks.push(parent);
+        jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+        let child!: TaskState;
+        let waitCallCount = 0;
+        const detached = await startSubTask({
+            parentTask: parent,
+            config: {
+                title: 'detached child',
+                objective: 'finish in background',
+                criteria: 'return a result',
+                isAsync: false
+            },
+            onCreated: (createdChild) => {
+                child = createdChild;
+                child.task_status = 'running';
+                jest.spyOn(child, 'submitUserMessage').mockResolvedValue({ status: 'ok' });
+                jest.spyOn(child, 'waitUntilFinished').mockImplementation(async () => {
+                    waitCallCount++;
+                    if (waitCallCount === 1) return;
+                    if (waitCallCount === 2) {
+                        await new Promise((resolve) => setTimeout(resolve, 0));
+                        child.task_status = 'stopped';
+                        throw new Error('detached wait failed');
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 1));
+                });
+            }
+        });
+
+        expect(detached).toMatchObject({
+            success: true,
+            subtask_id: child.task_id
+        });
+
+        const result = await Promise.race([
+            waitSubTaskResult({ subtaskId: child.task_id, parentTask: parent }),
+            new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100))
+        ]);
+
+        expect(result).not.toBe('timed-out');
+        expect(result).toMatchObject({
+            success: false,
+            subtask_id: child.task_id,
+            result: expect.stringContaining('detached wait failed')
+        });
     });
 
     test('allows a normally finished task to start a new user turn', async () => {

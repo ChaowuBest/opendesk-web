@@ -755,6 +755,10 @@ export const enUs: Record<string, string> = {
     'tools.askFromTask.name': 'Ask Task',
     'tools.deleteTasks.name': 'Delete Tasks',
     'tools.createSubTask.name': 'Sub-task',
+    'tools.createSubTask.detached':
+        'The sub-task continues in the background because the parent received a new message. Use planning-waitSubTask to retrieve its result.',
+    'tools.createSubTask.endedWithoutResult': 'The sub-task finished without returning a result.',
+    'tools.createSubTask.executionFailed': 'Sub-task execution failed: ${error}',
     'tools.waitSubTask.name': 'Await Sub-task',
     'tools.attachToSubTask.name': 'Append to Sub-task',
     'tools.askUser.name': 'Ask User',
