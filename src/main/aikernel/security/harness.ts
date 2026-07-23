@@ -25,6 +25,15 @@ import type { ModeDecl } from '../agents/common.js';
 import { normalizePath } from '../../../utils/path.js';
 import path from 'path';
 
+export function createTaskArtifactPermissionRules(artifactDirectory: string): PermissionRule[] {
+    const dirNorm = normalizePath(path.resolve(artifactDirectory));
+    const pattern = `${dirNorm}{,/**}`;
+    return [
+        { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
+        { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' }
+    ];
+}
+
 export type NodeExecutionCapabilities = {
     nodeId: string;
     displayName?: string;
@@ -149,13 +158,7 @@ export class HarnessContext {
     async grantTaskArtifactAccess(artifactDirectory: string): Promise<void> {
         if (!this.permission) return;
 
-        const dirNorm = normalizePath(path.resolve(artifactDirectory));
-        const pattern = `${dirNorm}{,/**}`;
-        const rules: PermissionRule[] = [
-            { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
-            { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' }
-        ];
-        for (const rule of rules) {
+        for (const rule of createTaskArtifactPermissionRules(artifactDirectory)) {
             await this.permission.addRule(rule);
         }
     }

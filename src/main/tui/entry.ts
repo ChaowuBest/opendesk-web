@@ -122,6 +122,11 @@ export class OpenDeskTUI {
     /** 所有任务共享的权限确认 provider（内含请求队列，确保同时只弹一个弹窗） */
     private sharedPermissionPrompt: TUIPermissionPromptProvider;
 
+    /** 获取共享的权限确认 provider（供外部设置 lazy harness init 使用） */
+    get permissionPromptProvider(): TUIPermissionPromptProvider {
+        return this.sharedPermissionPrompt;
+    }
+
     /** 主任务专用的 askUser provider */
     private sharedAskUserProvider: TUIAskUserProvider;
     /** 主任务专用的 exitPlanMode provider */

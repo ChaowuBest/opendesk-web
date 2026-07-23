@@ -121,6 +121,18 @@ export class HeadlessRunner {
         }
     }
 
+    /**
+     * 为从磁盘恢复的旧任务设置延迟 harness 初始化。
+     * 应在 execute() 之前调用，确保 getTaskLoadResult() 能触发 lazy harness init。
+     */
+    async setupLazyHarnessInit(): Promise<void> {
+        await this.taskManagerState.setupLazyHarnessInit(
+            this.activeMode,
+            this.args.workspace,
+            () => new HeadlessPermissionPromptProvider()
+        );
+    }
+
     async execute(command: string): Promise<void> {
         const startTime = Date.now();
 

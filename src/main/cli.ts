@@ -451,6 +451,7 @@ async function main(args: CommandLineArgs) {
         t4.end();
 
         const runner = new HeadlessRunner(args);
+        await runner.setupLazyHarnessInit();
         ApplicationRegistry.onReady(() => {
             runner.execute(args.command!);
             startupTrace.end();
@@ -485,6 +486,13 @@ async function main(args: CommandLineArgs) {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
         t6.end();
+
+        // 为从磁盘恢复的旧任务设置延迟 harness 初始化
+        await tui.taskManagerState.setupLazyHarnessInit(
+            tui.activeMode,
+            args.workspace,
+            () => tui.permissionPromptProvider
+        );
 
         // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
