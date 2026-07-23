@@ -21,21 +21,21 @@
  * AgentGate 地址可通过环境变量 AGENT_GATE_URL 配置，默认 http://127.0.0.1:9100
  */
 
-import { HookRegistry, type BeforeToolCallFeedback } from '../aikernel/hooks.js';
-import type { TaskState } from '../aikernel/states/tasks.js';
-import type { ToolCall } from '../aikernel/messages.js';
-import { Setting } from '../utils/setting.js';
-import { matchesToolName } from '../aikernel/compaction/compactable-tools.js';
+import { HookRegistry, type BeforeToolCallFeedback } from '../../aikernel/hooks.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
+import type { ToolCall } from '../../aikernel/messages.js';
+import { Setting } from '../../utils/setting.js';
+import { matchesToolName } from '../../aikernel/compaction/compactable-tools.js';
 import {
     saveInterceptionRecord,
     updateInterceptionAttribution,
     isBlacklisted,
     isSkillNameBlacklisted,
     getBlacklistedSkillDirectories
-} from '../applications/skillmgr/blacklist.js';
-import { attributeInterception } from '../applications/agentgate/skillAttribution.js';
-import { AgentGateBridge } from '../applications/agentgate/agent-gate-bridge.js';
-import { logger } from '../utils/logger.js';
+} from '../skillmgr/blacklist.js';
+import { attributeInterception } from './skillAttribution.js';
+import { AgentGateBridge } from './agent-gate-bridge.js';
+import { logger } from '../../utils/logger.js';
 import path from 'path';
 
 const AGENT_TYPE = 'opendesk';
@@ -61,12 +61,28 @@ const AGENT_VERSION = '0.2.0';
  * 探测结果缓存，仅首次工具调用时有几百 ms 延迟。
  */
 const GATE_PROBE_RANGE = [9100, 9101, 9102, 9103, 9104, 9105];
+/** 探测成功的 URL 缓存（仅缓存成功结果，失败不缓存） */
 let _cachedGateUrl: string | null = null;
+/** 缓存时间戳，超过 TTL 后自动失效 */
+let _cachedGateUrlTime = 0;
+const PROBE_CACHE_TTL_MS = 60_000;
 let _probePromise: Promise<string> | null = null;
 
-/** 探测本地端口找 agent-gate（返回 healthy 的那个），找不到返回 9100 兜底 */
+/**
+ * 探测本地端口找 agent-gate（返回 healthy 的那个），找不到返回 9100 兜底。
+ *
+ * 缓存策略：
+ *   - 仅缓存探测成功的 URL，失败时不缓存（下次重新探测）
+ *   - 成功缓存有 TTL（60s），过期后自动重新探测
+ *   - 外部可通过 invalidateGateUrlCache() 在请求失败时主动失效
+ */
 async function probeGateUrl(): Promise<string> {
-    if (_cachedGateUrl) return _cachedGateUrl;
+    // 缓存命中：TTL 内的成功探测结果
+    if (_cachedGateUrl && Date.now() - _cachedGateUrlTime < PROBE_CACHE_TTL_MS) {
+        return _cachedGateUrl;
+    }
+    _cachedGateUrl = null;
+
     if (_probePromise) return _probePromise;
     _probePromise = (async () => {
         for (const port of GATE_PROBE_RANGE) {
@@ -78,6 +94,7 @@ async function probeGateUrl(): Promise<string> {
                     const data = await r.json().catch(() => null);
                     if (data && data.status === 'healthy') {
                         _cachedGateUrl = `http://127.0.0.1:${port}`;
+                        _cachedGateUrlTime = Date.now();
                         return _cachedGateUrl;
                     }
                 }
@@ -85,15 +102,20 @@ async function probeGateUrl(): Promise<string> {
                 /* 端口未监听或非 agent-gate，继续探测下一个 */
             }
         }
-        // 全部探测失败，兜底 9100（保持原行为：连不上则 fail-open）
-        _cachedGateUrl = 'http://127.0.0.1:9100';
-        return _cachedGateUrl;
+        // 全部探测失败，兜底 9100（不缓存，下次重新探测）
+        return 'http://127.0.0.1:9100';
     })();
     try {
         return await _probePromise;
     } finally {
         _probePromise = null;
     }
+}
+
+/** 失效探测缓存（请求失败时调用，使下次 resolveGateUrl 重新探测） */
+function invalidateGateUrlCache(): void {
+    _cachedGateUrl = null;
+    _cachedGateUrlTime = 0;
 }
 
 async function resolveGateUrl(): Promise<string> {
@@ -112,7 +134,7 @@ async function resolveGateUrl(): Promise<string> {
 /** 同步版：仅用 env/缓存，不触发探测（用于通知日志等非关键路径） */
 function resolveGateUrlSync(): string {
     if (process.env.AGENT_GATE_URL) return process.env.AGENT_GATE_URL;
-    if (_cachedGateUrl) return _cachedGateUrl;
+    if (_cachedGateUrl && Date.now() - _cachedGateUrlTime < PROBE_CACHE_TTL_MS) return _cachedGateUrl;
     return 'http://127.0.0.1:9100';
 }
 
@@ -137,27 +159,13 @@ function matchesAny(toolName: string, candidates: Iterable<string>): boolean {
     return false;
 }
 
-/** 检查试验性功能是否已启用 */
-function isExperimentalFeatureEnabled(): boolean {
-    try {
-        const setting = Setting.getInstance();
-        const data = setting.getData() as any;
-        return !!data?.debug?.experimental_feature;
-    } catch {
-        // Setting 不可用时回退为 false（不启用）
-        return false;
-    }
-}
-
-/** 检查安全网关总开关是否已启用（试验性功能 + 独立总开关双重门控） */
+/** 检查安全网关总开关是否已启用 */
 function isSecurityGatewayEnabled(): boolean {
-    if (!isExperimentalFeatureEnabled()) return false;
     try {
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
         const agConfig = data?.applications?.agentgate || {};
-        // enabled 默认 true，向后兼容
-        return agConfig.enabled !== false;
+        return agConfig.enabled === true;
     } catch {
         return false;
     }
@@ -451,6 +459,8 @@ async function checkWithAgentGate(
         if (!response.ok) {
             // Fail-Closed: 网络错误时默认放行（避免阻断正常工作）
             console.error(`[AgentGate] HTTP ${response.status}: ${response.statusText}`);
+            // 失效探测缓存，使下次 resolveGateUrl 重新探测正确端口
+            invalidateGateUrlCache();
             return { allowed: true, reason: 'Gate unreachable (fail-open)', riskLevel: '' };
         }
 
@@ -469,6 +479,8 @@ async function checkWithAgentGate(
     } catch (err) {
         // Fail-Open: AgentGate 不可用时放行，避免阻断正常工作
         console.error(`[AgentGate] 请求失败: ${String(err)}`);
+        // 失效探测缓存，使下次 resolveGateUrl 重新探测正确端口
+        invalidateGateUrlCache();
         return { allowed: true, reason: 'Gate unreachable (fail-open)', riskLevel: '', riskType: '' };
     }
 }
@@ -478,10 +490,7 @@ async function checkWithAgentGate(
  */
 async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<BeforeToolCallFeedback> {
     try {
-        // 试验性功能关闭时跳过所有审查
-        if (!isExperimentalFeatureEnabled()) return { operation: 'allow' };
-
-        // 安全网关总开关关闭时跳过审查（与 Dashboard 同步）
+        // 安全网关总开关关闭时跳过审查
         if (!isSecurityGatewayEnabled()) {
             return { operation: 'allow' };
         }
@@ -693,7 +702,7 @@ let initialized = false;
 
 /**
  * 初始化 AgentGate Hook（幂等）。
- * 在 OpenDesk 启动时调用一次即可。
+ * 在 OpenDesk 启动时调用一次即可。Hook 始终注册，运行时由 isSecurityGatewayEnabled() 决定是否执行。
  */
 export function initAgentGateHook(): void {
     if (initialized) return;
@@ -708,7 +717,7 @@ export function initAgentGateHook(): void {
         if (!isSecurityGatewayEnabled()) return;
         (async () => {
             try {
-                const { NotificationStore } = await import('../tui/components/notification.js');
+                const { NotificationStore } = await import('../../tui/components/notification.js');
                 const store = NotificationStore.getInstance();
                 store.push('info', 'AgentGate', '安全审查已就绪', `Hook 已注册 → ${resolveGateUrlSync()}`, {
                     priority: 'low'

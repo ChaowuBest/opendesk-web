@@ -111,6 +111,8 @@ class AgentGateBridge {
     private _running = false;
     /** 最近一次启动/运行错误，供 UI 显示 */
     private _lastError: string | null = null;
+    /** 待执行的重启定时器（stop 时全部清除，防止进程退出后的延迟重启绕过 enabled 检查） */
+    private _restartTimers: ReturnType<typeof setTimeout>[] = [];
 
     private mossState: ServiceState = {
         process: null,
@@ -620,6 +622,11 @@ class AgentGateBridge {
     }
 
     private launchService(state: ServiceState, settingInstance?: Setting): void {
+        // 启动前检查 enabled -- 防止重启定时器在用户关闭后仍触发启动
+        if (!this._isEnabled(settingInstance)) {
+            logger.info(`[AgentGateBridge] ${state.name} launch skipped: agentgate disabled`);
+            return;
+        }
         const node = this.resolveNodeCommand();
         if (!node) {
             const msg =
@@ -762,6 +769,8 @@ class AgentGateBridge {
                 env: mergedEnv,
                 stdio: ['pipe', 'pipe', 'pipe']
             });
+            // spawn 成功，清理已消费的重启定时器引用
+            this._restartTimers = [];
         } catch (err) {
             const msg = `启动 ${state.name} 子进程失败: ${err instanceof Error ? err.message : String(err)}`;
             this._lastError = msg;
@@ -783,7 +792,8 @@ class AgentGateBridge {
             if (state.restartCount < MAX_RESTART) {
                 state.restartCount++;
                 logger.info(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
-                setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                const timer = setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                this._restartTimers.push(timer);
             }
         });
 
@@ -802,7 +812,8 @@ class AgentGateBridge {
             if (state.restartCount < MAX_RESTART) {
                 state.restartCount++;
                 logger.info(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
-                setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                const timer = setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                this._restartTimers.push(timer);
             }
         });
     }
@@ -811,13 +822,16 @@ class AgentGateBridge {
 
     /** 配置变更时重启 AgentMoss + AgentGate（延迟等端口释放，由 exit 回调触发） */
     updateConfig(setting: Setting): void {
+        // enabled 关闭时不重启，由调用方通过 stop() 停止服务
+        if (!this._isEnabled(setting)) return;
         this._currentSetting = setting;
         [this.mossState, this.gateState].forEach((state) => {
             if (state.process) {
                 state.process.removeAllListeners('exit');
                 state.process.on('exit', () => {
                     state.restartCount = 0;
-                    setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                    const timer = setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                    this._restartTimers.push(timer);
                 });
                 state.process.kill();
             }
@@ -825,12 +839,19 @@ class AgentGateBridge {
     }
 
     stop(): void {
+        // 清除所有待执行的重启定时器，防止 stop 后延迟重启绕过 enabled 检查
+        for (const timer of this._restartTimers) {
+            clearTimeout(timer);
+        }
+        this._restartTimers = [];
+
         [this.mossState, this.gateState].forEach((state) => {
             if (state.process) {
                 state.process.removeAllListeners('exit');
                 state.process.kill();
                 state.process = null;
             }
+            state.restartCount = 0;
         });
         this._running = false;
         this._lastError = null;
@@ -839,6 +860,18 @@ class AgentGateBridge {
 
     isRunning(): boolean {
         return this._running;
+    }
+
+    /** 检查配置中 agentgate.enabled 是否为 true */
+    private _isEnabled(settingInstance?: Setting): boolean {
+        try {
+            const setting = settingInstance ?? this._currentSetting;
+            if (!setting) return false;
+            const data = setting.getData() as any;
+            return data?.applications?.agentgate?.enabled === true;
+        } catch {
+            return false;
+        }
     }
 }
 

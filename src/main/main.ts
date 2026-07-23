@@ -87,8 +87,7 @@ import { initTelemetry, shutdownTelemetry, reloadTelemetry, withSpan } from './t
 import { StartupTrace } from './telemetry/startup-tracer.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
-import { initAgentGateHook } from './agentgate/hook.js';
-import { HookRegistry } from './aikernel/hooks.js';
+import { initAgentGateHook } from './applications/agentgate/hook.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
@@ -2048,27 +2047,7 @@ const registerSettingAPIHandlers = () => {
                 }
             }
 
-            // 试验性功能 / 安全网关总开关 / 浮窗开关变更时，经 AgentGateApplication
-            // 同步 bridge + events-cache 运行时（application 读取最新配置决定启停）
-            const oldExpFeature = !!oldSettings?.debug?.experimental_feature;
-            const newExpFeature = !!updatedData?.debug?.experimental_feature;
-            const oldAgEnabled = oldSettings?.applications?.agentgate?.enabled !== false;
-            const newAgEnabled = updatedData?.applications?.agentgate?.enabled !== false;
-            const oldFloatingEnabled = oldSettings?.applications?.agentgate?.floatingWindowEnabled === true;
-            const newFloatingEnabled = updatedData?.applications?.agentgate?.floatingWindowEnabled === true;
-            const shouldResync =
-                oldExpFeature !== newExpFeature ||
-                oldAgEnabled !== newAgEnabled ||
-                oldFloatingEnabled !== newFloatingEnabled;
-            if (shouldResync) {
-                try {
-                    const { AgentGateApplication } = await import('./applications/agentgate/app');
-                    const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
-                    agApp?.syncRuntimeState();
-                } catch (err) {
-                    logger.warn(`AgentGate runtime sync failed: ${err}`);
-                }
-            }
+            // AgentGate 的 bridge 启停已由 AgentGateApplication.onConfigChanged 内部处理，无需在此同步
             if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
                 try {
                     await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);
@@ -2825,28 +2804,17 @@ function startApplication() {
         p1e.end();
         initAgentGateHook();
 
-        // 注册会话结束后的恶意 skill 归因 + 黑名单弹窗钩子
-        // 仅在会话真正结束时触发（finished / 用户主动停止），
-        // 跳过 question（等待用户回复）和 interrupted（被截断需继续）等中间态，
-        // 避免 turn 暂停时误触发归因分析导致会话中断。
-        // 归因计算逻辑在 AgentGateApplication.analyzeAndPromptMaliciousSkills，
-        // 此处只负责框架级钩子注册 + 向主窗口推送事件（globalMainWindow 仅 main.ts 持有）。
-        HookRegistry.afterFinishTurn(async (task) => {
-            if (task.task_status !== 'stopped') return;
+        // 注册 GUI 侧 afterFinishTurn 钩子（会话结束时恶意 skill 归因 + 弹窗推送）。
+        // 钩子注册逻辑在 AgentGateApplication.registerGuiHooks 内部，此处只注入 IPC 推送回调。
+        {
             const { AgentGateApplication } = await import('./applications/agentgate/app');
             const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
-            if (!agApp) return;
-            const notify = (channel: string, payload: object) => {
+            agApp?.registerGuiHooks((channel: string, payload: object) => {
                 if (globalMainWindow && !globalMainWindow.isDestroyed()) {
                     safeSendToWebContents(globalMainWindow.webContents, channel, payload);
                 }
-            };
-            await agApp.analyzeAndPromptMaliciousSkills(task, {
-                onAttributionStart: (taskId: string) => notify('agentgate:attributionStart', { taskId }),
-                onAttributionEnd: (taskId: string) => notify('agentgate:attributionEnd', { taskId }),
-                onPrompt: (taskId: string, skills: object[]) => notify('skill:blacklistPrompt', { taskId, skills })
             });
-        });
+        }
 
         // IPC handler：用户确认后将 skill 加入黑名单（转发到 SkillMgrApplication）
         ipcMain.on(
@@ -3151,16 +3119,8 @@ function startApplication() {
             }
         });
 
-        // 启动 AgentGate + AgentMoss 后端服务 + 事件缓存（经 AgentGateApplication 驱动，
-        // 是否真正启停由 application 读取当前配置决定；主框架不再直接持有 bridge 单例）
+        // 启动 AgentGate 运行时（注入事件推送回调；是否真正启停由 application 读取配置决定）
         try {
-            const settingData = Setting.getInstance().getData() as any;
-            const experimentalFeature = !!settingData?.debug?.experimental_feature;
-            const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
-            // [DEBUG-LOG] 鸿蒙诊断：打印开关状态，部署验证后删除此行
-            logger.info(
-                `[electron] AgentGate pre-check: experimental=${experimentalFeature}, agentgateEnabled=${agentgateEnabled}, settingData.applications=${JSON.stringify(settingData?.applications?.agentgate)}, settingData.debug=${JSON.stringify(settingData?.debug)}`
-            );
             const { AgentGateApplication } = await import('./applications/agentgate/app');
             const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
             if (agApp) {
@@ -3172,10 +3132,6 @@ function startApplication() {
                         });
                     }
                 });
-            } else if (experimentalFeature && agentgateEnabled) {
-                logger.info('[electron] AgentGate application not registered yet, bridge start deferred');
-            } else {
-                logger.info('[electron] AgentGate skipped — experimental feature or master switch disabled');
             }
         } catch (err) {
             logger.warn(`AgentGate bridge start failed: ${err}`);
@@ -3203,15 +3159,6 @@ function startApplication() {
     });
 
     app.on('will-quit', async () => {
-        // 关闭 AgentGate + AgentMoss 服务 + 事件缓存轮询（经 AgentGateApplication，best-effort）
-        try {
-            const { AgentGateApplication } = await import('./applications/agentgate/app');
-            const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
-            agApp?.stopRuntime();
-        } catch {
-            /* best-effort */
-        }
-
         globalShortcut.unregisterAll();
         if (updateClient) {
             updateClient.stopAutoCheck();

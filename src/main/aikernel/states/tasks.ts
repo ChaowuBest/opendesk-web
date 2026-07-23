@@ -2220,37 +2220,58 @@ export class TaskState {
             }
         }
 
-        // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
-        // 每个工具调用独立 try-catch，防止单个工具异常导致整个 turn 崩溃
-        await Promise.all(
-            pendingCalls.map(async ({ tool_call, partIndex }) => {
-                try {
-                    const alreadyDenied = permissionResults.get(tool_call);
-                    if (alreadyDenied) {
-                        await tool_call.render();
-                        await this.sendSubscriptionFeedback(partIndex);
-                        return;
-                    }
-                    await this.processToolCall(tool_call, true);
+        // 阶段 2：执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
+        // 标记了 serialExecution 的工具（如文件写入类）按顺序串行执行，避免并发写入同一文件导致竞态条件
+        // 其余工具并行执行；两组之间互相并发
+        const executeOne = async ({ tool_call, partIndex }: { tool_call: ToolCall; partIndex: number }) => {
+            try {
+                const alreadyDenied = permissionResults.get(tool_call);
+                if (alreadyDenied) {
                     await tool_call.render();
                     await this.sendSubscriptionFeedback(partIndex);
-                } catch (err) {
-                    logger.error(
-                        `task ${this.task_id}: tool call execution crashed: ${(err as Error)?.message || String(err)}`
-                    );
-                    tool_call.status = 'error';
-                    tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
-                    try {
-                        await tool_call.render();
-                        await this.sendSubscriptionFeedback(partIndex);
-                    } catch (renderErr) {
-                        logger.error(
-                            `task ${this.task_id}: failed to render tool call error state: ${(renderErr as Error)?.message || String(renderErr)}`
-                        );
-                    }
+                    return;
                 }
-            })
-        );
+                await this.processToolCall(tool_call, true);
+                await tool_call.render();
+                await this.sendSubscriptionFeedback(partIndex);
+            } catch (err) {
+                logger.error(
+                    `task ${this.task_id}: tool call execution crashed: ${(err as Error)?.message || String(err)}`
+                );
+                tool_call.status = 'error';
+                tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
+                try {
+                    await tool_call.render();
+                    await this.sendSubscriptionFeedback(partIndex);
+                } catch (renderErr) {
+                    logger.error(
+                        `task ${this.task_id}: failed to render tool call error state: ${(renderErr as Error)?.message || String(renderErr)}`
+                    );
+                }
+            }
+        };
+
+        const serialCalls: { tool_call: ToolCall; partIndex: number }[] = [];
+        const parallelCalls: { tool_call: ToolCall; partIndex: number }[] = [];
+        for (const item of pendingCalls) {
+            const tool = resolveToolForCallForTask(this, item.tool_call);
+            if (tool?.serialExecution) {
+                serialCalls.push(item);
+            } else {
+                parallelCalls.push(item);
+            }
+        }
+
+        await Promise.all([
+            // 串行执行文件写入类工具
+            (async () => {
+                for (const item of serialCalls) {
+                    await executeOne(item);
+                }
+            })(),
+            // 并行执行其余工具
+            Promise.all(parallelCalls.map(executeOne))
+        ]);
 
         return true;
     }

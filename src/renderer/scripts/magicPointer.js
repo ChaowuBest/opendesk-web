@@ -1,4 +1,15 @@
 /**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * Magic Pointer: hold Command (Meta) on macOS or Alt on Windows/Linux to activate a magic cursor with drawing capability.
  * On release, if strokes were drawn, shows a floating input box for annotation.
  * On send, captures screenshot of window content + drawn strokes and saves to Desktop.

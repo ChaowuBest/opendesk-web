@@ -2810,7 +2810,7 @@ class AgentGateEntryWidget extends HTMLElement {
                         fov.textContent = Number(agCfg.floatingWindowOpacity).toFixed(2);
                     }
                     // 同步总开关状态（直接从广播数据读取，避免 IPC 往返时序问题）
-                    if (ms) _tog(ms, agCfg.enabled !== false);
+                    if (ms) _tog(ms, agCfg.enabled === true);
                     // 同步恶意技能检测开关
                     if (ms2) _tog(ms2, agCfg.maliciousSkillDetection !== false);
                 });

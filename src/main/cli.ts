@@ -44,12 +44,8 @@ import { registerServeCommand } from './tui/subcommands/serve.js';
 import { setRuntimeLocale, t } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
-import { initAgentGateHook } from './agentgate/hook.js';
-import { HookRegistry } from './aikernel/hooks.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
-import { readInterceptionRecords } from './applications/skillmgr/blacklist.js';
-import { confidenceWeight } from './applications/agentgate/skillAttribution.js';
 import { logger } from './utils/logger.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
@@ -392,67 +388,6 @@ async function main(args: CommandLineArgs) {
     // 初始化遥测系统（尽早初始化，在任何 LLM 请求之前）
     initTelemetry();
     const startupTrace = new StartupTrace('startup.cli');
-
-    // 初始化 AgentGate Hook（仅在试验性功能启用时注册安全审查）
-    initAgentGateHook();
-
-    // 注册 CLI 侧的黑名单处理钩子（每次 turn 结束展示本 turn 产生的拦截）
-    HookRegistry.afterFinishTurn(async (task) => {
-        if (task.task_status !== 'stopped') return;
-        const allRecords = readInterceptionRecords(task.task_id);
-        if (allRecords.length === 0) return;
-
-        // 只取本 turn 新增的拦截记录
-        const currentTurn = task.getTurnGeneration ? task.getTurnGeneration() : 0;
-        const records = allRecords.filter((r) => r.turn === currentTurn);
-        if (records.length === 0) return;
-
-        // 整理 skill 列表（confidenceWeight 与 GUI 侧归因共用，避免散落重复定义）
-        const skillMap = new Map<string, { reason: string; evidence: string; confidence: string }>();
-        for (const rec of records) {
-            for (const c of rec.certain || []) {
-                const key = `${c.bundleName}/${c.skillName}`;
-                if (!skillMap.has(key)) {
-                    skillMap.set(key, { reason: rec.reason, evidence: `确定性归因: ${rec.toolName} 被拦截`, confidence: 'certain' });
-                }
-            }
-            for (const s of rec.suspected || []) {
-                const key = `${s.bundleName}/${s.skillName}`;
-                const existing = skillMap.get(key);
-                if (!existing || confidenceWeight(s.confidence) > confidenceWeight(existing.confidence)) {
-                    skillMap.set(key, { reason: rec.reason, evidence: s.evidence, confidence: s.confidence });
-                }
-            }
-        }
-
-        if (skillMap.size === 0) return;
-
-        // 补充上下文关联嫌疑 skill
-        const loadedKeys = new Set(task.getLoadedSkillsFromContext().map((s) => `${s.bundleName}/${s.skillName}`));
-        const coveredKeys = new Set(skillMap.keys());
-        for (const key of loadedKeys) {
-            if (!coveredKeys.has(key)) {
-                skillMap.set(key, { reason: '', evidence: '该 skill 在本会话中加载，可能作为攻击前驱参与', confidence: 'contextual' });
-            }
-        }
-
-        const entries = Array.from(skillMap.entries())
-            .sort((a, b) => confidenceWeight(b[1].confidence) - confidenceWeight(a[1].confidence));
-
-        console.warn('\n⚠️  检测到疑似恶意技能');
-        console.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        for (const [key, val] of entries) {
-            const tag = val.confidence === 'certain' ? '【确定】' :
-                val.confidence === 'high' ? '【高置信】' :
-                val.confidence === 'medium' ? '【中置信】' :
-                val.confidence === 'contextual' ? '【上下文】' :
-                '【低置信】';
-            console.warn(`  ${tag} ${key}`);
-            console.warn(`     ${val.evidence}`);
-        }
-        console.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.warn('💡 如需查看详情或管理黑名单，请使用 GUI 模式或访问 skill 管理中心。\n');
-    });
 
     const t1 = startupTrace.createPhase('startup.cli.temp_dir');
     const { initTempDir } = await import('./utils/temp.js');
