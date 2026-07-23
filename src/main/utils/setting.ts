@@ -44,6 +44,10 @@ function resolveWritableUserDataRoot(): string {
     if (cliConfigDirectory) {
         return cliConfigDirectory;
     }
+    // 环境变量优先级高于平台默认路径，用于 GUI 模式下绕过 npm/run-script-os 参数传递限制
+    if (process.env.OPENDDESK_CONFIG_DIRECTORY) {
+        return path.resolve(process.env.OPENDDESK_CONFIG_DIRECTORY);
+    }
     if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
         return process.env.USER_DATA_PATH;
     }

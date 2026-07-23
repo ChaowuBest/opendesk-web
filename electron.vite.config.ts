@@ -83,6 +83,7 @@ export default defineConfig(({ mode }) => {
                         index: path.join(__dirname, 'src', 'renderer', 'index.html'),
                         application: path.join(__dirname, 'src', 'renderer', 'application.html'),
                         application_window: path.join(__dirname, 'src', 'renderer', 'application_window.html'),
+                        logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html')
                     },
                     onwarn(warning, warn) {
