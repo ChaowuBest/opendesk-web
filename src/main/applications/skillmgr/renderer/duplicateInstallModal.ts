@@ -10,6 +10,7 @@
  */
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 
 const ANIM_DURATION_OUT = 180;
 const CONFIRM_MODAL_STYLES = `
@@ -96,6 +97,8 @@ export function showDuplicateInstallModal(options: {
     return new Promise((resolve) => {
         const { skillName, mountTarget = document.body } = options;
         const defaultCustomName = `${skillName}-1`;
+        const pastel = getSkillPastel(skillName);
+        const initial = getSkillInitial(skillName);
 
         const overlay = document.createElement('div');
         overlay.className = 'od-confirm-modal-overlay';
@@ -123,9 +126,7 @@ ${CONFIRM_MODAL_STYLES}
 <div class="od-confirm-modal-card">
     <div class="od-confirm-modal-body">
         <div class="od-confirm-modal-header">
-            <div class="od-confirm-modal-icon" style="background:#FEF1E6">
-                <i class="fas fa-rotate" style="color:#E8935A"></i>
-            </div>
+            <div class="od-confirm-modal-icon" style="background:${pastel.bg};color:${pastel.text};font-size:18px;font-weight:700">${escapeHtml(initial)}</div>
             <div class="od-confirm-modal-title">技能已存在</div>
         </div>
         <div class="od-confirm-modal-message">技能「<b>${escapeHtml(skillName)}</b>」已安装，请选择处理方式。</div>

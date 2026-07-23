@@ -105,6 +105,23 @@ await run('opendocument files supported by officeparser are extracted and chunke
     }
 });
 
+await run('rtf files and rtf content with a doc extension are extracted as plain text', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-rtf-'));
+    try {
+        const rtf = String.raw`{\rtf1\ansi OpenDesk\par RTF body}`;
+        for (const ext of ['rtf', 'doc']) {
+            const filePath = path.join(dir, `sample.${ext}`);
+            fs.writeFileSync(filePath, rtf);
+
+            assert.equal(isExtractTextSupported(filePath), true);
+            assert.equal(await extractText(filePath), 'OpenDesk\nRTF body');
+        }
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('rtf'));
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 await run('legacy and modern excel files extract to tab-separated text', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-excel-'));
     try {

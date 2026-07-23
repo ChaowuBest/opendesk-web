@@ -514,10 +514,8 @@ ${agentsDescription}
                                     if (attachment.type === 'image') {
                                         userMessage.appendImageURL(attachment.data);
                                     } else if (attachment.type === 'file') {
-                                        // FileMessagePart 需要文件路径和内容，这里先只添加路径
-                                        // 如果需要提取内容，可以在这里处理
                                         userMessage.content.push(
-                                            new FileMessagePart(attachment.filePath || attachment.name, '')
+                                            new FileMessagePart(attachment.filePath || attachment.name)
                                         );
                                     }
                                 }
@@ -560,7 +558,7 @@ ${agentsDescription}
                 if (attachment.type === 'image') {
                     userMessage.appendImageURL(attachment.data);
                 } else if (attachment.type === 'file') {
-                    userMessage.content.push(new FileMessagePart(attachment.filePath || attachment.name, ''));
+                    userMessage.content.push(new FileMessagePart(attachment.filePath || attachment.name));
                 }
             }
         }

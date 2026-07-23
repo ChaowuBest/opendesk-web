@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { setCustomOpendeskDirectory } from '../../../../../main/utils/setting.js';
 import type { logger as Logger } from '../../../../../main/utils/logger.js';
-import { getLogFilename } from '../../../../../main/utils/logger.js';
 import type * as StoragePlatform from '../../../../../main/services/storage/platform.js';
 
 const isolatedOpendeskDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-platform-test-'));
@@ -13,6 +12,7 @@ setCustomOpendeskDirectory(isolatedOpendeskDir);
 let createWithNativeSqliteFallback: typeof StoragePlatform.createWithNativeSqliteFallback;
 let isNativeSqliteUnavailable: typeof StoragePlatform.isNativeSqliteUnavailable;
 let logger: typeof Logger;
+let getLogFilename: () => string;
 
 async function loadModules(): Promise<void> {
     const platform = await import('../../../../../main/services/storage/platform.js');
@@ -20,6 +20,7 @@ async function loadModules(): Promise<void> {
     createWithNativeSqliteFallback = platform.createWithNativeSqliteFallback;
     isNativeSqliteUnavailable = platform.isNativeSqliteUnavailable;
     logger = loggerModule.logger;
+    getLogFilename = loggerModule.getLogFilename;
 }
 
 function captureLogs(): { infos: string[]; warns: string[]; restore: () => void } {

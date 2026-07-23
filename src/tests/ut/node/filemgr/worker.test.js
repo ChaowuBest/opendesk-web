@@ -2731,7 +2731,9 @@ async function testSourceConfigPendingDoesNotLeakOnEarlyReturn() {
         const secondConfig = { entries: [makeEntry('/second-root')] };
         const second = worker.applicationConfigChanged(secondConfig);
 
+        await new Promise((resolve) => setImmediate(resolve));
         assert.deepEqual(worker._pendingConfigChange, secondConfig);
+        assert.equal(typeof release, 'function');
         release();
         await Promise.all([blocker, first, second]);
         assert.equal(worker._pendingConfigChange, null);

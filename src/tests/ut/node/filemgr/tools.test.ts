@@ -139,7 +139,7 @@ test('semanticSearch returns at most 30 markdown bullet results with path, title
     assert.match(output, /extractText/);
 });
 
-test('extractText GUI render uses detailed card with escaped text preview and dark-mode class hook', async () => {
+test('extractText GUI render uses an inline summary without embedding extracted content', async () => {
     const tool = new ExtractTextTool();
     const filePath = '/workspace/local/report.md';
     const result = JSON.stringify({
@@ -155,10 +155,12 @@ test('extractText GUI render uses detailed card with escaped text preview and da
     const html = await tool.renderToolCall(makeToolCall(tool.name, { file_path: filePath }, 'success', result));
 
     assert.ok(html);
-    assert.match(html, /<details class="file-tool-card filemgr-extract-text-tool/);
+    assert.match(html, /class="od-inline-toolcall-container filemgr-extract-text-tool"/);
     assert.match(html, /data-open-editor="\/workspace\/local\/report\.md"/);
-    assert.match(html, /<pre class=/);
-    assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(html, /2 \/ 2 lines/);
+    assert.match(html, /45 chars/);
+    assert.doesNotMatch(html, /<pre class=/);
+    assert.doesNotMatch(html, /alert\(1\)/);
     assert.doesNotMatch(html, /<script>/);
 });
 

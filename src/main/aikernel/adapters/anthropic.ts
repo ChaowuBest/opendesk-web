@@ -241,7 +241,7 @@ export class AnthropicAdapter {
     }
 
     private static userFileText(part: Extract<UserMessagePart, { type: 'file' }>): string {
-        return `用户添加了文件附件: ${part.path}，其内容以文本形式提取如下，供你参考: <content>${part.content}</content>`;
+        return part.toModelText();
     }
 
     private static userMessageToBlocks(message: UserMessage, supportsVision: boolean): object[] {

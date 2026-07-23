@@ -17,6 +17,8 @@
  * - 所有需要权限检查的模块只需引用本文件即可，无需感知引擎实现细节
  */
 
+import { normalizePath } from '../../../utils/path.js';
+
 /** 权限判定结果 */
 export type PermissionEffect = 'allow' | 'deny' | 'ask';
 
@@ -90,10 +92,10 @@ export class FileResourcePath extends ResourcePath {
         if (isDirectory) {
             // 目录路径：第一项直接用 dir/** 作为 pattern
             const dirPath = p.replace(/\/+$/, '');
-            prefixes.push({ label: dirPath + '/', pattern: dirPath + '/**' });
+            prefixes.push({ label: dirPath + '/', pattern: escapeGlobLiteralPath(dirPath) + '/**' });
         } else if (!concreteBase) {
             // 精确文件路径：先加自身
-            prefixes.push({ label: p, pattern: p });
+            prefixes.push({ label: p, pattern: escapeGlobLiteralPath(p) });
         }
 
         // 从父目录开始逐层向上
@@ -101,7 +103,7 @@ export class FileResourcePath extends ResourcePath {
         const seen = new Set<string>();
         while (dir && !seen.has(dir)) {
             seen.add(dir);
-            prefixes.push({ label: dir + '/', pattern: dir + '/**' });
+            prefixes.push({ label: dir + '/', pattern: escapeGlobLiteralPath(dir) + '/**' });
             const next = parentDir(dir);
             if (next === dir) break;
             dir = next;
@@ -130,7 +132,7 @@ export class NetworkResourcePath extends ResourcePath {
 
     getPrefixes(): { label: string; pattern: string }[] {
         const prefixes: { label: string; pattern: string }[] = [];
-        prefixes.push({ label: this.normalized, pattern: this.normalized });
+        prefixes.push({ label: this.normalized, pattern: escapeGlobLiteralPath(this.normalized) });
 
         try {
             const url = new URL(this.normalized);
@@ -140,9 +142,12 @@ export class NetworkResourcePath extends ResourcePath {
             for (let i = pathParts.length - 1; i >= 0; i--) {
                 if (i > 0) {
                     const subPath = pathParts.slice(0, i).join('/');
-                    prefixes.push({ label: origin + '/' + subPath + '/', pattern: origin + '/' + subPath + '/**' });
+                    prefixes.push({
+                        label: origin + '/' + subPath + '/',
+                        pattern: escapeGlobLiteralPath(origin + '/' + subPath) + '/**'
+                    });
                 } else {
-                    prefixes.push({ label: origin + '/', pattern: origin + '/**' });
+                    prefixes.push({ label: origin + '/', pattern: escapeGlobLiteralPath(origin) + '/**' });
                 }
             }
         } catch {
@@ -170,12 +175,12 @@ export class SkillResourcePath extends ResourcePath {
 
     getPrefixes(): { label: string; pattern: string }[] {
         const prefixes: { label: string; pattern: string }[] = [];
-        prefixes.push({ label: this.normalized, pattern: this.normalized });
+        prefixes.push({ label: this.normalized, pattern: escapeGlobLiteralPath(this.normalized) });
 
         const slashIdx = this.normalized.indexOf('/');
         if (slashIdx > 0) {
             const bundle = this.normalized.slice(0, slashIdx);
-            prefixes.push({ label: bundle + '/', pattern: bundle + '/**' });
+            prefixes.push({ label: bundle + '/', pattern: escapeGlobLiteralPath(bundle) + '/**' });
         }
         return prefixes;
     }
@@ -255,6 +260,18 @@ export interface PermissionRule {
     pathPattern: string;
     /** 该规则的判定结果 */
     effect: PermissionEffect;
+}
+
+/**
+ * 将具体资源路径转换为只匹配该路径的 glob pattern。
+ * 使用字符类转义而不是反斜杠，避免路径规范化把转义符误当成目录分隔符。
+ */
+export function escapeGlobLiteralPath(resourcePath: string): string {
+    return normalizePath(resourcePath).replace(/[*?[\]{}()!+@]/g, (character) => {
+        if (character === '[') return '[[]';
+        if (character === ']') return '[]]';
+        return `[${character}]`;
+    });
 }
 
 /**

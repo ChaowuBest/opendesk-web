@@ -303,7 +303,7 @@ class TaskState {
         },
         "FileMessagePart": {
             "type": "object",
-            "required": ["type", "path", "content"],
+            "required": ["type", "path"],
             "properties": {
                 "type": {
                     "type": "string",
@@ -312,10 +312,6 @@ class TaskState {
                 "path": {
                     "type": "string",
                     "description": "文件路径"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "文件内容"
                 },
                 "rendered": {
                     "type": "string"
