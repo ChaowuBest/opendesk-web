@@ -227,7 +227,7 @@ export function estimateRoughTokensFromChatMessage(
                 return total + estimateTextTokens(part.text);
             }
             if (part.type === 'file') {
-                return total + estimateTextTokens(part.path) + estimateTextTokens(part.content);
+                return total + estimateTextTokens(part.path);
             }
             if (part.type === 'image_url') {
                 return total + 256;

@@ -311,7 +311,6 @@ function collectTaskLanguageSample(chatContext: ChatContext): string {
             if (part.type === 'text') {
                 parts.push(part.text);
             } else if (part.type === 'file') {
-                parts.push(part.content);
                 parts.push(part.path);
             }
         }
@@ -908,7 +907,7 @@ function serializeUserMessageForSessionMemory(
                 return truncateText(part.text, options.messageTextPreviewChars);
             }
             if (part.type === 'file') {
-                return `[File: ${part.path}]\n${truncateText(part.content, options.messageTextPreviewChars)}`;
+                return `[File: ${part.path}]`;
             }
             if (part.type === 'image_url') {
                 return `[Image: ${part.image_url.url}]`;
@@ -1275,7 +1274,7 @@ function hasTextContent(message: ChatMessage): boolean {
                 return part.text.trim().length > 0;
             }
             if (part.type === 'file') {
-                return part.path.trim().length > 0 || part.content.trim().length > 0;
+                return part.path.trim().length > 0;
             }
             return false;
         });

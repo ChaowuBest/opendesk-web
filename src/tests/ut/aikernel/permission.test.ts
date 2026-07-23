@@ -29,7 +29,8 @@ import {
     FileResourcePath,
     NetworkResourcePath,
     SkillResourcePath,
-    createResourcePath
+    createResourcePath,
+    escapeGlobLiteralPath
 } from '../../../main/aikernel/security/permission';
 import type { PermissionRequest, PermissionRule } from '../../../main/aikernel/security/permission';
 
@@ -82,6 +83,53 @@ describe('GlobPermissionEnforcer', () => {
                 resourcePath: '/workspace/src/index.ts'
             });
             expect(r.effect).toBe('allow');
+        });
+
+        test('精确路径规则不会把文件名中的 glob 字符解释为通配符', async () => {
+            const exactFilePattern = new FileResourcePath('/tmp/report[1]?.pdf').getPrefixes()[0].pattern;
+            const enforcer = await GlobPermissionEnforcer.create([
+                {
+                    resourceType: 'file',
+                    action: 'read',
+                    pathPattern: exactFilePattern,
+                    effect: 'allow'
+                },
+                {
+                    resourceType: 'file',
+                    action: 'read',
+                    pathPattern: escapeGlobLiteralPath('/tmp/report*.pdf'),
+                    effect: 'allow'
+                }
+            ]);
+
+            await expect(
+                enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: '/tmp/report[1]?.pdf'
+                })
+            ).resolves.toMatchObject({ effect: 'allow' });
+            await expect(
+                enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: '/tmp/report*.pdf'
+                })
+            ).resolves.toMatchObject({ effect: 'allow' });
+            await expect(
+                enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: '/tmp/report1x.pdf'
+                })
+            ).resolves.toMatchObject({ effect: 'ask' });
+            await expect(
+                enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: '/tmp/report-private.pdf'
+                })
+            ).resolves.toMatchObject({ effect: 'ask' });
         });
 
         test('无规则匹配时返回隐式 ask', async () => {

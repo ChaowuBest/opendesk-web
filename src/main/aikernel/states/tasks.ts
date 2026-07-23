@@ -62,6 +62,7 @@ import { FileReadStateCache } from './read-state.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
+import { escapeGlobLiteralPath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
 import {
@@ -74,7 +75,6 @@ import { withSpan } from '../../telemetry/index.js';
 import { getPlatform } from '../../../platforms/base.js';
 import type { TaskSkillExposure } from '../agents/common.js';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
-import { parseAttachmentFile } from '../attachment-parser.js';
 import { TaskExtensionManager } from '../task-extension.js';
 import type { TaskManagerState } from '../task/manager.js';
 import {
@@ -1192,7 +1192,6 @@ export class TaskState {
         const user_message = new UserMessage();
         for (const filePath of filePaths) {
             const extname = path.extname(filePath);
-            const content = await parseAttachmentFile(filePath);
             logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
             // 获取文件大小和修改时间用于卡片展示
             let size: number | undefined;
@@ -1204,7 +1203,19 @@ export class TaskState {
             } catch {
                 // 如果无法获取 stat 信息，忽略
             }
-            user_message.content.push(new FileMessagePart(filePath, content, size, modifiedTime));
+            user_message.content.push(new FileMessagePart(filePath, size, modifiedTime));
+        }
+
+        // 自动授权拖入的文件为可读，使 Agent 工具能直接读取这些文件
+        if (this.harnessContext.permission) {
+            for (const filePath of filePaths) {
+                await this.harnessContext.permission.addRule({
+                    resourceType: 'file',
+                    action: 'read',
+                    pathPattern: escapeGlobLiteralPath(filePath),
+                    effect: 'allow'
+                });
+            }
         }
 
         this.chat_context.appendMessage(user_message);

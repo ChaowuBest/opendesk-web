@@ -39,6 +39,7 @@ export const RAW_TEXT_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export const RAW_CONTAINER_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'tsx']);
+const RTF_EXTS = new Set(['rtf']);
 const OFFICE_PARSER_EXTS = new Set(['docx', 'odt', 'odp', 'ods']);
 const WORD_EXTRACTOR_EXTS = new Set(['doc']);
 const SPREADSHEET_EXTS = new Set(['xls', 'xlsx']);
@@ -47,6 +48,7 @@ const CONTAINER_EXTS = new Set(['pdf', 'doc', 'docx', 'pptx', 'xls', 'xlsx', 'od
 export const EXTRACT_TEXT_SUPPORTED_EXTENSIONS = Object.freeze([
     ...new Set([
         ...PLAIN_TEXT_EXTS,
+        ...RTF_EXTS,
         ...OFFICE_PARSER_EXTS,
         ...WORD_EXTRACTOR_EXTS,
         ...SPREADSHEET_EXTS,
@@ -60,9 +62,57 @@ export function isExtractTextSupported(filePath) {
 }
 
 function getMaxFileSizeForExt(ext) {
-    if (PLAIN_TEXT_EXTS.has(ext)) return RAW_TEXT_MAX_FILE_SIZE;
+    if (PLAIN_TEXT_EXTS.has(ext) || RTF_EXTS.has(ext)) return RAW_TEXT_MAX_FILE_SIZE;
     if (CONTAINER_EXTS.has(ext)) return RAW_CONTAINER_MAX_FILE_SIZE;
     return RAW_TEXT_MAX_FILE_SIZE;
+}
+
+function isRtfContent(buffer) {
+    if (buffer.length < 5) return false;
+    const head = buffer.subarray(0, 5);
+    return (
+        head[0] === 0x7b &&
+        head[1] === 0x5c &&
+        (head[2] === 0x72 || head[2] === 0x52) &&
+        (head[3] === 0x74 || head[3] === 0x54) &&
+        (head[4] === 0x66 || head[4] === 0x46)
+    );
+}
+
+function extractRtfPlainText(rtfContent) {
+    let text = rtfContent;
+    let previous = '';
+    while (previous !== text) {
+        previous = text;
+        text = text.replace(/\{\\\*[^}]*\}/g, '');
+    }
+
+    text = text.replace(/\\'([0-9a-fA-F]{2})/g, (_match, hex) => {
+        const code = parseInt(hex, 16);
+        if ((code >= 0x20 && code <= 0x7e) || (code >= 0xa0 && code <= 0xff)) {
+            return String.fromCharCode(code);
+        }
+        return '';
+    });
+
+    text = text.replace(/\\\{/g, '\uE000');
+    text = text.replace(/\\\}/g, '\uE001');
+    text = text.replace(/\\\\/g, '\uE002');
+    text = text.replace(/\\par\b/g, '\n');
+    text = text.replace(/\\pard\b/g, '\n');
+    text = text.replace(/\\tab\b/g, '\t');
+    text = text.replace(/\\line\b/g, '\n');
+    text = text.replace(/\\[a-zA-Z]+[-\d]*\s?/g, '');
+    text = text.replace(/\uE000/g, '{');
+    text = text.replace(/\uE001/g, '}');
+    text = text.replace(/\uE002/g, '\\');
+    text = text.replace(/[{}]/g, '');
+    text = text.replace(/\n{3,}/g, '\n\n');
+    text = text
+        .split('\n')
+        .map((line) => line.trim())
+        .join('\n');
+    return text.replace(/^\n+/, '').replace(/\n+$/, '').trim();
 }
 
 /**
@@ -269,12 +319,20 @@ export async function extractText(filePath) {
             return await fs.promises.readFile(filePath, 'utf-8');
         }
 
+        if (RTF_EXTS.has(ext)) {
+            return extractRtfPlainText(await fs.promises.readFile(filePath, 'utf-8'));
+        }
+
         if (OFFICE_PARSER_EXTS.has(ext)) {
             const { parseOfficeAsync } = await import('officeparser');
             return await parseOfficeAsync(filePath);
         }
 
         if (WORD_EXTRACTOR_EXTS.has(ext)) {
+            const buffer = await fs.promises.readFile(filePath);
+            if (isRtfContent(buffer)) {
+                return extractRtfPlainText(buffer.toString('utf-8'));
+            }
             const extractor = new WordExtractor();
             const document = await extractor.extract(filePath);
             return document.getBody();

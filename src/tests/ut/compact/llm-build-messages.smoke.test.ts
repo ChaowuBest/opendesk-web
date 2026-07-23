@@ -11,6 +11,7 @@ import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    FileMessagePart,
     SystemMessage,
     ToolCall,
     ToolCallMessagePart,
@@ -81,6 +82,23 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () =>
         expect(JSON.stringify(openAIMessages)).toContain('real user request');
         expect(JSON.stringify(anthropicMessages)).toContain('/goal 实现用户登录功能');
         expect(JSON.stringify(anthropicMessages)).toContain('real user request');
+    });
+
+    test('file attachments tell OpenAI and Anthropic adapters to use extractText', () => {
+        const chatContext = new ChatContext();
+        const userMessage = new UserMessage();
+        userMessage.content.push(new FileMessagePart('/tmp/report.pdf'));
+        chatContext.appendMessage(userMessage);
+
+        const openAIText = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
+        const anthropicText = JSON.stringify(AnthropicAdapter.buildMessages(chatContext, false));
+
+        for (const serialized of [openAIText, anthropicText]) {
+            expect(serialized).toContain('/tmp/report.pdf');
+            expect(serialized).toContain('extractText');
+            expect(serialized).not.toContain('undefined');
+            expect(serialized).not.toContain('<content>');
+        }
     });
 
     test('step 6 buildMessages replays only the visible assistant tail', () => {

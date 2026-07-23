@@ -765,24 +765,26 @@ export class ToolCallMessagePart {
 export class FileMessagePart {
     type: 'file' = 'file';
     path: string;
-    content: string;
     rendered?: string;
     /** 文件大小（字节） */
     size?: number;
     /** 最后修改时间（ISO 字符串或时间戳） */
     modifiedTime?: string | number;
 
-    constructor(path: string, content: string, size?: number, modifiedTime?: string | number) {
+    constructor(path: string, size?: number, modifiedTime?: string | number) {
         this.path = path;
-        this.content = content;
         this.size = size;
         this.modifiedTime = modifiedTime;
+    }
+
+    toModelText(): string {
+        return `用户添加了文件附件: ${this.path}，你可以使用 extractText 工具提取其文本内容。`;
     }
 
     toOpenAIMessagePart(): object {
         return {
             type: 'text',
-            text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
+            text: this.toModelText()
         };
     }
 

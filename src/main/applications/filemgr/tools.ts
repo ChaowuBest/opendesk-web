@@ -1164,50 +1164,7 @@ function renderFileToolDetailsCard(opts: {
 // ==================== ExtractText 工具 ====================
 
 const EXTRACT_TEXT_MAX_BYTES = 240 * 1024;
-const EXTRACT_TEXT_RENDER_MAX_CHARS = 8000;
-const EXTRACT_TEXT_RENDER_MAX_LINES = 120;
 const EXTRACT_TEXT_SUPPORTED_EXTENSIONS_DISPLAY = EXTRACT_TEXT_SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(', ');
-
-function truncateTextPreviewForRender(content: string): { text: string; truncated: boolean } {
-    const lines = content.split(/\r?\n/);
-    const selectedLines = lines.slice(0, EXTRACT_TEXT_RENDER_MAX_LINES);
-    let text = selectedLines.join('\n');
-    let truncated = lines.length > selectedLines.length;
-
-    if (text.length > EXTRACT_TEXT_RENDER_MAX_CHARS) {
-        text = text.slice(0, EXTRACT_TEXT_RENDER_MAX_CHARS);
-        truncated = true;
-    }
-
-    return { text, truncated };
-}
-
-function renderExtractTextBody(result: any): string {
-    if (result?.type === 'error') {
-        return `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(result.error ?? ''))}</div>`;
-    }
-
-    if (result?.type !== 'text' || !result.file) {
-        return `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(t('filemgr.extractText.seeResult'))}</div>`;
-    }
-
-    const file = result.file;
-    if (!file.content) {
-        return `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(
-            t('filemgr.extractText.empty', { totalLines: file.totalLines })
-        )}</div>`;
-    }
-
-    const preview = truncateTextPreviewForRender(String(file.content));
-    const truncateHint = preview.truncated
-        ? `<div class="px-4 pb-2 text-[11px] text-gray-400">${escapeHtml(t('filemgr.extractText.previewTruncated'))}</div>`
-        : '';
-
-    return `<div class="max-h-[300px] overflow-y-auto">
-        <pre class="px-4 py-2.5 text-[11px] font-mono text-gray-700 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(preview.text)}</pre>
-        ${truncateHint}
-    </div>`;
-}
 
 const extractTextSchema = z.object({
     file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径'),
@@ -1238,13 +1195,12 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
         const offset = toolcall.args_object?.['offset'] as number | undefined;
         const limit = toolcall.args_object?.['limit'] as number | undefined;
 
-        let summary = filePath || '';
+        let detail = filePath ? escapeHtml(filePath) : '';
         const rangeStr = formatLineRange(offset, limit);
         if (rangeStr) {
-            summary += ` · ${rangeStr}`;
+            detail += ` · ${escapeHtml(rangeStr)}`;
         }
 
-        let body = `<div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px]"><i class="fa-solid fa-circle-notch fa-spin"></i><span class="text-gray-400">${escapeHtml(t('filemgr.extractText.extracting'))}</span></div>`;
         let visualStatus = toolcall.status;
         if (toolcall.status === 'success' && toolcall.result) {
             try {
@@ -1253,27 +1209,26 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                     visualStatus = 'error';
                 }
                 if (result.type === 'text' && result.file) {
-                    summary += ` · ${t('filemgr.extractText.lineSummaryShort', {
+                    detail += ` · ${t('filemgr.extractText.lineSummaryShort', {
                         numLines: result.file.numLines,
                         totalLines: result.file.totalLines
                     })}`;
+                    if (result.file.content) {
+                        detail += ` · ${t('filemgr.extractText.charCount', { count: result.file.content.length })}`;
+                    }
                 }
-                body = renderExtractTextBody(result);
             } catch {
-                body = `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(t('filemgr.extractText.seeResult'))}</div>`;
+                /* ignore */
             }
-        } else if (toolcall.status === 'error') {
-            body = `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(toolcall.result ?? ''))}</div>`;
         }
 
-        return renderFileToolDetailsCard({
+        return renderInlineTool({
             icon: 'fas fa-file-lines',
             title: t('filemgr.extractText.name'),
             status: visualStatus,
             className: 'filemgr-extract-text-tool',
-            summary,
-            summaryTitle: filePath || undefined,
-            body,
+            detail,
+            detailTitle: filePath || undefined,
             editorFilePath: filePath || undefined,
             editorLine: offset != null ? offset : undefined
         });

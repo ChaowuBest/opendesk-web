@@ -11,8 +11,7 @@ import {
     isAttachmentFilePathSupported,
     findUnsupportedAttachmentFiles
 } from '../../../../main/aikernel/attachment-support.js';
-import { parseAttachmentFile } from '../../../../main/aikernel/attachment-parser.js';
-import * as XLSX from 'xlsx';
+import { isExtractTextSupported } from '../../../../main/applications/filemgr/parser/extract.js';
 
 const _require = createRequire(import.meta.url);
 const unsupportedErrorPattern = /OfficeParser.*currently support .* files only/i;
@@ -73,6 +72,11 @@ test('agent attachment support covers officeparser plus legacy doc and xls adapt
     try {
         for (const extension of support.supportedExtensions) {
             assert.equal(isAttachmentFileExtensionSupported(extension), true);
+            assert.equal(
+                isExtractTextSupported(path.join(tmpDir, `supported.${extension}`)),
+                true,
+                `.${extension} attachments must be readable through extractText`
+            );
         }
 
         for (const extension of officeParserSupportedExtensions) {
@@ -95,41 +99,6 @@ test('agent attachment support covers officeparser plus legacy doc and xls adapt
         assert.deepEqual(findUnsupportedAttachmentFiles(['/tmp/deck.ppt']), [
             { filePath: '/tmp/deck.ppt', extension: 'ppt' }
         ]);
-    } finally {
-        await rm(tmpDir, { recursive: true, force: true });
-    }
-});
-
-test('agent attachment parser extracts xls and xlsx as tab-separated text', async () => {
-    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'opendesk-attachment-spreadsheet-'));
-    try {
-        for (const extension of ['xls', 'xlsx']) {
-            const filePath = path.join(tmpDir, `sheet.${extension}`);
-            const workbook = XLSX.utils.book_new();
-            const sheet = XLSX.utils.aoa_to_sheet([
-                ['name', 'status'],
-                ['OpenDesk', extension]
-            ]);
-            XLSX.utils.book_append_sheet(workbook, sheet, 'Data');
-            XLSX.writeFile(workbook, filePath, { bookType: extension as XLSX.BookType });
-
-            const text = await parseAttachmentFile(filePath);
-            assert.equal(text, `1\tname\tstatus\n2\tOpenDesk\t${extension}`);
-        }
-    } finally {
-        await rm(tmpDir, { recursive: true, force: true });
-    }
-});
-
-test('agent attachment parser routes doc to word-extractor instead of officeparser', async () => {
-    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'opendesk-attachment-doc-'));
-    try {
-        const filePath = path.join(tmpDir, 'legacy.doc');
-        await writeFile(filePath, 'not a real word document');
-        // parseAttachmentFile 现在会捕获内部异常并返回错误字符串，而不是抛出
-        const result = await parseAttachmentFile(filePath);
-        assert.match(result, /文件解析失败/);
-        assert.doesNotMatch(result, unsupportedErrorPattern);
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
     }

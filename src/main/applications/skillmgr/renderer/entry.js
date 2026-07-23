@@ -1601,7 +1601,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
         // 移除技能列表变更监听
         if (this._skillsChangedSubscriptionId) {
-            try { window.applicationAPI.unsubscribe('skillsChanged'); } catch {}
+            try {
+                window.applicationAPI.unsubscribe('skillsChanged');
+            } catch {}
             this._skillsChangedSubscriptionId = null;
         }
         this._stopAnalysisPolling();
@@ -2504,20 +2506,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             const action = event.detail;
             this._removeDetailModal();
             if (action.id === 'delete') this.deleteSkill(detail.id);
-            if (action.id === 'install' && action.data) this.installFromRegistry(action.data, detail.id);
+            if (action.id === 'install' && action.data) this.installFromRegistry(action.data, detail.id, detail.name);
         });
 
-        // 绑定工具参数展开/折叠
-        overlay.querySelectorAll('.detail-tool-params-toggle').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const idx = btn.getAttribute('data-tool-toggle');
-                const paramsEl = overlay.querySelector(`[data-tool-params="${idx}"]`);
-                if (!paramsEl) return;
-                const isHidden = paramsEl.style.display === 'none';
-                paramsEl.style.display = isHidden ? 'block' : 'none';
-                btn.classList.toggle('expanded', isHidden);
-            });
-        });
         this.shadowRoot.appendChild(card);
     }
 
@@ -3321,8 +3312,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                         const color = this._getSkillPastel(s.name || s.id);
                         const isEnabled = s.enabled !== false;
                         const isBlacklisted = s.blacklisted === true;
-                        const borderStyle = isBlacklisted ? 'border:1.5px solid #DC2626;box-shadow:0 0 0 1px rgba(220,38,38,0.15);' : '';
-                        const blacklistHint = isBlacklisted && s.blacklistEvidence ? escapeHtml(s.blacklistEvidence) : '';
+                        const borderStyle = isBlacklisted
+                            ? 'border:1.5px solid #DC2626;box-shadow:0 0 0 1px rgba(220,38,38,0.15);'
+                            : '';
+                        const blacklistHint =
+                            isBlacklisted && s.blacklistEvidence ? escapeHtml(s.blacklistEvidence) : '';
                         return `
                 <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}" style="${borderStyle}" title="${blacklistHint}">
                   <div class="card-header">
@@ -3337,7 +3331,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                   ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
                   ${isBlacklisted && s.blacklistEvidence ? `<div style="font-size:11px;color:#DC2626;background:#FEF2F2;border-radius:6px;padding:6px 8px;margin-top:2px;line-height:1.4;border:1px solid #FECACA;">${escapeHtml(s.blacklistEvidence).slice(0, 200)}</div>` : ''}
                   <div class="card-footer">
-                    <label class="skill-toggle" title="${isBlacklisted ? '已被加入黑名单，点击启用需确认风险' : (isEnabled ? '已启用，点击禁用' : '已禁用，点击启用')}">
+                    <label class="skill-toggle" title="${isBlacklisted ? '已被加入黑名单，点击启用需确认风险' : isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
                       <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
                       <span class="skill-toggle-slider" style="${isBlacklisted ? 'opacity:0.4;' : ''}"></span>
                     </label>
@@ -4250,7 +4244,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (!skillId) return;
                 // 如果是开启被拉黑的 skill，弹确认框
                 if (el.checked) {
-                    const skill = this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
+                    const skill =
+                        this.skills.find((s) => s.id === skillId) || this.builtinSkills.find((s) => s.id === skillId);
                     if (skill?.blacklisted) {
                         const evidence = skill.blacklistEvidence || '该技能因恶意行为被安全网关拦截并加入了黑名单';
                         const confirmed = await showConfirmModal({

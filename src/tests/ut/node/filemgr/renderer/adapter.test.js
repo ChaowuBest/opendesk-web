@@ -352,7 +352,7 @@ test('filemgr entry shows initializing label when both status and settings fail'
     }
 });
 
-test('homepage search result actions render attach/open/reveal on desktop and attach only on OpenHarmony', async () => {
+test('homepage search result actions render attach/open/reveal on desktop and OpenHarmony', async () => {
     const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
     globalThis.window = window;
     globalThis.document = window.document;
@@ -386,9 +386,17 @@ test('homepage search result actions render attach/open/reveal on desktop and at
     assert.equal(panel.querySelectorAll('.search-reveal-btn').length, 1);
 
     const attachEvents = [];
+    const openEvents = [];
+    const revealEvents = [];
     panel.addEventListener('homepage-search-attach', (event) => attachEvents.push(event.detail?.path));
+    panel.addEventListener('homepage-search-open', (event) => openEvents.push(event.detail?.path));
+    panel.addEventListener('homepage-search-reveal', (event) => revealEvents.push(event.detail?.path));
     panel.querySelector('.search-attach-btn')?.dispatchEvent(new window.Event('click', { bubbles: true }));
+    panel.querySelector('.search-open-btn')?.dispatchEvent(new window.Event('click', { bubbles: true }));
+    panel.querySelector('.search-reveal-btn')?.dispatchEvent(new window.Event('click', { bubbles: true }));
     assert.deepEqual(attachEvents, ['/Users/liumingxing/报告.pdf']);
+    assert.deepEqual(openEvents, ['/Users/liumingxing/报告.pdf']);
+    assert.deepEqual(revealEvents, ['/Users/liumingxing/报告.pdf']);
 
     window.systemInfo = { isOpenHarmony: true };
     panel.showSearchTab({
@@ -408,8 +416,12 @@ test('homepage search result actions render attach/open/reveal on desktop and at
     });
 
     assert.equal(panel.querySelectorAll('.search-attach-btn').length, 1);
-    assert.equal(panel.querySelectorAll('.search-open-btn').length, 0);
-    assert.equal(panel.querySelectorAll('.search-reveal-btn').length, 0);
+    assert.equal(panel.querySelectorAll('.search-open-btn').length, 1);
+    assert.equal(panel.querySelectorAll('.search-reveal-btn').length, 1);
+    panel.querySelector('.search-open-btn')?.dispatchEvent(new window.Event('click', { bubbles: true }));
+    panel.querySelector('.search-reveal-btn')?.dispatchEvent(new window.Event('click', { bubbles: true }));
+    assert.deepEqual(openEvents, ['/Users/liumingxing/报告.pdf', '/Users/liumingxing/报告.pdf']);
+    assert.deepEqual(revealEvents, ['/Users/liumingxing/报告.pdf', '/Users/liumingxing/报告.pdf']);
 });
 
 test('homepage search attach preserves search mode and attached files after manual exit', async () => {
