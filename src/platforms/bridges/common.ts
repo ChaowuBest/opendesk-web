@@ -27,6 +27,24 @@ export interface OcrKit {
     available(): Promise<boolean>;
 }
 
+// ── Huawei Account Kit ──────────────────────────────────────────────────────
+
+export interface HuaweiLoginResult {
+    status: boolean;
+    authCode: string;
+    unionId: string;
+    openId: string;
+    idToken: string;
+    anonymousPhone: string;
+}
+
+export interface HuaweiAccountKit {
+    available(): Promise<boolean>;
+    startLogin(): Promise<void>;
+    peekLogin(): Promise<HuaweiLoginResult | null>;
+    closeLogin(): Promise<void>;
+}
+
 /**
  * 原生平台功能桥接的接口定义。这个桥接设计用于封装不同操作系统和硬件平台的差异。
  */
@@ -46,6 +64,7 @@ export interface NativeBridge {
     getSpeechKit(): Promise<SpeechKit>;
     getOcrKit(): Promise<OcrKit>;
     getDatabaseKit(): Promise<DatabaseKit>;
+    getHuaweiAccountKit(): Promise<HuaweiAccountKit>;
 }
 
 export class NaiveSpeechKit implements SpeechKit {
@@ -80,10 +99,33 @@ export class NaiveOcrKit implements OcrKit {
     }
 }
 
+export class NaiveHuaweiAccountKit implements HuaweiAccountKit {
+    async available(): Promise<boolean> {
+        return false;
+    }
+
+    private unavailable(): never {
+        throw new Error('HuaweiAccountKit not available on this platform');
+    }
+
+    async startLogin(): Promise<void> {
+        this.unavailable();
+    }
+
+    async peekLogin(): Promise<HuaweiLoginResult | null> {
+        this.unavailable();
+    }
+
+    async closeLogin(): Promise<void> {
+        this.unavailable();
+    }
+}
+
 export class NaiveNativeBridge implements NativeBridge {
     _speechKit: SpeechKit = new NaiveSpeechKit();
     _ocrKit: OcrKit = new NaiveOcrKit();
     _databaseKit: DatabaseKit = new NaiveDatabaseKit();
+    _huaweiAccountKit: HuaweiAccountKit = new NaiveHuaweiAccountKit();
 
     async getPlatform(): Promise<string> {
         return process.platform;
@@ -103,6 +145,10 @@ export class NaiveNativeBridge implements NativeBridge {
 
     async getDatabaseKit(): Promise<DatabaseKit> {
         return this._databaseKit;
+    }
+
+    async getHuaweiAccountKit(): Promise<HuaweiAccountKit> {
+        return this._huaweiAccountKit;
     }
 }
 

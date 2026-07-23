@@ -100,6 +100,7 @@ import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
+import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
@@ -2594,6 +2595,122 @@ const registerMagicPointerHandlers = () => {
     });
 };
 
+/**
+ * 鸿蒙平台启动时校验华为账号登录。
+ * 若未登录则拉起登录窗口阻塞启动，登录成功或用户关闭窗口后继续。
+ * 非鸿蒙平台直接跳过。
+ */
+async function ensureHuaweiAuthOnStartup(): Promise<void> {
+    if (process.platform !== 'openharmony') {
+        return;
+    }
+
+    const authService = getHuaweiAuthService();
+    const available = await authService.isAvailable();
+    if (!available) {
+        logger.warn('[auth] Huawei account login is not available, skipping startup auth');
+        return;
+    }
+
+    // 已有有效会话则跳过
+    const existing = authService.getSession();
+    if (existing) {
+        logger.info('[auth] Valid Huawei auth session found, skipping login');
+        return;
+    }
+
+    logger.info('[auth] No valid Huawei auth session, launching login window...');
+
+    // 隐藏主窗口，避免用户在登录校验期间操作应用
+    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+        globalMainWindow.hide();
+        // 等待主窗口内容加载完成，确保鸿蒙侧 UIAbility 已进入 active 状态，
+        // ArkTS 创建登录窗口时才能拿到合法的 window context。
+        try {
+            await new Promise<void>((resolve) => {
+                if (globalMainWindow!.webContents.isLoadingMainFrame()) {
+                    globalMainWindow!.webContents.once('did-finish-load', () => resolve());
+                } else {
+                    resolve();
+                }
+            });
+        } catch {
+            /* ignore - 即使加载未完成也继续尝试登录 */
+        }
+    }
+
+    try {
+        await authService.login();
+        logger.info('[auth] Huawei account login succeeded on startup');
+    } catch (err: any) {
+        logger.error(`[auth] Huawei account login failed on startup: ${err?.message || err}`);
+        // 登录失败/取消，立即退出应用；同时使用 app.quit() + process.exit(1) 强制终止，
+        // 避免在鸿蒙 Electron 下 app.exit 未能真正结束进程导致悬挂空白窗口。
+        // 主动尝试关闭鸿蒙侧登录窗口，避免悬挂
+        try {
+            await authService.logout();
+        } catch {
+            /* ignore */
+        }
+        app.quit();
+        process.exit(1);
+        return;
+    }
+
+    // 登录成功，显示主窗口
+    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+        globalMainWindow.show();
+        globalMainWindow.focus();
+    }
+}
+
+const registerAuthAPIHandlers = () => {
+    ipcMain.handle('auth:isAvailable', async () => {
+        try {
+            const available = await getHuaweiAuthService().isAvailable();
+            return { status: 'ok', data: { available } };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:login', async () => {
+        try {
+            const session = await getHuaweiAuthService().login();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:getSession', () => {
+        try {
+            const session = getHuaweiAuthService().getSession();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:refreshToken', async () => {
+        try {
+            const session = await getHuaweiAuthService().refreshToken();
+            return { status: 'ok', data: session };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('auth:logout', async () => {
+        try {
+            await getHuaweiAuthService().logout();
+            return { status: 'ok' };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+};
+
 const registerHotKeys = () => {
     let hotkey = 'Alt+Space';
     if (process.platform === 'darwin') {
@@ -2877,9 +2994,48 @@ function startApplication() {
         new ElectronExitPlanModeProvider();
         p3.end();
 
+        // 注册原生桥 + 探测 ArkData 可用性
+        // 必须在 createWindow 之前注册，主窗口加载后会使用 native bridge
+        registerNativeBridge();
+        await probeArkdataAvailability();
+
+        // 提前注册设置 IPC handler，确保主窗口加载期间 renderer 调用
+        // setting:loadSettingObject（如 needsWizard 判断）能正常返回。
+        // 否则华为登录校验期间 renderer 调用会失败，导致引导页面不显示。
+        registerSettingAPIHandlers();
+
+        // 提前注册任务管理 IPC handler，确保主窗口加载期间 renderer 的
+        // sidebar.connectedCallback 调用 taskManagerAPI.getTaskList() 能正常返回，
+        // 否则 setUpEventListeners() 不会执行，导致"新任务/应用/技能"按钮无 click 事件绑定。
+        registerTaskManagerAPIHandlers();
+
+        // 提前注册应用注册器 IPC handler，确保主窗口加载期间 renderer 的
+        // sidebar 调用 applicationRegistry:getApplicationList 能正常返回，
+        // 否则应用按钮下的菜单列表为空，显示异常。
+        registerApplicationRegistryHandlers(ipcMain);
+
+        // 提前注册通知 IPC handler，确保主窗口加载期间 renderer 的
+        // notification-panel.connectedCallback 调用 notificationAPI.subscribeNotification 能正常返回。
+        registerNotificationAPIHandlers();
+
+        // 提前注册主题 IPC handler，确保主窗口加载期间 renderer 的
+        // initRendererTheme 调用 themeAPI.getResolvedTheme 能正常返回。
+        // 注意：不在此处调用 getMainThemeService().init()，因为 init() 内部会触发
+        // refreshOhosSystemDarkMode()/refreshOhosSystemLanguage() 等 callArkTS 调用，
+        // 在 createWindow() 之前调用 callArkTS 会干扰 ArkTS 侧事件循环，
+        // 导致 WebAbility 的 KVStore NAPI 类型断言 crash。
+        // init() 已在 registerThemeHandlers() 注册的 IPC handler 内部懒调用，
+        // renderer 调用 theme:getResolvedTheme 时 createWindow() 已完成，安全。
+        registerThemeHandlers();
+
+        // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
+        // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
         const p4 = startupTrace.createPhase('startup.ready.create_window');
         createWindow();
         p4.end();
+
+        // 鸿蒙平台：启动时校验华为账号登录，未登录则阻塞直到登录成功或退出
+        await ensureHuaweiAuthOnStartup();
 
         // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
         powerMonitor.on('suspend', () => {
@@ -2946,12 +3102,14 @@ function startApplication() {
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
-        registerTaskManagerAPIHandlers();
+        // registerTaskManagerAPIHandlers() 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 的 sidebar 需调用 taskManager:getTaskList
         registerModeAPIHandlers();
         registerFSAPIHandlers();
-        registerSettingAPIHandlers();
-
-        registerApplicationRegistryHandlers(ipcMain);
+        // registerSettingAPIHandlers() 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 需要调用 setting:loadSettingObject 判断是否显示引导页
+        // registerApplicationRegistryHandlers(ipcMain) 已在 createWindow 之前提前注册，
+        // 鸿蒙登录校验期间 renderer 的 sidebar 需调用 applicationRegistry:getApplicationList
 
         // 通用窗口控制 IPC（通过 event.sender 定位当前窗口）
         ipcMain.handle('window:close', async (event) => {
@@ -3034,13 +3192,17 @@ function startApplication() {
             }
         });
 
-        registerNativeBridge();
-        await probeArkdataAvailability();
-        registerNotificationAPIHandlers();
+        // registerNotificationAPIHandlers() 已在 createWindow 之前提前注册，
+        // 确保主窗口加载期间 renderer 的 notification-panel 能正常订阅通知。
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
+        registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
-        registerThemeHandlers();
+        // registerThemeHandlers() 已在 createWindow 之前提前注册，
+        // getMainThemeService().init() 在 IPC handler 内部懒调用，避免 createWindow
+        // 之前触发 callArkTS 导致 ArkTS 侧 NAPI 类型断言 crash。
+        // 此处 createWindow() 已完成、ArkTS 侧已 active，显式 init() 安全，
+        // 确保窗口背景色等主题效果在显示前就绪。
         getMainThemeService().init();
         registerHotKeys();
         registerTray();
