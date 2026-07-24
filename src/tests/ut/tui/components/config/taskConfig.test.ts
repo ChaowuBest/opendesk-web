@@ -14,6 +14,10 @@ function createTuiMock() {
     } as any;
 }
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 describe('TaskConfigPage', () => {
     let tempRoot: string;
 
@@ -48,7 +52,7 @@ describe('TaskConfigPage', () => {
     test('renders the localized EvidenceCard switch as disabled by default', () => {
         const page = new TaskConfigPage(createTuiMock(), jest.fn());
 
-        const text = page.render(80).join('\n');
+        const text = stripAnsi(page.render(80).join('\n'));
 
         expect(text).toContain('Use EvidenceCard to save tokens');
         expect(text).toContain('Use EvidenceCard to save tokens: No');

@@ -13,6 +13,7 @@ import { Skill } from '../../aikernel/skill.js';
 import { BaseApplication } from '../base.js';
 import { loadPoolSkill } from './pool.js';
 import { loadAnalysisResultVisualizerSkill } from './analysis-result-visualizer.js';
+import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
 
 export class BuiltinApplication extends BaseApplication {
     constructor() {
@@ -23,6 +24,7 @@ export class BuiltinApplication extends BaseApplication {
         const skills: Skill[] = [];
         skills.push(loadPoolSkill());
         skills.push(loadAnalysisResultVisualizerSkill());
+        skills.push(loadUseHarmonySkill());
 
         return skills;
     }
