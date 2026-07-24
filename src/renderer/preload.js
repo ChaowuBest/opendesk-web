@@ -1012,6 +1012,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        getBuildTime: async () => {
+            const result = await ipcRenderer.invoke('setting:getBuildTime');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         estimateContextSize: async (modelName) => {
             const result = await ipcRenderer.invoke('setting:estimateContextSize', modelName);
             if (result.status !== 'ok') return 0;
