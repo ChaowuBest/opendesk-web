@@ -15,11 +15,11 @@
  * Each tool wraps hdc shell commands to provide agent-friendly interfaces
  * for app management, UI interaction, and screen snapshot.
  *
- * All hdc invocations use async exec to avoid blocking the Node.js event loop.
+ * All hdc invocations use async child processes to avoid blocking the Node.js event loop.
  */
 
-import { exec } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -30,15 +30,19 @@ import { BaseTool, BaseToolset } from '../../../../aikernel/tool.js';
 // hdc helpers (async)
 // ---------------------------------------------------------------------------
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
-async function runHdc(cmd: string, timeout = 15000): Promise<string> {
-    const { stdout } = await execAsync(`hdc ${cmd}`, {
+async function runHdc(args: readonly string[], timeout = 15000): Promise<string> {
+    const { stdout } = await execFileAsync('hdc', args, {
         encoding: 'utf-8',
         timeout,
         maxBuffer: 10 * 1024 * 1024
     });
     return stdout.trim();
+}
+
+function quoteRemoteShellArg(value: string): string {
+    return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 function ok(data: Record<string, unknown>): string {
@@ -54,7 +58,7 @@ function fail(error: string): string {
 // ---------------------------------------------------------------------------
 
 async function getDeviceId(): Promise<string> {
-    const output = await runHdc('list targets', 5000);
+    const output = await runHdc(['list', 'targets'], 5000);
     const first = output
         .split('\n')
         .map((l) => l.trim())
@@ -348,15 +352,20 @@ function renderYamlNodes(nodes: (AriaNode | string)[], depth = 0): string {
 // ---------------------------------------------------------------------------
 
 async function dumpLayout(bundleName?: string): Promise<LayoutNode> {
-    const cmd = bundleName ? `shell uitest dumpLayout -b ${bundleName}` : 'shell uitest dumpLayout';
-    const dumpOutput = await runHdc(cmd, 20000);
+    const args = bundleName ? ['shell', 'uitest', 'dumpLayout', '-b', bundleName] : ['shell', 'uitest', 'dumpLayout'];
+    const dumpOutput = await runHdc(args, 20000);
     const match = dumpOutput.match(/saved to:(\S+)/);
     if (!match) throw new Error('Failed to get layout file path from hdc');
 
     const devicePath = match[1].trim();
-    const localPath = join(tmpdir(), `hdc_layout_${Date.now()}.json`);
-    await runHdc(`file recv ${devicePath} ${localPath}`, 10000);
-    return JSON.parse(readFileSync(localPath, 'utf-8'));
+    const localDir = mkdtempSync(join(tmpdir(), 'opendesk-hdc-layout-'));
+    const localPath = join(localDir, 'layout.json');
+    try {
+        await runHdc(['file', 'recv', devicePath, localPath], 10000);
+        return JSON.parse(readFileSync(localPath, 'utf-8'));
+    } finally {
+        rmSync(localDir, { recursive: true, force: true });
+    }
 }
 
 function convertLayout(layout: LayoutNode, bundleFilter?: string): string {
@@ -414,6 +423,7 @@ function findNodesByBundle(node: LayoutNode, bundleName: string): LayoutNode[] {
     const attrs = node.attributes || {};
     if (attrs.bundleName === bundleName) {
         results.push(node);
+        return results;
     }
     for (const child of node.children || []) {
         results.push(...findNodesByBundle(child, bundleName));
@@ -421,18 +431,26 @@ function findNodesByBundle(node: LayoutNode, bundleName: string): LayoutNode[] {
     return results;
 }
 
-function findAllWindows(node: LayoutNode): { bundleName: string; abilityName: string; bounds: string }[] {
+function findAllWindows(
+    node: LayoutNode,
+    seen = new Set<string>()
+): { bundleName: string; abilityName: string; bounds: string }[] {
     const results: { bundleName: string; abilityName: string; bounds: string }[] = [];
     const attrs = node.attributes || {};
     if (attrs.bundleName || attrs.abilityName) {
-        results.push({
+        const window = {
             bundleName: attrs.bundleName || '',
             abilityName: attrs.abilityName || '',
             bounds: attrs.origBounds || attrs.bounds || ''
-        });
+        };
+        const key = `${window.bundleName}\0${window.abilityName}\0${window.bounds}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            results.push(window);
+        }
     }
     for (const child of node.children || []) {
-        results.push(...findAllWindows(child));
+        results.push(...findAllWindows(child, seen));
     }
     return results;
 }
@@ -482,10 +500,16 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
                 'wait'
             ].join('\n');
 
-            const localScript = join(tmpdir(), `hdc_listapps_${Date.now()}.sh`);
-            writeFileSync(localScript, script);
-            await runHdc(`file send ${localScript} /data/local/tmp/hdc_listapps.sh`, 10000);
-            const output = await runHdc('shell sh /data/local/tmp/hdc_listapps.sh', 120000);
+            const localDir = mkdtempSync(join(tmpdir(), 'opendesk-hdc-listapps-'));
+            const localScript = join(localDir, 'listapps.sh');
+            let output: string;
+            try {
+                writeFileSync(localScript, script);
+                await runHdc(['file', 'send', localScript, '/data/local/tmp/hdc_listapps.sh'], 10000);
+                output = await runHdc(['shell', 'sh', '/data/local/tmp/hdc_listapps.sh'], 120000);
+            } finally {
+                rmSync(localDir, { recursive: true, force: true });
+            }
 
             const apps: { bundleName: string; label: string }[] = [];
             for (const line of output.split('\n')) {
@@ -510,7 +534,10 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
 // ========== openApp ==========
 
 const OpenAppArgsSchema = z.object({
-    bundleName: z.string().describe('要打开的应用的 bundleName，例如 com.develop.opensource.ohpcd.opendesk')
+    bundleName: z
+        .string()
+        .regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)
+        .describe('要打开的应用的 bundleName，例如 com.develop.opensource.ohpcd.opendesk')
 });
 
 export class OpenAppTool extends BaseTool<typeof OpenAppArgsSchema> {
@@ -522,12 +549,12 @@ export class OpenAppTool extends BaseTool<typeof OpenAppArgsSchema> {
     private async handleExecute(args: z.output<typeof OpenAppArgsSchema>): Promise<string> {
         try {
             // Find entry ability name from bm dump output
-            const dumpOutput = await runHdc(`shell bm dump -n ${args.bundleName} 2>/dev/null`, 15000);
+            const dumpOutput = await runHdc(['shell', 'bm', 'dump', '-n', args.bundleName], 15000);
             const abilityMatches = [...dumpOutput.matchAll(/"name":\s*"(\w+Ability)"/g)];
             const abilityName =
                 abilityMatches.find((m) => m[1] === 'EntryAbility')?.[1] || abilityMatches[0]?.[1] || 'EntryAbility';
 
-            await runHdc(`shell aa start -a ${abilityName} -b ${args.bundleName}`, 10000);
+            await runHdc(['shell', 'aa', 'start', '-a', abilityName, '-b', args.bundleName], 10000);
             return ok({ bundleName: args.bundleName, abilityName });
         } catch (err) {
             return fail(`Failed to open app ${args.bundleName}: ${err}`);
@@ -563,7 +590,11 @@ export class ListWindowsTool extends BaseTool<typeof ListWindowsArgsSchema> {
 // ========== snapshot ==========
 
 const SnapshotArgsSchema = z.object({
-    bundleName: z.string().optional().describe('只获取指定 bundleName 对应窗口的快照。不指定则获取所有窗口')
+    bundleName: z
+        .string()
+        .regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)
+        .optional()
+        .describe('只获取指定 bundleName 对应窗口的快照。不指定则获取所有窗口')
 });
 
 export class SnapshotTool extends BaseTool<typeof SnapshotArgsSchema> {
@@ -610,7 +641,7 @@ export class ClickTool extends BaseTool<typeof ClickArgsSchema> {
 
     private async handleExecute(args: z.output<typeof ClickArgsSchema>): Promise<string> {
         try {
-            await runHdc(`shell uitest uiInput click ${args.x} ${args.y}`, 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000);
             const result = await withSnapshot(args.snapshot, { x: args.x, y: args.y });
             return ok(result);
         } catch (err) {
@@ -642,7 +673,7 @@ export class ScrollTool extends BaseTool<typeof ScrollArgsSchema> {
         const dir = dirMap[args.direction];
 
         try {
-            await runHdc(`shell uitest uiInput dircFling ${dir}`, 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', String(dir)], 10000);
             const result = await withSnapshot(args.snapshot, { direction: args.direction });
             return ok(result);
         } catch (err) {
@@ -775,11 +806,10 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
 
     private async handleExecute(args: z.output<typeof InputArgsSchema>): Promise<string> {
         try {
-            const escapedText = args.text.replace(/"/g, '\\"');
             const hasNonAscii = /[^\x00-\x7F]/.test(args.text);
 
             // Click to focus the input
-            await runHdc(`shell uitest uiInput click ${args.x} ${args.y}`, 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000);
             await new Promise((resolve) => setTimeout(resolve, 300));
 
             if (hasNonAscii) {
@@ -787,13 +817,19 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
                 // but it places the text into the clipboard. We then select all and
                 // paste to replace everything (including the artifact char) with the
                 // actual text.
-                await runHdc(`shell uitest uiInput text "${escapedText}"`, 10000);
-                await runHdc(`shell uitest uiInput keyEvent ${KEYCODE_CTRL_LEFT} ${KEY_MAP.a}`, 5000);
-                await runHdc(`shell uitest uiInput keyEvent ${KEYCODE_PASTE}`, 5000);
+                await runHdc(['shell', 'uitest', 'uiInput', 'text', quoteRemoteShellArg(args.text)], 10000);
+                await runHdc(
+                    ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_CTRL_LEFT), String(KEY_MAP.a)],
+                    5000
+                );
+                await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_PASTE)], 5000);
             } else {
                 // ASCII: select all first to clear existing content, then type
-                await runHdc(`shell uitest uiInput keyEvent ${KEYCODE_CTRL_LEFT} ${KEY_MAP.a}`, 5000);
-                await runHdc(`shell uitest uiInput text "${escapedText}"`, 10000);
+                await runHdc(
+                    ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_CTRL_LEFT), String(KEY_MAP.a)],
+                    5000
+                );
+                await runHdc(['shell', 'uitest', 'uiInput', 'text', quoteRemoteShellArg(args.text)], 10000);
             }
 
             const result = await withSnapshot(args.snapshot, { x: args.x, y: args.y, text: args.text });
@@ -818,7 +854,7 @@ export class GoBackTool extends BaseTool<typeof GoBackArgsSchema> {
 
     private async handleExecute(args: z.output<typeof GoBackArgsSchema>): Promise<string> {
         try {
-            await runHdc('shell uitest uiInput keyEvent Back', 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', 'Back'], 10000);
             const result = await withSnapshot(args.snapshot, {});
             return ok(result);
         } catch (err) {
@@ -842,7 +878,10 @@ export class GoForwardTool extends BaseTool<typeof GoForwardArgsSchema> {
     private async handleExecute(args: z.output<typeof GoForwardArgsSchema>): Promise<string> {
         try {
             // Alt+Right Arrow
-            await runHdc(`shell uitest uiInput keyEvent ${KEYCODE_ALT_LEFT} ${KEY_MAP.ArrowRight}`, 10000);
+            await runHdc(
+                ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_ALT_LEFT), String(KEY_MAP.ArrowRight)],
+                10000
+            );
             const result = await withSnapshot(args.snapshot, {});
             return ok(result);
         } catch (err) {
@@ -861,6 +900,7 @@ const PressKeyArgsSchema = z.object({
         ),
     modifiers: z
         .array(z.enum(['Ctrl', 'Alt', 'Shift']))
+        .max(2)
         .optional()
         .describe('修饰键列表，如 ["Ctrl"] 或 ["Ctrl", "Shift"]'),
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
@@ -890,7 +930,7 @@ export class PressKeyTool extends BaseTool<typeof PressKeyArgsSchema> {
 
             // uitest keyEvent accepts up to 3 keycodes: modifier1 modifier2 key
             const allCodes = [...modCodes, keyCode];
-            await runHdc(`shell uitest uiInput keyEvent ${allCodes.join(' ')}`, 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', ...allCodes.map(String)], 10000);
 
             const result: Record<string, unknown> = { key: args.key };
             if (mods.length) result.modifiers = mods;

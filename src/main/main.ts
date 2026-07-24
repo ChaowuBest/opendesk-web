@@ -2751,7 +2751,7 @@ function openLogViewFromTray(): void {
         minHeight: 300,
         frame: false,
         icon: appIcon,
-        title: 'OpenDesk - Logs',
+        title: 'OpenDesk',
         show: false,
         paintWhenInitiallyHidden: true,
         backgroundColor: '#1e1e1e',
@@ -3186,8 +3186,7 @@ function startApplication() {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({
