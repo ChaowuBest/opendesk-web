@@ -150,11 +150,13 @@ export const enUs: Record<string, string> = {
 
     // Commands - Compact
     'compact.title': 'Context Compression',
+    'compact.starting': 'Compressing context, please wait...',
     'compact.success': 'Context compressed successfully. Effect will be reflected in next conversation.',
     'compact.fail': 'Compression Failed',
     'compact.fail.detail': 'Error during context compression: ',
     'compact.no.task': 'No active task',
     'compact.task.not.found': 'Current task not found',
+    'compact.noop': 'Context is too short, no need to compact.',
 
     // Commands - Debug
     'debug.current.task.id': 'Current Task ID',
