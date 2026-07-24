@@ -7,7 +7,13 @@ import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
 import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
 import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
 import { EventBus } from '../../../main/server/opencode/event-bus.js';
-import { AssistantMessage, ToolCall, ToolCallMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
+import {
+    AssistantMessage,
+    CompactSeparatorMessage,
+    ToolCall,
+    ToolCallMessagePart,
+    UserMessage
+} from '../../../main/aikernel/messages.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -70,6 +76,11 @@ function mockSetting(data = baseSettingData()) {
 }
 
 function makeTask(workspace: string) {
+    const compactBoundary = new CompactSeparatorMessage('compact summary', {
+        boundary_id: 'boundary-session-route',
+        created_at: '2026-07-24T10:00:00.000Z',
+        trigger: 'manual'
+    });
     return {
         task_id: 'task_model',
         parent_id: null,
@@ -100,6 +111,11 @@ function makeTask(workspace: string) {
         rebuildSystemPrompt: jest.fn(async () => undefined),
         setSystemPrompt: jest.fn(),
         persistLater: jest.fn(),
+        compactTaskContext: jest.fn(async () => ({
+            compacted: true,
+            boundary: compactBoundary,
+            summary: 'compact summary'
+        })),
         submitUserMessage: jest.fn(async () => undefined),
         waitUntilFinished: jest.fn(async () => undefined)
     };
@@ -174,6 +190,200 @@ describe('opencode session routes', () => {
         expect(task.task_name).toBe('Renamed session');
         expect(task.model).toBe('gpt4o');
         expect(task.persistLater).toHaveBeenCalledTimes(1);
+    });
+
+    test('POST /session/:id/summarize compacts with the requested model without changing the task model', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        task.model = 'existing-model';
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/summarize?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    providerID: 'openai',
+                    modelID: 'gpt-4o'
+                }),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'sid=compact',
+                    'x-tracerId': 'trace-compact'
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toBe(true);
+        expect(task.model).toBe('existing-model');
+        expect(task.compactTaskContext).toHaveBeenCalledWith({
+            model: 'gpt4o',
+            modelRequestOptions: {
+                extraHeaders: {
+                    cookie: 'sid=compact',
+                    trace_id: 'trace-compact'
+                }
+            }
+        });
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.status',
+                properties: { sessionID: 'ses_model', status: { type: 'busy' } }
+            })
+        );
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.compacted',
+                properties: { sessionID: 'ses_model' }
+            })
+        );
+        const events = publishSpy.mock.calls.map(([event]) => event as any);
+        const compactionUser = events.find(
+            (event) => event.type === 'message.updated' && event.properties.info.role === 'user'
+        );
+        const summaryAssistant = events.find(
+            (event) => event.type === 'message.updated' && event.properties.info.summary === true
+        );
+        const compactionPart = events.find(
+            (event) => event.type === 'message.part.updated' && event.properties.part.type === 'compaction'
+        );
+        const summaryPart = events.find(
+            (event) =>
+                event.type === 'message.part.updated' &&
+                event.properties.part.type === 'text' &&
+                event.properties.part.text === 'compact summary'
+        );
+        expect(compactionUser.properties.info.model).toEqual({
+            providerID: 'openai',
+            modelID: 'gpt-4o',
+            id: 'gpt-4o'
+        });
+        expect(compactionPart.properties.part).toEqual(
+            expect.objectContaining({
+                messageID: compactionUser.properties.info.id,
+                type: 'compaction',
+                auto: false
+            })
+        );
+        expect(summaryAssistant.properties.info).toEqual(
+            expect.objectContaining({
+                parentID: compactionUser.properties.info.id,
+                providerID: 'openai',
+                modelID: 'gpt-4o',
+                mode: 'compaction',
+                agent: 'compaction',
+                summary: true,
+                finish: 'stop'
+            })
+        );
+        expect(summaryPart.properties.part).toEqual(
+            expect.objectContaining({
+                messageID: summaryAssistant.properties.info.id,
+                text: 'compact summary'
+            })
+        );
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.status',
+                properties: { sessionID: 'ses_model', status: { type: 'idle' } }
+            })
+        );
+    });
+
+    test('POST /session/:id/summarize reports completion when context is below the compaction threshold', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        task.compactTaskContext.mockResolvedValue({ compacted: false });
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/summarize?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    providerID: 'openai',
+                    modelID: 'gpt-4o'
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toBe(true);
+        const events = publishSpy.mock.calls.map(([event]) => event as any);
+        expect(events).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    type: 'session.status',
+                    properties: { sessionID: 'ses_model', status: { type: 'busy' } }
+                }),
+                expect.objectContaining({
+                    type: 'session.compacted',
+                    properties: { sessionID: 'ses_model' }
+                }),
+                expect.objectContaining({
+                    type: 'session.status',
+                    properties: { sessionID: 'ses_model', status: { type: 'idle' } }
+                })
+            ])
+        );
+        expect(events.some((event) => event.type === 'message.updated')).toBe(false);
+        expect(events.some((event) => event.type === 'message.part.updated')).toBe(false);
+    });
+
+    test('POST /session/:id/summarize rejects an unknown model', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/summarize?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    providerID: 'openai',
+                    modelID: 'missing-model'
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(400);
+        expect(task.compactTaskContext).not.toHaveBeenCalled();
+    });
+
+    test('POST /session/:id/summarize rejects auto continuation until it is supported', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/summarize?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    providerID: 'openai',
+                    modelID: 'gpt-4o',
+                    auto: true
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'auto=true is not supported yet' });
+        expect(task.compactTaskContext).not.toHaveBeenCalled();
     });
 
     test('POST /session/:id/message uses requested opencode model object for the submitted turn', async () => {
@@ -468,6 +678,62 @@ describe('opencode session routes', () => {
         expect(deleteResponse.status).toBe(200);
         expect(task.chat_context.messages).toEqual([]);
         expect(task.persistLater).toHaveBeenCalledTimes(1);
+    });
+
+    test('GET /session/:id/message exposes a compact boundary as OpenCode compaction messages', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        task.chat_context.messages = [
+            new CompactSeparatorMessage('persisted compact summary', {
+                boundary_id: 'persisted-boundary',
+                created_at: '2026-07-24T11:00:00.000Z',
+                trigger: 'manual'
+            })
+        ];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages).toHaveLength(2);
+        expect(messages[0].info.role).toBe('user');
+        expect(messages[0].parts).toEqual([
+            expect.objectContaining({
+                messageID: messages[0].info.id,
+                type: 'compaction',
+                auto: false
+            })
+        ]);
+        expect(messages[1].info).toEqual(
+            expect.objectContaining({
+                role: 'assistant',
+                parentID: messages[0].info.id,
+                mode: 'compaction',
+                agent: 'compaction',
+                summary: true,
+                finish: 'stop'
+            })
+        );
+        expect(messages[1].parts).toEqual([
+            expect.objectContaining({
+                messageID: messages[1].info.id,
+                type: 'text',
+                text: 'persisted compact summary'
+            })
+        ]);
+
+        const singleResponse = await SessionRoutes().request(
+            `/ses_model/message/${messages[1].info.id}?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+        expect(singleResponse.status).toBe(200);
+        expect(await singleResponse.json()).toEqual(messages[1]);
     });
 
     test('GET /session/:id/message includes assistant error text', async () => {
