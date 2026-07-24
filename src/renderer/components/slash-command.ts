@@ -498,15 +498,26 @@ export async function executeSlashCommand(
             break;
         }
 
-        case 'compact':
-            if (ctx.currentTaskId && ctx.taskManagerAPI?.compactTask) {
-                try {
-                    await ctx.taskManagerAPI.compactTask(ctx.currentTaskId);
-                } catch (err) {
-                    console.error('Failed to compact task:', err);
+        case 'compact': {
+            if (!ctx.currentTaskId || !ctx.taskManagerAPI?.compactTask) {
+                window.notificationAPI?.sendNotification?.('warning', 'compact', t('compact.no.task'), '');
+                break;
+            }
+            try {
+                window.notificationAPI?.sendNotification?.('info', 'compact', t('compact.starting'), '');
+                const result = await ctx.taskManagerAPI.compactTask(ctx.currentTaskId);
+                if (result?.compacted) {
+                    window.notificationAPI?.sendNotification?.('info', 'compact', t('compact.success'), '');
+                } else {
+                    window.notificationAPI?.sendNotification?.('warning', 'compact', t('compact.noop'), '');
                 }
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error('Failed to compact task:', err);
+                window.notificationAPI?.sendNotification?.('error', 'compact', t('compact.fail.detail'), msg);
             }
             break;
+        }
 
         case 'stop':
             if (ctx.stopCallback) {

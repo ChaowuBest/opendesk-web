@@ -146,11 +146,13 @@ export const zhCn: Record<string, string> = {
 
     // Commands - Compact
     'compact.title': '上下文压缩',
+    'compact.starting': '正在压缩上下文，请稍候...',
     'compact.success': '上下文已成功压缩。压缩效果将在下次对话时体现。',
     'compact.fail': '压缩失败',
     'compact.fail.detail': '上下文压缩过程中发生错误：',
     'compact.no.task': '没有活跃的任务',
     'compact.task.not.found': '未找到当前任务',
+    'compact.noop': '上下文较短，无需压缩。',
 
     // Commands - Debug
     'debug.current.task.id': '当前任务ID',
