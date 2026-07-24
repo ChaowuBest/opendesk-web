@@ -61,6 +61,16 @@ class TurnCircuitBreaker {
     noteReadFileChanged(): void {
         this._unchangedCount = 0;
     }
+
+    /** 读取文件后清除该文件的编辑历史，避免 edit → read → edit 被误判为循环 */
+    clearEditsForFile(filePath: string): void {
+        const prefix = `${filePath}::`;
+        for (const key of this._editHistory.keys()) {
+            if (key.startsWith(prefix)) {
+                this._editHistory.delete(key);
+            }
+        }
+    }
 }
 
 // ==================== per-task 状态 + 全局钩子 ====================
@@ -103,6 +113,12 @@ HookRegistry.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
 
 HookRegistry.afterToolCall((task: TaskState, tool_call: ToolCall) => {
     if (tool_call.tool_name !== 'filemgr-readFile' || !tool_call.result) return;
+
+    // 读取文件后清除该文件的编辑历史，避免 edit -> read -> edit 被误判为循环
+    const args = tool_call.args_object as { file_path?: string } | undefined;
+    if (args?.file_path) {
+        getBreaker(task).clearEditsForFile(args.file_path);
+    }
 
     try {
         const parsed = JSON.parse(tool_call.result);
