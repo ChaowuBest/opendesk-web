@@ -2755,6 +2755,13 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
+}
+
+.od-user-msg {
+    min-width: 0;
+    max-width: min(48rem, 100%);
+    overflow-wrap: break-word;
 }
 
 .od-user-image-group {

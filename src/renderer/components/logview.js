@@ -11,12 +11,14 @@
 
 import { createRendererTranslator } from '../locale.ts';
 
-const MIN_ROW_HEIGHT = 32;
-const ROW_VERTICAL_PADDING = 16;
-const MESSAGE_LINE_HEIGHT = 16;
+const MIN_ROW_HEIGHT = 24;
+const ROW_VERTICAL_PADDING = 8;
+const MESSAGE_LINE_HEIGHT = 14;
 const MESSAGE_CHAR_WIDTH = 7.2;
 const OVERSCAN_PX = 320;
 const BATCH_SIZE = 200;
+const LEVEL_COL_WIDTH = 80;
+const TIME_COL_WIDTH = 140;
 const EXPORT_MENU_MIN_WIDTH = 180;
 const EXPORT_MENU_GAP = 6;
 const EXPORT_MENU_VIEWPORT_PADDING = 8;
@@ -207,42 +209,42 @@ class LogView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="od-log-view w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
-            <div class="od-log-header sticky top-0 z-10 px-6 py-4 flex items-center bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
-                <div class="flex items-center gap-2.5">
-                    <div class="od-log-icon w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-                        <i class="fas fa-file-lines text-indigo-500 text-xs"></i>
+            <div class="od-log-header sticky top-0 z-10 px-4 py-2 flex items-center bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
+                <div class="flex items-center gap-2">
+                    <div class="od-log-icon w-5 h-5 rounded-md bg-indigo-500/10 flex items-center justify-center">
+                        <i class="fas fa-file-lines text-indigo-500" style="font-size:9px"></i>
                     </div>
-                    <h1 class="od-log-title text-xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">${this.escapeHtml(this._t('renderer.log.title'))}</h1>
-                    <span id="log-counter" class="od-log-counter text-[11px] text-gray-400 ml-1"></span>
+                    <h1 class="od-log-title text-sm font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">${this.escapeHtml(this._t('renderer.log.title'))}</h1>
+                    <span id="log-counter" class="od-log-counter text-[10px] text-gray-400 ml-1"></span>
                 </div>
             </div>
 
-            <div class="flex-1 flex flex-col overflow-hidden px-5 pt-4 pb-3 gap-3">
-                <div class="od-log-toolbar flex items-center gap-2.5">
+            <div class="flex-1 flex flex-col overflow-hidden px-3 pt-2 pb-2 gap-2">
+                <div class="od-log-toolbar flex items-center gap-2">
                     <div class="od-log-search relative flex-1">
-                        <i class="od-log-search-icon fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none"></i>
+                        <i class="od-log-search-icon fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" style="font-size:10px;pointer-events:none"></i>
                         <input id="log-filter-input" type="text" placeholder="${this.escapeHtml(this._t('renderer.log.filterPlaceholder'))}"
-                            class="od-log-filter-input w-full pl-8 pr-8 py-2 text-xs bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-300/50 transition-all placeholder-gray-300">
-                        <button id="log-filter-clear" class="od-log-filter-clear absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-500 flex items-center justify-center transition-colors hidden" title="${this.escapeHtml(this._t('renderer.log.clearFilter'))}">
+                            class="od-log-filter-input w-full pl-7 pr-7 py-1 text-[11px] bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-300/50 transition-all placeholder-gray-300">
+                        <button id="log-filter-clear" class="od-log-filter-clear absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-500 flex items-center justify-center transition-colors hidden" title="${this.escapeHtml(this._t('renderer.log.clearFilter'))}">
                             <i class="fas fa-times" style="font-size:8px"></i>
                         </button>
                     </div>
-                    <button id="log-goto-bottom" class="od-log-goto-bottom shrink-0 px-3 py-2 text-xs text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-lg hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1.5" title="${this.escapeHtml(this._t('renderer.log.gotoLatest'))}">
-                        <i class="fas fa-angle-double-down" style="font-size:10px"></i>
+                    <button id="log-goto-bottom" class="od-log-goto-bottom shrink-0 px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${this.escapeHtml(this._t('renderer.log.gotoLatest'))}">
+                        <i class="fas fa-angle-double-down" style="font-size:9px"></i>
                         <span>${this.escapeHtml(this._t('renderer.log.latest'))}</span>
                     </button>
                     <div class="od-log-export relative shrink-0">
-                        <button id="log-export-btn" class="od-log-export-btn px-3 py-2 text-xs text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-lg hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1.5" title="${this.escapeHtml(this._t('renderer.log.export'))}" aria-haspopup="menu" aria-expanded="false">
-                            <i class="fas fa-download" style="font-size:10px"></i>
+                        <button id="log-export-btn" class="od-log-export-btn px-2.5 py-1 text-[11px] text-gray-500 bg-white/70 backdrop-blur-sm border border-gray-200/60 rounded-md hover:bg-gray-50 hover:border-gray-300/60 transition-all flex items-center gap-1" title="${this.escapeHtml(this._t('renderer.log.export'))}" aria-haspopup="menu" aria-expanded="false">
+                            <i class="fas fa-download" style="font-size:9px"></i>
                             <span>${this.escapeHtml(this._t('renderer.log.export'))}</span>
-                            <i class="fas fa-chevron-down" style="font-size:8px"></i>
+                            <i class="fas fa-chevron-down" style="font-size:7px"></i>
                         </button>
                         <div id="log-export-menu" class="od-log-export-menu hidden z-50 min-w-[180px] rounded-lg border border-gray-200/70 bg-white/95 shadow-lg backdrop-blur-xl py-1" role="menu">
-                            <button type="button" class="od-log-export-menu-item w-full px-3 py-2 text-left text-xs text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="filtered" role="menuitem">
+                            <button type="button" class="od-log-export-menu-item w-full px-3 py-1.5 text-left text-[11px] text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="filtered" role="menuitem">
                                 <i class="fas fa-filter text-gray-400" style="font-size:10px"></i>
                                 <span>${this.escapeHtml(this._t('renderer.log.exportFiltered'))}</span>
                             </button>
-                            <button type="button" class="od-log-export-menu-item w-full px-3 py-2 text-left text-xs text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="all" role="menuitem">
+                            <button type="button" class="od-log-export-menu-item w-full px-3 py-1.5 text-left text-[11px] text-gray-600 hover:bg-blue-50 hover:text-gray-800 flex items-center gap-2" data-log-export-scope="all" role="menuitem">
                                 <i class="fas fa-list text-gray-400" style="font-size:10px"></i>
                                 <span>${this.escapeHtml(this._t('renderer.log.exportAll'))}</span>
                             </button>
@@ -251,7 +253,7 @@ class LogView extends HTMLElement {
                 </div>
 
                 <div class="od-log-table flex-1 flex flex-col overflow-hidden rounded-lg border border-gray-200/80">
-                    <div class="od-log-table-head grid grid-cols-[100px_160px_minmax(0,1fr)] px-4 py-2 bg-gray-50/90 border-b border-gray-200/60 text-[11px] font-semibold text-gray-400 select-none">
+                    <div class="od-log-table-head grid grid-cols-[80px_140px_minmax(0,1fr)] px-3 py-1 bg-gray-50/90 border-b border-gray-200/60 text-[10px] font-semibold text-gray-400 select-none">
                         <span>${this.escapeHtml(this._t('renderer.log.column.level'))}</span>
                         <span>${this.escapeHtml(this._t('renderer.log.column.time'))}</span>
                         <span>${this.escapeHtml(this._t('renderer.log.column.content'))}</span>
@@ -480,7 +482,7 @@ class LogView extends HTMLElement {
     _getMessageColumnWidth() {
         const scroller = this.querySelector('#log-scroll-container');
         const width = scroller?.clientWidth || this.clientWidth || 800;
-        return Math.max(120, width - 100 - 160 - 32);
+        return Math.max(120, width - LEVEL_COL_WIDTH - TIME_COL_WIDTH - 24);
     }
 
     _estimateRowHeight(entry, messageWidth) {
@@ -571,15 +573,15 @@ class LogView extends HTMLElement {
             const cfg = this.getLevelConfig(entry.level);
             const stripe = i % 2 === 0 ? '' : 'od-log-row-alt bg-gray-50/40';
             const rowHeight = this._rowHeights[i] || MIN_ROW_HEIGHT;
-            html += `<div class="od-log-row grid grid-cols-[100px_160px_minmax(0,1fr)] px-4 py-2 items-start ${stripe} hover:bg-blue-50/40 transition-colors border-b border-gray-100/50" data-log-level="${this.escapeHtml(level)}" style="min-height:${rowHeight}px">
-                <div class="od-log-level flex items-center gap-1.5 overflow-hidden min-w-0">
-                    <span class="od-log-level-pill flex items-center gap-1.5 min-w-0 h-5 px-2 rounded-md">
-                        <i class="od-log-level-icon fas ${cfg.icon} ${cfg.color}" style="font-size:10px"></i>
-                        <span class="od-log-level-label ${cfg.color} text-[11px] font-medium truncate">${this.escapeHtml(cfg.label)}</span>
+            html += `<div class="od-log-row grid grid-cols-[80px_140px_minmax(0,1fr)] px-3 py-1 items-start ${stripe} hover:bg-blue-50/40 transition-colors border-b border-gray-100/50" data-log-level="${this.escapeHtml(level)}" style="min-height:${rowHeight}px">
+                <div class="od-log-level flex items-center gap-1 overflow-hidden min-w-0">
+                    <span class="od-log-level-pill flex items-center gap-1 min-w-0 h-4 px-1.5 rounded">
+                        <i class="od-log-level-icon fas ${cfg.icon} ${cfg.color}" style="font-size:9px"></i>
+                        <span class="od-log-level-label ${cfg.color} text-[10px] font-medium truncate">${this.escapeHtml(cfg.label)}</span>
                     </span>
                 </div>
-                <span class="od-log-time text-[11px] text-gray-400 font-mono truncate" title="${this.escapeHtml(entry.timestamp)}">${this.escapeHtml(entry.timestamp)}</span>
-                <span class="od-log-message min-w-0 text-[11px] text-gray-600 font-mono" title="${this.escapeHtml(entry.message)}" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:${MESSAGE_LINE_HEIGHT}px">${this.escapeHtml(entry.message)}</span>
+                <span class="od-log-time text-[10px] text-gray-400 font-mono truncate" title="${this.escapeHtml(entry.timestamp)}">${this.escapeHtml(entry.timestamp)}</span>
+                <span class="od-log-message min-w-0 text-[10px] text-gray-600 font-mono" title="${this.escapeHtml(entry.message)}" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:${MESSAGE_LINE_HEIGHT}px">${this.escapeHtml(entry.message)}</span>
             </div>`;
         }
         container.innerHTML = html;

@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { HookRegistry } from '../../../../main/aikernel/hooks.js';
+import { ToolCall } from '../../../../main/aikernel/messages.js';
+
+function makeToolCall(name: string, args: Record<string, unknown>, status: ToolCall['status'], result = ''): ToolCall {
+    const call = new ToolCall(0, `${name}-call`, name, JSON.stringify(args));
+    call.args_object = args;
+    call.status = status;
+    call.result = result;
+    return call;
+}
+
+test('a failed read does not reset the repeated-edit circuit breaker', async () => {
+    await import('../../../../main/applications/filemgr/harness/circuit-breaker.js');
+
+    const beforeToolCall = HookRegistry.beforeToolCallCallbacks.at(-1);
+    const afterToolCall = HookRegistry.afterToolCallCallbacks.at(-1);
+    assert.ok(beforeToolCall);
+    assert.ok(afterToolCall);
+
+    const task = {
+        task_id: 'circuit-breaker-test',
+        appendInternalUserMessage: () => undefined
+    } as any;
+    const editArgs = {
+        filePath: '/tmp/circuit-breaker-target.txt',
+        oldString: 'before',
+        newString: 'after'
+    };
+
+    assert.deepEqual(await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running')), {
+        operation: 'allow'
+    });
+
+    await afterToolCall(
+        task,
+        makeToolCall(
+            'filemgr-readFile',
+            { file_path: editArgs.filePath },
+            'error',
+            'permission denied while reading file'
+        )
+    );
+
+    const repeatedEdit = await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'));
+    assert.equal(repeatedEdit.operation, 'deny');
+});
+
+test('a successful read resets the repeated-edit circuit breaker for that file', async () => {
+    await import('../../../../main/applications/filemgr/harness/circuit-breaker.js');
+
+    const beforeToolCall = HookRegistry.beforeToolCallCallbacks.at(-1);
+    const afterToolCall = HookRegistry.afterToolCallCallbacks.at(-1);
+    assert.ok(beforeToolCall);
+    assert.ok(afterToolCall);
+
+    const task = {
+        task_id: 'circuit-breaker-success-test',
+        appendInternalUserMessage: () => undefined
+    } as any;
+    const filePath = '/tmp/circuit-breaker-success-target.txt';
+    const editArgs = { filePath, oldString: 'before', newString: 'after' };
+
+    assert.equal(
+        (await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'))).operation,
+        'allow'
+    );
+
+    await afterToolCall(
+        task,
+        makeToolCall(
+            'filemgr-readFile',
+            { file_path: filePath },
+            'success',
+            JSON.stringify({ type: 'text', file: { filePath, content: 'after' } })
+        )
+    );
+
+    assert.equal(
+        (await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'))).operation,
+        'allow'
+    );
+});

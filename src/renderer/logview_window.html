@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+    <head>
+        <script>
+            // 防止深色模式 FOUC：在首帧渲染前同步设置 data-theme
+            (function () {
+                var stored = localStorage.getItem('opendesk-theme-effective');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.dataset.theme = stored;
+                } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.dataset.theme = 'dark';
+                }
+            })();
+        </script>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk</title>
+
+        <link rel="stylesheet" href="./theme/theme.css" />
+        <link rel="stylesheet" href="./styles/titlebar.css" />
+        <link rel="stylesheet" href="./styles/common.css" />
+        <style>
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+            }
+            #log-drag-overlay {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 32px;
+                -webkit-app-region: drag;
+                z-index: 10;
+                pointer-events: none;
+            }
+            .window-controls {
+                position: absolute;
+                top: 0;
+                right: 0;
+                z-index: 11;
+                display: flex;
+                -webkit-app-region: no-drag;
+            }
+            log-view {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="log-drag-overlay"></div>
+        <div class="window-controls">
+            <button
+                id="log-minimize-btn"
+                class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
+            >
+                <i class="fas fa-minus"></i>
+            </button>
+            <button
+                id="log-maximize-btn"
+                class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
+            >
+                <i class="far fa-square" id="log-maximize-icon"></i>
+            </button>
+            <button
+                id="log-close-btn"
+                class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-red-500 hover:text-white transition"
+            >
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <log-view></log-view>
+
+        <script type="module">
+            import './components/logview.js';
+            import { createRendererTranslator, resolveRendererLocale } from './locale.ts';
+
+            (function () {
+                var currentTranslator = createRendererTranslator();
+
+                function applyLocalization(setting) {
+                    currentTranslator = createRendererTranslator(setting);
+                    document.documentElement.lang = resolveRendererLocale(setting);
+                    document.title = 'OpenDesk - ' + currentTranslator('renderer.log.title');
+
+                    var minimizeButton = document.getElementById('log-minimize-btn');
+                    var closeButton = document.getElementById('log-close-btn');
+                    minimizeButton.title = currentTranslator('common.minimize');
+                    minimizeButton.setAttribute('aria-label', currentTranslator('common.minimize'));
+                    closeButton.title = currentTranslator('common.close');
+                    closeButton.setAttribute('aria-label', currentTranslator('common.close'));
+                    updateMaximizeIcon();
+                }
+
+                // 窗口控制按钮
+                document.getElementById('log-close-btn').addEventListener('click', function () {
+                    window.windowControlAPI.close();
+                });
+                document.getElementById('log-minimize-btn').addEventListener('click', function () {
+                    window.windowControlAPI.minimize();
+                });
+                document.getElementById('log-maximize-btn').addEventListener('click', function () {
+                    window.windowControlAPI.maximize();
+                });
+
+                // 最大化/还原图标
+                function updateMaximizeIcon() {
+                    window.windowControlAPI.isMaximized().then(function (maximized) {
+                        var icon = document.getElementById('log-maximize-icon');
+                        var button = document.getElementById('log-maximize-btn');
+                        if (icon) {
+                            icon.className = maximized ? 'fas fa-window-restore' : 'far fa-square';
+                        }
+                        if (button) {
+                            var title = currentTranslator(maximized ? 'common.restore' : 'common.maximize');
+                            button.title = title;
+                            button.setAttribute('aria-label', title);
+                        }
+                    });
+                }
+                applyLocalization();
+                window.settingAPI
+                    .loadSettingObject()
+                    .then(applyLocalization)
+                    .catch(function () {});
+                window.settingAPI.onSettingChanged?.(applyLocalization);
+                window.addEventListener('resize', updateMaximizeIcon);
+            })();
+        </script>
+    </body>
+</html>

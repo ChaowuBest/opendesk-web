@@ -2735,22 +2735,53 @@ const registerHotKeys = () => {
     }
 };
 
+let globalLogWindow: BrowserWindow | null = null;
+
 function openLogViewFromTray(): void {
-    if (!globalMainWindow || globalMainWindow.isDestroyed()) {
+    if (globalLogWindow && !globalLogWindow.isDestroyed()) {
+        globalLogWindow.show();
+        globalLogWindow.focus();
         return;
     }
-    globalMainWindow.show();
-    void globalMainWindow.webContents
-        .executeJavaScript(
-            `(() => {
-                if (window.globalControlAPI && typeof window.globalControlAPI.openLogView === 'function') {
-                    window.globalControlAPI.openLogView();
-                }
-            })()`
-        )
-        .catch((error) => {
-            logger.warn(`failed to open log view from tray: ${error}`);
-        });
+
+    globalLogWindow = new BrowserWindow({
+        width: 900,
+        height: 560,
+        minWidth: 480,
+        minHeight: 300,
+        frame: false,
+        icon: appIcon,
+        title: 'OpenDesk',
+        show: false,
+        paintWhenInitiallyHidden: true,
+        backgroundColor: '#1e1e1e',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            allowRunningInsecureContent: true,
+            backgroundThrottling: true,
+            preload: getRendererPreloadPath()
+        }
+    });
+
+    globalLogWindow.setMenu(null);
+
+    globalLogWindow.once('ready-to-show', () => {
+        globalLogWindow?.show();
+    });
+
+    globalLogWindow.on('closed', () => {
+        globalLogWindow = null;
+    });
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+        const logUrl = new URL('logview_window.html', baseUrl);
+        void globalLogWindow.loadURL(logUrl.toString());
+    } else {
+        const baseDir = path.join(__dirname, '..', 'renderer');
+        void globalLogWindow.loadFile(path.join(baseDir, 'logview_window.html'));
+    }
 }
 
 const registerTray = () => {
@@ -2868,6 +2899,13 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 function startApplication() {
+    // 同步 --config-directory 到 Electron userData，使单例锁按 config 目录区分
+    const configDir = getOpendeskDirectory();
+    const defaultUserData = app.getPath('userData');
+    if (configDir !== defaultUserData) {
+        app.setPath('userData', configDir);
+    }
+
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (_event, _commandLine) => {
             if (globalMainWindow) {
@@ -3148,8 +3186,7 @@ function startApplication() {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

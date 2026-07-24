@@ -355,7 +355,7 @@ class TaskView extends HTMLElement {
         if (part.type === 'file') {
             return `<div class="self-end max-w-[340px]">${part.rendered}</div>`;
         }
-        return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"><div class="${TaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
+        return `<div class="flex flex-col items-end min-w-0"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 border border-gray-200"><div class="${TaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
     }
 
     renderUserMessage(user_message) {
