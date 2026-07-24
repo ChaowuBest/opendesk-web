@@ -24,6 +24,7 @@ class SettingPanel extends HTMLElement {
         this._editingProviderIndex = -1;
         this._editingModelIndex = -1;
         this.appVersion = null;
+        this.buildTime = null;
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
@@ -57,6 +58,22 @@ class SettingPanel extends HTMLElement {
             this.appVersion = await window.settingAPI.getVersion();
         } catch (e) {
             console.warn('Failed to load version:', e);
+        }
+        try {
+            const info = await window.settingAPI.getBuildTime();
+            if (info) {
+                const label = info.dev ? '开发中' : '构建时间';
+                const formatted = new Date(info.time).toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                this.buildTime = `${label} ${formatted}`;
+            }
+        } catch (e) {
+            console.warn('Failed to load build time:', e);
         }
     }
 
@@ -745,7 +762,7 @@ class SettingPanel extends HTMLElement {
 
             <!-- 底部版本信息栏 -->
             <div class="sp-footer">
-                <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'}</span>
+                <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'} · ${this.buildTime || ''}</span>
                 <a class="sp-footer-link" id="privacy-link">隐私协议</a>
             </div>
         </div>

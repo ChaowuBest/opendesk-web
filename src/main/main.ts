@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+declare const __BUILD_TIME__: string;
+declare const __IS_DEV__: boolean;
+
 import {
     app,
     BrowserWindow,
@@ -2452,6 +2455,9 @@ const registerSettingAPIHandlers = () => {
         ipcMain.handle('setting:getAppVersion', () => {
             return { status: 'ok', data: app.getVersion() };
         }),
+        ipcMain.handle('setting:getBuildTime', () => {
+            return { status: 'ok', data: { time: __BUILD_TIME__, dev: __IS_DEV__ } };
+        }),
         ipcMain.handle('setting:estimateContextSize', (_event, modelName: string) => {
             if (!modelName || typeof modelName !== 'string') return { status: 'ok', data: 0 };
             return { status: 'ok', data: lookupKnownContextSize(modelName) };
@@ -3186,7 +3192,8 @@ function startApplication() {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

@@ -4,9 +4,14 @@ import path from 'path';
 
 export default defineConfig(({ mode }) => {
     const isProd = mode === 'production';
+    const buildTime = new Date().toISOString();
 
     return {
         main: {
+            define: {
+                __BUILD_TIME__: JSON.stringify(buildTime),
+                __IS_DEV__: JSON.stringify(!isProd)
+            },
             publicDir: path.join(__dirname, 'resources', 'main'),
             plugins: [tailwindcss()],
             build: {
