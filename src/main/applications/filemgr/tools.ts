@@ -9,8 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool, BaseToolset } from '../../aikernel/tool';
-import { ToolCall, marked } from '../../aikernel/messages';
+import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool';
+import { ToolCall, UserMessage, marked } from '../../aikernel/messages';
+import { LLM } from '../../aikernel/llm.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
@@ -28,6 +29,7 @@ import {
     extractText as extractFileText,
     isExtractTextSupported
 } from './parser/extract.js';
+import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';
@@ -45,8 +47,7 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    | { ok: true }
-    | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -1085,6 +1086,240 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             }
             throw err;
         }
+    }
+}
+
+// ==================== ReadImage / AskImage 工具 ====================
+
+const imageSourceSchema = z.string().min(1).describe('本地图片路径，或以 http:// / https:// 开头的在线图片 URL');
+
+const readImageSchema = z.object({
+    path: imageSourceSchema
+});
+
+const askImageSchema = z.object({
+    question: z.string().min(1).describe('需要视觉模型结合图片回答的问题'),
+    path: imageSourceSchema
+});
+
+function normalizeImageSource(source: string, taskState?: TaskState): string {
+    const value = source.trim();
+    if (/^https?:\/\//i.test(value)) {
+        return new URL(value).toString();
+    }
+    if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) {
+        return value;
+    }
+    return sanitizePath(value, getWorkingDirectory(taskState));
+}
+
+function imageSourcePermission(source: string, taskState?: TaskState): PermissionRequest[] {
+    const normalized = normalizeImageSource(source, taskState);
+    if (!normalized) return [];
+    try {
+        if (isOnlineImageSource(normalized)) {
+            return [{ resourceType: 'network', action: 'access', resourcePath: normalized }];
+        }
+    } catch {
+        return [];
+    }
+    return [{ resourceType: 'file', action: 'read', resourcePath: normalized }];
+}
+
+function imageSourceErrorMessage(error: unknown, source: string): string {
+    if (!(error instanceof ImageSourceError)) {
+        const message = error instanceof Error ? error.message : String(error);
+        return t('filemgr.image.error.readFailed', { path: source, message });
+    }
+
+    switch (error.code) {
+        case 'unsupported_protocol':
+            return t('filemgr.image.error.unsupportedProtocol', { path: source });
+        case 'not_found':
+            return t('filemgr.image.error.notFound', { path: source });
+        case 'directory':
+            return t('filemgr.image.error.directory', { path: source });
+        case 'no_access':
+            return t('filemgr.image.error.noAccess', { path: source });
+        case 'too_large':
+            return t('filemgr.image.error.tooLarge', {
+                path: source,
+                maxMb: Math.floor(Number(error.details) / 1024 / 1024)
+            });
+        case 'http_error':
+            return t('filemgr.image.error.http', { path: source, status: error.details ?? '' });
+        case 'fetch_failed':
+            return t('filemgr.image.error.fetchFailed', { path: source });
+        case 'invalid_image':
+            return t('filemgr.image.error.invalid', { path: source });
+    }
+}
+
+function currentTaskModel(taskState?: TaskState): string | undefined {
+    const setting = Setting.getInstance();
+    const taskModel = taskState?.model;
+    if (taskModel && setting.getModelInstance(taskModel, 'chat')) {
+        return taskModel;
+    }
+    return setting.getData().default_model || undefined;
+}
+
+function renderImageTool(
+    toolcall: ToolCall,
+    options: { title: string; icon: string; className: string; includeQuestion?: boolean }
+): string {
+    const source = String(toolcall.args_object?.['path'] ?? '');
+    const question = options.includeQuestion ? String(toolcall.args_object?.['question'] ?? '') : '';
+    const detail = question ? `${source} · ${question}` : source;
+    return renderInlineTool({
+        icon: options.icon,
+        title: options.title,
+        status: toolcall.status,
+        className: options.className,
+        detail,
+        detailTitle: detail || undefined,
+        editorFilePath: source && !/^https?:\/\//i.test(source) ? source : undefined
+    });
+}
+
+function renderImageToolCli(toolcall: ToolCall, width: number, title: string, icon: string): string[] {
+    const source = String(toolcall.args_object?.['path'] ?? '');
+    const body: string[] = [];
+    if (source) {
+        body.push(chalk.yellow(truncText(source, width - 8)));
+    }
+    if (toolcall.status === 'running') {
+        body.push(chalk.dim(`  ${t('filemgr.image.loading')}`));
+    } else if (toolcall.status === 'error' && toolcall.result) {
+        body.push(chalk.red(`  ✗ ${truncText(toolcall.result, width - 10)}`));
+    } else if (toolcall.status === 'success') {
+        body.push(chalk.dim(`  ${t('filemgr.image.loaded')}`));
+    }
+    return new Card({
+        icon,
+        title,
+        status: statusDisplay(toolcall.status),
+        body
+    }).render(width);
+}
+
+export class ReadImageTool extends BaseTool<typeof readImageSchema> {
+    constructor() {
+        super(
+            'readImage',
+            '读取本地路径或在线 URL 指向的图片，并将图片内容直接返回给当前任务模型进行视觉理解。当前任务模型不支持视觉输入时会返回错误。',
+            readImageSchema
+        );
+        this.setUniversalExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof readImageSchema>, taskState?: TaskState): PermissionRequest[] {
+        return imageSourcePermission(args.path, taskState);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        return renderImageTool(toolcall, {
+            icon: 'fas fa-image',
+            title: t('filemgr.readImage.name'),
+            className: 'filemgr-read-image-tool'
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return renderImageToolCli(toolcall, width, t('filemgr.readImage.name'), '🖼️');
+    }
+
+    async executeCommand(
+        args: z.output<typeof readImageSchema>,
+        result: ToolResult,
+        taskState?: TaskState
+    ): Promise<void> {
+        const model = currentTaskModel(taskState);
+        if (!model || !(await LLM.supportsVision(model))) {
+            throw new Error(t('filemgr.readImage.error.modelUnsupported'));
+        }
+
+        const source = normalizeImageSource(args.path, taskState);
+        try {
+            const image = await loadImageSource(source);
+            result.updateResult(
+                JSON.stringify({
+                    type: 'image',
+                    source: image.source,
+                    mediaType: image.mimeType,
+                    width: image.width,
+                    height: image.height,
+                    message: t('filemgr.readImage.result')
+                })
+            );
+            result.updateResultObject({
+                type: 'image',
+                images: [
+                    {
+                        image_url: image.dataUrl,
+                        media_type: image.mimeType,
+                        source: image.source
+                    }
+                ]
+            });
+        } catch (error) {
+            throw new Error(imageSourceErrorMessage(error, source));
+        }
+    }
+}
+
+export class AskImageTool extends BaseTool<typeof askImageSchema> {
+    constructor() {
+        super(
+            'askImage',
+            '使用系统设置中的默认视觉模型分析本地路径或在线 URL 指向的图片，并直接返回该视觉模型对 question 的回答。',
+            askImageSchema
+        );
+        this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof askImageSchema>, taskState?: TaskState): PermissionRequest[] {
+        return imageSourcePermission(args.path, taskState);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        return renderImageTool(toolcall, {
+            icon: 'fas fa-eye',
+            title: t('filemgr.askImage.name'),
+            className: 'filemgr-ask-image-tool',
+            includeQuestion: true
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return renderImageToolCli(toolcall, width, t('filemgr.askImage.name'), '👁️');
+    }
+
+    async executeCommand(args: z.output<typeof askImageSchema>, taskState?: TaskState): Promise<string> {
+        const question = args.question.trim();
+        if (!question) {
+            throw new Error(t('filemgr.askImage.error.questionRequired'));
+        }
+
+        const visionModel = Setting.getInstance().getDefaultVisionModelInstance();
+        if (!visionModel) {
+            throw new Error(t('filemgr.askImage.error.modelMissing'));
+        }
+        if (!(await LLM.supportsVision(visionModel))) {
+            throw new Error(t('filemgr.askImage.error.modelUnsupported'));
+        }
+
+        const source = normalizeImageSource(args.path, taskState);
+        let image;
+        try {
+            image = await loadImageSource(source);
+        } catch (error) {
+            throw new Error(imageSourceErrorMessage(error, source));
+        }
+
+        const message = new UserMessage(question);
+        message.appendImageURL(image.dataUrl);
+        return await LLM.ask(message, visionModel, taskState?.createUsageTelemetryRequestOptions());
     }
 }
 
@@ -3168,6 +3403,8 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
 export function createFileManagerToolset(): BaseToolset {
     const toolset = new BaseToolset('filemgr');
     toolset.addTool(new ReadFileTool());
+    toolset.addTool(new ReadImageTool());
+    toolset.addTool(new AskImageTool());
     toolset.addTool(new ExtractTextTool());
     toolset.addTool(new WriteFileTool());
     toolset.addTool(new EditFileTool());

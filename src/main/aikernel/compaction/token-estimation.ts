@@ -180,12 +180,27 @@ export function estimateTextTokens(text: string | undefined): number {
     return Math.ceil(text.length / 4);
 }
 
+export function estimateToolResultObjectTokens(toolCall: ToolCall): number {
+    const images = toolCall.getResultImages();
+    if (images.length === 0) {
+        return estimateTextTokens(JSON.stringify(toolCall.result_object ?? ''));
+    }
+
+    const metadataOnly = images.map((image) => ({
+        media_type: image.media_type,
+        source: image.source
+    }));
+    // Data URLs are transported as image inputs, not tokenized as ordinary base64 text.
+    // Use a conservative per-image vision estimate while retaining the small metadata cost.
+    return estimateTextTokens(JSON.stringify(metadataOnly)) + images.length * 1_100;
+}
+
 export function estimateRoughTokensFromToolCall(toolCall: ToolCall, options: RoughTokenEstimationOptions = {}): number {
     return (
         estimateTextTokens(toolCall.tool_name) +
         estimateTextTokens(toolCall.args_string) +
         estimateTextTokens(resolveVisibleToolResultContent(toolCall, options.toolResultOverrides)) +
-        estimateTextTokens(JSON.stringify(toolCall.result_object ?? ''))
+        estimateToolResultObjectTokens(toolCall)
     );
 }
 

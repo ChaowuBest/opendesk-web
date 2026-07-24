@@ -367,6 +367,38 @@ export class ToolCall {
         });
     }
 
+    getResultImages(): Array<{ image_url: string; media_type?: string; source?: string }> {
+        if (this.status !== 'success' || !this.result_object || typeof this.result_object !== 'object') {
+            return [];
+        }
+        const resultObject = this.result_object as {
+            type?: unknown;
+            images?: unknown;
+        };
+        if (resultObject.type !== 'image' || !Array.isArray(resultObject.images)) {
+            return [];
+        }
+        return resultObject.images.flatMap((image) => {
+            if (!image || typeof image !== 'object') {
+                return [];
+            }
+            const record = image as Record<string, unknown>;
+            if (
+                typeof record.image_url !== 'string' ||
+                (!record.image_url.startsWith('data:image/') && !/^https?:\/\//i.test(record.image_url))
+            ) {
+                return [];
+            }
+            return [
+                {
+                    image_url: record.image_url,
+                    ...(typeof record.media_type === 'string' ? { media_type: record.media_type } : {}),
+                    ...(typeof record.source === 'string' ? { source: record.source } : {})
+                }
+            ];
+        });
+    }
+
     toOpenAIMessagePart(): object {
         return {
             type: 'tool_call',
@@ -1992,7 +2024,8 @@ export class AssistantMessage {
 
     private buildOpenAIMessagesFromParts(
         parts: ReadonlyArray<AssistantMessagePart>,
-        toolResultOverrides?: Map<string, string>
+        toolResultOverrides?: Map<string, string>,
+        supportsVision: boolean = true
     ): object[] {
         const messages: object[] = [];
 
@@ -2080,6 +2113,26 @@ export class AssistantMessage {
                         );
                         messages.push(toolCallMsg);
                     }
+                    if (supportsVision) {
+                        const imageContent = validToolcalls.flatMap((toolcall) =>
+                            toolcall.getResultImages().flatMap((image) => [
+                                {
+                                    type: 'text',
+                                    text: `Image returned by ${toolcall.tool_name} (${toolcall.id}).`
+                                },
+                                {
+                                    type: 'image_url',
+                                    image_url: { url: image.image_url }
+                                }
+                            ])
+                        );
+                        if (imageContent.length > 0) {
+                            // Chat Completions does not consistently accept image parts on role=tool.
+                            // Keep all tool responses contiguous, then attach their images in one
+                            // user message so OpenAI-compatible vision models receive real image input.
+                            messages.push({ role: 'user', content: imageContent });
+                        }
+                    }
 
                     break;
                 }
@@ -2099,30 +2152,39 @@ export class AssistantMessage {
         return messages;
     }
 
-    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
-        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides);
+    toOpenAIMessages(toolResultOverrides?: Map<string, string>, supportsVision: boolean = true): object[] {
+        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides, supportsVision);
     }
 
-    toOpenAIMessagesFromPartIndex(startPartIndex: number, toolResultOverrides?: Map<string, string>): object[] {
+    toOpenAIMessagesFromPartIndex(
+        startPartIndex: number,
+        toolResultOverrides?: Map<string, string>,
+        supportsVision: boolean = true
+    ): object[] {
         if (!Number.isInteger(startPartIndex) || startPartIndex < 0) {
             throw new Error(`invalid assistant replay startPartIndex: ${startPartIndex}`);
         }
         if (startPartIndex >= this.content.length) {
             return [];
         }
-        return this.buildOpenAIMessagesFromParts(this.content.slice(startPartIndex), toolResultOverrides);
+        return this.buildOpenAIMessagesFromParts(
+            this.content.slice(startPartIndex),
+            toolResultOverrides,
+            supportsVision
+        );
     }
 
     toOpenAIMessagesFromRound(
         roundRef: { assistantMessageId: string; startPartIndex: number },
-        toolResultOverrides?: Map<string, string>
+        toolResultOverrides?: Map<string, string>,
+        supportsVision: boolean = true
     ): object[] {
         if (roundRef.assistantMessageId !== this.message_id) {
             throw new Error(
                 `assistant replay roundRef message mismatch: expected ${this.message_id}, got ${roundRef.assistantMessageId}`
             );
         }
-        return this.toOpenAIMessagesFromPartIndex(roundRef.startPartIndex, toolResultOverrides);
+        return this.toOpenAIMessagesFromPartIndex(roundRef.startPartIndex, toolResultOverrides, supportsVision);
     }
 
     getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {

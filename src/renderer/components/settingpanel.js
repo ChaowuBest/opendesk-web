@@ -27,6 +27,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this.visionSupportMap = {};
         this._hasRendered = false;
         this._t = createRendererTranslator();
     }
@@ -42,6 +43,7 @@ class SettingPanel extends HTMLElement {
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
         this._t = createRendererTranslator(this.currentData);
+        await this.refreshVisionSupport();
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
         try {
             this.gatewayHostOptions = await window.settingAPI.getGatewayHostOptions();
@@ -1624,9 +1626,23 @@ class SettingPanel extends HTMLElement {
             .join('');
     }
 
+    async refreshVisionSupport() {
+        try {
+            this.visionSupportMap = await window.settingAPI.checkVisionSupport(this.getModelsByType('chat'));
+        } catch (error) {
+            console.warn('Failed to load model vision capabilities:', error);
+            this.visionSupportMap = {};
+        }
+    }
+
+    getVisionModels() {
+        return this.getModelsByType('chat').filter((model) => this.visionSupportMap[model.alias] === true);
+    }
+
     renderDefaultModelsSection() {
         const chatModelOptions = this.renderModelOptions(this.getModelsByType('chat'));
         const embeddingModelOptions = this.renderModelOptions(this.getModelsByType('embedding'));
+        const visionModelOptions = this.renderModelOptions(this.getVisionModels());
 
         return `
         <section class="sp-section">
@@ -1658,7 +1674,7 @@ class SettingPanel extends HTMLElement {
                     <label class="sp-form-label">${this._t('config.defaultmodel.field.vision_model')}</label>
                     <select id="default-vision-model-select" class="sp-form-input">
                         <option value="">${this._t('common.none')}</option>
-                        ${chatModelOptions}
+                        ${visionModelOptions}
                     </select>
                 </div>
 
@@ -3013,6 +3029,7 @@ class SettingPanel extends HTMLElement {
         }
 
         this.closeModal();
+        await this.refreshVisionSupport();
         this.refreshModelsSection();
         this.refreshDefaultModelsSection();
         this.scheduleSave();

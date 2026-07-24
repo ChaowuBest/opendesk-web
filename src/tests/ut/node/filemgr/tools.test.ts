@@ -3,15 +3,22 @@ import test from 'node:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import sharp from 'sharp';
 import * as XLSX from 'xlsx';
 import { setRuntimeLocale } from '../../../../locale/index.js';
+import { LLM } from '../../../../main/aikernel/llm.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
+import { Setting } from '../../../../main/utils/setting.js';
+import { loadImageSource } from '../../../../main/applications/filemgr/image.js';
+import { setPlatform } from '../../../../platforms/base.js';
 import {
     EXTRACT_TEXT_SUPPORTED_EXTENSIONS,
     isExtractTextSupported
 } from '../../../../main/applications/filemgr/parser/extract.js';
 import {
+    AskImageTool,
     ExtractTextTool,
+    ReadImageTool,
     SemanticSearchTool,
     createFileManagerToolset
 } from '../../../../main/applications/filemgr/tools.js';
@@ -193,7 +200,269 @@ test('semanticSearch GUI render uses markdown detailed card and does not render 
 test('file manager base toolset exposes extractText and no legacy semantic search tools', () => {
     const toolset = createFileManagerToolset();
     assert.equal(toolset.hasTool('extractText'), true);
+    assert.equal(toolset.hasTool('readImage'), true);
+    assert.equal(toolset.hasTool('askImage'), true);
     assert.equal(toolset.hasTool('readFileAsText'), false);
     assert.equal(toolset.hasTool('searchFileByName'), false);
     assert.equal(toolset.hasTool('searchFileByContent'), false);
+});
+
+test('readImage returns local image content as a multimodal tool result', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'example.png');
+    await sharp({
+        create: {
+            width: 32,
+            height: 24,
+            channels: 4,
+            background: { r: 20, g: 40, b: 60, alpha: 1 }
+        }
+    })
+        .png()
+        .toFile(imagePath);
+
+    const originalSupportsVision = LLM.supportsVision;
+    const setting = Setting.getInstance();
+    const originalData = setting.data;
+    setting.data = {
+        ...originalData,
+        default_model: 'vision',
+        providers: [
+            {
+                name: 'test',
+                provider_type: 'openai',
+                base_url: 'https://example.test/v1',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ],
+        models: [
+            {
+                alias: 'vision',
+                provider_name: 'test',
+                model_name: 'gpt-4o',
+                model_type: 'chat',
+                reasoning_effort: '',
+                auto_parse_think_tags: false
+            }
+        ]
+    };
+    LLM.supportsVision = async () => true;
+
+    try {
+        const result = await new ReadImageTool().execute({ path: imagePath });
+        assert.equal(result.status, 'success');
+        assert.doesNotMatch(result.result, /base64/);
+        const summary = JSON.parse(result.result);
+        assert.equal(summary.type, 'image');
+        assert.equal(summary.source, imagePath);
+        assert.equal(summary.mediaType, 'image/png');
+        assert.equal(summary.width, 32);
+        assert.equal(summary.height, 24);
+        const resultObject = result.result_object as {
+            type: string;
+            images: Array<{ image_url: string; media_type: string; source: string }>;
+        };
+        assert.equal(resultObject.type, 'image');
+        assert.equal(resultObject.images.length, 1);
+        assert.match(resultObject.images[0].image_url, /^data:image\/png;base64,/);
+        assert.equal(resultObject.images[0].source, imagePath);
+    } finally {
+        LLM.supportsVision = originalSupportsVision;
+        setting.data = originalData;
+        cleanup(dir);
+    }
+});
+
+test('readImage reports an error before reading when the current task model lacks vision', async () => {
+    const originalSupportsVision = LLM.supportsVision;
+    const setting = Setting.getInstance();
+    const originalData = setting.data;
+    setting.data = {
+        ...originalData,
+        default_model: 'fallback-vision',
+        providers: [
+            {
+                name: 'test',
+                provider_type: 'openai',
+                base_url: 'https://example.test/v1',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ],
+        models: [
+            {
+                alias: 'text-only',
+                provider_name: 'test',
+                model_name: 'gpt-4',
+                model_type: 'chat',
+                reasoning_effort: '',
+                auto_parse_think_tags: false
+            },
+            {
+                alias: 'fallback-vision',
+                provider_name: 'test',
+                model_name: 'gpt-4o',
+                model_type: 'chat',
+                reasoning_effort: '',
+                auto_parse_think_tags: false
+            }
+        ]
+    };
+    let checkedModel = '';
+    LLM.supportsVision = async (model) => {
+        checkedModel = String(model);
+        return false;
+    };
+    try {
+        const result = await new ReadImageTool().execute({ path: '/path/that/does/not/exist.png' }, undefined, {
+            model: 'text-only'
+        } as any);
+        assert.equal(result.status, 'error');
+        assert.match(result.result, /does not support image input/i);
+        assert.equal(checkedModel, 'text-only');
+    } finally {
+        LLM.supportsVision = originalSupportsVision;
+        setting.data = originalData;
+    }
+});
+
+test('askImage sends the image and question to the configured default vision model', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'question.png');
+    await sharp({
+        create: {
+            width: 16,
+            height: 12,
+            channels: 3,
+            background: { r: 200, g: 100, b: 50 }
+        }
+    })
+        .jpeg()
+        .toFile(imagePath);
+
+    const setting = Setting.getInstance();
+    const originalData = setting.data;
+    const originalSupportsVision = LLM.supportsVision;
+    const originalAsk = LLM.ask;
+    setting.data = {
+        ...originalData,
+        default_vision_model: 'vision',
+        providers: [
+            {
+                name: 'test',
+                provider_type: 'openai',
+                base_url: 'https://example.test/v1',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ],
+        models: [
+            {
+                alias: 'vision',
+                provider_name: 'test',
+                model_name: 'gpt-4o',
+                model_type: 'chat',
+                reasoning_effort: '',
+                auto_parse_think_tags: false
+            }
+        ]
+    };
+    LLM.supportsVision = async () => true;
+
+    let capturedQuestion = '';
+    let capturedImage = '';
+    let capturedModelName = '';
+    LLM.ask = async (question, model) => {
+        const userMessage = question as any;
+        capturedQuestion = userMessage.content.find((part: any) => part.type === 'text')?.text ?? '';
+        capturedImage = userMessage.content.find((part: any) => part.type === 'image_url')?.image_url?.url ?? '';
+        capturedModelName = typeof model === 'string' ? model : (model?.model_name ?? '');
+        return 'The image is orange.';
+    };
+
+    try {
+        const output = await new AskImageTool().executeCommand({
+            question: 'What color is the image?',
+            path: imagePath
+        });
+        assert.equal(output, 'The image is orange.');
+        assert.equal(capturedQuestion, 'What color is the image?');
+        assert.match(capturedImage, /^data:image\/jpeg;base64,/);
+        assert.equal(capturedModelName, 'gpt-4o');
+    } finally {
+        LLM.supportsVision = originalSupportsVision;
+        LLM.ask = originalAsk;
+        setting.data = originalData;
+        cleanup(dir);
+    }
+});
+
+test('askImage reports a localized error when no default vision model is configured', async () => {
+    const setting = Setting.getInstance();
+    const originalData = setting.data;
+    setting.data = {
+        ...originalData,
+        default_vision_model: ''
+    };
+    try {
+        const result = await new AskImageTool().execute({
+            question: 'What is shown?',
+            path: '/path/that/does/not/exist.png'
+        });
+        assert.equal(result.status, 'error');
+        assert.match(result.result, /No default vision model is configured/i);
+    } finally {
+        setting.data = originalData;
+    }
+});
+
+test('image tools declare network permissions for online image URLs', () => {
+    const source = 'https://example.test/image.png';
+    assert.deepEqual(new ReadImageTool().getDeclaredPermissions({ path: source }), [
+        { resourceType: 'network', action: 'access', resourcePath: source }
+    ]);
+    assert.deepEqual(
+        new AskImageTool().getDeclaredPermissions({
+            question: 'What is shown?',
+            path: source
+        }),
+        [{ resourceType: 'network', action: 'access', resourcePath: source }]
+    );
+});
+
+test('online image sources are downloaded, validated, and returned as data URLs', async () => {
+    const png = await sharp({
+        create: {
+            width: 10,
+            height: 8,
+            channels: 4,
+            background: { r: 1, g: 2, b: 3, alpha: 1 }
+        }
+    })
+        .png()
+        .toBuffer();
+    let requestedUrl = '';
+    setPlatform({
+        fetch: async (input: string | URL) => {
+            requestedUrl = input.toString();
+            return new Response(png, {
+                status: 200,
+                headers: {
+                    'content-type': 'image/png',
+                    'content-length': String(png.length)
+                }
+            });
+        }
+    } as any);
+
+    const loaded = await loadImageSource('https://example.test/image.png');
+    assert.equal(requestedUrl, 'https://example.test/image.png');
+    assert.equal(loaded.mimeType, 'image/png');
+    assert.equal(loaded.width, 10);
+    assert.equal(loaded.height, 8);
+    assert.match(loaded.dataUrl, /^data:image\/png;base64,/);
 });

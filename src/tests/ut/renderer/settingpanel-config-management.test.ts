@@ -103,6 +103,37 @@ describe('setting-panel config management', () => {
         expect(addHeaderButton.textContent).not.toContain('+');
     });
 
+    test('default vision model select only lists known vision-capable chat models', () => {
+        const panel = createPanel();
+        panel.currentData.models = [
+            {
+                alias: 'vision-model',
+                model_name: 'gpt-4o',
+                model_type: 'chat'
+            },
+            {
+                alias: 'text-model',
+                model_name: 'gpt-4',
+                model_type: 'chat'
+            },
+            {
+                alias: 'embedding-model',
+                model_name: 'text-embedding-3-small',
+                model_type: 'embedding'
+            }
+        ];
+        panel.visionSupportMap = {
+            'vision-model': true,
+            'text-model': false
+        };
+        panel.innerHTML = panel.renderDefaultModelsSection();
+
+        const options = Array.from(panel.querySelectorAll('#default-vision-model-select option')).map(
+            (option: HTMLOptionElement) => option.value
+        );
+        expect(options).toEqual(['', 'vision-model']);
+    });
+
     test('exports current settings as json and omits runtime locale field', async () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();
