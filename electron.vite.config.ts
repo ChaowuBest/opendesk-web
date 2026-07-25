@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
                             'src',
                             'main',
                             'applications',
-                            'workflow',
+                            'workflowMgr',
                             'run',
                             'runtime',
                             'worker.ts'

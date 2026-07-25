@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
@@ -18,7 +13,7 @@ import {
     type WorkflowRuntimeWorkerInbound,
     type WorkflowRuntimeWorkerOutbound,
     type WorkflowWorker
-} from '../../../../main/applications/workflow/run/runtime/host.js';
+} from '../../../../main/applications/workflowMgr/run/runtime/host.js';
 
 test('WorkflowRuntime validates the minimal JavaScript contract', () => {
     const runtime = new WorkflowRuntime();

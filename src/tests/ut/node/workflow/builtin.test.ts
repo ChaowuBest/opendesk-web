@@ -1,13 +1,8 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createBuiltinWorkflows } from '../../../../main/applications/workflow/definitions/builtin.js';
-import { WorkflowRuntime } from '../../../../main/applications/workflow/run/runtime/host.js';
+import { createBuiltinWorkflows } from '../../../../main/applications/workflowMgr/definitions/builtin.js';
+import { WorkflowRuntime } from '../../../../main/applications/workflowMgr/run/runtime/host.js';
 
 test('Deep Research is one immutable built-in using the generic five-stage Workflow script', () => {
     const workflows = createBuiltinWorkflows();

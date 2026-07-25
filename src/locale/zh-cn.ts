@@ -1548,8 +1548,7 @@ export const zhCn: Record<string, string> = {
     'agentoffice.error.noReply': '该员工已完成任务，但没有通过 sendReply 回复。',
     'agentoffice.error.resourceDenied': '资源不在这位数字员工已配置的权限范围内：${path}',
     'agentgate.attribution.status': '正在进行恶意技能归因分析……',
-    'workflow.app.name': '工作流',
-    'workflow.error.experimentalDisabled': '请先在设置中启用试验性功能，再使用 Workflow。',
+    'workflowMgr.app.name': '工作流',
     'workflow.error.nameInvalid': 'Workflow 名称只能使用小写字母、数字和单个连字符。',
     'workflow.error.alreadyExists': 'Workflow 已存在：${name}',
     'workflow.error.descriptionEmpty': 'Workflow 描述不能为空。',
@@ -1646,38 +1645,6 @@ export const zhCn: Record<string, string> = {
     'workflow.stop.stopped': 'Workflow run ${runId} 已停止。',
     'workflow.stop.alreadyTerminal': 'Workflow run ${runId} 已经处于 ${status} 状态。',
     'workflow.card.started': '已启动',
-    'workflow.skill.description':
-        '处理创建、实现、生成、查找、运行和停止“工作流”“workflow”或“可复用流程”的请求；先调用 LoadWorkflowTools 加载对应工具。',
-    'workflow.skill.argumentHint': '<需求或 Workflow 名称>',
-    'workflow.skill.body': `# Workflow 工作流
-
-本技能用于创建和使用可复用的 JavaScript Workflow。用户表达创建、实现、生成、查找、运行或停止工作流时，调用 \`LoadWorkflowTools\`，当前 Task 将获得完整的 Workflow 操作工具。
-
-## 可用能力
-
-- \`AuthorWorkflow\`：直接读取当前 Task 中按时间顺序保留的用户真实原始输入，完成方案设计、Definition 生成和校验。
-- \`ListWorkflows\`：列出当前 Task 的临时 Definition，以及已保存和内置的 Definition，并返回来源、输入结构和准确调用方式。
-- \`RunWorkflow\`：使用准确的 reference 和符合 inputSchema 的 input 对象启动一次异步运行。
-- \`StopWorkflow\`：使用 runId 停止正在运行的 Workflow。
-
-## 创建并运行
-
-创建意图的调用顺序是 \`LoadWorkflowTools\`、\`AuthorWorkflow\`。Authoring agent 承担 Workflow 的方案设计和 Definition 实现。创建与运行是两次独立工具调用，\`AuthorWorkflow\` 返回 Definition 和 invocation。
-
-- \`launchReady=true\` 表示首次运行所需输入已经齐全，可在当前回合继续调用返回的 invocation。
-- \`launchReady=false\` 表示需要按 \`nextAction\` 向用户收集 \`missingRequiredInputs\`。收到用户下一条回复后，使用同一 reference 和符合 inputSchema 的 input 对象调用 \`RunWorkflow\`。
-
-## 运行结果
-
-\`status="started"\` 和运行卡片共同构成启动回执。当前回合在启动回执后结束，OpenDesk 会在 Workflow 到达终态后向宿主 Task 投递结果。`,
-    'workflow.skill.definition.whenToUse': '适用场景：',
-    'workflow.skill.definition.runTitle': '运行方式',
-    'workflow.skill.definition.loadTools': '调用 `LoadWorkflowTools` 为当前 Task 加载 Workflow 操作工具。',
-    'workflow.skill.definition.run': '随后调用 `RunWorkflow`，使用 reference `${reference}`。',
-    'workflow.skill.definition.started':
-        '`status="started"` 和运行卡片共同构成启动回执，最终结果会在 Workflow 到达终态后投递给宿主 Task。',
-    'workflow.skill.definition.inputTitle': '输入结构',
-    'workflow.skill.definition.input': '`RunWorkflow.input` 使用符合以下 JSON Schema 的对象：',
     'workflow.detail.empty': '还没有 Workflow 运行记录。',
     'workflow.detail.phases': '阶段',
     'workflow.detail.back': '返回',

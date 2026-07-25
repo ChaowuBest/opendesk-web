@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -16,12 +11,12 @@ import {
     type WorkflowDefinition,
     type WorkflowJSONValue
 } from '../../../../main/aikernel/workflow.js';
-import { WorkflowManager } from '../../../../main/applications/workflow/manager.js';
+import { WorkflowManager } from '../../../../main/applications/workflowMgr/manager.js';
 import type {
     WorkflowRuntimeEngine,
     WorkflowRuntimeExecution,
     WorkflowRuntimeStartInput
-} from '../../../../main/applications/workflow/run/runtime/host.js';
+} from '../../../../main/applications/workflowMgr/run/runtime/host.js';
 
 const BUILTIN_CONTENT = {
     name: 'example',

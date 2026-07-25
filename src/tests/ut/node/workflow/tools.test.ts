@@ -1,16 +1,11 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { AssistantMessage, ChatContext, ToolCall, ToolCallMessagePart } from '../../../../main/aikernel/messages.js';
 import { TaskHooks } from '../../../../main/aikernel/hooks.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
-import { WorkflowAuthoringCancelledError } from '../../../../main/applications/workflow/authoring/service.js';
-import { createWorkflowSkills } from '../../../../main/applications/workflow/tooling/skills.js';
+import { WorkflowAuthoringCancelledError } from '../../../../main/applications/workflowMgr/authoring/service.js';
+import { createWorkflowSkills } from '../../../../main/applications/workflowMgr/tooling/skills.js';
 import {
     AuthorWorkflowTool,
     createWorkflowDiscoveryToolset,
@@ -18,8 +13,7 @@ import {
     RunWorkflowTool,
     StopWorkflowTool,
     type WorkflowToolHost
-} from '../../../../main/applications/workflow/tooling/tools.js';
-import { Setting } from '../../../../main/utils/setting.js';
+} from '../../../../main/applications/workflowMgr/tooling/tools.js';
 
 const hostTask = { task_id: 'task-host' } as TaskState;
 
@@ -204,8 +198,8 @@ test('RunWorkflowTool returns a started result and owns its detail navigation ca
     assert.equal(stopReason, 'system');
     assert.match(result.result, /startup acknowledgement|启动回执/i);
     assert.match(html ?? '', /localStorage\.setItem\('opendesk\.workflow\.selectedRunId'/);
-    assert.match(html ?? '', /applicationRegistryAPI\.callMainWorld\('workflow','notifyRunSelectedForUI'/);
-    assert.match(html ?? '', /globalControlAPI\.openApplication\('workflow'\)/);
+    assert.match(html ?? '', /applicationRegistryAPI\.callMainWorld\('workflowMgr','notifyRunSelectedForUI'/);
+    assert.match(html ?? '', /globalControlAPI\.openApplication\('workflowMgr'\)/);
 });
 
 test('RunWorkflow starts a temporary definition with complete explicit input', async () => {
@@ -415,58 +409,62 @@ test('Workflow Skills describe the direct creation and execution flow while disc
             throw new Error('unused');
         }
     } satisfies WorkflowToolHost;
-    const skills = createWorkflowSkills([
-        {
-            id: 'workflow-1',
-            revision: 'revision-1',
-            name: 'daily-brief',
-            description: 'Create a daily brief',
-            script: 'return args;',
-            inputSchema: { type: 'object' },
-            phases: [],
-            createdAt: '2026-07-19T00:00:00.000Z',
-            updatedAt: '2026-07-19T00:00:00.000Z'
-        }
-    ]);
+    const skills = createWorkflowSkills(
+        [
+            {
+                id: 'workflow-1',
+                revision: 'revision-1',
+                name: 'daily-brief',
+                description: 'Create a daily brief',
+                script: 'return args;',
+                inputSchema: { type: 'object' },
+                phases: [],
+                createdAt: '2026-07-19T00:00:00.000Z',
+                updatedAt: '2026-07-19T00:00:00.000Z'
+            }
+        ],
+        host
+    );
 
     assert.deepEqual(
         skills.map((skill) => skill.frontmatter.name),
         ['workflow', 'daily-brief']
     );
-    assert.equal(skills[1].toolsets, undefined);
+    assert.ok(skills.every((skill) => skill.frontmatter['user-invocable'] === true));
+    assert.ok(skills.every((skill) => skill.frontmatter['disable-model-invocation'] === true));
+    assert.ok(skills.every((skill) => skill.isUserInvocable));
+    assert.ok(skills.every((skill) => !skill.isModelInvocable));
+    assert.deepEqual(
+        skills[1].toolsets?.flatMap((toolset) => [...toolset.tools.keys()]),
+        ['LoadWorkflowTools']
+    );
     assert.match(skills[1].body, /RunWorkflow/);
-    assert.match(skills[1].body, /inputSchema|输入结构/);
-    assert.equal(skills[0].toolsets, undefined);
-    assert.match(skills[0].frontmatter.description, /LoadWorkflowTools/);
-    assert.match(skills[0].frontmatter.description, /工作流|workflow|reusable process/i);
+    assert.match(skills[1].body, /输入结构/);
+    assert.deepEqual(
+        skills[0].toolsets?.flatMap((toolset) => [...toolset.tools.keys()]),
+        ['LoadWorkflowTools']
+    );
+    assert.match(skills[0].frontmatter.description, /Workflow/);
     assert.match(skills[0].body, /LoadWorkflowTools[\s\S]*AuthorWorkflow/);
-    assert.match(skills[0].body, /真实原始输入|exact original user inputs/i);
-    assert.match(skills[0].body, /创建与运行是两次独立工具调用|two separate tool calls/i);
+    assert.match(skills[0].body, /真实原始输入/);
+    assert.match(skills[0].body, /创建与运行是两次独立工具调用/);
     assert.match(skills[0].body, /AuthorWorkflow/);
     assert.match(skills[0].body, /RunWorkflow/);
     assert.match(skills[0].body, /status="started"/);
 
-    const originalSetting = Setting.instance;
     const attachedToolsets: string[][] = [];
-    try {
-        Setting.instance = new Setting();
-        const data = Setting.instance.getData() as { debug: { experimental_feature: boolean } };
-        data.debug.experimental_feature = true;
-        const loader = createWorkflowDiscoveryToolset(host).getTool('LoadWorkflowTools');
-        assert.ok(loader);
-        assert.match(loader.description, /工作流|workflow|reusable process/i);
-        assert.match(loader.description, /创建|create/i);
-        const task = {
-            attachToolset: async (toolset: { tools: Map<string, unknown> }) => {
-                attachedToolsets.push([...toolset.tools.keys()]);
-            }
-        } as TaskState;
+    const loader = createWorkflowDiscoveryToolset(host).getTool('LoadWorkflowTools');
+    assert.ok(loader);
+    assert.match(loader.description, /工作流|workflow|reusable process/i);
+    assert.match(loader.description, /创建|create/i);
+    const task = {
+        attachToolset: async (toolset: { tools: Map<string, unknown> }) => {
+            attachedToolsets.push([...toolset.tools.keys()]);
+        }
+    } as TaskState;
 
-        const loaded = await loader.execute({}, undefined, task);
+    const loaded = await loader.execute({}, undefined, task);
 
-        assert.equal(loaded.status, 'success');
-        assert.deepEqual(attachedToolsets, [['AuthorWorkflow', 'ListWorkflows', 'RunWorkflow', 'StopWorkflow']]);
-    } finally {
-        Setting.instance = originalSetting;
-    }
+    assert.equal(loaded.status, 'success');
+    assert.deepEqual(attachedToolsets, [['AuthorWorkflow', 'ListWorkflows', 'RunWorkflow', 'StopWorkflow']]);
 });

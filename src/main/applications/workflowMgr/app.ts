@@ -1,12 +1,20 @@
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * 职责：装配 Workflow 服务，并仅提供轻量的 Application 桥接。
  */
 
 import { BaseApplication, type EventDecl } from '../base.js';
 import type { Skill } from '../../aikernel/skill.js';
-import type { BaseToolset } from '../../aikernel/tool.js';
 import type { WorkflowJSONValue, WorkflowRun } from '../../aikernel/workflow.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { GlobalState } from '../../aikernel/states/global.js';
@@ -20,28 +28,25 @@ import {
 } from './authoring/service.js';
 import { createBuiltinWorkflows } from './definitions/builtin.js';
 import { WorkflowRunDelivery } from './run/delivery.js';
-import { assertWorkflowEnabled, isWorkflowEnabled, registerWorkflowSkillGate } from './feature.js';
 import { WorkflowManager, type AvailableWorkflowDefinition, type WorkflowLaunchResult } from './manager.js';
 import { WorkflowRuntime } from './run/runtime/host.js';
 import { createWorkflowSkills } from './tooling/skills.js';
 import type { WorkflowRunSummary } from './storage.js';
 import {
     LOAD_WORKFLOW_TOOLS_TOOL_NAME,
-    createWorkflowDiscoveryToolset,
     type WorkflowStopResult,
     type WorkflowToolHost,
     type WorkflowLaunchTarget
 } from './tooling/tools.js';
 
-export class WorkflowApplication extends BaseApplication implements WorkflowToolHost {
+export class WorkflowMgrApplication extends BaseApplication implements WorkflowToolHost {
     private readonly agentRunner = new WorkflowAgentRunner();
     private readonly manager: WorkflowManager;
     private readonly authoring: WorkflowAuthoringService;
     private readonly delivery: WorkflowRunDelivery;
 
     constructor() {
-        super('workflow', t('workflow.app.name'), false);
-        registerWorkflowSkillGate();
+        super('workflowMgr', t('workflowMgr.app.name'), false);
         this.delivery = new WorkflowRunDelivery(GlobalState.getInstance().taskManagerState);
         this.manager = new WorkflowManager({
             dataDirectory: this.getDataDirectory(),
@@ -62,10 +67,6 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
         this.authoring = new WorkflowAuthoringService(this.agentRunner, this.manager, [LOAD_WORKFLOW_TOOLS_TOOL_NAME]);
     }
 
-    isExperimental(): boolean {
-        return true;
-    }
-
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
             {
@@ -80,23 +81,20 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
     }
 
     async getSkills(): Promise<Skill[]> {
-        return createWorkflowSkills(this.manager.listAvailableDefinitions().map(({ definition }) => definition));
-    }
-
-    async getToolsets(): Promise<BaseToolset[]> {
-        return isWorkflowEnabled() ? [createWorkflowDiscoveryToolset(this)] : [];
+        return createWorkflowSkills(
+            this.manager.listAvailableDefinitions().map(({ definition }) => definition),
+            this
+        );
     }
 
     async authorWorkflow(
         hostTask: TaskState,
         onProgress?: WorkflowAuthoringProgress
     ): Promise<WorkflowAuthoringResult> {
-        assertWorkflowEnabled();
         return await this.authoring.author(hostTask, onProgress);
     }
 
     listWorkflows(): AvailableWorkflowDefinition[] {
-        assertWorkflowEnabled();
         return this.manager.listAvailableDefinitions();
     }
 
@@ -105,12 +103,10 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
         input: WorkflowJSONValue | undefined,
         hostTask: TaskState
     ): Promise<WorkflowLaunchResult> {
-        assertWorkflowEnabled();
         return await this.manager.launch(target, input, hostTask.task_id, hostTask.task_name ?? undefined);
     }
 
     async stopWorkflow(runId: string, _hostTask: TaskState): Promise<WorkflowStopResult> {
-        assertWorkflowEnabled();
         const run = await this.manager.stop(runId);
         return {
             runId: run.id,
@@ -123,12 +119,10 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
     }
 
     async stopRunForUI(runId: string): Promise<WorkflowRun> {
-        assertWorkflowEnabled();
         return await this.manager.stop(runId);
     }
 
     notifyRunSelectedForUI(runId: string): void {
-        assertWorkflowEnabled();
         if (!this.manager.getRun(runId)) {
             throw new Error(t('workflow.error.runNotFound', { runId }));
         }
@@ -136,12 +130,10 @@ export class WorkflowApplication extends BaseApplication implements WorkflowTool
     }
 
     getRunForUI(runId: string): WorkflowRun | undefined {
-        assertWorkflowEnabled();
         return this.manager.getRun(runId);
     }
 
     listRunsForUI(): WorkflowRunSummary[] {
-        assertWorkflowEnabled();
         return this.manager.listRuns();
     }
 }

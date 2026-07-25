@@ -1,6 +1,15 @@
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
  * 职责：提供面向 Task 的 Workflow 工具及其自定义卡片展示。
  */
 
@@ -28,7 +37,6 @@ import {
     type WorkflowAuthoringStage,
     type WorkflowInvocation
 } from '../authoring/service.js';
-import { assertWorkflowEnabled } from '../feature.js';
 import type { AvailableWorkflowDefinition, WorkflowLaunchResult } from '../manager.js';
 
 export const LOAD_WORKFLOW_TOOLS_TOOL_NAME = 'LoadWorkflowTools';
@@ -123,7 +131,6 @@ export class LoadWorkflowToolsTool extends BaseTool<typeof LoadWorkflowToolsSche
     constructor(private readonly host: WorkflowToolHost) {
         super(LOAD_WORKFLOW_TOOLS_TOOL_NAME, t('workflow.tool.load.description'), LoadWorkflowToolsSchema);
         this.setUniversalExecutor(async (_args, result, taskState) => {
-            assertWorkflowEnabled();
             if (!taskState) {
                 throw new Error('LoadWorkflowTools requires a host Task');
             }
@@ -298,7 +305,7 @@ export class RunWorkflowTool extends BaseTool<typeof RunWorkflowSchema> {
             <button type="button"
                 data-workflow-run-id="${escapeHtml(runId)}"
                 class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-left transition-colors"
-                onclick="(async function(button){var runId=button.dataset.workflowRunId;window.localStorage.setItem('opendesk.workflow.selectedRunId',runId);await window.globalControlAPI.openApplication('workflow');await window.applicationRegistryAPI.callMainWorld('workflow','notifyRunSelectedForUI',runId);})(this)">
+                onclick="(async function(button){var runId=button.dataset.workflowRunId;window.localStorage.setItem('opendesk.workflow.selectedRunId',runId);await window.globalControlAPI.openApplication('workflowMgr');await window.applicationRegistryAPI.callMainWorld('workflowMgr','notifyRunSelectedForUI',runId);})(this)">
                 <span class="flex items-center gap-2 min-w-0">
                     <i class="fas fa-diagram-project text-indigo-500"></i>
                     <span class="min-w-0">

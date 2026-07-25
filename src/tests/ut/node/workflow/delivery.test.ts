@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -10,7 +5,7 @@ import type { StartInternalTurnOptions } from '../../../../main/aikernel/states/
 import {
     deliverWorkflowRun,
     type WorkflowDeliveryTaskManager
-} from '../../../../main/applications/workflow/run/delivery.js';
+} from '../../../../main/applications/workflowMgr/run/delivery.js';
 import type { WorkflowRun } from '../../../../main/aikernel/workflow.js';
 
 const RUN: WorkflowRun = {

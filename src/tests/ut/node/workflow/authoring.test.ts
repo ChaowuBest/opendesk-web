@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { z } from 'zod';
@@ -10,19 +5,19 @@ import { z } from 'zod';
 import { ChatContext, ToolCall, UserMessage } from '../../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../../main/aikernel/states/tasks.js';
 import { BaseTool, BaseToolset, type ToolsetProvider } from '../../../../main/aikernel/tool.js';
-import type { WorkflowAgentResult } from '../../../../main/applications/workflow/agent/contract.js';
+import type { WorkflowAgentResult } from '../../../../main/applications/workflowMgr/agent/contract.js';
 import {
     WORKFLOW_AGENT_COMPLETION_TOOL_NAME,
     WorkflowAgentRunner
-} from '../../../../main/applications/workflow/agent/runner.js';
+} from '../../../../main/applications/workflowMgr/agent/runner.js';
 import {
     buildAuthoringPrompt,
     resolveWorkflowToolCatalog,
     WorkflowAuthoringCancelledError,
     WorkflowAuthoringService
-} from '../../../../main/applications/workflow/authoring/service.js';
-import { validateAuthoredDefinition } from '../../../../main/applications/workflow/authoring/validation.js';
-import type { WorkflowManager } from '../../../../main/applications/workflow/manager.js';
+} from '../../../../main/applications/workflowMgr/authoring/service.js';
+import { validateAuthoredDefinition } from '../../../../main/applications/workflowMgr/authoring/validation.js';
+import type { WorkflowManager } from '../../../../main/applications/workflowMgr/manager.js';
 
 class CancellableWorkflowAgentRunner extends WorkflowAgentRunner {
     executionId?: string;

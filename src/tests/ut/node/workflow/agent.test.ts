@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -19,7 +14,7 @@ import {
     bindWorkflowAgentAccess,
     createWorkflowAgentCompletionSchema,
     WorkflowAgentRunner
-} from '../../../../main/applications/workflow/agent/runner.js';
+} from '../../../../main/applications/workflowMgr/agent/runner.js';
 
 test('Workflow completion Tool exposes and accepts the requested structured output contract', () => {
     const outputSchema = {

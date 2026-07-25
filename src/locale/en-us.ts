@@ -1589,8 +1589,7 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.resourceDenied':
         "Resource is outside this digital staff member's configured permissions: ${path}",
     'agentgate.attribution.status': 'Analyzing malicious skill attribution...',
-    'workflow.app.name': 'Workflows',
-    'workflow.error.experimentalDisabled': 'Workflows require experimental features to be enabled in Settings.',
+    'workflowMgr.app.name': 'Workflows',
     'workflow.error.nameInvalid': 'Workflow names must use lowercase letters, numbers, and single hyphens.',
     'workflow.error.alreadyExists': 'Workflow already exists: ${name}',
     'workflow.error.descriptionEmpty': 'Workflow description must not be empty.',
@@ -1692,38 +1691,6 @@ export const enUs: Record<string, string> = {
     'workflow.stop.stopped': 'Workflow run ${runId} was stopped.',
     'workflow.stop.alreadyTerminal': 'Workflow run ${runId} is already ${status}.',
     'workflow.card.started': 'Started',
-    'workflow.skill.description':
-        'Handle requests to create, implement, generate, find, run, or stop a workflow or reusable process by loading the matching actions with LoadWorkflowTools.',
-    'workflow.skill.argumentHint': '<request or workflow name>',
-    'workflow.skill.body': `# Workflow
-
-This Skill creates and uses reusable JavaScript Workflows. When the user asks to create, implement, generate, find, run, or stop a Workflow, call \`LoadWorkflowTools\` to attach the complete action set to the current Task.
-
-## Capabilities
-
-- \`AuthorWorkflow\`: read the current Task's exact original user inputs in chronological order and own the design, Definition generation, and validation process.
-- \`ListWorkflows\`: list current-Task temporary, saved, and built-in Definitions with source, input schema, and exact invocation.
-- \`RunWorkflow\`: start an asynchronous run with an exact reference and an input object matching inputSchema.
-- \`StopWorkflow\`: stop an active Workflow with its runId.
-
-## Create and run
-
-For creation, call \`LoadWorkflowTools\` and then \`AuthorWorkflow\`. The authoring agent owns the Workflow design and Definition implementation. Creation and execution remain separate tool calls; \`AuthorWorkflow\` returns the Definition and invocation.
-
-- \`launchReady=true\` means the first-run input is complete and the returned invocation can run in the current turn.
-- \`launchReady=false\` provides a \`nextAction\` for collecting \`missingRequiredInputs\`. After the user's next reply, call \`RunWorkflow\` with the same reference and an input object matching inputSchema.
-
-## Run result
-
-\`status="started"\` and the run card form the startup acknowledgement. End the current turn after that acknowledgement; OpenDesk delivers the terminal result to the host Task later.`,
-    'workflow.skill.definition.whenToUse': 'Use when: ',
-    'workflow.skill.definition.runTitle': 'Run',
-    'workflow.skill.definition.loadTools': 'Call `LoadWorkflowTools` to attach Workflow actions to the current Task.',
-    'workflow.skill.definition.run': 'Then call `RunWorkflow` with reference `${reference}`.',
-    'workflow.skill.definition.started':
-        '`status="started"` and the run card form the startup acknowledgement. OpenDesk delivers the terminal result to the host Task later.',
-    'workflow.skill.definition.inputTitle': 'Input schema',
-    'workflow.skill.definition.input': '`RunWorkflow.input` is an object matching this JSON Schema:',
     'workflow.detail.empty': 'No Workflow runs yet.',
     'workflow.detail.phases': 'Phases',
     'workflow.detail.back': 'Back',

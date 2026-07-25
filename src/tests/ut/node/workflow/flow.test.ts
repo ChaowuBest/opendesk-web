@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -19,25 +14,25 @@ import {
 } from '../../../../main/aikernel/messages.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import type { WorkflowDefinition, WorkflowJSONValue } from '../../../../main/aikernel/workflow.js';
-import type { WorkflowAgentResult } from '../../../../main/applications/workflow/agent/contract.js';
+import type { WorkflowAgentResult } from '../../../../main/applications/workflowMgr/agent/contract.js';
 import {
     WORKFLOW_AGENT_COMPLETION_TOOL_NAME,
     WorkflowAgentRunner
-} from '../../../../main/applications/workflow/agent/runner.js';
-import { WorkflowAuthoringService } from '../../../../main/applications/workflow/authoring/service.js';
-import { WorkflowManager } from '../../../../main/applications/workflow/manager.js';
+} from '../../../../main/applications/workflowMgr/agent/runner.js';
+import { WorkflowAuthoringService } from '../../../../main/applications/workflowMgr/authoring/service.js';
+import { WorkflowManager } from '../../../../main/applications/workflowMgr/manager.js';
 import {
     WorkflowRuntime,
     type WorkflowRuntimeEngine,
     type WorkflowRuntimeExecution,
     type WorkflowRuntimeStartInput
-} from '../../../../main/applications/workflow/run/runtime/host.js';
+} from '../../../../main/applications/workflowMgr/run/runtime/host.js';
 import {
     AuthorWorkflowTool,
     ListWorkflowsTool,
     RunWorkflowTool,
     type WorkflowToolHost
-} from '../../../../main/applications/workflow/tooling/tools.js';
+} from '../../../../main/applications/workflowMgr/tooling/tools.js';
 
 class AcceptedRuntime implements WorkflowRuntimeEngine {
     private readonly sourceValidator = new WorkflowRuntime();

@@ -1,14 +1,9 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { AssistantMessage, ToolCall, ToolCallMessagePart } from '../../../../main/aikernel/messages.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
-import { resolveAuthoredDefinitionFromTask } from '../../../../main/applications/workflow/tooling/tools.js';
+import { resolveAuthoredDefinitionFromTask } from '../../../../main/applications/workflowMgr/tooling/tools.js';
 
 test('RunWorkflow resolves a temporary definition only from the current Task ToolCall result', () => {
     const toolCall = new ToolCall(0, 'call-author', 'workflow-AuthorWorkflow', '{}');
