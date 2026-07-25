@@ -41,9 +41,12 @@ import {
     resolveStreamingToolCallsForTask
 } from '../task/tool-resolver.js';
 import type { TaskState } from '../states/tasks.js';
-import type { TaskUpdateRetryChunk } from './types.js';
-import type { TaskModelRequestOptions } from './types.js';
-import { getLLMRetryDelayMs, errorToMessage } from './types.js';
+import {
+    getLLMRetryDelayMs,
+    errorToMessage,
+    type TaskUpdateRetryChunk,
+    type TaskModelRequestOptions
+} from './types.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {

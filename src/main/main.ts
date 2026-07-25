@@ -82,8 +82,15 @@ import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/c
 import { readUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
-import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/index.js';
-import { initTelemetry, shutdownTelemetry, reloadTelemetry, withSpan } from './telemetry/index.js';
+import {
+    getUsageDashboardSummary,
+    getUsageRankings,
+    type RankPeriod,
+    initTelemetry,
+    shutdownTelemetry,
+    reloadTelemetry,
+    withSpan
+} from './telemetry/index.js';
 import { StartupTrace } from './telemetry/startup-tracer.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
@@ -3186,7 +3193,8 @@ function startApplication() {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

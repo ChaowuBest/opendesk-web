@@ -10,8 +10,7 @@
  */
 
 import type { OpenDeskTUI } from '../entry.js';
-import { setDebugMode, getDebugMode } from '../../utils/logger.js';
-import { logger } from '../../utils/logger.js';
+import { setDebugMode, getDebugMode, logger } from '../../utils/logger.js';
 import { isDeveloperModeEnabled, setDeveloperModeEnabled } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
 import { t } from '../../../locale/index.js';

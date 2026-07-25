@@ -18,13 +18,14 @@ import {
     CombinedAutocompleteProvider,
     Markdown,
     type AutocompleteProvider,
-    type AutocompleteItem
+    type AutocompleteItem,
+    visibleWidth,
+    truncateToWidth
 } from '@earendil-works/pi-tui';
 import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
-import { visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
 import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';

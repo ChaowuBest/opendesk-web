@@ -16,8 +16,7 @@
  * 用户可以滚动浏览计划，然后选择执行模式或继续编辑。
  */
 
-import { type Component, getKeybindings, Markdown } from '@earendil-works/pi-tui';
-import { visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
+import { type Component, getKeybindings, Markdown, visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 import type { OpenDeskTUI } from '../entry.js';
 import type {
     ExitPlanModeProvider,

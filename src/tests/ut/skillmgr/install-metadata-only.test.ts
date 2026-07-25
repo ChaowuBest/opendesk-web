@@ -1,8 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { SkillRegistry } from '../../../main/applications/skillmgr/utils';
-import { installSkillFromDirectory } from '../../../main/applications/skillmgr/utils';
+import { SkillRegistry, installSkillFromDirectory } from '../../../main/applications/skillmgr/utils';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 describe('skillmgr metadata-only installation', () => {
