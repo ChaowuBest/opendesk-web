@@ -27,11 +27,19 @@ export interface AriaProperties {
     [key: string]: string | undefined;
 }
 
+export interface AriaImageInfo {
+    url: string;
+    width: number;
+    height: number;
+}
+
 export interface AriaNode {
     role: string;
     name: string;
     children: Array<AriaNode | string>;
     props: AriaProperties;
+    /** Present for rendered <img> elements large enough to be useful as visual context. */
+    image?: AriaImageInfo;
     ref?: string;
     checked?: boolean | 'mixed';
     disabled?: boolean;
@@ -204,6 +212,9 @@ function hasVisibleRef(node: AriaNode): boolean {
 function createKey(node: AriaNode): string {
     let key = node.role;
     if (node.name && node.name.length <= 900) key += ' ' + JSON.stringify(node.name);
+    if (node.role === 'img' && node.image) {
+        key += ` <${node.image.url}>, size: ${node.image.width} * ${node.image.height}`;
+    }
 
     if (node.checked === 'mixed') key += ' [checked=mixed]';
     else if (node.checked === true) key += ' [checked]';
