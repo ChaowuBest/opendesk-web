@@ -43,50 +43,6 @@ function getExtensionsDir(): string {
     return dir;
 }
 
-/**
- * 从 OpenDesk 自身 package.json 读取依赖版本（单一来源，避免散落硬编码）。
- * 查找顺序：process.cwd()/package.json → 向上逐层查找（覆盖 dev 与打包场景）。
- * 结果缓存，进程内只读一次盘。
- */
-const _depVersionCache = new Map<string, string>();
-function getDependencyVersion(packageName: string): string {
-    const cached = _depVersionCache.get(packageName);
-    if (cached) return cached;
-
-    const candidates: string[] = [];
-    if (process.cwd()) candidates.push(path.resolve(process.cwd(), 'package.json'));
-    // 从本文件向上找（dev: src/main/services → 仓库根；打包: dist/main/... → app 根）
-    // 用 import.meta.dirname 而非 __dirname，ESM 模块下 __dirname 不可用
-    let dir = import.meta.dirname;
-    for (let i = 0; i < 8 && dir; i++) {
-        candidates.push(path.join(dir, 'package.json'));
-        const parent = path.dirname(dir);
-        if (parent === dir) break;
-        dir = parent;
-    }
-
-    for (const p of candidates) {
-        try {
-            if (!fs.existsSync(p)) continue;
-            const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
-            const version = pkg?.dependencies?.[packageName] || pkg?.devDependencies?.[packageName];
-            if (typeof version === 'string' && version.length > 0) {
-                // 去掉 ^ ~ 等前缀，ensureInstalled 需要精确版本做相等比较
-                const clean = version.replace(/^[\^~>=< ]+/, '');
-                if (clean) {
-                    _depVersionCache.set(packageName, clean);
-                    return clean;
-                }
-            }
-        } catch {
-            // 继续尝试下一个候选
-        }
-    }
-    // 读不到时回退到一个已知版本，保证启动不中断（但日志告警）
-    logger.warn(`[AgentGateBridge] 无法从 package.json 读取 ${packageName} 版本，使用回退值`);
-    return '';
-}
-
 interface ServiceState {
     process: ChildProcess | null;
     restartCount: number;
@@ -194,129 +150,20 @@ class AgentGateBridge {
      * 回退到项目 node_modules/（本地开发 npm link 场景）。
      */
     private resolveBundle(packageName: string): string {
-        // 1. 插件目录
-        const extBundle = path.join(getExtensionsDir(), 'node_modules', packageName, 'dist', 'cli.js');
-        if (fs.existsSync(extBundle)) return extBundle;
-
-        // 2. 项目 node_modules（本地开发 / npm link）
-        const localBundle = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
+        // CLI 产物路径：agent-gate 用 dist/v1/cli.js（V1 薄包装，只复用 createApp + server，
+        // 不打包 node-pty/proxy/gateway/pty 模块；OpenDesk 只需 HTTP server，对接 V1 即够，
+        // 也让鸿蒙等无 C++ 工具链平台离线安装时依赖树彻底不含 node-pty）。
+        // agent-moss 在 dist/cli.js。
+        const cliRel = packageName === '@kenhkl/agent-gate' ? 'dist/v1/cli.js' : 'dist/cli.js';
+        // 1. 项目 node_modules（预装依赖，优先）
+        const localBundle = path.resolve(process.cwd(), 'node_modules', packageName, cliRel);
         if (fs.existsSync(localBundle)) return localBundle;
 
-        return extBundle; // 返回默认路径，后续 start() 会自动安装
-    }
+        // 2. 旧版 extensions 目录（兼容历史安装）
+        const extBundle = path.join(getExtensionsDir(), 'node_modules', packageName, cliRel);
+        if (fs.existsSync(extBundle)) return extBundle;
 
-    /**
-     * 确保包已安装到 extensions 目录。
-     * 直接使用 npm install，不写入 plugins.json（避免 loadPlugins 扫描到），
-     * 因为 agent-gate/agent-moss 是 bridge 通过 spawn() 启动的子进程，不是 OpenClaw 插件。
-     */
-    private async ensureInstalled(packageName: string, version: string): Promise<void> {
-        const extensionsDir = getExtensionsDir();
-
-        // 版本号为空（无法从 package.json 读取）时：已装则沿用，不触发安装，
-        // 避免 npm install `<pkg>@` 这种非法 spec 报错
-        if (!version) {
-            const installedPkgJson0 = path.join(extensionsDir, 'node_modules', packageName, 'package.json');
-            if (fs.existsSync(installedPkgJson0)) {
-                try {
-                    const installed = JSON.parse(fs.readFileSync(installedPkgJson0, 'utf-8'));
-                    logger.warn(
-                        `[AgentGateBridge] ${packageName} 版本未知，沿用 extensions 已装 @${installed.version}`
-                    );
-                    return;
-                } catch {}
-            }
-        }
-
-        // 检查 extensions 目录已安装的版本
-        const installedPkgJson = path.join(extensionsDir, 'node_modules', packageName, 'package.json');
-        if (fs.existsSync(installedPkgJson)) {
-            try {
-                const installed = JSON.parse(fs.readFileSync(installedPkgJson, 'utf-8'));
-                if (installed.version === version) {
-                    logger.info(`[AgentGateBridge] ${packageName}@${installed.version} found in extensions`);
-                    return;
-                }
-                logger.info(
-                    `[AgentGateBridge] ${packageName}@${installed.version} found but expected @${version}, upgrading...`
-                );
-            } catch {
-                logger.info(`[AgentGateBridge] ${packageName} package.json unreadable, reinstalling...`);
-            }
-            // 版本不匹配：fall through 执行 npm install
-        } else {
-            // extensions 无安装：检查项目 node_modules（本地开发 npm link）
-            const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
-            if (fs.existsSync(localPath)) {
-                logger.info(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
-                return;
-            }
-        }
-
-        // 直接 npm install 到 extensions 目录（不写 plugins.json，不走 installPlugin）
-        const spec = `${packageName}@${version}`;
-        logger.info(`[AgentGateBridge] Installing ${spec} to extensions...`);
-
-        // 确保 node_modules 存在，阻止 npm 向上遍历
-        const nmDir = path.join(extensionsDir, 'node_modules');
-        if (!fs.existsSync(nmDir)) fs.mkdirSync(nmDir, { recursive: true });
-
-        // 确保 package.json 存在（npm --prefix 需要）
-        const pkgJsonPath = path.join(extensionsDir, 'package.json');
-        if (!fs.existsSync(pkgJsonPath)) {
-            fs.writeFileSync(
-                pkgJsonPath,
-                JSON.stringify(
-                    {
-                        name: 'opendesk-extensions',
-                        version: '1.0.0',
-                        private: true,
-                        description: 'OpenDesk extension dependencies'
-                    },
-                    null,
-                    2
-                )
-            );
-        }
-
-        // 确保 .npmrc 存在，阻止 npm 向上查找 .npmrc（与 plugins/manager.ts 一致）
-        const npmrcPath = path.join(extensionsDir, '.npmrc');
-        if (!fs.existsSync(npmrcPath)) {
-            fs.writeFileSync(npmrcPath, '', 'utf-8');
-        }
-
-        // npm 子进程环境变量（与 plugins/manager.ts 的 buildNpmEnv 一致）
-        // 注意：鸿蒙上 npm 由 HNP node 执行，必须保留 --jitless（移除会导致 V8 JIT native crash），
-        // 所以不要在 npmEnv 中覆盖 NODE_OPTIONS，让 mergeGlobalEnviron 自然保留平台注入的 --jitless。
-        const npmEnv: NodeJS.ProcessEnv = {
-            npm_config_fund: 'false',
-            npm_config_userconfig: npmrcPath,
-            npm_config_cache: path.join(
-                // 优先使用 XDG_CACHE_HOME，避免写入 /tmp 时的权限问题
-                process.env.XDG_CACHE_HOME ||
-                    path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cache'),
-                'opendesk-npm-cache'
-            )
-        };
-
-        try {
-            // 使用 asyncShellExec + mergeGlobalEnviron，确保鸿蒙等平台的 PATH 和 NODE_OPTIONS 正确注入
-            await asyncShellExec(
-                `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --audit=false`,
-                { cwd: extensionsDir, timeout: 180000, env: npmEnv }
-            );
-            logger.info(`[AgentGateBridge] ${spec} installed successfully`);
-
-            // agent-gate 安装后，尝试编译 better-sqlite3 native binding（支持 sqlite 存储模式）
-            // 如果编译失败（鸿蒙等平台缺少工具链），则回退到 json 存储
-            if (packageName === '@kenhkl/agent-gate') {
-                await this.tryBuildSqliteNative(extensionsDir);
-            }
-        } catch (err: any) {
-            const errMsg = err?.stderr || err?.message || String(err);
-            logger.warn(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
-            throw new Error(`Failed to install ${spec}: ${errMsg}`);
-        }
+        return localBundle; // 返回预装路径，不存在时 start() 会预装校验报错
     }
 
     /**
@@ -325,7 +172,129 @@ class AgentGateBridge {
      * 编译成功：sqlite 可用；编译失败：回退 json。
      * 鸿蒙平台不支持 native module 编译，直接跳过。
      */
-    private async tryBuildSqliteNative(extensionsDir: string): Promise<void> {
+    /**
+     * 查找预装位置（node_modules）的 better-sqlite3 目录候选。
+     * 候选：① agent-gate 子包自带的（@kenhkl/agent-gate/node_modules/better-sqlite3）
+     *       ② npm hoist 到根的（node_modules/better-sqlite3）
+     */
+    private _findSqliteDirs(): string[] {
+        const projectRoot = path.resolve(process.cwd());
+        return [
+            path.join(projectRoot, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3'),
+            path.join(projectRoot, 'node_modules', 'better-sqlite3')
+        ];
+    }
+
+    /**
+     * 同步判定 SQLite 是否可用 —— 供 UI（app.ts#checkSqliteAvailable）查询。
+     *
+     * 与子进程实际加载行为保持一致：搜索 _findSqliteDirs() 的候选路径，找到
+     * better-sqlite3 包后判 native binding 是否就绪。binding 可能落在三个位置：
+     *   1. prebuilds/                     — prebuild-install 下载的预编译二进制
+     *   2. build/Release/better_sqlite3.node — node-gyp 编译产物
+     *   3. lib/binding/node-v{abi}-{platform}-{arch}/better_sqlite3.node
+     *      — OpenDesk setup-native-modules.cjs 的 dual-ABI 方案：postinstall 把
+     *        系统 node 与 Electron 两个 ABI 的 binding 分别存到 lib/binding/ 下，
+     *        再删掉 build/Release/，运行时由 bindings 库按 process.versions.modules
+     *        自动选对应 ABI。故 build/Release/ 在 OpenDesk 下恒为空，必须查 lib/binding/。
+     * 鸿蒙不支持 native module 编译，永远返回 false（走 JSON）。
+     *
+     * 注：此方法只做"文件存在性"快速判定，不 spawn 子进程探测 ABI 兼容性
+     * （ABI 探测仅在 start() 启动时做一次并按需重新编译）。
+     * 如果 binding 文件在但 ABI 不匹配，子进程启动时会自行暴露错误并触发回退，
+     * 此处保守返回 true 让 UI 不误判。
+     */
+    isSqliteAvailable(): boolean {
+        if ((process.platform as string) === 'openharmony') {
+            return false;
+        }
+        const sqliteDir = this._findSqliteDirs().find((d) => fs.existsSync(path.join(d, 'package.json')));
+        if (!sqliteDir) return false;
+        // 1/2: prebuilds 或 build/Release 编译产物
+        if (
+            fs.existsSync(path.join(sqliteDir, 'prebuilds')) ||
+            fs.existsSync(path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node'))
+        ) {
+            return true;
+        }
+        // 3: OpenDesk dual-ABI 方案 — lib/binding/node-v{abi}-{platform}-{arch}/
+        // process.versions.modules 是当前进程的 node ABI；子进程用系统 node，
+        // bridge resolveNodeCommand 找的就是系统 node，ABI 一致，故此处用当前 ABI 判定正确。
+        const abiBinding = path.join(
+            sqliteDir,
+            'lib',
+            'binding',
+            `node-v${process.versions.modules}-${process.platform}-${process.arch}`,
+            'better_sqlite3.node'
+        );
+        return fs.existsSync(abiBinding);
+    }
+
+    /**
+     * 检测 better-sqlite3 的 native binding 是否存在且 ABI 兼容子进程将使用的系统 node。
+     * 实现：spawn 子进程尝试 `require('better-sqlite3')` 并打开一个 :memory: db。
+     * 子进程 exit 0 视为兼容；非 0（含 ABI 不匹配的 ERR_DLOPEN_FAILED）视为不兼容。
+     *
+     * 不能在主进程内直接 require 探测——主进程加载了 canvas，旧 libstdc++.so.6 缺
+     * GLIBCXX_3.4.29 会劫持动态链接器，better-sqlite3 dlopen 失败（误报 ABI 不兼容）。
+     * spawn 干净的子进程探测才能真实反映子进程运行时的可用性。
+     */
+    private async _checkSqliteAbiCompatible(sqliteDir: string): Promise<boolean> {
+        // 鸿蒙不支持 native binding，永远返回 false（走 json）
+        if ((process.platform as string) === 'openharmony') {
+            return false;
+        }
+        // 文件都不在，肯定不兼容
+        const bindingPath = path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node');
+        if (!fs.existsSync(bindingPath)) {
+            return false;
+        }
+        const nodeCmd = this.resolveNodeCommand();
+        if (!nodeCmd) {
+            // 找不到 node 无法探测，保守起见返回 true（让子进程启动时自行暴露错误）
+            return true;
+        }
+        // 子进程内尝试加载 binding 并开关 :memory: db
+        // 注意：better-sqlite3 用 bindings 库按 NODE_MODULE_VERSION 解析，ABI 不匹配会抛
+        // ERR_DLOPEN_FAILED，被我们 catch 后 exit 1
+        const probeScript = `try {
+            const D = require('${sqliteDir.replace(/'/g, "\\'")}');
+            const db = new D(':memory:');
+            db.exec('CREATE TABLE t(x INTEGER)');
+            db.close();
+            process.exit(0);
+        } catch (e) {
+            process.stderr.write(String(e && e.message || e));
+            process.exit(1);
+        }`;
+        return new Promise((resolve) => {
+            try {
+                const child = spawn(nodeCmd.nodePath, ['-e', probeScript], {
+                    env: { ...process.env, ...nodeCmd.env },
+                    stdio: ['ignore', 'pipe', 'pipe']
+                });
+                let stderr = '';
+                child.stderr.on('data', (chunk: Buffer) => {
+                    stderr += chunk.toString();
+                });
+                child.on('error', () => resolve(false));
+                child.on('exit', (code: number | null) => {
+                    if (code === 0) {
+                        resolve(true);
+                    } else {
+                        logger.info(
+                            `[AgentGateBridge] better-sqlite3 ABI incompatible with ${nodeCmd.nodePath}: ${stderr.trim().slice(0, 200)}`
+                        );
+                        resolve(false);
+                    }
+                });
+            } catch {
+                resolve(false);
+            }
+        });
+    }
+
+    private async tryBuildSqliteNative(sqliteDir: string): Promise<void> {
         // 鸿蒙平台不支持 native module 编译（无 C++ 工具链、ABI 不同），直接跳过
         if ((process.platform as string) === 'openharmony') {
             logger.info(
@@ -333,46 +302,9 @@ class AgentGateBridge {
             );
             return;
         }
-        // 查找 better-sqlite3 目录（hoisted 到顶层或嵌套在 agent-gate 内）
-        const sqliteDirs = [
-            path.join(extensionsDir, 'node_modules', 'better-sqlite3'),
-            path.join(extensionsDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3')
-        ];
-        let sqliteDir = '';
-        for (const d of sqliteDirs) {
-            if (fs.existsSync(path.join(d, 'package.json'))) {
-                sqliteDir = d;
-                break;
-            }
-        }
-        if (!sqliteDir) {
-            // better-sqlite3 未被安装（可能 npm hoisting 后依赖树中没有）
-            // 尝试显式安装
-            logger.info('[AgentGateBridge] better-sqlite3 not found, attempting to install...');
-            try {
-                await asyncShellExec(
-                    `npm install --prefix "${extensionsDir}" better-sqlite3 --ignore-scripts --no-bin-links --audit=false`,
-                    { cwd: extensionsDir, timeout: 120000, env: {} }
-                );
-                // 安装后重新查找
-                for (const d of sqliteDirs) {
-                    if (fs.existsSync(path.join(d, 'package.json'))) {
-                        sqliteDir = d;
-                        break;
-                    }
-                }
-                if (!sqliteDir) {
-                    logger.warn(
-                        '[AgentGateBridge] better-sqlite3 install succeeded but package not found, using JSON storage'
-                    );
-                    return;
-                }
-            } catch (err: any) {
-                logger.warn(
-                    `[AgentGateBridge] better-sqlite3 install failed: ${err?.message || err}, using JSON storage`
-                );
-                return;
-            }
+        if (!fs.existsSync(path.join(sqliteDir, 'package.json'))) {
+            logger.warn(`[AgentGateBridge] better-sqlite3 not found at ${sqliteDir}, using JSON storage`);
+            return;
         }
 
         // 尝试编译 native binding
@@ -395,7 +327,7 @@ class AgentGateBridge {
 
         try {
             await asyncShellExec(
-                `npx --yes prebuild-install --runtime node --target ${nodeVersion} --arch ${process.arch}`,
+                `npx --yes prebuild-install --runtime node --target ${nodeVersion} --arch ${process.arch} --force`,
                 { cwd: sqliteDir, timeout: 60000, env: {} }
             );
             logger.info('[AgentGateBridge] better-sqlite3 native binding built successfully, sqlite storage available');
@@ -415,101 +347,35 @@ class AgentGateBridge {
         }
     }
 
-    /**
-     * 检测并修复 linked 本地包的 native modules（Electron ABI 兼容）。
-     * 仅对 symlink 的本地开发目录生效，不影响正式 npm 包。
-     */
-    private ensureNativeModules(packageName: string): void {
-        const pkgDir = path.resolve(process.cwd(), 'node_modules', packageName);
-        try {
-            if (!fs.lstatSync(pkgDir).isSymbolicLink()) return; // 正式包，跳过
-        } catch {
-            return;
-        }
-
-        // 找 Electron 版本
-        let electronVersion = '';
-        for (let dir = process.cwd(); dir !== path.dirname(dir); dir = path.dirname(dir)) {
-            const p = path.join(dir, 'node_modules', 'electron', 'package.json');
-            try {
-                if (fs.existsSync(p)) {
-                    electronVersion = JSON.parse(fs.readFileSync(p, 'utf-8')).version;
-                    break;
-                }
-            } catch {
-                /* continue */
-            }
-        }
-        if (!electronVersion) return;
-
-        // 找 better-sqlite3 所在的 node_modules 目录
-        const realPkgDir = fs.realpathSync(pkgDir);
-        const nativeDir = path.join(realPkgDir, 'node_modules', 'better-sqlite3');
-        try {
-            if (!fs.existsSync(path.join(nativeDir, 'package.json'))) return;
-            logger.info(
-                `[AgentGateBridge] Rebuilding better-sqlite3 for Electron ${electronVersion} (local dev: ${packageName})`
-            );
-            execSync(`npx --yes prebuild-install --runtime electron --target ${electronVersion} --arch x64`, {
-                cwd: nativeDir,
-                stdio: 'pipe',
-                timeout: 30000
-            });
-        } catch {
-            /* better-sqlite3 is not a dep of this package, skip */
-        }
-    }
-
     async start(settingInstance?: Setting): Promise<void> {
         if (this._running) return;
         this._running = true;
         this._lastError = null;
 
-        try {
-            // 确保插件已安装（未安装则自动下载）
-            // 版本号从 OpenDesk 自身 package.json 读取（单一来源），避免散落硬编码
-            await this.ensureInstalled('@kenhkl/agent-moss', getDependencyVersion('@kenhkl/agent-moss'));
-            await this.ensureInstalled('@kenhkl/agent-gate', getDependencyVersion('@kenhkl/agent-gate'));
-        } catch (err) {
-            logger.warn('[AgentGateBridge] Failed to ensure plugins:', err);
-            this._lastError = String(err);
+        // 包已作为 OpenDesk 的 dependencies 预装到 node_modules（离线 npm install 一次即就绪），
+        // 不再运行时 npm install 到 extensions 目录。仅做存在性校验。
+        const projectRoot = path.resolve(process.cwd());
+        const gatePkg = path.join(projectRoot, 'node_modules', '@kenhkl', 'agent-gate', 'package.json');
+        if (!fs.existsSync(gatePkg)) {
+            logger.warn('[AgentGateBridge] @kenhkl/agent-gate 未在 node_modules 中预装，安全网关无法启动');
+            this._lastError = '@kenhkl/agent-gate 未预装';
             this._running = false;
             return;
         }
 
-        // 如果配置为 sqlite 模式但 better-sqlite3 未安装/未编译，尝试编译 native binding
-        // （ensureInstalled 用 --ignore-scripts 跳过了编译，已安装的包也不会重新安装）
-        const extDir = getExtensionsDir();
-        const sqliteInstalled =
-            fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json')) ||
-            fs.existsSync(
-                path.join(
-                    extDir,
-                    'node_modules',
-                    '@kenhkl',
-                    'agent-gate',
-                    'node_modules',
-                    'better-sqlite3',
-                    'package.json'
-                )
-            );
-        if (!sqliteInstalled) {
-            // better-sqlite3 未安装到 node_modules，尝试安装+编译
-            await this.tryBuildSqliteNative(extDir);
-        } else {
-            // better-sqlite3 已安装但 native binding 可能未编译（--ignore-scripts 跳过了）
-            const sqliteDir = fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json'))
-                ? path.join(extDir, 'node_modules', 'better-sqlite3')
-                : path.join(extDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3');
-            const hasBuild =
-                fs.existsSync(path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node')) ||
-                fs.existsSync(path.join(sqliteDir, 'prebuilds', process.arch + '-electron.pkg'));
-            if (!hasBuild) {
-                // package.json 存在但 native binding 未编译，尝试编译
+        // 如果配置为 sqlite 模式但 better-sqlite3 的 native binding 缺失或 ABI 不匹配系统 node，尝试编译
+        // （npm install 时 prebuild-install 通常已下好预编译 binding，此处兜底处理异常情况）
+        // 重要：不能只检查文件存在——binding 可能是为旧 Node ABI 编的（如 v24→ABI140），
+        // 系统 node 升级后（如 v25→ABI141）加载会失败。必须实际尝试加载探测 ABI 兼容性。
+        const sqliteDirs = this._findSqliteDirs();
+        const sqliteDir = sqliteDirs.find((d) => fs.existsSync(path.join(d, 'package.json')));
+        if (sqliteDir) {
+            const abiCompatible = await this._checkSqliteAbiCompatible(sqliteDir);
+            if (!abiCompatible) {
                 logger.info(
-                    '[AgentGateBridge] better-sqlite3 package found but native binding missing, attempting build...'
+                    '[AgentGateBridge] better-sqlite3 native binding missing or ABI mismatch, attempting build...'
                 );
-                await this.tryBuildSqliteNative(extDir);
+                await this.tryBuildSqliteNative(sqliteDir);
             }
         }
 
@@ -519,14 +385,13 @@ class AgentGateBridge {
 
         // [DEBUG-LOG] 鸿蒙诊断：打印安装路径和数据目录，部署验证后删除此行
         logger.info(
-            `[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`
+            `[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, dataDir=${this.getAgentGateDataDir()}`
         );
 
-        // 确保 linked 本地包的原生模块兼容 Electron ABI（仅本地开发）
-        this.ensureNativeModules('@kenhkl/agent-moss');
-        this.ensureNativeModules('@kenhkl/agent-gate');
-
         // 找到空闲端口后并行启动
+        // 注：不调用 ensureNativeModules——spawn 子进程方案下子进程用系统 node 跑，
+        // binding 已由 tryBuildSqliteNative 编为系统 node ABI。
+        // ensureNativeModules 会把 binding 覆盖成 Electron ABI，与子进程需求相反。
         this.findFreePort(PORT_MOSS_START)
             .then((mossPort) => {
                 this.mossState.port = mossPort;
@@ -720,21 +585,11 @@ class AgentGateBridge {
                       let storageType =
                           appCfg?.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
                       // sqlite 模式需要 better-sqlite3，检测是否可用，不可用时自动回退到 json
+                      // ABI 兼容性兜底已在 start() 的 tryBuildSqliteNative 处理，此处只判存在性
                       if (storageType === 'sqlite') {
-                          const extDir = getExtensionsDir();
-                          const sqliteAvailable =
-                              fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json')) ||
-                              fs.existsSync(
-                                  path.join(
-                                      extDir,
-                                      'node_modules',
-                                      '@kenhkl',
-                                      'agent-gate',
-                                      'node_modules',
-                                      'better-sqlite3',
-                                      'package.json'
-                                  )
-                              );
+                          const sqliteAvailable = this._findSqliteDirs().some((d) =>
+                              fs.existsSync(path.join(d, 'package.json'))
+                          );
                           if (!sqliteAvailable) {
                               logger.warn(
                                   '[AgentGateBridge] better-sqlite3 not installed, falling back to JSON storage'

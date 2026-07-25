@@ -10,7 +10,6 @@
  */
 
 import { z } from 'zod';
-import path from 'path';
 import { BaseApplication } from '../base';
 import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
@@ -19,7 +18,6 @@ import { readInterceptionRecords } from '../skillmgr/blacklist.js';
 import { HookRegistry } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
-import { getExtensionsDir } from '../../plugins/manager';
 import { logger } from '../../utils/logger.js';
 import AgentGateWorker from './worker';
 
@@ -129,27 +127,20 @@ class AgentGateApplication extends BaseApplication {
         this._syncBridgeState();
     }
 
-    /** 检测 SQLite 是否可用（尝试在 agent-gate 安装目录中查找 better-sqlite3） */
+    /**
+     * 检测 SQLite 是否可用 —— 复用 AgentGateBridge 的判定，与子进程实际加载行为一致。
+     *
+     * 之前此方法只搜 extensions 目录且未 import fs（fs 永远 undefined → 抛错被吞 →
+     * 永远返回不可用），导致 UI 误报"SQLite 模块不可用"并把"（当前）"标到 JSON，
+     * 与后端真实状态（Storage: SQLite）矛盾。
+     * 现统一走 bridge.isSqliteAvailable()：搜项目 node_modules + extensions 候选，
+     * 判 better-sqlite3 包与 native binding 是否就绪。
+     */
     checkSqliteAvailable(): { available: boolean; reason?: string } {
-        const extDir = getExtensionsDir();
-        const sqlitePaths = [
-            path.join(extDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3'),
-            path.join(extDir, 'node_modules', 'better-sqlite3')
-        ];
-        for (const p of sqlitePaths) {
-            try {
-                if (fs.existsSync(path.join(p, 'package.json'))) {
-                    // 检查 native binding 是否存在
-                    const prebuildsDir = path.join(p, 'prebuilds');
-                    const buildDir = path.join(p, 'build');
-                    if (fs.existsSync(prebuildsDir) || fs.existsSync(buildDir)) {
-                        return { available: true };
-                    }
-                    return { available: false, reason: 'better-sqlite3 native binding 未编译' };
-                }
-            } catch {}
-        }
-        return { available: false, reason: 'better-sqlite3 模块未安装' };
+        const available = AgentGateBridge.getInstance().isSqliteAvailable();
+        return available
+            ? { available: true }
+            : { available: false, reason: 'better-sqlite3 模块未安装或 native binding 未编译' };
     }
 
     /** 获取当前数据库路径（未配置时返回 AgentGate 默认路径） */
