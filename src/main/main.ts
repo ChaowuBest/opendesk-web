@@ -55,7 +55,6 @@ import {
     initializeProtocolHandlers,
     registerApplicationRegistryHandlers
 } from './applications/registry_electron.js';
-import { UpdateClient } from '../updater/client.js';
 import { setPlatform, getPlatform } from '../platforms/base.js';
 import {
     ElectronTaskUpdateSubscriber,
@@ -2833,36 +2832,6 @@ const registerTray = () => {
     });
 };
 
-// 初始化自动更新客户端
-let updateClient: UpdateClient | null = null;
-
-const initializeUpdater = () => {
-    // 配置多个备选更新服务器地址，按顺序尝试
-    // 如果第一个服务器不可用，会自动尝试下一个
-    const updateServerUrls = [
-        // 如果要进行更新测试，可以把下边这一行注释打开
-        // 'http://localhost:3000',
-        'https://fillipdesk.uv0xab.com/update'
-    ];
-
-    // 只在生产环境启用自动更新，或者设置了 DEBUG_UPDATER 环境变量
-    if (!is.dev || process.env.DEBUG_UPDATER) {
-        logger.info(`启用自动更新, 当前版本: ${app.getVersion()}`);
-        updateClient = new UpdateClient({
-            serverUrls: updateServerUrls,
-            currentVersion: app.getVersion(),
-            checkInterval: 3600000 // 每小时检查一次
-        });
-
-        // 延迟检查更新，避免影响应用启动速度
-        setTimeout(() => {
-            updateClient.checkAndPromptUpdate().catch((error) => {
-                logger.error('检查更新失败', error);
-            });
-        }, 3000); // 3秒后检查
-    }
-};
-
 const initializeScreenAdaption = () => {
     const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
     logger.info(`屏幕显示参数: ${scaleFactor}`);
@@ -3276,7 +3245,6 @@ function startApplication() {
         const p7 = startupTrace.createPhase('startup.ready.finalize');
         initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
         initializeProtocolHandlers();
-        initializeUpdater();
         p7.end();
 
         ApplicationRegistry.onReady(async () => {
@@ -3367,9 +3335,6 @@ function startApplication() {
 
     app.on('will-quit', async () => {
         globalShortcut.unregisterAll();
-        if (updateClient) {
-            updateClient.stopAutoCheck();
-        }
         try {
             await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
         } catch {
