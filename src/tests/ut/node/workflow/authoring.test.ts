@@ -144,7 +144,7 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
                 },
                 toolCatalog
             ),
-        /references unavailable identifier\(s\): publishFile/
+        /引用了不可用的标识符：publishFile/
     );
     assert.throws(
         () =>
@@ -165,7 +165,7 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
                     'return { stock };'
                 ].join('\n')
             }),
-        /Required input "stock" must be read directly from args without a literal fallback/
+        /必填输入“stock”必须直接从 args 读取，不能使用字面量默认值/
     );
     assert.throws(
         () =>
@@ -185,7 +185,7 @@ test('Workflow authoring uses the runtime tool catalog from prompt through defin
                 },
                 toolCatalog
             ),
-        /must contain executable statements directly/
+        /必须在 async 函数体中直接包含可执行语句/
     );
 
     const taskManager = new TaskManagerState();
@@ -264,7 +264,7 @@ test('Workflow authoring keeps raw user intent through self-review without inven
 
             const rejected = await submit(invented, 'invented');
             assert.equal(rejected.status, 'error');
-            assert.match(rejected.result, /host user did not supply/);
+            assert.match(rejected.result, /宿主用户未提供的值/);
 
             const review = await submit(repaired, 'review');
             assert.equal(review.status, 'success');

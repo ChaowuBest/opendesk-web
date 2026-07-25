@@ -56,7 +56,7 @@ export class WorkflowMgrApplication extends BaseApplication implements WorkflowT
             runAgent: async (request, run) => {
                 const hostTask = GlobalState.getInstance().taskManagerState.getTask(run.hostTaskId);
                 if (!hostTask) {
-                    throw new Error(t('workflow.error.hostTaskMissing', { taskId: run.hostTaskId }));
+                    throw new Error(`该 Workflow 的宿主 Task 已不存在：${run.hostTaskId}`);
                 }
                 return await this.agentRunner.run(hostTask, request, { executionId: run.id });
             },
@@ -113,8 +113,8 @@ export class WorkflowMgrApplication extends BaseApplication implements WorkflowT
             status: run.status,
             message:
                 run.status === 'cancelled'
-                    ? t('workflow.stop.stopped', { runId: run.id })
-                    : t('workflow.stop.alreadyTerminal', { runId: run.id, status: run.status })
+                    ? `Workflow run ${run.id} 已停止。`
+                    : `Workflow run ${run.id} 已经处于 ${run.status} 状态。`
         };
     }
 
@@ -124,7 +124,7 @@ export class WorkflowMgrApplication extends BaseApplication implements WorkflowT
 
     notifyRunSelectedForUI(runId: string): void {
         if (!this.manager.getRun(runId)) {
-            throw new Error(t('workflow.error.runNotFound', { runId }));
+            throw new Error(`未找到 Workflow run：${runId}`);
         }
         this.sendEventToSubscribers('runSelected', runId);
     }

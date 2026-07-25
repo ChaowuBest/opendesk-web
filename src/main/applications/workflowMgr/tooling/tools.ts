@@ -91,12 +91,15 @@ const AuthorWorkflowSchema = z.object({});
 const ListWorkflowsSchema = z.object({});
 
 const RunWorkflowSchema = z.object({
-    reference: z.string().min(1).describe(t('workflow.tool.run.reference')),
-    input: z.record(z.string(), z.unknown()).optional().describe(t('workflow.tool.run.input'))
+    reference: z
+        .string()
+        .min(1)
+        .describe('Workflow 的准确引用：当前 Task reference，或已保存、内置 Definition 的名称或 id。'),
+    input: z.record(z.string(), z.unknown()).optional().describe('符合目标 Definition.inputSchema 的当前运行输入对象。')
 });
 
 const StopWorkflowSchema = z.object({
-    runId: z.string().min(1).describe(t('workflow.tool.stop.runId'))
+    runId: z.string().min(1).describe('RunWorkflow 返回的稳定 Workflow run id。')
 });
 
 export interface WorkflowToolHost {
@@ -129,27 +132,37 @@ export function createWorkflowDiscoveryToolset(host: WorkflowToolHost): BaseTool
 
 export class LoadWorkflowToolsTool extends BaseTool<typeof LoadWorkflowToolsSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super(LOAD_WORKFLOW_TOOLS_TOOL_NAME, t('workflow.tool.load.description'), LoadWorkflowToolsSchema);
+        super(
+            LOAD_WORKFLOW_TOOLS_TOOL_NAME,
+            '当用户要创建、查找、运行或停止工作流时，为当前 Task 加载对应的 Workflow 操作工具。',
+            LoadWorkflowToolsSchema
+        );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
-                throw new Error('LoadWorkflowTools requires a host Task');
+                throw new Error('LoadWorkflowTools 需要宿主 Task。');
             }
             await taskState.attachToolset(createWorkflowActionToolset(this.host));
             result.updateResultObject({
                 status: 'loaded',
                 tools: ['AuthorWorkflow', 'ListWorkflows', 'RunWorkflow', 'StopWorkflow']
             });
-            result.updateResult(t('workflow.tool.load.loaded'));
+            result.updateResult(
+                'Workflow 工具已加载。创建使用 AuthorWorkflow；查找、运行和停止分别使用 ListWorkflows、RunWorkflow 和 StopWorkflow。'
+            );
         });
     }
 }
 
 export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super('AuthorWorkflow', t('workflow.tool.author.description'), AuthorWorkflowSchema);
+        super(
+            'AuthorWorkflow',
+            '读取当前 Task 中按时间顺序保留的用户真实原始输入，设计、生成并校验一个临时 JavaScript Workflow Definition。',
+            AuthorWorkflowSchema
+        );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
-                throw new Error('AuthorWorkflow requires a host Task');
+                throw new Error('AuthorWorkflow 需要宿主 Task。');
             }
             let authored: WorkflowAuthoringResult;
             try {
@@ -176,7 +189,9 @@ export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
                     retryable: false,
                     errors
                 });
-                throw new Error(`${message}\n${t('workflow.author.terminalFailure')}`);
+                throw new Error(
+                    `${message}\n本次 AuthorWorkflow 创建流程已结束。当前回合请向用户说明完整失败原因并结束；后续创建尝试由用户的新指令触发。`
+                );
             }
             result.result_object = {
                 ...(result.result_object ?? {}),
@@ -252,10 +267,14 @@ export class AuthorWorkflowTool extends BaseTool<typeof AuthorWorkflowSchema> {
 
 export class ListWorkflowsTool extends BaseTool<typeof ListWorkflowsSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super('ListWorkflows', t('workflow.tool.list.description'), ListWorkflowsSchema);
+        super(
+            'ListWorkflows',
+            '列出当前 Task 临时、已保存和内置的 Workflow Definition，并返回来源、输入结构和准确调用方式。',
+            ListWorkflowsSchema
+        );
         this.setUniversalExecutor(async (_args, result, taskState) => {
             if (!taskState) {
-                throw new Error('ListWorkflows requires a host Task');
+                throw new Error('ListWorkflows 需要宿主 Task。');
             }
             const listed: WorkflowListResult = {
                 status: 'listed',
@@ -274,10 +293,14 @@ export class ListWorkflowsTool extends BaseTool<typeof ListWorkflowsSchema> {
 
 export class RunWorkflowTool extends BaseTool<typeof RunWorkflowSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super('RunWorkflow', t('workflow.tool.run.description'), RunWorkflowSchema);
+        super(
+            'RunWorkflow',
+            '根据准确 reference 和符合 inputSchema 的 input 对象创建一次异步 Workflow run，并返回启动回执。',
+            RunWorkflowSchema
+        );
         this.setUniversalExecutor(async (args, result, taskState) => {
             if (!taskState) {
-                throw new Error('RunWorkflow requires a host Task');
+                throw new Error('RunWorkflow 需要宿主 Task。');
             }
             const authored = args.reference.startsWith('authoring_')
                 ? resolveAuthoredWorkflowFromTask(taskState, args.reference)
@@ -289,7 +312,9 @@ export class RunWorkflowTool extends BaseTool<typeof RunWorkflowSchema> {
                 taskState
             );
             result.updateResultObject(launch);
-            result.updateResult(t('workflow.run.started', { runId: launch.runId }));
+            result.updateResult(
+                `Workflow run ${launch.runId} 已异步启动。当前回合在启动回执后结束；OpenDesk 将在后续回合投递最终结果。`
+            );
             stopHostTurnAfterLaunch(taskState, launch.runId);
         });
     }
@@ -363,9 +388,7 @@ function createCollectInputAction(authored: WorkflowAuthoringResult): WorkflowCo
         requiredInputs: [...authored.missingRequiredInputs],
         inputSchema: structuredClone(authored.inputSchema),
         reference: authored.reference,
-        instruction: t('workflow.nextAction.collectInput', {
-            fields: authored.missingRequiredInputs.join(', ')
-        })
+        instruction: `向用户询问 ${authored.missingRequiredInputs.join(', ')}，并在提问后结束当前回合。收到用户下一条回复后，使用同一 reference 和完整 input 对象调用 RunWorkflow。`
     };
 }
 
@@ -411,10 +434,10 @@ function toWorkflowListEntry(
 
 export class StopWorkflowTool extends BaseTool<typeof StopWorkflowSchema> {
     constructor(private readonly host: WorkflowToolHost) {
-        super('StopWorkflow', t('workflow.tool.stop.description'), StopWorkflowSchema);
+        super('StopWorkflow', '使用稳定的 run id 停止正在运行的 Workflow。', StopWorkflowSchema);
         this.setUniversalExecutor(async (args, result, taskState) => {
             if (!taskState) {
-                throw new Error('StopWorkflow requires a host Task');
+                throw new Error('StopWorkflow 需要宿主 Task。');
             }
             const stopped = await this.host.stopWorkflow(args.runId, taskState);
             result.updateResultObject(stopped);
@@ -468,7 +491,7 @@ function resolveAuthoredWorkflowFromTask(hostTask: TaskState, reference: string)
     if (authored) {
         return authored;
     }
-    throw new Error(t('workflow.error.authoringNotFound', { reference }));
+    throw new Error(`未在当前 Task 中找到 Workflow 创建结果：${reference}`);
 }
 
 function stopHostTurnAfterLaunch(hostTask: TaskState, runId: string): void {

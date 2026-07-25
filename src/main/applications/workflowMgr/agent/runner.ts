@@ -73,7 +73,7 @@ class CompleteWorkflowAgentTool extends BaseTool<z.ZodType> {
         );
         this.setUniversalExecutor(async (rawArgs, result, task) => {
             if (!task) {
-                throw new Error('CompleteWorkflowAgent requires a Task context');
+                throw new Error('CompleteWorkflowAgent 需要 Task 上下文。');
             }
             await onCompletion(parseWorkflowAgentCompletion(rawArgs, outputSchema), result, task);
         });
@@ -207,7 +207,7 @@ export class WorkflowAgentRunner {
         const mode = modes.find((candidate) => candidate.id === modeId) ?? modes[0];
         const workspace = hostTask.getWorkspace();
         if (!mode || !workspace) {
-            throw new Error('Workflow agent requires the host Task mode and workspace');
+            throw new Error('Workflow agent 需要宿主 Task 的 mode 和 workspace。');
         }
 
         await hostTask.task_manager_state.initHarness(task, workspace, mode);

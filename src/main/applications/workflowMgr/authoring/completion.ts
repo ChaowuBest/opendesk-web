@@ -15,7 +15,6 @@
 
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import type { WorkflowDefinitionInput, WorkflowJSONSchema } from '../../../aikernel/workflow.js';
-import { t } from '../../../../locale/index.js';
 import { WorkflowAgentExecutionError } from '../agent/contract.js';
 import type { WorkflowAgentRunOptions } from '../agent/runner.js';
 import type { WorkflowAuthoringContext } from './context.js';
@@ -75,7 +74,7 @@ export function createWorkflowAuthoringCompletion(
                     const completion = completionControl.parse(toolCall);
                     attempt += 1;
                     if (completion.status !== 'success' || !completion.output) {
-                        const error = new Error(completion.summary || t('workflow.error.authoringFailed'));
+                        const error = new Error(completion.summary || 'Workflow 创建失败。');
                         options.onProgress?.({
                             stage: 'validate',
                             attempt,
@@ -209,13 +208,13 @@ function createAuthoringCompletionError(
     const lastError = uniqueErrors.at(-1);
     const message =
         code === 'completion_not_submitted'
-            ? 'Workflow authoring agent ended before submitting workflow-agent-CompleteWorkflowAgent.'
+            ? 'Workflow authoring agent 在提交 workflow-agent-CompleteWorkflowAgent 前结束。'
             : code === 'completion_repair_abandoned'
-              ? `Workflow authoring agent ended without an accepted definition after ${attempts}/${MAX_AUTHORING_COMPLETION_REJECTIONS} rejected submissions.${
-                    lastError ? ` Last validation error: ${lastError}` : ''
+              ? `Workflow authoring agent 在 ${attempts}/${MAX_AUTHORING_COMPLETION_REJECTIONS} 次提交被拒后结束，未产出通过校验的 Definition。${
+                    lastError ? ` 最后一次校验错误：${lastError}` : ''
                 }`
-              : `Workflow authoring failed after ${MAX_AUTHORING_COMPLETION_REJECTIONS} rejected submissions.${
-                    lastError ? ` Last validation error: ${lastError}` : ''
+              : `Workflow authoring 在 ${MAX_AUTHORING_COMPLETION_REJECTIONS} 次提交被拒后失败。${
+                    lastError ? ` 最后一次校验错误：${lastError}` : ''
                 }`;
     return new WorkflowAuthoringCompletionError({
         code,

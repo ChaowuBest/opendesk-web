@@ -17,8 +17,6 @@ import crypto from 'node:crypto';
 
 import { z } from 'zod';
 
-import { t } from '../../locale/index.js';
-
 export type WorkflowJSONValue =
     null | boolean | number | string | WorkflowJSONValue[] | { [key: string]: WorkflowJSONValue };
 export type WorkflowJSONSchema = Record<string, unknown>;
@@ -206,20 +204,12 @@ export function validateWorkflowInput(schema: Record<string, unknown>, input: Wo
     try {
         parser = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
     } catch (error) {
-        throw new Error(
-            t('workflow.error.invalidSchema', {
-                message: error instanceof Error ? error.message : String(error)
-            })
-        );
+        throw new Error(`Workflow 输入结构无效：${error instanceof Error ? error.message : String(error)}`);
     }
     const parsed = parser.safeParse(input);
     if (!parsed.success) {
         throw new WorkflowValidationError(
-            parsed.error.issues.map((issue) =>
-                t('workflow.error.invalidInput', {
-                    message: `${formatZodPath(issue.path)}${issue.message}`
-                })
-            )
+            parsed.error.issues.map((issue) => `Workflow 输入无效：${formatZodPath(issue.path)}${issue.message}`)
         );
     }
     return parsed.data as WorkflowJSONValue;
@@ -256,10 +246,10 @@ export function collectWorkflowDefinitionErrors(
     const errors: string[] = [];
     const name = input.name.trim().toLowerCase();
     if (!WORKFLOW_NAME_PATTERN.test(name)) {
-        errors.push(t('workflow.error.nameInvalid'));
+        errors.push('Workflow 名称只能使用小写字母、数字和单个连字符。');
     }
     if (!input.description.trim()) {
-        errors.push(t('workflow.error.descriptionEmpty'));
+        errors.push('Workflow 描述不能为空。');
     }
     try {
         options.validateSource(input.script);
@@ -273,19 +263,15 @@ export function collectWorkflowDefinitionErrors(
     try {
         z.fromJSONSchema(inputSchema as Parameters<typeof z.fromJSONSchema>[0]);
     } catch (error) {
-        errors.push(
-            t('workflow.error.invalidSchema', {
-                message: error instanceof Error ? error.message : String(error)
-            })
-        );
+        errors.push(`Workflow 输入结构无效：${error instanceof Error ? error.message : String(error)}`);
     }
     const phaseNames = (input.phases ?? []).map((phase) => phase.name.trim());
     if (phaseNames.some((phaseName) => !phaseName)) {
-        errors.push(t('workflow.error.phaseNameEmpty'));
+        errors.push('Workflow 阶段名称不能为空。');
     }
     const nonEmptyPhaseNames = phaseNames.filter(Boolean);
     if (new Set(nonEmptyPhaseNames).size !== nonEmptyPhaseNames.length) {
-        errors.push(t('workflow.error.phaseNameDuplicate'));
+        errors.push('Workflow 阶段名称不能重复。');
     }
     return [...new Set(errors)];
 }

@@ -18,7 +18,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { type WorkflowDefinition, type WorkflowRun, type WorkflowRunStatus } from '../../aikernel/workflow.js';
-import { t } from '../../../locale/index.js';
 
 const DEFINITION_STORE_VERSION = 2;
 const RUN_INDEX_VERSION = 1;
@@ -70,7 +69,7 @@ export class WorkflowStorage {
             !Array.isArray(parsed.definitions) ||
             !parsed.definitions.every(isWorkflowDefinition)
         ) {
-            throw new Error(t('workflow.error.unsupportedStore', { path: this.definitionStorePath }));
+            throw new Error(`不支持的 Workflow 数据文件：${this.definitionStorePath}`);
         }
         return structuredClone(parsed.definitions);
     }

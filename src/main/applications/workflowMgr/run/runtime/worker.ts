@@ -29,7 +29,7 @@ let nextRequestId = 1;
 let started = false;
 
 if (!parentPort) {
-    throw new Error('Workflow runtime worker requires parentPort');
+    throw new Error('Workflow runtime worker 需要 parentPort。');
 }
 
 function post(message: WorkflowRuntimeWorkerOutbound): void {

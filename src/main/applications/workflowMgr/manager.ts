@@ -133,7 +133,7 @@ export class WorkflowManager {
         const errors = collectWorkflowDefinitionErrors(input, this.runtime);
         const name = input.name.trim().toLowerCase();
         if (!options.allowNameCollision && this.resolveDefinition(name)) {
-            errors.push(t('workflow.error.alreadyExists', { name }));
+            errors.push(`Workflow 已存在：${name}`);
         }
         return [...new Set(errors)];
     }
@@ -162,13 +162,13 @@ export class WorkflowManager {
         }
         const name = input.name.trim().toLowerCase();
         if (!options.allowNameCollision && this.resolveDefinition(name)) {
-            errors.push(t('workflow.error.alreadyExists', { name }));
+            errors.push(`Workflow 已存在：${name}`);
         }
         if (errors.length > 0) {
             throw new WorkflowValidationError([...new Set(errors)]);
         }
         if (!definition) {
-            throw new Error(t('workflow.error.authoringFailed'));
+            throw new Error('Workflow 创建失败。');
         }
         return definition;
     }
@@ -181,7 +181,7 @@ export class WorkflowManager {
     ): Promise<WorkflowLaunchResult> {
         const definition = typeof target === 'string' ? this.resolveDefinition(target) : structuredClone(target);
         if (!definition) {
-            throw new Error(t('workflow.error.notFound', { reference: target }));
+            throw new Error(`未找到 Workflow：${target}`);
         }
         return await this.launchDefinition(definition, requestedInput, hostTaskId, hostTaskName);
     }
@@ -243,14 +243,14 @@ export class WorkflowManager {
             runId: run.id,
             workflowName: definition.name,
             status: 'started',
-            message: t('workflow.launch.started', { name: definition.name })
+            message: `Workflow ${definition.name} 已启动。`
         };
     }
 
     async stop(runId: string): Promise<WorkflowRun> {
         const run = this.getMutableRun(runId);
         if (!run) {
-            throw new Error(t('workflow.error.runNotFound', { runId }));
+            throw new Error(`未找到 Workflow run：${runId}`);
         }
         if (run.status !== 'running') {
             return structuredClone(run);
@@ -309,7 +309,7 @@ export class WorkflowManager {
                     (candidate) => candidate.status === 'pending' && candidate.name === phaseName
                 );
                 if (!phase) {
-                    throw new Error(t('workflow.error.phaseNotDeclared', { name: phaseName }));
+                    throw new Error(`Workflow 阶段“${phaseName}”未在 Definition 中声明。`);
                 }
                 phase.status = 'running';
                 phase.startedAt = now;
@@ -437,7 +437,7 @@ export class WorkflowManager {
             return current;
         }
         if (run.phases.length > 0) {
-            throw new Error(t('workflow.error.agentOutsidePhase'));
+            throw new Error('Workflow Agent 必须在已开始的阶段内运行。');
         }
         const phase: WorkflowRunPhase = {
             id: `phase_${crypto.randomUUID()}`,
@@ -451,7 +451,7 @@ export class WorkflowManager {
 
     private assertRunActive(run: WorkflowRun): void {
         if (run.status !== 'running') {
-            throw new Error(t('workflow.error.stopped'));
+            throw new Error('Workflow run 已停止。');
         }
     }
 
@@ -474,7 +474,7 @@ export class WorkflowManager {
             if (run.status === 'running') {
                 const now = this.clock().toISOString();
                 run.status = 'failed';
-                run.error = t('workflow.error.interrupted');
+                run.error = 'OpenDesk 在 Workflow 运行完成前已停止。';
                 run.failure = {
                     code: 'runtime_failed',
                     message: run.error

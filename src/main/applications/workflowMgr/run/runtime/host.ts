@@ -20,7 +20,6 @@ import { Worker, type WorkerOptions } from 'node:worker_threads';
 import vm from 'node:vm';
 
 import type { WorkflowJSONValue } from '../../../../aikernel/workflow.js';
-import { t } from '../../../../../locale/index.js';
 import type { WorkflowAgentRequest, WorkflowAgentResult } from '../../agent/contract.js';
 import { collectDisallowedWorkflowAgentTools } from '../../agent/policy.js';
 
@@ -82,10 +81,10 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
 
     validateSource(source: string): void {
         if (!source.trim()) {
-            throw new Error(t('workflow.error.scriptEmpty'));
+            throw new Error('Workflow 脚本不能为空。');
         }
         if (/(^|\s)(?:import|export)\s/m.test(source)) {
-            throw new Error(t('workflow.error.scriptModuleSyntax'));
+            throw new Error('Workflow 脚本不能包含 import 或 export 声明。');
         }
         new vm.Script(['(async function workflowMain() {', '"use strict";', source, '})'].join('\n'), {
             filename: 'workflow.validation.js'
@@ -118,7 +117,7 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
             rejectCompletion = reject;
         });
         const startTimer = setTimeout(() => {
-            fail(new Error(t('workflow.error.runtimeStartTimeout', { timeout: this.startTimeoutMs })));
+            fail(new Error(`Workflow runtime 未能在 ${this.startTimeoutMs} 毫秒内启动。`));
         }, this.startTimeoutMs);
         let wallTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -168,7 +167,7 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
                 accepted = true;
                 clearTimeout(startTimer);
                 wallTimer = setTimeout(() => {
-                    fail(new Error(t('workflow.error.runTimeout', { timeout: this.wallTimeoutMs })));
+                    fail(new Error(`Workflow 运行超过 ${this.wallTimeoutMs} 毫秒时限。`));
                 }, this.wallTimeoutMs);
                 resolveAccepted();
                 return;
@@ -181,7 +180,7 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
             }
             if (message.type === 'completed' && message.runId === input.runId) {
                 if (!reported) {
-                    fail(new Error(t('workflow.error.reportRequired')));
+                    fail(new Error('Workflow 未通过 report() 发布结果，不能标记为成功。'));
                     return;
                 }
                 complete(message.output);
@@ -194,7 +193,7 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
         worker.on('error', fail);
         worker.on('exit', (code) => {
             if (!settled) {
-                fail(new Error(t('workflow.error.runtimeExited', { code })));
+                fail(new Error(`Workflow runtime 已退出，退出码：${code}。`));
             }
         });
 
@@ -211,7 +210,7 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
                 if (wallTimer) {
                     clearTimeout(wallTimer);
                 }
-                rejectCompletion(new Error(t('workflow.error.stopped')));
+                rejectCompletion(new Error('Workflow run 已停止。'));
                 await terminateWorker().catch(() => undefined);
             }
         };
@@ -249,22 +248,18 @@ export class WorkflowRuntime implements WorkflowRuntimeEngine {
 
 function parseWorkflowAgentRequest(value: WorkflowJSONValue): WorkflowAgentRequest {
     if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.prompt !== 'string') {
-        throw new Error(t('workflow.error.agentRequestPrompt'));
+        throw new Error('Workflow agent 请求必须包含字符串 prompt。');
     }
     const allowedTools = value.allowedTools;
     if (
         allowedTools !== undefined &&
         (!Array.isArray(allowedTools) || !allowedTools.every((toolName) => typeof toolName === 'string'))
     ) {
-        throw new Error(t('workflow.error.agentRequestAllowedTools'));
+        throw new Error('Workflow agent allowedTools 必须是工具名称数组。');
     }
     const disallowedTools = collectDisallowedWorkflowAgentTools(allowedTools ?? []);
     if (disallowedTools.length > 0) {
-        throw new Error(
-            t('workflow.error.agentToolNotAllowed', {
-                tools: disallowedTools.join(', ')
-            })
-        );
+        throw new Error(`Workflow agent 不能使用嵌套 Agent 或代码执行工具：${disallowedTools.join(', ')}。`);
     }
     const reasoningEffort = value.reasoningEffort;
     if (
@@ -273,14 +268,14 @@ function parseWorkflowAgentRequest(value: WorkflowJSONValue): WorkflowAgentReque
         reasoningEffort !== 'medium' &&
         reasoningEffort !== 'high'
     ) {
-        throw new Error(t('workflow.error.agentRequestReasoningEffort'));
+        throw new Error('Workflow agent reasoningEffort 必须是 low、medium 或 high。');
     }
     const outputSchema = value.outputSchema;
     if (
         outputSchema !== undefined &&
         (!outputSchema || typeof outputSchema !== 'object' || Array.isArray(outputSchema))
     ) {
-        throw new Error(t('workflow.error.agentRequestOutputSchema'));
+        throw new Error('Workflow agent outputSchema 必须是对象。');
     }
     return {
         prompt: value.prompt,
@@ -301,7 +296,7 @@ export function resolveWorkflowRuntimeWorkerPath(baseUrl: string | URL = import.
     ];
     const resolved = candidates.find((candidate) => existsSync(candidate));
     if (!resolved) {
-        throw new Error(t('workflow.error.runtimeArtifactMissing', { path: moduleDirectory }));
+        throw new Error(`在 ${moduleDirectory} 附近未找到 Workflow runtime 产物。`);
     }
     return resolved;
 }

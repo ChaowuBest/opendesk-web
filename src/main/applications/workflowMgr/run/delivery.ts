@@ -77,7 +77,7 @@ function buildDeliveryPrompt(run: WorkflowRun): string {
             : {
                   failure: run.failure ?? {
                       code: 'runtime_failed',
-                      message: run.error ?? 'Workflow failed without an error message.'
+                      message: run.error ?? 'Workflow 失败，但没有返回错误信息。'
                   }
               };
     return [

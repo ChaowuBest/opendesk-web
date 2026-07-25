@@ -22,7 +22,6 @@ import {
     type WorkflowDefinitionInput,
     type WorkflowJSONValue
 } from '../../../aikernel/workflow.js';
-import { t } from '../../../../locale/index.js';
 import { WorkflowAgentRunner } from '../agent/runner.js';
 import { isWorkflowAgentToolAllowed } from '../agent/policy.js';
 import { createWorkflowAuthoringCompletion } from './completion.js';
@@ -80,7 +79,7 @@ export interface WorkflowAuthoringDefinitionHost extends WorkflowDefinitionValid
 
 export class WorkflowAuthoringCancelledError extends Error {
     constructor() {
-        super(t('workflow.author.cancelled'));
+        super('Workflow 创建已停止。');
         this.name = 'WorkflowAuthoringCancelledError';
     }
 }
@@ -166,7 +165,7 @@ export class WorkflowAuthoringService {
             authoringSettled = true;
         }
         if (authored.status !== 'success' || !authored.output) {
-            throw new Error(authored.summary || t('workflow.error.authoringFailed'));
+            throw new Error(authored.summary || 'Workflow 创建失败。');
         }
         const output = completion.getValidatedOutput() ?? parseAuthoredOutput(authored.output);
         const definition = this.definitionHost.createDefinition(output.definition, {
@@ -189,11 +188,8 @@ export class WorkflowAuthoringService {
             launchReady,
             invocation,
             message: launchReady
-                ? t('workflow.author.ready', { name: definition.name, reference })
-                : t('workflow.author.inputRequired', {
-                      name: definition.name,
-                      fields: missingRequiredInputs.join(', ')
-                  })
+                ? `Workflow“${definition.name}”已生成并通过校验。请使用返回的 invocation 启动 reference“${reference}”。`
+                : `Workflow“${definition.name}”已生成并通过校验。首次运行需要用户提供：${missingRequiredInputs.join(', ')}。收到输入后请使用同一 reference 启动。`
         };
     }
 }

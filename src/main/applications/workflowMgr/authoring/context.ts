@@ -15,7 +15,6 @@
 
 import { UserMessage } from '../../../aikernel/messages.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import { t } from '../../../../locale/index.js';
 
 export interface WorkflowAuthoringContext {
     userInputs: string[];
@@ -36,5 +35,5 @@ export function createWorkflowAuthoringContext(hostTask: TaskState): WorkflowAut
     if (userInputs.length > 0) {
         return { userInputs };
     }
-    throw new Error(t('workflow.error.authoringOriginalRequestMissing'));
+    throw new Error('当前 Task 中没有可用于创建 Workflow 的用户原始输入。');
 }

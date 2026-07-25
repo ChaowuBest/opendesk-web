@@ -18,7 +18,6 @@ import {
     type WorkflowDefinition,
     type WorkflowPhaseDefinition
 } from '../../../aikernel/workflow.js';
-import { t } from '../../../../locale/index.js';
 
 const DEEP_RESEARCH_SEARCH_LIMIT = 5;
 const DEEP_RESEARCH_FETCH_LIMIT = 5;
@@ -39,24 +38,24 @@ const DEEP_RESEARCH_MVP_POLICY = Object.freeze({
 function createDeepResearchPhases(): WorkflowPhaseDefinition[] {
     return [
         {
-            name: t('workflow.deepResearch.phase.scope'),
-            description: t('workflow.deepResearch.phase.scopeDescription')
+            name: 'Scope',
+            description: '将问题拆解为聚焦的搜索角度'
         },
         {
-            name: t('workflow.deepResearch.phase.search'),
-            description: t('workflow.deepResearch.phase.searchDescription')
+            name: 'Search',
+            description: '按搜索角度并行检索资料'
         },
         {
-            name: t('workflow.deepResearch.phase.fetch'),
-            description: t('workflow.deepResearch.phase.fetchDescription')
+            name: 'Fetch',
+            description: '去重来源、读取页面并提取可验证主张'
         },
         {
-            name: t('workflow.deepResearch.phase.verify'),
-            description: t('workflow.deepResearch.phase.verifyDescription')
+            name: 'Verify',
+            description: '对每个主张进行独立的对抗性验证投票'
         },
         {
-            name: t('workflow.deepResearch.phase.synthesize'),
-            description: t('workflow.deepResearch.phase.synthesizeDescription')
+            name: 'Synthesize',
+            description: '合并已确认的主张并生成带来源报告'
         }
     ];
 }
@@ -67,7 +66,7 @@ function createDeepResearchScript(phases: WorkflowPhaseDefinition[]): string {
 const POLICY = ${JSON.stringify(DEEP_RESEARCH_MVP_POLICY)};
 const QUESTION = typeof args.query === 'string' ? args.query.trim() : '';
 if (!QUESTION) {
-    throw new Error('deep-research requires args.query');
+    throw new Error('deep-research 需要 args.query。');
 }
 
 const SCOPE_SCHEMA = {
@@ -215,7 +214,7 @@ const angles = arrayValue(scopeOutput.angles)
     .filter(Boolean)
     .slice(0, POLICY.maxSearchAngles);
 if (angles.length === 0) {
-    throw new Error('deep-research scope agent returned no executable search angles');
+    throw new Error('deep-research scope agent 没有返回可执行的搜索角度。');
 }
 
 await phase(${phaseNames[1]});
@@ -269,7 +268,7 @@ const candidateSources = discoveredSources
     )
     .slice(0, POLICY.maxFetchSources);
 if (candidateSources.length === 0) {
-    throw new Error('deep-research search agents returned no usable sources');
+    throw new Error('deep-research search agent 没有返回可用来源。');
 }
 
 await phase(${phaseNames[2]});
@@ -470,8 +469,8 @@ export function createBuiltinWorkflows(): WorkflowDefinition[] {
             id: 'builtin-deep-research',
             revision: computeWorkflowRevision({ script, inputSchema, phases }),
             name: 'deep-research',
-            description: t('workflow.deepResearch.description'),
-            whenToUse: t('workflow.deepResearch.whenToUse'),
+            description: '通过问题拆解、资料检索、来源阅读、交叉验证和引用整合完成深度研究。',
+            whenToUse: '当用户需要针对具体主题生成多来源、经过事实核查的深度研究报告时。',
             phases,
             script,
             inputSchema,

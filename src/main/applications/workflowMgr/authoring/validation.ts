@@ -22,7 +22,6 @@ import {
     type WorkflowDefinitionInput,
     type WorkflowJSONValue
 } from '../../../aikernel/workflow.js';
-import { t } from '../../../../locale/index.js';
 import { collectDisallowedWorkflowAgentTools, isWorkflowAgentToolAllowed } from '../agent/policy.js';
 
 const RESERVED_RUNTIME_IDENTIFIERS = new Set(['args', 'phase', 'agent', 'report']);
@@ -153,10 +152,9 @@ export interface WorkflowDefinitionValidationHost {
 export class WorkflowAuthoringValidationError extends Error {
     constructor(readonly errors: string[]) {
         super(
-            [
-                'The submitted Workflow definition is not runnable yet:',
-                ...errors.map((error, index) => `${index + 1}. ${error}`)
-            ].join('\n')
+            ['提交的 Workflow Definition 尚不可运行：', ...errors.map((error, index) => `${index + 1}. ${error}`)].join(
+                '\n'
+            )
         );
         this.name = 'WorkflowAuthoringValidationError';
     }
@@ -183,9 +181,9 @@ export function collectAuthoringErrors(
         const unsupportedValues = collectUnsupportedLaunchInputValues(output.launchInput, hostTask);
         if (unsupportedValues.length > 0) {
             errors.push(
-                `launchInput contains value(s) that the host user did not supply: ${unsupportedValues.join(
+                `launchInput 包含宿主用户未提供的值：${unsupportedValues.join(
                     ', '
-                )}. Omit launchInput and keep the corresponding inputSchema fields required.`
+                )}。请省略 launchInput，并保持对应 inputSchema 字段为必填。`
             );
         }
     }
@@ -210,7 +208,7 @@ export function collectAuthoredDefinitionErrors(
         ...new Set([
             ...(input.inputSchema?.type === 'object'
                 ? []
-                : ['Workflow inputSchema must describe one object so RunWorkflow.input has a stable field contract.']),
+                : ['Workflow inputSchema 必须描述一个对象，使 RunWorkflow.input 具有稳定的字段契约。']),
             ...validateAuthoredScript(
                 input.script,
                 input.phases ?? [],
@@ -253,9 +251,7 @@ function validateAuthoredScript(
                 statement.type !== 'EmptyStatement'
         )
     ) {
-        errors.push(
-            'Workflow script must contain executable statements directly in the async function body; declarations alone do not start the Workflow.'
-        );
+        errors.push('Workflow 脚本必须在 async 函数体中直接包含可执行语句；只有声明不会启动 Workflow。');
     }
     const bindingsByScope = collectScriptBindings(root);
     const declaredIdentifierNodes = collectDeclaredIdentifierNodes(root);
@@ -266,13 +262,13 @@ function validateAuthoredScript(
         if (isBindingNode(node)) {
             for (const name of bindingNames(bindingPattern(node))) {
                 if (RESERVED_RUNTIME_IDENTIFIERS.has(name)) {
-                    errors.push(`Runtime identifier "${name}" must not be declared, assigned, or shadowed.`);
+                    errors.push(`Runtime 标识符“${name}”不能被声明、赋值或遮蔽。`);
                 }
             }
         }
 
         if (node.type === 'Identifier' && node.name && FORBIDDEN_RUNTIME_IDENTIFIERS.has(node.name)) {
-            errors.push(`Runtime identifier "${node.name}" is not available in Workflow scripts.`);
+            errors.push(`Workflow 脚本中不能使用 Runtime 标识符“${node.name}”。`);
         }
         if (
             node.type === 'Identifier' &&
@@ -291,9 +287,7 @@ function validateAuthoredScript(
         ) {
             const inputName = directArgsPropertyName(node.left as ScriptNode | undefined);
             if (inputName && requiredInputs.has(inputName)) {
-                errors.push(
-                    `Required input "${inputName}" must be read directly from args without a literal fallback.`
-                );
+                errors.push(`必填输入“${inputName}”必须直接从 args 读取，不能使用字面量默认值。`);
             }
         }
 
@@ -306,22 +300,22 @@ function validateAuthoredScript(
             return;
         }
         if (!isAwaited(node, ancestors)) {
-            errors.push(`${name}(...) must be awaited.`);
+            errors.push(`${name}(...) 必须使用 await。`);
         }
         const args = (node.arguments as ScriptNode[] | undefined) ?? [];
         if (name === 'phase') {
             if (args.length !== 1) {
-                errors.push('phase(...) takes exactly one string argument and does not accept a callback.');
+                errors.push('phase(...) 只接收一个字符串参数，不接收回调函数。');
             }
             const phaseName = literalString(args[0]);
             if (!phaseName) {
-                errors.push('phase(...) must use a non-empty string literal so the run can prebuild its phase list.');
+                errors.push('phase(...) 必须使用非空字符串字面量，以便 run 预先构建阶段列表。');
             } else {
                 phaseCalls.push(phaseName);
             }
         }
         if (name === 'agent' && (!args[0] || args[0].type === 'ObjectExpression')) {
-            errors.push('agent() requires the prompt as its first positional argument.');
+            errors.push('agent() 的第一个位置参数必须是 prompt。');
         }
         if (name === 'agent') {
             errors.push(...validateAgentAllowedTools(args[1], toolCatalog));
@@ -333,7 +327,7 @@ function validateAuthoredScript(
 
     if (undefinedIdentifiers.size > 0) {
         errors.push(
-            `Workflow script references unavailable identifier(s): ${[...undefinedIdentifiers].sort().join(', ')}. Use only local declarations, standard ECMAScript intrinsics, or the host globals args, phase, agent, and report; nested-agent tool names belong only in allowedTools.`
+            `Workflow 脚本引用了不可用的标识符：${[...undefinedIdentifiers].sort().join(', ')}。只能使用本地声明、标准 ECMAScript 内建对象或宿主全局变量 args、phase、agent、report；agent 工具名称只能出现在 allowedTools 中。`
         );
     }
 
@@ -352,7 +346,7 @@ function validateAuthoredScript(
         const property = memberPropertyName(node);
         if (property && !AGENT_RESULT_FIELDS.has(property)) {
             errors.push(
-                `Agent result "${object.name}" exposes only status, summary, and output; read domain field "${property}" from ${object.name}.output.`
+                `Agent 结果“${object.name}”只包含 status、summary 和 output；领域字段“${property}”应从 ${object.name}.output 读取。`
             );
         }
     });
@@ -360,11 +354,11 @@ function validateAuthoredScript(
     const declaredPhases = phases.map((phase) => phase.name);
     if (!sameSequence(declaredPhases, phaseCalls)) {
         errors.push(
-            `Declared phases (${declaredPhases.join(' -> ') || 'none'}) must match phase(...) calls (${phaseCalls.join(' -> ') || 'none'}) in order and count.`
+            `声明的 phases（${declaredPhases.join(' -> ') || '无'}）必须与 phase(...) 调用（${phaseCalls.join(' -> ') || '无'}）在顺序和数量上完全一致。`
         );
     }
     if (reportCallCount === 0) {
-        errors.push('Workflow script must publish its final JSON-safe result with await report(value).');
+        errors.push('Workflow 脚本必须使用 await report(value) 发布最终 JSON-safe 结果。');
     }
     return errors;
 }
@@ -377,7 +371,7 @@ function validateAgentAllowedTools(
         return [];
     }
     if (options.type !== 'ObjectExpression') {
-        return ['agent options must be an object literal so allowedTools can be validated before the Workflow runs.'];
+        return ['agent options 必须是对象字面量，以便在 Workflow 运行前校验 allowedTools。'];
     }
     const allowedToolsProperty = ((options.properties as ScriptNode[] | undefined) ?? []).find(
         (property) => property.type === 'Property' && objectPropertyName(property) === 'allowedTools'
@@ -389,7 +383,7 @@ function validateAgentAllowedTools(
     const elements =
         value?.type === 'ArrayExpression' ? ((value.elements as ScriptNode[] | undefined) ?? []) : undefined;
     if (!elements || elements.some((element) => element.type !== 'Literal' || typeof element.value !== 'string')) {
-        return ['agent allowedTools must be an array literal of exact names from the available tool catalog.'];
+        return ['agent allowedTools 必须是数组字面量，并使用可用工具目录中的准确名称。'];
     }
     const availableNames = new Set(toolCatalog.map((tool) => tool.name));
     const declaredNames = elements.map((element) => (element.value as string).trim());
@@ -399,15 +393,15 @@ function validateAgentAllowedTools(
     ];
     const errors: string[] = [];
     if (disallowedNames.length > 0) {
-        errors.push(`Workflow agents cannot use nested-agent or code-execution tools: ${disallowedNames.join(', ')}.`);
+        errors.push(`Workflow agent 不能使用嵌套 Agent 或代码执行工具：${disallowedNames.join(', ')}。`);
     }
     if (unknownNames.length > 0) {
         const availableSummary =
-            toolCatalog.length > 0 ? toolCatalog.map((tool) => tool.name).join(', ') : '(none available)';
+            toolCatalog.length > 0 ? toolCatalog.map((tool) => tool.name).join(', ') : '（当前无可用工具）';
         errors.push(
-            `agent allowedTools contains unavailable tool names: ${unknownNames
-                .map((name) => name || '(empty)')
-                .join(', ')}. Use only: ${availableSummary}.`
+            `agent allowedTools 包含不可用的工具名称：${unknownNames
+                .map((name) => name || '（空）')
+                .join(', ')}。只能使用：${availableSummary}。`
         );
     }
     return errors;
@@ -764,7 +758,7 @@ function sameSequence(left: string[], right: string[]): boolean {
 
 export function parseAuthoredOutput(value: WorkflowJSONValue): ParsedAuthoredOutput {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error(t('workflow.error.authoringOutputObject'));
+        throw new Error('Workflow 创建过程必须返回对象。');
     }
     const name = value.name;
     const description = value.description;
@@ -773,23 +767,23 @@ export function parseAuthoredOutput(value: WorkflowJSONValue): ParsedAuthoredOut
     const script = value.script;
     const inputSchema = value.inputSchema;
     if (typeof name !== 'string' || typeof description !== 'string' || typeof script !== 'string') {
-        throw new Error(t('workflow.error.authoringOutputFields'));
+        throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
     }
     if (!inputSchema || typeof inputSchema !== 'object' || Array.isArray(inputSchema)) {
-        throw new Error(t('workflow.error.authoringOutputSchema'));
+        throw new Error('Workflow 创建结果必须包含 inputSchema 对象。');
     }
     if (whenToUse !== undefined && typeof whenToUse !== 'string') {
-        throw new Error(t('workflow.error.authoringOutputFields'));
+        throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
     }
     if (phases !== undefined && !Array.isArray(phases)) {
-        throw new Error(t('workflow.error.authoringOutputFields'));
+        throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
     }
     const parsedPhases = phases?.map((phase) => {
         if (!phase || typeof phase !== 'object' || Array.isArray(phase) || typeof phase.name !== 'string') {
-            throw new Error(t('workflow.error.authoringOutputFields'));
+            throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
         }
         if (phase.description !== undefined && typeof phase.description !== 'string') {
-            throw new Error(t('workflow.error.authoringOutputFields'));
+            throw new Error('Workflow 创建结果必须包含字符串类型的 name、description 和 script。');
         }
         return {
             name: phase.name,
