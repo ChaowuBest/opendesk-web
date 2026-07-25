@@ -9,11 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from '@earendil-works/pi-tui';
+import { type Component, type OverlayHandle, Box, Text, matchesKey, Key, visibleWidth } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
-import { visibleWidth } from '@earendil-works/pi-tui';
 import { InfoOverlay } from './notice';
 import { SelectTable, type SelectRow } from './selecttable';
 

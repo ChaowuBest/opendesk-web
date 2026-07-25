@@ -19,8 +19,7 @@
  *   4. 子进程异常退出时自动重启（最多 3 次）
  */
 
-import { spawn, type ChildProcess } from 'child_process';
-import { execSync } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import { createServer } from 'net';
 import path from 'path';
 import fs from 'fs';

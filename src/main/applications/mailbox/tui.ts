@@ -42,7 +42,6 @@ import chalk from 'chalk';
 import { jsonrepair } from 'jsonrepair';
 import fs from 'fs';
 import path from 'path';
-import nodePath from 'path';
 import {
     callMailWorker,
     formatSender,
@@ -110,7 +109,14 @@ interface EmailContent {
 }
 
 type MailViewState =
-    'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
+    | 'loading'
+    | 'list'
+    | 'detail'
+    | 'compose'
+    | 'assistant'
+    | 'assistant-result'
+    | 'search'
+    | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
@@ -990,7 +996,7 @@ export class MailOverlay implements Component {
         const filePath = raw.replace(/^["']|["']$/g, '');
 
         try {
-            const resolved = nodePath.resolve(filePath);
+            const resolved = path.resolve(filePath);
             if (!fs.existsSync(resolved)) {
                 this.errorText = `文件不存在: ${filePath}`;
                 this.openDeskTUI.tui.requestRender();
@@ -1017,10 +1023,10 @@ export class MailOverlay implements Component {
 
             // 检查是否已添加过
             if (this.composeAttachments.some((a) => a.path === resolved)) {
-                this.errorText = `附件已添加: ${nodePath.basename(resolved)}`;
+                this.errorText = `附件已添加: ${path.basename(resolved)}`;
                 this.openDeskTUI.tui.requestRender();
                 setTimeout(() => {
-                    if (this.errorText === `附件已添加: ${nodePath.basename(resolved)}`) {
+                    if (this.errorText === `附件已添加: ${path.basename(resolved)}`) {
                         this.errorText = undefined;
                         this.openDeskTUI.tui.requestRender();
                     }
@@ -1029,7 +1035,7 @@ export class MailOverlay implements Component {
             }
 
             this.composeAttachments.push({
-                filename: nodePath.basename(resolved),
+                filename: path.basename(resolved),
                 path: resolved
             });
             this.composeAttachmentSelectedIdx = this.composeAttachments.length - 1;
@@ -2331,7 +2337,7 @@ export class MailOverlay implements Component {
             this.composeAttachmentInput = new Input();
             this.composeAttachments = (content.attachments || [])
                 .map((a: any) => ({
-                    filename: a.filename || nodePath.basename(a.path || ''),
+                    filename: a.filename || path.basename(a.path || ''),
                     path: a.path || ''
                 }))
                 .filter((a: any) => a.path);

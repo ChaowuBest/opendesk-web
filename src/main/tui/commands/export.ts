@@ -17,8 +17,6 @@ import AdmZip from 'adm-zip';
 import { cleanPathInput } from '../../../utils/path.js';
 import path from 'path';
 import fs from 'fs';
-import path from 'path';
-import fs from 'fs';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
 

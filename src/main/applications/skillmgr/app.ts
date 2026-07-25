@@ -12,8 +12,7 @@
 import { BaseApplication, BaseWorker } from '../base.js';
 import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
-import { logger } from '../../utils/logger.js';
-import { SkillRegistry } from './utils.js';
+import { logger, useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
@@ -44,10 +43,10 @@ import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from 
 import { registerSkillTestCliSubcommands } from './skill-test-cli.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
-import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
 import {
+    SkillRegistry,
     installSkillFromDirectory,
     installSkillFromLocalZip,
     installSkillFromUrl,

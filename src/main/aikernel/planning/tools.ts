@@ -1232,7 +1232,3 @@ export function createSubTaskPlanningToolset(): BaseToolset {
     toolset.addTool(new AttemptCompletionSubTaskTool());
     return toolset;
 }
-
-// ─── 注册全局钩子 ─────────────────────────────────────────────────────────────
-// harness.ts 在模块加载时自动注册全局钩子，此处通过 import 确保副作用执行
-import './harness.js';

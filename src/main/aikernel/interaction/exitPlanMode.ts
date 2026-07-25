@@ -26,8 +26,6 @@ import path from 'path';
 import fs from 'fs';
 import type { TaskState } from '../states/tasks.js';
 import chalk from 'chalk';
-import fs from 'fs';
-import path from 'path';
 
 // ─── Provider 接口 ────────────────────────────────────────────────────────────
 

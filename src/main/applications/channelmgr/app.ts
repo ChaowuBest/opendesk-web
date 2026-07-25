@@ -49,7 +49,7 @@ import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
-import { BaseToolset } from '../../aikernel/tool.js';
+import { BaseToolset, ToolResult } from '../../aikernel/tool.js';
 import { HookRegistry } from '../../aikernel/hooks.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
@@ -78,7 +78,6 @@ import {
 } from './tools.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
-import { ToolResult } from '../../aikernel/tool.js';
 import { t } from '../../../locale/index.js';
 import qrcodeTerminal from 'qrcode-terminal';
 import chalk from 'chalk';

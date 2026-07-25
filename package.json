@@ -28,8 +28,6 @@
         "make:win32": "electron-forge make --platform=win32",
         "make:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge make --platform=darwin",
         "make:linux": "npm run build && electron-forge make --platform=linux",
-        "updater:server": "tsx src/updater/server.ts",
-        "updater:publish": "tsx src/updater/publish-update.ts",
         "build-cli": "tsx esbuild.config.ts",
         "build-cli-bun": "bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",

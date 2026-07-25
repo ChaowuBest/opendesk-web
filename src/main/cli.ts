@@ -19,7 +19,8 @@ import {
     interceptConsole,
     dropDeprecatedLogs,
     getLogFilename,
-    reloadLoggerFileTransport
+    reloadLoggerFileTransport,
+    logger
 } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
@@ -46,7 +47,6 @@ import type { BaseApplication } from './applications/base.js';
 
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
-import { logger } from './utils/logger.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 

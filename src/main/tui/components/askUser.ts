@@ -19,8 +19,14 @@
  * 支持单选和多选模式。
  */
 
-import { type Component, getKeybindings, matchesKey } from '@earendil-works/pi-tui';
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import {
+    type Component,
+    getKeybindings,
+    matchesKey,
+    visibleWidth,
+    truncateToWidth,
+    wrapTextWithAnsi
+} from '@earendil-works/pi-tui';
 import type { OpenDeskTUI } from '../entry';
 import type {
     AskUserRequest,
