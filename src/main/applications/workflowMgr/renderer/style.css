@@ -1,0 +1,265 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
+ * 职责：定义独立 Workflow Manager 和 Run 详情界面的样式。
+ * Workflow detail styles are carried over from the accepted legacy Workflow surface.
+ * Keep selectors and values aligned with the legacy taskView Workflow presentation.
+ */
+
+html[data-theme='light'] workflowmgr-entry-widget,
+html:not([data-theme]) workflowmgr-entry-widget {
+    --od-workflow-bg: #ffffff;
+    --od-workflow-bg-elevated: #f8fafc;
+    --od-workflow-bg-muted: #f1f5f9;
+    --od-workflow-bg-hover: #f3f4f6;
+    --od-workflow-border: rgba(15, 23, 42, 0.12);
+    --od-workflow-border-strong: rgba(15, 23, 42, 0.18);
+    --od-workflow-text: #111827;
+    --od-workflow-text-muted: #64748b;
+    --od-workflow-text-subtle: #94a3b8;
+    --od-workflow-selected-bg: #c94c40;
+    --od-workflow-selected-text: #ffffff;
+    --od-workflow-status-success: #15803d;
+    --od-workflow-status-failed: #b91c1c;
+    --od-workflow-status-muted: #64748b;
+    --od-workflow-status-paused: #b45309;
+    --od-workflow-status-partial: #d97706;
+    --od-workflow-status-running: #2563eb;
+}
+
+html[data-theme='dark'] workflowmgr-entry-widget {
+    --od-workflow-bg: #1f1f1f;
+    --od-workflow-bg-elevated: #242424;
+    --od-workflow-bg-muted: #2a2a2a;
+    --od-workflow-bg-hover: #303030;
+    --od-workflow-border: #3f3f46;
+    --od-workflow-border-strong: #4b5563;
+    --od-workflow-text: #f3f4f6;
+    --od-workflow-text-muted: #a1a1aa;
+    --od-workflow-text-subtle: #71717a;
+    --od-workflow-selected-bg: #c94c40;
+    --od-workflow-selected-text: #ffffff;
+    --od-workflow-status-success: #22c55e;
+    --od-workflow-status-failed: #f87171;
+    --od-workflow-status-muted: #94a3b8;
+    --od-workflow-status-paused: #f59e0b;
+    --od-workflow-status-partial: #f59e0b;
+    --od-workflow-status-running: #60a5fa;
+}
+
+workflowmgr-entry-widget {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+}
+
+.workflow-agent-detail-text {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.workflow-detail-header,
+.workflow-detail-sidebar {
+    background: var(--od-workflow-bg-elevated);
+    border-color: var(--od-workflow-border);
+}
+
+.workflow-detail-header {
+    padding-top: calc(32px + 0.75rem) !important;
+}
+
+.workflow-detail-back {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    flex: 0 0 28px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
+}
+
+.workflow-detail-back > i {
+    pointer-events: none;
+}
+
+.workflow-detail-shell {
+    background: var(--od-workflow-bg);
+    border-color: var(--od-workflow-border);
+    color: var(--od-workflow-text);
+}
+
+.workflow-detail-loading,
+.workflow-detail-error,
+.workflow-detail-content {
+    background: var(--od-workflow-bg);
+    color: var(--od-workflow-text-muted);
+}
+
+.workflow-detail-error {
+    color: var(--od-workflow-status-failed);
+}
+
+.workflow-detail-title,
+.workflow-agent-title {
+    color: var(--od-workflow-text);
+}
+
+.workflow-detail-muted,
+.workflow-agent-muted {
+    color: var(--od-workflow-text-muted);
+}
+
+.workflow-detail-subtle {
+    color: var(--od-workflow-text-subtle);
+}
+
+.workflow-detail-section-title {
+    color: var(--od-workflow-status-paused);
+}
+
+.workflow-detail-action,
+.workflow-detail-back,
+.workflow-agent-detail-back {
+    border-color: var(--od-workflow-border);
+    color: var(--od-workflow-text-muted);
+}
+
+.workflow-detail-action:hover,
+.workflow-detail-back:hover,
+.workflow-agent-detail-back:hover,
+.workflow-phase-row:hover,
+.workflow-agent-row:hover {
+    background: var(--od-workflow-bg-hover);
+    color: var(--od-workflow-text);
+}
+
+.workflow-phase-row {
+    color: var(--od-workflow-text);
+}
+
+.workflow-phase-row.is-selected {
+    background: var(--od-workflow-selected-bg);
+    color: var(--od-workflow-selected-text);
+}
+
+.workflow-phase-row.is-selected:hover {
+    background: var(--od-workflow-selected-bg) !important;
+    color: var(--od-workflow-selected-text);
+}
+
+.workflow-phase-row.is-selected .workflow-phase-progress {
+    color: color-mix(in srgb, var(--od-workflow-selected-text) 72%, transparent);
+}
+
+.workflow-phase-row.is-selected .od-workflow-status-success,
+.workflow-phase-row.is-selected .od-workflow-status-failed,
+.workflow-phase-row.is-selected .od-workflow-status-muted,
+.workflow-phase-row.is-selected .od-workflow-status-paused,
+.workflow-phase-row.is-selected .od-workflow-status-partial,
+.workflow-phase-row.is-selected .od-workflow-status-running {
+    color: var(--od-workflow-selected-text);
+}
+
+.workflow-agent-row {
+    border-color: transparent;
+}
+
+.workflow-agent-row:hover {
+    border-color: var(--od-workflow-border-strong);
+}
+
+.workflow-agent-detail-card,
+.workflow-agent-detail-text {
+    background: var(--od-workflow-bg-elevated);
+    border-color: var(--od-workflow-border);
+    color: var(--od-workflow-text);
+}
+
+.od-workflow-status-success {
+    color: var(--od-workflow-status-success);
+}
+
+.od-workflow-status-failed {
+    color: var(--od-workflow-status-failed);
+}
+
+.od-workflow-status-muted {
+    color: var(--od-workflow-status-muted);
+}
+
+.od-workflow-status-paused {
+    color: var(--od-workflow-status-paused);
+}
+
+.od-workflow-status-partial {
+    color: var(--od-workflow-status-partial);
+}
+
+.od-workflow-status-running {
+    color: var(--od-workflow-status-running);
+}
+
+.workflow-detail-action {
+    position: relative;
+}
+
+.workflow-detail-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    line-height: 1;
+}
+
+.workflow-detail-action > i {
+    display: block;
+    width: 12px;
+    font-size: 12px;
+    line-height: 1;
+    text-align: center;
+}
+
+.workflow-detail-action[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 50;
+    max-width: 220px;
+    padding: 5px 8px;
+    border: 1px solid #3f3f46;
+    border-radius: 6px;
+    background: #18181b;
+    color: #e5e7eb;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: left;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition:
+        opacity 120ms ease,
+        transform 120ms ease;
+}
+
+.workflow-detail-action[data-tooltip]:hover::after,
+.workflow-detail-action[data-tooltip]:focus-visible::after {
+    opacity: 1;
+    transform: translateY(0);
+}
