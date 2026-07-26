@@ -292,7 +292,9 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.taskStatus.waiting',
             'agentoffice.taskStatus.running',
             'agentoffice.taskStatus.stopped',
-            'agentoffice.taskStatus.failed'
+            'agentoffice.taskStatus.failed',
+            'agentoffice.ctrlEnterSend',
+            'agentoffice.sendOptions'
         ];
         return Object.fromEntries(keys.map((key) => [key, t(key)]));
     }

@@ -1432,6 +1432,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.messagePlaceholder': 'Message; Enter to send, Shift+Enter for a new line',
     'agentoffice.send': 'Send',
     'agentoffice.attach': 'Add attachment',
+    'agentoffice.ctrlEnterSend': 'Press Ctrl+Enter to send',
+    'agentoffice.sendOptions': 'Send options',
     'agentoffice.running': 'Working',
     'agentoffice.disabled': 'Disabled',
     'agentoffice.enabled': 'Enabled',

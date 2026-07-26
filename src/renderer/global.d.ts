@@ -12,6 +12,11 @@
 /**
  * Renderer 端由 preload.js 暴露的 API 类型定义
  */
+declare module '*.css?raw' {
+    const content: string;
+    export default content;
+}
+
 declare global {
     interface Window {
         settingErrorAPI: {

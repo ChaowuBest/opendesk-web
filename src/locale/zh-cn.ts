@@ -1394,6 +1394,8 @@ export const zhCn: Record<string, string> = {
     'agentoffice.messagePlaceholder': '输入消息，Enter 发送，Shift+Enter 换行',
     'agentoffice.send': '发送',
     'agentoffice.attach': '添加附件',
+    'agentoffice.ctrlEnterSend': '按 Ctrl+Enter 发送',
+    'agentoffice.sendOptions': '发送选项',
     'agentoffice.running': '工作中',
     'agentoffice.disabled': '已停用',
     'agentoffice.enabled': '已启用',
