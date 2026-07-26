@@ -34,10 +34,14 @@ describe('OpenDeskTUI active task view state', () => {
     });
 
     test('clearActiveTask clears stale active task state', () => {
+        const clearTodos = jest.fn();
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: { task_id: 'task-1' },
                 clearMessages: jest.fn()
+            },
+            todoList: {
+                clear: clearTodos
             },
             activeTaskId: 'task-1',
             goalEvaluationInProgressByTask: new Map(),
@@ -61,6 +65,7 @@ describe('OpenDeskTUI active task view state', () => {
 
         expect(tui.taskView.taskState).toBeUndefined();
         expect(tui.activeTaskId).toBeUndefined();
+        expect(clearTodos).toHaveBeenCalledTimes(1);
         expect(tui.inputArea.clearGoalSupplementQueuedHint).toHaveBeenCalled();
         expect(tui.tui.requestRender).toHaveBeenCalled();
     });
