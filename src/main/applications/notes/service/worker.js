@@ -59,6 +59,18 @@ class NotesWorker extends BaseWorker {
                     deletedNotes: parsed.deletedNotes || [],
                     last_updated: parsed.last_updated || ''
                 };
+                // 为缺失 preview 的旧笔记补充生成
+                let migrated = false;
+                for (const note of this.notesData.notes) {
+                    if (note.preview === undefined) {
+                        note.preview = this._generatePreview(this.getNoteContentSync(note.id));
+                        migrated = true;
+                    }
+                }
+                if (migrated) {
+                    logger.info('[notes] 正在为旧笔记补充 preview 字段');
+                    await this._saveNotesData();
+                }
             } catch (e) {
                 logger.error('[notes] 加载 notes.json 失败:', e);
                 this.notesData = { version: '1.0', notes: [], tags: [], deletedNotes: [], last_updated: '' };
@@ -90,6 +102,25 @@ class NotesWorker extends BaseWorker {
     _pickTagColor() {
         const usedCount = this.notesData.tags.length;
         return TAG_COLORS[usedCount % TAG_COLORS.length];
+    }
+
+    /**
+     * 从 HTML 内容中提取纯文本预览
+     */
+    _generatePreview(html) {
+        if (!html) return '';
+        let text = html
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/(?:p|div|h[1-6]|li|tr)>/gi, '\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'");
+        text = text.replace(/\s+/g, ' ').trim();
+        return text.slice(0, 200);
     }
 
     // ─── CRUD 操作 ───
@@ -134,6 +165,10 @@ class NotesWorker extends BaseWorker {
     }
 
     async getNoteContent(noteId) {
+        return this.getNoteContentSync(noteId);
+    }
+
+    getNoteContentSync(noteId) {
         const contentFile = path.join(this.dataDir, noteId, 'content.html');
         if (fs.existsSync(contentFile)) {
             return fs.readFileSync(contentFile, 'utf-8');
@@ -150,7 +185,8 @@ class NotesWorker extends BaseWorker {
             tags: data.tags || [],
             createdAt: now,
             updatedAt: now,
-            isPinned: data.isPinned || false
+            isPinned: data.isPinned || false,
+            preview: this._generatePreview(data.content || '')
         };
 
         // 创建笔记目录和内容文件
@@ -191,10 +227,11 @@ class NotesWorker extends BaseWorker {
         }
         fs.writeFileSync(contentFile, htmlContent, 'utf-8');
 
-        // 更新 updatedAt
+        // 更新 updatedAt 和 preview
         const idx = this.notesData.notes.findIndex((n) => n.id === noteId);
         if (idx !== -1) {
             this.notesData.notes[idx].updatedAt = Date.now();
+            this.notesData.notes[idx].preview = this._generatePreview(htmlContent);
             await this._saveNotesData();
         }
     }
@@ -312,7 +349,8 @@ class NotesWorker extends BaseWorker {
             tags: deletedNote.tags || [],
             createdAt: deletedNote.createdAt,
             updatedAt: Date.now(),
-            isPinned: deletedNote.isPinned || false
+            isPinned: deletedNote.isPinned || false,
+            preview: this._generatePreview(deletedNote.content || '')
         };
         this.notesData.notes.unshift(restoredNote);
 

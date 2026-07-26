@@ -2480,9 +2480,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     // ─── 工具函数 ───
 
     _extractPreview(note) {
-        // 从 content 中提取纯文本预览（如果有缓存的内容）
-        // 否则返回空
-        return '';
+        return note.preview || '';
     }
 
     _getTagColor(tagName) {
