@@ -23,6 +23,7 @@
  */
 
 import { showConfirmModal } from './confirmModal';
+import { showImageLightbox } from './imageLightbox.js';
 import { marked } from 'marked';
 import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
@@ -48,6 +49,7 @@ export interface PreviewPayload {
     limit: number;
     content: string;
     binary: boolean;
+    dataUri?: string;
 }
 
 type ChildrenCache = FSEntry[] | 'loading' | { error: string };
@@ -672,6 +674,13 @@ function isHtmlFile(filePath: string): boolean {
 function isSvgFile(filePath: string): boolean {
     const ext = filePath.split('.').pop()?.toLowerCase();
     return ext === 'svg';
+}
+
+const IMAGE_FILE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'apng']);
+
+function isImageFile(filePath: string): boolean {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    return ext !== undefined && IMAGE_FILE_EXTENSIONS.has(ext);
 }
 
 const CODE_FILE_EXTENSIONS: Record<string, string> = {
@@ -2192,6 +2201,7 @@ export class FileExplorer {
             this._attachMarkdownShadow(el);
             this._attachHtmlPreview(el);
             this._attachSvgPreview(el);
+            this._attachImagePreview(el);
         }
     }
 
@@ -2199,6 +2209,8 @@ export class FileExplorer {
         if (this._editorMode) return false;
         if (this._previewState.status !== 'idle' || !this._previewState.data) return false;
         const d = this._previewState.data;
+        // 图片文件有自己的预览方式，不算"不支持"
+        if (this._selectedFile && isImageFile(this._selectedFile)) return false;
         return d.tooLarge || d.binary;
     }
 
@@ -2262,6 +2274,27 @@ export class FileExplorer {
         img.alt = this._selectedFile.split('/').pop() || 'SVG';
         host.style.cssText =
             'width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f0f0f0 0% 25%, transparent 0% 50%) 50% / 20px 20px;';
+        host.appendChild(img);
+    }
+
+    private _attachImagePreview(root: ParentNode): void {
+        if (!this._selectedFile || !isImageFile(this._selectedFile)) {
+            return;
+        }
+        const host = root.querySelector<HTMLElement>('.ws-preview-image-host');
+        if (!host || host.dataset.attached) return;
+        host.dataset.attached = '1';
+
+        const dataUri = this._previewState.data?.dataUri;
+        if (!dataUri) return;
+
+        const img = document.createElement('img');
+        img.src = dataUri;
+        img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;cursor:pointer;';
+        img.alt = this._selectedFile.split('/').pop() || 'image';
+        host.style.cssText =
+            'width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f0f0f0 0% 25%, transparent 0% 50%) 50% / 20px 20px;';
+        img.addEventListener('click', () => showImageLightbox(img.src));
         host.appendChild(img);
     }
 
@@ -2348,6 +2381,8 @@ export class FileExplorer {
                         <div class="ws-preview-hint">当前预览器仅支持较小的文本文件</div>
                     </div>
                 </div>`;
+            } else if (this._selectedFile && isImageFile(this._selectedFile)) {
+                bodyHtml = `<div class="ws-preview-image-host"></div>`;
             } else if (d.binary) {
                 bodyHtml = `
                 <div class="ws-preview-body ws-preview-info">

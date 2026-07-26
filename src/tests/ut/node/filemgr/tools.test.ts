@@ -434,6 +434,17 @@ test('image tools declare network permissions for online image URLs', () => {
     );
 });
 
+test('image tools tolerate malformed HTTP URLs while declaring permissions', () => {
+    assert.deepEqual(new ReadImageTool().getDeclaredPermissions({ path: 'http://[' }), []);
+    assert.deepEqual(
+        new AskImageTool().getDeclaredPermissions({
+            question: 'What is shown?',
+            path: 'https://['
+        }),
+        []
+    );
+});
+
 test('online image sources are downloaded, validated, and returned as data URLs', async () => {
     const png = await sharp({
         create: {

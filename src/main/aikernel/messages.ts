@@ -1063,12 +1063,26 @@ export class ImageMessagePart {
     type: 'image_url' = 'image_url';
     image_url: { url: string };
     rendered?: string;
+    /**
+     * 当设置此字段时，图片已保存到本地文件，发送给模型的是文本引用
+     * （包含文件路径和工具使用引导）而非图片 data URI。
+     * UI 渲染仍然使用 image_url 中的 data URI 显示图片预览。
+     */
+    file_path?: string;
 
-    constructor(image_url: string) {
+    constructor(image_url: string, file_path?: string) {
         this.image_url = { url: image_url };
+        this.file_path = file_path;
+    }
+
+    toModelText(): string {
+        return `用户添加了图片附件: ${this.file_path}, 你可以使用 readImage 工具或 askImage 工具分析该图片内容`;
     }
 
     toOpenAIMessagePart(): object {
+        if (this.file_path) {
+            return { type: 'text', text: this.toModelText() };
+        }
         return { type: this.type, image_url: this.image_url };
     }
 
@@ -1083,7 +1097,8 @@ export class ImageMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
-            rendered: this.rendered
+            rendered: this.rendered,
+            ...(this.file_path ? { file_path: this.file_path } : {})
         };
     }
 
@@ -1443,7 +1458,11 @@ export class UserMessage {
     }
 
     toOpenAIMessage(supportsVision: boolean = true): object {
-        const parts = supportsVision ? this.content : this.content.filter((part) => part.type !== 'image_url');
+        // 当模型不支持视觉时，过滤掉真正的图片 data URI 部分。
+        // 带有 file_path 的 image_url 部分是文本引用（路径+工具引导），应保留。
+        const parts = supportsVision
+            ? this.content
+            : this.content.filter((part) => !(part.type === 'image_url' && !(part as ImageMessagePart).file_path));
 
         if (parts.length === 1 && parts[0].type === 'text') {
             return {

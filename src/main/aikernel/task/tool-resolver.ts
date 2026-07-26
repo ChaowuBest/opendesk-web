@@ -39,7 +39,7 @@ export async function buildToolsetsForTask(task: TaskState): Promise<BaseToolset
         }
     }
 
-    applyToolAvailabilityFilters(task, all);
+    await applyToolAvailabilityFilters(task, all);
 
     // Apply allowedTools whitelist filter (Agent level) — if set, only these tools are kept
     if (task.allowedTools && task.allowedTools.length > 0) {
@@ -68,13 +68,16 @@ export async function buildToolsetsForTask(task: TaskState): Promise<BaseToolset
     return all;
 }
 
-function applyToolAvailabilityFilters(task: TaskState, toolsets: BaseToolset[]): void {
+async function applyToolAvailabilityFilters(task: TaskState, toolsets: BaseToolset[]): Promise<void> {
     for (let i = toolsets.length - 1; i >= 0; i--) {
         const toolset = toolsets[i];
         for (const [name, tool] of [...toolset.tools.entries()]) {
             const isAvailable = (tool as TaskAwareTool).isAvailable;
-            if (typeof isAvailable === 'function' && !isAvailable.call(tool, task)) {
-                toolset.tools.delete(name);
+            if (typeof isAvailable === 'function') {
+                const available = await Promise.resolve(isAvailable.call(tool, task));
+                if (!available) {
+                    toolset.tools.delete(name);
+                }
             }
         }
         if (toolset.tools.size === 0) {

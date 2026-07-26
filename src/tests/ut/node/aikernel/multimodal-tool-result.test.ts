@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AnthropicAdapter } from '../../../../main/aikernel/adapters/anthropic.js';
-import { AssistantMessage, ChatContext, ToolCall, ToolCallMessagePart } from '../../../../main/aikernel/messages.js';
+import {
+    AssistantMessage,
+    ChatContext,
+    ImageMessagePart,
+    ToolCall,
+    ToolCallMessagePart,
+    UserMessage
+} from '../../../../main/aikernel/messages.js';
 
 const IMAGE_URL = 'data:image/png;base64,iVBORw0KGgo=';
 
@@ -77,4 +84,23 @@ test('Anthropic projection omits tool-result image blocks for text-only models',
 
     assert.ok(toolResult);
     assert.equal(typeof toolResult.content, 'string');
+});
+
+test('Anthropic projection sends persisted user image attachments as file references', () => {
+    const context = new ChatContext();
+    const message = new UserMessage('Describe the attachment.');
+    message.content.push(new ImageMessagePart(IMAGE_URL, '/tmp/pasted-image.png'));
+    context.appendMessage(message);
+
+    for (const supportsVision of [true, false]) {
+        const projected = AnthropicAdapter.buildMessages(context, supportsVision) as any;
+        const blocks = projected.messages[0].content as any[];
+
+        assert.deepEqual(
+            blocks.map((block) => block.type),
+            ['text', 'text']
+        );
+        assert.match(blocks[1].text, /\/tmp\/pasted-image\.png/);
+        assert.doesNotMatch(JSON.stringify(projected), /iVBORw0KGgo=/);
+    }
 });

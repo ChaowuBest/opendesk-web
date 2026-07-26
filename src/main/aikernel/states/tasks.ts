@@ -1265,6 +1265,25 @@ export class TaskState {
     }
 
     /**
+     * 将粘贴/拖入的图片 data URI 保存为文件到任务 artifacts 目录。
+     * 保存后返回文件绝对路径，供模型通过 readImage / askImage 工具按需读取。
+     */
+    private savePastedImageToArtifacts(dataUri: string): string {
+        const match = dataUri.match(/^data:([^;]+);base64,(.+)$/);
+        if (!match) {
+            throw new Error('invalid data URI format');
+        }
+        const mimeType = match[1];
+        const base64Data = match[2];
+        const ext = mimeType.split('/')[1]?.replace('svg+xml', 'svg') || 'png';
+        const fileName = `pasted-image-${Date.now()}-${crypto.randomUUID()}.${ext}`;
+        const taskArtifactDir = getTaskArtifactDirectory(this.task_id);
+        const filePath = path.join(taskArtifactDir, fileName);
+        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+        return filePath;
+    }
+
+    /**
      * Submit a message to the task
      */
     async submitUserMessage(
@@ -1317,8 +1336,16 @@ export class TaskState {
 
         if (imageDataUris && imageDataUris.length > 0) {
             for (const dataUri of imageDataUris) {
-                user_message.content.push(new ImageMessagePart(dataUri));
-                logger.info(`attached pasted image (data URI, ${Math.round(dataUri.length / 1024)}KB)`);
+                try {
+                    const filePath = this.savePastedImageToArtifacts(dataUri);
+                    user_message.content.push(new ImageMessagePart(dataUri, filePath));
+                    logger.info(
+                        `saved pasted image to artifacts: ${filePath} (${Math.round(dataUri.length / 1024)}KB)`
+                    );
+                } catch (err) {
+                    user_message.content.push(new ImageMessagePart(dataUri));
+                    logger.warn(`failed to save pasted image to artifacts, sending data URI directly: ${err}`);
+                }
             }
         }
 

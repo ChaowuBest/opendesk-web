@@ -251,10 +251,14 @@ export class AnthropicAdapter {
                 blocks.push(...AnthropicAdapter.textBlock(part.text));
             } else if (part.type === 'file') {
                 blocks.push(...AnthropicAdapter.textBlock(AnthropicAdapter.userFileText(part)));
-            } else if (part.type === 'image_url' && supportsVision) {
-                const imageBlock = AnthropicAdapter.imageUrlToAnthropicBlock(part.image_url.url);
-                if (imageBlock) {
-                    blocks.push(imageBlock);
+            } else if (part.type === 'image_url') {
+                if (part.file_path) {
+                    blocks.push(...AnthropicAdapter.textBlock(part.toModelText()));
+                } else if (supportsVision) {
+                    const imageBlock = AnthropicAdapter.imageUrlToAnthropicBlock(part.image_url.url);
+                    if (imageBlock) {
+                        blocks.push(imageBlock);
+                    }
                 }
             }
         }

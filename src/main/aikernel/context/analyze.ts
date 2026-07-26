@@ -89,7 +89,11 @@ function countUserMessageTokens(
         } else if (part.type === 'file') {
             userFileTokens += estimateTextTokens(part.path);
         } else if (part.type === 'image_url') {
-            userImageTokens += 256;
+            if (part.file_path) {
+                userTextTokens += estimateTextTokens(part.toModelText());
+            } else {
+                userImageTokens += 256;
+            }
         }
     }
 

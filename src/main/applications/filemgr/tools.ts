@@ -1105,7 +1105,11 @@ const askImageSchema = z.object({
 function normalizeImageSource(source: string, taskState?: TaskState): string {
     const value = source.trim();
     if (/^https?:\/\//i.test(value)) {
-        return new URL(value).toString();
+        try {
+            return new URL(value).toString();
+        } catch {
+            return value;
+        }
     }
     if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) {
         return value;
@@ -1170,15 +1174,18 @@ function renderImageTool(
 ): string {
     const source = String(toolcall.args_object?.['path'] ?? '');
     const question = options.includeQuestion ? String(toolcall.args_object?.['question'] ?? '') : '';
-    const detail = question ? `${source} · ${question}` : source;
+    // 显示时用文件名替代完整路径，避免路径过长挤掉 question
+    const isUrl = /^https?:\/\//i.test(source);
+    const displaySource = isUrl ? source : source ? path.basename(source) : '';
+    const detail = question ? `${displaySource} · ${question}` : displaySource;
     return renderInlineTool({
         icon: options.icon,
         title: options.title,
         status: toolcall.status,
         className: options.className,
         detail,
-        detailTitle: detail || undefined,
-        editorFilePath: source && !/^https?:\/\//i.test(source) ? source : undefined
+        detailTitle: source || undefined,
+        editorFilePath: source && !isUrl ? source : undefined
     });
 }
 
@@ -1211,6 +1218,12 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
             readImageSchema
         );
         this.setUniversalExecutor(this.executeCommand);
+    }
+
+    async isAvailable(taskState?: TaskState): Promise<boolean> {
+        const model = currentTaskModel(taskState);
+        if (!model) return true;
+        return LLM.supportsVision(model);
     }
 
     getDeclaredPermissions(args: z.output<typeof readImageSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1276,6 +1289,16 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
             askImageSchema
         );
         this.setExecutor(this.executeCommand);
+    }
+
+    async isAvailable(taskState?: TaskState): Promise<boolean> {
+        const model = currentTaskModel(taskState);
+        if (model && (await LLM.supportsVision(model))) {
+            return false;
+        }
+        const visionModel = Setting.getInstance().getDefaultVisionModelInstance();
+        if (!visionModel) return false;
+        return LLM.supportsVision(visionModel);
     }
 
     getDeclaredPermissions(args: z.output<typeof askImageSchema>, taskState?: TaskState): PermissionRequest[] {
