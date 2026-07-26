@@ -910,7 +910,7 @@ function serializeUserMessageForSessionMemory(
                 return `[File: ${part.path}]`;
             }
             if (part.type === 'image_url') {
-                return `[Image: ${part.image_url.url}]`;
+                return part.file_path ? part.toModelText() : `[Image: ${part.image_url.url}]`;
             }
             return '';
         })

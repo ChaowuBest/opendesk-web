@@ -251,10 +251,14 @@ export class AnthropicAdapter {
                 blocks.push(...AnthropicAdapter.textBlock(part.text));
             } else if (part.type === 'file') {
                 blocks.push(...AnthropicAdapter.textBlock(AnthropicAdapter.userFileText(part)));
-            } else if (part.type === 'image_url' && supportsVision) {
-                const imageBlock = AnthropicAdapter.imageUrlToAnthropicBlock(part.image_url.url);
-                if (imageBlock) {
-                    blocks.push(imageBlock);
+            } else if (part.type === 'image_url') {
+                if (part.file_path) {
+                    blocks.push(...AnthropicAdapter.textBlock(part.toModelText()));
+                } else if (supportsVision) {
+                    const imageBlock = AnthropicAdapter.imageUrlToAnthropicBlock(part.image_url.url);
+                    if (imageBlock) {
+                        blocks.push(imageBlock);
+                    }
                 }
             }
         }
@@ -339,7 +343,8 @@ export class AnthropicAdapter {
     private static appendAssistantParts(
         messages: object[],
         parts: ReadonlyArray<AssistantMessagePart>,
-        projection: AdapterContextProjection
+        projection: AdapterContextProjection,
+        supportsVision: boolean
     ): void {
         let content: object[] = [];
         const flushAssistant = () => {
@@ -370,7 +375,7 @@ export class AnthropicAdapter {
                     validToolCalls.map((toolCall) => ({
                         type: 'tool_result',
                         tool_use_id: toolCall.id,
-                        content: buildToolResultContent(toolCall, projection.toolResultOverrides)
+                        content: AnthropicAdapter.toolResultContent(toolCall, projection, supportsVision)
                     }))
                 );
                 continue;
@@ -383,6 +388,25 @@ export class AnthropicAdapter {
         }
 
         flushAssistant();
+    }
+
+    private static toolResultContent(
+        toolCall: ToolCall,
+        projection: AdapterContextProjection,
+        supportsVision: boolean
+    ): string | object[] {
+        const text = buildToolResultContent(toolCall, projection.toolResultOverrides);
+        if (!supportsVision) {
+            return text;
+        }
+        const imageBlocks = toolCall
+            .getResultImages()
+            .map((image) => AnthropicAdapter.imageUrlToAnthropicBlock(image.image_url))
+            .filter((block): block is object => block !== undefined);
+        if (imageBlocks.length === 0) {
+            return text;
+        }
+        return [...AnthropicAdapter.textBlock(text), ...imageBlocks];
     }
 
     private static compactBoundaryText(summary: string): string {
@@ -421,7 +445,8 @@ export class AnthropicAdapter {
                 AnthropicAdapter.appendAssistantParts(
                     messages,
                     resolveAssistantMessageParts(projection, message),
-                    projection
+                    projection,
+                    supportsVision
                 );
             }
         }

@@ -704,6 +704,26 @@ export const enUs: Record<string, string> = {
 
     // File Manager Tools
     'filemgr.readFile.name': 'Read File',
+    'filemgr.readImage.name': 'Read Image',
+    'filemgr.askImage.name': 'Ask Image',
+    'filemgr.readImage.error.modelUnsupported': 'The current task model does not support image input',
+    'filemgr.readImage.result': 'The image is attached to this tool result and is ready for visual understanding',
+    'filemgr.askImage.error.questionRequired': 'Please provide a question to answer using the image',
+    'filemgr.askImage.error.modelMissing':
+        'No default vision model is configured. Select a vision-capable model in Settings first.',
+    'filemgr.askImage.error.modelUnsupported': 'The configured default vision model does not support image input',
+    'filemgr.image.error.unsupportedProtocol':
+        'Unsupported image source protocol: ${path}. Use a local path or an HTTP(S) URL.',
+    'filemgr.image.error.notFound': 'Image file not found: ${path}',
+    'filemgr.image.error.directory': 'Image path is a directory, not a file: ${path}',
+    'filemgr.image.error.noAccess': 'Permission denied while reading image: ${path}',
+    'filemgr.image.error.tooLarge': 'Image is too large: ${path}. Images must not exceed ${maxMb} MB.',
+    'filemgr.image.error.http': 'Failed to download image: ${path} (HTTP ${status})',
+    'filemgr.image.error.fetchFailed': 'Unable to download image: ${path}',
+    'filemgr.image.error.invalid': 'Unable to recognize or process image content: ${path}',
+    'filemgr.image.error.readFailed': 'Failed to read image: ${path} (${message})',
+    'filemgr.image.loading': 'Reading image...',
+    'filemgr.image.loaded': 'Image loaded',
     'filemgr.extractText.name': 'Extract Text',
     'filemgr.extractText.error.pathRequired': 'Please provide a file path (file_path)',
     'filemgr.extractText.error.directory': 'Path is a directory, not a file: ${path}',

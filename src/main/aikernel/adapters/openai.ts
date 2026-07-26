@@ -296,17 +296,22 @@ export class OpenAIAdapter {
                 const replayInstruction = getAssistantReplayInstruction(projection, message);
                 if (replayInstruction?.roundRef) {
                     messages.push(
-                        ...message.toOpenAIMessagesFromRound(replayInstruction.roundRef, projection.toolResultOverrides)
+                        ...message.toOpenAIMessagesFromRound(
+                            replayInstruction.roundRef,
+                            projection.toolResultOverrides,
+                            supportsVision
+                        )
                     );
                 } else if (typeof replayInstruction?.startPartIndex === 'number') {
                     messages.push(
                         ...message.toOpenAIMessagesFromPartIndex(
                             replayInstruction.startPartIndex,
-                            projection.toolResultOverrides
+                            projection.toolResultOverrides,
+                            supportsVision
                         )
                     );
                 } else {
-                    messages.push(...message.toOpenAIMessages(projection.toolResultOverrides));
+                    messages.push(...message.toOpenAIMessages(projection.toolResultOverrides, supportsVision));
                 }
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));

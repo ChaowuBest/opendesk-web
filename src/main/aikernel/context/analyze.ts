@@ -10,9 +10,14 @@
  */
 
 import { buildVisibleAssistantRounds } from '../compaction/assistant-rounds.js';
-import { estimateSystemPromptTokens, estimateTextTokens } from '../compaction/token-estimation.js';
+import {
+    estimateSystemPromptTokens,
+    estimateTextTokens,
+    estimateToolResultObjectTokens
+} from '../compaction/token-estimation.js';
 import { AssistantMessage, CompactSeparatorMessage, UserMessage } from '../messages.js';
-import type { ToolCall, BaseTool, BaseToolset } from '../tool.js';
+import type { ToolCall } from '../messages.js';
+import type { BaseTool, BaseToolset } from '../tool.js';
 import type { AssistantRound } from '../compaction/types.js';
 import type {
     ContextAssistantRoundInfo,
@@ -84,7 +89,11 @@ function countUserMessageTokens(
         } else if (part.type === 'file') {
             userFileTokens += estimateTextTokens(part.path);
         } else if (part.type === 'image_url') {
-            userImageTokens += 256;
+            if (part.file_path) {
+                userTextTokens += estimateTextTokens(part.toModelText());
+            } else {
+                userImageTokens += 256;
+            }
         }
     }
 
@@ -121,7 +130,7 @@ function countAssistantRoundTokens(
         for (const toolcall of part.toolcalls) {
             assistantToolCallTokens += estimateTextTokens(toolcall.tool_name);
             assistantToolCallTokens += estimateTextTokens(toolcall.args_string);
-            assistantToolCallTokens += estimateTextTokens(JSON.stringify(toolcall.result_object ?? ''));
+            assistantToolCallTokens += estimateToolResultObjectTokens(toolcall);
 
             const visibleResultText = resolveVisibleToolResultText(toolcall, toolResultOverrides);
             if (visibleResultText !== undefined) {

@@ -38,7 +38,7 @@ export {
     renderAriaTreeToYaml,
     mergeFrameTrees
 } from './cdp/aria';
-export type { AriaNode, FrameAriaResult } from './cdp/aria';
+export type { AriaImageInfo, AriaNode, FrameAriaResult } from './cdp/aria';
 export { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
 
 // Re-export setCDPLogger so consumers can wire in their project logger

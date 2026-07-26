@@ -29,6 +29,9 @@ import {
     isNestedRef
 } from './aria.js';
 
+/** Minimum rendered image area that warrants exposing its source in snapshots. */
+export const IMAGE_DETAIL_MIN_RENDERED_AREA = 10_000;
+
 // ---------------------------------------------------------------------------
 // JS snapshot injection script
 // ---------------------------------------------------------------------------
@@ -45,7 +48,7 @@ import {
  * - Iframe detection: marks iframe elements with frameIndex/frameSrc, collects iframeUrls
  * - Returns JSON tree directly (NOT YAML)
  */
-const SNAPSHOT_INJECTION = `(() => {
+export const SNAPSHOT_INJECTION = `(() => {
     // Clean up old refs
     var oldRefs = document.querySelectorAll('[data-od-ref]');
     for (var i = 0; i < oldRefs.length; i++) oldRefs[i].removeAttribute('data-od-ref');
@@ -326,13 +329,24 @@ const SNAPSHOT_INJECTION = `(() => {
 
     function computeBox(el) {
         var rect = el.getBoundingClientRect();
-        var visible = rect.width > 0 && rect.height > 0;
+        var width = Math.round(rect.width);
+        var height = Math.round(rect.height);
+        var visible = width > 0 && height > 0;
         var display = '';
         try { display = getComputedStyle(el).display || ''; } catch(e) {}
         var isInline = display === 'inline';
         var cursor = '';
         try { cursor = getComputedStyle(el).cursor || ''; } catch(e) {}
-        return { visible: visible, inline: isInline, cursor: cursor };
+        return { visible: visible, inline: isInline, cursor: cursor, width: width, height: height };
+    }
+
+    function getImageUrl(el) {
+        var candidates = [el.currentSrc || '', el.src || ''];
+        for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i].trim();
+            if (candidate && !/^(?:data|blob):/i.test(candidate)) return candidate;
+        }
+        return '';
     }
 
     // ---- State computation ----
@@ -404,6 +418,18 @@ const SNAPSHOT_INJECTION = `(() => {
             return null;
 
         var node = { role: role, name: name, children: [], props: {}, box: box, rpe: rpe, el: el };
+
+        if (role === 'img' && el.tagName === 'IMG' &&
+            box.width * box.height >= ${IMAGE_DETAIL_MIN_RENDERED_AREA}) {
+            var imageUrl = getImageUrl(el);
+            if (imageUrl) {
+                node.image = {
+                    url: imageUrl,
+                    width: box.width,
+                    height: box.height
+                };
+            }
+        }
 
         // States
         if (checkedRoles.indexOf(role) !== -1) {
@@ -629,6 +655,7 @@ const SNAPSHOT_INJECTION = `(() => {
         if (node.level) obj.level = node.level;
         if (node.pressed !== undefined) obj.pressed = node.pressed;
         if (node.selected !== undefined) obj.selected = node.selected;
+        if (node.image !== undefined) obj.image = node.image;
 
         // Copy iframe metadata
         if (node.frameSrc !== undefined) obj.frameSrc = node.frameSrc;

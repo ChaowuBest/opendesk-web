@@ -29,7 +29,7 @@ export interface TaskRuntimeInterrupt {
 export type TaskModelRequestOptions = LLMRequestOptions;
 
 export type TaskAwareTool = BaseTool<any> & {
-    isAvailable?: (taskState?: TaskState) => boolean;
+    isAvailable?: (taskState?: TaskState) => boolean | Promise<boolean>;
 };
 
 export interface StartInternalTurnOptions {

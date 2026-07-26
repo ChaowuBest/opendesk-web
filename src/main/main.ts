@@ -1909,6 +1909,26 @@ const registerFSAPIHandlers = () => {
                     break;
                 }
             }
+            // 二进制图片文件附带 data URI，供前端预览
+            let dataUri: string | undefined;
+            if (binary) {
+                const ext = path.extname(systemPath).toLowerCase().slice(1);
+                const mimeMap: Record<string, string> = {
+                    png: 'image/png',
+                    jpg: 'image/jpeg',
+                    jpeg: 'image/jpeg',
+                    gif: 'image/gif',
+                    webp: 'image/webp',
+                    bmp: 'image/bmp',
+                    ico: 'image/x-icon',
+                    avif: 'image/avif',
+                    apng: 'image/apng'
+                };
+                const mime = mimeMap[ext];
+                if (mime) {
+                    dataUri = `data:${mime};base64,${buf.toString('base64')}`;
+                }
+            }
             return {
                 status: 'ok',
                 data: {
@@ -1916,7 +1936,8 @@ const registerFSAPIHandlers = () => {
                     size: st.size,
                     limit,
                     content: binary ? '' : buf.toString('utf8'),
-                    binary
+                    binary,
+                    ...(dataUri ? { dataUri } : {})
                 }
             };
         } catch (error: any) {
