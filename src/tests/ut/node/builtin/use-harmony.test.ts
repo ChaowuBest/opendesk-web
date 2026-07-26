@@ -4,11 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+    ClickTool,
+    GoBackTool,
+    GoForwardTool,
     InputTool,
     ListWindowsTool,
     OpenAppTool,
     PressKeyTool,
-    SnapshotTool
+    ScrollTool,
+    SubmitOpenDeskMessageTool,
+    SnapshotTool,
+    WaitForTool
 } from '../../../../main/applications/builtin/skills/use-harmony/tools.js';
 
 test('input passes text to hdc without executing it in a host or device shell', { concurrency: false }, async () => {
@@ -155,6 +161,64 @@ test('pressKey rejects combinations that exceed the hdc keyEvent limit', async (
     });
 
     assert.equal(result.status, 'error');
+});
+
+test('submitOpenDeskMessage submits only to an idle task other than its caller', async () => {
+    const submitted: string[] = [];
+    const targetTask = {
+        task_id: 'target-task',
+        task_status: 'stopped' as const,
+        submitUserMessage: async (text: string) => {
+            submitted.push(text);
+            return { status: 'ok' as const };
+        }
+    };
+    const tool = new SubmitOpenDeskMessageTool({
+        getTask: (taskId) => (taskId === targetTask.task_id ? targetTask : undefined)
+    });
+
+    const result = await tool.execute({ taskId: targetTask.task_id, text: 'hello from fallback submit' }, undefined, {
+        task_id: 'caller-task'
+    } as never);
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(JSON.parse(result.result), { success: true, taskId: 'target-task', submitted: true });
+    assert.deepEqual(submitted, ['hello from fallback submit']);
+});
+
+test('submitOpenDeskMessage rejects running and caller tasks without submitting', async () => {
+    const submitted: string[] = [];
+    const runningTask = {
+        task_id: 'running-task',
+        task_status: 'running' as const,
+        submitUserMessage: async (text: string) => {
+            submitted.push(text);
+            return { status: 'ok' as const };
+        }
+    };
+    const tool = new SubmitOpenDeskMessageTool({
+        getTask: () => runningTask
+    });
+
+    const runningResult = await tool.execute({ taskId: 'running-task', text: 'must not interrupt' });
+    assert.equal(runningResult.status, 'success');
+    assert.match(runningResult.result, /message queue/);
+
+    const callerTask = {
+        ...runningTask,
+        task_status: 'stopped' as const
+    };
+    const callerTool = new SubmitOpenDeskMessageTool({
+        getTask: () => callerTask
+    });
+    const callerResult = await callerTool.execute(
+        { taskId: 'running-task', text: 'must not recurse' },
+        undefined,
+        callerTask as never
+    );
+    assert.equal(callerResult.status, 'success');
+    assert.match(callerResult.result, /invoked this tool/);
+    assert.deepEqual(submitted, []);
 });
 
 test(

@@ -91,6 +91,7 @@ waitFor({ duration: 2000, snapshot: true })
 - 通过 snapshot 获取目标元素的 \`[ref=eN x=<cx> y=<cy>]\` 标签
 - 将 x、y 坐标传入 click 工具
 - 设置 \`snapshot: true\` 可在点击后自动获取界面快照
+- **注意按钮重叠区域**：如果一个按钮旁边紧挨着下拉箭头/选项按钮，两者的坐标区域可能重叠。点击时应倾向于按钮的左侧区域，避免触发下拉菜单
 
 ### 输入文本
 
@@ -117,10 +118,11 @@ waitFor({ duration: 2000, snapshot: true })
 - \`key\`：按键名称（Enter、Tab、Escape、Backspace、Delete、ArrowUp/Down/Left/Right、Space、Home、Back、PageUp/Down、a-z、0-9、F1-F12、Paste、Copy、Cut、Refresh 等）
 - \`modifiers\`：可选修饰键列表，如 \`["Ctrl"]\` 或 \`["Ctrl", "Shift"]\`
 - 设置 \`snapshot: true\` 可在按键后自动获取界面快照
+- **推荐在输入消息后使用 pressKey({ key: "Enter" }) 发送，比点击"发送"按钮更可靠**
 
 示例：
 \`\`\`
-// 按 Enter
+// 按 Enter（推荐用于发送消息）
 pressKey({ key: "Enter" })
 
 // 按 Ctrl+A 全选
@@ -129,6 +131,17 @@ pressKey({ key: "a", modifiers: ["Ctrl"] })
 // 按 Ctrl+Shift+V 粘贴
 pressKey({ key: "v", modifiers: ["Ctrl", "Shift"] })
 \`\`\`
+
+### OpenDesk 消息提交
+
+当目标是运行本技能的同一个 OpenDesk 实例时，若 HarmonyOS WebView 无法接收“发送”按钮的点击或 Enter 事件，可使用 **submitOpenDeskMessage** 直接向指定任务提交纯文本消息。该工具不通过 HDC 操作远端界面。
+
+- \`taskId\`：本机 OpenDesk 的目标任务 ID，可通过 \`listRecentTasks\` 获取
+- \`text\`：要提交的纯文本消息
+- 目标任务正在运行时工具会拒绝提交，防止绕过输入框的消息队列
+- 工具也会拒绝向调用它的任务自身提交，避免递归中断当前工具调用
+
+该工具仅适用于本机 OpenDesk 任务运行时；不能向另一台设备上的 OpenDesk 实例发送消息。
 
 ### 等待
 
@@ -147,6 +160,9 @@ pressKey({ key: "v", modifiers: ["Ctrl", "Shift"] })
 2. 快照中的坐标是设备屏幕的绝对坐标，直接用于 click 工具
 3. hdc 命令异步执行，不会阻塞界面响应
 4. 部分系统应用可能无法通过 openApp 正常打开
+5. **按钮重叠**：按钮与相邻下拉箭头/选项按钮的坐标区域可能重叠（如"发送"+"发送选项"），点击时应选择按钮左侧区域
+6. **发送消息优先用 pressKey**：在输入框中输入文本后，优先使用 \`pressKey({ key: "Enter" })\` 发送，比点击"发送"按钮更可靠
+7. **不要使用 uinput 命令**：不要通过 \`hdc shell uinput\` 发送按键事件，应使用 skill 内置的 \`pressKey\` 工具，它可以正确路由到目标应用
 `;
 
 export function loadUseHarmonySkill(): Skill {

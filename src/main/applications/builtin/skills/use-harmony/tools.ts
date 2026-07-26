@@ -24,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { GlobalState } from '../../../../aikernel/states/global.js';
+import type { TaskState } from '../../../../aikernel/states/tasks.js';
 import { BaseTool, BaseToolset } from '../../../../aikernel/tool.js';
 
 // ---------------------------------------------------------------------------
@@ -39,10 +41,6 @@ async function runHdc(args: readonly string[], timeout = 15000): Promise<string>
         maxBuffer: 10 * 1024 * 1024
     });
     return stdout.trim();
-}
-
-function quoteRemoteShellArg(value: string): string {
-    return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 function ok(data: Record<string, unknown>): string {
@@ -635,7 +633,11 @@ const ClickArgsSchema = z.object({
 
 export class ClickTool extends BaseTool<typeof ClickArgsSchema> {
     constructor() {
-        super('click', '在设备屏幕的指定坐标处执行点击操作', ClickArgsSchema);
+        super(
+            'click',
+            '在设备屏幕的指定坐标处执行点击操作。若按钮旁边有下拉箭头/选项按钮，建议点击按钮左侧区域',
+            ClickArgsSchema
+        );
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -808,20 +810,23 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
         try {
             const hasNonAscii = /[^\x00-\x7F]/.test(args.text);
 
-            // Click to focus the input
+            // Click to focus the input.
             await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000);
             await new Promise((resolve) => setTimeout(resolve, 300));
 
             if (hasNonAscii) {
-                // uitest uiInput text doesn't support non-ASCII characters directly,
-                // but it places the text into the clipboard. We then select all and
-                // paste to replace everything (including the artifact char) with the
-                // actual text.
-                await runHdc(['shell', 'uitest', 'uiInput', 'text', quoteRemoteShellArg(args.text)], 10000);
+                // uiInput text writes the intended text to the pasteboard but leaves
+                // the fixed "va'" fallback sequence in the focused field. Clear a
+                // selection when Ctrl+A works, otherwise remove those three chars.
+                await runHdc(['shell', 'uitest', 'uiInput', 'text', args.text], 10000);
+                await new Promise((resolve) => setTimeout(resolve, 300));
                 await runHdc(
                     ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_CTRL_LEFT), String(KEY_MAP.a)],
                     5000
                 );
+                for (let i = 0; i < 3; i++) {
+                    await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Backspace)], 5000);
+                }
                 await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_PASTE)], 5000);
             } else {
                 // ASCII: select all first to clear existing content, then type
@@ -829,7 +834,7 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
                     ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_CTRL_LEFT), String(KEY_MAP.a)],
                     5000
                 );
-                await runHdc(['shell', 'uitest', 'uiInput', 'text', quoteRemoteShellArg(args.text)], 10000);
+                await runHdc(['shell', 'uitest', 'uiInput', 'text', args.text], 10000);
             }
 
             const result = await withSnapshot(args.snapshot, { x: args.x, y: args.y, text: args.text });
@@ -911,7 +916,7 @@ export class PressKeyTool extends BaseTool<typeof PressKeyArgsSchema> {
         super(
             'pressKey',
             '在当前焦点元素上按下指定按键。支持功能键、方向键、字母数字键和修饰键组合。' +
-                '按键名称参考 HarmonyOS 键值定义',
+                '按键名称参考 HarmonyOS 键值定义。在输入框中输入文本后，推荐优先使用 pressKey({ key: "Enter" }) 发送消息',
             PressKeyArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
@@ -962,6 +967,68 @@ export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
     }
 }
 
+// ========== submitOpenDeskMessage ==========
+
+const SubmitOpenDeskMessageArgsSchema = z.object({
+    taskId: z.string().min(1).describe('本机 OpenDesk 任务 ID'),
+    text: z.string().min(1).describe('要提交的纯文本消息')
+});
+
+type OpenDeskMessageTask = Pick<TaskState, 'task_id' | 'task_status' | 'submitUserMessage'>;
+
+interface OpenDeskTaskLookup {
+    getTask(taskId: string): OpenDeskMessageTask | undefined;
+}
+
+/**
+ * Submits a plain-text message through the local OpenDesk task runtime instead
+ * of relying on a HarmonyOS WebView click or keyboard event.
+ */
+export class SubmitOpenDeskMessageTool extends BaseTool<typeof SubmitOpenDeskMessageArgsSchema> {
+    private readonly taskManagerState: OpenDeskTaskLookup;
+
+    constructor(taskManagerState: OpenDeskTaskLookup = GlobalState.getInstance().taskManagerState) {
+        super(
+            'submitOpenDeskMessage',
+            '向本机 OpenDesk 的指定任务提交纯文本消息，不通过 HDC 点击或按键。任务运行中或目标为调用该工具的任务时不会提交，以避免绕过消息队列。',
+            SubmitOpenDeskMessageArgsSchema
+        );
+        this.taskManagerState = taskManagerState;
+        this.serialExecution = true;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(
+        args: z.output<typeof SubmitOpenDeskMessageArgsSchema>,
+        callerTask?: TaskState
+    ): Promise<string> {
+        const task = this.taskManagerState.getTask(args.taskId);
+        if (!task) {
+            return fail(`OpenDesk task not found: ${args.taskId}`);
+        }
+        if (task.task_id === callerTask?.task_id) {
+            return fail('Refusing to submit a message to the task that invoked this tool');
+        }
+        if (task.task_status === 'running') {
+            return fail('Refusing to bypass the message queue of a running OpenDesk task');
+        }
+
+        try {
+            const result = await task.submitUserMessage(args.text);
+            if (result.status === 'error') {
+                return fail(`OpenDesk rejected the message: ${result.messageKey}`);
+            }
+            return ok({
+                taskId: task.task_id,
+                submitted: true,
+                ...(result.supplementId ? { supplementId: result.supplementId } : {})
+            });
+        } catch (err) {
+            return fail(`Failed to submit OpenDesk message: ${err}`);
+        }
+    }
+}
+
 export function createUseHarmonyToolset(): BaseToolset {
     const toolset = new BaseToolset('use-harmony');
     toolset.addTool(new ListAppsTool());
@@ -975,5 +1042,6 @@ export function createUseHarmonyToolset(): BaseToolset {
     toolset.addTool(new GoBackTool());
     toolset.addTool(new GoForwardTool());
     toolset.addTool(new WaitForTool());
+    toolset.addTool(new SubmitOpenDeskMessageTool());
     return toolset;
 }
