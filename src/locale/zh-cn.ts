@@ -705,6 +705,9 @@ export const zhCn: Record<string, string> = {
     'filemgr.image.error.tooLarge': '图片过大: ${path}，图片大小不能超过 ${maxMb} MB',
     'filemgr.image.error.http': '下载图片失败: ${path}（HTTP ${status}）',
     'filemgr.image.error.fetchFailed': '无法下载图片: ${path}',
+    'filemgr.image.error.unsupportedFormat': '不支持此图片格式: ${path}，请使用 JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片',
+    'filemgr.image.error.resizeUnsupported':
+        'WebP 图片尺寸过大: ${path}，当前无法缩放，请将图片长宽处理到 ${maxDimension} 像素以内',
     'filemgr.image.error.invalid': '无法识别或处理图片内容: ${path}',
     'filemgr.image.error.readFailed': '读取图片失败: ${path}（${message}）',
     'filemgr.image.loading': '正在读取图片…',

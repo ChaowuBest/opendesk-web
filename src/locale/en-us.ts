@@ -720,6 +720,10 @@ export const enUs: Record<string, string> = {
     'filemgr.image.error.tooLarge': 'Image is too large: ${path}. Images must not exceed ${maxMb} MB.',
     'filemgr.image.error.http': 'Failed to download image: ${path} (HTTP ${status})',
     'filemgr.image.error.fetchFailed': 'Unable to download image: ${path}',
+    'filemgr.image.error.unsupportedFormat':
+        'Unsupported image format: ${path}. Please use a JPEG, PNG, WebP, BMP, GIF, or TIFF image.',
+    'filemgr.image.error.resizeUnsupported':
+        'The WebP image is too large to resize: ${path}. Please reduce its dimensions to ${maxDimension} pixels or less.',
     'filemgr.image.error.invalid': 'Unable to recognize or process image content: ${path}',
     'filemgr.image.error.readFailed': 'Failed to read image: ${path} (${message})',
     'filemgr.image.loading': 'Reading image...',
