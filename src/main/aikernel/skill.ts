@@ -100,6 +100,10 @@ function createSkillFrontmatterExposureMatcher(exposure?: TaskSkillExposure): (s
     };
 }
 
+function isSkillExposedToAgent(skill: Skill, agentId?: string): boolean {
+    return skill.agentIds === undefined || (agentId !== undefined && skill.agentIds.includes(agentId));
+}
+
 /** SKILL.md 文件名（规范要求） */
 export const SKILL_MD_FILENAME = 'SKILL.md';
 
@@ -138,6 +142,11 @@ export class Skill {
     body: string;
     directory?: string;
     toolsets?: BaseToolset[];
+    /**
+     * 限定 Skill 仅向指定 Agent 暴露。
+     * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
+     */
+    agentIds?: readonly string[];
     /** skill 自带的 .env 文件中的环境变量，加载 skill 时从 directory/.env 解析 */
     env: Record<string, string> = {};
 
@@ -435,7 +444,11 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     }
 
     private async loadSkill(args: z.output<typeof LoadSkillSchema>, taskState?: TaskState): Promise<string> {
-        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName);
+        const skill = await SkillRegistry.getInstance().getSkillForAgent(
+            args.bundleName,
+            args.skillName,
+            taskState?.agentId
+        );
         if (!skill) {
             return '未找到该Skill';
         } else {
@@ -691,7 +704,11 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         parentResult: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName);
+        const skill = await SkillRegistry.getInstance().getSkillForAgent(
+            args.bundleName,
+            args.skillName,
+            taskState?.agentId
+        );
         if (!skill) {
             parentResult.updateResult('未找到该Skill');
             return;
@@ -788,7 +805,8 @@ export class SkillRegistry {
         this.providers.set(bundleName, provider);
     }
 
-    unregisterSkillProvider(bundleName: string): void {
+    unregisterSkillProvider(bundleName: string, provider?: SkillProvider): void {
+        if (provider !== undefined && this.providers.get(bundleName) !== provider) return;
         this.providers.delete(bundleName);
         this.clearCache(bundleName);
     }
@@ -837,7 +855,7 @@ export class SkillRegistry {
         }
     }
 
-    async getAvailableSkills(): Promise<Map<string, Skill[]>> {
+    async getAvailableSkills(agentId?: string): Promise<Map<string, Skill[]>> {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
             try {
@@ -847,7 +865,10 @@ export class SkillRegistry {
                     this.cacheSkill(bundleName, skill);
                 }
                 // 只返回启用的技能
-                const enabledSkills = allSkills.filter((s) => this.isSkillEnabled(bundleName, s.frontmatter.name));
+                const enabledSkills = allSkills.filter(
+                    (skill) =>
+                        this.isSkillEnabled(bundleName, skill.frontmatter.name) && isSkillExposedToAgent(skill, agentId)
+                );
                 result.set(bundleName, enabledSkills);
             } catch (err) {
                 logger.error(`获取技能失败: ${err}`);
@@ -872,7 +893,7 @@ export class SkillRegistry {
         return result;
     }
 
-    async getSkillFrontmatterXml(exposure?: TaskSkillExposure): Promise<string> {
+    async getSkillFrontmatterXml(exposure?: TaskSkillExposure, agentId?: string): Promise<string> {
         const shouldExposeSkill = createSkillFrontmatterExposureMatcher(exposure);
         let result = '<available_skills>\n';
         for (const [bundleName, provider] of this.providers) {
@@ -882,6 +903,7 @@ export class SkillRegistry {
                 if (!skill.isModelInvocable) continue;
                 // 禁用的技能不向 LLM 暴露
                 if (!this.isSkillEnabled(bundleName, skill.frontmatter.name)) continue;
+                if (!isSkillExposedToAgent(skill, agentId)) continue;
                 if (!shouldExposeSkill(skill)) continue;
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
@@ -898,13 +920,17 @@ export class SkillRegistry {
     /**
      * 获取所有 user-invocable 的 Skill 列表（供 / 菜单和自动补全使用）
      */
-    async getUserInvocableSkills(): Promise<{ bundleName: string; skill: Skill }[]> {
+    async getUserInvocableSkills(agentId?: string): Promise<{ bundleName: string; skill: Skill }[]> {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
                 const skills = await provider.getSkills();
                 for (const skill of skills) {
-                    if (skill.isUserInvocable && this.isSkillEnabled(bundleName, skill.frontmatter.name)) {
+                    if (
+                        skill.isUserInvocable &&
+                        this.isSkillEnabled(bundleName, skill.frontmatter.name) &&
+                        isSkillExposedToAgent(skill, agentId)
+                    ) {
                         result.push({ bundleName, skill });
                     }
                 }
@@ -918,13 +944,16 @@ export class SkillRegistry {
     /**
      * 获取所有 Skill（含 bundleName），平坦列表
      */
-    async getAllSkillsFlat(): Promise<{ bundleName: string; skill: Skill }[]> {
+    async getAllSkillsFlat(agentId?: string): Promise<{ bundleName: string; skill: Skill }[]> {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
                 const skills = await provider.getSkills();
                 for (const skill of skills) {
-                    if (this.isSkillEnabled(bundleName, skill.frontmatter.name)) {
+                    if (
+                        this.isSkillEnabled(bundleName, skill.frontmatter.name) &&
+                        isSkillExposedToAgent(skill, agentId)
+                    ) {
                         result.push({ bundleName, skill });
                     }
                 }
@@ -959,6 +988,11 @@ export class SkillRegistry {
             this.cacheSkill(bundleName, skill);
         }
         return skill;
+    }
+
+    async getSkillForAgent(bundleName: string, skillName: string, agentId?: string): Promise<Skill | undefined> {
+        const skill = await this.getSkill(bundleName, skillName);
+        return skill && isSkillExposedToAgent(skill, agentId) ? skill : undefined;
     }
 
     getToolset(): BaseToolset {

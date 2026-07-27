@@ -1847,7 +1847,7 @@ export class TaskState {
         if (matchedNames.size === 0) return message;
 
         const registry = SkillRegistry.getInstance();
-        const allSkills = await registry.getAllSkillsFlat();
+        const allSkills = await registry.getAllSkillsFlat(this.agentId);
 
         let updatedMessage = message;
         for (const name of matchedNames) {
@@ -1855,7 +1855,7 @@ export class TaskState {
             if (!entry) continue;
 
             try {
-                const loadedSkill = await registry.getSkill(entry.bundleName, name);
+                const loadedSkill = await registry.getSkillForAgent(entry.bundleName, name, this.agentId);
                 if (!loadedSkill) continue;
 
                 const directory = loadedSkill.directory || entry.bundleName;
@@ -1879,7 +1879,7 @@ export class TaskState {
         if (matchedNames.size === 0) return;
 
         const registry = SkillRegistry.getInstance();
-        const allSkills = await registry.getAllSkillsFlat();
+        const allSkills = await registry.getAllSkillsFlat(this.agentId);
 
         for (const name of matchedNames) {
             // 查找 user-invocable 的 skill
@@ -1888,7 +1888,7 @@ export class TaskState {
 
             const { bundleName } = entry;
             try {
-                const loadedSkill = await registry.getSkill(bundleName, name);
+                const loadedSkill = await registry.getSkillForAgent(bundleName, name, this.agentId);
                 if (!loadedSkill) continue;
 
                 // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ

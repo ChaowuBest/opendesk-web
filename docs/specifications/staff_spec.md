@@ -32,9 +32,12 @@
 
 ### 1.2 与 Agent 系统的关系
 
-Staff 使用 `MainAgentDecl`（standard mode）作为底层 agent，但在其基础上叠加了：
+Staff 直接从自身的 `agent/` 子目录加载一个与 CustomAgent 同格式的 Agent。AgentOffice 创建或复用
+Staff 任务时，将该 Agent 的目录绝对路径写入 `TaskState.agentId`，并直接把任务分配给它；Staff Agent
+不会注册进 `AgentRegistry`，因此不能被 `createSubTask` 或其他通用 Agent 派发机制创建。
 
-- Staff 专属的 `agents.md` 指令（注入到 system prompt）
+- Staff 专属的 `agents.md` 指令（作为 system prompt 主体）
+- Staff 专属的 MCP 和 Skills（按 `agentId` 隔离）
 - Staff 专属的权限隔离（`StaffPermissionEnforcer`）
 - AgentOffice 专用工具集（`sendReply`、`getHistoryMessages`）
 - 持久化的消息历史（`messages.jsonl`）
@@ -77,12 +80,12 @@ staffs/{staffId}/
 
 ### 2.3 目录访问权限
 
-| 目录 | Agent 访问 | 说明 |
-|------|-----------|------|
-| `agent/` | 读取 | Agent 可读取指令和技能，但不能修改 |
-| `resources/` | 读取 | Agent 可读取用户上传的附件 |
-| `workspace/` | 读写执行 | Agent 的工作空间，可自由读写 |
-| `protected/` | 禁止访问 | 元数据、权限、任务记录、消息历史均受保护 |
+| 目录         | Agent 访问 | 说明                                     |
+| ------------ | ---------- | ---------------------------------------- |
+| `agent/`     | 读取       | Agent 可读取指令和技能，但不能修改       |
+| `resources/` | 读取       | Agent 可读取用户上传的附件               |
+| `workspace/` | 读写执行   | Agent 的工作空间，可自由读写             |
+| `protected/` | 禁止访问   | 元数据、权限、任务记录、消息历史均受保护 |
 
 ---
 
@@ -110,11 +113,7 @@ Staff 的身份定义文件。
     "name": "Avery",
     "vendor_name": "OpenDesk",
     "title": "Research Analyst",
-    "specialties": [
-        "Information retrieval",
-        "Industry research",
-        "Analysis reports"
-    ]
+    "specialties": ["Information retrieval", "Industry research", "Analysis reports"]
 }
 ```
 
@@ -195,10 +194,11 @@ Staff 的权限配置，控制 Agent 可访问的文件范围和网络权限。
 ```typescript
 {
     directories: {
-        path: string;                    // 目录绝对路径
-        access: 'read' | 'readwrite';    // 访问级别
-    }[];
-    network_access: boolean;             // 是否允许网络访问
+        path: string; // 目录绝对路径
+        access: 'read' | 'readwrite'; // 访问级别
+    }
+    [];
+    network_access: boolean; // 是否允许网络访问
 }
 ```
 
@@ -291,17 +291,17 @@ Staff 使用 `createStaffPermissionEnforcer()` 创建专属的权限执行器，
 
 **权限规则生成：**
 
-| 资源 | 操作 | 路径 | 判定 |
-|------|------|------|------|
-| file | * | `protected/` 及子路径 | deny（始终拒绝） |
-| file | read | `workspace/` 及子路径 | allow |
-| file | write | `workspace/` 及子路径 | allow |
-| file | execute | `workspace/` 及子路径 | allow |
-| file | read | `resources/` 及子路径 | allow |
-| skill | read | ** | allow |
-| network | access | ** | allow（如果 network_access=true）/ deny（如果 false） |
-| file | read | permission.directories 中 access=read 的路径 | allow |
-| file | read/write | permission.directories 中 access=readwrite 的路径 | allow |
+| 资源    | 操作       | 路径                                              | 判定                                                  |
+| ------- | ---------- | ------------------------------------------------- | ----------------------------------------------------- |
+| file    | *          | `protected/` 及子路径                             | deny（始终拒绝）                                      |
+| file    | read       | `workspace/` 及子路径                             | allow                                                 |
+| file    | write      | `workspace/` 及子路径                             | allow                                                 |
+| file    | execute    | `workspace/` 及子路径                             | allow                                                 |
+| file    | read       | `resources/` 及子路径                             | allow                                                 |
+| skill   | read       | **                                                | allow                                                 |
+| network | access     | **                                                | allow（如果 network_access=true）/ deny（如果 false） |
+| file    | read       | permission.directories 中 access=read 的路径      | allow                                                 |
+| file    | read/write | permission.directories 中 access=readwrite 的路径 | allow                                                 |
 
 ### 4.2 Deny-by-default
 
@@ -313,13 +313,13 @@ Staff 使用 `createStaffPermissionEnforcer()` 创建专属的权限执行器，
 
 ### 4.4 与 CustomAgent 权限模型的对比
 
-| 特性 | Staff | CustomAgent |
-|------|-------|-------------|
-| 权限引擎 | StaffPermissionEnforcer (deny-by-default) | createDefaultPermissionRules (standard) |
-| 工作空间 | Staff 专属 workspace/ 目录 | 继承父任务工作空间 |
-| 外部目录 | 需在 permission.json 中显式声明 | ask（可通过 permissionPrompt 确认） |
-| 网络访问 | 可配置（permission.network_access） | ask（隐式回退） |
-| protected 目录 | 始终 deny | 不适用 |
+| 特性           | Staff                                     | CustomAgent                             |
+| -------------- | ----------------------------------------- | --------------------------------------- |
+| 权限引擎       | StaffPermissionEnforcer (deny-by-default) | createDefaultPermissionRules (standard) |
+| 工作空间       | Staff 专属 workspace/ 目录                | 继承父任务工作空间                      |
+| 外部目录       | 需在 permission.json 中显式声明           | ask（可通过 permissionPrompt 确认）     |
+| 网络访问       | 可配置（permission.network_access）       | ask（隐式回退）                         |
+| protected 目录 | 始终 deny                                 | 不适用                                  |
 
 ---
 
@@ -332,11 +332,14 @@ sendMessage(staffId, input)
   │
   ├── 获取 Staff 详情（验证 enabled 状态）
   ├── 获取或创建任务（复用 running 任务或创建新任务）
-  ├── 初始化 workspace 和 harness
-  │   ├── 创建 MainAgentDecl，使用 standard mode
+  ├── 加载 Staff 自身 agent/ 配置
+  │   ├── CustomAgent.loadFromPath(..., { purpose: 'staff' })
+  │   ├── task.agentId = Staff Agent 的目录绝对路径
+  │   └── 设置 Staff Agent 的 default mode 与工具过滤
+  ├── 初始化 workspace 和 harness（新任务）
   │   └── taskManager.initHarness(task, workspace, mode)
   ├── 设置 Staff 专属权限
-  │   └── task.harnessContext.permission = createStaffPermissionEnforcer(...)
+  │   └── 使用 Staff 最新 permission.json 覆盖 harness permission
   ├── 附加 AgentOffice 工具集
   │   └── task.attachToolset(createAgentOfficeTaskToolset(...))
   │       ├── sendReply 工具：将回复写入 messages.jsonl
@@ -367,10 +370,10 @@ monitorTaskTurn(task, staffId, replyTask)
 
 Staff 任务附加了两个专属工具：
 
-| 工具 | 功能 |
-|------|------|
-| `sendReply` | Agent 通过此工具发送回复消息，消息被写入 `messages.jsonl` 并通知前端 |
-| `getHistoryMessages` | Agent 查询历史消息，支持按数量或时间范围检索 |
+| 工具                 | 功能                                                                 |
+| -------------------- | -------------------------------------------------------------------- |
+| `sendReply`          | Agent 通过此工具发送回复消息，消息被写入 `messages.jsonl` 并通知前端 |
+| `getHistoryMessages` | Agent 查询历史消息，支持按数量或时间范围检索                         |
 
 ---
 
@@ -380,19 +383,19 @@ AgentOffice 在首次启动时通过 `ensurePresetStaffs()` 自动安装预设�
 
 ### 6.1 内置预设
 
-| key | name | title | specialties |
-|-----|------|-------|-------------|
-| `research-analyst-v1` | Avery | Research Analyst | Information retrieval, Industry research, Analysis reports |
-| `project-planner-v1` | Parker | Project Planner | Task planning, Project management, Risk assessment |
-| `content-writer-v1` | Casey | Content Writer | Copywriting, Content editing, Communication |
+| key                   | name   | title            | specialties                                                |
+| --------------------- | ------ | ---------------- | ---------------------------------------------------------- |
+| `research-analyst-v1` | Avery  | Research Analyst | Information retrieval, Industry research, Analysis reports |
+| `project-planner-v1`  | Parker | Project Planner  | Task planning, Project management, Risk assessment         |
+| `content-writer-v1`   | Casey  | Content Writer   | Copywriting, Content editing, Communication                |
 
 ### 6.2 预设格式
 
 ```typescript
 interface PresetStaffDefinition {
-    key: string;                    // 预设唯一标识
-    definition: StaffDefinition;    // Staff 身份定义
-    agents_md: string;              // 预设的指令内容
+    key: string; // 预设唯一标识
+    definition: StaffDefinition; // Staff 身份定义
+    agents_md: string; // 预设的指令内容
 }
 ```
 
@@ -442,14 +445,19 @@ Staff 的 `agent/` 子目录是 Agent 配置的核心部分，包含指令、MCP
 - [§ 3.3 mcp.json](./agent_spec.md#33-mcpjson)
 - [§ 3.4 skills/](./agent_spec.md#34-skills)
 
-### 8.1 当前状态与展望
+### 8.1 加载与隔离
 
-当前 AgentOffice Staff 对 `agent/` 子目录中的 MCP 和 Skills 配置仅做存储和 UI 管理，尚未实现自动连接和注入。后续计划通过集成 CustomAgent 的加载机制来实现：
+AgentOffice 在应用加载时扫描已启用 Staff，并通过 `CustomAgent.loadFromPath()` 加载其 `agent/`
+目录。Staff Agent 只保存在 AgentOffice 内部，不作为 `getAgents()` 的返回值，因此不会进入
+`AgentRegistry`。
 
-```typescript
-// 未来可能的集成方式
-const agent = await CustomAgent.loadFromPath(`${staffDir}/agent`);
-// MCP 服务器自动连接，Skills 自动注册
-```
-
-这将使 Staff 获得 CustomAgent 已实现的 MCP 工具注入和 Skills 自动注册能力。
+- **MCP**：AgentOffice 将 Staff 的 `mcp.json` 连同 Agent 目录绝对路径组成的 `agentId` 交给
+  MCPMgr。MCPMgr 负责连接、工具发现、调用和清理，并在管理界面中显示这些运行时 Server。
+- **Tools**：MCPMgr 生成的工具带有 `agentIds: [staffAgentId]`，只有对应 Staff 任务可见。
+- **Skills**：Staff 私有 Skill 注册为 `staff:{staffId}` provider，每个 Skill 同样带有
+  `agentIds: [staffAgentId]`。system prompt、斜杠菜单、`LoadSkill` 和 `CallSkill` 都会按
+  当前任务 `agentId` 过滤。
+- **刷新**：创建、导入、启停或修改 Staff 的 Agent、MCP、Skills 时，AgentOffice 会刷新该
+  Staff Agent，并原子同步所有 Agent 专属 MCP 配置。
+- **权限**：Agent mode 只提供运行模式和工具过滤；每次发送消息时，最终权限始终由 Staff
+  最新的 `permission.json` 重新生成并覆盖。

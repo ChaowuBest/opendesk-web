@@ -280,7 +280,10 @@ export class MainAgentDecl extends AgentDecl {
     async createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
         const effectiveWorkspace = taskCtx.getWorkspace();
         const executionHost = getTaskExecutionHost(taskCtx);
-        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml(taskCtx.skillExposure);
+        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml(
+            taskCtx.skillExposure,
+            taskCtx.agentId
+        );
         const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 
         const soulUid = SoulRegistry.getActiveSoulUid();

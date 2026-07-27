@@ -31,6 +31,13 @@ export const CustomAgentMetaSchema = z.object({
 
 export type CustomAgentMeta = z.output<typeof CustomAgentMetaSchema>;
 
+export interface CustomAgentLoadOptions {
+    purpose?: 'subtask' | 'staff';
+    agentName?: string;
+    whenToUse?: string;
+    skillBundleName?: string;
+}
+
 // ─── Mode ─────────────────────────────────────────────────────
 
 const CUSTOM_AGENT_DEFAULT_MODE: ModeDecl = {
@@ -61,32 +68,43 @@ class CustomAgentSkillProvider implements SkillProvider {
 
 export class CustomAgent extends AgentDecl {
     readonly agentType: AgentType = 'custom';
-    readonly agentId: string;
     readonly agentName: string;
     readonly whenToUse: string;
     readonly mcpConfig: unknown;
 
+    private readonly _agentId: string;
     private readonly agentsMd: string;
     private readonly skillProvider: CustomAgentSkillProvider;
     private readonly skillBundleName: string;
+    private readonly purpose: 'subtask' | 'staff';
 
     private skillsRegistered = false;
+
+    /** 覆写基类 getter，返回自定义 agent 的配置目录路径 */
+    get agentId(): string {
+        return this._agentId;
+    }
 
     private constructor(
         meta: CustomAgentMeta,
         configDir: string,
         agentsMd: string,
         mcpConfig: unknown,
-        skills: Skill[]
+        skills: Skill[],
+        options: CustomAgentLoadOptions
     ) {
         super();
-        this.agentId = configDir;
-        this.agentName = meta.name;
-        this.whenToUse = meta.when_to_use;
+        this._agentId = configDir;
+        this.agentName = options.agentName ?? meta.name;
+        this.whenToUse = options.whenToUse ?? meta.when_to_use;
         this.agentsMd = agentsMd;
         this.mcpConfig = mcpConfig;
-        this.skillBundleName = `custom:${configDir}`;
+        this.purpose = options.purpose ?? 'subtask';
+        this.skillBundleName = options.skillBundleName ?? `custom:${configDir}`;
         this.skillProvider = new CustomAgentSkillProvider();
+        for (const skill of skills) {
+            skill.agentIds = [this.agentId];
+        }
         this.skillProvider.setSkills(skills);
 
         // 注册 SkillProvider，使 agent 专属技能出现在 system prompt 的技能列表中
@@ -108,7 +126,7 @@ export class CustomAgent extends AgentDecl {
      * - mcp.json    - MCP 服务器配置（可选）
      * - skills/     - 私有技能目录（可选）
      */
-    static async loadFromPath(dir: string): Promise<CustomAgent> {
+    static async loadFromPath(dir: string, options: CustomAgentLoadOptions = {}): Promise<CustomAgent> {
         const resolvedDir = path.resolve(dir);
 
         // 读取 agents.md（必需）
@@ -163,7 +181,7 @@ export class CustomAgent extends AgentDecl {
         const skills = CustomAgent.loadSkills(path.join(resolvedDir, 'skills'));
 
         logger.info(`CustomAgent loaded: name="${meta.name}" from ${resolvedDir} (skills=${skills.length})`);
-        return new CustomAgent(meta, resolvedDir, agentsMd, mcpConfig, skills);
+        return new CustomAgent(meta, resolvedDir, agentsMd, mcpConfig, skills, options);
     }
 
     private static loadSkills(skillsDir: string): Skill[] {
@@ -209,7 +227,10 @@ export class CustomAgent extends AgentDecl {
             availableNodes: listExecutionNodes()
         });
 
-        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml(taskCtx.skillExposure);
+        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml(
+            taskCtx.skillExposure,
+            taskCtx.agentId
+        );
 
         const parts = [
             this.agentsMd,
@@ -219,11 +240,15 @@ export class CustomAgent extends AgentDecl {
             '',
             envSection,
             '',
-            getSkillsSection(skillFrontmatters),
-            '',
-            '注意：你是一个子任务执行者。完成后通过 planning-attemptCompletion 工具提交结果。',
-            '无论任务成功、失败还是因缺少信息无法继续，都必须调用 planning-attemptCompletion 结束任务。'
+            getSkillsSection(skillFrontmatters)
         ];
+        if (this.purpose === 'subtask') {
+            parts.push(
+                '',
+                '注意：你是一个子任务执行者。完成后通过 planning-attemptCompletion 工具提交结果。',
+                '无论任务成功、失败还是因缺少信息无法继续，都必须调用 planning-attemptCompletion 结束任务。'
+            );
+        }
 
         const base = parts.join('\n');
         const agentsMd = getAgentsMdSection(workspace);
@@ -233,7 +258,7 @@ export class CustomAgent extends AgentDecl {
     async dispose(): Promise<void> {
         // 注销 SkillProvider
         if (this.skillsRegistered) {
-            SkillRegistry.getInstance().unregisterSkillProvider(this.skillBundleName);
+            SkillRegistry.getInstance().unregisterSkillProvider(this.skillBundleName, this.skillProvider);
             this.skillsRegistered = false;
         }
     }

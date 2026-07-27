@@ -1585,6 +1585,9 @@ export const enUs: Record<string, string> = {
     'agentoffice.tool.getHistory.description':
         'Read Office message history between the current digital staff member and the user. Supports recent-count pagination and ISO 8601 date or time ranges, with at most 200 messages per page.',
     'agentoffice.error.staffDisabled': 'This digital staff member is disabled',
+    'agentoffice.error.agentLoadFailed': 'Failed to load the digital staff agent: ${message}',
+    'agentoffice.error.agentUnavailable': 'The digital staff agent is unavailable',
+    'agentoffice.error.agentModeUnavailable': 'The digital staff agent default mode is unavailable',
     'agentoffice.error.mainAgentModeUnavailable': 'The main agent standard mode is unavailable',
     'agentoffice.error.portraitPngOnly': 'Staff portraits must be PNG files',
     'agentoffice.error.staleTurnReply': 'This turn was interrupted by a newer message and can no longer send replies',

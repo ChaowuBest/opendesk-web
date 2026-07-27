@@ -400,10 +400,12 @@ stdio 传输会自动合并全局环境变量和解释器隔离环境变量，�
 
 CustomAgent 在构造时将加载的技能注册为 `SkillProvider`：
 
-- **bundleName**: `custom:{agentName}`
+- **bundleName**: 通用 CustomAgent 使用 `custom:{agentId}`；Staff 使用 `staff:{staffId}`
 - **Provider**: `CustomAgentSkillProvider`，实现 `getSkills(): Promise<Skill[]>` 接口
 
-注册后，这些技能自动出现在所有任务的 system prompt 技能列表中（通过 `SkillRegistry.getSkillFrontmatterXml()`）。LLM 可以通过 `LoadSkillTool` 加载技能内容，通过 `CallSkillTool` 调用技能内置工具。
+每个私有 Skill 都带有 `agentIds: [agentId]`。只有当前 `TaskState.agentId` 匹配时，技能才会
+出现在 system prompt 或用户可调用技能列表中，也只有匹配的任务才能通过 `LoadSkillTool`
+和 `CallSkillTool` 读取或调用它。
 
 ### 7.2 技能目录扫描
 
@@ -466,21 +468,23 @@ Staff 的 `agent/` 子目录包含 `agents.md`、`mcp.json`、`skills/`，这些
 
 ### 9.2 功能差异
 
-| 能力               | AgentOffice Staff                         | CustomAgent                             |
-| ------------------ | ----------------------------------------- | --------------------------------------- |
-| agents.md 注入方式 | 注入到用户消息                            | 作为 system prompt 主体                 |
-| MCP 服务器连接     | 仅存储配置，未实际连接                    | 由 MCPMgr 自动连接并按 agentId 注入工具 |
-| Skills 加载        | 仅文件管理，未注册到 SkillRegistry        | 自动注册为 SkillProvider                |
-| 权限模型           | StaffPermissionEnforcer (deny-by-default) | 继承父任务标准权限                      |
-| 任务创建           | 独立的 sendMessage 流程                   | 通过 createSubTask                      |
-| 消息历史           | 持久化到 messages.jsonl                   | 通过 attemptCompletion 返回             |
+| 能力               | AgentOffice Staff                          | CustomAgent                             |
+| ------------------ | ------------------------------------------ | --------------------------------------- |
+| agents.md 注入方式 | 作为 system prompt 主体                    | 作为 system prompt 主体                 |
+| MCP 服务器连接     | 由 MCPMgr 自动连接并按 agentId 注入工具    | 由 MCPMgr 自动连接并按 agentId 注入工具 |
+| Skills 加载        | 注册为 staff:{staffId} 私有 Provider       | 注册为 custom:{agentId} 私有 Provider   |
+| 权限模型           | StaffPermissionEnforcer (deny-by-default)  | 继承父任务标准权限                      |
+| 任务创建           | AgentOffice 直接分配，不进入 AgentRegistry | 通过 createSubTask                      |
+| 消息历史           | 持久化到 messages.jsonl                    | 通过 attemptCompletion 返回             |
 
 ### 9.3 互补定位
 
 - **AgentOffice Staff**：面向数字员工场景，提供独立的对话界面、消息历史、权限隔离和资源管理
 - **CustomAgent**：面向子任务场景，提供按需加载的 agent 能力，可在 `createSubTask` 中被 LLM 自动选择
 
-AgentOffice 现已作为 CustomAgent 的加载提供者；Staff 的独立会话配置仍可在后续复用同一加载与 MCPMgr 注册链路。
+AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAgent 会返回给
+`AgentRegistry`；Staff 自身的 Agent 只保存在 AgentOffice 内部并直接分配给对应 Staff 任务。
+两者共用 CustomAgent 文件加载、SkillRegistry 注册以及 MCPMgr 连接链路。
 
 ---
 
@@ -488,7 +492,9 @@ AgentOffice 现已作为 CustomAgent 的加载提供者；Staff 的独立会话�
 
 ### 10.1 扫描目录
 
-应用启动时，`AgentOfficeApplication.getAgents()` 会扫描 `getOpendeskDirectory()/agents/` 目录，将每个子目录作为一个 CustomAgent 配置目录加载：
+应用启动时，`AgentOfficeApplication.getAgents()` 会扫描 `getOpendeskDirectory()/agents/`
+目录，将每个子目录作为可派发的 CustomAgent 配置目录加载；同时扫描 AgentOffice 数据目录中
+已启用 Staff 的 `agent/` 目录，但后者不会作为返回值进入 `AgentRegistry`：
 
 ```
 {getOpendeskDirectory()}/agents/

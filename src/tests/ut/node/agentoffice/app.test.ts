@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import type { AgentDecl, ModeDecl } from '../../../../main/aikernel/agents/common.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import type { StaffTaskRecord } from '../../../../main/applications/agentoffice/common.js';
 import { setPlatform, type AbstractPlatform } from '../../../../platforms/base.js';
@@ -8,6 +11,8 @@ import {
     acquireStaffTaskForMessage,
     AgentOfficeApplication,
     applyStaffModelToTask,
+    applyStaffPermissionToTask,
+    assignStaffAgentToTask,
     mergeStaffTaskRecord
 } from '../../../../main/applications/agentoffice/app.js';
 
@@ -184,4 +189,79 @@ test('staff model overrides the task model and an empty selection restores globa
     applyStaffModelToTask(task, undefined);
     assert.equal(task.model, undefined);
     assert.equal(validationCount, 2);
+});
+
+test('staff task assignment preserves then refreshes permissions from Staff data', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-task-runtime-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const workspace = path.join(root, 'workspace');
+    const resourcesDirectory = path.join(root, 'resources');
+    const protectedDirectory = path.join(root, 'protected');
+    const externalDirectory = path.join(root, 'external');
+    const originalPermission = { marker: 'original' };
+    const task = {
+        agentId: undefined,
+        activeModeId: undefined,
+        allowedTools: undefined,
+        disabledTools: undefined,
+        harnessContext: {
+            permission: originalPermission
+        }
+    } as unknown as Pick<TaskState, 'agentId' | 'activeModeId' | 'allowedTools' | 'disabledTools' | 'harnessContext'>;
+    const agent = { agentId: path.join(root, 'staff', 'agent') } as AgentDecl;
+    const mode = {
+        id: 'default',
+        allowedTools: ['staffReply'],
+        disabledTools: ['exitPlanMode']
+    } as ModeDecl;
+
+    assignStaffAgentToTask(task, agent, mode);
+
+    assert.equal(task.agentId, agent.agentId);
+    assert.equal(task.activeModeId, 'default');
+    assert.deepEqual(task.allowedTools, ['staffReply']);
+    assert.deepEqual(task.disabledTools, ['exitPlanMode']);
+    assert.equal(task.harnessContext.permission, originalPermission);
+
+    await applyStaffPermissionToTask(task, {
+        workspace,
+        resourcesDirectory,
+        protectedDirectory,
+        permission: {
+            directories: [{ path: externalDirectory, access: 'read' }],
+            network_access: false
+        }
+    });
+
+    assert.notEqual(task.harnessContext.permission, originalPermission);
+    assert.equal(
+        (
+            await task.harnessContext.permission!.check({
+                resourceType: 'file',
+                action: 'write',
+                resourcePath: path.join(workspace, 'result.md')
+            })
+        ).effect,
+        'allow'
+    );
+    assert.equal(
+        (
+            await task.harnessContext.permission!.check({
+                resourceType: 'file',
+                action: 'write',
+                resourcePath: path.join(externalDirectory, 'result.md')
+            })
+        ).effect,
+        'deny'
+    );
+    assert.equal(
+        (
+            await task.harnessContext.permission!.check({
+                resourceType: 'network',
+                action: 'access',
+                resourcePath: 'https://example.com'
+            })
+        ).effect,
+        'deny'
+    );
 });

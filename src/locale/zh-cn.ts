@@ -1543,6 +1543,9 @@ export const zhCn: Record<string, string> = {
     'agentoffice.tool.getHistory.description':
         '读取当前数字员工与用户的办公室历史消息。支持按最近条数向前翻页，或按 ISO 8601 日期/时间范围查询；每页最多 200 条。',
     'agentoffice.error.staffDisabled': '这位数字员工已停用',
+    'agentoffice.error.agentLoadFailed': '数字员工 Agent 加载失败：${message}',
+    'agentoffice.error.agentUnavailable': '数字员工 Agent 当前不可用',
+    'agentoffice.error.agentModeUnavailable': '数字员工 Agent 的默认模式不可用',
     'agentoffice.error.mainAgentModeUnavailable': '主 Agent 的标准模式不可用',
     'agentoffice.error.portraitPngOnly': '员工头像必须是 PNG 文件',
     'agentoffice.error.staleTurnReply': '这次任务已被新消息中断，不能再发送旧回复',

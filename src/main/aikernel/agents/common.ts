@@ -119,6 +119,7 @@ export interface TaskSkillExposure {
 export interface TaskContext {
     readonly task_id: string;
     readonly task_name: string | null;
+    readonly agentId?: string;
     readonly skillExposure?: TaskSkillExposure;
     getWorkspace(): string;
     getExecutionHost?(): ExecutionHost;

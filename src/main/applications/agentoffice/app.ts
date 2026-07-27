@@ -13,7 +13,6 @@ import fs from 'fs';
 import path from 'path';
 import { BaseApplication, type EventDecl, type ProtocolHandlerConfig } from '../base.js';
 import { GlobalState } from '../../aikernel/states/global.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { getLocale, t } from '../../../locale/index.js';
@@ -26,8 +25,8 @@ import { SkillRegistry } from '../skillmgr/utils.js';
 import AgentOfficeWorker from './worker.js';
 import { unwrapAgentOfficeCallResult } from './common.js';
 import { CustomAgent } from './custom-agent.js';
-import type { McpMgrApplication } from '../mcpmgr/app.js';
-import type { AgentDecl } from '../../aikernel/agents/common.js';
+import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
+import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
 import type {
     HistoryQuery,
     InstalledSkillSummary,
@@ -35,7 +34,9 @@ import type {
     SendStaffMessageInput,
     StaffDefinition,
     StaffDetail,
+    StaffListItem,
     StaffMessage,
+    StaffPermission,
     StaffSkillBatchImportResult,
     StaffSkillImportCandidate,
     StaffTaskRecord,
@@ -135,11 +136,37 @@ export function applyStaffModelToTask(
     task.ensureValidModelOrFallback();
 }
 
+export function assignStaffAgentToTask(
+    task: Pick<TaskState, 'agentId' | 'activeModeId' | 'allowedTools' | 'disabledTools'>,
+    agent: AgentDecl,
+    mode: ModeDecl
+): void {
+    task.agentId = agent.agentId;
+    task.activeModeId = mode.id;
+    task.allowedTools = mode.allowedTools;
+    task.disabledTools = mode.disabledTools;
+}
+
+export async function applyStaffPermissionToTask(
+    task: Pick<TaskState, 'harnessContext'>,
+    options: {
+        workspace: string;
+        resourcesDirectory: string;
+        protectedDirectory: string;
+        permission: StaffPermission;
+    }
+): Promise<void> {
+    task.harnessContext.permission = await createStaffPermissionEnforcer(options);
+}
+
 export class AgentOfficeApplication extends BaseApplication {
     private readonly staffLocks = new Map<string, Promise<void>>();
     private readonly repliedTurns = new Set<string>();
     private readonly suppressedTurns = new Set<string>();
     private readonly invalidatedTurns = new Set<string>();
+    private readonly staffAgents = new Map<string, CustomAgent>();
+    private readonly staffMcpRegistrations = new Map<string, AgentMcpRegistration>();
+    private customMcpRegistrations: AgentMcpRegistration[] = [];
 
     constructor() {
         super('agentoffice', t('agentoffice.name'));
@@ -154,9 +181,11 @@ export class AgentOfficeApplication extends BaseApplication {
     }
 
     /**
-     * 从 OpenDesk 配置目录加载自定义 Agent，并把其中的 MCP 配置交给 MCPMgr。
+     * 加载可派发的 Custom Agent，同时加载不进入 AgentRegistry 的 Staff Agent。
+     * 两类 Agent 的 MCP 都由 MCPMgr 统一管理。
      */
     async getAgents(): Promise<AgentDecl[]> {
+        await this.disposeStaffAgents();
         const agentsDirectory = path.join(getOpendeskDirectory(), 'agents');
         const agents: CustomAgent[] = [];
 
@@ -175,23 +204,131 @@ export class AgentOfficeApplication extends BaseApplication {
             logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
         }
 
-        const mcpMgr = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
-        if (mcpMgr) {
-            try {
-                await mcpMgr.replaceAgentServers(
-                    agents.map((agent) => ({
-                        agentId: agent.agentId,
-                        config: agent.mcpConfig
-                    }))
-                );
-            } catch (error) {
-                logger.warn(`AgentOffice: failed to register custom agent MCP servers: ${error}`);
-            }
-        } else if (agents.length > 0) {
-            logger.warn('AgentOffice: MCPMgr is unavailable; custom agent MCP servers were not registered');
+        this.customMcpRegistrations = agents.map((agent) => ({
+            agentId: agent.agentId,
+            config: agent.mcpConfig
+        }));
+        await this.loadStaffAgents();
+        await this.syncAgentMcpServers();
+        return agents;
+    }
+
+    private async loadStaffAgents(): Promise<void> {
+        let staffs: StaffListItem[];
+        try {
+            staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+        } catch (error) {
+            logger.warn(`AgentOffice: failed to list staff agents: ${error}`);
+            return;
         }
 
-        return agents;
+        for (const staff of staffs) {
+            if (!staff.enabled) continue;
+            try {
+                const agent = await this.createStaffAgent(staff.id, staff);
+                this.staffAgents.set(staff.id, agent);
+                this.staffMcpRegistrations.set(staff.id, {
+                    agentId: agent.agentId,
+                    config: agent.mcpConfig
+                });
+            } catch (error) {
+                logger.warn(`AgentOffice: failed to load agent for staff ${staff.id}: ${error}`);
+            }
+        }
+    }
+
+    private createStaffAgent(staffId: string, staff: Pick<StaffListItem, 'name' | 'title'>): Promise<CustomAgent> {
+        return CustomAgent.loadFromPath(path.join(this.staffDirectory(staffId), 'agent'), {
+            purpose: 'staff',
+            agentName: `staff:${staffId}`,
+            whenToUse: `${staff.name} — ${staff.title}`,
+            skillBundleName: `staff:${staffId}`
+        });
+    }
+
+    private async reloadStaffAgent(
+        staffId: string,
+        detail: StaffDetail,
+        throwOnError: boolean
+    ): Promise<CustomAgent | undefined> {
+        const previous = this.staffAgents.get(staffId);
+        this.staffAgents.delete(staffId);
+        this.staffMcpRegistrations.delete(staffId);
+        await previous?.dispose();
+
+        let agent: CustomAgent | undefined;
+        let loadError: unknown;
+        if (detail.enabled) {
+            try {
+                agent = await this.createStaffAgent(staffId, detail);
+                this.staffAgents.set(staffId, agent);
+                this.staffMcpRegistrations.set(staffId, {
+                    agentId: agent.agentId,
+                    config: agent.mcpConfig
+                });
+            } catch (error) {
+                loadError = error;
+                logger.warn(`AgentOffice: failed to reload agent for staff ${staffId}: ${error}`);
+            }
+        }
+
+        await this.syncAgentMcpServers();
+        if (loadError && throwOnError) {
+            throw new Error(
+                t('agentoffice.error.agentLoadFailed', {
+                    message: loadError instanceof Error ? loadError.message : String(loadError)
+                })
+            );
+        }
+        return agent;
+    }
+
+    private async ensureStaffAgent(staffId: string, detail: StaffDetail): Promise<CustomAgent> {
+        const existing = this.staffAgents.get(staffId);
+        if (existing) return existing;
+        const loaded = await this.reloadStaffAgent(staffId, detail, true);
+        if (!loaded) {
+            throw new Error(t('agentoffice.error.agentUnavailable'));
+        }
+        return loaded;
+    }
+
+    private async refreshStaffAgentAfterMutation(staffId: string, detail?: StaffDetail): Promise<void> {
+        try {
+            const current = detail ?? (await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId));
+            await this.reloadStaffAgent(staffId, current, false);
+        } catch (error) {
+            logger.warn(`AgentOffice: failed to refresh agent for staff ${staffId}: ${error}`);
+        }
+    }
+
+    private async removeStaffAgent(staffId: string): Promise<void> {
+        const agent = this.staffAgents.get(staffId);
+        this.staffAgents.delete(staffId);
+        this.staffMcpRegistrations.delete(staffId);
+        await agent?.dispose();
+        await this.syncAgentMcpServers();
+    }
+
+    private async disposeStaffAgents(): Promise<void> {
+        const agents = [...this.staffAgents.values()];
+        this.staffAgents.clear();
+        this.staffMcpRegistrations.clear();
+        await Promise.allSettled(agents.map(async (agent) => await agent.dispose()));
+    }
+
+    private async syncAgentMcpServers(): Promise<void> {
+        const mcpMgr = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
+        const registrations = [...this.customMcpRegistrations, ...this.staffMcpRegistrations.values()];
+        if (mcpMgr) {
+            try {
+                await mcpMgr.replaceAgentServers(registrations);
+            } catch (error) {
+                logger.warn(`AgentOffice: failed to register agent MCP servers: ${error}`);
+            }
+        } else if (registrations.length > 0) {
+            logger.warn('AgentOffice: MCPMgr is unavailable; agent MCP servers were not registered');
+        }
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
@@ -200,6 +337,10 @@ export class AgentOfficeApplication extends BaseApplication {
             { eventName: 'messagesChanged', eventDescription: t('agentoffice.event.messagesChanged') },
             { eventName: 'staffTaskChanged', eventDescription: t('agentoffice.event.staffTaskChanged') }
         ];
+    }
+
+    async beforeExit(): Promise<void> {
+        await this.disposeStaffAgents();
     }
 
     getProtocolHandlers(): ProtocolHandlerConfig[] {
@@ -369,8 +510,14 @@ export class AgentOfficeApplication extends BaseApplication {
         };
     }
 
-    createStaff(definition: StaffDefinition) {
-        return this.callAgentOfficeWorker('createStaff', definition, t('agentoffice.defaultAgentsMd'));
+    async createStaff(definition: StaffDefinition) {
+        const detail = await this.callAgentOfficeWorker<StaffDetail>(
+            'createStaff',
+            definition,
+            t('agentoffice.defaultAgentsMd')
+        );
+        await this.refreshStaffAgentAfterMutation(detail.id, detail);
+        return detail;
     }
 
     async updateStaff(staffId: string, input: StaffUpdateInput) {
@@ -384,11 +531,22 @@ export class AgentOfficeApplication extends BaseApplication {
         if (input.portrait_data_uri && !/^data:image\/png;base64,[a-z0-9+/]+={0,2}$/i.test(input.portrait_data_uri)) {
             throw new Error(t('agentoffice.error.portraitPngOnly'));
         }
-        return await this.callAgentOfficeWorker('updateStaff', staffId, input);
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('updateStaff', staffId, input);
+        if (
+            input.definition !== undefined ||
+            input.agents_md !== undefined ||
+            input.mcp !== undefined ||
+            input.enabled !== undefined
+        ) {
+            await this.refreshStaffAgentAfterMutation(staffId, detail);
+        }
+        return detail;
     }
 
-    importStaff(zipPath: string) {
-        return this.callAgentOfficeWorker('importStaff', zipPath);
+    async importStaff(zipPath: string) {
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('importStaff', zipPath);
+        await this.refreshStaffAgentAfterMutation(detail.id, detail);
+        return detail;
     }
 
     exportStaff(staffId: string, zipPath: string) {
@@ -403,8 +561,10 @@ export class AgentOfficeApplication extends BaseApplication {
         return this.callAgentOfficeWorker('listSkills', staffId);
     }
 
-    addSkill(staffId: string, sourcePath: string) {
-        return this.callAgentOfficeWorker('addSkill', staffId, sourcePath);
+    async addSkill(staffId: string, sourcePath: string) {
+        const added = await this.callAgentOfficeWorker<{ name: string }>('addSkill', staffId, sourcePath);
+        await this.refreshStaffAgentAfterMutation(staffId);
+        return added;
     }
 
     scanSkillSources(rootDirectory: string): Promise<StaffSkillImportCandidate[]> {
@@ -424,6 +584,7 @@ export class AgentOfficeApplication extends BaseApplication {
                 });
             }
         }
+        if (result.added.length > 0) await this.refreshStaffAgentAfterMutation(staffId);
         return result;
     }
 
@@ -452,7 +613,9 @@ export class AgentOfficeApplication extends BaseApplication {
             }
             const archivePath = path.join(temporaryDirectory, 'skill.zip');
             fs.writeFileSync(archivePath, archive);
-            return await this.callAgentOfficeWorker('addSkill', staffId, archivePath);
+            const added = await this.callAgentOfficeWorker<{ name: string }>('addSkill', staffId, archivePath);
+            await this.refreshStaffAgentAfterMutation(staffId);
+            return added;
         } finally {
             fs.rmSync(temporaryDirectory, { recursive: true, force: true });
         }
@@ -493,18 +656,22 @@ export class AgentOfficeApplication extends BaseApplication {
         return result;
     }
 
-    deleteSkill(staffId: string, name: string) {
-        return this.callAgentOfficeWorker('deleteSkill', staffId, name);
+    async deleteSkill(staffId: string, name: string) {
+        const result = await this.callAgentOfficeWorker('deleteSkill', staffId, name);
+        await this.refreshStaffAgentAfterMutation(staffId);
+        return result;
     }
 
     async deleteStaff(staffId: string, mode: 'trash' | 'permanent'): Promise<void> {
         await this.stopActiveStaffTasks(staffId);
         if (mode === 'permanent') {
             await this.callAgentOfficeWorker('deleteStaff', staffId);
+            await this.removeStaffAgent(staffId);
             return;
         }
         const directory = this.staffDirectory(staffId);
         await getPlatform().trashItem(directory);
+        await this.removeStaffAgent(staffId);
         this.sendEventToSubscribers('staffsChanged');
     }
 
@@ -526,18 +693,18 @@ export class AgentOfficeApplication extends BaseApplication {
         applyStaffModelToTask(task, detail.model);
 
         const workspace = await this.callAgentOfficeWorker<string>('ensureWorkspace', staffId);
-        const agent = new MainAgentDecl();
+        const agent = await this.ensureStaffAgent(staffId, detail);
         const mode = agent.supportedModes().find((candidate) => candidate.id === agent.defaultModeId());
-        if (!mode) throw new Error(t('agentoffice.error.mainAgentModeUnavailable'));
+        if (!mode) throw new Error(t('agentoffice.error.agentModeUnavailable'));
+        assignStaffAgentToTask(task, agent, mode);
         if (!selection.reused) {
             await taskManager.initHarness(task, workspace, mode);
         }
-        const permission = detail.permission;
-        task.harnessContext.permission = await createStaffPermissionEnforcer({
+        await applyStaffPermissionToTask(task, {
             workspace,
             resourcesDirectory: path.join(this.staffDirectory(staffId), 'resources'),
             protectedDirectory: path.join(this.staffDirectory(staffId), 'protected'),
-            permission
+            permission: detail.permission
         });
         await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id));
 
