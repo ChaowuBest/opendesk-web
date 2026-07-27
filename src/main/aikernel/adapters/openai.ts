@@ -24,6 +24,8 @@ import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
+import { StreamIdleTimeoutError, withStreamIdleTimeout } from '../../utils/stream-timeout.js';
+import { t } from '../../../locale/index.js';
 import {
     buildContextProjection,
     buildToolDefinitions,
@@ -529,7 +531,7 @@ export class OpenAIAdapter {
                 requestOptions
             );
 
-            for await (const chunk of stream) {
+            for await (const chunk of withStreamIdleTimeout(stream, undefined, () => stream.controller?.abort())) {
                 const parsed = OpenAIAdapter.parseResponse(chunk);
                 if (parsed.usage) {
                     finalUsage = parsed.usage;
@@ -543,7 +545,9 @@ export class OpenAIAdapter {
             }
             yield AssistantResponse.richError(
                 'Stream Completion Failed',
-                String(err),
+                err instanceof StreamIdleTimeoutError
+                    ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
+                    : String(err),
                 JSON.stringify(messages, undefined, 2)
             );
         }

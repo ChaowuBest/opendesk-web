@@ -28,6 +28,8 @@ import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
+import { readWithIdleTimeout, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
+import { t } from '../../../locale/index.js';
 import {
     buildContextProjection,
     buildToolDefinitions,
@@ -726,7 +728,7 @@ export class AnthropicAdapter {
             let buffer = '';
 
             while (true) {
-                const { done, value } = await reader.read();
+                const { done, value } = await readWithIdleTimeout(reader);
                 if (done) {
                     break;
                 }
@@ -836,7 +838,9 @@ export class AnthropicAdapter {
             }
             yield AssistantResponse.richError(
                 'Stream Completion Failed',
-                String(err),
+                err instanceof StreamIdleTimeoutError
+                    ? t('error.model.stream_idle_timeout', { timeoutMs: err.timeoutMs })
+                    : String(err),
                 JSON.stringify(anthropicMessages, undefined, 2)
             );
         }
