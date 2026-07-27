@@ -10,15 +10,22 @@
  */
 
 import { type Component, type TUI } from '@earendil-works/pi-tui';
-import { Setting } from '../../../utils/setting';
-import { ConfigForm, type FieldDef, type ActionDef } from './form';
+import { Setting } from '../../../utils/setting.js';
+import { lookupKnownVisionSupport } from '../../../utils/model-context.js';
+import { ConfigForm, type FieldDef, type ActionDef } from './form.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 
 const DEFAULT_MODEL_FIELDS = [
     { key: 'default_model', labelKey: 'config.defaultmodel.field.default_model', modelType: 'chat' },
     { key: 'default_embedding_model', labelKey: 'config.defaultmodel.field.embedding_model', modelType: 'embedding' },
-    { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model', modelType: 'chat' }
+    { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model', modelType: 'chat' },
+    {
+        key: 'default_vision_model',
+        labelKey: 'config.defaultmodel.field.vision_model',
+        modelType: 'chat',
+        visionOnly: true
+    }
 ] as const;
 
 function modelTypeOf(model: any): 'chat' | 'embedding' {
@@ -50,9 +57,10 @@ export class DefaultModelConfigPage implements Component {
             const current: string = data[f.key] ?? '';
             const aliases: string[] = models
                 .filter((m: any) => modelTypeOf(m) === f.modelType)
+                .filter((m: any) => !('visionOnly' in f) || lookupKnownVisionSupport(m.model_name) === true)
                 .map((m: any) => m.alias);
             const optionsWithEmpty = ['', ...aliases];
-            if (optionsWithEmpty.length > 1) {
+            if (optionsWithEmpty.length > 1 || 'visionOnly' in f) {
                 return {
                     type: 'select' as const,
                     key: f.key,

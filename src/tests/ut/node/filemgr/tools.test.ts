@@ -3,6 +3,7 @@ import test from 'node:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { Jimp } from 'jimp';
 import sharp from 'sharp';
 import * as XLSX from 'xlsx';
 import { setRuntimeLocale } from '../../../../locale/index.js';
@@ -476,4 +477,177 @@ test('online image sources are downloaded, validated, and returned as data URLs'
     assert.equal(loaded.width, 10);
     assert.equal(loaded.height, 8);
     assert.match(loaded.dataUrl, /^data:image\/png;base64,/);
+});
+
+test('image sources resize large PNG images with Jimp before returning them', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'large.png');
+    const png = await sharp({
+        create: {
+            width: 3000,
+            height: 1500,
+            channels: 4,
+            background: { r: 10, g: 20, b: 30, alpha: 0.5 }
+        }
+    })
+        .png()
+        .toBuffer();
+    fs.writeFileSync(imagePath, png);
+
+    try {
+        const loaded = await loadImageSource(imagePath);
+        const output = Buffer.from(loaded.dataUrl.split(',')[1], 'base64');
+        const metadata = await sharp(output).metadata();
+        assert.equal(loaded.mimeType, 'image/png');
+        assert.equal(loaded.width, 2048);
+        assert.equal(loaded.height, 1024);
+        assert.equal(metadata.width, 2048);
+        assert.equal(metadata.height, 1024);
+        assert.equal(output.equals(png), false);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources resize large JPEG images with Jimp before returning them', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'large.jpg');
+    const jpeg = await sharp({
+        create: {
+            width: 1500,
+            height: 3000,
+            channels: 3,
+            background: { r: 10, g: 20, b: 30 }
+        }
+    })
+        .jpeg()
+        .toBuffer();
+    fs.writeFileSync(imagePath, jpeg);
+
+    try {
+        const loaded = await loadImageSource(imagePath);
+        const output = Buffer.from(loaded.dataUrl.split(',')[1], 'base64');
+        const metadata = await sharp(output).metadata();
+        assert.equal(loaded.mimeType, 'image/jpeg');
+        assert.equal(loaded.width, 1024);
+        assert.equal(loaded.height, 2048);
+        assert.equal(metadata.width, 1024);
+        assert.equal(metadata.height, 2048);
+        assert.equal(output.equals(jpeg), false);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources read WebP dimensions without converting the image', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'example.webp');
+    const webp = await sharp({
+        create: {
+            width: 23,
+            height: 17,
+            channels: 4,
+            background: { r: 10, g: 20, b: 30, alpha: 0.5 }
+        }
+    })
+        .webp()
+        .toBuffer();
+    fs.writeFileSync(imagePath, webp);
+
+    try {
+        const loaded = await loadImageSource(imagePath);
+        assert.equal(loaded.mimeType, 'image/webp');
+        assert.equal(loaded.width, 23);
+        assert.equal(loaded.height, 17);
+        assert.equal(Buffer.from(loaded.dataUrl.split(',')[1], 'base64').equals(webp), true);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources reject large WebP images because default Jimp has no WebP decoder', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'large.webp');
+    await sharp({
+        create: {
+            width: 3000,
+            height: 1500,
+            channels: 3,
+            background: { r: 10, g: 20, b: 30 }
+        }
+    })
+        .webp()
+        .toFile(imagePath);
+
+    try {
+        await assert.rejects(loadImageSource(imagePath), (error: unknown) => {
+            return error instanceof Error && error.message === 'resize_unsupported';
+        });
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources convert BMP, GIF, and TIFF images to PNG with Jimp', async () => {
+    const dir = makeTempDir();
+    const cases = [
+        { extension: 'bmp', mimeType: 'image/bmp' as const },
+        { extension: 'gif', mimeType: 'image/gif' as const },
+        { extension: 'tiff', mimeType: 'image/tiff' as const }
+    ];
+
+    try {
+        for (const imageCase of cases) {
+            const imagePath = path.join(dir, `example.${imageCase.extension}`);
+            const input = await new Jimp({ width: 30, height: 20, color: 0x123456ff }).getBuffer(imageCase.mimeType);
+            fs.writeFileSync(imagePath, input);
+
+            const loaded = await loadImageSource(imagePath);
+            const output = Buffer.from(loaded.dataUrl.split(',')[1], 'base64');
+            const metadata = await sharp(output).metadata();
+            assert.equal(loaded.mimeType, 'image/png');
+            assert.equal(loaded.width, 30);
+            assert.equal(loaded.height, 20);
+            assert.equal(metadata.format, 'png');
+            assert.equal(metadata.width, 30);
+            assert.equal(metadata.height, 20);
+        }
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources resize large GIF images with Jimp and use the first frame', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'large.gif');
+    const gif = await new Jimp({ width: 2050, height: 50, color: 0x123456ff }).getBuffer('image/gif');
+    fs.writeFileSync(imagePath, gif);
+
+    try {
+        const loaded = await loadImageSource(imagePath);
+        const output = Buffer.from(loaded.dataUrl.split(',')[1], 'base64');
+        const metadata = await sharp(output).metadata();
+        assert.equal(loaded.mimeType, 'image/png');
+        assert.equal(loaded.width, 2048);
+        assert.equal(loaded.height, 50);
+        assert.equal(metadata.format, 'png');
+        assert.equal(metadata.width, 2048);
+        assert.equal(metadata.height, 50);
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('image sources reject unsupported image formats', async () => {
+    const dir = makeTempDir();
+    const imagePath = path.join(dir, 'example.svg');
+    fs.writeFileSync(imagePath, '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
+
+    try {
+        await assert.rejects(loadImageSource(imagePath), (error: unknown) => {
+            return error instanceof Error && error.message === 'unsupported_format';
+        });
+    } finally {
+        cleanup(dir);
+    }
 });

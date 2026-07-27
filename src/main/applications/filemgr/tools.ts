@@ -1091,7 +1091,10 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
 // ==================== ReadImage / AskImage 工具 ====================
 
-const imageSourceSchema = z.string().min(1).describe('本地图片路径，或以 http:// / https:// 开头的在线图片 URL');
+const imageSourceSchema = z
+    .string()
+    .min(1)
+    .describe('JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片的本地路径，或以 http:// / https:// 开头的在线图片 URL');
 
 const readImageSchema = z.object({
     path: imageSourceSchema
@@ -1154,6 +1157,13 @@ function imageSourceErrorMessage(error: unknown, source: string): string {
             return t('filemgr.image.error.http', { path: source, status: error.details ?? '' });
         case 'fetch_failed':
             return t('filemgr.image.error.fetchFailed', { path: source });
+        case 'unsupported_format':
+            return t('filemgr.image.error.unsupportedFormat', { path: source });
+        case 'resize_unsupported':
+            return t('filemgr.image.error.resizeUnsupported', {
+                path: source,
+                maxDimension: error.details ?? ''
+            });
         case 'invalid_image':
             return t('filemgr.image.error.invalid', { path: source });
     }
@@ -1214,7 +1224,7 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
     constructor() {
         super(
             'readImage',
-            '读取本地路径或在线 URL 指向的图片，并将图片内容直接返回给当前任务模型进行视觉理解。当前任务模型不支持视觉输入时会返回错误。',
+            '读取本地路径或在线 URL 指向的 JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片，并将图片内容返回给当前任务模型进行视觉理解。GIF 按首帧处理；当前任务模型不支持视觉输入时会返回错误。',
             readImageSchema
         );
         this.setUniversalExecutor(this.executeCommand);
@@ -1285,7 +1295,7 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
     constructor() {
         super(
             'askImage',
-            '使用系统设置中的默认视觉模型分析本地路径或在线 URL 指向的图片，并直接返回该视觉模型对 question 的回答。',
+            '使用系统设置中的默认视觉模型分析本地路径或在线 URL 指向的 JPEG、PNG、WebP、BMP、GIF 或 TIFF 图片，并直接返回该视觉模型对 question 的回答。GIF 按首帧处理。',
             askImageSchema
         );
         this.setExecutor(this.executeCommand);
