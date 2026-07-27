@@ -1073,6 +1073,7 @@ export class OpenDeskTUI {
     clearActiveTask() {
         this.taskView.taskState = undefined;
         this.taskView.clearMessages();
+        this.todoList.clear();
         if (this.activeTaskId) {
             this.goalEvaluationInProgressByTask.delete(this.activeTaskId);
         }
