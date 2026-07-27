@@ -115,7 +115,8 @@ export async function waitForLLMRetryDelayForTask(
     task: TaskState,
     attempt: number,
     delayMs: number,
-    error: unknown
+    error: unknown,
+    expectedGeneration: number = task.getTurnGeneration()
 ): Promise<boolean> {
     const nextRetryAt = Date.now() + delayMs;
     const errorMessage = errorToMessage(error);
@@ -129,17 +130,19 @@ export async function waitForLLMRetryDelayForTask(
             status: 'scheduled'
         });
 
-    await emitScheduled();
-
-    return await new Promise<boolean>((resolve) => {
+    let cancelWait = () => {};
+    const waitPromise = new Promise<boolean>((resolve) => {
         let settled = false;
         let interval: ReturnType<typeof setInterval> = undefined as any;
         let timeout: ReturnType<typeof setTimeout> = undefined as any;
+        const retryNowResolver = () => settle(true);
         const cleanup = () => {
             clearInterval(interval);
             clearTimeout(timeout);
-            task._retryDelayPending = false;
-            task._retryNowResolver = null;
+            if (task._retryNowResolver === retryNowResolver) {
+                task._retryDelayPending = false;
+                task._retryNowResolver = null;
+            }
         };
         const settle = (value: boolean) => {
             if (settled) return;
@@ -147,9 +150,18 @@ export async function waitForLLMRetryDelayForTask(
             cleanup();
             resolve(value);
         };
-        task._retryNowResolver = () => settle(true);
+        cancelWait = () => settle(false);
+        task._retryNowResolver = retryNowResolver;
         const tick = () => {
-            if (task.task_status === 'stopped' || !task._retryDelayPending) {
+            if (task._retryNowResolver !== retryNowResolver) {
+                settle(false);
+                return;
+            }
+            if (
+                task.task_status === 'stopped' ||
+                task.getTurnGeneration() !== expectedGeneration ||
+                !task._retryDelayPending
+            ) {
                 void clearLLMRetryFeedbackForTask(task, attempt, delayMs, nextRetryAt, errorMessage).finally(() =>
                     settle(false)
                 );
@@ -158,8 +170,22 @@ export async function waitForLLMRetryDelayForTask(
             void emitScheduled();
         };
         interval = setInterval(tick, 1000);
-        timeout = setTimeout(() => settle(task.task_status !== 'stopped'), delayMs);
+        timeout = setTimeout(
+            () =>
+                settle(
+                    task.task_status !== 'stopped' &&
+                        task.getTurnGeneration() === expectedGeneration &&
+                        task._retryNowResolver === retryNowResolver
+                ),
+            delayMs
+        );
     });
+
+    await emitScheduled();
+    if (task.getTurnGeneration() !== expectedGeneration) {
+        cancelWait();
+    }
+    return await waitPromise;
 }
 
 export async function clearLLMRetryFeedbackForTask(
@@ -189,6 +215,12 @@ export async function processTaskCompletion(
     if (assistant_message === undefined || !(assistant_message instanceof AssistantMessage)) {
         return false;
     }
+
+    // 捕获当前 turn 代数，用于在流式过程中检测是否被新 turn 取代。
+    // submitUserMessage 会递增 _turnGeneration 并将 task_status 改回 'running'，
+    // 仅靠 task_status 检查无法阻止旧 turn 的 processCompletion 继续处理 LLM 响应。
+    const myGeneration = task.getTurnGeneration();
+    const isCurrentTurn = () => task.getTurnGeneration() === myGeneration;
 
     const model = task.ensureValidModelOrFallback();
     let streamOptions:
@@ -228,6 +260,7 @@ export async function processTaskCompletion(
                 : {}),
             requestOptions: modelRequestOptions
         });
+        if (!isCurrentTurn()) return false;
 
         if (preparation.toolResultReplacementState) {
             task.tool_result_replacement_state = preparation.toolResultReplacementState;
@@ -476,6 +509,8 @@ export async function processTaskCompletion(
         logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
     }
 
+    if (!isCurrentTurn()) return false;
+
     requestTailText ??= task.buildEvidenceCardRequestTail(streamOptions?.activeContext);
 
     task.profiler?.beginLLM(task._currentTurn);
@@ -517,7 +552,7 @@ export async function processTaskCompletion(
         | undefined;
 
     try {
-        while (task.task_status !== 'stopped') {
+        while (task.task_status !== 'stopped' && task.getTurnGeneration() === myGeneration) {
             try {
                 const requestModel = task.ensureValidModelOrFallback();
                 const effectiveModel = requestModel || Setting.getInstance().getData().default_model || '';
@@ -542,9 +577,11 @@ export async function processTaskCompletion(
                         throw responseError;
                     }
 
-                    // 检查是否已停止
-                    if (task.task_status === 'stopped') {
-                        logger.info(`task ${task.task_id} completion interrupted by stop request`);
+                    // 检查是否已停止或被新 turn 取代
+                    if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
+                        logger.info(
+                            `task ${task.task_id} completion interrupted by ${task.task_status === 'stopped' ? 'stop request' : 'new turn'}`
+                        );
                         break;
                     }
 
@@ -557,6 +594,7 @@ export async function processTaskCompletion(
                         if (lastExisting) {
                             finalizeToolCallArgs(lastExisting);
                             const feedback = await task.hooks.checkAfterParseToolcall(task, lastExisting);
+                            if (!isCurrentTurn()) return false;
                             if (feedback.operation === 'reject') {
                                 removeToolCallsFrom(assistant_message, existingCalls.length - 1);
                                 if (chunk_resp.usage) {
@@ -582,6 +620,7 @@ export async function processTaskCompletion(
                             chunkHasNewToolCall,
                             requestToolCalls
                         );
+                        if (!isCurrentTurn()) return false;
                         if (feedback.operation === 'reject') {
                             logger.warn(`task ${task.task_id}: beforeToolcallCreated rejected: ${feedback.message}`);
                             if (chunk_resp.usage) {
@@ -636,6 +675,8 @@ export async function processTaskCompletion(
                     }
                 }
 
+                if (!isCurrentTurn()) return false;
+
                 if (lastRetryState) {
                     await clearLLMRetryFeedbackForTask(
                         task,
@@ -645,9 +686,10 @@ export async function processTaskCompletion(
                         lastRetryState.errorMessage
                     );
                 }
+                if (!isCurrentTurn()) return false;
                 break;
             } catch (err: unknown) {
-                if (task.task_status === 'stopped') {
+                if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
                     break;
                 }
 
@@ -662,6 +704,7 @@ export async function processTaskCompletion(
                             lastRetryState.errorMessage
                         );
                     }
+                    if (!isCurrentTurn()) return false;
                     assistant_message.appendError('Stream Completion Failed', errorToMessage(err));
                     await task.sendSubscriptionFeedback();
                     break;
@@ -693,6 +736,7 @@ export async function processTaskCompletion(
                     }
                     prevMergedToolCallCount = getCurrentRequestToolCalls().length;
                     await task.sendAssistantMessageReplace(assistant_message);
+                    if (!isCurrentTurn()) return false;
                 }
 
                 logger.warn(
@@ -700,7 +744,7 @@ export async function processTaskCompletion(
                         errorMessage
                 );
 
-                const shouldRetry = await waitForLLMRetryDelayForTask(task, retryAttempt, delayMs, err);
+                const shouldRetry = await waitForLLMRetryDelayForTask(task, retryAttempt, delayMs, err, myGeneration);
                 if (!shouldRetry) {
                     break;
                 }
@@ -712,8 +756,11 @@ export async function processTaskCompletion(
                     error_message: errorMessage,
                     status: 'retrying'
                 });
+                if (!isCurrentTurn()) return false;
             }
         }
+
+        if (!isCurrentTurn()) return false;
 
         // 流结束后，如果之前没有被 tool call 钩子主动中断，则再校验最后一个工具调用
         if (!abortedByToolcallHook) {
@@ -722,6 +769,7 @@ export async function processTaskCompletion(
                 const lastTc = finalToolCalls[finalToolCalls.length - 1];
                 finalizeToolCallArgs(lastTc);
                 const feedback = await task.hooks.checkAfterParseToolcall(task, lastTc);
+                if (!isCurrentTurn()) return false;
                 if (feedback.operation === 'reject') {
                     removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
                     logger.warn(
@@ -730,6 +778,7 @@ export async function processTaskCompletion(
                     );
                     abortedByToolcallHook = true;
                     await task.sendSubscriptionFeedback();
+                    if (!isCurrentTurn()) return false;
                 }
             }
         }
@@ -753,16 +802,18 @@ export async function processTaskCompletion(
         task.ensureBenchmarkUsageLedger().finishRequest(benchmarkRequest, {
             usage: assistant_message.usage
         });
-        task.profiler?.endLLM({
-            prompt_tokens: assistant_message.usage?.prompt_tokens,
-            completion_tokens: assistant_message.usage?.completion_tokens,
-            total_tokens: assistant_message.usage?.total_tokens,
-            input_tokens: assistant_message.usage?.input_tokens,
-            output_tokens: assistant_message.usage?.output_tokens,
-            cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
-            cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
-        });
-        recordEvidenceCardLLMUsage(task, assistant_message.usage, 'streamComplete');
+        if (isCurrentTurn()) {
+            task.profiler?.endLLM({
+                prompt_tokens: assistant_message.usage?.prompt_tokens,
+                completion_tokens: assistant_message.usage?.completion_tokens,
+                total_tokens: assistant_message.usage?.total_tokens,
+                input_tokens: assistant_message.usage?.input_tokens,
+                output_tokens: assistant_message.usage?.output_tokens,
+                cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
+                cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
+            });
+            recordEvidenceCardLLMUsage(task, assistant_message.usage, 'streamComplete');
+        }
         // 确保无论流式成功还是异常，持久化前所有 reasoning part 的耗时都已固化
         assistant_message.finalizeReasoningTiming();
     }

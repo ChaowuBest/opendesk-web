@@ -13,6 +13,7 @@ import {
     UserMessage
 } from '../../../main/aikernel/messages.js';
 import { registerDeadloopHarness } from '../../../main/aikernel/harnesses/chat/deadloop.js';
+import { waitForLLMRetryDelayForTask } from '../../../main/aikernel/task/completion.js';
 import {
     BaseTaskUpdateSubscriber,
     TaskManagerState,
@@ -340,5 +341,106 @@ describe('task LLM auto retry', () => {
         await completion;
 
         expect(requestCount).toBe(expectedDelays.length);
+    });
+
+    test('processCompletion stops processing chunks when turn generation changes', async () => {
+        // When submitUserMessage increments _turnGeneration (and sets task_status back to 'running'),
+        // the old turn's processCompletion should detect the generation mismatch and stop processing
+        // LLM chunks, instead of continuing to merge content into the stale assistant message.
+        const { task } = createRunningTask(false);
+        task.onTextPartComplete = jest.fn();
+        task.profiler = {
+            beginLLM: jest.fn(),
+            endLLM: jest.fn()
+        } as any;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield textResponse('first chunk');
+            // Simulate submitUserMessage incrementing generation while task_status is 'running'
+            (task as any)._turnGeneration++;
+            yield textResponse('second chunk');
+        });
+
+        await task.processCompletion();
+
+        const lastMessage = task.chat_context.lastMessage() as AssistantMessage;
+        const fullText = lastMessage.content
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { text: string }).text)
+            .join('');
+
+        expect(fullText).toContain('first chunk');
+        expect(fullText).not.toContain('second chunk');
+        expect(task.onTextPartComplete).not.toHaveBeenCalled();
+        expect(task.profiler.endLLM).not.toHaveBeenCalled();
+    });
+
+    test('processCompletion does not merge a chunk when generation changes during an async hook', async () => {
+        const { task } = createRunningTask(false);
+        task.hooks.beforeToolcallCreated(async () => {
+            (task as any)._turnGeneration++;
+            return { operation: 'accept' };
+        });
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield textResponse('stale chunk');
+        });
+
+        await task.processCompletion();
+
+        const lastMessage = task.chat_context.lastMessage() as AssistantMessage;
+        const fullText = lastMessage.content
+            .filter((part) => part.type === 'text')
+            .map((part) => (part as { text: string }).text)
+            .join('');
+
+        expect(fullText).toBe('');
+    });
+
+    test('deprecated turn leaves retry delay without starting another request', async () => {
+        const { task, chunks } = createRunningTask(true);
+        let requestCount = 0;
+        let finished = false;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            requestCount++;
+            yield* [] as AssistantResponse[];
+            throw new Error('temporary failure');
+        });
+
+        const completion = task.processCompletion().then(() => {
+            finished = true;
+        });
+        await waitForCondition(() => retryChunks(chunks).some((chunk) => chunk.status === 'scheduled'));
+
+        (task as any)._turnGeneration++;
+        await jest.advanceTimersByTimeAsync(1000);
+        await completion;
+
+        expect(finished).toBe(true);
+        expect(requestCount).toBe(1);
+        expect(task._retryDelayPending).toBe(false);
+    });
+
+    test('deprecated retry wait does not clear the active turn retry state', async () => {
+        const { task } = createRunningTask(true);
+        const firstGeneration = task.getTurnGeneration();
+        const firstWait = waitForLLMRetryDelayForTask(task, 1, 10_000, new Error('first failure'), firstGeneration);
+
+        (task as any)._turnGeneration++;
+        const secondWait = waitForLLMRetryDelayForTask(
+            task,
+            1,
+            10_000,
+            new Error('second failure'),
+            task.getTurnGeneration()
+        );
+        await Promise.resolve();
+        await expect(firstWait).resolves.toBe(false);
+
+        expect(task._retryDelayPending).toBe(true);
+        expect(task.skipRetryDelay()).toBe(true);
+        await expect(secondWait).resolves.toBe(true);
+        expect(task._retryDelayPending).toBe(false);
     });
 });

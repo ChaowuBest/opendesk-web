@@ -1264,11 +1264,13 @@ export class TaskView implements Component {
             }
         }, REASONING_SPINNER_MS);
         try {
+            // resolveOnStop: stop() 时通过 _stopResolvers 立即 settle 订阅者，
+            // 避免旧订阅者在 stop() 后继续接收新消息的 chunk 导致重复消息显示 (#197)
             await taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
                 if (!isCurrentTask()) return;
                 await this.handleChunkUpdate(chunkUpdate);
                 this.requestStreamRender();
-            });
+            }, true);
         } finally {
             clearInterval(renderInterval);
             if (isCurrentTask()) {
