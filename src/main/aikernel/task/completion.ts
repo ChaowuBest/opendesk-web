@@ -190,6 +190,11 @@ export async function processTaskCompletion(
         return false;
     }
 
+    // 捕获当前 turn 代数，用于在流式过程中检测是否被新 turn 取代。
+    // submitUserMessage 会递增 _turnGeneration 并将 task_status 改回 'running'，
+    // 仅靠 task_status 检查无法阻止旧 turn 的 processCompletion 继续处理 LLM 响应。
+    const myGeneration = task.getTurnGeneration();
+
     const model = task.ensureValidModelOrFallback();
     let streamOptions:
         | {
@@ -517,7 +522,7 @@ export async function processTaskCompletion(
         | undefined;
 
     try {
-        while (task.task_status !== 'stopped') {
+        while (task.task_status !== 'stopped' && task.getTurnGeneration() === myGeneration) {
             try {
                 const requestModel = task.ensureValidModelOrFallback();
                 const effectiveModel = requestModel || Setting.getInstance().getData().default_model || '';
@@ -542,9 +547,11 @@ export async function processTaskCompletion(
                         throw responseError;
                     }
 
-                    // 检查是否已停止
-                    if (task.task_status === 'stopped') {
-                        logger.info(`task ${task.task_id} completion interrupted by stop request`);
+                    // 检查是否已停止或被新 turn 取代
+                    if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
+                        logger.info(
+                            `task ${task.task_id} completion interrupted by ${task.task_status === 'stopped' ? 'stop request' : 'new turn'}`
+                        );
                         break;
                     }
 
@@ -647,7 +654,7 @@ export async function processTaskCompletion(
                 }
                 break;
             } catch (err: unknown) {
-                if (task.task_status === 'stopped') {
+                if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
                     break;
                 }
 

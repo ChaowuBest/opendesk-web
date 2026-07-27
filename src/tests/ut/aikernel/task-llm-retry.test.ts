@@ -341,4 +341,29 @@ describe('task LLM auto retry', () => {
 
         expect(requestCount).toBe(expectedDelays.length);
     });
+
+    test('processCompletion stops processing chunks when turn generation changes', async () => {
+        // When submitUserMessage increments _turnGeneration (and sets task_status back to 'running'),
+        // the old turn's processCompletion should detect the generation mismatch and stop processing
+        // LLM chunks, instead of continuing to merge content into the stale assistant message.
+        const { task } = createRunningTask(false);
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield textResponse('first chunk');
+            // Simulate submitUserMessage incrementing generation while task_status is 'running'
+            (task as any)._turnGeneration++;
+            yield textResponse('second chunk');
+        });
+
+        await task.processCompletion();
+
+        const lastMessage = task.chat_context.lastMessage() as AssistantMessage;
+        const fullText = lastMessage.content
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { text: string }).text)
+            .join('');
+
+        expect(fullText).toContain('first chunk');
+        expect(fullText).not.toContain('second chunk');
+    });
 });
