@@ -1565,16 +1565,30 @@ class AgentGateEntryWidget extends HTMLElement {
     }
 
     /** 切换到 dashboard tab（供浮窗跳转时调用，不重新 fetch） */
-    _switchToDashboardTab() {
+    async _switchToDashboardTab() {
         const tabs = this.shadow.querySelectorAll('.ag-tab');
         tabs.forEach((x) => x.classList.remove('active'));
         const dashTab = this.shadow.querySelector('.ag-tab[data-tab="dashboard"]');
         if (dashTab) dashTab.classList.add('active');
-        (this.shadow.querySelector('#ag-dash') as HTMLElement).classList.remove('hidden');
+        const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
+        dash.classList.remove('hidden');
         (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.add('hidden');
+
+        // 总开关关闭时，正确内容是 emptyDashboardHTML（分行居中布局）。
+        // 若此时 panel 残留了之前开总开关时的 dashboard 表格 DOM，children.length
+        // 不为 0，下面的守卫会跳过 _renderDash()，导致从浮窗跳转过来时显示残留的、
+        // 布局错乱（不换行）的内容。因此总开关关闭时必须强制重渲染。
+        let enabled = true;
+        try {
+            enabled = await (window as any).applicationAPI?.callMainWorld('getEnabled');
+        } catch {}
+        if (enabled === false) {
+            dash.innerHTML = emptyDashboardHTML();
+            return;
+        }
+
         // 不调用 _renderDash()，避免和 refresh interval 冲突导致交替清空
         // 仅在 dashboard 未初始化时才首次渲染
-        const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
         if (!dash.children.length) {
             this._renderDash();
         }
