@@ -16,6 +16,11 @@ OpenDesk 是一个基于 Electron 的全能型 AI 工作站，同时提供 CLI �
 - 代码格式化: `npm run format`
 - 架构检查: `npm run check:architecture`
 
+### 开发规则
+
+- 如果是定位 OpenDesk 的 bug，那么尽可能通过设计新的单元测试来复现这些问题，不要仅靠猜测。同样地，修复完 bug 之后要用你的单元测试进行回归，确保问题真正得到了解决；
+- 在新特性的开发过程中要使用测试用例先行 (Test-Driven Development) 的模式;
+
 ## 验证变更
 
 在完成代码修改后，必须运行以下命令确认构建通过：

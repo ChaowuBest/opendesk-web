@@ -135,8 +135,8 @@ class WorkflowAgentPermissionPrompt implements PermissionPromptProvider {
         );
     }
 
-    notifyPermissionRulesChanged(enforcer: PermissionEnforcer): Promise<void> | void {
-        return this.delegate.notifyPermissionRulesChanged?.(enforcer);
+    notifyPermissionRulesChanged(enforcer: PermissionEnforcer, taskIds?: string[]): Promise<void> | void {
+        return this.delegate.notifyPermissionRulesChanged?.(enforcer, taskIds);
     }
 
     cancelTaskPrompts(taskIds: string[]): void {

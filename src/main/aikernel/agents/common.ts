@@ -49,6 +49,10 @@ export interface ModeDecl {
      */
     permissionFactory: ModePermissionFactory;
     /**
+     * 完全跳过权限判定。宿主必须使用无条件放行的权限执行器，不能仅依赖 allow glob 规则。
+     */
+    bypassPermissionChecks?: boolean;
+    /**
      * 模式专属的 Sub-Prompt，会作为独立 Section 整合进 SystemPrompt。
      * 返回 null 表示无额外提示。
      * @param taskCtx 任务上下文（包含 workspace、taskId 等）

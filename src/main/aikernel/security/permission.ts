@@ -384,7 +384,7 @@ export interface PermissionPromptProvider {
      * Called after a task writes a persistent permission rule. Providers with
      * queues can re-check pending requests and auto-resolve newly allowed items.
      */
-    notifyPermissionRulesChanged?(enforcer: PermissionEnforcer): Promise<void> | void;
+    notifyPermissionRulesChanged?(enforcer: PermissionEnforcer, taskIds?: string[]): Promise<void> | void;
 
     /**
      * Cancel pending prompts associated with stopped or removed tasks.

@@ -100,6 +100,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     private queue: QueuedElectronPermissionPrompt[] = [];
     private current: QueuedElectronPermissionPrompt | null = null;
     private waitingForRuleChange = false;
+    private ruleChangeWaitGeneration = 0;
     private ruleChangeDeadlineTimer?: ReturnType<typeof setTimeout>;
 
     async prompt(
@@ -141,12 +142,14 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         }
     }
 
-    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer): Promise<void> {
-        if (this.current && !this.current.settled) {
+    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer, taskIds?: string[]): Promise<void> {
+        const waitGeneration = this.ruleChangeWaitGeneration;
+        const ids = taskIds ? new Set(taskIds) : null;
+        const current = this.current;
+        if (current && !current.settled && (!ids || this.matchesTask(current, ids))) {
             try {
-                const askOrDeny = await enforcer.checkAllDetailed(this.current.requests);
-                if (askOrDeny.length === 0) {
-                    const current = this.current;
+                const askOrDeny = await enforcer.checkAllDetailed(current.requests);
+                if (this.current === current && !current.settled && askOrDeny.length === 0) {
                     this.cleanupCurrent();
                     this.dismiss(current);
                     this.settleItem(current, { decision: 'allow', rememberScope: 'none' });
@@ -157,23 +160,29 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             }
         }
 
-        const remaining: QueuedElectronPermissionPrompt[] = [];
-        for (const item of this.queue) {
+        const queuedItems = [...this.queue];
+        for (const item of queuedItems) {
             if (item.settled) continue;
+            if (ids && !this.matchesTask(item, ids)) {
+                continue;
+            }
             try {
                 const askOrDeny = await enforcer.checkAllDetailed(item.requests);
                 if (askOrDeny.length === 0) {
-                    this.settleItem(item, { decision: 'allow', rememberScope: 'none' });
-                    continue;
+                    const index = this.queue.indexOf(item);
+                    if (index >= 0) {
+                        this.queue.splice(index, 1);
+                        this.settleItem(item, { decision: 'allow', rememberScope: 'none' });
+                    }
                 }
             } catch (err) {
                 logger.warn(`Permission queue re-check failed: ${err}`);
             }
-            remaining.push(item);
         }
-        this.queue = remaining;
-        this.clearRuleChangeWait();
-        this.processQueue();
+        if (this.ruleChangeWaitGeneration === waitGeneration) {
+            this.clearRuleChangeWait();
+            this.processQueue();
+        }
     }
 
     cancelTaskPrompts(taskIds: string[]): void {
@@ -361,9 +370,9 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
     private dismiss(item: QueuedElectronPermissionPrompt): void {
         const { BrowserWindow } = electron();
-        const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-        if (focusedWindow) {
-            safeSendToWebContents(focusedWindow.webContents, 'permission:dismiss', item.requestId);
+        for (const win of BrowserWindow.getAllWindows()) {
+            if (win.isDestroyed()) continue;
+            safeSendToWebContents(win.webContents, 'permission:dismiss', item.requestId);
         }
     }
 
@@ -374,6 +383,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     }
 
     private startRuleChangeWait(): void {
+        this.ruleChangeWaitGeneration++;
         this.waitingForRuleChange = true;
         this.scheduleRuleChangeDeadline();
     }

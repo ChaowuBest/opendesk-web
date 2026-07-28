@@ -74,7 +74,7 @@ class RecordingPromptProvider implements PermissionPromptProvider {
         return this.response;
     }
 
-    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer): Promise<void> {
+    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer, _taskIds?: string[]): Promise<void> {
         this.notifiedEnforcers.push(enforcer);
         this.notificationChecks.push(await enforcer.check(this.requestToCheckOnNotify));
     }

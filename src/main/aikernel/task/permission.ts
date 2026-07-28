@@ -154,8 +154,9 @@ export async function applyPersistentPermissionAllowForTask(task: TaskState, rul
         }
     }
 
+    const relatedTaskIds = relatedTasks.map((relatedTask) => relatedTask.task_id);
     for (const provider of providers) {
-        await provider.notifyPermissionRulesChanged?.(authoritativeEnforcer);
+        await provider.notifyPermissionRulesChanged?.(authoritativeEnforcer, relatedTaskIds);
     }
 }
 
