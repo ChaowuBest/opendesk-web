@@ -57,7 +57,7 @@ npm run cli
 - **会话内切换**：在 TUI 中可随时切换当前模式，无需重启。按 **Shift+Tab** 打开模式选择器；或在输入框执行 `/mode <模式id>`（见下文 [斜杠命令](#斜杠命令)）。
 - **启动时指定**：通过命令行 `--mode <mode>` 指定本次进程的初始模式；`--allow-everything` 与 `--mode unlimited` 等价（详见 [命令行参数](#命令行参数)）。
 - **与规划工作流**：**Plan** 模式用于「先只读调研、再在 `.plan` 中写方案」；确认方案后通常需要切换到 **Standard** 或 **Solo** 才能实际修改业务代码（Plan 下会禁用 `editFile`、`writeFile` 等直接改代码的工具）。
-- **默认模式**：未另行指定时，一般为 **standard**（与代码中 `defaultModeId()` 一致）。
+- **默认模式**：未另行指定时，一般为 **standard**（由 AgentDecl 的 `getDefaultMode()` 提供）。
 
 ### 现有模式一览
 

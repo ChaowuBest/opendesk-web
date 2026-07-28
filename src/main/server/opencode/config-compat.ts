@@ -14,16 +14,12 @@ import iconv from 'iconv-lite';
 import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
-import { SkillRegistry } from '../../aikernel/skill.js';
 import { logger } from '../../utils/logger.js';
 
 type JsonRecord = Record<string, unknown>;
 type RefreshableApplication = {
     refresh: () => unknown;
 };
-
-const AVAILABLE_SKILLS_XML_PATTERN = /<available_skills>[\s\S]*?<\/available_skills>/;
 
 function isRecord(value: unknown): value is JsonRecord {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -356,15 +352,6 @@ async function refreshOpenDeskTaskContexts(): Promise<void> {
 
     if (tasks.length === 0) return;
 
-    let skillFrontmatters = '';
-    try {
-        skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
-    } catch (error) {
-        logger.warn(`failed to build skills prompt during config reload: ${errorToMessage(error)}`);
-        return;
-    }
-    const mainAgentDecl = new MainAgentDecl();
-
     await Promise.allSettled(
         tasks.map(async (task) => {
             try {
@@ -376,21 +363,7 @@ async function refreshOpenDeskTaskContexts(): Promise<void> {
                 const toolsets = await task.buildToolsets();
                 task.chat_context.attachToolsets(...toolsets);
 
-                const currentPrompt = task.chat_context.system_prompt?.content;
-                if (typeof currentPrompt === 'string' && AVAILABLE_SKILLS_XML_PATTERN.test(currentPrompt)) {
-                    task.setSystemPrompt(currentPrompt.replace(AVAILABLE_SKILLS_XML_PATTERN, skillFrontmatters));
-                } else if (!task.parent_id) {
-                    const modes = mainAgentDecl.supportedModes();
-                    const mode =
-                        modes.find((item) => item.id === task.activeModeId) ??
-                        modes.find((item) => item.id === mainAgentDecl.defaultModeId()) ??
-                        modes[0];
-                    task.setSystemPrompt(await mainAgentDecl.createSystemPrompt(mode, task));
-                } else {
-                    return;
-                }
-
-                task.persistLater();
+                await task.rebuildSystemPrompt();
             } catch (error) {
                 logger.warn(`failed to refresh task context during config reload: ${errorToMessage(error)}`);
             }

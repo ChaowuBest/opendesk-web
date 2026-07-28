@@ -89,6 +89,7 @@ ${formatEnvironmentSection(workspace, executionHost, { availableNodes })}
 
 export class PlanAgentDecl extends AgentDecl {
     readonly agentName = 'plan';
+    readonly dispatchable = true;
     readonly agentType: AgentType = 'builtin';
     readonly whenToUse =
         '用于设计实现方案的软件架构师代理。当你需要为任务规划实现策略时使用此代理。返回分步计划、识别关键文件，并考虑架构权衡。适合需求分析、方案设计、架构决策等场景。';
@@ -97,7 +98,7 @@ export class PlanAgentDecl extends AgentDecl {
         return [PLAN_AGENT_DEFAULT_MODE];
     }
 
-    defaultModeId(): string {
+    protected defaultModeId(): string {
         return 'default';
     }
 

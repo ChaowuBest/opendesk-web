@@ -69,6 +69,7 @@ ${formatEnvironmentSection(workspace, executionHost, { availableNodes })}
 
 export class ExploreAgentDecl extends AgentDecl {
     readonly agentName = 'explore';
+    readonly dispatchable = true;
     readonly agentType: AgentType = 'builtin';
     readonly whenToUse =
         '专为探索代码库优化的快速只读代理。当你需要通过模式快速查找文件、搜索代码关键词、或回答关于代码库结构和实现的问题时使用此代理。适合代码调研、架构理解、依赖分析等场景。';
@@ -77,7 +78,7 @@ export class ExploreAgentDecl extends AgentDecl {
         return [EXPLORE_AGENT_DEFAULT_MODE];
     }
 
-    defaultModeId(): string {
+    protected defaultModeId(): string {
         return 'default';
     }
 

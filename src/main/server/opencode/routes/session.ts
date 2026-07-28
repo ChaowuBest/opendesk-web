@@ -15,7 +15,6 @@ import crypto from 'crypto';
 import path from 'path';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { BaseTaskUpdateSubscriber, type TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
 import { createAskUserToolset } from '../../../aikernel/interaction/tools.js';
 import { EventBus } from '../event-bus.js';
 import { modelAliasFromOpenCodeRef } from '../config-compat.js';
@@ -193,6 +192,20 @@ function buildOpenCodeTelemetryMetadata(
     };
 }
 
+function buildOpenCodeTelemetryOutput(task: any, sessionID: string): Record<string, unknown> {
+    const agentId = typeof task.agentId === 'string' && task.agentId.length > 0 ? task.agentId : undefined;
+    return {
+        sessionID,
+        ...(agentId
+            ? {
+                  mode: task.getAgentMode().id,
+                  agent: agentId
+              }
+            : {}),
+        cost: 0
+    };
+}
+
 function numericToken(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
@@ -295,33 +308,25 @@ function getStableMessageId(sourceMessageID: unknown, fallbackKey: string): stri
     return id;
 }
 
-function getDefaultMainMode(agentDecl: MainAgentDecl) {
-    const modes = agentDecl.supportedModes();
-    return modes.find((m) => m.id === agentDecl.defaultModeId()) ?? modes[0];
-}
-
-async function ensureServerTaskHarness(
-    tms: any,
-    task: any,
-    agentDecl = new MainAgentDecl(),
-    workspace = getTaskWorkspace(task)
-): Promise<void> {
+async function ensureServerTaskHarness(tms: any, task: any, workspace = getTaskWorkspace(task)): Promise<void> {
+    const previousAgentId = task.agentId;
+    task.getAgent();
+    const agentChanged = task.agentId !== previousAgentId;
+    const persistedWorkspaceChanged = task.workspace !== workspace;
     const workspaceChanged = task.harnessContext?.workspace !== workspace || task.workspace !== workspace;
     const needsHarness = !task.harnessContext?.permission || workspaceChanged;
     if (needsHarness) {
-        await tms.initHarness(task, workspace, getDefaultMainMode(agentDecl));
+        await tms.initHarness(task, workspace, task.getAgentMode());
     }
     task.workspace = workspace;
     task.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
     task.interactionToolset = createAskUserToolset(ServerQuestionBroker.getInstance());
     await ensureMcpWorkspace(workspace);
 
-    if (workspaceChanged || !task.chat_context?.system_prompt) {
-        const mode = getDefaultMainMode(agentDecl);
-        const systemPrompt = await agentDecl.createSystemPrompt(mode, task);
-        task.setSystemPrompt(systemPrompt);
+    if (agentChanged || workspaceChanged || !task.chat_context?.system_prompt) {
+        await task.rebuildSystemPrompt();
     }
-    if (typeof task.persistLater === 'function') {
+    if (persistedWorkspaceChanged && typeof task.persistLater === 'function') {
         task.persistLater();
     }
 }
@@ -1269,8 +1274,7 @@ export function SessionRoutes() {
         applyOpenCodeRequestModel(task, body);
 
         // 初始化 harness 和 system prompt
-        const agentDecl = new MainAgentDecl();
-        await ensureServerTaskHarness(tms, task, agentDecl, workspace);
+        await ensureServerTaskHarness(tms, task, workspace);
 
         EventBus.publish({
             type: 'session.created',
@@ -1307,10 +1311,15 @@ export function SessionRoutes() {
         }
 
         const body = await c.req.json().catch(() => ({}));
+        const previousTaskName = task.task_name;
+        const previousModel = task.model;
         if (body.title !== undefined) {
             task.task_name = body.title;
         }
         applyOpenCodeRequestModel(task, body);
+        if (task.task_name !== previousTaskName || task.model !== previousModel) {
+            task.persistLater();
+        }
 
         tms.save();
         return c.json(taskToSessionInfo(task, getRequestOrTaskWorkspace(c, task), getRequestWorkspaceID(c)));
@@ -1465,7 +1474,7 @@ export function SessionRoutes() {
         }
 
         const workspace = getRequestOrTaskWorkspace(c, task);
-        await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
+        await ensureServerTaskHarness(tms, task, workspace);
 
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
@@ -1481,12 +1490,7 @@ export function SessionRoutes() {
                 modelInfo,
                 task.model
             ),
-            output: {
-                sessionID,
-                mode: 'default',
-                agent: 'explore',
-                cost: 0
-            }
+            output: buildOpenCodeTelemetryOutput(task, sessionID)
         };
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
@@ -1564,7 +1568,7 @@ export function SessionRoutes() {
 
         // 异步提交，不等待完成
         const workspace = getRequestOrTaskWorkspace(c, task);
-        await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
+        await ensureServerTaskHarness(tms, task, workspace);
 
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
@@ -1580,12 +1584,7 @@ export function SessionRoutes() {
                 modelInfo,
                 task.model
             ),
-            output: {
-                sessionID,
-                mode: 'default',
-                agent: 'explore',
-                cost: 0
-            }
+            output: buildOpenCodeTelemetryOutput(task, sessionID)
         };
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
@@ -1708,12 +1707,16 @@ export function SessionRoutes() {
 
         const messageID = c.req.param('messageID');
         const messages = task.chat_context.messages;
-        const idx = messages.findIndex((m: any) => m.message_id === messageID);
+        const idx = messages.findIndex(
+            (message: any, messageIndex: number) =>
+                getStableMessageId(message.message_id, `${sessionID}:message:${messageIndex}`) === messageID
+        );
         if (idx === -1) {
             return c.json({ error: 'Message not found' }, 404);
         }
 
         messages.splice(idx, 1);
+        task.persistLater();
         tms.save();
 
         return c.json(true);

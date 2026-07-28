@@ -39,14 +39,16 @@ CustomAgent 的配置目录格式与 AgentOffice Staff 的 `agent/` 子目录完
 
 ### 1.3 在 Agent 系统中的位置
 
-| Agent            | agentName   | agentType  | 注册方式                                        | 权限       |
-| ---------------- | ----------- | ---------- | ----------------------------------------------- | ---------- |
-| MainAgentDecl    | `'main'`    | `builtin`  | 不注册（顶层调度者）                            | 多模式     |
-| ExploreAgentDecl | `'explore'` | `builtin`  | `initBuiltinAgents()`                           | 只读       |
-| PlanAgentDecl    | `'plan'`    | `builtin`  | `initBuiltinAgents()`                           | 只读       |
-| **CustomAgent**  | 用户定义    | `'custom'` | `BaseApplication.getAgents()` → `AgentRegistry` | 继承父任务 |
+| Agent            | agentId                  | agentType  | dispatchable | 权限       |
+| ---------------- | ------------------------ | ---------- | ------------ | ---------- |
+| MainAgentDecl    | `main`                   | `builtin`  | 否           | 多模式     |
+| ExploreAgentDecl | `explore`                | `builtin`  | 是           | 只读       |
+| PlanAgentDecl    | `plan`                   | `builtin`  | 是           | 只读       |
+| **CustomAgent**  | `agentoffice:{名称}`     | `'custom'` | 是           | 继承父任务 |
+| Staff Agent      | `agentoffice:staff:{id}` | `'custom'` | 否           | Staff 权限 |
 
-CustomAgent 注册到 `AgentRegistry` 后，可通过 `createSubTask(agentName=...)` 调用。只有单 mode 的 agent 才会被列入可派发列表（`getAgentFrontmatterXml`），CustomAgent 恰好只有一个 `default` mode。
+所有 Agent（包括 main 和 Staff）都注册到 `AgentRegistry`。只有 `dispatchable=true` 的 Agent
+会被列入 `getAgentFrontmatterXml()` 并可通过 `createSubTask(agentName=...)` 调用。
 
 ---
 
@@ -107,7 +109,7 @@ Agent 元数据文件，使用 JSON 格式。
 
 ```typescript
 {
-    name: string; // Agent 唯一标识，用于 AgentRegistry.registerAgent() 和 createSubTask(agentName=...)
+    name: string; // Agent 在所属应用作用域内的名称，是完整 agentId 的一部分
     when_to_use: string; // 使用场景描述，注入到 system prompt 的可派发 agent 列表中供 LLM 选择
 }
 ```
@@ -244,7 +246,7 @@ Instructions for the skill...
 **说明：**
 
 - 无效的 `SKILL.md` 会被跳过并记录警告，不影响其他技能的加载
-- 加载的技能会注册到 `SkillRegistry`，bundleName 为 `custom:{agentName}`
+- 加载的技能会注册到 `SkillRegistry`，bundleName 为 `custom:{配置目录绝对路径}`
 - 技能自动出现在使用此 agent 的任务的 system prompt 技能列表中
 
 ---
@@ -306,8 +308,20 @@ MCP server 的替换、断开和工具刷新由 MCPMgr worker 统一处理。
 
 ```typescript
 export abstract class AgentDecl {
-    /** 内置 Agent 默认等于 agentName；CustomAgent 使用配置目录绝对路径 */
+    /** Agent 在作用域内的名称 */
+    abstract readonly agentName: string;
+
+    /** 规范 ID：内置 Agent 为 {agentName}，应用 Agent 为 {bundleName}:{agentName} */
     get agentId(): string;
+
+    /** 是否可作为通用子任务执行者 */
+    abstract readonly dispatchable: boolean;
+
+    /** 返回此 Agent 支持的模式 */
+    abstract supportedModes(): ModeDecl[];
+
+    /** 返回默认模式；默认 mode id 是 AgentDecl 的内部实现细节 */
+    getDefaultMode(): ModeDecl;
 
     /** 释放 Agent 自身持有的资源 */
     async dispose(): Promise<void> {
@@ -322,14 +336,36 @@ export abstract class BaseApplication {
 }
 ```
 
-`ApplicationRegistry.loadAvailableAgents()` 先卸载旧的 custom agent，再收集应用的 `getAgents()`。
-任务派发时把 `agentDecl.agentId` 写入 `TaskState.agentId`，供统一工具过滤使用。
+`ApplicationRegistry.loadAvailableAgents()` 先卸载旧的应用 Agent，再按应用 `bundleName` 收集并注册
+`getAgents()` 的结果。主 Agent 通过始终返回非空声明的 `getMainAgent()` 获取；其他声明通过
+`getBuiltinAgent(agentName)` 或
+`getApplicationAgent(bundleName, agentName)` 获取声明；AIKernel 内部可以直接使用完整 agentId。
+任务派发时把 `agentDecl.agentId` 写入 `TaskState.agentId`，供 prompt 重建及工具、Skill 过滤使用。
+任务 JSON 持久化 `agentId`，旧任务缺失时使用 `main`；若恢复时找不到绑定的 Agent，也回退到
+`main`。内置 Agent 的规范 ID 是不带作用域的 `agentName`，应用 Agent 的规范 ID 是
+`<bundleName>:<agentName>`；不再解析其他历史 Agent 引用格式。`agent_system_prompt` 是运行时派生状态，重建它不触发
+dirty；`custom_system_prompt` 是任务的持久化数据，没有附加提示词时落盘为 `null`。完整的
+`chat_context.system_prompt` 仍然落盘，
+用于保持旧格式兼容并方便调试。
+
+`AgentRegistry` 只负责 Agent 的注册、查找和外部引用解析，不负责解释 Task 或创建 system prompt。
+`TaskState` 通过 `getAgent()` 获取自身绑定，通过 `getAgentMode()` 解析自身的 `activeModeId`，并由
+`buildSystemPrompt()` 调用该 Agent 的 `createSystemPrompt()`。因此调用方无需传递 Agent 或 Mode。
+
+`main` 在顶层任务中生成完整主 Agent prompt；在带 `parent_id` 的默认子任务中重建通用
+子任务 prompt。这样，缺少 `agentId` 的旧子任务仍可按 `main` 恢复，同时保留原有执行语义。
 
 ---
 
 ## 5. System Prompt 生成
 
-`createSystemPrompt(activeMode, taskCtx)` 按以下顺序拼接 system prompt：
+普通重建入口是 `TaskState.rebuildSystemPrompt()`；它通过纯构建方法 `buildSystemPrompt()`，根据任务
+自己的 `agentId` 和 `activeModeId` 获取 `AgentDecl` 与 `ModeDecl`，调用
+`agent.createSystemPrompt(activeMode, taskCtx)` 生成 `agent_system_prompt`，再与持久化的
+`custom_system_prompt` 拼接并安装到 ChatContext。`setSystemPrompt()` 只修改
+`custom_system_prompt`。显式使用 `agentId: null` 的任务没有 Agent 部分，其完整 system prompt
+仅由 custom 部分组成；旧任务缺少 `agentId` 字段时仍恢复为 `main`。
+Agent 的实现按以下顺序拼接 agent system prompt：
 
 ```
 1. agents.md 内容（主体）
@@ -350,7 +386,7 @@ Skills 的 frontmatter 不在此处直接注入，而是通过 `SkillRegistry.ge
 ```
 AgentOfficeApplication.getAgents()
   │
-  ├── 加载 CustomAgent，agentId = 配置目录绝对路径
+  ├── 加载 CustomAgent，agentId = agentoffice:{agentName}
   ├── 收集每个 agent 的 mcpConfig
   └── McpMgrApplication.replaceAgentServers(...)
       │
@@ -400,7 +436,7 @@ stdio 传输会自动合并全局环境变量和解释器隔离环境变量，�
 
 CustomAgent 在构造时将加载的技能注册为 `SkillProvider`：
 
-- **bundleName**: 通用 CustomAgent 使用 `custom:{agentId}`；Staff 使用 `staff:{staffId}`
+- **bundleName**: 通用 CustomAgent 使用 `custom:{配置目录绝对路径}`；Staff 使用 `staff:{staffId}`
 - **Provider**: `CustomAgentSkillProvider`，实现 `getSkills(): Promise<Skill[]>` 接口
 
 每个私有 Skill 都带有 `agentIds: [agentId]`。只有当前 `TaskState.agentId` 匹配时，技能才会
@@ -468,22 +504,22 @@ Staff 的 `agent/` 子目录包含 `agents.md`、`mcp.json`、`skills/`，这些
 
 ### 9.2 功能差异
 
-| 能力               | AgentOffice Staff                          | CustomAgent                             |
-| ------------------ | ------------------------------------------ | --------------------------------------- |
-| agents.md 注入方式 | 作为 system prompt 主体                    | 作为 system prompt 主体                 |
-| MCP 服务器连接     | 由 MCPMgr 自动连接并按 agentId 注入工具    | 由 MCPMgr 自动连接并按 agentId 注入工具 |
-| Skills 加载        | 注册为 staff:{staffId} 私有 Provider       | 注册为 custom:{agentId} 私有 Provider   |
-| 权限模型           | StaffPermissionEnforcer (deny-by-default)  | 继承父任务标准权限                      |
-| 任务创建           | AgentOffice 直接分配，不进入 AgentRegistry | 通过 createSubTask                      |
-| 消息历史           | 持久化到 messages.jsonl                    | 通过 attemptCompletion 返回             |
+| 能力               | AgentOffice Staff                         | CustomAgent                             |
+| ------------------ | ----------------------------------------- | --------------------------------------- |
+| agents.md 注入方式 | 作为 system prompt 主体                   | 作为 system prompt 主体                 |
+| MCP 服务器连接     | 由 MCPMgr 自动连接并按 agentId 注入工具   | 由 MCPMgr 自动连接并按 agentId 注入工具 |
+| Skills 加载        | 注册为 staff:{staffId} 私有 Provider      | 注册为 custom:{agentId} 私有 Provider   |
+| 权限模型           | StaffPermissionEnforcer (deny-by-default) | 继承父任务标准权限                      |
+| 任务创建           | AgentOffice 直接分配，注册但不可派发      | 通过 createSubTask                      |
+| 消息历史           | 持久化到 messages.jsonl                   | 通过 attemptCompletion 返回             |
 
 ### 9.3 互补定位
 
 - **AgentOffice Staff**：面向数字员工场景，提供独立的对话界面、消息历史、权限隔离和资源管理
 - **CustomAgent**：面向子任务场景，提供按需加载的 agent 能力，可在 `createSubTask` 中被 LLM 自动选择
 
-AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAgent 会返回给
-`AgentRegistry`；Staff 自身的 Agent 只保存在 AgentOffice 内部并直接分配给对应 Staff 任务。
+AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAgent 和 Staff Agent 都返回给
+`AgentRegistry`；Staff Agent 以 `dispatchable=false` 注册，并由 AgentOffice 直接分配给对应任务。
 两者共用 CustomAgent 文件加载、SkillRegistry 注册以及 MCPMgr 连接链路。
 
 ---
@@ -494,7 +530,7 @@ AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAge
 
 应用启动时，`AgentOfficeApplication.getAgents()` 会扫描 `getOpendeskDirectory()/agents/`
 目录，将每个子目录作为可派发的 CustomAgent 配置目录加载；同时扫描 AgentOffice 数据目录中
-已启用 Staff 的 `agent/` 目录，但后者不会作为返回值进入 `AgentRegistry`：
+已启用 Staff 的 `agent/` 目录；两者都会作为返回值进入 `AgentRegistry`，仅前者可派发：
 
 ```
 {getOpendeskDirectory()}/agents/
@@ -512,7 +548,9 @@ AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAge
 
 ### 10.2 加载时机
 
-在所有启动入口中，先初始化应用和 MCPMgr worker，再调用 `ApplicationRegistry.loadAvailableAgents()`：
+在所有启动入口中，先初始化应用和 MCPMgr worker，再调用 `ApplicationRegistry.loadAvailableAgents()`。
+恢复任务的 lazy harness 和任何可执行任务的入口必须排在应用 Agent 注册之后，避免把尚未加载的合法
+应用 agentId 误判为缺失：
 
 | 启动入口       | 文件                                               | 调用位置                   |
 | -------------- | -------------------------------------------------- | -------------------------- |
@@ -526,7 +564,7 @@ AgentOffice 同时负责两类配置的加载：`agents/` 下的通用 CustomAge
 
 - 目录不存在时静默跳过（不报错）
 - 单个 agent 加载失败时记录警告，不影响其他 agent 的加载
-- agent 名称与已注册的 builtin agent 冲突时跳过并记录警告
+- 同一应用作用域内出现重复 agentName 时跳过后注册项并记录警告
 
 ### 10.4 刷新 API
 

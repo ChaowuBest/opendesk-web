@@ -10,6 +10,7 @@ import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import { AgentOfficeApplication } from '../../../../main/applications/agentoffice/app.js';
 import type { StaffListItem } from '../../../../main/applications/agentoffice/common.js';
 import { CustomAgent } from '../../../../main/applications/agentoffice/custom-agent.js';
+import { AgentsMdManager } from '../../../../main/aikernel/agents_md.js';
 import { setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 
 const ENABLED_STAFF_ID = '11111111-1111-4111-8111-111111111111';
@@ -93,14 +94,16 @@ test('AgentOffice loads Staff capabilities without making Staff dispatchable', a
                 : undefined
     });
 
-    const dispatchableAgents = await application.getAgents();
+    const agents = await application.getAgents();
+    await AgentRegistry.replaceApplicationAgents([{ bundleName: application.bundleName, agents }]);
 
-    assert.deepEqual(dispatchableAgents, []);
-    assert.equal(AgentRegistry.getAgent(`staff:${ENABLED_STAFF_ID}`), undefined);
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0].dispatchable, false);
+    assert.equal(AgentRegistry.getApplicationAgent('agentoffice', `staff:${ENABLED_STAFF_ID}`), agents[0]);
     assert.equal(registrationSnapshots.length, 1);
     assert.deepEqual(registrationSnapshots[0], [
         {
-            agentId: path.resolve(enabledAgentDirectory),
+            agentId: `agentoffice:staff:${ENABLED_STAFF_ID}`,
             config: {
                 servers: [{ name: 'staff-files', command: 'first-command' }]
             }
@@ -109,7 +112,7 @@ test('AgentOffice loads Staff capabilities without making Staff dispatchable', a
 
     const skillRegistry = SkillRegistry.getInstance();
     const staffBundleName = `staff:${ENABLED_STAFF_ID}`;
-    const staffAgentId = path.resolve(enabledAgentDirectory);
+    const staffAgentId = `agentoffice:staff:${ENABLED_STAFF_ID}`;
     const staffSkill = await skillRegistry.getSkillForAgent(staffBundleName, SKILL_NAME, staffAgentId);
     assert.ok(staffSkill);
     assert.deepEqual(staffSkill.agentIds, [staffAgentId]);
@@ -134,7 +137,13 @@ test('AgentOffice loads Staff capabilities without making Staff dispatchable', a
         path.join(enabledAgentDirectory, 'mcp.json'),
         JSON.stringify({ servers: [{ name: 'staff-files', command: 'updated-command' }] })
     );
-    await application.getAgents();
+    const reloadedAgents = await application.getAgents();
+    await AgentRegistry.replaceApplicationAgents([
+        {
+            bundleName: application.bundleName,
+            agents: reloadedAgents
+        }
+    ]);
     assert.deepEqual(registrationSnapshots.at(-1), [
         {
             agentId: staffAgentId,
@@ -162,14 +171,19 @@ test('Staff prompt uses its own Agent definition without subtask completion inst
         purpose: 'staff',
         agentName: 'staff:test',
         whenToUse: 'Staff runtime test',
-        skillBundleName: 'staff:test'
+        skillBundleName: 'staff:test',
+        additionalSystemPrompt: () => 'CRITICAL STAFF RULE'
     });
     context.after(async () => await agent.dispose());
+    const workspaceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentoffice-staff-workspace-'));
+    fs.writeFileSync(path.join(workspaceDirectory, 'AGENTS.md'), 'WORKSPACE INSTRUCTIONS');
+    AgentsMdManager.getInstance().reloadForWorkspace(workspaceDirectory);
+    context.after(() => fs.rmSync(workspaceDirectory, { recursive: true, force: true }));
     const taskContext: TaskContext = {
         task_id: 'staff-task',
         task_name: 'staff task',
         agentId: agent.agentId,
-        getWorkspace: () => configDirectory
+        getWorkspace: () => workspaceDirectory
     };
 
     const prompt = await agent.createSystemPrompt(agent.supportedModes()[0], taskContext);
@@ -177,4 +191,6 @@ test('Staff prompt uses its own Agent definition without subtask completion inst
     assert.match(prompt, /staff-specific definition/);
     assert.match(prompt, new RegExp(SKILL_NAME));
     assert.doesNotMatch(prompt, /planning-attemptCompletion/);
+    assert.ok(prompt.indexOf('CRITICAL STAFF RULE') > prompt.indexOf('WORKSPACE INSTRUCTIONS'));
+    assert.equal(prompt.trimEnd().endsWith('CRITICAL STAFF RULE'), true);
 });

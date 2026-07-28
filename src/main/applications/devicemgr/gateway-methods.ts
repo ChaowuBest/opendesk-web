@@ -20,7 +20,6 @@ import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber, isTaskVisibleForDeveloperMode } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
 import type { BaseToolset } from '../../aikernel/tool.js';
 import { isDeveloperModeEnabled } from '../../utils/setting.js';
@@ -186,8 +185,6 @@ const handleStatus: GatewayMethodHandler = (_conn, _frame, _params, respond) => 
  * 流程与 CLI 一致：创建/复用 task → submitUserMessage → 订阅更新 → 流式推送 chat 事件。
  */
 function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext): GatewayMethodHandler {
-    const agentDecl = new MainAgentDecl();
-
     return async (conn: ConnectionState, _frame, params, respond) => {
         const sessionKey: string = params?.sessionKey ?? 'main';
         const message: string | undefined = params?.message;
@@ -213,7 +210,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
         respond(true, { runId, status: 'started' });
 
         try {
-            const task = await resolveOrCreateTask(ctx, agentDecl, conn.connId, sessionKey);
+            const task = await resolveOrCreateTask(ctx, conn.connId, sessionKey);
 
             // 如果任务正在运行，等待它完成
             if (task.task_status === 'running') {
@@ -302,12 +299,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
 /**
  * 解析或创建会话任务——与 ChannelMessageRouter.resolveSessionTask 逻辑类似。
  */
-async function resolveOrCreateTask(
-    ctx: GatewayMethodContext,
-    agentDecl: MainAgentDecl,
-    connId: string,
-    sessionKey: string
-): Promise<TaskState> {
+async function resolveOrCreateTask(ctx: GatewayMethodContext, connId: string, sessionKey: string): Promise<TaskState> {
     const key = sessionTaskKey(connId, sessionKey);
     const entry = sessionTaskMap.get(key);
 
@@ -323,8 +315,7 @@ async function resolveOrCreateTask(
     const task = ctx.taskManagerState.createTask(ctx.model);
     task.harnessContext = HarnessContext.createEmpty();
     task.harnessContext.workspace = ctx.workspace;
-    const systemPrompt = await agentDecl.createSystemPrompt(undefined, task);
-    await task.setSystemPrompt(systemPrompt);
+    await task.rebuildSystemPrompt();
     task.task_name = `Gateway: ${sessionKey}`;
 
     // 挂载额外的工具集（如 SendFileTool），与 channel 路径行为一致

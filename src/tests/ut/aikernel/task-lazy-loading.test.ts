@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, test } from '@jest/globals';
+import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact.js';
 import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import '../../../main/aikernel/goal/task-extension.js';
@@ -229,7 +229,7 @@ describe('task lazy loading', () => {
         expect(fs.readFileSync(taskFile, 'utf8')).toBe(taskFileBeforeLoad);
     });
 
-    test('skips a mismatched legacy index entry during load but may revive it in the index', () => {
+    test('drops a mismatched legacy index entry without touching its task file', () => {
         const { taskDirectory, taskFile, taskListFile } = persistTaskFixture();
         const mismatchedJson = JSON.parse(fs.readFileSync(taskFile, 'utf8'));
         mismatchedJson.task_id = 'task-other';
@@ -247,17 +247,10 @@ describe('task lazy loading', () => {
 
         const manager = TaskManagerState.load()!;
 
-        // 不匹配的任务不会被加载到内存中
         expect(manager.tasks.map((task) => task.task_id)).toEqual(['task-valid']);
-        // 由于 .json 文件仍在磁盘上，合并写入时该条目会被保留（复活）。
-        // 这是可接受的：不丢失数据，下次访问时会被检测为 corrupted 并通过
-        // removeCorruptedTaskEntry({ mergeDiskEntries: false }) 正确清除。
         expect(
-            JSON.parse(fs.readFileSync(taskListFile, 'utf8'))
-                .map((entry: { task_id: string }) => entry.task_id)
-                .sort()
-        ).toEqual(['task-lazy', 'task-valid']);
-        // 物理文件不被触碰
+            JSON.parse(fs.readFileSync(taskListFile, 'utf8')).map((entry: { task_id: string }) => entry.task_id)
+        ).toEqual(['task-valid']);
         expect(fs.readFileSync(taskFile, 'utf8')).toBe(mismatchedContent);
     });
 
@@ -279,7 +272,7 @@ describe('task lazy loading', () => {
     });
 
     test('removes a corrupted entry without deleting task data, artifacts, or todos', () => {
-        const { taskFile, taskListFile } = persistTaskFixture();
+        const { taskDirectory, taskFile, taskListFile } = persistTaskFixture();
         const malformedContent = '{invalid json';
         fs.writeFileSync(taskFile, malformedContent, 'utf8');
         const artifactFile = path.join(getTaskArtifactDirectory('task-lazy'), 'preserved.txt');
@@ -297,12 +290,25 @@ describe('task lazy loading', () => {
             }
         ]);
         const manager = TaskManagerState.load()!;
+        const concurrentTaskManager = new TaskManagerState();
+        const concurrentTask = new TaskState(concurrentTaskManager);
+        concurrentTask.task_id = 'task-from-another-process';
+        concurrentTask.task_name = 'concurrent task';
+        concurrentTask.created_at = new Date('2026-07-18T09:00:00.000Z');
+        fs.writeFileSync(
+            path.join(taskDirectory, `${concurrentTask.task_id}.json`),
+            JSON.stringify(concurrentTask.toJSON(), null, 4),
+            'utf8'
+        );
+        const concurrentIndexEntry = concurrentTask.toIndexJSON();
+        const diskIndex = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
+        fs.writeFileSync(taskListFile, JSON.stringify([...diskIndex, concurrentIndexEntry], null, 4), 'utf8');
 
         expect(manager.getTaskLoadResult('task-lazy').corrupted).toBe(true);
         expect(manager.removeCorruptedTaskEntry('task-lazy')).toBe(true);
 
         expect(manager.tasks).toEqual([]);
-        expect(JSON.parse(fs.readFileSync(taskListFile, 'utf8'))).toEqual([]);
+        expect(JSON.parse(fs.readFileSync(taskListFile, 'utf8'))).toEqual([concurrentIndexEntry]);
         expect(fs.readFileSync(taskFile, 'utf8')).toBe(malformedContent);
         expect(fs.readFileSync(artifactFile, 'utf8')).toBe('preserved artifact');
         expect(getTaskTodosForDisplay('task-lazy')).toEqual([
@@ -427,6 +433,30 @@ describe('task lazy loading', () => {
 
         expect(manager.tasks).toEqual([]);
         expect(fs.existsSync(taskFile)).toBe(false);
+    });
+
+    test('explicit deletion does not restore the task index when removing its task file fails', () => {
+        const { taskFile, taskListFile } = persistTaskFixture();
+        const manager = TaskManagerState.load()!;
+        const originalUnlinkSync = fs.unlinkSync.bind(fs);
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation((filePath) => {
+            if (path.resolve(filePath.toString()) === path.resolve(taskFile)) {
+                throw new Error('simulated task file deletion failure');
+            }
+            originalUnlinkSync(filePath);
+        });
+
+        try {
+            expect(manager.removeTask('task-lazy')).toEqual(['task-lazy']);
+        } finally {
+            unlinkSpy.mockRestore();
+        }
+
+        expect(fs.existsSync(taskFile)).toBe(true);
+        expect(manager.tasks).toEqual([]);
+        expect(
+            JSON.parse(fs.readFileSync(taskListFile, 'utf8')).map((entry: { task_id: string }) => entry.task_id)
+        ).not.toContain('task-lazy');
     });
 
     test('manual recovery scans every task file and rebuilds an exact index', () => {

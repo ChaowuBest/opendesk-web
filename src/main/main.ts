@@ -66,8 +66,8 @@ import {
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
-import { MainAgentDecl } from './aikernel/agents/main/agent.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
+import type { AgentDecl } from './aikernel/agents/common.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
@@ -118,11 +118,10 @@ import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './
 import { replaceTaskHarnessForMode } from './aikernel/task/mode.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
-let _globalAgentDecl: MainAgentDecl | null = null;
-function getGlobalAgentDecl(): MainAgentDecl {
+let _globalAgentDecl: AgentDecl | null = null;
+function getGlobalAgentDecl(): AgentDecl {
     if (!_globalAgentDecl) {
-        _globalAgentDecl = new MainAgentDecl();
-        AgentRegistry.initBuiltinAgents();
+        _globalAgentDecl = AgentRegistry.getMainAgent();
     }
     return _globalAgentDecl;
 }
@@ -133,7 +132,7 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const workspace = Setting.getInstance().getEffectiveWorkspace();
     const agent = getGlobalAgentDecl();
     const modes = agent.supportedModes();
-    const mode = modes.find((m) => m.id === (_currentElectronModeId || agent.defaultModeId())) ?? modes[0];
+    const mode = modes.find((candidate) => candidate.id === _currentElectronModeId) ?? agent.getDefaultMode();
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
 }
 
@@ -825,7 +824,7 @@ const registerModeAPIHandlers = () => {
         try {
             const agentDecl = getGlobalAgentDecl();
             const modes = agentDecl.supportedModes();
-            const defaultId = agentDecl.defaultModeId();
+            const defaultId = agentDecl.getDefaultMode().id;
             const currentId = _currentElectronModeId || defaultId;
             return {
                 status: 'ok',
@@ -880,7 +879,7 @@ const registerModeAPIHandlers = () => {
             }
 
             const workspace = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-            const oldModeId = task.activeModeId || agentDecl.defaultModeId();
+            const oldModeId = task.activeModeId || agentDecl.getDefaultMode().id;
             if (oldModeId !== modeId) {
                 const oldMode = modes.find((m) => m.id === oldModeId);
                 if (oldMode?.onExitMode) {
@@ -892,13 +891,7 @@ const registerModeAPIHandlers = () => {
             }
 
             try {
-                await replaceTaskHarnessForMode(
-                    task,
-                    workspace,
-                    target,
-                    () => new ElectronPermissionPromptProvider(),
-                    () => agentDecl.createSystemPrompt(target, task)
-                );
+                await replaceTaskHarnessForMode(task, workspace, target, () => new ElectronPermissionPromptProvider());
             } catch (err) {
                 logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
                 return { status: 'error', message: String(err) };
@@ -1098,8 +1091,8 @@ const registerTaskManagerAPIHandlers = () => {
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const modes = agentDecl.supportedModes();
-        const resolvedModeId = options.modeId || _currentElectronModeId || agentDecl.defaultModeId();
-        const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
+        const resolvedModeId = options.modeId || _currentElectronModeId;
+        const activeMode = modes.find((candidate) => candidate.id === resolvedModeId) ?? agentDecl.getDefaultMode();
 
         try {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
@@ -1117,7 +1110,7 @@ const registerTaskManagerAPIHandlers = () => {
                 const targetMode = modes2.find((m) => m.id === targetModeId);
                 if (!targetMode) return;
                 const ws = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-                const oldId = task.activeModeId || getGlobalAgentDecl().defaultModeId();
+                const oldId = task.activeModeId || getGlobalAgentDecl().getDefaultMode().id;
                 if (oldId !== targetModeId) {
                     const oldMode = modes2.find((m) => m.id === oldId);
                     await oldMode?.onExitMode?.(ws);
@@ -1125,13 +1118,7 @@ const registerTaskManagerAPIHandlers = () => {
                 }
                 // 仅切换当前任务的模式，不影响其他任务
                 try {
-                    await replaceTaskHarnessForMode(
-                        task,
-                        ws,
-                        targetMode,
-                        () => new ElectronPermissionPromptProvider(),
-                        () => getGlobalAgentDecl().createSystemPrompt(targetMode, task)
-                    );
+                    await replaceTaskHarnessForMode(task, ws, targetMode, () => new ElectronPermissionPromptProvider());
                 } catch (err) {
                     logger.warn(`Failed to switch task ${task.task_id} to mode ${targetModeId}: ${err}`);
                     return;
@@ -1150,8 +1137,7 @@ const registerTaskManagerAPIHandlers = () => {
                 if (result.status !== 'ok') return result;
             }
 
-            const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
-            task.setSystemPrompt(systemPrompt);
+            await task.rebuildSystemPrompt();
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -1221,10 +1207,14 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         try {
-            const agentDecl = getGlobalAgentDecl();
-            const modes = agentDecl.supportedModes();
-            const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
-            const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+            const taskAgent = task.getAgent();
+            const mainAgent = getGlobalAgentDecl();
+            const mainModeId = task.activeModeId || _currentElectronModeId;
+            const mainModes = mainAgent.supportedModes();
+            const mode =
+                taskAgent.agentId === mainAgent.agentId
+                    ? (mainModes.find((candidate) => candidate.id === mainModeId) ?? mainAgent.getDefaultMode())
+                    : task.getAgentMode();
             const savedEnv = task.harnessContext.environ;
             const savedExecutionHost = task.harnessContext.executionHost;
             const savedPrompt = task.harnessContext.permissionPrompt;
@@ -1235,6 +1225,10 @@ const registerTaskManagerAPIHandlers = () => {
             await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
             task.harnessContext = ctx;
             task.workspace = newWorkspace;
+            task.activeModeId = mode.id;
+            task.allowedTools = mode.allowedTools;
+            task.disabledTools = mode.disabledTools;
+            await task.rebuildSystemPrompt();
             task.persistLater();
             return { status: 'ok' };
         } catch (err: any) {
@@ -1276,9 +1270,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', code: 'TASK_CORRUPTED', message: t('task.corrupted.detail', { taskId }) };
         }
 
-        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
-            getGlobalAgentDecl().createSystemPrompt(mode, taskState)
-        );
+        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task);
         task.ensureValidModelOrFallback();
         await task.ensureToolsResolved();
         await task.render();
@@ -1513,6 +1505,7 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        task.agentId = undefined;
         task.setSystemPrompt(prompt);
     });
     async function setTaskExecutionNode(taskId: string, nodeId?: string | null) {
@@ -1526,12 +1519,7 @@ const registerTaskManagerAPIHandlers = () => {
         return result;
     }
     async function refreshTaskSystemPrompt(task: TaskState): Promise<void> {
-        const agentDecl = getGlobalAgentDecl();
-        const modes = agentDecl.supportedModes();
-        const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
-        const activeMode = modes.find((m) => m.id === modeId) ?? modes[0];
-        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
-        task.setSystemPrompt(systemPrompt);
+        await task.rebuildSystemPrompt();
     }
     ipcMain.handle('node:listExecutionNodes', async () => {
         return { status: 'ok', data: listExecutionNodes() };
@@ -1560,9 +1548,7 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
-            getGlobalAgentDecl().createSystemPrompt(mode, taskState)
-        );
+        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task);
         if (details.attachedFilePaths) {
             try {
                 await task.attachFiles(details.attachedFilePaths);
@@ -2970,6 +2956,18 @@ async function startApplication(): Promise<void> {
         p1e.end();
         initAgentGateHook();
 
+        // Worker 会继承 ARKDATA_AVAILABLE，因此原生桥探测必须先于 Worker 和应用 Agent 初始化。
+        // 同时保持在 createWindow 之前注册，确保 renderer 首次调用 native bridge 时 handler 已就绪。
+        registerNativeBridge();
+        await probeArkdataAvailability();
+
+        // 应用 Agent 必须先于恢复任务的 lazy harness 可用。否则 renderer 若在启动阶段较早
+        // 打开旧任务，尚未注册的应用 agentId 会被误判为缺失并永久回退到 main。
+        const p1f = startupTrace.createPhase('startup.ready.application_agents');
+        initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
+        await ApplicationRegistry.loadAvailableAgents();
+        p1f.end();
+
         // 注册 GUI 侧 afterFinishTurn 钩子（会话结束时恶意 skill 归因 + 弹窗推送）。
         // 钩子注册逻辑在 AgentGateApplication.registerGuiHooks 内部，此处只注入 IPC 推送回调。
         {
@@ -3008,14 +3006,13 @@ async function startApplication(): Promise<void> {
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const defaultMode =
-            agentDecl.supportedModes().find((m) => m.id === (_currentElectronModeId || agentDecl.defaultModeId())) ??
-            agentDecl.supportedModes()[0];
+            agentDecl.supportedModes().find((candidate) => candidate.id === _currentElectronModeId) ??
+            agentDecl.getDefaultMode();
 
         await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
             defaultMode,
             startupWorkspace,
-            () => new ElectronPermissionPromptProvider(),
-            (mode, task) => agentDecl.createSystemPrompt(mode, task)
+            () => new ElectronPermissionPromptProvider()
         );
         p2.end();
 
@@ -3043,11 +3040,6 @@ async function startApplication(): Promise<void> {
         // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
         new ElectronExitPlanModeProvider();
         p3.end();
-
-        // 注册原生桥 + 探测 ArkData 可用性
-        // 必须在 createWindow 之前注册，主窗口加载后会使用 native bridge
-        registerNativeBridge();
-        await probeArkdataAvailability();
 
         // 提前注册设置 IPC handler，确保主窗口加载期间 renderer 调用
         // setting:loadSettingObject（如 needsWizard 判断）能正常返回。
@@ -3270,20 +3262,13 @@ async function startApplication(): Promise<void> {
         p6.end();
 
         const p7 = startupTrace.createPhase('startup.ready.finalize');
-        initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
-        await ApplicationRegistry.loadAvailableAgents();
         initializeProtocolHandlers();
         p7.end();
 
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = getGlobalAgentDecl();
-                const router = new ChannelMessageRouter(
-                    GlobalState.getInstance().taskManagerState,
-                    agentDecl,
-                    startupWorkspace
-                );
+                const router = new ChannelMessageRouter(GlobalState.getInstance().taskManagerState, startupWorkspace);
 
                 const CHANNEL_NAMES: Record<string, string> = {
                     feishu: '飞书',

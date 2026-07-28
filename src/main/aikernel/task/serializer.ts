@@ -18,6 +18,7 @@ import { SessionMemoryStates } from '../compaction/session-memory-compact.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
 import { normalizeTaskUsageSummary } from '../../telemetry/local-telemetry.js';
 import type { ReasoningEffort } from '../../utils/setting.js';
+import { AgentRegistry } from '../agents/registry.js';
 import { TaskState } from '../states/tasks.js';
 import type { TaskManagerState } from './manager.js';
 import { logger } from '../../utils/logger.js';
@@ -87,7 +88,8 @@ export function serializeTask(task: TaskState): object {
         ...(task.internal === true ? { internal: true } : {}),
         model: task.model,
         reasoningEffort: task.reasoningEffort,
-        agentId: task.agentId,
+        agentId: task.agentId ?? null,
+        custom_system_prompt: task.custom_system_prompt ?? null,
         chat_context: task.chat_context.toJSON(),
         tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
         auto_compact_state: AutoCompactStates.serialize(task.auto_compact_state),
@@ -201,8 +203,14 @@ function applyTaskJson(task: TaskState, task_json: any): void {
     task.model = typeof task_json.model === 'string' ? task_json.model : undefined;
     task.reasoningEffort =
         typeof task_json.reasoningEffort === 'string' ? (task_json.reasoningEffort as ReasoningEffort) : undefined;
-    task.agentId = typeof task_json.agentId === 'string' ? task_json.agentId : undefined;
+    task.agentId =
+        typeof task_json.agentId === 'string'
+            ? task_json.agentId
+            : task_json.agentId === null
+              ? undefined
+              : AgentRegistry.getMainAgent().agentId;
     task.chat_context = ChatContext.assign(task_json.chat_context);
+    task.restoreSystemPromptState(task_json.custom_system_prompt);
     // ⚠️ 顺序依赖：chat_context 赋值必须在 extensions.restore() 之前。
     // ensureLoaded() → loadFullTaskData() → applyTaskJson() 中 _loading=true，
     // chat_context getter 此时会跳过 ensureLoaded() 直接返回 _chat_context。
@@ -358,6 +366,7 @@ export function indexEntryHasMetadata(entry: Record<string, unknown>): boolean {
 export function forkTask(task: TaskState): TaskState {
     task.refreshEvidenceCardFeatureState();
     const forkedTask = new TaskState(task.task_manager_state, null);
+    forkedTask.agentId = task.agentId;
     const toolResultReplacementState = task.getSynchronizedToolResultReplacementState();
 
     // Copy chat context via serialization
@@ -397,7 +406,7 @@ export function forkTask(task: TaskState): TaskState {
     forkedTask.executionNodeId = task.executionNodeId;
     forkedTask.executionNodeLabel = task.executionNodeLabel;
     forkedTask.activeModeId = task.activeModeId;
-    forkedTask.agentId = task.agentId;
+    forkedTask.restoreSystemPromptState(task.custom_system_prompt);
     forkedTask.disabledTools = task.disabledTools;
     task.extensions.prepareFork(forkedTask);
 

@@ -167,6 +167,7 @@ export const enUs: Record<string, string> = {
     'mode.invalid': 'Invalid Mode',
     'mode.not.found': 'Mode not found "',
     'mode.available': 'Available modes: ',
+    'mode.unsupportedForAgent': 'Agent "${agentId}" does not support mode "${modeId}"',
     'mode.standard.name': 'Standard',
     'mode.standard.description':
         'Default mode: freely read and write inside the workspace, ask for confirmation outside it',

@@ -15,8 +15,8 @@ import path from 'path';
 import type { AgentSideConnection } from '@agentclientprotocol/sdk';
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../../aikernel/agents/common.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { AcpPermissionPromptProvider } from './permission.js';
 import { AcpAskUserProvider } from './askUser.js';
 import { AcpExitPlanModeProvider } from './exitPlanMode.js';
@@ -26,6 +26,7 @@ import { createInteractionToolset } from '../../aikernel/interaction/tools.js';
 import { logger } from '../../utils/logger.js';
 import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
+import { replaceTaskHarnessForMode } from '../../aikernel/task/mode.js';
 
 interface AcpSessionState {
     sessionId: string;
@@ -44,11 +45,6 @@ function sessionNotFound(sessionId: string): acp.RequestError {
 
 function errorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
-}
-
-function getDefaultMode(agentDecl: MainAgentDecl): ModeDecl {
-    const modes = agentDecl.supportedModes();
-    return modes.find((mode) => mode.id === agentDecl.defaultModeId()) ?? modes[0];
 }
 
 function modeToAcp(mode: ModeDecl): acp.SessionMode {
@@ -119,7 +115,7 @@ export function promptBlocksToText(blocks: acp.ContentBlock[]): string {
 }
 
 export class OpenDeskAcpAgent implements acp.Agent {
-    private readonly agentDecl = new MainAgentDecl();
+    private readonly agentDecl = AgentRegistry.getMainAgent();
     private readonly sessions = new Map<string, AcpSessionState>();
 
     constructor(private readonly connection: AgentSideConnection) {}
@@ -158,7 +154,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
         }
 
         const sessionId = crypto.randomUUID();
-        const mode = getDefaultMode(this.agentDecl);
+        const mode = this.agentDecl.getDefaultMode();
         const task = GlobalState.getInstance().taskManagerState.createTask();
 
         // Initialize task model from ACP's persisted default (falls back to OpenDesk default)
@@ -208,14 +204,12 @@ export class OpenDeskAcpAgent implements acp.Agent {
                 const bTime = b.task.updated_at?.getTime() ?? b.createdAt.getTime();
                 return bTime - aTime;
             })
-            .map(
-                (session): acp.SessionInfo => ({
-                    sessionId: session.sessionId,
-                    cwd: session.cwd,
-                    title: session.task.task_name || t('acp.session.default_title'),
-                    updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
-                })
-            );
+            .map((session): acp.SessionInfo => ({
+                sessionId: session.sessionId,
+                cwd: session.cwd,
+                title: session.task.task_name || t('acp.session.default_title'),
+                updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
+            }));
 
         return { sessions };
     }
@@ -369,18 +363,16 @@ export class OpenDeskAcpAgent implements acp.Agent {
             const modes = this.agentDecl.supportedModes();
             const targetMode = modes.find((m) => m.id === targetModeId);
             if (!targetMode) return;
-            const ws = Setting.getInstance().getEffectiveWorkspace();
-            const oldId = session.task.activeModeId || this.agentDecl.defaultModeId();
+            const ws = session.cwd;
+            const oldId = session.task.activeModeId || this.agentDecl.getDefaultMode().id;
             if (oldId !== targetModeId) {
                 const oldMode = modes.find((m) => m.id === oldId);
                 await oldMode?.onExitMode?.(ws);
                 await targetMode.onEnterMode?.(ws);
             }
-            session.task.activeModeId = targetModeId;
-            session.task.allowedTools = targetMode.allowedTools;
-            session.task.disabledTools = targetMode.disabledTools;
-            session.task.setSystemPrompt(await this.agentDecl.createSystemPrompt(targetMode, session.task));
-            session.task.persistLater();
+            await replaceTaskHarnessForMode(session.task, ws, targetMode, () => {
+                return new AcpPermissionPromptProvider(this.connection, session.sessionId);
+            });
             session.mode = targetMode;
 
             await this.safeSessionUpdate(
@@ -398,8 +390,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
             new AcpAskUserProvider(this.connection, session.sessionId),
             exitPlanModeProvider
         );
-        session.task.setSystemPrompt(await this.agentDecl.createSystemPrompt(mode, session.task));
-        session.task.persistLater();
+        await session.task.rebuildSystemPrompt();
     }
 
     private async runPrompt(session: AcpSessionState, text: string): Promise<void> {

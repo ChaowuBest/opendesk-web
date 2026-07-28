@@ -84,7 +84,7 @@ export function getPlanModeSubPrompt(taskCtx: TaskContext): string {
   - 识别需要修改的关键文件和它们的依赖关系
 
 ### 阶段 2：设计方案
-- 使用 \`createSubTask\` 工具启动使用 plan agent 的子任务来设计实现方案
+- 使用 \`createSubTask\` 工具启动使用 **plan** agent 的子任务来设计实现方案
 - 基于阶段 1 的探索结果，在 plan 代理的任务描述中提供完整的上下文（包括文件名和代码路径追踪结果）
 - plan agent会返回分步实现策略和关键文件列表
 - 对于复杂任务，可以启动多个 plan 代理从不同视角设计方案：

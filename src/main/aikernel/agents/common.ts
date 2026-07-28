@@ -123,6 +123,7 @@ export interface TaskSkillExposure {
 export interface TaskContext {
     readonly task_id: string;
     readonly task_name: string | null;
+    readonly parent_id?: string | null;
     readonly agentId?: string;
     readonly skillExposure?: TaskSkillExposure;
     getWorkspace(): string;
@@ -130,16 +131,27 @@ export interface TaskContext {
 }
 
 export abstract class AgentDecl {
+    /**
+     * 仅应用 Agent 需要显式作用域，内置 Agent 不绑定应用作用域。
+     */
+    private agentScope?: string;
+
+    protected constructor(agentScope?: string) {
+        this.agentScope = agentScope;
+    }
+
     /** Agent 的唯一名称标识 */
     abstract readonly agentName: string;
 
     /**
-     * Agent 的运行时唯一标识。内置 Agent 默认复用 agentName；
-     * 外部加载的 Agent 应覆写为其稳定来源标识。
+     * Agent 的运行时唯一标识。agentName 仅在所属作用域内唯一。
      */
     get agentId(): string {
-        return this.agentName;
+        return this.agentScope ? `${this.agentScope}:${this.agentName}` : this.agentName;
     }
+
+    /** 是否可由主 Agent 作为子任务执行者调度 */
+    abstract readonly dispatchable: boolean;
 
     /** Agent 类型：builtin 为系统内置，custom 为通过 AGENT.md 等外部工具加载（预留） */
     abstract readonly agentType: AgentType;
@@ -153,11 +165,32 @@ export abstract class AgentDecl {
     abstract supportedModes(): ModeDecl[];
 
     /**
-     * 返回默认模式的 id
+     * 返回默认模式的 id。
+     * 业务代码应使用 getDefaultMode() 获取默认模式。
      */
-    abstract defaultModeId(): string;
+    protected abstract defaultModeId(): string;
+
+    /**
+     * 返回此 Agent 的默认模式。
+     */
+    getDefaultMode(): ModeDecl {
+        const modes = this.supportedModes();
+        const mode = modes.find((candidate) => candidate.id === this.defaultModeId()) ?? modes[0];
+        if (!mode) {
+            throw new Error(`Agent "${this.agentId}" does not provide any modes`);
+        }
+        return mode;
+    }
 
     abstract createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string>;
+
+    /**
+     * 将应用提供的 Agent 绑定到应用作用域。
+     * 仅由 AgentRegistry 在注册应用 Agent 时调用。
+     */
+    bindApplicationScope(bundleName: string): void {
+        this.agentScope = bundleName;
+    }
 
     /**
      * 释放 agent 持有的资源。

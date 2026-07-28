@@ -73,7 +73,11 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
                 tui.taskManagerState.tasks.push(task);
                 tui.taskManagerState.save();
                 tui.taskManagerState.publishTaskListUpdate();
-                await tui.switchToTask(task);
+                const initializedTask = tui.taskManagerState.getTask(task.task_id);
+                if (!initializedTask) {
+                    throw new Error(t('context.task.not.found'));
+                }
+                await tui.switchToTask(initializedTask);
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
                 const info = new InfoOverlay(tui, {

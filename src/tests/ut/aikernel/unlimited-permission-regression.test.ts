@@ -244,13 +244,14 @@ describe('CLI unlimited permission regressions', () => {
         task.harnessContext = await HarnessContext.createForMode('/workspace', MAIN_AGENT_STANDARD_MODE);
         task.setSystemPrompt('system:standard');
         manager.tasks.push(task);
-        const createSystemPrompt = jest.fn(async (activeMode) => `system:${activeMode.id}`);
+        const buildSystemPrompt = jest
+            .spyOn(task, 'buildSystemPrompt')
+            .mockImplementation(async () => `system:${task.activeModeId}`);
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             _activeMode: MAIN_AGENT_STANDARD_MODE,
             workspace: '/workspace',
             agentDecl: {
-                supportedModes: () => [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_UNLIMITED_MODE],
-                createSystemPrompt
+                supportedModes: () => [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_UNLIMITED_MODE]
             },
             taskManagerState: manager,
             syncModeDisplay: jest.fn(),
@@ -261,7 +262,7 @@ describe('CLI unlimited permission regressions', () => {
 
         await tui.setMode(MAIN_AGENT_UNLIMITED_MODE.id);
 
-        expect(createSystemPrompt).toHaveBeenCalledWith(MAIN_AGENT_UNLIMITED_MODE, task);
+        expect(buildSystemPrompt).toHaveBeenCalledWith();
         expect(task.chat_context.system_prompt?.content).toBe('system:unlimited');
     });
 
@@ -274,14 +275,12 @@ describe('CLI unlimited permission regressions', () => {
         task.setSystemPrompt('system:standard');
         manager.tasks.push(task);
         const previousContext = task.harnessContext;
+        jest.spyOn(task, 'buildSystemPrompt').mockRejectedValueOnce(new Error('prompt generation failed'));
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             _activeMode: MAIN_AGENT_STANDARD_MODE,
             workspace: '/workspace',
             agentDecl: {
-                supportedModes: () => [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_UNLIMITED_MODE],
-                createSystemPrompt: jest.fn(async () => {
-                    throw new Error('prompt generation failed');
-                })
+                supportedModes: () => [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_UNLIMITED_MODE]
             },
             taskManagerState: manager,
             syncModeDisplay: jest.fn(),

@@ -28,9 +28,9 @@ import TodoMgrWorker from './worker';
 import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import { ApplicationRegistry } from '../registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { buildTriggerMessage } from './trigger.js';
 import { resolveTodoWorkspace } from './workspace.js';
-import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
@@ -173,7 +173,8 @@ export class TodoMgrApplication extends BaseApplication {
             // 标志为自动触发任务（无交互 UI），禁用 askUser 等交互工具
             // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
             const origin = deliver || ({ type: 'automation' } as any);
-            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt, {
+            const mainAgent = AgentRegistry.getMainAgent();
+            const task = await taskManager.dispatchPromptToAgent(mainAgent, undefined, prompt, {
                 workspace: resolvedWorkspace,
                 origin
             });

@@ -25,8 +25,8 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
-import type { ModeDecl } from '../aikernel/agents/common.js';
+import { AgentRegistry } from '../aikernel/agents/registry.js';
+import type { AgentDecl, ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { getTaskArtifactDirectory } from '../utils/setting.js';
@@ -92,7 +92,7 @@ class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
 
 export class HeadlessRunner {
     private taskManagerState: TaskManagerState;
-    private agentDecl: MainAgentDecl;
+    private agentDecl: AgentDecl;
     private args: CommandLineArgs;
     private activeMode: ModeDecl;
 
@@ -102,12 +102,11 @@ export class HeadlessRunner {
     constructor(args: CommandLineArgs) {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new MainAgentDecl();
+        this.agentDecl = AgentRegistry.getMainAgent();
 
         const modes = this.agentDecl.supportedModes();
         // allowEverything 优先级最高，等同于 unlimited mode
         const cliModeId = args.allowEverything ? 'unlimited' : args.mode?.toLowerCase();
-        const defaultId = this.agentDecl.defaultModeId();
         if (cliModeId) {
             const found = modes.find((m) => m.id === cliModeId);
             if (!found) {
@@ -117,7 +116,7 @@ export class HeadlessRunner {
             }
             this.activeMode = found;
         } else {
-            this.activeMode = modes.find((m) => m.id === defaultId) ?? modes[0];
+            this.activeMode = this.agentDecl.getDefaultMode();
         }
     }
 
@@ -129,8 +128,7 @@ export class HeadlessRunner {
         await this.taskManagerState.setupLazyHarnessInit(
             this.activeMode,
             this.args.workspace,
-            () => new HeadlessPermissionPromptProvider(),
-            (mode, task) => this.agentDecl.createSystemPrompt(mode, task)
+            () => new HeadlessPermissionPromptProvider()
         );
     }
 
@@ -171,23 +169,24 @@ export class HeadlessRunner {
             task.profiler = new TaskProfiler(task.task_id);
         }
 
+        const taskAgent = task.getAgent();
+        const taskMode = taskAgent.agentId === this.agentDecl.agentId ? this.activeMode : task.getAgentMode();
+
         // 初始化 harness（resume 的任务也需要重新初始化，因为 harnessContext 不落盘）
         try {
-            task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
+            task.harnessContext = await HarnessContext.createForMode(this.args.workspace, taskMode);
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
-            task.activeModeId = this.activeMode.id;
-            task.disabledTools = this.activeMode.disabledTools;
+            task.activeModeId = taskMode.id;
+            task.allowedTools = taskMode.allowedTools;
+            task.disabledTools = taskMode.disabledTools;
             await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
 
-        const refreshedLazyPrompt = await this.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
-            this.agentDecl.createSystemPrompt(mode, taskState)
-        );
+        const refreshedLazyPrompt = await this.taskManagerState.refreshLazyTaskSystemPrompt(task);
         if (!this.args.resume || !refreshedLazyPrompt) {
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
-            await task.setSystemPrompt(systemPrompt);
+            await task.rebuildSystemPrompt();
         }
         if (this.args.resume) {
             // resume 时需要先解析工具引用，再打印历史对话

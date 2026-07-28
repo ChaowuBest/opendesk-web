@@ -19,8 +19,7 @@ import {
     interceptConsole,
     dropDeprecatedLogs,
     getLogFilename,
-    reloadLoggerFileTransport,
-    logger
+    reloadLoggerFileTransport
 } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
@@ -33,7 +32,6 @@ import { program as prog, Option } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { MainAgentDecl } from './aikernel/agents/main/agent.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
 import { StartupTrace } from './telemetry/opentelemetry/startup-tracer.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
@@ -475,35 +473,32 @@ async function main(args: CommandLineArgs) {
             process.stdout.write(FULL_CLEAR);
         }
 
-        const t5 = startupTrace.createPhase('startup.cli.tui_start');
-        const tui = new OpenDeskTUI(args);
-        tui.start();
-        t5.end();
-
-        const t6 = startupTrace.createPhase('startup.cli.registry');
+        const t5 = startupTrace.createPhase('startup.cli.registry');
         initializeRegistry();
         initializeRegistryWorker();
         await ApplicationRegistry.loadAvailableAgents();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
+        t5.end();
+
+        const t6 = startupTrace.createPhase('startup.cli.tui_start');
+        const tui = new OpenDeskTUI(args);
+        tui.start();
         t6.end();
 
         // 为从磁盘恢复的旧任务设置延迟 harness 初始化
-        const tuiAgentDecl = new MainAgentDecl();
         await tui.taskManagerState.setupLazyHarnessInit(
             tui.activeMode,
             args.workspace,
-            () => tui.permissionPromptProvider,
-            (mode, task) => tuiAgentDecl.createSystemPrompt(mode, task)
+            () => tui.permissionPromptProvider
         );
 
         // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = new MainAgentDecl();
-                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.workspace, args.model);
+                const router = new ChannelMessageRouter(tui.taskManagerState, args.workspace, args.model);
 
                 const CHANNEL_NAMES: Record<string, string> = {
                     feishu: '飞书',

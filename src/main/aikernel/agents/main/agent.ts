@@ -13,7 +13,7 @@ import { AgentDecl, localizeModeDisplays, type AgentType, type ModeDecl, type Ta
 import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
-import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
+import { SUBTASK_SYSTEM_PROMPT, TASK_MANAGEMENT_PROMPT } from '../../planning/prompt.js';
 import { getLocalISODate } from '../../../utils/date.js';
 import {
     MAIN_AGENT_STANDARD_MODE,
@@ -260,6 +260,7 @@ function formatBullets(items: Array<string | string[]>): string[] {
 
 export class MainAgentDecl extends AgentDecl {
     readonly agentName = 'main';
+    readonly dispatchable = false;
     readonly agentType: AgentType = 'builtin';
     readonly whenToUse = '通用主智能体，负责与用户直接交互并执行各种软件工程任务，包括编码、调试、重构和项目管理等。';
 
@@ -273,17 +274,21 @@ export class MainAgentDecl extends AgentDecl {
         ]);
     }
 
-    defaultModeId(): string {
+    protected defaultModeId(): string {
         return 'standard';
     }
 
     async createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
-        const effectiveWorkspace = taskCtx.getWorkspace();
-        const executionHost = getTaskExecutionHost(taskCtx);
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml(
             taskCtx.skillExposure,
             taskCtx.agentId
         );
+        if (taskCtx.parent_id) {
+            return [SUBTASK_SYSTEM_PROMPT.trim(), getSkillsSection(skillFrontmatters)].join('\n\n');
+        }
+
+        const effectiveWorkspace = taskCtx.getWorkspace();
+        const executionHost = getTaskExecutionHost(taskCtx);
         const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 
         const soulUid = SoulRegistry.getActiveSoulUid();

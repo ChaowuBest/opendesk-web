@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { z } from 'zod';
-import { ToolCall } from '../../../main/aikernel/messages.js';
+import { AssistantMessage, ToolCall, ToolCallMessagePart } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import {
@@ -95,5 +95,34 @@ describe('TaskState tool instrumentation boundary', () => {
                 result: 'tool-result:after-hook'
             }
         ]);
+    });
+
+    test('stores the stable turn id in tool-call runtime metadata', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const task = new TaskState(manager);
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue(undefined);
+
+        await task.startInternalTurn({
+            prompt: 'continue',
+            source: 'test',
+            metadata: {
+                scope: 'task',
+                origin: { source: 'internal', reason: 'test' }
+            }
+        });
+
+        const assistantMessage = task.chat_context.lastMessage() as AssistantMessage;
+        const toolCall = new ToolCall(0, 'call-with-turn', 'testTool', '{}');
+        const toolPart = new ToolCallMessagePart();
+        toolPart.push(toolCall);
+        assistantMessage.content.push(toolPart);
+        task.applyRuntimeMetadataToAssistant(assistantMessage);
+
+        expect(assistantMessage.metadata?.execution?.turnId).toBe(`${task.task_id}:1`);
+        expect(toolCall.metadata?.execution?.turnId).toBe(`${task.task_id}:1`);
     });
 });
