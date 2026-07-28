@@ -185,6 +185,16 @@ src/renderer/
 - **示例**：见 `src/main/applications/skills/resources/example/`（含 SKILL.md 与可选 handler.js），复制到应用数据目录 `skills/` 后即可被主进程检测并调用。
 - **前端 API**：`window.skillRegistryAPI.list()`、`skillRegistryAPI.refresh()`、`skillRegistryAPI.getSkillsDirectory()`。
 
+### 3.5. MCP 工具分层加载
+
+MCP Manager 会在建立连接后读取 Server 的工具列表，但不会无条件把所有完整定义注入模型上下文：
+
+- 当全部 MCP 工具定义不超过 16,000 字符预算时，保持原有独立工具注册方式。
+- 超出预算时，按 Server 汇总定义大小，并优先延迟加载最大的 Server，直到直接注册部分回到预算内。Server 内的工具始终使用相同加载模式。
+- 延迟工具通过三级网关访问：`mcpSearchTools` 返回最多 240 字符的摘要，`mcpGetTool` 只加载一个工具的完整 `description` 和 `inputSchema`，`mcpCallTool` 再转发实际调用。
+
+该机制位于 MCP Client 侧，不要求第三方 MCP Server 实现额外协议。大型文档 MCP 不再在每次模型请求中携带全部工具描述，小型 MCP 的工具名和调用方式则保持兼容。
+
 ## 4. 后续开发规划
 
 #### 版本节奏

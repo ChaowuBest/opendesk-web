@@ -1,0 +1,207 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { z } from 'zod';
+import { t } from '../../../locale/index.js';
+import { BaseTool } from '../../aikernel/tool.js';
+import type { McpToolInfo } from './common.js';
+
+export const MCP_EAGER_DEFINITION_CHAR_BUDGET = 16_000;
+
+const MCP_TOOL_SUMMARY_MAX_CHARS = 240;
+
+export interface McpToolPartition {
+    eager: McpToolInfo[];
+    deferred: McpToolInfo[];
+}
+
+function estimateToolDefinitionChars(tool: McpToolInfo): number {
+    return JSON.stringify({
+        name: `${tool.serverName}__${tool.name}`,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+    }).length;
+}
+
+/**
+ * Keep small MCP collections directly callable for compatibility, while deferring
+ * the largest servers until the total eager definitions fit the context budget.
+ */
+export function partitionMcpToolsForContext(
+    tools: readonly McpToolInfo[],
+    budget: number = MCP_EAGER_DEFINITION_CHAR_BUDGET
+): McpToolPartition {
+    const groups = new Map<string, { size: number; tools: McpToolInfo[] }>();
+    let totalSize = 0;
+
+    for (const tool of tools) {
+        const size = estimateToolDefinitionChars(tool);
+        totalSize += size;
+        const group = groups.get(tool.serverId) || { size: 0, tools: [] };
+        group.size += size;
+        group.tools.push(tool);
+        groups.set(tool.serverId, group);
+    }
+
+    const deferredServerIds = new Set<string>();
+    const groupsBySize = Array.from(groups.entries()).sort(
+        ([leftId, left], [rightId, right]) => right.size - left.size || leftId.localeCompare(rightId)
+    );
+
+    for (const [serverId, group] of groupsBySize) {
+        if (totalSize <= budget) break;
+        deferredServerIds.add(serverId);
+        totalSize -= group.size;
+    }
+
+    return {
+        eager: tools.filter((tool) => !deferredServerIds.has(tool.serverId)),
+        deferred: tools.filter((tool) => deferredServerIds.has(tool.serverId))
+    };
+}
+
+function compactSummary(description: string): string {
+    const compact = description.replace(/\s+/g, ' ').trim();
+    if (compact.length <= MCP_TOOL_SUMMARY_MAX_CHARS) return compact;
+    return `${compact.slice(0, MCP_TOOL_SUMMARY_MAX_CHARS - 1)}…`;
+}
+
+function normalizeSearchText(value: string): string {
+    return value.trim().toLocaleLowerCase();
+}
+
+function scoreTool(tool: McpToolInfo, query: string): number {
+    if (!query) return 1;
+
+    const name = normalizeSearchText(tool.name);
+    const serverName = normalizeSearchText(tool.serverName);
+    const description = normalizeSearchText(tool.description);
+    const normalizedQuery = normalizeSearchText(query);
+    const terms = normalizedQuery.split(/[\s,，;；/]+/u).filter(Boolean);
+    let score = 0;
+
+    for (const term of terms) {
+        if (name === term) score += 100;
+        else if (name.includes(term)) score += 60;
+        if (serverName === term) score += 40;
+        else if (serverName.includes(term)) score += 20;
+        if (description.includes(term)) score += 10;
+    }
+
+    if (terms.length > 1 && description.includes(normalizedQuery)) score += 20;
+    return score;
+}
+
+const McpSearchToolsSchema = z.object({
+    query: z.string().default('').describe(t('mcpmgr.gateway.search.query')),
+    server: z.string().optional().describe(t('mcpmgr.gateway.search.server')),
+    offset: z.number().int().min(0).default(0).describe(t('mcpmgr.gateway.search.offset')),
+    limit: z.number().int().min(1).max(10).default(5).describe(t('mcpmgr.gateway.search.limit'))
+});
+
+export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
+    constructor(private readonly tools: readonly McpToolInfo[]) {
+        super('mcpSearchTools', t('mcpmgr.gateway.search.description'), McpSearchToolsSchema);
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof McpSearchToolsSchema>): Promise<string> {
+        const serverFilter = args.server ? normalizeSearchText(args.server) : '';
+        const matches = this.tools
+            .map((tool, index) => ({ tool, index, score: scoreTool(tool, args.query) }))
+            .filter(({ tool, score }) => {
+                if (score <= 0) return false;
+                if (!serverFilter) return true;
+                return (
+                    normalizeSearchText(tool.serverId) === serverFilter ||
+                    normalizeSearchText(tool.serverName) === serverFilter
+                );
+            })
+            .sort((left, right) => right.score - left.score || left.index - right.index);
+        const page = matches.slice(args.offset, args.offset + args.limit);
+        const nextOffset = args.offset + page.length < matches.length ? args.offset + page.length : null;
+
+        return JSON.stringify({
+            tools: page.map(({ tool }) => ({
+                serverId: tool.serverId,
+                serverName: tool.serverName,
+                name: tool.name,
+                summary: compactSummary(tool.description)
+            })),
+            total: matches.length,
+            nextOffset,
+            hint: t('mcpmgr.gateway.search.hint')
+        });
+    }
+}
+
+const McpGetToolSchema = z.object({
+    serverId: z.string().min(1).describe(t('mcpmgr.gateway.get.serverId')),
+    toolName: z.string().min(1).describe(t('mcpmgr.gateway.get.toolName'))
+});
+
+export class McpGetToolTool extends BaseTool<typeof McpGetToolSchema> {
+    constructor(private readonly tools: readonly McpToolInfo[]) {
+        super('mcpGetTool', t('mcpmgr.gateway.get.description'), McpGetToolSchema);
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof McpGetToolSchema>): Promise<string> {
+        const tool = this.tools.find(
+            (candidate) => candidate.serverId === args.serverId && candidate.name === args.toolName
+        );
+        if (!tool) {
+            throw new Error(
+                t('mcpmgr.gateway.toolNotFound', {
+                    serverId: args.serverId,
+                    toolName: args.toolName
+                })
+            );
+        }
+
+        return JSON.stringify({
+            serverId: tool.serverId,
+            serverName: tool.serverName,
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+        });
+    }
+}
+
+const McpCallToolSchema = z.object({
+    serverId: z.string().min(1).describe(t('mcpmgr.gateway.call.serverId')),
+    toolName: z.string().min(1).describe(t('mcpmgr.gateway.call.toolName')),
+    arguments: z.record(z.string(), z.unknown()).default({}).describe(t('mcpmgr.gateway.call.arguments'))
+});
+
+export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
+    constructor(
+        private readonly tools: readonly McpToolInfo[],
+        callTool: (tool: McpToolInfo, args: Record<string, unknown>) => Promise<string>
+    ) {
+        super('mcpCallTool', t('mcpmgr.gateway.call.description'), McpCallToolSchema);
+        this.setExecutor(async (args) => {
+            const tool = this.tools.find(
+                (candidate) => candidate.serverId === args.serverId && candidate.name === args.toolName
+            );
+            if (!tool) {
+                throw new Error(
+                    t('mcpmgr.gateway.toolNotFound', {
+                        serverId: args.serverId,
+                        toolName: args.toolName
+                    })
+                );
+            }
+            return callTool(tool, args.arguments);
+        });
+    }
+}

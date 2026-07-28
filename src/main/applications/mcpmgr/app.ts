@@ -28,11 +28,18 @@ import {
     UpdateMcpServerTool
 } from './tools.js';
 import { MCPTool } from './mcp-tool.js';
+import {
+    McpCallToolTool,
+    McpGetToolTool,
+    McpSearchToolsTool,
+    partitionMcpToolsForContext
+} from './mcp-gateway-tools.js';
 import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
 import { jsonrepair } from 'jsonrepair';
+import { t } from '../../../locale/index.js';
 import {
     getRegistriesInfo,
     getRegistry,
@@ -434,8 +441,9 @@ export class McpMgrApplication extends BaseApplication {
         }
 
         if (tools && tools.length > 0) {
+            const { eager, deferred } = partitionMcpToolsForContext(tools);
             const toolset = new BaseToolset('mcpmgr');
-            for (const tool of tools) {
+            for (const tool of eager) {
                 let schema: z.ZodType;
                 try {
                     schema = z.fromJSONSchema(tool.inputSchema as any);
@@ -459,11 +467,23 @@ export class McpMgrApplication extends BaseApplication {
                 const toolName = tool.name;
                 mcpTool.setExecutor(async (args) => {
                     const result = await this.callWorker('callMcpTool', serverId, toolName, args);
-                    if (result.status !== 'ok') throw new Error(result.message || 'MCP tool call failed');
+                    if (result.status !== 'ok') throw new Error(result.message || t('mcpmgr.toolCallFailed'));
                     return result.data as string;
                 });
 
                 toolset.addTool(mcpTool);
+            }
+
+            if (deferred.length > 0) {
+                toolset.addTool(new McpSearchToolsTool(deferred));
+                toolset.addTool(new McpGetToolTool(deferred));
+                toolset.addTool(
+                    new McpCallToolTool(deferred, async (tool, args) => {
+                        const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
+                        if (result.status !== 'ok') throw new Error(result.message || t('mcpmgr.toolCallFailed'));
+                        return result.data as string;
+                    })
+                );
             }
             toolsets.push(toolset);
         }

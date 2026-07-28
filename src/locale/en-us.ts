@@ -247,6 +247,25 @@ export const enUs: Record<string, string> = {
     'tools.execution.result': 'Result:',
     'tools.execution.result.object': 'Result object:',
     'tools.param.parse.fail': 'Parameter parsing failed, please provide valid JSON string',
+    'mcpmgr.gateway.search.description':
+        'Search deferred MCP tools by capability. Returns compact summaries only; use mcpGetTool to load the full description and input schema before calling a tool.',
+    'mcpmgr.gateway.search.query': 'Capability, topic, or tool-name keywords; leave empty to browse',
+    'mcpmgr.gateway.search.server': 'Optional MCP server name or serverId filter',
+    'mcpmgr.gateway.search.offset': 'Pagination offset',
+    'mcpmgr.gateway.search.limit': 'Maximum tools to return (1-10)',
+    'mcpmgr.gateway.search.hint':
+        'After selecting a tool, call mcpGetTool for its full definition, then call mcpCallTool.',
+    'mcpmgr.gateway.get.description':
+        'Load the full description and input schema for one deferred MCP tool by serverId and tool name. Then invoke it with mcpCallTool.',
+    'mcpmgr.gateway.get.serverId': 'MCP server ID returned by mcpSearchTools',
+    'mcpmgr.gateway.get.toolName': 'Original MCP tool name returned by mcpSearchTools',
+    'mcpmgr.gateway.call.description':
+        'Call a deferred MCP tool. First find it with mcpSearchTools and load its exact input schema with mcpGetTool.',
+    'mcpmgr.gateway.call.serverId': 'MCP server ID returned by mcpSearchTools',
+    'mcpmgr.gateway.call.toolName': 'Original MCP tool name to call',
+    'mcpmgr.gateway.call.arguments': 'Tool arguments matching the inputSchema returned by mcpGetTool',
+    'mcpmgr.gateway.toolNotFound': 'Deferred MCP tool not found: ${serverId}/${toolName}',
+    'mcpmgr.toolCallFailed': 'MCP tool call failed',
 
     // Commands - Rename
     'rename.no.task': 'No active task',
