@@ -21,7 +21,7 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import iconv from 'iconv-lite';
-import { Setting } from './setting.js';
+import { Setting, getOpendeskDirectory, type SettingData } from './setting.js';
 import { getPlatform } from '../../platforms/base.js';
 
 // ── 可执行文件查找 ──────────────────────────────────────────────────────────
@@ -336,6 +336,127 @@ export function injectNonInteractiveEnv(env: NodeJS.ProcessEnv): void {
     }
 }
 
+const PATH_SEGMENT = process.platform === 'win32' ? ';' : ':';
+const USER_PYTHON_ENV_KEYS = ['VIRTUAL_ENV', 'CONDA_PREFIX', 'CONDA_PREFIX_1'] as const;
+const USER_PYTHON_CONTEXT_ENV_KEYS = [
+    'VIRTUAL_ENV',
+    'VIRTUAL_ENV_PROMPT',
+    'CONDA_PREFIX',
+    'CONDA_PREFIX_1',
+    'CONDA_DEFAULT_ENV',
+    'CONDA_PROMPT_MODIFIER',
+    'CONDA_SHLVL',
+    'CONDA_EXE',
+    'CONDA_PYTHON_EXE',
+    'PYTHONHOME',
+    'PYTHONPATH',
+    'PYTHONUSERBASE'
+] as const;
+
+function prependEnvPath(entries: string[], current: string | undefined): string {
+    return [...entries, ...(current ? [current] : [])].join(PATH_SEGMENT);
+}
+
+export function hasUserPythonEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+    return USER_PYTHON_ENV_KEYS.some((key) => {
+        const value = env[key];
+        return typeof value === 'string' && value.trim().length > 0;
+    });
+}
+
+export function shouldUseIsolatedPython(
+    settingData: Pick<SettingData, 'cli_config'>,
+    env: NodeJS.ProcessEnv = process.env
+): boolean {
+    if (settingData.cli_config?.inherit_venv !== false && hasUserPythonEnvironment(env)) {
+        return false;
+    }
+    return settingData.cli_config?.use_isolated_python !== false;
+}
+
+function normalizePathEntry(entry: string): string {
+    const normalized = path.normalize(entry);
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function getUserPythonPathEntries(env: NodeJS.ProcessEnv): Set<string> {
+    const entries = new Set<string>();
+    const isWindows = process.platform === 'win32';
+
+    for (const key of USER_PYTHON_ENV_KEYS) {
+        const rawDir = env[key];
+        if (typeof rawDir !== 'string' || rawDir.trim().length === 0) continue;
+
+        const dir = rawDir.trim();
+        const candidates = [
+            path.join(dir, 'bin'),
+            path.join(dir, 'condabin'),
+            ...(isWindows ? [dir, path.join(dir, 'Scripts'), path.join(dir, 'Library', 'bin')] : [])
+        ];
+        for (const candidate of candidates) {
+            entries.add(normalizePathEntry(candidate));
+        }
+    }
+
+    return entries;
+}
+
+export function stripUserPythonEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const next = { ...env };
+    for (const key of USER_PYTHON_CONTEXT_ENV_KEYS) {
+        delete next[key];
+    }
+
+    const pathEntriesToRemove = getUserPythonPathEntries(env);
+    if (typeof env.PATH === 'string' && pathEntriesToRemove.size > 0) {
+        next.PATH = env.PATH.split(PATH_SEGMENT)
+            .filter((entry) => !pathEntriesToRemove.has(normalizePathEntry(entry)))
+            .join(PATH_SEGMENT);
+    }
+
+    return next;
+}
+
+export function buildInterpretersEnv(
+    options: {
+        useIsolatedPython?: boolean;
+        baseEnv?: NodeJS.ProcessEnv;
+    } = {}
+): NodeJS.ProcessEnv {
+    const baseEnv = options.baseEnv ?? process.env;
+    const useIsolatedPython = options.useIsolatedPython !== false;
+    const interpretersDir = path.join(getOpendeskDirectory(), 'interpreters');
+    const isWindows = process.platform === 'win32';
+
+    const npmPrefix = baseEnv.NPM_CONFIG_PREFIX || path.join(interpretersDir, 'npm-global');
+    fs.mkdirSync(npmPrefix, { recursive: true });
+    const npmBinDir = isWindows ? npmPrefix : path.join(npmPrefix, 'bin');
+    const env: NodeJS.ProcessEnv = {
+        NPM_CONFIG_PREFIX: npmPrefix,
+        PATH: prependEnvPath([npmBinDir], baseEnv.PATH)
+    };
+
+    if (!useIsolatedPython) return env;
+
+    const pipTarget = baseEnv.PIP_TARGET || path.join(interpretersDir, 'pip-global');
+    fs.mkdirSync(pipTarget, { recursive: true });
+    const pipBinDir = path.join(pipTarget, isWindows ? 'Scripts' : 'bin');
+    const uvDir = path.join(interpretersDir, 'uv');
+    const uvCacheDir = baseEnv.UV_CACHE_DIR || path.join(uvDir, 'cache');
+    const uvToolDir = baseEnv.UV_TOOL_DIR || path.join(uvDir, 'tools');
+    const uvToolBinDir = baseEnv.UV_TOOL_BIN_DIR || path.join(uvToolDir, 'bin');
+    fs.mkdirSync(uvCacheDir, { recursive: true });
+    fs.mkdirSync(uvToolDir, { recursive: true });
+
+    env.PIP_TARGET = pipTarget;
+    env.UV_CACHE_DIR = uvCacheDir;
+    env.UV_TOOL_DIR = uvToolDir;
+    env.UV_TOOL_BIN_DIR = uvToolBinDir;
+    env.PATH = prependEnvPath([npmBinDir, pipBinDir, uvToolBinDir], baseEnv.PATH);
+    env.PYTHONPATH = prependEnvPath([pipTarget], baseEnv.PYTHONPATH);
+    return env;
+}
+
 /**
  * 获取全局环境变量合并后的 env 对象。
  * 优先级：process.env → 平台注入环境变量 → 用户全局 environ → 调用方显式 env。
@@ -344,9 +465,14 @@ export function injectNonInteractiveEnv(env: NodeJS.ProcessEnv): void {
 export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
     // 合并平台注入的环境变量（如 OpenHarmony 上的 NODE_OPTIONS=--jitless）
     let baseEnv: NodeJS.ProcessEnv = { ...process.env };
-    const platformEnviron = getPlatform().getInjectedEnviron();
-    if (platformEnviron.size > 0) {
-        baseEnv = { ...baseEnv, ...Object.fromEntries(platformEnviron) };
+    try {
+        const platformEnviron = getPlatform().getInjectedEnviron();
+        if (platformEnviron.size > 0) {
+            baseEnv = { ...baseEnv, ...Object.fromEntries(platformEnviron) };
+        }
+    } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Platform is not set') throw error;
+        // 平台尚未初始化时仅使用进程环境；测试与早期启动阶段可能进入这里
     }
 
     let globalEnviron: Record<string, string> | undefined;
@@ -388,6 +514,37 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
 }
 
 /**
+ * 构建 OpenDesk 子进程的完整环境变量。
+ *
+ * 统一处理系统/平台/用户/调用方变量、Python 环境继承策略、内置 npm/pip/uv
+ * 可写目录、UTF-8 编码和非交互式防御变量。
+ */
+export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    let env = mergeGlobalEnviron(explicitEnv) ?? { ...process.env, ...explicitEnv };
+    let settingData: Pick<SettingData, 'cli_config'> = { cli_config: undefined };
+    try {
+        settingData = Setting.getInstance().getData();
+    } catch {
+        // Setting 未初始化时使用默认解释器隔离策略
+    }
+
+    const inheritVenv = settingData.cli_config?.inherit_venv !== false;
+    const interpreterBaseEnv = inheritVenv ? env : stripUserPythonEnvironment(env);
+    env = {
+        ...interpreterBaseEnv,
+        ...buildInterpretersEnv({
+            useIsolatedPython: shouldUseIsolatedPython(settingData, interpreterBaseEnv),
+            baseEnv: interpreterBaseEnv
+        })
+    };
+
+    if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = 'utf-8';
+    if (!env.PYTHONUTF8) env.PYTHONUTF8 = '1';
+    injectNonInteractiveEnv(env);
+    return env;
+}
+
+/**
  * 异步执行 shell 命令（对标 child_process.exec 的 promisify 版本）。
  *
  * 通过 spawn + 默认 shell 执行命令，兼容不支持 exec 的平台。
@@ -395,7 +552,7 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
 export function asyncShellExec(command: string, options: ShellExecOptions = {}): Promise<ShellExecResult> {
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
-        const env = mergeGlobalEnviron(options.env);
+        const env = buildChildProcessEnv(options.env);
         // detached 让子进程在新会话中运行（POSIX setsid），使其没有控制终端。
         // 这样 open("/dev/tty") 直接失败（ENXIO），所有工具自动回退非交互模式，
         // 不依赖逐个工具的环境变量兼容性。Windows 无 /dev/tty 问题，跳过。
@@ -484,7 +641,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
  */
 export function shellExec(command: string, options: ShellExecOptions = {}): ShellExecResult {
     const { shellPath, shellArgs } = getDefaultShell();
-    const env = mergeGlobalEnviron(options.env);
+    const env = buildChildProcessEnv(options.env);
     // 不使用内置 encoding 以获取原始 Buffer，后续手动解码处理 Windows GBK 乱码
     const result = spawnSync(shellPath, [...shellArgs, command], {
         cwd: options.cwd,

@@ -174,6 +174,11 @@ export class BaseTool<T extends z.ZodType> {
     name: string;
     description: string;
     params: T;
+    /**
+     * 限定工具仅向指定 Agent 暴露。
+     * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
+     */
+    agentIds?: readonly string[];
     executor?: (args: z.output<T>, taskState?: TaskState) => Promise<string>;
     universalExecutor?: (args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>;
     /**
@@ -193,7 +198,8 @@ export class BaseTool<T extends z.ZodType> {
         return {
             name: this.name,
             description: this.description,
-            params: this.params.toJSONSchema()
+            params: this.params.toJSONSchema(),
+            agentIds: this.agentIds
         };
     }
 
@@ -203,6 +209,7 @@ export class BaseTool<T extends z.ZodType> {
             jsonObject['description'],
             z.fromJSONSchema(jsonObject['params'])
         );
+        tool.agentIds = Array.isArray(jsonObject['agentIds']) ? jsonObject['agentIds'] : undefined;
         return tool;
     }
 

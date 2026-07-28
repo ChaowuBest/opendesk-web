@@ -41,7 +41,7 @@ export const TEST_RESULTS_REPORT_STYLE = `
     /* ── Test report modal ── */
     .analyze-modal-dialog.test-report-modal-dialog {
         width: min(790px, calc(100vw - 64px)); max-width: calc(100vw - 64px);
-        max-height: min(820px, calc(100vh - 64px)); border-radius: 8px;
+        max-height: min(960px, calc(100vh - 64px)); border-radius: 8px;
     }
     .analyze-modal-dialog.test-report-modal-dialog .analyze-modal-header {
         padding: 18px 24px 14px;

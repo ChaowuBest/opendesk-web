@@ -20,13 +20,16 @@ import {
     StaffDefinitionSchema,
     StaffMessageSchema,
     StaffPermissionSchema,
+    staffTriggerIntervalMs,
     sumTaskUsage,
+    type DueStaffTrigger,
     type HistoryQuery,
     type HistoryResult,
     type MessageAttachmentInput,
     type PreparedMessage,
     type PresetStaffDefinition,
     type StaffDefinition,
+    type StaffDefinitionInput,
     type StaffDetail,
     type StaffListItem,
     type StaffMessage,
@@ -224,6 +227,10 @@ export class AgentOfficeRepository {
     ensureWorkspace(staffId: string): string {
         const directory = this.workspaceDirectory(staffId);
         fs.mkdirSync(directory, { recursive: true });
+        const memoryPath = path.join(directory, 'MEMORY.md');
+        if (!fs.existsSync(memoryPath)) {
+            fs.writeFileSync(memoryPath, t('agentoffice.memory.initialContent'), 'utf8');
+        }
         return directory;
     }
 
@@ -257,9 +264,10 @@ export class AgentOfficeRepository {
         return result;
     }
 
-    createStaff(definitionInput: StaffDefinition, defaultAgentsMd = DEFAULT_AGENTS_MD): StaffDetail {
+    createStaff(definitionInput: StaffDefinitionInput, defaultAgentsMd = DEFAULT_AGENTS_MD): StaffDetail {
         const definition = StaffDefinitionSchema.parse(definitionInput);
         const staffId = crypto.randomUUID();
+        const now = new Date().toISOString();
         const directory = this.staffDirectory(staffId);
         const protectedDirectory = this.protectedDirectory(staffId);
         fs.mkdirSync(path.join(directory, 'agent', 'skills'), { recursive: true });
@@ -270,8 +278,9 @@ export class AgentOfficeRepository {
         atomicWriteJson(path.join(directory, 'agent', 'mcp.json'), EMPTY_MCP);
         atomicWriteJson(path.join(protectedDirectory, 'metadata.json'), {
             id: staffId,
-            hired_at: new Date().toISOString(),
-            enabled: true
+            hired_at: now,
+            enabled: true,
+            last_triggered_at: now
         } satisfies StaffMetadata);
         atomicWriteJson(path.join(protectedDirectory, 'tasks.json'), []);
         atomicWriteJson(path.join(protectedDirectory, 'permission.json'), EMPTY_PERMISSION);
@@ -292,6 +301,7 @@ export class AgentOfficeRepository {
                     vendor_name: detail.vendor_name,
                     title: detail.title,
                     specialties: detail.specialties,
+                    trigger_interval: detail.trigger_interval,
                     hired_at: detail.hired_at,
                     enabled: detail.enabled,
                     portrait_url: detail.portrait_url,
@@ -343,7 +353,23 @@ export class AgentOfficeRepository {
     updateStaff(staffId: string, input: StaffUpdateInput): StaffDetail {
         const directory = this.staffDirectory(staffId);
         if (input.definition) {
-            atomicWriteJson(path.join(directory, 'staff.json'), StaffDefinitionSchema.parse(input.definition));
+            const definitionPath = path.join(directory, 'staff.json');
+            const previous = StaffDefinitionSchema.parse(readJson(definitionPath, {}));
+            const next = StaffDefinitionSchema.parse({
+                ...input.definition,
+                trigger_interval: input.definition.trigger_interval ?? previous.trigger_interval
+            });
+            atomicWriteJson(definitionPath, next);
+            if (previous.trigger_interval !== next.trigger_interval) {
+                const metadataPath = path.join(directory, 'protected', 'metadata.json');
+                const metadata = readJson<StaffMetadata>(metadataPath, {
+                    id: staffId,
+                    hired_at: new Date().toISOString(),
+                    enabled: true
+                });
+                metadata.last_triggered_at = new Date().toISOString();
+                atomicWriteJson(metadataPath, metadata);
+            }
         }
         if (input.agents_md !== undefined) {
             fs.writeFileSync(path.join(directory, 'agent', 'agents.md'), input.agents_md, 'utf8');
@@ -362,7 +388,10 @@ export class AgentOfficeRepository {
                 hired_at: new Date().toISOString(),
                 enabled: true
             });
-            if (input.enabled !== undefined) metadata.enabled = input.enabled;
+            if (input.enabled !== undefined) {
+                if (!metadata.enabled && input.enabled) metadata.last_triggered_at = new Date().toISOString();
+                metadata.enabled = input.enabled;
+            }
             if (input.model !== undefined) {
                 const model = input.model?.trim();
                 if (model) metadata.model = model;
@@ -517,7 +546,60 @@ export class AgentOfficeRepository {
 
     readTasks(staffId: string): StaffTaskRecord[] {
         const tasks = readJson<StaffTaskRecord[]>(path.join(this.protectedDirectory(staffId), 'tasks.json'), []);
-        return Array.isArray(tasks) ? tasks : [];
+        return Array.isArray(tasks)
+            ? tasks.map((task) => ({
+                  ...task,
+                  source: task.source ?? 'user'
+              }))
+            : [];
+    }
+
+    claimDueTriggers(nowIso: string): DueStaffTrigger[] {
+        const now = new Date(nowIso);
+        if (Number.isNaN(now.getTime())) return [];
+        const due: DueStaffTrigger[] = [];
+        for (const entry of fs.readdirSync(this.staffsDirectory, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            try {
+                const directory = this.staffDirectory(entry.name);
+                const definition = StaffDefinitionSchema.parse(readJson(path.join(directory, 'staff.json'), {}));
+                const metadataPath = path.join(directory, 'protected', 'metadata.json');
+                const metadata = readJson<StaffMetadata>(metadataPath, {
+                    id: entry.name,
+                    hired_at: new Date(0).toISOString(),
+                    enabled: false
+                });
+                if (!metadata.enabled) continue;
+                const intervalMs = staffTriggerIntervalMs(definition.trigger_interval);
+                if (intervalMs === undefined) continue;
+                const baseline = new Date(metadata.last_triggered_at ?? metadata.hired_at).getTime();
+                if (Number.isFinite(baseline) && now.getTime() - baseline < intervalMs) continue;
+                const previousTriggeredAt = metadata.last_triggered_at;
+                metadata.last_triggered_at = nowIso;
+                atomicWriteJson(metadataPath, metadata);
+                due.push({
+                    staff_id: entry.name,
+                    triggered_at: nowIso,
+                    previous_triggered_at: previousTriggeredAt
+                });
+            } catch {
+                // Ignore malformed staff directories while keeping healthy schedules active.
+            }
+        }
+        return due;
+    }
+
+    releaseTriggerClaim(trigger: DueStaffTrigger): void {
+        const metadataPath = path.join(this.protectedDirectory(trigger.staff_id), 'metadata.json');
+        const metadata = readJson<StaffMetadata>(metadataPath, {
+            id: trigger.staff_id,
+            hired_at: new Date().toISOString(),
+            enabled: false
+        });
+        if (metadata.last_triggered_at !== trigger.triggered_at) return;
+        if (trigger.previous_triggered_at) metadata.last_triggered_at = trigger.previous_triggered_at;
+        else delete metadata.last_triggered_at;
+        atomicWriteJson(metadataPath, metadata);
     }
 
     upsertTask(staffId: string, taskRecord: StaffTaskRecord): void {
@@ -592,7 +674,8 @@ export class AgentOfficeRepository {
     exportStaff(staffId: string, zipPath: string): string {
         const directory = this.staffDirectory(staffId);
         const zip = new AdmZip();
-        zip.addLocalFile(path.join(directory, 'staff.json'));
+        const definition = StaffDefinitionSchema.parse(readJson(path.join(directory, 'staff.json'), {}));
+        zip.addFile('staff.json', Buffer.from(`${JSON.stringify(definition, null, 4)}\n`, 'utf8'));
         addDirectoryToZip(zip, path.join(directory, 'agent'), 'agent');
         zip.writeZip(zipPath);
         return zipPath;

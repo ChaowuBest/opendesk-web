@@ -127,7 +127,12 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
-import { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs, errorToMessage } from '../task/types.js';
+import {
+    ATTEMPT_COMPLETION_TOOL_NAME,
+    getLLMRetryDelayMs,
+    errorToMessage,
+    TaskModelRequestOptions
+} from '../task/types.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
 export class BaseTaskUpdateSubscriber {
@@ -247,6 +252,11 @@ export class TaskState {
      * 不参与序列化——Mode 在每次会话时由 TUI/GUI 设定。
      */
     activeModeId?: string;
+
+    /**
+     * 当前任务对应的 Agent ID，用于筛选 agent 专属工具。
+     */
+    agentId?: string;
 
     /**
      * 当前模式需要排除的工具名列表。
@@ -1839,7 +1849,7 @@ export class TaskState {
         if (matchedNames.size === 0) return message;
 
         const registry = SkillRegistry.getInstance();
-        const allSkills = await registry.getAllSkillsFlat();
+        const allSkills = await registry.getAllSkillsFlat(this.agentId);
 
         let updatedMessage = message;
         for (const name of matchedNames) {
@@ -1847,7 +1857,7 @@ export class TaskState {
             if (!entry) continue;
 
             try {
-                const loadedSkill = await registry.getSkill(entry.bundleName, name);
+                const loadedSkill = await registry.getSkillForAgent(entry.bundleName, name, this.agentId);
                 if (!loadedSkill) continue;
 
                 const directory = loadedSkill.directory || entry.bundleName;
@@ -1871,7 +1881,7 @@ export class TaskState {
         if (matchedNames.size === 0) return;
 
         const registry = SkillRegistry.getInstance();
-        const allSkills = await registry.getAllSkillsFlat();
+        const allSkills = await registry.getAllSkillsFlat(this.agentId);
 
         for (const name of matchedNames) {
             // 查找 user-invocable 的 skill
@@ -1880,7 +1890,7 @@ export class TaskState {
 
             const { bundleName } = entry;
             try {
-                const loadedSkill = await registry.getSkill(bundleName, name);
+                const loadedSkill = await registry.getSkillForAgent(bundleName, name, this.agentId);
                 if (!loadedSkill) continue;
 
                 // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
@@ -1927,10 +1937,9 @@ export class TaskState {
             async (span) => {
                 span.setAttribute('task.id', this.task_id);
                 const model = this.ensureValidModelOrFallback();
-                const prompt = `
-        你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-        请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
-        `;
+                const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
+                请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
+                `;
 
                 const output = await LLM.ask(prompt.trim(), model, {
                     reasoningEffort: 'none',

@@ -273,6 +273,7 @@ async function initializeSkillTestRuntime(command: Command, silent: boolean): Pr
     AgentRegistry.initBuiltinAgents();
     initializeRegistry();
     initializeRegistryWorker();
+    await ApplicationRegistry.loadAvailableAgents();
     GlobalState.getInstance().taskManagerState.toolsetProvider = {
         listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
     };

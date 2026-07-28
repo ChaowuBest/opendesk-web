@@ -1432,6 +1432,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.messagePlaceholder': 'Message; Enter to send, Shift+Enter for a new line',
     'agentoffice.send': 'Send',
     'agentoffice.attach': 'Add attachment',
+    'agentoffice.ctrlEnterSend': 'Press Ctrl+Enter to send',
+    'agentoffice.sendOptions': 'Send options',
     'agentoffice.running': 'Working',
     'agentoffice.disabled': 'Disabled',
     'agentoffice.enabled': 'Enabled',
@@ -1530,6 +1532,15 @@ export const enUs: Record<string, string> = {
     'agentoffice.modelGlobalDefault': 'Use global default model',
     'agentoffice.modelHint':
         'When specified, this staff member uses the selected model when starting or continuing tasks. Leave it blank to use the global default.',
+    'agentoffice.triggerIntervalLabel': 'Trigger interval',
+    'agentoffice.triggerIntervalHint':
+        'OpenDesk wakes this staff member on this interval so they can decide whether any work or communication is needed.',
+    'agentoffice.triggerInterval.5m': 'Every 5 minutes',
+    'agentoffice.triggerInterval.10m': 'Every 10 minutes',
+    'agentoffice.triggerInterval.15m': 'Every 15 minutes',
+    'agentoffice.triggerInterval.30m': 'Every 30 minutes',
+    'agentoffice.triggerInterval.1h': 'Every hour',
+    'agentoffice.triggerInterval.never': 'Never',
     'agentoffice.loadOlder': 'Load older messages',
     'agentoffice.mcpServersArray': 'mcp.json servers must be an array',
     'agentoffice.requiredFields': 'Staff name, creator, and title are required',
@@ -1544,6 +1555,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.taskStatus.running': 'Running',
     'agentoffice.taskStatus.stopped': 'Finished',
     'agentoffice.taskStatus.failed': 'Failed',
+    'agentoffice.taskSource.user': 'User message',
+    'agentoffice.taskSource.scheduled': 'Scheduled trigger',
     'agentoffice.event.staffsChanged': 'The digital staff list changed',
     'agentoffice.event.messagesChanged': 'A digital staff conversation changed',
     'agentoffice.event.staffTaskChanged': 'A task linked to a digital staff member changed',
@@ -1570,12 +1583,18 @@ export const enUs: Record<string, string> = {
         '# Content Writer\n\nYou create clear, natural content for the intended audience, channel, and objective. Confirm tone and length before writing, then review structure, facts, wording, and readability, offering alternative styles when useful.',
     'agentoffice.defaultAgentsMd':
         '# Digital staff instructions\n\nDescribe this staff member’s role and working style here.\n',
+    'agentoffice.memory.initialContent': '# Long-term memory\n\n',
+    'agentoffice.task.scheduledName': 'Scheduled check-in',
+    'agentoffice.task.scheduledInProgress':
+        '## Concurrent work notice\n\nA scheduled task is already running in the background. It has an independent context and may update files in the workspace at the same time. Account for that while handling this user message and use sendReply to tell the user first when coordination is needed.',
     'agentoffice.task.prompt':
-        '# Office digital staff message\n\nYou are handling an Office conversation as a digital staff member. The user cannot see or receive ordinary task output in the Office conversation. You must use agentoffice-sendReply for every user-facing reply. Use agentoffice-getHistoryMessages when more history is needed. Do not attempt to read or write the protected directory.\n\nRelative resource paths are based in this read-only directory:\n${resourcesDirectory}\n\n## Recent Office messages\n\n${recent}\n\n## Current user message\n\n${current}\n\nHandle the current message and reply through agentoffice-sendReply.',
+        '# Office digital staff message\n\nYou are handling an Office conversation as a digital staff member. The user cannot see or receive ordinary task output in the Office conversation; all user-facing communication must go through agentoffice-sendReply. Use agentoffice-getHistoryMessages when more history is needed. Do not attempt to read or write the protected directory.\n\n${scheduledTaskNotice}\n\nRelative resource paths are based in this read-only directory:\n${resourcesDirectory}\n\n## Recent Office messages\n\n${recent}\n\n## Current user message\n\n${current}\n\nHandle the current message. If the work is likely to take a while, first acknowledge it through sendReply and briefly say what you will do. During execution, immediately share progress, interim results, blockers, or choices the user should know about instead of waiting until the end. Send the final result when complete.',
+    'agentoffice.task.scheduledPrompt':
+        '# Digital staff scheduled check-in\n\nThe system created this independent task from the staff trigger interval; it is not a new user message. Based on your staff role and instructions, first read `${memoryPath}` and use the Office history below to decide whether there is work to continue, state to maintain, or a useful message to proactively send the user.\n\nIf nothing needs attention, end the task quickly and do not send a message merely to prove the check ran. If work is needed, perform it normally and use agentoffice-sendReply only when there is a real reason to communicate. For longer work, you may call sendReply multiple times before starting and when meaningful progress, interim results, blockers, or questions arise.\n\n## Recent Office messages\n\n${recent}',
     'agentoffice.task.systemRule':
-        '# Office delivery rule\nYou must deliver replies to the Office user through agentoffice-sendReply. Ordinary task output does not enter the Office conversation. Use agentoffice-getHistoryMessages to retrieve more Office history.',
+        '# Office delivery and memory rules\n\nThe context for this task is cleared after it ends. Read `${memoryPath}` when the task starts. Before finishing, persist every state, user preference, commitment, decision, and work update that a future task must remember in that file. Never assume the next task can see this context.\n\nagentoffice-sendReply is your interaction window with the Office user, not merely a final-answer tool. Ordinary task output does not enter the Office conversation. If work will take a while, use it first to acknowledge and set expectations. Call it again as soon as meaningful progress, interim results, blockers, or questions should be shared, then send the final result when done. Call it as often as communication requires, while avoiding low-information updates. Use agentoffice-getHistoryMessages to retrieve more Office history.',
     'agentoffice.tool.sendReply.description':
-        'Send a message to the Office conversation for the current digital staff member. Office does not receive ordinary task output, so every user-facing reply must use this tool. It may be called more than once.',
+        'The digital staff member’s only interaction window with the Office user. Call it multiple times when useful: acknowledge longer work and set expectations before starting, share meaningful progress, interim results, blockers, or questions during execution, and deliver the final result when done. Ordinary task output never enters Office; avoid low-information updates.',
     'agentoffice.tool.sendReply.success': 'Message sent to the Office conversation',
     'agentoffice.tool.sendReply.textArg': 'Text to send to the Office conversation',
     'agentoffice.tool.sendReply.filesArg': 'Absolute paths of local files to send',
@@ -1583,6 +1602,9 @@ export const enUs: Record<string, string> = {
     'agentoffice.tool.getHistory.description':
         'Read Office message history between the current digital staff member and the user. Supports recent-count pagination and ISO 8601 date or time ranges, with at most 200 messages per page.',
     'agentoffice.error.staffDisabled': 'This digital staff member is disabled',
+    'agentoffice.error.agentLoadFailed': 'Failed to load the digital staff agent: ${message}',
+    'agentoffice.error.agentUnavailable': 'The digital staff agent is unavailable',
+    'agentoffice.error.agentModeUnavailable': 'The digital staff agent default mode is unavailable',
     'agentoffice.error.mainAgentModeUnavailable': 'The main agent standard mode is unavailable',
     'agentoffice.error.portraitPngOnly': 'Staff portraits must be PNG files',
     'agentoffice.error.staleTurnReply': 'This turn was interrupted by a newer message and can no longer send replies',

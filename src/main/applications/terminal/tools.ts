@@ -13,7 +13,6 @@ import { spawn, type ChildProcess } from 'child_process';
 import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../../common/utils/escape.js';
-import { logger } from '../../utils/logger.js';
 import stripAnsi from 'strip-ansi';
 import Convert from 'ansi-to-html';
 import { t } from '../../../locale/index.js';
@@ -24,12 +23,10 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import fs from 'fs';
-import path from 'path';
 import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
-import { Setting, getOpendeskDirectory, type SettingData } from '../../utils/setting.js';
-import { getPlatform } from '../../../platforms/base.js';
+import { Setting } from '../../utils/setting.js';
 import {
     BackgroundProcessManager,
     killProcessTree,
@@ -39,8 +36,12 @@ import {
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
 import {
     findExecutableInPath,
+    buildChildProcessEnv,
+    buildInterpretersEnv,
     decodeShellOutput,
-    injectNonInteractiveEnv,
+    hasUserPythonEnvironment,
+    shouldUseIsolatedPython,
+    stripUserPythonEnvironment,
     trackDetachedProcess
 } from '../../utils/shellExec.js';
 
@@ -54,202 +55,11 @@ const SHELL_CWD_WARNING_RE =
 function filterShellEnvironmentWarnings(text: string): string {
     return text.replace(SHELL_CWD_WARNING_RE, '');
 }
-const PATH_SEGMENT = process.platform === 'win32' ? ';' : ':';
-const USER_PYTHON_ENV_KEYS = ['VIRTUAL_ENV', 'CONDA_PREFIX', 'CONDA_PREFIX_1'] as const;
-const USER_PYTHON_CONTEXT_ENV_KEYS = [
-    'VIRTUAL_ENV',
-    'VIRTUAL_ENV_PROMPT',
-    'CONDA_PREFIX',
-    'CONDA_PREFIX_1',
-    'CONDA_DEFAULT_ENV',
-    'CONDA_PROMPT_MODIFIER',
-    'CONDA_SHLVL',
-    'CONDA_EXE',
-    'CONDA_PYTHON_EXE',
-    'PYTHONHOME',
-    'PYTHONPATH',
-    'PYTHONUSERBASE'
-] as const;
-
 function getTaskWorkspace(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
 }
 
-function prependEnvPath(entries: string[], current: string | undefined): string {
-    return [...entries, ...(current ? [current] : [])].join(PATH_SEGMENT);
-}
-
-export function hasUserPythonEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
-    return USER_PYTHON_ENV_KEYS.some((key) => {
-        const value = env[key];
-        return typeof value === 'string' && value.trim().length > 0;
-    });
-}
-
-export function shouldUseIsolatedPython(
-    settingData: Pick<SettingData, 'cli_config'>,
-    env: NodeJS.ProcessEnv = process.env
-): boolean {
-    if (settingData.cli_config?.inherit_venv !== false && hasUserPythonEnvironment(env)) {
-        return false;
-    }
-    return settingData.cli_config?.use_isolated_python !== false;
-}
-
-function normalizePathEntry(entry: string): string {
-    const normalized = path.normalize(entry);
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
-function getUserPythonPathEntries(env: NodeJS.ProcessEnv): Set<string> {
-    const entries = new Set<string>();
-    const isWindows = process.platform === 'win32';
-
-    for (const key of USER_PYTHON_ENV_KEYS) {
-        const rawDir = env[key];
-        if (typeof rawDir !== 'string' || rawDir.trim().length === 0) {
-            continue;
-        }
-
-        const dir = rawDir.trim();
-        const candidates = [
-            path.join(dir, 'bin'),
-            path.join(dir, 'condabin'),
-            ...(isWindows ? [dir, path.join(dir, 'Scripts'), path.join(dir, 'Library', 'bin')] : [])
-        ];
-
-        for (const candidate of candidates) {
-            entries.add(normalizePathEntry(candidate));
-        }
-    }
-
-    return entries;
-}
-
-export function stripUserPythonEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    const next = { ...env };
-    for (const key of USER_PYTHON_CONTEXT_ENV_KEYS) {
-        delete next[key];
-    }
-
-    const pathEntriesToRemove = getUserPythonPathEntries(env);
-    if (typeof env.PATH === 'string' && pathEntriesToRemove.size > 0) {
-        next.PATH = env.PATH.split(PATH_SEGMENT)
-            .filter((entry) => !pathEntriesToRemove.has(normalizePathEntry(entry)))
-            .join(PATH_SEGMENT);
-    }
-
-    return next;
-}
-
-export function buildInterpretersEnv(
-    options: {
-        useIsolatedPython?: boolean;
-        baseEnv?: NodeJS.ProcessEnv;
-    } = {}
-): NodeJS.ProcessEnv {
-    const baseEnv = options.baseEnv ?? process.env;
-    const useIsolatedPython = options.useIsolatedPython !== false;
-    const appRoot = getOpendeskDirectory();
-    const interpretersDir = path.join(appRoot, 'interpreters');
-    const isWindows = process.platform === 'win32';
-
-    const npmPrefix = path.join(interpretersDir, 'npm-global');
-    if (!fs.existsSync(npmPrefix)) {
-        fs.mkdirSync(npmPrefix, { recursive: true });
-    }
-
-    const npmBinDir = isWindows ? npmPrefix : path.join(npmPrefix, 'bin');
-    const env: NodeJS.ProcessEnv = {
-        NPM_CONFIG_PREFIX: npmPrefix,
-        PATH: prependEnvPath([npmBinDir], baseEnv.PATH)
-    };
-
-    if (!useIsolatedPython) {
-        return env;
-    }
-
-    const pipTarget = path.join(interpretersDir, 'pip-global');
-    if (!fs.existsSync(pipTarget)) {
-        fs.mkdirSync(pipTarget, { recursive: true });
-    }
-
-    const pipBinDir = path.join(pipTarget, isWindows ? 'Scripts' : 'bin');
-    const uvDir = path.join(interpretersDir, 'uv');
-    const uvCacheDir = path.join(uvDir, 'cache');
-    if (!fs.existsSync(uvCacheDir)) {
-        fs.mkdirSync(uvCacheDir, { recursive: true });
-    }
-    const uvToolDir = path.join(uvDir, 'tools');
-    if (!fs.existsSync(uvToolDir)) {
-        fs.mkdirSync(uvToolDir, { recursive: true });
-    }
-    const uvToolBinDir = path.join(uvToolDir, 'bin');
-    env.PIP_TARGET = pipTarget;
-    env.UV_CACHE_DIR = uvCacheDir;
-    env.UV_TOOL_DIR = uvToolDir;
-    env.UV_TOOL_BIN_DIR = uvToolBinDir;
-    env.PATH = prependEnvPath([npmBinDir, pipBinDir, uvToolBinDir], baseEnv.PATH);
-    env.PYTHONPATH = prependEnvPath([pipTarget], baseEnv.PYTHONPATH);
-    env.PATH = prependEnvPath([npmBinDir, pipBinDir], baseEnv.PATH);
-    return env;
-}
-
-/**
- * 构建子进程的环境变量：系统 env + 平台注入 + 全局 environ 设置 + task 的 harnessContext.environ（skill .env 合并而来）
- */
-function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
-    let env = { ...process.env };
-    // Windows 上系统 PATH 变量注册为 "Path"（混合大小写），展开为 plain object 后
-    // process.env 的大小写不敏感代理失效，下游 env.PATH 会返回 undefined。
-    // 在入口处归一化为 "PATH" 以保证后续访问一致。
-    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path');
-    if (pathKey && pathKey !== 'PATH') {
-        env.PATH = env[pathKey];
-        delete env[pathKey];
-    }
-    const settingData = Setting.getInstance().getData();
-    // 合并平台注入的环境变量
-    const platformEnviron = getPlatform().getInjectedEnviron();
-    if (platformEnviron.size > 0) {
-        env = { ...env, ...Object.fromEntries(platformEnviron) };
-    }
-    // 合并用户配置的全局环境变量
-    const globalEnviron = settingData.environ;
-    if (globalEnviron && Object.keys(globalEnviron).length > 0) {
-        env = { ...env, ...globalEnviron };
-    }
-    if (taskState && Object.keys(taskState.harnessContext.environ).length > 0) {
-        env = { ...env, ...taskState.harnessContext.environ };
-    }
-    // inherit_venv 优先级高于 use_isolated_python：
-    // inherit_venv=false 时始终剥离用户 Python 环境，use_isolated_python 仅控制是否注入隔离 pip target
-    const inheritVenv = settingData.cli_config?.inherit_venv !== false;
-    const interpreterBaseEnv = inheritVenv ? env : stripUserPythonEnvironment(env);
-    const useIsolatedPython = shouldUseIsolatedPython(settingData, interpreterBaseEnv);
-
-    env = {
-        ...interpreterBaseEnv,
-        ...buildInterpretersEnv({
-            useIsolatedPython,
-            baseEnv: interpreterBaseEnv
-        })
-    };
-    // ── 编码环境变量 ──────────────────────────────────────────────────────
-    // 默认注入 UTF-8 编码环境变量，避免 Windows 子进程（python/node/bash等）输出乱码
-    // 仅在未显式设置时注入，用户/平台/全局 environ 中的设置优先
-    if (!env.PYTHONIOENCODING) {
-        env.PYTHONIOENCODING = 'utf-8';
-    }
-    if (!env.PYTHONUTF8) {
-        env.PYTHONUTF8 = '1';
-    }
-
-    // 注入非交互式防御变量，防止子进程绕过 pipe 直接打开 /dev/tty 抢占终端
-    injectNonInteractiveEnv(env);
-
-    return env;
-}
+export { buildInterpretersEnv, hasUserPythonEnvironment, shouldUseIsolatedPython, stripUserPythonEnvironment };
 
 // re-export for backward compatibility
 export { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
@@ -418,7 +228,7 @@ async function executeShellCommand(opts: {
         isKilledByStop
     } = opts;
 
-    const env = buildSpawnEnv(taskState);
+    const env = buildChildProcessEnv(taskState?.harnessContext.environ);
     const startTime = Date.now();
     const proc = spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });
     proc.stdin?.end();

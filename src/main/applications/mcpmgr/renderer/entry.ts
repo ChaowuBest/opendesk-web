@@ -30,6 +30,7 @@ interface McpServerState {
     source?: string;
     registryId?: string;
     registryMcpId?: string;
+    agentIds?: string[];
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     error?: string;
     tools: { name: string; description: string; inputSchema?: object }[];
@@ -593,7 +594,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     enabled: server.enabled,
                     status: server.status,
                     toolCount: server.tools?.length || 0,
-                    error: server.error
+                    error: server.error,
+                    agentIds: server.agentIds
                 }))
             );
         });
@@ -872,6 +874,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 (server.args || []).join(' '),
                 server.url,
                 server.source,
+                ...(server.agentIds || []),
                 server.error
             ]
                 .filter(Boolean)
@@ -924,6 +927,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             : server.enabled
               ? '已启用，点击禁用'
               : '已禁用，点击启用';
+        const scopeControl =
+            server.agentIds !== undefined
+                ? '<span class="tag-pill tag-gray">Agent</span>'
+                : `<label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
+                    <input type="checkbox" data-toggle-id="${escapeHtml(server.id)}" ${server.enabled ? 'checked' : ''}>
+                    <span class="mcp-toggle-slider"></span>
+                </label>`;
 
         return `
         <div class="mcp-card installed-card" data-server-id="${escapeHtml(server.id)}">
@@ -940,10 +950,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     <span class="tag-pill tag-blue">${escapeHtml(TRANSPORT_LABELS[server.transport] || server.transport)}</span>
                     <span class="status-line ${status.colorClass}"><span class="status-dot ${status.dotClass}"></span>${status.label}</span>
                 </div>
-                <label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
-                    <input type="checkbox" data-toggle-id="${escapeHtml(server.id)}" ${server.enabled ? 'checked' : ''}>
-                    <span class="mcp-toggle-slider"></span>
-                </label>
+                ${scopeControl}
             </div>
         </div>`;
     }
@@ -1150,6 +1157,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             { label: '状态', value: status.label },
             { label: '启用', value: server.enabled ? '是' : '否' },
             { label: '来源', value: server.source },
+            { label: 'Agent ID', value: server.agentIds?.join(', ') },
             { label: '工具数量', value: server.tools?.length || 0 },
             { label: '通知刷新次数', value: server.toolsChangedCount },
             { label: '最近工具变更', value: server.lastToolsChangedAt }
@@ -1170,10 +1178,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             ? `<div class="detail-section"><div class="detail-section-label">错误</div><div class="detail-desc status-error">${escapeHtml(server.error)}</div></div>`
             : '';
         const toolsHtml = this.renderTools(server.tools || []);
+        const mutableActions =
+            server.agentIds === undefined
+                ? '<button type="button" class="btn btn-sm" id="detail-edit">编辑</button><button type="button" class="btn btn-danger btn-sm" id="detail-delete">删除</button>'
+                : '';
         const footer = `
             ${server.status === 'connected' || server.status === 'error' ? '<button type="button" class="btn btn-sm" id="detail-reconnect">重新连接</button>' : ''}
-            <button type="button" class="btn btn-sm" id="detail-edit">编辑</button>
-            <button type="button" class="btn btn-danger btn-sm" id="detail-delete">删除</button>
+            ${mutableActions}
             <button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>`;
 
         this.showDetailDialog({

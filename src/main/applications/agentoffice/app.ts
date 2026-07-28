@@ -13,28 +13,34 @@ import fs from 'fs';
 import path from 'path';
 import { BaseApplication, type EventDecl, type ProtocolHandlerConfig } from '../base.js';
 import { GlobalState } from '../../aikernel/states/global.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { getLocale, t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
-import { getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
+import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
 import { getTempDir } from '../../utils/temp.js';
 import { createAgentOfficeTaskToolset } from './tools.js';
 import { createStaffPermissionEnforcer } from './permission.js';
 import { SkillRegistry } from '../skillmgr/utils.js';
 import AgentOfficeWorker from './worker.js';
 import { unwrapAgentOfficeCallResult } from './common.js';
+import { CustomAgent } from './custom-agent.js';
+import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
+import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
 import type {
+    DueStaffTrigger,
     HistoryQuery,
     InstalledSkillSummary,
     PreparedMessage,
     SendStaffMessageInput,
-    StaffDefinition,
+    StaffDefinitionInput,
     StaffDetail,
+    StaffListItem,
     StaffMessage,
+    StaffPermission,
     StaffSkillBatchImportResult,
     StaffSkillImportCandidate,
+    StaffTaskSource,
     StaffTaskRecord,
     StaffUpdateInput
 } from './common.js';
@@ -42,6 +48,15 @@ import type {
 const AGENTOFFICE_SCHEME = 'agentoffice';
 const PORTRAIT_DATA_URI_MAX_LENGTH = 8 * 1024 * 1024;
 const SKILL_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const STAFF_TRIGGER_POLL_INTERVAL_MS = 30 * 1000;
+
+export function interpolateAgentOfficePrompt(template: string, values: Record<string, string>): string {
+    let prompt = template;
+    for (const [key, value] of Object.entries(values)) {
+        prompt = prompt.split(`\${${key}}`).join(value);
+    }
+    return prompt;
+}
 
 function mimeTypeFor(filePath: string): string {
     const extension = path.extname(filePath).toLowerCase();
@@ -65,17 +80,25 @@ function mimeTypeFor(filePath: string): string {
     return known[extension] ?? 'application/octet-stream';
 }
 
-function buildTaskPrompt(current: StaffMessage, recent: StaffMessage[], resourcesDirectory: string): string {
-    const values = {
+function buildTaskPrompt(
+    current: StaffMessage,
+    recent: StaffMessage[],
+    resourcesDirectory: string,
+    scheduledTaskInProgress: boolean
+): string {
+    return interpolateAgentOfficePrompt(t('agentoffice.task.prompt'), {
         resourcesDirectory,
         recent: JSON.stringify(recent, null, 2),
-        current: JSON.stringify(current, null, 2)
-    };
-    let prompt = t('agentoffice.task.prompt');
-    for (const [key, value] of Object.entries(values)) {
-        prompt = prompt.split(`\${${key}}`).join(value);
-    }
-    return prompt;
+        current: JSON.stringify(current, null, 2),
+        scheduledTaskNotice: scheduledTaskInProgress ? t('agentoffice.task.scheduledInProgress') : ''
+    });
+}
+
+function buildScheduledTaskPrompt(recent: StaffMessage[], memoryPath: string): string {
+    return interpolateAgentOfficePrompt(t('agentoffice.task.scheduledPrompt'), {
+        recent: JSON.stringify(recent, null, 2),
+        memoryPath
+    });
 }
 
 function taskNameFor(input: SendStaffMessageInput): string {
@@ -92,11 +115,7 @@ export function acquireStaffTaskForMessage(
     taskName: string,
     onInterrupt: (task: TaskState, turnKey: string) => void
 ): { task: TaskState; reused: boolean; interruptedTurnKey?: string } {
-    const activeTask = records
-        .slice()
-        .reverse()
-        .map((record) => taskManager.getTask(record.task_id))
-        .find((candidate): candidate is TaskState => candidate?.task_status === 'running');
+    const activeTask = findRunningStaffTaskBySource(records, taskManager, 'user');
     if (!activeTask) {
         return { task: taskManager.createTask(undefined, { taskName, internal: true }), reused: false };
     }
@@ -106,6 +125,19 @@ export function acquireStaffTaskForMessage(
     onInterrupt(activeTask, interruptedTurnKey);
     activeTask.stop('user');
     return { task: activeTask, reused: true, interruptedTurnKey };
+}
+
+export function findRunningStaffTaskBySource(
+    records: readonly StaffTaskRecord[],
+    taskManager: Pick<TaskManagerState, 'getTask'>,
+    source: StaffTaskSource
+): TaskState | undefined {
+    return records
+        .slice()
+        .reverse()
+        .filter((record) => (record.source ?? 'user') === source)
+        .map((record) => taskManager.getTask(record.task_id))
+        .find((candidate): candidate is TaskState => candidate?.task_status === 'running');
 }
 
 export function mergeStaffTaskRecord(
@@ -118,6 +150,7 @@ export function mergeStaffTaskRecord(
         task_id: task.task_id,
         message_ids: existing ? [...existing.message_ids, messageId] : [messageId],
         status: 'running',
+        source: 'user',
         created_at: existing?.created_at ?? timestamp,
         updated_at: timestamp,
         usage_summary: task.usage_summary
@@ -132,11 +165,44 @@ export function applyStaffModelToTask(
     task.ensureValidModelOrFallback();
 }
 
+export function assignStaffAgentToTask(
+    task: Pick<TaskState, 'agentId' | 'activeModeId' | 'allowedTools' | 'disabledTools'>,
+    agent: AgentDecl,
+    mode: ModeDecl
+): void {
+    task.agentId = agent.agentId;
+    task.activeModeId = mode.id;
+    task.allowedTools = mode.allowedTools;
+    task.disabledTools = mode.disabledTools;
+}
+
+export async function applyStaffPermissionToTask(
+    task: Pick<TaskState, 'harnessContext'>,
+    options: {
+        workspace: string;
+        resourcesDirectory: string;
+        protectedDirectory: string;
+        permission: StaffPermission;
+    }
+): Promise<void> {
+    task.harnessContext.permission = await createStaffPermissionEnforcer(options);
+}
+
 export class AgentOfficeApplication extends BaseApplication {
     private readonly staffLocks = new Map<string, Promise<void>>();
     private readonly repliedTurns = new Set<string>();
+    private readonly monitoredTurns = new Set<string>();
     private readonly suppressedTurns = new Set<string>();
     private readonly invalidatedTurns = new Set<string>();
+    private readonly staffAgents = new Map<string, CustomAgent>();
+    private readonly staffMcpRegistrations = new Map<string, AgentMcpRegistration>();
+    private readonly scheduledTaskQueues = new Map<string, Promise<void>>();
+    private readonly scheduledTaskIds = new Set<string>();
+    private customMcpRegistrations: AgentMcpRegistration[] = [];
+    private triggerPollTimer?: ReturnType<typeof setInterval>;
+    private triggerPollRunning = false;
+    private schedulerRecovered = false;
+    private schedulerStopping = false;
 
     constructor() {
         super('agentoffice', t('agentoffice.name'));
@@ -150,12 +216,179 @@ export class AgentOfficeApplication extends BaseApplication {
         return AgentOfficeWorker;
     }
 
+    setRegistry(registry: any): void {
+        super.setRegistry(registry);
+        if (this.triggerPollTimer) return;
+        this.schedulerStopping = false;
+        this.schedulerRecovered = false;
+        this.triggerPollTimer = setInterval(() => void this.pollScheduledTriggers(), STAFF_TRIGGER_POLL_INTERVAL_MS);
+        this.triggerPollTimer.unref?.();
+    }
+
+    /**
+     * 加载可派发的 Custom Agent，同时加载不进入 AgentRegistry 的 Staff Agent。
+     * 两类 Agent 的 MCP 都由 MCPMgr 统一管理。
+     */
+    async getAgents(): Promise<AgentDecl[]> {
+        await this.disposeStaffAgents();
+        const agentsDirectory = path.join(getOpendeskDirectory(), 'agents');
+        const agents: CustomAgent[] = [];
+
+        if (fs.existsSync(agentsDirectory)) {
+            const entries = fs.readdirSync(agentsDirectory, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                const agentDirectory = path.join(agentsDirectory, entry.name);
+                try {
+                    agents.push(await CustomAgent.loadFromPath(agentDirectory));
+                } catch (error) {
+                    logger.warn(`AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`);
+                }
+            }
+        } else {
+            logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
+        }
+
+        this.customMcpRegistrations = agents.map((agent) => ({
+            agentId: agent.agentId,
+            config: agent.mcpConfig
+        }));
+        await this.loadStaffAgents();
+        await this.syncAgentMcpServers();
+        return agents;
+    }
+
+    private async loadStaffAgents(): Promise<void> {
+        let staffs: StaffListItem[];
+        try {
+            staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+        } catch (error) {
+            logger.warn(`AgentOffice: failed to list staff agents: ${error}`);
+            return;
+        }
+
+        for (const staff of staffs) {
+            if (!staff.enabled) continue;
+            try {
+                const agent = await this.createStaffAgent(staff.id, staff);
+                this.staffAgents.set(staff.id, agent);
+                this.staffMcpRegistrations.set(staff.id, {
+                    agentId: agent.agentId,
+                    config: agent.mcpConfig
+                });
+            } catch (error) {
+                logger.warn(`AgentOffice: failed to load agent for staff ${staff.id}: ${error}`);
+            }
+        }
+    }
+
+    private createStaffAgent(staffId: string, staff: Pick<StaffListItem, 'name' | 'title'>): Promise<CustomAgent> {
+        return CustomAgent.loadFromPath(path.join(this.staffDirectory(staffId), 'agent'), {
+            purpose: 'staff',
+            agentName: `staff:${staffId}`,
+            whenToUse: `${staff.name} — ${staff.title}`,
+            skillBundleName: `staff:${staffId}`
+        });
+    }
+
+    private async reloadStaffAgent(
+        staffId: string,
+        detail: StaffDetail,
+        throwOnError: boolean
+    ): Promise<CustomAgent | undefined> {
+        const previous = this.staffAgents.get(staffId);
+        this.staffAgents.delete(staffId);
+        this.staffMcpRegistrations.delete(staffId);
+        await previous?.dispose();
+
+        let agent: CustomAgent | undefined;
+        let loadError: unknown;
+        if (detail.enabled) {
+            try {
+                agent = await this.createStaffAgent(staffId, detail);
+                this.staffAgents.set(staffId, agent);
+                this.staffMcpRegistrations.set(staffId, {
+                    agentId: agent.agentId,
+                    config: agent.mcpConfig
+                });
+            } catch (error) {
+                loadError = error;
+                logger.warn(`AgentOffice: failed to reload agent for staff ${staffId}: ${error}`);
+            }
+        }
+
+        await this.syncAgentMcpServers();
+        if (loadError && throwOnError) {
+            throw new Error(
+                t('agentoffice.error.agentLoadFailed', {
+                    message: loadError instanceof Error ? loadError.message : String(loadError)
+                })
+            );
+        }
+        return agent;
+    }
+
+    private async ensureStaffAgent(staffId: string, detail: StaffDetail): Promise<CustomAgent> {
+        const existing = this.staffAgents.get(staffId);
+        if (existing) return existing;
+        const loaded = await this.reloadStaffAgent(staffId, detail, true);
+        if (!loaded) {
+            throw new Error(t('agentoffice.error.agentUnavailable'));
+        }
+        return loaded;
+    }
+
+    private async refreshStaffAgentAfterMutation(staffId: string, detail?: StaffDetail): Promise<void> {
+        try {
+            const current = detail ?? (await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId));
+            await this.reloadStaffAgent(staffId, current, false);
+        } catch (error) {
+            logger.warn(`AgentOffice: failed to refresh agent for staff ${staffId}: ${error}`);
+        }
+    }
+
+    private async removeStaffAgent(staffId: string): Promise<void> {
+        const agent = this.staffAgents.get(staffId);
+        this.staffAgents.delete(staffId);
+        this.staffMcpRegistrations.delete(staffId);
+        await agent?.dispose();
+        await this.syncAgentMcpServers();
+    }
+
+    private async disposeStaffAgents(): Promise<void> {
+        const agents = [...this.staffAgents.values()];
+        this.staffAgents.clear();
+        this.staffMcpRegistrations.clear();
+        await Promise.allSettled(agents.map(async (agent) => await agent.dispose()));
+    }
+
+    private async syncAgentMcpServers(): Promise<void> {
+        const mcpMgr = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
+        const registrations = [...this.customMcpRegistrations, ...this.staffMcpRegistrations.values()];
+        if (mcpMgr) {
+            try {
+                await mcpMgr.replaceAgentServers(registrations);
+            } catch (error) {
+                logger.warn(`AgentOffice: failed to register agent MCP servers: ${error}`);
+            }
+        } else if (registrations.length > 0) {
+            logger.warn('AgentOffice: MCPMgr is unavailable; agent MCP servers were not registered');
+        }
+    }
+
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
             { eventName: 'staffsChanged', eventDescription: t('agentoffice.event.staffsChanged') },
             { eventName: 'messagesChanged', eventDescription: t('agentoffice.event.messagesChanged') },
             { eventName: 'staffTaskChanged', eventDescription: t('agentoffice.event.staffTaskChanged') }
         ];
+    }
+
+    async beforeExit(): Promise<void> {
+        this.schedulerStopping = true;
+        if (this.triggerPollTimer) clearInterval(this.triggerPollTimer);
+        this.triggerPollTimer = undefined;
+        await this.disposeStaffAgents();
     }
 
     getProtocolHandlers(): ProtocolHandlerConfig[] {
@@ -279,6 +512,14 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.modelLabel',
             'agentoffice.modelGlobalDefault',
             'agentoffice.modelHint',
+            'agentoffice.triggerIntervalLabel',
+            'agentoffice.triggerIntervalHint',
+            'agentoffice.triggerInterval.5m',
+            'agentoffice.triggerInterval.10m',
+            'agentoffice.triggerInterval.15m',
+            'agentoffice.triggerInterval.30m',
+            'agentoffice.triggerInterval.1h',
+            'agentoffice.triggerInterval.never',
             'agentoffice.loadOlder',
             'agentoffice.mcpServersArray',
             'agentoffice.requiredFields',
@@ -292,7 +533,11 @@ export class AgentOfficeApplication extends BaseApplication {
             'agentoffice.taskStatus.waiting',
             'agentoffice.taskStatus.running',
             'agentoffice.taskStatus.stopped',
-            'agentoffice.taskStatus.failed'
+            'agentoffice.taskStatus.failed',
+            'agentoffice.taskSource.user',
+            'agentoffice.taskSource.scheduled',
+            'agentoffice.ctrlEnterSend',
+            'agentoffice.sendOptions'
         ];
         return Object.fromEntries(keys.map((key) => [key, t(key)]));
     }
@@ -323,11 +568,21 @@ export class AgentOfficeApplication extends BaseApplication {
         };
     }
 
-    createStaff(definition: StaffDefinition) {
-        return this.callAgentOfficeWorker('createStaff', definition, t('agentoffice.defaultAgentsMd'));
+    async createStaff(definition: StaffDefinitionInput) {
+        const detail = await this.callAgentOfficeWorker<StaffDetail>(
+            'createStaff',
+            definition,
+            t('agentoffice.defaultAgentsMd')
+        );
+        await this.refreshStaffAgentAfterMutation(detail.id, detail);
+        return detail;
     }
 
     async updateStaff(staffId: string, input: StaffUpdateInput) {
+        return await this.withStaffLock(staffId, async () => await this.updateStaffLocked(staffId, input));
+    }
+
+    private async updateStaffLocked(staffId: string, input: StaffUpdateInput) {
         if (input.enabled === false) await this.stopActiveStaffTasks(staffId);
         if (input.portrait_path && path.extname(input.portrait_path).toLowerCase() !== '.png') {
             throw new Error(t('agentoffice.error.portraitPngOnly'));
@@ -338,11 +593,22 @@ export class AgentOfficeApplication extends BaseApplication {
         if (input.portrait_data_uri && !/^data:image\/png;base64,[a-z0-9+/]+={0,2}$/i.test(input.portrait_data_uri)) {
             throw new Error(t('agentoffice.error.portraitPngOnly'));
         }
-        return await this.callAgentOfficeWorker('updateStaff', staffId, input);
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('updateStaff', staffId, input);
+        if (
+            input.definition !== undefined ||
+            input.agents_md !== undefined ||
+            input.mcp !== undefined ||
+            input.enabled !== undefined
+        ) {
+            await this.refreshStaffAgentAfterMutation(staffId, detail);
+        }
+        return detail;
     }
 
-    importStaff(zipPath: string) {
-        return this.callAgentOfficeWorker('importStaff', zipPath);
+    async importStaff(zipPath: string) {
+        const detail = await this.callAgentOfficeWorker<StaffDetail>('importStaff', zipPath);
+        await this.refreshStaffAgentAfterMutation(detail.id, detail);
+        return detail;
     }
 
     exportStaff(staffId: string, zipPath: string) {
@@ -357,8 +623,10 @@ export class AgentOfficeApplication extends BaseApplication {
         return this.callAgentOfficeWorker('listSkills', staffId);
     }
 
-    addSkill(staffId: string, sourcePath: string) {
-        return this.callAgentOfficeWorker('addSkill', staffId, sourcePath);
+    async addSkill(staffId: string, sourcePath: string) {
+        const added = await this.callAgentOfficeWorker<{ name: string }>('addSkill', staffId, sourcePath);
+        await this.refreshStaffAgentAfterMutation(staffId);
+        return added;
     }
 
     scanSkillSources(rootDirectory: string): Promise<StaffSkillImportCandidate[]> {
@@ -378,6 +646,7 @@ export class AgentOfficeApplication extends BaseApplication {
                 });
             }
         }
+        if (result.added.length > 0) await this.refreshStaffAgentAfterMutation(staffId);
         return result;
     }
 
@@ -406,7 +675,9 @@ export class AgentOfficeApplication extends BaseApplication {
             }
             const archivePath = path.join(temporaryDirectory, 'skill.zip');
             fs.writeFileSync(archivePath, archive);
-            return await this.callAgentOfficeWorker('addSkill', staffId, archivePath);
+            const added = await this.callAgentOfficeWorker<{ name: string }>('addSkill', staffId, archivePath);
+            await this.refreshStaffAgentAfterMutation(staffId);
+            return added;
         } finally {
             fs.rmSync(temporaryDirectory, { recursive: true, force: true });
         }
@@ -447,18 +718,26 @@ export class AgentOfficeApplication extends BaseApplication {
         return result;
     }
 
-    deleteSkill(staffId: string, name: string) {
-        return this.callAgentOfficeWorker('deleteSkill', staffId, name);
+    async deleteSkill(staffId: string, name: string) {
+        const result = await this.callAgentOfficeWorker('deleteSkill', staffId, name);
+        await this.refreshStaffAgentAfterMutation(staffId);
+        return result;
     }
 
     async deleteStaff(staffId: string, mode: 'trash' | 'permanent'): Promise<void> {
+        await this.withStaffLock(staffId, async () => await this.deleteStaffLocked(staffId, mode));
+    }
+
+    private async deleteStaffLocked(staffId: string, mode: 'trash' | 'permanent'): Promise<void> {
         await this.stopActiveStaffTasks(staffId);
         if (mode === 'permanent') {
             await this.callAgentOfficeWorker('deleteStaff', staffId);
+            await this.removeStaffAgent(staffId);
             return;
         }
         const directory = this.staffDirectory(staffId);
         await getPlatform().trashItem(directory);
+        await this.removeStaffAgent(staffId);
         this.sendEventToSubscribers('staffsChanged');
     }
 
@@ -472,34 +751,13 @@ export class AgentOfficeApplication extends BaseApplication {
         this.validateMessageInput(input);
 
         const taskManager = GlobalState.getInstance().taskManagerState;
+        const scheduledTaskInProgress = Boolean(findRunningStaffTaskBySource(detail.tasks, taskManager, 'scheduled'));
         const selection = acquireStaffTaskForMessage(detail.tasks, taskManager, taskNameFor(input), (_task, key) => {
             this.suppressedTurns.add(key);
             this.invalidatedTurns.add(key);
         });
         const { task } = selection;
-        applyStaffModelToTask(task, detail.model);
-
-        const workspace = await this.callAgentOfficeWorker<string>('ensureWorkspace', staffId);
-        const agent = new MainAgentDecl();
-        const mode = agent.supportedModes().find((candidate) => candidate.id === agent.defaultModeId());
-        if (!mode) throw new Error(t('agentoffice.error.mainAgentModeUnavailable'));
-        if (!selection.reused) {
-            await taskManager.initHarness(task, workspace, mode);
-        }
-        const permission = detail.permission;
-        task.harnessContext.permission = await createStaffPermissionEnforcer({
-            workspace,
-            resourcesDirectory: path.join(this.staffDirectory(staffId), 'resources'),
-            protectedDirectory: path.join(this.staffDirectory(staffId), 'protected'),
-            permission
-        });
-        await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id));
-
-        const recent = (
-            await this.callAgentOfficeWorker<{
-                messages: StaffMessage[];
-            }>('getHistory', staffId, { mode: 'recent', limit: 10 })
-        ).messages;
+        const runtime = await this.configureStaffTaskTurn(staffId, detail, task, selection.reused);
         const prepared = await this.callAgentOfficeWorker<PreparedMessage>(
             'prepareUserMessage',
             staffId,
@@ -509,34 +767,6 @@ export class AgentOfficeApplication extends BaseApplication {
             input.image_data_uris ?? []
         );
 
-        const expectedGeneration = task.getTurnGeneration() + 1;
-        const taskToolset = createAgentOfficeTaskToolset({
-            sendReply: async (text, files, taskState) => {
-                const replyTask = taskState ?? task;
-                if (replyTask.task_id !== task.task_id || replyTask.getTurnGeneration() !== expectedGeneration) {
-                    throw new Error(t('agentoffice.error.staleTurnReply'));
-                }
-                const turnKey = `${replyTask.task_id}:${expectedGeneration}`;
-                if (this.invalidatedTurns.has(turnKey)) {
-                    throw new Error(t('agentoffice.error.staleTurnReply'));
-                }
-                const reply = await this.callAgentOfficeWorker<StaffMessage>(
-                    'appendAssistantMessage',
-                    staffId,
-                    replyTask.task_id,
-                    text,
-                    files,
-                    'message'
-                );
-                await this.linkMessageToTask(staffId, replyTask.task_id, reply.id);
-                this.repliedTurns.add(turnKey);
-            },
-            getHistory: async (query: HistoryQuery) => await this.callAgentOfficeWorker('getHistory', staffId, query)
-        });
-        await task.attachToolset(taskToolset);
-        const basePrompt = await agent.createSystemPrompt(mode, task);
-        task.setSystemPrompt(`${basePrompt}\n\n${t('agentoffice.task.systemRule')}`);
-        await task.hooks.noticeBeforeTaskStart(task);
         await this.callAgentOfficeWorker('appendMessage', staffId, prepared.message);
 
         const record = mergeStaffTaskRecord(
@@ -550,11 +780,12 @@ export class AgentOfficeApplication extends BaseApplication {
         try {
             const prompt = buildTaskPrompt(
                 prepared.message,
-                recent,
-                path.join(this.staffDirectory(staffId), 'resources')
+                runtime.recent,
+                runtime.resourcesDirectory,
+                scheduledTaskInProgress
             );
             await task.submitUserMessage(prompt, prepared.image_data_uris);
-            if (task.getTurnGeneration() !== expectedGeneration) {
+            if (task.getTurnGeneration() !== runtime.expectedGeneration) {
                 throw new Error(t('agentoffice.error.turnGenerationMismatch'));
             }
             if (selection.interruptedTurnKey) {
@@ -584,23 +815,321 @@ export class AgentOfficeApplication extends BaseApplication {
         }
 
         const generation = task.getTurnGeneration();
-        void this.monitorTaskTurn(staffId, task, record, generation);
+        void this.monitorTaskTurn(staffId, task, record, generation, true);
         return { task_id: task.task_id };
+    }
+
+    private async configureStaffTaskTurn(
+        staffId: string,
+        detail: StaffDetail,
+        task: TaskState,
+        reused: boolean
+    ): Promise<{
+        expectedGeneration: number;
+        memoryPath: string;
+        recent: StaffMessage[];
+        resourcesDirectory: string;
+    }> {
+        const taskManager = GlobalState.getInstance().taskManagerState;
+        applyStaffModelToTask(task, detail.model);
+        const workspace = await this.callAgentOfficeWorker<string>('ensureWorkspace', staffId);
+        const memoryPath = path.join(workspace, 'MEMORY.md');
+        const resourcesDirectory = path.join(this.staffDirectory(staffId), 'resources');
+        const agent = await this.ensureStaffAgent(staffId, detail);
+        const mode = agent.supportedModes().find((candidate) => candidate.id === agent.defaultModeId());
+        if (!mode) throw new Error(t('agentoffice.error.agentModeUnavailable'));
+        assignStaffAgentToTask(task, agent, mode);
+        if (!reused) await taskManager.initHarness(task, workspace, mode);
+        await applyStaffPermissionToTask(task, {
+            workspace,
+            resourcesDirectory,
+            protectedDirectory: path.join(this.staffDirectory(staffId), 'protected'),
+            permission: detail.permission
+        });
+        await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id));
+
+        const recent = (
+            await this.callAgentOfficeWorker<{
+                messages: StaffMessage[];
+            }>('getHistory', staffId, { mode: 'recent', limit: 10 })
+        ).messages;
+        const expectedGeneration = task.getTurnGeneration() + 1;
+        await task.attachToolset(
+            createAgentOfficeTaskToolset({
+                sendReply: async (text, files, taskState) => {
+                    const replyTask = taskState ?? task;
+                    if (replyTask.task_id !== task.task_id || replyTask.getTurnGeneration() !== expectedGeneration) {
+                        throw new Error(t('agentoffice.error.staleTurnReply'));
+                    }
+                    const turnKey = `${replyTask.task_id}:${expectedGeneration}`;
+                    if (this.invalidatedTurns.has(turnKey)) {
+                        throw new Error(t('agentoffice.error.staleTurnReply'));
+                    }
+                    const reply = await this.callAgentOfficeWorker<StaffMessage>(
+                        'appendAssistantMessage',
+                        staffId,
+                        replyTask.task_id,
+                        text,
+                        files,
+                        'message'
+                    );
+                    await this.linkMessageToTask(staffId, replyTask.task_id, reply.id);
+                    this.repliedTurns.add(turnKey);
+                },
+                getHistory: async (query: HistoryQuery) =>
+                    await this.callAgentOfficeWorker('getHistory', staffId, query)
+            })
+        );
+        const basePrompt = await agent.createSystemPrompt(mode, task);
+        task.setSystemPrompt(
+            `${basePrompt}\n\n${interpolateAgentOfficePrompt(t('agentoffice.task.systemRule'), { memoryPath })}`
+        );
+        await task.hooks.noticeBeforeTaskStart(task);
+        return { expectedGeneration, memoryPath, recent, resourcesDirectory };
+    }
+
+    private async pollScheduledTriggers(): Promise<void> {
+        if (this.triggerPollRunning || this.schedulerStopping) return;
+        this.triggerPollRunning = true;
+        try {
+            if (!this.schedulerRecovered) {
+                await this.recoverStaffTaskRecords();
+                this.schedulerRecovered = true;
+            }
+            const now = new Date().toISOString();
+            const due = await this.callAgentOfficeWorker<DueStaffTrigger[]>('claimDueTriggers', now);
+            await Promise.all(
+                due.map(async (trigger) => {
+                    try {
+                        const created = await this.createScheduledTask(trigger);
+                        if (created) return;
+                    } catch (error) {
+                        logger.warn(
+                            `[agentoffice] failed to create scheduled task for staff ${trigger.staff_id}: ${error}`
+                        );
+                    }
+                    await this.callAgentOfficeWorker('releaseTriggerClaim', trigger);
+                })
+            );
+        } catch (error) {
+            logger.warn(`[agentoffice] failed to poll scheduled staff triggers: ${error}`);
+        } finally {
+            this.triggerPollRunning = false;
+        }
+    }
+
+    private async createScheduledTask(trigger: DueStaffTrigger): Promise<boolean> {
+        const created = await this.withStaffLock(trigger.staff_id, async () => {
+            const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', trigger.staff_id);
+            if (!detail.enabled || this.schedulerStopping) return undefined;
+            const task = GlobalState.getInstance().taskManagerState.createTask(undefined, {
+                taskName: `${t('agentoffice.taskPrefix')} ${t('agentoffice.task.scheduledName')}`,
+                internal: true
+            });
+            const record: StaffTaskRecord = {
+                task_id: task.task_id,
+                message_ids: [],
+                status: 'waiting',
+                source: 'scheduled',
+                triggered_at: trigger.triggered_at,
+                created_at: trigger.triggered_at,
+                updated_at: trigger.triggered_at,
+                usage_summary: task.usage_summary
+            };
+            try {
+                await this.callAgentOfficeWorker('upsertTask', trigger.staff_id, record);
+            } catch (error) {
+                task.stop('system');
+                throw error;
+            }
+            return { task, record };
+        });
+        if (!created) return false;
+        this.enqueueScheduledTask(
+            trigger.staff_id,
+            created.task,
+            created.record,
+            async () => await this.runScheduledTask(trigger.staff_id, created.task, created.record)
+        );
+        return true;
+    }
+
+    private enqueueScheduledTask(
+        staffId: string,
+        task: TaskState,
+        record: StaffTaskRecord,
+        operation: () => Promise<void>
+    ): void {
+        if (this.scheduledTaskIds.has(task.task_id)) return;
+        this.scheduledTaskIds.add(task.task_id);
+        const previous = this.scheduledTaskQueues.get(staffId) ?? Promise.resolve();
+        const queued = previous
+            .catch(() => undefined)
+            .then(operation)
+            .catch(async (error) => {
+                logger.warn(`[agentoffice] scheduled task ${task.task_id} failed: ${error}`);
+                await this.settleFailedScheduledTask(staffId, task, record);
+            })
+            .finally(() => {
+                this.scheduledTaskIds.delete(task.task_id);
+                if (this.scheduledTaskQueues.get(staffId) === queued) {
+                    this.scheduledTaskQueues.delete(staffId);
+                }
+            });
+        this.scheduledTaskQueues.set(staffId, queued);
+    }
+
+    private async recoverStaffTaskRecords(): Promise<void> {
+        const staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+        const taskManager = GlobalState.getInstance().taskManagerState;
+        for (const staff of staffs) {
+            const records = await this.callAgentOfficeWorker<StaffTaskRecord[]>('readTasks', staff.id);
+            for (const record of records) {
+                if (!['running', 'waiting'].includes(record.status)) continue;
+                const task = taskManager.getTask(record.task_id);
+                if ((record.source ?? 'user') === 'scheduled' && task?.task_status === 'waiting') {
+                    this.enqueueScheduledTask(
+                        staff.id,
+                        task,
+                        record,
+                        async () => await this.runScheduledTask(staff.id, task, record)
+                    );
+                    continue;
+                }
+                if ((record.source ?? 'user') === 'scheduled' && task?.task_status === 'running') {
+                    this.enqueueScheduledTask(staff.id, task, record, async () => {
+                        await this.monitorTaskTurn(staff.id, task, record, task.getTurnGeneration(), false);
+                    });
+                    continue;
+                }
+                if (task?.task_status === 'running') {
+                    void this.monitorTaskTurn(staff.id, task, record, task.getTurnGeneration(), false);
+                    continue;
+                }
+                await this.callAgentOfficeWorker('upsertTask', staff.id, {
+                    ...record,
+                    status: task?.task_status === 'failed' ? 'failed' : 'stopped',
+                    updated_at: new Date().toISOString(),
+                    usage_summary: task?.usage_summary ?? record.usage_summary
+                } satisfies StaffTaskRecord);
+            }
+        }
+    }
+
+    private async settleFailedScheduledTask(
+        staffId: string,
+        task: TaskState,
+        fallbackRecord: StaffTaskRecord
+    ): Promise<void> {
+        try {
+            if (task.task_status === 'running' || task.task_status === 'waiting') task.stop('system');
+            const records = await this.callAgentOfficeWorker<StaffTaskRecord[]>('readTasks', staffId);
+            const record = records.find((candidate) => candidate.task_id === task.task_id) ?? fallbackRecord;
+            if (record.status === 'failed') return;
+            await this.callAgentOfficeWorker('upsertTask', staffId, {
+                ...record,
+                status: 'failed',
+                updated_at: new Date().toISOString(),
+                usage_summary: task.usage_summary
+            } satisfies StaffTaskRecord);
+        } catch (error) {
+            logger.warn(`[agentoffice] failed to settle scheduled task ${task.task_id}: ${error}`);
+        }
+    }
+
+    private async runScheduledTask(staffId: string, task: TaskState, originalRecord: StaffTaskRecord): Promise<void> {
+        while (!this.schedulerStopping) {
+            const records = await this.callAgentOfficeWorker<StaffTaskRecord[]>('readTasks', staffId);
+            const runningUserTask = findRunningStaffTaskBySource(
+                records,
+                GlobalState.getInstance().taskManagerState,
+                'user'
+            );
+            if (runningUserTask) {
+                await runningUserTask.waitUntilFinished(undefined, true);
+                continue;
+            }
+
+            const started = await this.withStaffLock(staffId, async () => {
+                const latestRecords = await this.callAgentOfficeWorker<StaffTaskRecord[]>('readTasks', staffId);
+                const latestRunningUserTask = findRunningStaffTaskBySource(
+                    latestRecords,
+                    GlobalState.getInstance().taskManagerState,
+                    'user'
+                );
+                if (latestRunningUserTask) return { waitFor: latestRunningUserTask };
+                const detail = await this.callAgentOfficeWorker<StaffDetail>('getStaffDetail', staffId);
+                const record = latestRecords.find((candidate) => candidate.task_id === task.task_id) ?? originalRecord;
+                if (!detail.enabled || this.schedulerStopping) {
+                    task.stop('system');
+                    await this.callAgentOfficeWorker('upsertTask', staffId, {
+                        ...record,
+                        status: 'stopped',
+                        updated_at: new Date().toISOString()
+                    } satisfies StaffTaskRecord);
+                    return { cancelled: true as const };
+                }
+
+                try {
+                    const runtime = await this.configureStaffTaskTurn(staffId, detail, task, false);
+                    await task.submitUserMessage(buildScheduledTaskPrompt(runtime.recent, runtime.memoryPath));
+                    if (task.getTurnGeneration() !== runtime.expectedGeneration) {
+                        throw new Error(t('agentoffice.error.turnGenerationMismatch'));
+                    }
+                    const runningRecord: StaffTaskRecord = {
+                        ...record,
+                        status: 'running',
+                        updated_at: new Date().toISOString(),
+                        usage_summary: task.usage_summary
+                    };
+                    await this.callAgentOfficeWorker('upsertTask', staffId, runningRecord);
+                    return { runningRecord, generation: task.getTurnGeneration() };
+                } catch (error) {
+                    if (task.task_status === 'running' || task.task_status === 'waiting') task.stop('system');
+                    await this.callAgentOfficeWorker('upsertTask', staffId, {
+                        ...record,
+                        status: 'failed',
+                        updated_at: new Date().toISOString(),
+                        usage_summary: task.usage_summary
+                    } satisfies StaffTaskRecord);
+                    throw error;
+                }
+            });
+
+            if ('waitFor' in started) {
+                await started.waitFor.waitUntilFinished(undefined, true);
+                continue;
+            }
+            if ('cancelled' in started) return;
+            await this.monitorTaskTurn(staffId, task, started.runningRecord, started.generation, false);
+            return;
+        }
+
+        if (task.task_status === 'waiting') task.stop('system');
+        await this.callAgentOfficeWorker('upsertTask', staffId, {
+            ...originalRecord,
+            status: 'stopped',
+            updated_at: new Date().toISOString()
+        } satisfies StaffTaskRecord);
     }
 
     private async monitorTaskTurn(
         staffId: string,
         task: TaskState,
         record: StaffTaskRecord,
-        generation: number
+        generation: number,
+        requireReply: boolean
     ): Promise<void> {
         const turnKey = `${task.task_id}:${generation}`;
+        if (this.monitoredTurns.has(turnKey)) return;
+        this.monitoredTurns.add(turnKey);
         try {
             await task.waitUntilFinished(undefined, true);
             const superseded = task.getTurnGeneration() !== generation;
             const interrupted = this.suppressedTurns.delete(turnKey) || superseded;
             if (superseded) return;
-            if (!interrupted && !this.repliedTurns.delete(turnKey)) {
+            const replied = this.repliedTurns.delete(turnKey);
+            if (requireReply && !interrupted && !replied) {
                 const noReplyMessage = await this.callAgentOfficeWorker<StaffMessage>(
                     'appendAssistantMessage',
                     staffId,
@@ -622,6 +1151,7 @@ export class AgentOfficeApplication extends BaseApplication {
         } catch (error) {
             logger.warn(`[agentoffice] failed to monitor task ${task.task_id}: ${error}`);
         } finally {
+            this.monitoredTurns.delete(turnKey);
             this.repliedTurns.delete(turnKey);
             this.suppressedTurns.delete(turnKey);
         }
@@ -632,11 +1162,17 @@ export class AgentOfficeApplication extends BaseApplication {
         const manager = GlobalState.getInstance().taskManagerState;
         for (const record of records) {
             const task = manager.getTask(record.task_id);
-            if (task?.task_status !== 'running') continue;
+            if (!task || !['running', 'waiting'].includes(task.task_status)) continue;
             const turnKey = `${task.task_id}:${task.getTurnGeneration()}`;
             this.suppressedTurns.add(turnKey);
             this.invalidatedTurns.add(turnKey);
             task.stop('system');
+            await this.callAgentOfficeWorker('upsertTask', staffId, {
+                ...record,
+                status: 'stopped',
+                updated_at: new Date().toISOString(),
+                usage_summary: task.usage_summary
+            } satisfies StaffTaskRecord);
         }
     }
 

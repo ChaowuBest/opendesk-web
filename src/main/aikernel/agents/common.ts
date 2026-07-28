@@ -123,6 +123,7 @@ export interface TaskSkillExposure {
 export interface TaskContext {
     readonly task_id: string;
     readonly task_name: string | null;
+    readonly agentId?: string;
     readonly skillExposure?: TaskSkillExposure;
     getWorkspace(): string;
     getExecutionHost?(): ExecutionHost;
@@ -131,6 +132,14 @@ export interface TaskContext {
 export abstract class AgentDecl {
     /** Agent 的唯一名称标识 */
     abstract readonly agentName: string;
+
+    /**
+     * Agent 的运行时唯一标识。内置 Agent 默认复用 agentName；
+     * 外部加载的 Agent 应覆写为其稳定来源标识。
+     */
+    get agentId(): string {
+        return this.agentName;
+    }
 
     /** Agent 类型：builtin 为系统内置，custom 为通过 AGENT.md 等外部工具加载（预留） */
     abstract readonly agentType: AgentType;
@@ -149,4 +158,10 @@ export abstract class AgentDecl {
     abstract defaultModeId(): string;
 
     abstract createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string>;
+
+    /**
+     * 释放 agent 持有的资源。
+     * 在 agent 被卸载或不再使用时调用。
+     */
+    async dispose(): Promise<void> {}
 }

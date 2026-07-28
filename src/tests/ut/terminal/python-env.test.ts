@@ -2,11 +2,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+    buildChildProcessEnv,
     buildInterpretersEnv,
     hasUserPythonEnvironment,
     shouldUseIsolatedPython,
     stripUserPythonEnvironment
-} from '../../../main/applications/terminal/tools';
+} from '../../../main/utils/shellExec';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 describe('terminal Python environment isolation', () => {
@@ -82,6 +83,7 @@ describe('terminal Python environment isolation', () => {
         expect(env.PYTHONPATH).toBe([env.PIP_TARGET, '/user/pythonpath'].join(path.delimiter));
         expect(env.PATH).toContain('npm-global');
         expect(env.PATH).toContain('pip-global');
+        expect(env.PATH).toContain(path.join('uv', 'tools', 'bin'));
         expect(env.PATH?.endsWith(`${path.delimiter}/usr/bin`)).toBe(true);
     });
 
@@ -101,6 +103,48 @@ describe('terminal Python environment isolation', () => {
         expect(env.PATH).toContain('npm-global');
         expect(env.PATH).not.toContain('pip-global');
         expect(env.PATH?.endsWith(`${path.delimiter}/work/.venv/bin`)).toBe(true);
+    });
+
+    test('preserves explicitly configured interpreter directories', () => {
+        const npmPrefix = path.join(tempDir, 'custom-npm');
+        const pipTarget = path.join(tempDir, 'custom-pip');
+        const uvCacheDir = path.join(tempDir, 'custom-uv-cache');
+        const uvToolDir = path.join(tempDir, 'custom-uv-tools');
+        const uvToolBinDir = path.join(tempDir, 'custom-uv-bin');
+        const env = buildInterpretersEnv({
+            useIsolatedPython: true,
+            baseEnv: {
+                PATH: '/usr/bin',
+                NPM_CONFIG_PREFIX: npmPrefix,
+                PIP_TARGET: pipTarget,
+                UV_CACHE_DIR: uvCacheDir,
+                UV_TOOL_DIR: uvToolDir,
+                UV_TOOL_BIN_DIR: uvToolBinDir
+            }
+        });
+
+        expect(env.NPM_CONFIG_PREFIX).toBe(npmPrefix);
+        expect(env.PIP_TARGET).toBe(pipTarget);
+        expect(env.UV_CACHE_DIR).toBe(uvCacheDir);
+        expect(env.UV_TOOL_DIR).toBe(uvToolDir);
+        expect(env.UV_TOOL_BIN_DIR).toBe(uvToolBinDir);
+        expect(env.PATH).toContain(uvToolBinDir);
+    });
+
+    test('builds the same complete child environment for shell and MCP processes', () => {
+        const npmPrefix = path.join(tempDir, 'child-npm');
+        const env = buildChildProcessEnv({
+            OPENDESK_ENV_TEST: 'explicit',
+            NPM_CONFIG_PREFIX: npmPrefix,
+            PYTHONIOENCODING: 'custom-encoding'
+        });
+
+        expect(env.OPENDESK_ENV_TEST).toBe('explicit');
+        expect(env.NPM_CONFIG_PREFIX).toBe(npmPrefix);
+        expect(env.PATH).toContain(npmPrefix);
+        expect(env.PYTHONIOENCODING).toBe('custom-encoding');
+        expect(env.PYTHONUTF8).toBe('1');
+        expect(env.CI).toBe('true');
     });
 
     test('strips active virtual environment metadata for forced isolated Python', () => {

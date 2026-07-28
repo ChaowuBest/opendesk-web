@@ -67,6 +67,7 @@ describe('agentoffice management form behavior', () => {
             vendor_name: 'Vendor',
             title: 'Title',
             specialties: ['Research'],
+            trigger_interval: 'never',
             hired_at: '2026-01-01T00:00:00.000Z',
             enabled: true,
             message_count: 0,
@@ -135,6 +136,32 @@ describe('agentoffice management form behavior', () => {
         expect(widget.shadowRoot.querySelector('#f-enabled + .setting-toggle-track')).not.toBeNull();
     });
 
+    test('trigger interval changes update the template definition immediately', () => {
+        const widget = createWidget();
+        widget.detail = detail();
+        widget.activeTab = 'management';
+        widget.render();
+        widget.queueStaffUpdate = jest.fn();
+        const interval = widget.shadowRoot.querySelector('#f-trigger-interval');
+
+        Object.defineProperty(interval, 'value', { value: '15m' });
+        interval.dispatchEvent(new Event('change'));
+
+        expect(widget.detail.trigger_interval).toBe('15m');
+        expect(widget.queueStaffUpdate).toHaveBeenCalledWith(
+            {
+                definition: {
+                    name: 'Staff name',
+                    vendor_name: 'Vendor',
+                    title: 'Title',
+                    specialties: ['Research'],
+                    trigger_interval: '15m'
+                }
+            },
+            true
+        );
+    });
+
     test('chat messages hide task ids and retain task navigation metadata for the context menu', () => {
         const widget = createWidget();
         widget.locale = 'en-US';
@@ -191,15 +218,16 @@ describe('agentoffice management form behavior', () => {
         widget.render();
 
         expect(widget.shadowRoot.querySelector('[data-action="back"] .fa-arrow-left')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('style').textContent).toContain(".fa-arrow-left { --fa:'\\f060'; }");
+        const css = widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '');
+        expect(css).toContain(".fa-arrow-left{--fa:'\\f060';}");
         expect(widget.shadowRoot.querySelector('#f-enabled + .setting-toggle-track')).not.toBeNull();
         widget.detailSection = 'security';
         widget.render();
         expect(widget.shadowRoot.querySelector('#f-network + .setting-toggle-track')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('[data-remove-dir] .fa-xmark')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('.network-setting-row')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('style').textContent).toContain(
-            '.network-setting-row { border-bottom:0; }'
+        expect(widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '')).toContain(
+            '.network-setting-row{border-bottom:0;}'
         );
     });
 
@@ -290,9 +318,9 @@ describe('agentoffice management form behavior', () => {
         const widget = createWidget();
         widget.render();
 
-        const css = widget.shadowRoot.querySelector('style').textContent;
+        const css = widget.shadowRoot.querySelector('style').textContent.replace(/\s+/g, '');
         expect(css).toContain('background:#1e1e1e');
-        expect(css).toContain('--bg:#1e1e1e; --surface:#252526; --surface2:#333;');
+        expect(css).toContain('--bg:#1e1e1e;--surface:#252526;--surface2:#333;');
     });
 
     test('batch Skill import scans one chosen directory and opens a constrained multi-select list', async () => {

@@ -31,6 +31,7 @@ import {
     type StaffSkillSummary,
     type StaffUpdateInput
 } from '../common.js';
+import css from './style.css?raw';
 
 type DetailSection = 'basic' | 'skills' | 'mcp' | 'security' | 'tasks';
 
@@ -49,315 +50,6 @@ type AutoSaveState = 'idle' | 'saving' | 'saved' | 'invalid' | 'error';
 
 const PORTRAIT_CANVAS_SIZE = 512;
 const PORTRAIT_MAX_FILE_BYTES = 20 * 1024 * 1024;
-
-const CSS = String.raw`
-:host { display:block; width:100%; height:100%; background:#fff; color:#1d1d1f; }
-:host([data-theme='dark']) { color-scheme:dark; background:#1e1e1e; color:#ccc; }
-* { box-sizing:border-box; }
-button,input,textarea,select { font:inherit; }
-button { cursor:pointer; }
-.fa-solid { display:inline-block; width:1.25em; font-family:'Font Awesome 7 Free'; font-style:normal; font-variant:normal; font-weight:900; line-height:1; text-align:center; text-rendering:auto; -webkit-font-smoothing:antialiased; }
-.fa-solid::before { content:var(--fa); }.fa-arrow-left { --fa:'\f060'; }.fa-plus { --fa:'\2b'; }.fa-xmark { --fa:'\f00d'; }.fa-folder-open { --fa:'\f07c'; }.fa-file-zipper { --fa:'\f1c6'; }.fa-inbox { --fa:'\f01c'; }.fa-link { --fa:'\f0c1'; }.fa-download { --fa:'\f019'; }.fa-check { --fa:'\f00c'; }.fa-copy { --fa:'\f0c5'; }.fa-font { --fa:'\f031'; }.fa-arrow-up-right-from-square { --fa:'\f35d'; }
-.root { --bg:#f6f7f9; --surface:#fff; --surface2:#f4f5f7; --border:#e7e8ec; --text:#1d1d1f; --muted:#777b84; --accent:#5b6ee1; --accentSoft:#eef0ff; height:100%; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
-:host([data-theme='dark']) .root { --bg:#1e1e1e; --surface:#252526; --surface2:#333; --border:rgba(255,255,255,.18); --text:#e4e4e4; --muted:#ababab; --accent:#6ba3ef; --accentSoft:rgba(96,165,250,.16); }
-/* Shadow DOM equivalent of docs/specifications/scrollbar_specification.md. */
-:is(.messages,.staff-list,.management,.detail-content)::-webkit-scrollbar { width:4px; height:4px; }
-:is(.messages,.staff-list,.management,.detail-content)::-webkit-scrollbar-track { background:transparent; }
-:is(.messages,.staff-list,.management,.detail-content)::-webkit-scrollbar-thumb { border-radius:4px; background:rgba(0,0,0,.12); }
-:is(.messages,.staff-list,.management,.detail-content)::-webkit-scrollbar-thumb:hover { background:rgba(0,0,0,.22); }
-:is(.messages,.staff-list,.management,.detail-content)::-webkit-scrollbar-corner { background:transparent; }
-:is(.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar { width:4px; height:4px; }
-:is(.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-track { background:transparent; }
-:is(.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-thumb { border-radius:2px; background:#d1d5db; }
-:is(.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-thumb:hover { background:#bfc5ce; }
-:is(.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-corner { background:transparent; }
-:host([data-theme='dark']) :is(.messages,.staff-list,.management,.detail-content,.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18) !important; }
-:host([data-theme='dark']) :is(.messages,.staff-list,.management,.detail-content,.modal-body,.detail-nav,.installed-skill-list,.message-markdown pre,.message-markdown table,.compose-row textarea,.field textarea)::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.28) !important; }
-.tabs { height:58px; display:flex; align-items:flex-end; gap:8px; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface); }
-.tab { border:0; background:transparent; color:var(--muted); padding:18px 16px 14px; border-bottom:3px solid transparent; font-weight:600; }
-.tab.active { color:var(--text); border-color:var(--accent); }
-.body { flex:1; min-height:0; }
-.office { height:100%; display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; padding:16px; }
-.chat,.staff-panel,.management-panel,.detail { background:var(--surface); border:1px solid var(--border); border-radius:20px; min-height:0; box-shadow:0 8px 28px rgba(0,0,0,.04); }
-.chat { display:flex; flex-direction:column; overflow:hidden; }
-.chat-head { min-height:70px; padding:14px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--border); }
-.avatar { width:42px; height:42px; border-radius:14px; object-fit:cover; display:grid; place-items:center; background:linear-gradient(135deg,#6574e8,#8e68d5); color:white; font-weight:700; flex:none; }
-.chat-title { font-weight:700; }
-.sub { color:var(--muted); font-size:12px; margin-top:3px; }
-.status-dot { width:8px; height:8px; border-radius:50%; background:#9ca3af; display:inline-block; margin-right:5px; }
-.status-dot.on { background:#28b76b; }.status-dot.run { background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.14); }
-.messages { flex:1; overflow:auto; padding:22px; display:flex; flex-direction:column; gap:13px; }
-.load-older { align-self:center; border:1px solid var(--border); background:var(--surface2); color:var(--muted); border-radius:999px; padding:6px 12px; }
-.message { max-width:min(72%,720px); padding:11px 14px; border-radius:17px; line-height:1.5; overflow-wrap:anywhere; }
-.message.user { align-self:flex-end; background:var(--accent); color:white; border-bottom-right-radius:5px; }
-.message.assistant { align-self:flex-start; background:var(--surface2); border-bottom-left-radius:5px; }
-.message.error { border:1px solid #ef4444; }
-.message-meta { font-size:10px; opacity:.7; margin-top:7px; display:flex; gap:8px; }
-.message-context-menu { position:fixed; z-index:50; min-width:188px; padding:4px; border:1px solid color-mix(in srgb,var(--border) 86%,transparent); border-radius:9px; background:color-mix(in srgb,var(--surface) 92%,transparent); box-shadow:0 14px 42px rgba(15,23,42,.18); backdrop-filter:blur(28px) saturate(1.5); }
-.message-context-menu button { width:100%; padding:7px 9px; display:flex; align-items:center; gap:9px; border:0; border-radius:5px; background:transparent; color:var(--text); text-align:left; font-size:12px; }
-.message-context-menu button:hover { background:var(--accent); color:#fff; }
-.message-context-menu button i { width:15px; color:var(--muted); text-align:center; }
-.message-context-menu button:hover i { color:#fff; }
-.message-context-menu-separator { height:1px; margin:4px 2px; background:var(--border); }
-.resource { margin-top:8px; max-width:360px; }
-.resource img,.resource video { max-width:100%; max-height:260px; border-radius:11px; display:block; }
-.resource audio { max-width:100%; }
-.resource a { color:inherit; text-decoration:underline; }
-.composer { border-top:1px solid var(--border); padding:13px 16px; }
-.attachment-list { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:8px; }
-.chip { background:var(--surface2); border:1px solid var(--border); border-radius:999px; padding:5px 9px; font-size:12px; }
-.compose-row { display:flex; align-items:flex-end; gap:9px; }
-.compose-row textarea { flex:1; resize:none; min-height:44px; max-height:130px; padding:11px 13px; border-radius:14px; border:1px solid var(--border); background:var(--surface2); color:var(--text); outline:none; }
-.icon-btn,.primary,.secondary,.danger { border-radius:11px; border:1px solid var(--border); padding:9px 13px; background:var(--surface); color:var(--text); }
-.primary { background:var(--accent); border-color:var(--accent); color:white; }.danger { color:#ef4444; }.secondary:hover,.icon-btn:hover { background:var(--surface2); }
-.staff-panel { display:flex; flex-direction:column; overflow:hidden; }
-.panel-head { padding:16px; border-bottom:1px solid var(--border); }
-.search { width:100%; border:1px solid var(--border); border-radius:11px; padding:9px 11px; background:var(--surface2); color:var(--text); }
-.staff-list { padding:9px; overflow:auto; }
-.staff-row { width:100%; display:flex; align-items:center; gap:10px; padding:10px; border:0; border-radius:14px; background:transparent; color:var(--text); text-align:left; }
-.staff-row:hover,.staff-row.active { background:var(--accentSoft); }
-.staff-copy { min-width:0; flex:1; display:flex; flex-direction:column; }
-.staff-copy .sub { display:block; margin-top:2px; }
-.ellipsis { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.empty { height:100%; min-height:220px; display:grid; place-items:center; color:var(--muted); text-align:center; padding:32px; }
-.management { height:100%; padding:16px; overflow:auto; }
-.management-panel { min-height:100%; padding:20px; }
-.toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; }
-.toolbar-actions { display:flex; gap:8px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
-.card { border:1px solid var(--border); border-radius:17px; padding:16px; background:var(--surface); text-align:left; color:var(--text); transition:.15s; }
-.card:hover { transform:translateY(-2px); box-shadow:0 10px 25px rgba(0,0,0,.08); }
-.card-top { display:flex; gap:12px; align-items:center; }.card h3 { margin:0 0 4px; }.tags { display:flex; gap:5px; flex-wrap:wrap; margin-top:13px; }.tag { font-size:11px; padding:4px 7px; border-radius:999px; background:var(--accentSoft); color:var(--accent); }
-.detail { min-height:100%; overflow:hidden; }.detail-head { padding:18px 20px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); }.detail-main { display:grid; grid-template-columns:190px minmax(0,1fr); min-height:600px; }.detail-nav { padding:12px; border-right:1px solid var(--border); }.nav-btn { width:100%; text-align:left; border:0; border-radius:10px; padding:10px; color:var(--muted); background:transparent; }.nav-btn.active { color:var(--text); background:var(--accentSoft); }.detail-content { padding:22px; overflow:auto; }.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }.field { display:flex; flex-direction:column; gap:6px; }.field.full { grid-column:1/-1; }.field label { font-size:12px; color:var(--muted); }.field input,.field textarea,.field select { border:1px solid var(--border); border-radius:10px; padding:9px 10px; background:var(--surface2); color:var(--text); }.field textarea { min-height:150px; resize:vertical; }.stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:0 0 18px; }.stat { border:1px solid var(--border); border-radius:13px; padding:12px; }.stat b { display:block; font-size:18px; }.list-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px; border-bottom:1px solid var(--border); }
-.modal-backdrop { position:fixed; inset:0; z-index:30; background:rgba(15,23,42,.48); backdrop-filter:blur(6px); display:grid; place-items:center; padding:20px; }
-.modal { width:min(560px,100%); max-height:min(720px,calc(100vh - 40px)); display:flex; flex-direction:column; overflow:hidden; background:color-mix(in srgb,var(--surface) 95%,transparent); border-radius:24px; border:1px solid color-mix(in srgb,var(--border) 72%,white); box-shadow:0 24px 70px rgba(15,23,42,.24); }
-.modal-head { padding:17px 24px; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }.modal-head h3 { margin:0; font-size:16px; line-height:1.5; }.modal-head .sub { max-width:400px; line-height:1.55; }
-.modal-close { width:32px; height:32px; flex:none; display:grid; place-items:center; padding:0; border:0; border-radius:9px; background:transparent; color:var(--muted); font-size:20px; line-height:1; }.modal-close:hover { background:var(--surface2); color:var(--text); }
-.modal-body { padding:20px 24px; overflow:auto; }.modal-form { display:flex; flex-direction:column; gap:16px; }
-.modal .field { gap:7px; }.modal .field label { font-size:12px; font-weight:600; color:var(--muted); }.required-mark { color:#ef4444; margin-left:3px; }.optional-mark { color:var(--muted); font-weight:400; margin-left:5px; }
-.modal .field input { width:100%; padding:10px 14px; background:color-mix(in srgb,var(--surface) 72%,var(--surface2)); border:1px solid var(--border); border-radius:12px; outline:none; transition:border-color .16s,box-shadow .16s,background .16s; }.modal .field input:focus { border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent); background:var(--surface); }
-.modal .field.invalid input { border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.12); }.field-error { display:none; color:#ef4444; font-size:12px; }.field.invalid .field-error { display:block; }
-.modal-error { margin-bottom:16px; padding:10px 12px; border:1px solid rgba(239,68,68,.28); border-radius:11px; background:rgba(239,68,68,.08); color:#ef4444; font-size:12px; line-height:1.5; }.modal-error:empty { display:none; }
-.modal-footer { padding:15px 24px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:10px; }.modal-footer .secondary,.modal-footer .primary { min-width:76px; padding:9px 16px; border-radius:12px; }.modal-footer .primary { background:linear-gradient(135deg,var(--accent),#667eea); box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 22%,transparent); }
-.modal.submitting { pointer-events:none; opacity:.72; }.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }.notice { color:#ef4444; font-size:12px; margin:8px 0; }.busy { opacity:.6; pointer-events:none; }
-@media(max-width:850px){.office{grid-template-columns:1fr}.staff-panel{max-height:240px;order:-1}.message{max-width:88%}.composer{padding-right:76px}.detail-main{grid-template-columns:1fr}.detail-nav{display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.nav-btn{width:auto;white-space:nowrap}.stats{grid-template-columns:1fr 1fr}}
-
-/* Flat, information-dense application layout. Rounded treatment is reserved for controls and avatars. */
-.root { --bg:#f7f8fa; --surface2:#f3f5f8; font-size:13px; background:var(--bg); }
-.tabs { height:68px; align-items:stretch; gap:24px; padding:20px 22px 0; -webkit-app-region:drag; }
-.tab { padding:0 2px; border-bottom-width:2px; font-size:13px; -webkit-app-region:no-drag; }
-.office { grid-template-columns:minmax(0,1fr) 286px; gap:0; padding:0; background:var(--bg); }
-.chat,.staff-panel,.management-panel,.detail { border:0; border-radius:0; box-shadow:none; background:var(--surface); }
-.chat { border-right:1px solid var(--border); }
-.chat-head { min-height:60px; padding:10px 22px; }
-.avatar { width:36px; height:36px; border-radius:50%; font-size:12px; }
-.chat-title { font-size:13px; }
-.sub { font-size:11px; margin-top:2px; }
-.messages { padding:26px max(24px,calc((100% - 820px)/2)); gap:18px; background:var(--surface); }
-.load-older { border-radius:3px; padding:5px 9px; font-size:11px; }
-.message { line-height:1.55; font-size:13px; }
-.message.user { max-width:min(70%,620px); padding:9px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); }
-.message.assistant { width:100%; max-width:820px; padding:0; border-radius:0; background:transparent; }
-.message.error { padding:10px 12px; border-radius:3px; background:rgba(239,68,68,.05); }
-.message-markdown { min-width:0; overflow-wrap:anywhere; }
-.message-markdown > :first-child { margin-top:0; }
-.message-markdown > :last-child { margin-bottom:0; }
-.message-markdown p { margin:0 0 .65em; }
-.message-markdown h1,.message-markdown h2,.message-markdown h3,.message-markdown h4,.message-markdown h5,.message-markdown h6 { margin:1em 0 .45em; line-height:1.3; font-weight:650; }
-.message-markdown h1 { font-size:1.35em; }.message-markdown h2 { font-size:1.22em; }.message-markdown h3 { font-size:1.1em; }
-.message-markdown ul,.message-markdown ol { margin:.45em 0 .7em; padding-left:1.6em; }
-.message-markdown li + li { margin-top:.2em; }
-.message-markdown blockquote { margin:.7em 0; padding:.15em .8em; border-left:3px solid var(--accent); color:var(--muted); }
-.message-markdown code { padding:.12em .35em; border-radius:4px; background:color-mix(in srgb,var(--surface2) 82%,var(--border)); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em; }
-.message-markdown pre { max-width:100%; margin:.7em 0; padding:10px 12px; overflow:auto; border:1px solid var(--border); border-radius:6px; background:var(--surface2); }
-.message-markdown pre code { padding:0; background:transparent; }
-.message-markdown table { display:block; max-width:100%; margin:.7em 0; overflow:auto; border-collapse:collapse; }
-.message-markdown th,.message-markdown td { padding:6px 8px; border:1px solid var(--border); text-align:left; }
-.message-markdown th { background:var(--surface2); font-weight:650; }
-.message-markdown a { color:var(--accent); text-decoration:none; }.message-markdown a:hover { text-decoration:underline; }
-.message-markdown hr { margin:.8em 0; border:0; border-top:1px solid var(--border); }
-.message-markdown img { display:block; max-width:100%; max-height:320px; margin:.6em 0; border-radius:4px; object-fit:contain; }
-.message.user .message-markdown pre,.message.user .message-markdown code,.message.user .message-markdown th { background:var(--surface); }
-.message-meta { margin-top:6px; font-size:9px; color:var(--muted); opacity:.68; align-items:center; }
-.message-meta .chip { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.resource img,.resource video { border-radius:3px; }
-.composer { padding:10px max(20px,calc((100% - 840px)/2)) 12px; background:var(--surface); }
-.compose-row { width:100%; padding:5px; gap:5px; align-items:center; border:1px solid var(--border); border-radius:10px; background:var(--surface); box-shadow:0 1px 4px rgba(15,23,42,.04); }
-.compose-row textarea { min-height:38px; max-height:120px; padding:9px 8px; border:0; border-radius:0; background:transparent; }
-.compose-row textarea:focus { box-shadow:none; }
-.icon-btn,.primary,.secondary,.danger { border-radius:4px; padding:7px 10px; font-size:12px; }
-.compose-row .icon-btn { width:34px; height:34px; padding:0; border:0; background:transparent; color:var(--muted); font-size:18px; }
-.compose-row .primary { height:34px; padding:0 13px; }
-.chip { border-radius:3px; padding:3px 6px; font-size:10px; }
-.staff-panel { border-left:0; }
-.panel-head { padding:10px 12px; }
-.search { border-radius:4px; padding:7px 9px; font-size:12px; background:var(--surface); }
-.staff-list { padding:0; }
-.staff-row { gap:9px; padding:10px 12px; border-radius:0; border-bottom:1px solid var(--border); }
-.staff-row[hidden] { display:none; }
-.staff-row:hover { background:var(--surface2); }
-.staff-row.active { box-shadow:inset 3px 0 0 var(--accent); background:var(--accentSoft); }
-.staff-row .avatar { width:34px; height:34px; }
-.staff-avatar-trigger { display:inline-flex; flex:none; }
-.staff-preview { position:fixed; z-index:20; width:300px; min-height:158px; margin:0; pointer-events:auto; box-shadow:0 18px 46px rgba(15,23,42,.22); }
-.staff-preview[hidden] { display:none; }
-.staff-preview:hover { border-color:var(--border); background:var(--surface); box-shadow:0 18px 46px rgba(15,23,42,.22); }
-:host([data-theme='dark']) .staff-preview { box-shadow:0 20px 50px rgba(0,0,0,.5); }
-.management { padding:0; overflow:auto; background:var(--bg); font-size:12px; }
-.management-panel { min-height:100%; padding:0; }
-.toolbar { min-height:52px; margin:0; padding:8px 16px; border-bottom:1px solid var(--border); }
-.toolbar-title { font-size:14px; font-weight:650; }
-.toolbar-actions { gap:6px; }
-.grid { grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px; padding:14px 16px; }
-.card { min-height:158px; padding:13px 14px 12px; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
-.card:hover { transform:none; border-color:color-mix(in srgb,var(--accent) 46%,var(--border)); box-shadow:0 5px 14px rgba(15,23,42,.06); background:color-mix(in srgb,var(--surface) 94%,var(--accentSoft)); }
-.card-profile { display:flex; align-items:center; gap:10px; }
-.card-identity { min-width:0; flex:1; }
-.card .avatar { width:38px; height:38px; border-radius:7px; }
-.card h3 { margin:0 0 2px; font-size:13px; }
-.card-status { flex:none; display:inline-flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:9px; font-weight:600; }
-.card-status::before { content:''; width:5px; height:5px; border-radius:50%; background:#9ca3af; }
-.card-status.on { color:#18864b; border-color:color-mix(in srgb,#28b76b 32%,var(--border)); background:color-mix(in srgb,#28b76b 9%,var(--surface)); }
-.card-status.on::before { background:#28b76b; }
-.card-status.run { color:#b46a05; border-color:color-mix(in srgb,#f59e0b 38%,var(--border)); background:color-mix(in srgb,#f59e0b 9%,var(--surface)); }
-.card-status.run::before { background:#f59e0b; }
-:host([data-theme='dark']) .card-status.on { color:#72d89e; }
-:host([data-theme='dark']) .card-status.run { color:#f4bd64; }
-.tags { gap:4px; margin-top:10px; min-height:18px; max-height:36px; overflow:hidden; }
-.tag { padding:2px 5px; border-radius:2px; font-size:9px; }
-.card-divider { margin:10px 0 9px; border-top:1px dashed color-mix(in srgb,var(--border) 82%,var(--muted)); }
-.card-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
-.card-metric { position:relative; min-width:0; padding-top:7px; color:var(--muted); font-size:9px; }
-.card-metric::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:999px; background:#36b96d; }
-.card-metric:nth-child(2)::before { background:#47a9e8; }
-.card-metric:nth-child(3)::before { background:#e7ad36; }
-.card-metric b { display:block; overflow:hidden; color:var(--text); font-size:12px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-.card-metric span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.detail { min-height:100%; }
-.detail-head { min-height:58px; padding:9px 16px; }
-.detail-head .avatar { width:36px; height:36px; }
-.detail-avatar-button { width:36px; height:36px; flex:none; padding:0; border:0; border-radius:50%; background:transparent; }
-.detail-avatar-button:hover { box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent); }
-.detail-avatar-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.auto-save-indicator { display:inline-flex; align-items:center; gap:5px; min-width:54px; color:var(--muted); font-size:10px; white-space:nowrap; }
-.auto-save-indicator::before { content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
-.auto-save-indicator[data-state='saving']::before { animation:auto-save-pulse 1s ease-in-out infinite; }
-.auto-save-indicator[data-state='saved'] { color:#18864b; }
-.auto-save-indicator[data-state='invalid'],.auto-save-indicator[data-state='error'] { color:#dc2626; }
-.auto-save-indicator[data-state='idle'] { visibility:hidden; }
-:host([data-theme='dark']) .auto-save-indicator[data-state='saved'] { color:#72d89e; }
-:host([data-theme='dark']) .auto-save-indicator[data-state='invalid'],:host([data-theme='dark']) .auto-save-indicator[data-state='error'] { color:#fca5a5; }
-@keyframes auto-save-pulse { 50% { opacity:.35; } }
-.detail-notice { margin:0; padding:8px 16px; border-bottom:1px solid rgba(239,68,68,.22); background:rgba(239,68,68,.07); color:#dc2626; font-size:11px; line-height:1.5; }
-.detail-notice[hidden] { display:none; }
-:host([data-theme='dark']) .detail-notice { color:#fca5a5; }
-.detail-main { grid-template-columns:164px minmax(0,1fr); min-height:calc(100vh - 126px); }
-.detail-nav { padding:8px 0; background:var(--surface); }
-.nav-btn { padding:8px 14px; border-radius:0; border-left:3px solid transparent; font-size:12px; }
-.nav-btn:hover { background:var(--surface2); }
-.nav-btn.active { border-left-color:var(--accent); background:var(--accentSoft); }
-.detail-content { padding:20px 24px; font-size:12px; background:var(--bg); }
-.settings-page { width:100%; max-width:980px; margin:0 auto; }
-.settings-section { margin-bottom:16px; padding:17px 18px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
-.settings-section-head { min-height:28px; margin-bottom:14px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-.settings-section-head:last-child { margin-bottom:0; }
-.settings-section-title { margin:0; color:var(--text); font-size:13px; font-weight:650; line-height:1.5; }
-.settings-section-desc { margin:3px 0 0; color:var(--muted); font-size:10px; line-height:1.5; }
-.settings-actions { margin-top:14px; padding-top:14px; display:flex; align-items:center; justify-content:flex-end; gap:7px; border-top:1px solid var(--border); }
-.settings-form { max-width:none; }
-.form-grid { gap:13px 15px; max-width:none; }
-.field { gap:6px; }
-.field label { font-size:11px; font-weight:600; color:var(--text); }
-.field input,.field textarea,.field select { border-radius:10px; padding:8px 10px; background:var(--surface); font-size:12px; outline:none; transition:border-color .15s,box-shadow .15s; }
-.field input:focus,.field textarea:focus,.field select:focus { border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent); }
-.settings-form .field.invalid input { border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.1); }
-.field.invalid textarea { border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.1); }
-.field textarea { min-height:130px; line-height:1.55; }
-.setting-check-row { min-height:42px; padding:9px 0; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border); }
-.network-setting-row { border-bottom:0; }
-.setting-check-copy { min-width:0; color:var(--text); font-size:12px; font-weight:600; }
-.setting-toggle { position:relative; width:40px; height:22px; flex:none; margin-left:16px; }
-.setting-toggle input { position:absolute; width:1px; height:1px; opacity:0; }
-.setting-toggle-track { position:absolute; inset:0; border-radius:11px; background:#d1d5db; cursor:pointer; transition:background .2s; }
-.setting-toggle-track::after { content:''; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,.3); transition:transform .2s; }
-.setting-toggle input:checked + .setting-toggle-track { background:var(--accent); }
-.setting-toggle input:checked + .setting-toggle-track::after { transform:translateX(18px); }
-:host([data-theme='dark']) .setting-toggle-track { background:#4b5563; }
-.stats { gap:9px; margin:0; border:0; max-width:none; }
-.stat { min-height:66px; padding:10px 11px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); color:var(--muted); font-size:10px; }
-.stat b { margin-bottom:3px; color:var(--text); font-size:15px; }
-.list-row { min-height:48px; padding:9px 2px; font-size:11px; }
-.list-row select { max-width:150px; padding:7px 28px 7px 9px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); font-size:11px; }
-.settings-section .list-row:last-child { border-bottom:0; }
-.directory-table { overflow:hidden; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
-.directory-grid { display:grid; grid-template-columns:minmax(0,1fr) 116px 32px; align-items:center; gap:10px; }
-.directory-header { min-height:34px; padding:7px 10px; border-bottom:1px solid var(--border); background:var(--surface2); color:var(--muted); font-size:10px; font-weight:600; }
-.directory-row { min-height:46px; padding:7px 10px; border-bottom:1px solid var(--border); }
-.directory-row:last-child { border-bottom:0; }
-.directory-path { min-width:0; overflow:hidden; color:var(--text); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-.directory-row select { width:100%; max-width:none; height:32px; padding:5px 30px 5px 9px; appearance:none; border:1px solid var(--border); border-radius:4px; background-color:var(--surface); background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 8px center; color:var(--text); cursor:pointer; }
-.directory-remove { width:32px; height:30px; padding:0; display:grid; place-items:center; }
-.directory-empty { padding:22px 12px; color:var(--muted); text-align:center; font-size:11px; }
-.settings-section .empty { min-height:160px; }
-.modal-backdrop { background:rgba(0,0,0,.18); backdrop-filter:blur(8px); }
-.modal { width:min(680px,94%); border:1px solid rgba(0,0,0,.05); border-radius:18px; background:var(--surface); box-shadow:0 24px 80px -16px rgba(0,0,0,.22); }
-.modal-head { padding:20px 24px 16px; }
-.modal-head h3 { font-size:16px; }
-.modal-close { width:28px; height:28px; border-radius:50%; background:var(--surface2); font-size:16px; }
-.modal-body { padding:20px 24px 24px; }
-.modal-form { gap:14px; }
-.modal .field input { padding:10px 12px; border-radius:10px; background:var(--surface); }
-.modal-error { border-radius:8px; }
-.modal-footer { padding:12px 24px; background:var(--surface); }
-.modal-footer .secondary,.modal-footer .primary,.modal-footer .danger { min-width:68px; padding:7px 16px; border-radius:8px; }
-.modal-footer .primary { background:#6ba3ef; box-shadow:none; }
-:host([data-theme='dark']) .modal-backdrop { background:rgba(0,0,0,.55); }
-:host([data-theme='dark']) .modal { border-color:rgba(255,255,255,.2); background:#252526; color:#ccc; }
-:host([data-theme='dark']) .modal-head,:host([data-theme='dark']) .modal-footer { border-color:rgba(255,255,255,.12); background:#252526; }
-:host([data-theme='dark']) .modal-close { background:#3f3f46; color:#ccc; }
-:host([data-theme='dark']) .modal-close:hover { background:#4a4a4d; color:#fff; }
-:host([data-theme='dark']) .modal .field input { border-color:rgba(255,255,255,.2); background:#333; color:#ccc; }
-:host([data-theme='dark']) .modal-footer .secondary,:host([data-theme='dark']) .modal-footer .danger { border-color:rgba(255,255,255,.2); background:#333; color:#ccc; }
-:host([data-theme='dark']) .modal-footer .danger { color:#f08a8a; }
-:host([data-theme='dark']) .modal-footer .primary { border-color:#3b82f6; background:#3b82f6; color:#fff; }
-.portrait-editor { display:grid; grid-template-columns:minmax(220px,300px) minmax(150px,1fr); gap:18px; align-items:start; }
-.portrait-crop { position:relative; width:min(300px,100%); aspect-ratio:1; overflow:hidden; border:1px solid var(--border); background:linear-gradient(45deg,var(--surface2) 25%,transparent 25%,transparent 75%,var(--surface2) 75%),linear-gradient(45deg,var(--surface2) 25%,var(--surface) 25%,var(--surface) 75%,var(--surface2) 75%); background-position:0 0,8px 8px; background-size:16px 16px; touch-action:none; cursor:grab; }
-.portrait-crop.dragging { cursor:grabbing; }
-.portrait-crop canvas { display:block; width:100%; height:100%; }
-.portrait-crop-guide { position:absolute; inset:8%; border:1px solid rgba(255,255,255,.92); border-radius:50%; box-shadow:0 0 0 999px rgba(15,23,42,.32),0 0 0 1px rgba(15,23,42,.25); pointer-events:none; }
-.portrait-crop-empty { position:absolute; inset:0; display:grid; place-items:center; padding:24px; color:var(--muted); text-align:center; font-size:11px; line-height:1.6; pointer-events:none; }
-.portrait-crop-empty[hidden] { display:none; }
-.portrait-controls { display:flex; flex-direction:column; gap:14px; }
-.portrait-controls .secondary { align-self:flex-start; }
-.portrait-file-input { display:none; }
-.portrait-zoom { display:flex; flex-direction:column; gap:7px; color:var(--muted); font-size:11px; }
-.portrait-zoom input { width:100%; accent-color:var(--accent); }
-.skills-page { position:relative; min-height:100%; }
-.skills-toolbar { min-height:38px; display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-.skills-toolbar h3 { margin:0; font-size:13px; }
-.skills-add-anchor { position:relative; }
-.skills-add-button { width:30px; height:30px; padding:0; display:grid; place-items:center; border:0; border-radius:4px; background:transparent; color:var(--text); font-size:14px; }
-.skills-add-button:hover { background:var(--surface2); }
-.skills-add-menu { position:absolute; top:34px; right:0; z-index:12; width:255px; padding:4px; border:1px solid var(--border); border-radius:9px; background:var(--surface); box-shadow:0 12px 34px rgba(15,23,42,.18); }
-.skills-add-menu button { width:100%; padding:8px 9px; display:flex; align-items:center; gap:10px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
-.skills-add-menu button:hover { background:var(--surface2); }
-.skills-add-menu-divider { height:1px; margin:4px 3px; background:var(--border); }
-.skill-menu-icon { width:30px; height:30px; display:grid; place-items:center; flex:none; border-radius:8px; }
-.skill-menu-icon.folder { color:#5b8def; background:#ebf3fe; }.skill-menu-icon.zip { color:#e8935a; background:#fef1e6; }.skill-menu-icon.batch,.skill-menu-icon.installed { color:#4caf6e; background:#e7f6ea; }.skill-menu-icon.url { color:#8b5cf6; background:#f1eafe; }
-:host([data-theme='dark']) .skill-menu-icon.folder { background:rgba(91,141,239,.18); }:host([data-theme='dark']) .skill-menu-icon.zip { background:rgba(232,147,90,.18); }:host([data-theme='dark']) .skill-menu-icon.batch,:host([data-theme='dark']) .skill-menu-icon.installed { background:rgba(76,175,110,.18); }:host([data-theme='dark']) .skill-menu-icon.url { background:rgba(139,92,246,.18); }
-.skill-menu-copy { display:flex; flex-direction:column; gap:2px; }.skill-menu-copy b { font-size:12px; }.skill-menu-copy span { color:var(--muted); font-size:10px; }
-.skill-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
-.skill-card { min-height:126px; padding:13px; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:14px; background:var(--surface); color:var(--text); text-align:left; }
-.skill-card:hover { border-color:color-mix(in srgb,var(--accent) 48%,var(--border)); box-shadow:0 5px 14px rgba(15,23,42,.07); }
-.skill-card-head { display:flex; align-items:center; gap:10px; }.skill-card-icon { width:36px; height:36px; display:grid; place-items:center; flex:none; border-radius:9px; background:var(--accentSoft); color:var(--accent); font-size:15px; }.skill-card h4 { margin:0; overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }.skill-card-id { margin-top:2px; color:var(--muted); font-size:9px; }.skill-card-desc { margin:10px 0 0; display:-webkit-box; overflow:hidden; color:var(--muted); font-size:10px; line-height:1.5; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
-.installed-skill-list { max-height:min(380px,50vh); overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
-.installed-skill-row { padding:10px 12px; display:grid; grid-template-columns:18px minmax(0,1fr); gap:10px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .12s; }.installed-skill-row:last-child { border-bottom:0; }.installed-skill-row:hover { background:var(--surface2); }.installed-skill-row.disabled { opacity:.55; cursor:default; }.installed-skill-row input { width:15px; height:15px; margin:2px 0 0; accent-color:var(--accent); }.installed-skill-row b { display:block; font-size:12px; }.installed-skill-row span { display:block; margin-top:2px; color:var(--muted); font-size:10px; line-height:1.45; }
-.skill-import-result-icon { width:18px; padding-top:1px; color:#22a061; text-align:center; }.skill-import-result-icon.error { color:#ef4444; }
-.portrait-format-hint { margin:0; color:var(--muted); font-size:10px; line-height:1.55; }
-@media(max-width:620px){.portrait-editor{grid-template-columns:1fr}.portrait-crop{margin:0 auto}.portrait-controls{align-items:stretch}}
-@media(max-width:760px){.detail-head{align-items:flex-start;flex-wrap:wrap}.detail-head>.toolbar-actions{width:100%;padding-left:48px;flex-wrap:wrap}.detail-head>.toolbar-actions button{flex:1 1 auto}.form-grid{grid-template-columns:1fr}.field.full{grid-column:1}.directory-grid{grid-template-columns:minmax(0,1fr) 104px 32px}}
-@media(max-width:850px){.office{grid-template-columns:1fr}.staff-panel{max-height:220px;order:-1;border-bottom:1px solid var(--border)}.chat{border-right:0}.composer{padding:10px 16px 12px}.detail-main{min-height:auto}.management{font-size:12px}}
-`;
 
 export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private strings: Record<string, string> = {};
@@ -381,17 +73,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private skillAddMenuOpen = false;
     private modelCatalog: ModelCatalog = { default_model: '', models: [] };
     private attachments: { path: string; name: string }[] = [];
+    private imageDataUris: { dataUrl: string; name: string }[] = [];
+    private ctrlEnterSend = false;
+    private sendMenuOpen = false;
     private query = '';
     private busy = false;
     private modal:
-        | 'new'
-        | 'delete'
-        | 'portrait'
-        | 'installed-skills'
-        | 'batch-skills'
-        | 'skill-url'
-        | 'skill-detail'
-        | null = null;
+        'new' | 'delete' | 'portrait' | 'installed-skills' | 'batch-skills' | 'skill-url' | 'skill-detail' | null =
+        null;
     private status = '';
     private previewHideTimer?: ReturnType<typeof setTimeout>;
     private portraitImage?: HTMLImageElement;
@@ -424,6 +113,15 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot?.querySelector('.message-context-menu')?.remove();
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
     };
+    private readonly closeSendMenuHandler = (event?: Event) => {
+        const target = event?.composedPath()[0];
+        if (
+            target instanceof Element &&
+            (target.closest('.composer-send-options-panel') || target.closest('[data-action="send-menu"]'))
+        )
+            return;
+        this.closeSendMenu();
+    };
 
     connectedCallback(): void {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
@@ -440,6 +138,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
         if (this.autoSaveIndicatorTimer) clearTimeout(this.autoSaveIndicatorTimer);
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
+        this.closeSendMenu();
         void this.flushAutoSave();
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
         window.applicationAPI.unsubscribe('staffsChanged', this.onStaffsChanged);
@@ -528,7 +227,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private render(): void {
         if (!this.shadowRoot) return;
-        this.shadowRoot.innerHTML = `<style>${CSS}</style><div class="root ${this.busy ? 'busy' : ''}">
+        this.closeSendMenu();
+        this.shadowRoot.innerHTML = `<style>${css}</style><div class="root ${this.busy ? 'busy' : ''}">
             <div class="tabs">
                 ${this.tabButton('office', this.tr('agentoffice.tab.office'))}
                 ${this.tabButton('management', this.tr('agentoffice.tab.management'))}
@@ -555,8 +255,21 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 <div class="messages" id="messages">${this.renderMessages(staff.id)}</div>
                 <div class="composer">
                     ${this.status ? `<div class="notice">${escapeHtml(this.status)}</div>` : ''}
-                    ${this.attachments.length ? `<div class="attachment-list">${this.attachments.map((item, index) => `<button class="chip" data-remove-attachment="${index}">${escapeHtml(item.name)} ×</button>`).join('')}</div>` : ''}
-                    <div class="compose-row"><button class="icon-btn" data-action="attach" title="${escapeHtml(this.tr('agentoffice.attach'))}">＋</button><textarea id="message-input" placeholder="${escapeHtml(this.tr('agentoffice.messagePlaceholder'))}" ${staff.enabled ? '' : 'disabled'}></textarea><button class="primary" data-action="send" ${staff.enabled ? '' : 'disabled'}>${escapeHtml(this.tr('agentoffice.send'))}</button></div>
+                    <div class="composer-outer" id="composer-outer">
+                        <div class="composer-card">
+                            ${this.imageDataUris.length ? `<div class="composer-image-previews">${this.imageDataUris.map((img, index) => `<div class="composer-image-thumb"><img src="${img.dataUrl}" alt="${escapeHtml(img.name)}" data-image-preview="${index}"><button class="composer-image-thumb-remove" data-remove-image="${index}"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}</div>` : ''}
+                            <div class="composer-textarea-wrap"><textarea id="message-input" class="composer-textarea" placeholder="${escapeHtml(this.tr('agentoffice.messagePlaceholder'))}" ${staff.enabled ? '' : 'disabled'}></textarea></div>
+                            <div class="composer-toolbar">
+                                <div class="composer-toolbar-left">
+                                    <button class="composer-toolbar-control" data-action="attach" title="${escapeHtml(this.tr('agentoffice.attach'))}"><i class="fa-solid fa-paperclip"></i></button>
+                                    ${this.attachments.map((item, index) => `<div class="composer-file-tag"><i class="fa-solid fa-paperclip"></i><span>${escapeHtml(item.name)}</span><button data-remove-attachment="${index}"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}
+                                </div>
+                                <div class="composer-toolbar-right">
+                                    <div class="composer-send-group"><button class="composer-send-btn ${staff.enabled ? 'composer-send-active' : 'composer-send-inactive'}" data-action="send" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-arrow-up"></i><span>${escapeHtml(this.tr('agentoffice.send'))}</span></button><div class="composer-send-divider"></div><button class="composer-send-menu-btn ${staff.enabled ? 'composer-send-active' : 'composer-send-inactive'}" data-action="send-menu" title="${escapeHtml(this.tr('agentoffice.sendOptions'))}" ${staff.enabled ? '' : 'disabled'}><i class="fa-solid fa-ellipsis"></i></button></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
             <aside class="staff-panel"><div class="panel-head"><input class="search" id="staff-search" value="${escapeHtml(this.query)}" placeholder="${escapeHtml(this.tr('agentoffice.searchStaff'))}"></div><div class="staff-list">${this.staffs
@@ -625,9 +338,16 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 detail.model && !this.modelCatalog.models.some((model) => model.alias === detail.model)
                     ? `<option value="${escapeHtml(detail.model)}" selected>${escapeHtml(detail.model)}</option>`
                     : '';
+            const triggerInterval = detail.trigger_interval ?? 'never';
+            const triggerOptions = ['5m', '10m', '15m', '30m', '1h', 'never']
+                .map(
+                    (value) =>
+                        `<option value="${value}" ${triggerInterval === value ? 'selected' : ''}>${escapeHtml(this.tr(`agentoffice.triggerInterval.${value}`))}</option>`
+                )
+                .join('');
             return `<div class="settings-page">
                 <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.basic'))}</h3></div><div class="stats"><div class="stat"><b>${detail.message_count}</b>${escapeHtml(this.tr('agentoffice.messagesStat'))}</div><div class="stat"><b>${detail.task_count}</b>${escapeHtml(this.tr('agentoffice.tasksStat'))}</div><div class="stat"><b>${usage.toLocaleString(this.locale)}</b>${escapeHtml(this.tr('agentoffice.tokensStat'))}</div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b>${escapeHtml(this.tr('agentoffice.hiredAt'))}</div></div></section>
-                <section class="settings-section"><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field full"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.enableStaff'))}</span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
+                <section class="settings-section"><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.enableStaff'))}</span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
                 <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3></div><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
@@ -665,7 +385,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                       .reverse()
                       .map(
                           (task) =>
-                              `<div class="list-row"><div><b>${escapeHtml(task.task_id)}</b><div class="sub">${escapeHtml(this.taskStatus(task.status))} · ${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))} · ${(task.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</div></div><button class="secondary" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`
+                              `<div class="list-row"><div><b>${escapeHtml(task.task_id)}</b><div class="sub">${escapeHtml(this.tr(`agentoffice.taskSource.${task.source ?? 'user'}`))} · ${escapeHtml(this.taskStatus(task.status))} · ${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))} · ${(task.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</div></div><button class="secondary" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`
                       )
                       .join('');
         return `<div class="settings-page"><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.tasks'))}</h3></div>${tasks}</section></div>`;
@@ -693,6 +413,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     <div class="field" data-new-field="vendor"><label for="new-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="new-vendor" autocomplete="organization" required aria-required="true"><div class="field-error">${error}</div></div>
                     <div class="field" data-new-field="title"><label for="new-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="new-title" autocomplete="organization-title" required aria-required="true"><div class="field-error">${error}</div></div>
                     <div class="field"><label for="new-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}<span class="optional-mark">${escapeHtml(this.tr('agentoffice.optional'))}</span></label><input id="new-specialties" autocomplete="off"></div>
+                    <div class="field"><label for="new-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="new-trigger-interval"><option value="5m">${escapeHtml(this.tr('agentoffice.triggerInterval.5m'))}</option><option value="10m">${escapeHtml(this.tr('agentoffice.triggerInterval.10m'))}</option><option value="15m">${escapeHtml(this.tr('agentoffice.triggerInterval.15m'))}</option><option value="30m">${escapeHtml(this.tr('agentoffice.triggerInterval.30m'))}</option><option value="1h">${escapeHtml(this.tr('agentoffice.triggerInterval.1h'))}</option><option value="never" selected>${escapeHtml(this.tr('agentoffice.triggerInterval.never'))}</option></select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div>
                 </div></div>
                 <div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="primary" data-action="create">${escapeHtml(this.tr('agentoffice.save'))}</button></div>
             </div></div>`;
@@ -826,10 +547,25 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot
             ?.querySelector('[data-action="send"]')
             ?.addEventListener('click', () => void this.sendMessage());
+        this.shadowRoot?.querySelector('[data-action="send-menu"]')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.sendMenuOpen) {
+                this.closeSendMenu();
+            } else {
+                this.showSendMenu();
+            }
+        });
         this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input')?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void this.sendMessage();
+                if (this.ctrlEnterSend) {
+                    if (event.ctrlKey) {
+                        event.preventDefault();
+                        void this.sendMessage();
+                    }
+                } else {
+                    event.preventDefault();
+                    void this.sendMessage();
+                }
             }
         });
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-remove-attachment]').forEach((element) =>
@@ -838,6 +574,36 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.render();
             })
         );
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-remove-image]').forEach((element) =>
+            element.addEventListener('click', () => {
+                this.imageDataUris.splice(Number(element.dataset.removeImage), 1);
+                this.render();
+            })
+        );
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-image-preview]').forEach((element) =>
+            element.addEventListener('click', () => {
+                const idx = Number(element.dataset.imagePreview);
+                const img = this.imageDataUris[idx];
+                if (img) window.open(img.dataUrl, '_blank');
+            })
+        );
+        const composerOuter = this.shadowRoot?.querySelector<HTMLElement>('#composer-outer');
+        composerOuter?.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            composerOuter.classList.add('drag-over');
+        });
+        composerOuter?.addEventListener('dragleave', (event) => {
+            if (!composerOuter.contains(event.relatedTarget as Node)) {
+                composerOuter.classList.remove('drag-over');
+            }
+        });
+        composerOuter?.addEventListener('drop', (event) => void this.handleComposerDrop(event));
+        const messageInput = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
+        messageInput?.addEventListener('paste', (event) => {
+            this.handleComposerPaste(event);
+        });
+        messageInput?.addEventListener('input', () => this.updateSendButtonState());
         this.shadowRoot
             ?.querySelector('[data-action="older"]')
             ?.addEventListener('click', () => void this.loadMessages(this.historyCursor));
@@ -1042,6 +808,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.detail.model = model;
             this.queueStaffUpdate({ model: model ?? null }, true);
         });
+        this.shadowRoot
+            ?.querySelector<HTMLSelectElement>('#f-trigger-interval')
+            ?.addEventListener('change', (event) => {
+                if (!this.detail) return;
+                this.detail.trigger_interval = (event.target as HTMLSelectElement)
+                    .value as StaffDetail['trigger_interval'];
+                this.queueDefinitionUpdate(true);
+            });
         this.shadowRoot?.querySelector<HTMLInputElement>('#f-enabled')?.addEventListener('change', (event) => {
             if (!this.detail) return;
             const enabled = (event.target as HTMLInputElement).checked;
@@ -1140,12 +914,17 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         if (!this.selectedStaffId || this.busy) return;
         const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
         const text = input?.value.trim();
-        if (!text && this.attachments.length === 0) return;
+        if (!text && this.attachments.length === 0 && this.imageDataUris.length === 0) return;
         this.busy = true;
         this.render();
         try {
-            await this.call('sendMessage', this.selectedStaffId, { text, attachments: this.attachments });
+            await this.call('sendMessage', this.selectedStaffId, {
+                text,
+                attachments: this.attachments,
+                image_data_uris: this.imageDataUris.map((img) => img.dataUrl)
+            });
             this.attachments = [];
+            this.imageDataUris = [];
             await this.reloadStaffs();
         } catch (error) {
             this.status = this.errorText(error);
@@ -1161,6 +940,115 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             ...paths.map((filePath) => ({ path: filePath, name: filePath.split(/[\\/]/).pop() || filePath }))
         );
         this.render();
+    }
+
+    private async handleComposerDrop(event: DragEvent): Promise<void> {
+        event.preventDefault();
+        event.stopPropagation();
+        const composerOuter = this.shadowRoot?.querySelector<HTMLElement>('#composer-outer');
+        composerOuter?.classList.remove('drag-over');
+        const files = event.dataTransfer?.files;
+        if (!files || files.length === 0) return;
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+        const fsAPI = (window as any).fsAPI;
+        for (const file of files) {
+            if (file.type.startsWith('image/') || imageExts.includes(file.name.split('.').pop()?.toLowerCase() ?? '')) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.imageDataUris.push({ dataUrl: reader.result as string, name: file.name || 'image' });
+                    this.render();
+                };
+                reader.readAsDataURL(file);
+                continue;
+            }
+            const filePath = fsAPI?.getFilePath?.(file);
+            if (!filePath) continue;
+            const pathType = await fsAPI?.getPathType?.(filePath);
+            if (pathType === 'directory') {
+                const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
+                if (textarea) {
+                    const cursorPos = textarea.selectionStart;
+                    const before = textarea.value.substring(0, cursorPos);
+                    const after = textarea.value.substring(cursorPos);
+                    textarea.value = before + filePath + after;
+                    const newCursor = cursorPos + filePath.length;
+                    textarea.setSelectionRange(newCursor, newCursor);
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            } else if (pathType === 'file') {
+                this.attachments.push({ path: filePath, name: filePath.split(/[\\/]/).pop() || filePath });
+            }
+        }
+        this.render();
+    }
+
+    private handleComposerPaste(event: ClipboardEvent): void {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+        let hasImage = false;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                hasImage = true;
+                break;
+            }
+        }
+        if (!hasImage) return;
+        event.preventDefault();
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (!file) continue;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.imageDataUris.push({ dataUrl: reader.result as string, name: file.name || 'pasted-image' });
+                    this.render();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+    }
+
+    private updateSendButtonState(): void {
+        const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
+        const sendBtn = this.shadowRoot?.querySelector<HTMLElement>('.composer-send-btn');
+        const menuBtn = this.shadowRoot?.querySelector<HTMLElement>('.composer-send-menu-btn');
+        if (!sendBtn) return;
+        const hasContent =
+            Boolean(textarea?.value.trim()) || this.attachments.length > 0 || this.imageDataUris.length > 0;
+        sendBtn.classList.toggle('composer-send-active', hasContent);
+        sendBtn.classList.toggle('composer-send-inactive', !hasContent);
+        if (menuBtn) {
+            menuBtn.classList.toggle('composer-send-active', hasContent);
+            menuBtn.classList.toggle('composer-send-inactive', !hasContent);
+        }
+    }
+
+    private showSendMenu(): void {
+        this.closeSendMenu();
+        const groupEl = this.shadowRoot?.querySelector<HTMLElement>('.composer-send-group');
+        if (!groupEl || !this.shadowRoot) return;
+        const menu = document.createElement('div');
+        menu.className = 'composer-send-options-panel';
+        menu.id = 'composer-send-menu';
+        Object.assign(menu.style, { position: 'fixed', zIndex: '10002' });
+        menu.innerHTML = `<div class="composer-send-menu-item" data-action="toggle-ctrl-enter"><span class="composer-send-menu-item-label">${escapeHtml(this.tr('agentoffice.ctrlEnterSend'))}</span><label class="composer-send-toggle"><input type="checkbox" ${this.ctrlEnterSend ? 'checked' : ''}><span class="composer-send-toggle-slider"></span></label></div>`;
+        const rect = groupEl.getBoundingClientRect();
+        menu.style.top = `${rect.bottom + 4}px`;
+        menu.style.right = `${window.innerWidth - rect.right}px`;
+        this.shadowRoot.appendChild(menu);
+        this.sendMenuOpen = true;
+        menu.querySelector('[data-action="toggle-ctrl-enter"]')?.addEventListener('click', () => {
+            this.ctrlEnterSend = !this.ctrlEnterSend;
+            const input = menu.querySelector<HTMLInputElement>('input[type="checkbox"]');
+            if (input) input.checked = this.ctrlEnterSend;
+        });
+        setTimeout(() => window.addEventListener('mousedown', this.closeSendMenuHandler), 0);
+    }
+
+    private closeSendMenu(): void {
+        this.shadowRoot?.querySelector('#composer-send-menu')?.remove();
+        this.sendMenuOpen = false;
+        window.removeEventListener('mousedown', this.closeSendMenuHandler);
     }
 
     private async createStaff(): Promise<void> {
@@ -1199,7 +1087,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 specialties: value('#new-specialties')
                     .split(',')
                     .map((item) => item.trim())
-                    .filter(Boolean)
+                    .filter(Boolean),
+                trigger_interval:
+                    (this.shadowRoot?.querySelector<HTMLSelectElement>('#new-trigger-interval')?.value as
+                        StaffDetail['trigger_interval'] | undefined) ?? 'never'
             });
             this.modal = null;
             this.status = '';
@@ -1299,16 +1190,20 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.queueStaffUpdate({ mcp: parsed });
     }
 
-    private queueDefinitionUpdate(): void {
+    private queueDefinitionUpdate(immediate = false): void {
         if (!this.detail) return;
-        this.queueStaffUpdate({
-            definition: {
-                name: this.detail.name,
-                vendor_name: this.detail.vendor_name,
-                title: this.detail.title,
-                specialties: [...this.detail.specialties]
-            }
-        });
+        this.queueStaffUpdate(
+            {
+                definition: {
+                    name: this.detail.name,
+                    vendor_name: this.detail.vendor_name,
+                    title: this.detail.title,
+                    specialties: [...this.detail.specialties],
+                    trigger_interval: this.detail.trigger_interval ?? 'never'
+                }
+            },
+            immediate
+        );
     }
 
     private openPortraitEditor(): void {

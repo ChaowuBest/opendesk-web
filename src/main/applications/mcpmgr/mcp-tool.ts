@@ -23,13 +23,21 @@ export class MCPTool<T extends z.ZodType> extends BaseTool<T> {
     private serverName: string;
     private originalToolName: string;
 
-    constructor(serverName: string, toolName: string, description: string, params: T) {
+    constructor(
+        serverName: string,
+        toolName: string,
+        description: string,
+        params: T,
+        agentIds?: readonly string[],
+        toolNamespace = serverName
+    ) {
         // 工具名格式：serverName__toolName（去掉 mcpmgr 前缀）
-        const safeName = `${serverName.replace(/[^a-zA-Z0-9_]/g, '_')}__${toolName}`;
+        const safeName = `${toolNamespace.replace(/[^a-zA-Z0-9_]/g, '_')}__${toolName}`;
         super(safeName, `[MCP: ${serverName}] ${description}`, params);
 
         this.serverName = serverName;
         this.originalToolName = toolName;
+        this.agentIds = agentIds;
     }
 
     /**

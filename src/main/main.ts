@@ -2945,6 +2945,7 @@ function startApplication() {
     app.whenReady().then(async () => {
         const p1a = startupTrace.createPhase('startup.ready.global_state.init');
         GlobalState.initialize();
+        AgentRegistry.initBuiltinAgents();
         p1a.end();
 
         const p1b = startupTrace.createPhase('startup.ready.global_state.toolset_provider');
@@ -3270,6 +3271,7 @@ function startApplication() {
 
         const p7 = startupTrace.createPhase('startup.ready.finalize');
         initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
+        await ApplicationRegistry.loadAvailableAgents();
         initializeProtocolHandlers();
         p7.end();
 

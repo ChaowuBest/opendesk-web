@@ -20,7 +20,8 @@ const NoteItemSchema = z.object({
     tags: z.array(z.string()).default([]),
     createdAt: z.number(),
     updatedAt: z.number(),
-    isPinned: z.boolean().default(false)
+    isPinned: z.boolean().default(false),
+    preview: z.string().default('')
 });
 
 /**

@@ -40,6 +40,7 @@ export async function buildToolsetsForTask(task: TaskState): Promise<BaseToolset
     }
 
     await applyToolAvailabilityFilters(task, all);
+    applyAgentToolExposureFilter(task, all);
 
     // Apply allowedTools whitelist filter (Agent level) — if set, only these tools are kept
     if (task.allowedTools && task.allowedTools.length > 0) {
@@ -66,6 +67,20 @@ export async function buildToolsetsForTask(task: TaskState): Promise<BaseToolset
     }
 
     return all;
+}
+
+function applyAgentToolExposureFilter(task: TaskState, toolsets: BaseToolset[]): void {
+    for (let i = toolsets.length - 1; i >= 0; i--) {
+        const toolset = toolsets[i];
+        for (const [name, tool] of [...toolset.tools.entries()]) {
+            if (tool.agentIds !== undefined && (!task.agentId || !tool.agentIds.includes(task.agentId))) {
+                toolset.tools.delete(name);
+            }
+        }
+        if (toolset.tools.size === 0) {
+            toolsets.splice(i, 1);
+        }
+    }
 }
 
 async function applyToolAvailabilityFilters(task: TaskState, toolsets: BaseToolset[]): Promise<void> {
