@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { AssistantMessage, ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { formatConversationForMemoryReview } from '../../../main/aikernel/memory/review.js';
 
 function resetHookRegistry(): void {
     GlobalHooks.beforeFinishTurnHooks = [];
@@ -165,6 +166,39 @@ describe('onTaskReview hook', () => {
         await jest.advanceTimersByTimeAsync(1);
         expect(callback).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 2 });
+    });
+
+    test('review captures real input and output without request-only TailCard state', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const task = new TaskState(manager);
+        task.task_name = 'existing task';
+        task.chat_context.appendMessage(new UserMessage('previous input'));
+        task.chat_context.appendMessage(new AssistantMessage());
+        task.setFrontendTailCardSection('knowledge-mode', 'turn control prompt with /workspace/opaque-source');
+        task.markCompacted();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        let transcript = '';
+        let receivedStartIndex = -1;
+        GlobalHooks.onTaskReview(({ task: receivedTask, startMessageIndex }) => {
+            receivedStartIndex = startMessageIndex;
+            transcript = formatConversationForMemoryReview(receivedTask, startMessageIndex);
+        });
+
+        await task.submitUserMessage('real user input');
+        const assistant = task.chat_context.messages.at(-1) as AssistantMessage;
+        assistant.appendText('assistant response');
+
+        await jest.advanceTimersByTimeAsync(100);
+
+        expect(receivedStartIndex).toBe(2);
+        expect(transcript).not.toContain('turn control prompt');
+        expect(transcript).not.toContain('/workspace/opaque-source');
+        expect(transcript).toContain('real user input');
+        expect(transcript).toContain('assistant response');
     });
 
     test('continues observing messages after chat_context is replaced', async () => {

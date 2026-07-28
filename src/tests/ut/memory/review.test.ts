@@ -268,4 +268,31 @@ describe('联合长期记忆回顾', () => {
         expect(startReviewTask.mock.calls.map(([sourceTask]) => sourceTask)).toEqual([sourceTaskA, sourceTaskB]);
         expect(reviewTaskB.waitUntilFinished).toHaveBeenCalledTimes(1);
     });
+
+    test('TailCard section 的控制 prompt 和 source path 不会进入长期记忆审查', () => {
+        const task = new TaskState(new TaskManagerState());
+        task.setFrontendTailCardSection(
+            'knowledge-mode',
+            '以下运行时上下文仅适用于当前模型请求。source=/workspace/private-source'
+        );
+        task.chat_context.appendMessage(new UserMessage('请查找项目事实'));
+
+        const formatted = formatConversationForMemoryReview(task, 0);
+
+        expect(formatted).not.toContain('以下运行时上下文仅适用于当前模型请求');
+        expect(formatted).not.toContain('/workspace/private-source');
+        expect(formatted).toContain('用户: 请查找项目事实');
+    });
+
+    test('联合回顾 transcript 超过 24,000 字符时只保留尾部', () => {
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context.appendMessage(new UserMessage(`REMOVED_PREFIX${'a'.repeat(24_000)}`));
+        task.chat_context.appendMessage(new UserMessage('KEPT_TAIL'));
+
+        const formatted = formatConversationForMemoryReview(task, 0);
+
+        expect(formatted).toContain('[前文过长，已仅保留末尾 24000 字符]');
+        expect(formatted).not.toContain('REMOVED_PREFIX');
+        expect(formatted).toContain('KEPT_TAIL');
+    });
 });

@@ -321,6 +321,28 @@ function exposeTaskManagerAPI() {
             taskwiseToolsetCallbacks.get(taskId).set(toolset.name, toolsetCallback);
             return result.data;
         },
+        listFrontendTailCardSections: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:listFrontendTailCardSections', taskId);
+            if (result.status !== 'ok') {
+                console.error('listing TailCard sections failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        setFrontendTailCardSection: async (taskId, id, content) => {
+            const result = await ipcRenderer.invoke('taskManager:setFrontendTailCardSection', taskId, id, content);
+            if (result.status !== 'ok') {
+                console.error('setting TailCard section failed', result.message);
+                throw new Error(result.message);
+            }
+        },
+        removeFrontendTailCardSection: async (taskId, id) => {
+            const result = await ipcRenderer.invoke('taskManager:removeFrontendTailCardSection', taskId, id);
+            if (result.status !== 'ok') {
+                console.error('removing TailCard section failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
         getAttachmentFileSupport: async () => {
             const result = await ipcRenderer.invoke('taskManager:getAttachmentFileSupport');

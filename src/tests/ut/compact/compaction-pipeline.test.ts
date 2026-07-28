@@ -20,6 +20,7 @@ import {
     UserMessage,
     isCompactBoundaryMessage
 } from '../../../main/aikernel/messages';
+import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
@@ -891,5 +892,35 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(autoCompactState.lastAttemptAt).toBeUndefined();
         expect(autoCompactState.lastSuccessAt).toBeUndefined();
         expect(autoCompactState.cooldownUntil).toBeUndefined();
+    });
+
+    test('TailCard sections stay out of active context and enter only the request projection', async () => {
+        const task = new TaskState(new TaskManagerState());
+        task.chat_context = createCompactableChatContext();
+        task.setFrontendTailCardSection('knowledge-mode', 'opaque request-only prompt');
+
+        const activeResult = await prepareContextForModel(task.chat_context, undefined, {
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+        const withoutTail = JSON.stringify(
+            OpenAIAdapter.buildMessages(task.chat_context, false, {
+                activeContext: activeResult.activeContext
+            })
+        );
+        expect(withoutTail).not.toContain('opaque request-only prompt');
+
+        const requestTailText = await task.hooks.buildTailcards(task, {
+            activeContext: activeResult.activeContext,
+            chatContext: task.chat_context,
+            requestType: 'streamComplete'
+        });
+        const withTail = JSON.stringify(
+            OpenAIAdapter.buildMessages(task.chat_context, false, {
+                activeContext: activeResult.activeContext,
+                requestTailText
+            })
+        );
+        expect(withTail).toContain('opaque request-only prompt');
+        expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('opaque request-only prompt');
     });
 });
