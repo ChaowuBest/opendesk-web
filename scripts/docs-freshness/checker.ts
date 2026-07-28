@@ -66,7 +66,13 @@ export function checkRelativeLinks(docPath: string, content: string, rootDir: st
     while ((match = relativeLinkRegex.exec(content)) !== null) {
         const linkText = match[1];
         const linkPath = match[2];
-        const resolvedPath = path.resolve(path.dirname(docPath), linkPath);
+
+        // Strip the #anchor fragment before checking file existence
+        const hashIndex = linkPath.indexOf('#');
+        const filePathPart = hashIndex >= 0 ? linkPath.slice(0, hashIndex) : linkPath;
+        const anchorPart = hashIndex >= 0 ? linkPath.slice(hashIndex + 1) : null;
+
+        const resolvedPath = path.resolve(path.dirname(docPath), filePathPart);
 
         if (!fs.existsSync(resolvedPath)) {
             results.push({
@@ -75,10 +81,55 @@ export function checkRelativeLinks(docPath: string, content: string, rootDir: st
                 message: `链接目标不存在: ${linkPath}`,
                 detail: `链接文本: "${linkText}"`
             });
+            continue;
+        }
+
+        // For markdown files, verify the anchor exists as a heading
+        if (anchorPart && resolvedPath.endsWith('.md')) {
+            const targetContent = fs.readFileSync(resolvedPath, 'utf-8');
+            const headingAnchors = extractMarkdownAnchors(targetContent);
+            if (!headingAnchors.has(anchorPart)) {
+                results.push({
+                    type: 'warning',
+                    file: path.relative(rootDir, docPath),
+                    message: `链接锚点不存在: ${linkPath}`,
+                    detail: `链接文本: "${linkText}", 目标文件中未找到锚点 #${anchorPart}`
+                });
+            }
         }
     }
 
     return results;
+}
+
+/**
+ * Extract all GitHub-style heading anchors from markdown content.
+ * GitHub generates anchors by: lowercasing, replacing spaces with hyphens,
+ * and removing non-alphanumeric characters (except hyphens and CJK characters).
+ */
+function extractMarkdownAnchors(content: string): Set<string> {
+    const anchors = new Set<string>();
+    const headingRegex = /^#{1,6}\s+(.+)$/gm;
+    let match;
+
+    while ((match = headingRegex.exec(content)) !== null) {
+        const heading = match[1].trim();
+        // Remove markdown formatting (links, images, bold, etc.)
+        const text = heading
+            .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links -> text
+            .replace(/[*_`~]/g, '') // emphasis/code
+            .trim();
+        // GitHub anchor generation: lowercase, spaces -> -, remove special chars
+        const anchor = text
+            .toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^\w\u4e00-\u9fff-]/g, '');
+        if (anchor) {
+            anchors.add(anchor);
+        }
+    }
+
+    return anchors;
 }
 
 export function checkImageReferences(docPath: string, content: string, rootDir: string): CheckResult[] {
