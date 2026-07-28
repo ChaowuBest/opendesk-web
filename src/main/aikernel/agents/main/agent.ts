@@ -120,22 +120,6 @@ function getUsingToolsSection(): string {
     return ['# 使用你的工具', ...formatBullets(items)].join('\n');
 }
 
-// ─── Section 5.5: Local Filesystem ────────────────────────────────
-function getLocalFilesystemSection(): string {
-    const semanticSearchAvailable = isSemanticSearchAvailableForPrompt();
-    const semanticSearchItem = semanticSearchAvailable
-        ? '已配置向量嵌入模型时，filemgr 可通过 semanticSearch 进行本地语义搜索；具体使用条件遵循 filemgr skill。'
-        : '未配置向量嵌入模型时，本地语义搜索不可用，但 filemgr 本地知识库/本地文件资料仍可通过文件名、路径、关键词或读取文件内容进行查询。';
-    const items = [
-        'OpenDesk 的 filemgr 提供本地知识库能力，用于检索、读取和操作已配置扫描目录或工作区中的本地文件；具体工具选择遵循 filemgr skill。',
-        'knowledgebase 应用提供云端/服务商知识库能力；它与 filemgr 本地知识库是不同来源。',
-        semanticSearchItem,
-        '当用户询问知识库、资料、文档或工作区文件时，应根据语境区分本地 filemgr 和云端 knowledgebase；不确定时可以分别查询并在回答中标明来源。',
-        '当同时使用本地知识库和云端/服务商知识库时，回答必须明确区分信息来源。'
-    ];
-    return ['# 本地文件系统', ...items.map((item) => ` - ${item}`)].join('\n');
-}
-
 // ─── Section 6: Tone and Style (Soul) ─────────────────────────────
 function getToneAndStyleSection(soulName: string, soulUid: string, soulContent: string): string {
     return `# 语调与风格
@@ -302,7 +286,6 @@ export class MainAgentDecl extends AgentDecl {
             TASK_MANAGEMENT_PROMPT,
             getActionsSection(),
             getUsingToolsSection(),
-            getLocalFilesystemSection(),
             getToneAndStyleSection(soulName, soulUid, soulContent),
             getLanguageSection(),
             getOutputEfficiencySection()
