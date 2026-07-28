@@ -90,10 +90,10 @@ import {
     type RankPeriod,
     initTelemetry,
     shutdownTelemetry,
-    reloadTelemetry,
-    withSpan
+    reloadTelemetry
 } from './telemetry/index.js';
-import { StartupTrace } from './telemetry/startup-tracer.js';
+import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
+import { StartupTrace } from './telemetry/opentelemetry/startup-tracer.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
@@ -1606,7 +1606,7 @@ const registerTaskManagerAPIHandlers = () => {
                 ? details.attachedImages
                 : undefined;
 
-        await task.submitUserMessage(details.message, imageDataUris);
+        await task.submitUserMessage(details.message, { imageDataUris });
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {
@@ -2181,7 +2181,7 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle(
         'setting:fetchProviderModels',
         async (_event, { base_url, api_key, provider_type, no_proxy, no_ssl }) => {
-            return withSpan('llm.list_models', async () => {
+            return TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.list_models'), async () => {
                 try {
                     const headers: Record<string, string> = {
                         Authorization: `Bearer ${api_key}`,
@@ -2900,7 +2900,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
     });
 }
 
-function startApplication() {
+async function startApplication(): Promise<void> {
     // 同步 --config-directory 到 Electron userData，使单例锁按 config 目录区分
     const configDir = getOpendeskDirectory();
     const defaultUserData = app.getPath('userData');
@@ -2920,7 +2920,7 @@ function startApplication() {
     }
 
     // 在 app.whenReady() 之前初始化 Registry 和协议 schemes
-    initTelemetry();
+    await initTelemetry();
     const startupTrace = new StartupTrace('startup.gui');
     const t = startupTrace.createPhase('startup.pre_ready.registry');
     initializeRegistry();
@@ -3400,4 +3400,4 @@ function startApplication() {
     });
 }
 
-startApplication();
+void startApplication();

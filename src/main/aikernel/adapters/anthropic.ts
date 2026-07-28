@@ -119,7 +119,7 @@ function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record
         ...Object.fromEntries(
             Object.entries(extraHeaders).map(([k, v]) => [k, iconv.encode(v, 'latin1').toString('latin1')])
         ),
-        span_id: crypto.randomBytes(8).toString('hex')
+        span_id: extraHeaders.span_id ?? crypto.randomBytes(8).toString('hex')
     };
 }
 

@@ -164,7 +164,17 @@ describe('opencode session routes', () => {
 
         expect(response.status).toBe(200);
         expect(task.model).toBe('gpt4o');
-        expect(task.submitUserMessage).toHaveBeenCalledWith('hello');
+        expect(task.submitUserMessage).toHaveBeenCalledWith(
+            'hello',
+            expect.objectContaining({
+                instrumentationContext: expect.objectContaining({
+                    metadata: expect.objectContaining({
+                        sessionID: 'ses_model',
+                        route: 'POST /session/:sessionID/message'
+                    })
+                })
+            })
+        );
     });
 
     test('POST /session/:id/message passes opencode request headers to the submitted turn', async () => {
@@ -190,10 +200,27 @@ describe('opencode session routes', () => {
         );
 
         expect(response.status).toBe(200);
-        expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', undefined, {
-            extraHeaders: {
-                cookie: 'sid=abc',
-                trace_id: 'trace-123'
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', {
+            modelRequestOptions: {
+                extraHeaders: {
+                    cookie: 'sid=abc',
+                    trace_id: 'trace-123'
+                }
+            },
+            instrumentationContext: {
+                traceId: 'trace-123',
+                input: expect.objectContaining({ message: 'hello headers' }),
+                metadata: expect.objectContaining({
+                    sessionID: 'ses_model',
+                    route: 'POST /session/:sessionID/message',
+                    recordGenerations: true
+                }),
+                output: {
+                    sessionID: 'ses_model',
+                    mode: 'default',
+                    agent: 'explore',
+                    cost: 0
+                }
             }
         });
     });
@@ -220,7 +247,13 @@ describe('opencode session routes', () => {
         );
 
         expect(response.status).toBe(200);
-        expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers');
+        expect(task.submitUserMessage).toHaveBeenCalledWith(
+            'hello without complete headers',
+            expect.objectContaining({
+                modelRequestOptions: undefined,
+                instrumentationContext: expect.any(Object)
+            })
+        );
     });
 
     test('POST /session/:id/message publishes busy and idle session events', async () => {
@@ -635,7 +668,16 @@ describe('opencode session routes', () => {
 
         expect(response.status).toBe(204);
         expect(task.model).toBe('gpt4o');
-        expect(task.submitUserMessage).toHaveBeenCalledWith('hello async');
+        expect(task.submitUserMessage).toHaveBeenCalledWith(
+            'hello async',
+            expect.objectContaining({
+                instrumentationContext: expect.objectContaining({
+                    metadata: expect.objectContaining({
+                        route: 'POST /session/:sessionID/prompt_async'
+                    })
+                })
+            })
+        );
     });
 
     test('opencode chunk events keep a stable part id when text is rebased to reasoning', () => {

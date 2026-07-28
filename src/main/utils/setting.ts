@@ -306,25 +306,66 @@ const TelemetryEndpointCompatSchema = z.preprocess((val) => {
     return val;
 }, TelemetryEndpointSchema);
 
+const DEFAULT_OPENTELEMETRY_CONFIG = {
+    endpoints: []
+};
+
+const OpenTelemetryConfigSchema = z
+    .object({
+        endpoints: z
+            .preprocess(
+                (val) => (Array.isArray(val) ? val.filter((ep: unknown) => typeof ep !== 'string') : val),
+                z.array(TelemetryEndpointCompatSchema)
+            )
+            .default([])
+            .describe('OTLP HTTP 端点列表')
+    })
+    .describe('OpenTelemetry 配置')
+    .default(DEFAULT_OPENTELEMETRY_CONFIG);
+
+const LangfuseEndpointSchema = z
+    .object({
+        name: z.string().default('').describe('端点名称，用于标识'),
+        protocol: z.literal('langfuse').default('langfuse').describe('遥测协议'),
+        enabled: z.boolean().default(false).describe('是否启用此 Langfuse 端点'),
+        base_url: z.string().trim().default('').describe('Langfuse 服务地址，为空时使用官方云服务地址'),
+        public_key: z.string().default('').describe('Langfuse 项目公钥'),
+        secret_key: z.string().default('').describe('Langfuse 项目私钥'),
+        export_mode: z.enum(['immediate', 'batched']).default('batched').describe('Langfuse span 导出模式'),
+        flush_at: z.number().int().positive().default(50).describe('批量发送前最多累计的 span 数量'),
+        flush_interval_seconds: z.number().int().positive().default(5).describe('批量发送的最长等待秒数')
+    })
+    .describe('Langfuse 端点配置');
+
+const DEFAULT_LANGFUSE_CONFIG = {
+    endpoints: [],
+    environment: 'development',
+    max_payload_chars: 20_000
+};
+
+const LangfuseConfigSchema = z
+    .object({
+        endpoints: z.array(LangfuseEndpointSchema).default([]).describe('Langfuse 端点列表'),
+        environment: z.string().trim().min(1).default('development').describe('Langfuse 运行环境标识'),
+        max_payload_chars: z.number().int().positive().default(20_000).describe('单个遥测字符串字段的最大字符数')
+    })
+    .describe('Langfuse 配置')
+    .default(DEFAULT_LANGFUSE_CONFIG);
+
 const TelemetrySchema = z
     .object({
-        opentelemetry: z
-            .object({
-                endpoints: z
-                    .preprocess(
-                        (val) => (Array.isArray(val) ? val.filter((ep: unknown) => typeof ep !== 'string') : val),
-                        z.array(TelemetryEndpointCompatSchema)
-                    )
-                    .default([])
-                    .describe('OTLP HTTP 端点列表')
-            })
-            .describe('OpenTelemetry 配置')
-            .default({ endpoints: [] })
+        opentelemetry: OpenTelemetryConfigSchema,
+        langfuse: LangfuseConfigSchema
     })
     .describe('遥测设置')
-    .default({});
+    .default({
+        opentelemetry: DEFAULT_OPENTELEMETRY_CONFIG,
+        langfuse: DEFAULT_LANGFUSE_CONFIG
+    });
 
 type TelemetryConfig = z.infer<typeof TelemetrySchema>;
+type OpenTelemetryConfig = z.infer<typeof OpenTelemetryConfigSchema>;
+type LangfuseConfig = z.infer<typeof LangfuseConfigSchema>;
 
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
@@ -1030,6 +1071,10 @@ export {
     isLogRawLlmRequestEnabled,
     TelemetrySchema,
     type TelemetryConfig,
+    OpenTelemetryConfigSchema,
+    type OpenTelemetryConfig,
+    LangfuseConfigSchema,
+    type LangfuseConfig,
     normalizeProviderType,
     normalizeModelType,
     isChatModel,

@@ -10,42 +10,42 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { Setting } from '../utils/setting.js';
-import { initOpenTelemetry, shutdownOpenTelemetry } from './opentelemetry-telemetry.js';
-
-export {
-    getTracer,
-    withSpan,
-    context,
-    trace,
-    SpanStatusCode,
-    type Span,
-    type SpanOptions
-} from './opentelemetry-telemetry.js';
+import { Setting, TelemetrySchema } from '../utils/setting.js';
+import { initLangfuse } from './langfuse/init.js';
+import { initOpenTelemetry } from './opentelemetry/init.js';
+import { installProtocols, shutdownProtocols, type TelemetryProtocol } from './protocol.js';
 
 export * from './local-telemetry.js';
 
 let initialized = false;
+let activeProtocols: TelemetryProtocol[] = [];
 
 /**
- * 初始化遥测系统。从系统设置中读取 OpenTelemetry 配置（端点列表），
- * 如果启用则初始化 OTel SDK；LocalTelemetry（本地用量记录）始终启用。
+ * 初始化所有已配置的遥测协议。每个协议负责自己的配置解析、实现注册和资源生命周期，
+ * 顶层仅负责协议装配。
  */
 export async function initTelemetry(): Promise<void> {
     if (initialized) return;
     initialized = true;
+    let pendingProtocols: TelemetryProtocol[] = [];
 
     try {
-        const telemetryConfig = Setting.getInstance().getData().telemetry;
-        const allEndpoints = telemetryConfig?.opentelemetry?.endpoints ?? [];
-        const enabledEndpoints = allEndpoints.filter((ep) => ep.enabled && ep.url).map((ep) => ep.url);
-        if (enabledEndpoints.length > 0) {
-            initOpenTelemetry(enabledEndpoints);
+        const config = TelemetrySchema.parse(Setting.getInstance().getData().telemetry);
+        const langfuse = await initLangfuse(config.langfuse);
+        pendingProtocols = langfuse ? [langfuse] : [];
+        const opentelemetry = await initOpenTelemetry(config.opentelemetry, langfuse ? [langfuse] : []);
+        if (!opentelemetry) {
+            await shutdownProtocols(pendingProtocols);
+            pendingProtocols = [];
         } else {
-            logger.info('[Telemetry] OpenTelemetry disabled (no enabled endpoints)');
+            activeProtocols = [...pendingProtocols, opentelemetry];
+            pendingProtocols = [];
         }
+        installProtocols(activeProtocols);
     } catch (err) {
-        logger.warn(`[Telemetry] Failed to read telemetry config: ${err}`);
+        await shutdownProtocols([...activeProtocols, ...pendingProtocols]);
+        activeProtocols = [];
+        logger.warn(`[Telemetry] Failed to initialize protocols: ${err}`);
     }
 }
 
@@ -53,16 +53,15 @@ export async function initTelemetry(): Promise<void> {
  * 关闭遥测系统，刷新所有待发送的 span。
  */
 export async function shutdownTelemetry(): Promise<void> {
-    await shutdownOpenTelemetry();
+    await shutdownProtocols(activeProtocols);
+    activeProtocols = [];
     initialized = false;
 }
 
 /**
- * 热重载遥测配置：先关闭现有 provider（刷新待发送 span），
- * 再从设置中重新读取配置并初始化。用于设置变更后无需重启即可生效。
+ * 热重载遥测配置：先按协议关闭并刷新现有资源，再重新初始化。
  */
 export async function reloadTelemetry(): Promise<void> {
-    await shutdownOpenTelemetry();
-    initialized = false;
+    await shutdownTelemetry();
     await initTelemetry();
 }

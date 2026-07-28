@@ -61,6 +61,55 @@ const ModelSchema = z.object({
 
 应用程序配置是一个动态扩展的对象，各应用通过 [`registerApplicationSettings()`](src/main/utils/setting.ts:157) 方法注册自己的配置 Schema。
 
+### 5. 遥测配置 (`telemetry`)
+
+遥测配置由 `TelemetrySchema` 统一校验。OpenTelemetry 与 Langfuse 是 `telemetry` 下两个同级协议，
+可以单独启用，也可以同时启用：
+
+```json
+{
+    "telemetry": {
+        "opentelemetry": {
+            "endpoints": [
+                {
+                    "name": "local-collector",
+                    "url": "http://localhost:4318/v1/traces",
+                    "protocol": "opentelemetry",
+                    "enabled": true
+                }
+            ]
+        },
+        "langfuse": {
+            "endpoints": [
+                {
+                    "name": "langfuse-cloud",
+                    "protocol": "langfuse",
+                    "enabled": true,
+                    "base_url": "https://cloud.langfuse.com",
+                    "public_key": "pk-lf-xxx",
+                    "secret_key": "sk-lf-xxx",
+                    "export_mode": "batched",
+                    "flush_at": 50,
+                    "flush_interval_seconds": 5
+                }
+            ],
+            "environment": "development",
+            "max_payload_chars": 20000
+        }
+    }
+}
+```
+
+OpenTelemetry 通过 `endpoints` 配置一个或多个 OTLP HTTP Trace 端点；端点包含 `name`、`url`、
+`protocol` 和 `enabled`。Langfuse 同样通过 `endpoints` 配置一个或多个端点；启用的端点需要完整的
+公钥和私钥，`base_url` 为空时使用官方云服务地址。有效的 `LANGFUSE_*` 环境变量会增加一个独立端点，
+不会覆盖或关闭配置文件中的端点。
+
+两种协议默认均关闭，可在 GUI 或 TUI 的“遥测设置”中配置并热重载。它们共用进程内唯一的
+OpenTelemetry Provider，通过独立的 Span Processor 隔离上报数据：普通 Span 发送到 OTLP 端点，
+Langfuse Observation 只发送到 Langfuse，不会互相冲突。完整的观测范围、调用层级和环境变量说明见
+[Telemetry 架构文档](telemetry.md)。
+
 示例配置结构：
 
 ```json
@@ -86,6 +135,23 @@ const ModelSchema = z.object({
             "model_name": "google/gemini-2.5-flash"
         }
     ],
+    "telemetry": {
+        "opentelemetry": {
+            "endpoints": [
+                {
+                    "name": "local-collector",
+                    "url": "http://localhost:4318/v1/traces",
+                    "protocol": "opentelemetry",
+                    "enabled": true
+                }
+            ]
+        },
+        "langfuse": {
+            "endpoints": [],
+            "environment": "development",
+            "max_payload_chars": 20000
+        }
+    },
     "applications": {
         "filemgr": {
             "root": "/home/user",

@@ -260,7 +260,9 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
 
             // 提交用户消息——与 CLI 完全一致
             const text = hasMessageText ? message!.trim() : '';
-            await task.submitUserMessage(text, imageDataUris.length > 0 ? imageDataUris : undefined);
+            await task.submitUserMessage(text, {
+                imageDataUris: imageDataUris.length > 0 ? imageDataUris : undefined
+            });
 
             // 等待任务完成
             await task.waitUntilFinished();

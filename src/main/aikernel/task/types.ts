@@ -13,6 +13,7 @@ import type { UserMessagePart, AssistantMessagePart, Usage, RuntimeMetadata } fr
 import type { LLMRequestOptions } from '../llm.js';
 import type { BaseTool } from '../tool.js';
 import type { TaskState } from '../states/tasks.js';
+import type { TaskTurnInstrumentationExternalContext } from '../../telemetry/agent-execution.js';
 
 export type TaskStatus = 'waiting' | 'running' | 'stopped';
 export type TaskCompletionStatus = 'success' | 'fail' | 'ask';
@@ -27,6 +28,18 @@ export interface TaskRuntimeInterrupt {
 }
 
 export type TaskModelRequestOptions = LLMRequestOptions;
+
+export interface SubmitUserMessageOptions {
+    imageDataUris?: string[];
+    modelRequestOptions?: TaskModelRequestOptions;
+    instrumentationContext?: TaskTurnInstrumentationExternalContext;
+}
+
+export interface ProcessTaskTurnOptions {
+    generation?: number;
+    modelRequestOptions?: TaskModelRequestOptions;
+    instrumentationContext?: TaskTurnInstrumentationExternalContext;
+}
 
 export type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean | Promise<boolean>;

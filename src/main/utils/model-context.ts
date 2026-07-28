@@ -10,7 +10,7 @@
  */
 
 import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
-import { withSpan } from '../telemetry/index.js';
+import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 
 /**
  * 已知模型的信息记录，合并了上下文窗口大小、最大输出 token 和视觉支持。
@@ -412,7 +412,7 @@ export async function fetchContextSizeFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<number> {
-    return withSpan('llm.metadata_query', async () => {
+    return TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.metadata_query'), async () => {
         const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
         const headers: Record<string, string> = {
             Authorization: `Bearer ${apiKey}`,
@@ -465,7 +465,7 @@ export async function fetchMaxOutputTokensFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<number> {
-    return withSpan('llm.metadata_query', async () => {
+    return TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.metadata_query'), async () => {
         const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
         const headers: Record<string, string> = {
             Authorization: `Bearer ${apiKey}`,
@@ -518,7 +518,7 @@ export async function fetchVisionSupportFromAPI(
         model_name: string;
     } & ModelNetworkConfig
 ): Promise<boolean | undefined> {
-    return withSpan('llm.metadata_query', async () => {
+    return TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.metadata_query'), async () => {
         const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
         const headers: Record<string, string> = {
             Authorization: `Bearer ${apiKey}`,

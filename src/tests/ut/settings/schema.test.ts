@@ -11,6 +11,97 @@ describe('设置 schema', () => {
         expect(setting.debug.developer_mode).toBe(false);
     });
 
+    test('Langfuse 遥测默认关闭并提供安全的运行默认值', () => {
+        const setting = Setting.getSettingSchema().parse({});
+
+        expect(setting.telemetry.opentelemetry).toEqual({
+            endpoints: []
+        });
+        expect(setting.telemetry.langfuse).toEqual({
+            endpoints: [],
+            environment: 'development',
+            max_payload_chars: 20_000
+        });
+    });
+
+    test('OpenTelemetry 配置通过独立 schema 校验并补齐端点默认字段', () => {
+        const setting = Setting.getSettingSchema().parse({
+            telemetry: {
+                opentelemetry: {
+                    endpoints: [
+                        {
+                            url: 'http://localhost:4318/v1/traces',
+                            enabled: true
+                        },
+                        'http://legacy-endpoint'
+                    ]
+                }
+            }
+        });
+
+        expect(setting.telemetry.opentelemetry).toEqual({
+            endpoints: [
+                {
+                    name: '',
+                    url: 'http://localhost:4318/v1/traces',
+                    protocol: 'opentelemetry',
+                    enabled: true
+                }
+            ]
+        });
+    });
+
+    test('Langfuse 多端点配置补齐每个端点的默认字段', () => {
+        const setting = Setting.getSettingSchema().parse({
+            telemetry: {
+                langfuse: {
+                    endpoints: [
+                        {
+                            name: 'cloud',
+                            enabled: true,
+                            public_key: 'pk-cloud',
+                            secret_key: 'sk-cloud'
+                        },
+                        {
+                            name: 'internal',
+                            enabled: false,
+                            base_url: 'https://langfuse.example.com'
+                        }
+                    ]
+                }
+            }
+        });
+
+        expect(setting.telemetry.langfuse.endpoints).toEqual([
+            {
+                name: 'cloud',
+                protocol: 'langfuse',
+                enabled: true,
+                base_url: '',
+                public_key: 'pk-cloud',
+                secret_key: 'sk-cloud',
+                export_mode: 'batched',
+                flush_at: 50,
+                flush_interval_seconds: 5
+            },
+            {
+                name: 'internal',
+                protocol: 'langfuse',
+                enabled: false,
+                base_url: 'https://langfuse.example.com',
+                public_key: '',
+                secret_key: '',
+                export_mode: 'batched',
+                flush_at: 50,
+                flush_interval_seconds: 5
+            }
+        ]);
+        expect(setting.telemetry.langfuse).toMatchObject({
+            environment: 'development',
+            max_payload_chars: 20_000
+        });
+    });
+
     test('调试设置使用共享结构并默认关闭实验功能', () => {
         const setting = Setting.getSettingSchema().parse({
             debug: {

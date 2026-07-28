@@ -1320,46 +1320,74 @@ class SettingPanel extends HTMLElement {
     }
 
     renderTelemetrySection() {
-        const telemetryConfig = this.currentData?.telemetry?.opentelemetry || {};
-        const endpoints = Array.isArray(telemetryConfig.endpoints) ? telemetryConfig.endpoints : [];
+        const endpoints = this.getTelemetryEndpointEntries();
 
         return `
-        <section class="sp-section">
-            <h2 class="sp-section-title">${this._t('renderer.settings.telemetry')}<span class="sp-section-subtitle">${endpoints.length} 个端点</span></h2>
-            <div id="telemetry-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
-                ${endpoints.map((ep, i) => this.renderTelemetryCard(ep, i)).join('')}
+        <section id="telemetry-section" class="sp-section">
+            <h2 class="sp-section-title">${this._t('renderer.settings.telemetry')}</h2>
+            <div class="sp-section-card">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px">
+                    <div>
+                        <h3 style="font-size:15px;font-weight:600;color:var(--sp-color-text)">${this._t('config.telemetry.endpoints')}</h3>
+                        <p style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:3px">${this._t('config.telemetry.title.hint')}</p>
+                    </div>
+                    <span class="sp-tag sp-tag-teal">${this._t('renderer.settings.telemetryEndpointCount', { count: endpoints.length })}</span>
+                </div>
+                <div id="telemetry-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+                    ${endpoints.map((entry) => this.renderTelemetryCard(entry)).join('')}
+                </div>
+                <button id="telemetry-add-btn" class="sp-add-btn" style="margin-top:16px">
+                    <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('renderer.settings.telemetryAddEndpoint')}
+                </button>
             </div>
-            <button id="telemetry-add-btn" class="sp-add-btn" style="margin-top:16px">
-                <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('renderer.settings.telemetryAddEndpoint')}
-            </button>
         </section>
         `;
     }
 
-    renderTelemetryCard(endpoint, index) {
-        const protocol = endpoint.protocol || 'opentelemetry';
+    getTelemetryEndpointEntries() {
+        const openTelemetryEndpoints = this.currentData?.telemetry?.opentelemetry?.endpoints;
+        const langfuseEndpoints = this.currentData?.telemetry?.langfuse?.endpoints;
+        return [
+            ...(Array.isArray(openTelemetryEndpoints)
+                ? openTelemetryEndpoints.map((endpoint, index) => ({
+                      protocol: 'opentelemetry',
+                      index,
+                      endpoint
+                  }))
+                : []),
+            ...(Array.isArray(langfuseEndpoints)
+                ? langfuseEndpoints.map((endpoint, index) => ({
+                      protocol: 'langfuse',
+                      index,
+                      endpoint
+                  }))
+                : [])
+        ];
+    }
+
+    renderTelemetryCard({ endpoint, protocol, index }) {
         const enabled = !!endpoint.enabled;
-        const url = endpoint.url || '';
+        const url = protocol === 'langfuse' ? endpoint.base_url || 'https://cloud.langfuse.com' : endpoint.url || '';
         const name = endpoint.name || '';
-        const protocolLabel = protocol === 'opentelemetry' ? 'OpenTelemetry' : protocol;
-        const displayName = name || url || '未设置端点';
+        const protocolLabel = protocol === 'opentelemetry' ? 'OpenTelemetry' : 'Langfuse';
+        const displayName = name || url || this._t('renderer.settings.telemetryEndpointUnset');
 
         return `
-        <div class="sp-card" data-telemetry-index="${index}">
+        <div class="sp-card" data-telemetry-protocol="${protocol}" data-telemetry-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                         <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text);word-break:break-all">${this.escapeHtml(displayName)}</h3>
                         <span class="sp-tag sp-tag-teal">${this.escapeHtml(protocolLabel)}</span>
-                        ${enabled ? '<span class="sp-tag sp-tag-success">已启用</span>' : '<span class="sp-tag sp-tag-neutral">已禁用</span>'}
+                        <span class="sp-tag ${enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${this._t(enabled ? 'config.telemetry.status.enabled' : 'config.telemetry.status.disabled')}</span>
                     </div>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px;font-family:var(--sp-font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono','Consolas','Monaco',monospace)">${this.escapeHtml(url || 'http://localhost:4318/v1/traces')}</p>
                 </div>
                 <div class="sp-card-actions">
-                    <button class="edit-telemetry-btn sp-card-action-btn" data-index="${index}" title="${this._t('renderer.settings.telemetryEdit')}">
+                    <button class="edit-telemetry-btn sp-card-action-btn" data-protocol="${protocol}" data-index="${index}" title="${this._t('renderer.settings.telemetryEdit')}">
                         <i class="fas fa-pen" style="font-size:12px"></i>
                     </button>
-                    <button class="delete-telemetry-btn sp-card-action-btn sp-delete-btn" data-index="${index}" title="${this._t('renderer.settings.telemetryDeleteEndpoint')}">
+                    <button class="delete-telemetry-btn sp-card-action-btn sp-delete-btn" data-protocol="${protocol}" data-index="${index}" title="${this._t('renderer.settings.telemetryDeleteEndpoint')}">
                         <i class="fas fa-trash" style="font-size:12px"></i>
                     </button>
                 </div>
@@ -1368,18 +1396,41 @@ class SettingPanel extends HTMLElement {
         `;
     }
 
-    showTelemetryEditModal(index) {
+    getLangfuseConfig() {
+        return {
+            endpoints: [],
+            environment: 'development',
+            max_payload_chars: 20000,
+            ...(this.currentData?.telemetry?.langfuse || {})
+        };
+    }
+
+    showTelemetryEditModal(index, initialProtocol = 'opentelemetry') {
         const isEdit = index >= 0;
-        const endpoint = isEdit
-            ? this.currentData?.telemetry?.opentelemetry?.endpoints?.[index] || {
-                  name: '',
-                  url: '',
-                  protocol: 'opentelemetry',
-                  enabled: true
-              }
-            : { name: '', url: '', protocol: 'opentelemetry', enabled: true };
+        const protocol = initialProtocol === 'langfuse' ? 'langfuse' : 'opentelemetry';
+        const langfuseConfig = this.getLangfuseConfig();
+        const endpoint =
+            (isEdit
+                ? protocol === 'langfuse'
+                    ? langfuseConfig.endpoints?.[index]
+                    : this.currentData?.telemetry?.opentelemetry?.endpoints?.[index]
+                : undefined) ||
+            (protocol === 'langfuse'
+                ? {
+                      name: '',
+                      protocol: 'langfuse',
+                      enabled: true,
+                      base_url: '',
+                      public_key: '',
+                      secret_key: '',
+                      export_mode: 'batched',
+                      flush_at: 50,
+                      flush_interval_seconds: 5
+                  }
+                : { name: '', url: '', protocol: 'opentelemetry', enabled: true });
 
         this._editingTelemetryIndex = index;
+        this._editingTelemetryProtocol = protocol;
 
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
@@ -1395,14 +1446,54 @@ class SettingPanel extends HTMLElement {
                         <input id="telemetry-name-input" type="text" value="${this.escapeHtml(endpoint.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('config.telemetry.field.name')}">
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.endpoint')}</label>
-                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all font-mono" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
-                    </div>
-                    <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.protocol')}</label>
                         <select id="telemetry-protocol-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="opentelemetry" ${endpoint.protocol === 'opentelemetry' ? 'selected' : ''}>OpenTelemetry (OTLP)</option>
+                            <option value="opentelemetry" ${protocol === 'opentelemetry' ? 'selected' : ''}>OpenTelemetry (OTLP)</option>
+                            <option value="langfuse" ${protocol === 'langfuse' ? 'selected' : ''}>Langfuse</option>
                         </select>
+                    </div>
+                    <div id="telemetry-opentelemetry-fields">
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.endpoint')}</label>
+                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all font-mono" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
+                    </div>
+                    <div id="telemetry-langfuse-fields" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.base_url')}</label>
+                            <input id="telemetry-langfuse-base-url-input" type="text" value="${this.escapeHtml(endpoint.base_url || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="https://cloud.langfuse.com">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.public_key')}</label>
+                            <input id="telemetry-langfuse-public-key-input" type="text" value="${this.escapeHtml(endpoint.public_key || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="pk-lf-...">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.secret_key')}</label>
+                            <input id="telemetry-langfuse-secret-key-input" type="password" value="${this.escapeHtml(endpoint.secret_key || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="sk-lf-...">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.environment')}</label>
+                            <input id="telemetry-langfuse-environment-input" type="text" value="${this.escapeHtml(langfuseConfig.environment)}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl" placeholder="development">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.export_mode')}</label>
+                            <select id="telemetry-langfuse-export-mode-input" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                                <option value="batched" ${endpoint.export_mode !== 'immediate' ? 'selected' : ''}>${this._t('config.telemetry.langfuse.option.export_mode.batched')}</option>
+                                <option value="immediate" ${endpoint.export_mode === 'immediate' ? 'selected' : ''}>${this._t('config.telemetry.langfuse.option.export_mode.immediate')}</option>
+                            </select>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.max_payload_chars')}</label>
+                                <input id="telemetry-langfuse-max-payload-chars-input" type="number" min="1" step="1" value="${this.escapeHtml(langfuseConfig.max_payload_chars)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.flush_at')}</label>
+                                <input id="telemetry-langfuse-flush-at-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_at || 50)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.flush_interval_seconds')}</label>
+                                <input id="telemetry-langfuse-flush-interval-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_interval_seconds || 5)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                            </div>
+                        </div>
                     </div>
                     <div class="flex items-center gap-2">
                         <input id="telemetry-enabled-input" type="checkbox" ${endpoint.enabled ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
@@ -1420,37 +1511,115 @@ class SettingPanel extends HTMLElement {
         this.querySelector('.modal-close-btn')?.addEventListener('click', () => this.closeModal());
         this.querySelector('#telemetry-modal-cancel')?.addEventListener('click', () => this.closeModal());
         this.querySelector('#telemetry-modal-save')?.addEventListener('click', () => this.saveTelemetryEndpoint());
+        this.querySelector('#telemetry-protocol-input')?.addEventListener('change', () =>
+            this.updateTelemetryProtocolFields()
+        );
         this.querySelector('#telemetry-url-input')?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 this.saveTelemetryEndpoint();
             }
         });
+        this.updateTelemetryProtocolFields();
+    }
+
+    updateTelemetryProtocolFields() {
+        const protocol = this.querySelector('#telemetry-protocol-input')?.value;
+        const openTelemetryFields = this.querySelector('#telemetry-opentelemetry-fields');
+        const langfuseFields = this.querySelector('#telemetry-langfuse-fields');
+        if (openTelemetryFields) openTelemetryFields.style.display = protocol === 'langfuse' ? 'none' : '';
+        if (langfuseFields) langfuseFields.style.display = protocol === 'langfuse' ? '' : 'none';
     }
 
     saveTelemetryEndpoint() {
         const name = this.querySelector('#telemetry-name-input')?.value?.trim() || '';
-        const url = this.querySelector('#telemetry-url-input')?.value?.trim();
-        if (!url) return;
-
-        const protocol = this.querySelector('#telemetry-protocol-input')?.value || 'opentelemetry';
+        const protocol =
+            this.querySelector('#telemetry-protocol-input')?.value === 'langfuse' ? 'langfuse' : 'opentelemetry';
         const enabled = this.querySelector('#telemetry-enabled-input')?.checked ?? true;
         const index = this._editingTelemetryIndex;
+        const previousProtocol = this._editingTelemetryProtocol;
 
         if (!this.currentData.telemetry) this.currentData.telemetry = {};
-        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
+        if (!this.currentData.telemetry.opentelemetry) {
+            this.currentData.telemetry.opentelemetry = { endpoints: [] };
+        }
         if (!Array.isArray(this.currentData.telemetry.opentelemetry.endpoints)) {
             this.currentData.telemetry.opentelemetry.endpoints = [];
         }
+        const langfuseConfig = this.getLangfuseConfig();
+        if (!Array.isArray(langfuseConfig.endpoints)) langfuseConfig.endpoints = [];
+        this.currentData.telemetry.langfuse = langfuseConfig;
 
-        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
-
-        if (index >= 0 && index < endpoints.length) {
-            // 编辑现有端点
-            endpoints[index] = { name, url, protocol, enabled };
+        let endpoint;
+        if (protocol === 'opentelemetry') {
+            const url = this.querySelector('#telemetry-url-input')?.value?.trim();
+            if (!url) {
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('renderer.settings.telemetry'),
+                    this._t('config.telemetry.validation.endpoint_required')
+                );
+                return;
+            }
+            endpoint = { name, url, protocol, enabled };
         } else {
-            // 添加新端点
-            endpoints.push({ name, url, protocol, enabled });
+            const positiveInteger = (selector) => {
+                const value = Number(this.querySelector(selector)?.value);
+                return Number.isInteger(value) && value > 0 ? value : undefined;
+            };
+            const maxPayloadChars = positiveInteger('#telemetry-langfuse-max-payload-chars-input');
+            const flushAt = positiveInteger('#telemetry-langfuse-flush-at-input');
+            const flushIntervalSeconds = positiveInteger('#telemetry-langfuse-flush-interval-input');
+            const publicKey = this.querySelector('#telemetry-langfuse-public-key-input')?.value || '';
+            const secretKey = this.querySelector('#telemetry-langfuse-secret-key-input')?.value || '';
+            if (!maxPayloadChars || !flushAt || !flushIntervalSeconds) {
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('renderer.settings.telemetry'),
+                    this._t('config.telemetry.langfuse.validation.positive_integer')
+                );
+                return;
+            }
+            if (enabled && (!publicKey.trim() || !secretKey.trim())) {
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('renderer.settings.telemetry'),
+                    this._t('config.telemetry.langfuse.validation.keys_required')
+                );
+                return;
+            }
+            endpoint = {
+                name,
+                protocol,
+                enabled,
+                base_url: this.querySelector('#telemetry-langfuse-base-url-input')?.value?.trim() || '',
+                public_key: publicKey,
+                secret_key: secretKey,
+                export_mode:
+                    this.querySelector('#telemetry-langfuse-export-mode-input')?.value === 'immediate'
+                        ? 'immediate'
+                        : 'batched',
+                flush_at: flushAt,
+                flush_interval_seconds: flushIntervalSeconds
+            };
+            langfuseConfig.environment =
+                this.querySelector('#telemetry-langfuse-environment-input')?.value?.trim() || 'development';
+            langfuseConfig.max_payload_chars = maxPayloadChars;
+        }
+
+        const previousEndpoints =
+            previousProtocol === 'langfuse'
+                ? langfuseConfig.endpoints
+                : this.currentData.telemetry.opentelemetry.endpoints;
+        const nextEndpoints =
+            protocol === 'langfuse' ? langfuseConfig.endpoints : this.currentData.telemetry.opentelemetry.endpoints;
+        if (index >= 0 && previousProtocol === protocol && index < nextEndpoints.length) {
+            nextEndpoints[index] = endpoint;
+        } else {
+            if (index >= 0 && index < previousEndpoints.length) {
+                previousEndpoints.splice(index, 1);
+            }
+            nextEndpoints.push(endpoint);
         }
 
         this.closeModal();
@@ -1458,23 +1627,14 @@ class SettingPanel extends HTMLElement {
         this.refreshTelemetrySection();
     }
 
-    deleteTelemetryEndpoint(index) {
+    deleteTelemetryEndpoint(protocol, index) {
         if (!this.currentData.telemetry) this.currentData.telemetry = {};
-        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
-        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
+        const endpoints =
+            protocol === 'langfuse'
+                ? this.currentData.telemetry.langfuse?.endpoints
+                : this.currentData.telemetry.opentelemetry?.endpoints;
         if (Array.isArray(endpoints) && index >= 0 && index < endpoints.length) {
             endpoints.splice(index, 1);
-            this.saveImmediately();
-            this.refreshTelemetrySection();
-        }
-    }
-
-    toggleTelemetryEndpoint(index, enabled) {
-        if (!this.currentData.telemetry) this.currentData.telemetry = {};
-        if (!this.currentData.telemetry.opentelemetry) this.currentData.telemetry.opentelemetry = {};
-        const endpoints = this.currentData.telemetry.opentelemetry.endpoints;
-        if (Array.isArray(endpoints) && index >= 0 && index < endpoints.length) {
-            endpoints[index].enabled = enabled;
             this.saveImmediately();
             this.refreshTelemetrySection();
         }
@@ -1487,14 +1647,14 @@ class SettingPanel extends HTMLElement {
     _bindTelemetryEvents() {
         // 添加端点按钮
         this.querySelector('#telemetry-add-btn')?.addEventListener('click', () => {
-            this.showTelemetryEditModal(-1);
+            this.showTelemetryEditModal(-1, 'opentelemetry');
         });
 
         // 编辑端点
         this.querySelectorAll('.edit-telemetry-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const index = parseInt(e.currentTarget.dataset.index);
-                this.showTelemetryEditModal(index);
+                this.showTelemetryEditModal(index, e.currentTarget.dataset.protocol);
             });
         });
 
@@ -1502,13 +1662,13 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.delete-telemetry-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const index = parseInt(e.currentTarget.dataset.index);
-                this.deleteTelemetryEndpoint(index);
+                this.deleteTelemetryEndpoint(e.currentTarget.dataset.protocol, index);
             });
         });
     }
 
     refreshTelemetrySection() {
-        const telemetrySection = this.querySelector('#tab-general .sp-section:last-child');
+        const telemetrySection = this.querySelector('#telemetry-section');
         if (!telemetrySection) return;
         const next = telemetrySection.nextElementSibling;
         const parent = telemetrySection.parentElement;

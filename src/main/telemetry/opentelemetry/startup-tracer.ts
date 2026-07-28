@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { context, trace, type Context } from '@opentelemetry/api';
-import { getTracer, SpanStatusCode, type Span } from './index.js';
+import { context, trace, SpanStatusCode, type Context, type Span } from '@opentelemetry/api';
+import { getTracer } from './tracing.js';
 
 /**
  * 启动追踪根 span：贯穿整个启动流程，所有 StartupPhase 作为其子 span，
