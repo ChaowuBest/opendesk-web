@@ -20,7 +20,12 @@
  */
 
 import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from './permission.js';
-import { GlobPermissionEnforcer, createDefaultPermissionRules, ReadableDirectoryRegistry } from './enforcer.js';
+import {
+    AllowEverythingPermissionEnforcer,
+    GlobPermissionEnforcer,
+    createDefaultPermissionRules,
+    ReadableDirectoryRegistry
+} from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
 import { normalizePath } from '../../../utils/path.js';
 import path from 'path';
@@ -32,6 +37,17 @@ export function createTaskArtifactPermissionRules(artifactDirectory: string): Pe
         { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' }
     ];
+}
+
+export function createModePermissionEnforcer(
+    workspace: string,
+    mode: ModeDecl,
+    additionalRules: PermissionRule[] = []
+): PermissionEnforcer {
+    if (mode.bypassPermissionChecks) {
+        return new AllowEverythingPermissionEnforcer();
+    }
+    return GlobPermissionEnforcer.createSync([...mode.permissionFactory(workspace), ...additionalRules]);
 }
 
 export type NodeExecutionCapabilities = {
@@ -139,8 +155,7 @@ export class HarnessContext {
         const ctx = new HarnessContext();
         ctx.workspace = workspace;
 
-        const rules = mode.permissionFactory(workspace);
-        ctx.permission = await GlobPermissionEnforcer.create(rules);
+        ctx.permission = createModePermissionEnforcer(workspace, mode);
 
         // 追加外部注册的可读目录规则（如 skill 目录）
         for (const rule of ReadableDirectoryRegistry.getInstance().getReadRules()) {

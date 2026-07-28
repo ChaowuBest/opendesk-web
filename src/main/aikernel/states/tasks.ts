@@ -829,6 +829,7 @@ export class TaskState {
     }
 
     async startInternalTurn(options: StartInternalTurnOptions): Promise<void> {
+        await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
         const generation = ++this._turnGeneration;
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
@@ -1294,6 +1295,7 @@ export class TaskState {
         | { status: 'ok'; supplementId?: string }
         | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
     > {
+        await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
         const extensionInputResult = await this.extensions.handleUserMessage(message, imageDataUris);
         if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();

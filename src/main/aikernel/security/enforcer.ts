@@ -161,6 +161,30 @@ export class ReadableDirectoryRegistry {
     }
 }
 
+/**
+ * 无条件放行权限执行器。
+ *
+ * Unlimited mode 的语义是完全跳过权限判定，因此不能用普通 allow glob 规则模拟：
+ * 普通引擎中的显式 ask/deny 优先级更高，后续叠加规则时仍可能重新触发权限弹窗。
+ */
+export class AllowEverythingPermissionEnforcer implements PermissionEnforcer {
+    async check(request: PermissionRequest): Promise<PermissionCheckResult> {
+        return { effect: 'allow', request };
+    }
+
+    async checkAll(_requests: PermissionRequest[]): Promise<PermissionCheckResult | null> {
+        return null;
+    }
+
+    async checkAllDetailed(_requests: PermissionRequest[]): Promise<PermissionCheckResult[]> {
+        return [];
+    }
+
+    async addRule(_rule: PermissionRule): Promise<void> {}
+
+    async removeRule(_rule: PermissionRule): Promise<void> {}
+}
+
 export class GlobPermissionEnforcer implements PermissionEnforcer {
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];
@@ -193,6 +217,10 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
         const instance = new GlobPermissionEnforcer(this);
         instance.initialize(initialRules);
         return instance;
+    }
+
+    inheritsFrom(enforcer: GlobPermissionEnforcer): boolean {
+        return this.inherited === enforcer || this.inherited?.inheritsFrom(enforcer) === true;
     }
 
     private initialize(initialRules: PermissionRule[]): void {

@@ -15,9 +15,13 @@ import { logger } from '../../utils/logger.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { deleteTaskTodos } from '../todos/task-todos.js';
-import { createTaskArtifactPermissionRules, HarnessContext } from '../security/harness.js';
+import {
+    createModePermissionEnforcer,
+    createTaskArtifactPermissionRules,
+    HarnessContext
+} from '../security/harness.js';
 import { GlobPermissionEnforcer, ReadableDirectoryRegistry } from '../security/enforcer.js';
-import type { PermissionPromptProvider, PermissionRule } from '../security/permission.js';
+import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from '../security/permission.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -60,7 +64,11 @@ export class TaskManagerState {
     toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
     private _deletedTaskIds: Set<string> = new Set();
     private _sharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
+    private _activeSharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
     private _disposeReadableDirectoryListener?: () => void;
+    private _updateLazyHarnessMode?: (mode: ModeDecl) => void;
+    private _lazyHarnessPromptModes: WeakMap<TaskState, ModeDecl> = new WeakMap();
+    private _lazySystemPromptFactory?: (mode: ModeDecl, task: TaskState) => Promise<string>;
     /**
      * Harness 延迟初始化回调，由宿主环境（Electron main / CLI）设置。
      * 当 getTaskLoadResult() 发现 task.harnessContext.workspace 为空时调用，
@@ -84,7 +92,65 @@ export class TaskManagerState {
         this._disposeReadableDirectoryListener?.();
         this._disposeReadableDirectoryListener = undefined;
         this._sharedHarnessBaseEnforcers.clear();
+        this._activeSharedHarnessBaseEnforcers.clear();
         this._harnessInitializer = undefined;
+        this._updateLazyHarnessMode = undefined;
+        this._lazyHarnessPromptModes = new WeakMap();
+        this._lazySystemPromptFactory = undefined;
+    }
+
+    /**
+     * 更新尚未初始化任务应使用的 mode。
+     */
+    updateLazyHarnessMode(mode: ModeDecl): void {
+        this._updateLazyHarnessMode?.(mode);
+    }
+
+    /**
+     * 为刚完成 lazy harness 初始化的任务刷新与该 mode 对应的 system prompt。
+     * 生成失败时保留待刷新标记，允许后续入口重试。
+     */
+    async refreshLazyTaskSystemPrompt(
+        task: TaskState,
+        createSystemPrompt: ((mode: ModeDecl, task: TaskState) => Promise<string>) | undefined = this
+            ._lazySystemPromptFactory
+    ): Promise<boolean> {
+        const mode = this._lazyHarnessPromptModes.get(task);
+        if (!mode || !createSystemPrompt) return false;
+
+        const systemPrompt = await createSystemPrompt(mode, task);
+        if (this._lazyHarnessPromptModes.get(task) !== mode) {
+            return false;
+        }
+        task.setSystemPrompt(systemPrompt);
+        this._lazyHarnessPromptModes.delete(task);
+        return true;
+    }
+
+    clearLazyTaskSystemPromptRefresh(task: TaskState): void {
+        this._lazyHarnessPromptModes.delete(task);
+    }
+
+    /**
+     * 释放既不属于当前 lazy cache、也不再被任务 overlay 继承的共享权限基座。
+     */
+    pruneLazyHarnessBaseEnforcers(): void {
+        const taskPermissions = this.tasks
+            .map((task) => task.harnessContext.permission)
+            .filter((permission): permission is PermissionEnforcer => permission !== null);
+        for (const enforcer of this._sharedHarnessBaseEnforcers) {
+            if (this._activeSharedHarnessBaseEnforcers.has(enforcer)) {
+                continue;
+            }
+            const isInherited = taskPermissions.some(
+                (permission) =>
+                    permission === enforcer ||
+                    (permission instanceof GlobPermissionEnforcer && permission.inheritsFrom(enforcer))
+            );
+            if (!isInherited) {
+                this._sharedHarnessBaseEnforcers.delete(enforcer);
+            }
+        }
     }
 
     /**
@@ -100,8 +166,13 @@ export class TaskManagerState {
     async setupLazyHarnessInit(
         mode: ModeDecl,
         defaultWorkspace: string,
-        permissionPromptFactory: () => PermissionPromptProvider
+        permissionPromptFactory: () => PermissionPromptProvider,
+        createSystemPrompt?: (mode: ModeDecl, task: TaskState) => Promise<string>
     ): Promise<void> {
+        this._lazySystemPromptFactory = createSystemPrompt;
+        this._activeSharedHarnessBaseEnforcers.clear();
+        this.pruneLazyHarnessBaseEnforcers();
+
         // 收集所有 unique workspace，为每个预热一个共享基础 GlobPermissionEnforcer
         const uniqueWorkspaces = new Set<string>();
         for (const task of this.tasks) {
@@ -109,16 +180,33 @@ export class TaskManagerState {
         }
         uniqueWorkspaces.add(defaultWorkspace);
 
-        const sharedBaseEnforcers = new Map<string, GlobPermissionEnforcer>();
+        let currentMode = mode;
+        const sharedBaseEnforcers = new Map<string, PermissionEnforcer>();
+        this._updateLazyHarnessMode = (nextMode: ModeDecl) => {
+            if (currentMode.id === nextMode.id) {
+                currentMode = nextMode;
+                return;
+            }
+            for (const enforcer of sharedBaseEnforcers.values()) {
+                if (enforcer instanceof GlobPermissionEnforcer) {
+                    this._activeSharedHarnessBaseEnforcers.delete(enforcer);
+                }
+            }
+            currentMode = nextMode;
+            sharedBaseEnforcers.clear();
+            this.pruneLazyHarnessBaseEnforcers();
+        };
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
-        const createSharedBaseEnforcer = (workspace: string): GlobPermissionEnforcer | undefined => {
+        const createSharedBaseEnforcer = (workspace: string): PermissionEnforcer | undefined => {
             const existing = sharedBaseEnforcers.get(workspace);
             if (existing) return existing;
             try {
-                const rules = [...mode.permissionFactory(workspace), ...readableRegistry.getReadRules()];
-                const enforcer = GlobPermissionEnforcer.createSync(rules);
+                const enforcer = createModePermissionEnforcer(workspace, currentMode, readableRegistry.getReadRules());
                 sharedBaseEnforcers.set(workspace, enforcer);
-                this._sharedHarnessBaseEnforcers.add(enforcer);
+                if (enforcer instanceof GlobPermissionEnforcer) {
+                    this._sharedHarnessBaseEnforcers.add(enforcer);
+                    this._activeSharedHarnessBaseEnforcers.add(enforcer);
+                }
                 return enforcer;
             } catch (err) {
                 logger.warn(`Failed to create shared permission enforcer for workspace ${workspace}: ${err}`);
@@ -159,11 +247,18 @@ export class TaskManagerState {
             }
             task.harnessContext = new HarnessContext();
             task.harnessContext.workspace = taskWorkspace;
-            task.harnessContext.permission = sharedBaseEnforcer.createOverlay(
-                createTaskArtifactPermissionRules(getTaskArtifactDirectory(task.task_id, false))
-            );
+            task.harnessContext.permission =
+                sharedBaseEnforcer instanceof GlobPermissionEnforcer
+                    ? sharedBaseEnforcer.createOverlay(
+                          createTaskArtifactPermissionRules(getTaskArtifactDirectory(task.task_id, false))
+                      )
+                    : sharedBaseEnforcer;
             task.harnessContext.executionHost = savedExecutionHost;
             task.harnessContext.permissionPrompt = permissionPromptFactory();
+            task.activeModeId = currentMode.id;
+            task.allowedTools = currentMode.allowedTools;
+            task.disabledTools = currentMode.disabledTools;
+            this._lazyHarnessPromptModes.set(task, currentMode);
         });
     }
 

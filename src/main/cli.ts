@@ -488,10 +488,12 @@ async function main(args: CommandLineArgs) {
         t6.end();
 
         // 为从磁盘恢复的旧任务设置延迟 harness 初始化
+        const tuiAgentDecl = new MainAgentDecl();
         await tui.taskManagerState.setupLazyHarnessInit(
             tui.activeMode,
             args.workspace,
-            () => tui.permissionPromptProvider
+            () => tui.permissionPromptProvider,
+            (mode, task) => tuiAgentDecl.createSystemPrompt(mode, task)
         );
 
         // Initialize channelmgr after registry is ready

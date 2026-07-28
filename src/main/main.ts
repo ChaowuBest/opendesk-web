@@ -115,6 +115,7 @@ import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/e
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
+import { replaceTaskHarnessForMode } from './aikernel/task/mode.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -878,7 +879,7 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
 
-            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            const workspace = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
             const oldModeId = task.activeModeId || agentDecl.defaultModeId();
             if (oldModeId !== modeId) {
                 const oldMode = modes.find((m) => m.id === oldModeId);
@@ -890,21 +891,17 @@ const registerModeAPIHandlers = () => {
                 }
             }
 
-            const savedEnv = task.harnessContext.environ;
-            const savedExecutionHost = task.harnessContext.executionHost;
             try {
-                const ctx = await HarnessContext.createForMode(workspace, target);
-                ctx.environ = savedEnv;
-                ctx.executionHost = savedExecutionHost;
-                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                task.harnessContext = ctx;
-                task.activeModeId = target.id;
-                task.allowedTools = target.allowedTools;
-                task.disabledTools = target.disabledTools;
+                await replaceTaskHarnessForMode(
+                    task,
+                    workspace,
+                    target,
+                    () => new ElectronPermissionPromptProvider(),
+                    () => agentDecl.createSystemPrompt(target, task)
+                );
             } catch (err) {
                 logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
-                task.harnessContext.workspace = workspace;
+                return { status: 'error', message: String(err) };
             }
 
             return { status: 'ok', data: modeId };
@@ -1119,7 +1116,7 @@ const registerTaskManagerAPIHandlers = () => {
                 const modes2 = getGlobalAgentDecl().supportedModes();
                 const targetMode = modes2.find((m) => m.id === targetModeId);
                 if (!targetMode) return;
-                const ws = Setting.getInstance().getEffectiveWorkspace();
+                const ws = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
                 const oldId = task.activeModeId || getGlobalAgentDecl().defaultModeId();
                 if (oldId !== targetModeId) {
                     const oldMode = modes2.find((m) => m.id === oldId);
@@ -1127,21 +1124,17 @@ const registerTaskManagerAPIHandlers = () => {
                     await targetMode.onEnterMode?.(ws);
                 }
                 // 仅切换当前任务的模式，不影响其他任务
-                const savedEnv = task.harnessContext.environ;
-                const savedExecutionHost = task.harnessContext.executionHost;
                 try {
-                    const ctx = await HarnessContext.createForMode(ws, targetMode);
-                    ctx.environ = savedEnv;
-                    ctx.executionHost = savedExecutionHost;
-                    ctx.permissionPrompt =
-                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                    task.activeModeId = targetMode.id;
-                    task.allowedTools = targetMode.allowedTools;
-                    task.disabledTools = targetMode.disabledTools;
-                } catch {
-                    /* ignore */
+                    await replaceTaskHarnessForMode(
+                        task,
+                        ws,
+                        targetMode,
+                        () => new ElectronPermissionPromptProvider(),
+                        () => getGlobalAgentDecl().createSystemPrompt(targetMode, task)
+                    );
+                } catch (err) {
+                    logger.warn(`Failed to switch task ${task.task_id} to mode ${targetModeId}: ${err}`);
+                    return;
                 }
                 // 通知 renderer 侧更新该任务的模式显示
                 for (const w of BrowserWindow.getAllWindows()) {
@@ -1283,6 +1276,9 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', code: 'TASK_CORRUPTED', message: t('task.corrupted.detail', { taskId }) };
         }
 
+        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
+            getGlobalAgentDecl().createSystemPrompt(mode, taskState)
+        );
         task.ensureValidModelOrFallback();
         await task.ensureToolsResolved();
         await task.render();
@@ -1564,6 +1560,9 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
+            getGlobalAgentDecl().createSystemPrompt(mode, taskState)
+        );
         if (details.attachedFilePaths) {
             try {
                 await task.attachFiles(details.attachedFilePaths);
@@ -3014,7 +3013,8 @@ function startApplication() {
         await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
             defaultMode,
             startupWorkspace,
-            () => new ElectronPermissionPromptProvider()
+            () => new ElectronPermissionPromptProvider(),
+            (mode, task) => agentDecl.createSystemPrompt(mode, task)
         );
         p2.end();
 
@@ -3189,8 +3189,7 @@ function startApplication() {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

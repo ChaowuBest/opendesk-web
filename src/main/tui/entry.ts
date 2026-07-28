@@ -62,6 +62,7 @@ import { NotificationManager } from '../utils/notificationmgr.js';
 import { SkillMgrApplication } from '../applications/skillmgr/app.js';
 import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
+import type { PermissionEnforcer, PermissionPromptProvider } from '../aikernel/security/permission.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
 import { TUIAskUserProvider } from './components/askUser.js';
 import { TUIExitPlanModeProvider } from './components/exitPlanMode.js';
@@ -1095,6 +1096,9 @@ export class OpenDeskTUI {
             return;
         }
 
+        await this.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
+            this.agentDecl.createSystemPrompt(mode, taskState)
+        );
         task.ensureValidModelOrFallback();
 
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
@@ -1932,13 +1936,15 @@ export class OpenDeskTUI {
         // 调用退出旧模式的钩子
         await oldMode.onExitMode?.(this.workspace);
 
-        this._activeMode = newMode;
-
         // 调用进入新模式的钩子
         await newMode.onEnterMode?.(this.workspace);
 
+        if (!(await this.syncAllTaskHarnesses(newMode))) {
+            logger.warn(`Mode switch to ${newMode.id} aborted because task preparation failed`);
+            return;
+        }
+        this._activeMode = newMode;
         this.syncModeDisplay();
-        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode switched to: ${this._activeMode.name} (${this._activeMode.id})`);
     }
@@ -1999,15 +2005,16 @@ export class OpenDeskTUI {
             await oldMode.onExitMode?.(this.workspace);
         }
 
-        this._activeMode = target;
-
         // 调用进入新模式的钩子
         if (oldMode.id !== target.id) {
             await target.onEnterMode?.(this.workspace);
         }
 
+        if (!(await this.syncAllTaskHarnesses(target))) {
+            return false;
+        }
+        this._activeMode = target;
         this.syncModeDisplay();
-        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode set to: ${this._activeMode.name} (${this._activeMode.id})`);
         return true;
@@ -2015,29 +2022,92 @@ export class OpenDeskTUI {
 
     /**
      * 将所有主任务的权限引擎同步到最新的 Mode。
-     * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
-     * 子任务由父任务管理，不在此处更新。
+     * 默认子任务共享父任务的权限引擎，因此在父任务替换引擎时同步更新其引用；
+     * 使用独立 Agent 权限引擎的子任务保持自身策略不变。
+     * 跳过尚未加载的任务（harnessContext.workspace 为空），它们会在首次访问时
+     * 通过 lazy initializer 以当前 mode 创建 harness。
      */
-    private async syncAllTaskHarnesses(): Promise<void> {
-        const mode = this._activeMode;
+    private async syncAllTaskHarnesses(mode: ModeDecl = this._activeMode): Promise<boolean> {
+        const changedProviders = new Map<PermissionPromptProvider, PermissionEnforcer>();
+        const prepared: Array<{
+            task: TaskState;
+            context: HarnessContext;
+            systemPrompt: string;
+            savedPrompt?: PermissionPromptProvider | null;
+            inheritedChildren: TaskState[];
+        }> = [];
         for (const task of this.taskManagerState.tasks) {
-            if (task.parent_id !== null) continue;
+            if (task.parent_id !== null || task.internal) continue;
+            if (!task.harnessContext.workspace) continue;
+            const taskWorkspace = task.getWorkspace() || this.workspace;
             const savedEnv = task.harnessContext.environ;
             const savedPrompt = task.harnessContext.permissionPrompt;
+            const savedExecutionHost = task.harnessContext.executionHost;
+            const previousPermission = task.harnessContext.permission;
+            const inheritedChildren = previousPermission
+                ? this.taskManagerState.tasks.filter((candidate) => {
+                      if (candidate.parent_id === null || candidate.harnessContext.permission !== previousPermission) {
+                          return false;
+                      }
+                      let parentId: string | null = candidate.parent_id;
+                      while (parentId) {
+                          if (parentId === task.task_id) return true;
+                          parentId =
+                              this.taskManagerState.tasks.find((parent) => parent.task_id === parentId)?.parent_id ??
+                              null;
+                      }
+                      return false;
+                  })
+                : [];
 
             try {
-                const ctx = await HarnessContext.createForMode(this.workspace, mode);
+                const ctx = await HarnessContext.createForMode(taskWorkspace, mode);
                 ctx.environ = savedEnv;
                 ctx.permissionPrompt = savedPrompt;
+                ctx.executionHost = savedExecutionHost;
                 await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                task.harnessContext = ctx;
-                task.activeModeId = mode.id;
-                task.allowedTools = mode.allowedTools;
-                task.disabledTools = mode.disabledTools;
+                const systemPrompt = await this.agentDecl.createSystemPrompt(mode, task);
+                prepared.push({
+                    task,
+                    context: ctx,
+                    systemPrompt,
+                    savedPrompt,
+                    inheritedChildren
+                });
             } catch (err) {
                 logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+                return false;
             }
         }
+
+        this.taskManagerState.updateLazyHarnessMode(mode);
+        for (const replacement of prepared) {
+            const { task, context, systemPrompt, savedPrompt, inheritedChildren } = replacement;
+            task.harnessContext = context;
+            task.activeModeId = mode.id;
+            task.allowedTools = mode.allowedTools;
+            task.disabledTools = mode.disabledTools;
+            task.setSystemPrompt(systemPrompt);
+            this.taskManagerState.clearLazyTaskSystemPromptRefresh(task);
+            for (const child of inheritedChildren) {
+                child.harnessContext.permission = context.permission;
+                child.activeModeId = mode.id;
+                child.allowedTools = mode.allowedTools;
+                child.disabledTools = mode.disabledTools;
+            }
+            if (mode.bypassPermissionChecks && savedPrompt?.notifyPermissionRulesChanged && context.permission) {
+                changedProviders.set(savedPrompt, context.permission);
+            }
+        }
+        for (const [provider, enforcer] of changedProviders) {
+            try {
+                await provider.notifyPermissionRulesChanged?.(enforcer);
+            } catch (err) {
+                logger.warn(`Failed to refresh permission prompts for mode ${mode.id}: ${err}`);
+            }
+        }
+        this.taskManagerState.pruneLazyHarnessBaseEnforcers();
+        return true;
     }
 
     /**

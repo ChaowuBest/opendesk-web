@@ -34,9 +34,11 @@ import type {
     PermissionRequest,
     PermissionUserResponse,
     PermissionPromptProvider,
-    PermissionTaskInfo
+    PermissionTaskInfo,
+    PermissionEnforcer
 } from '../../aikernel/security/permission';
 import chalk from 'chalk';
+import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
 
 function getActionLabel(action: string): string {
@@ -344,6 +346,7 @@ interface QueuedPermissionRequest {
     prefixOptions: { label: string; pattern: string }[];
     taskInfo?: PermissionTaskInfo;
     resolve: (response: PermissionUserResponse) => void;
+    widget?: PermissionPromptWidget;
 }
 
 /**
@@ -424,17 +427,18 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         if (this.current && this.matchesTask(this.current, ids)) {
             const current = this.current;
-            this.openDeskTUI.inputArea.hidePromptWidget();
+            const restored = this.closePermissionWidget(current);
             this.current = null;
             this.isShowing = false;
             current.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
             cancelledAny = true;
+            this.openDeskTUI.focusAfterInputPromptClose(restored);
             this.processQueue();
             this.openDeskTUI.tui.requestRender();
         } else if (cancelledAny) {
             if (this.queue.length === 0) {
                 this.isPending = false;
-                if (!this.isShowing) {
+                if (!this.isShowing && !this.openDeskTUI.isInputBlocked()) {
                     this.openDeskTUI.focusInputAreaIfAvailable();
                 }
             } else {
@@ -442,6 +446,69 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             }
             this.openDeskTUI.tui.requestRender();
         }
+    }
+
+    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer, taskIds?: string[]): Promise<void> {
+        const ids = taskIds ? new Set(taskIds) : null;
+        try {
+            const current = this.current;
+            if (current && (!ids || this.matchesTask(current, ids))) {
+                const remaining = await enforcer.checkAllDetailed(current.requests);
+                if (this.current === current && remaining.length === 0) {
+                    this.resolveCurrentAfterRuleChange(current);
+                }
+            }
+
+            const queuedItems = [...this.queue];
+            for (const item of queuedItems) {
+                if (ids && !this.matchesTask(item, ids)) {
+                    continue;
+                }
+                try {
+                    const remaining = await enforcer.checkAllDetailed(item.requests);
+                    if (remaining.length === 0) {
+                        if (this.resolveCurrentAfterRuleChange(item)) {
+                            continue;
+                        }
+                        const index = this.queue.indexOf(item);
+                        if (index >= 0) {
+                            this.queue.splice(index, 1);
+                            item.resolve({ decision: 'allow', rememberScope: 'none' });
+                        }
+                    }
+                } catch (err) {
+                    logger.warn(`Permission queue re-check failed: ${err}`);
+                }
+            }
+            this.isPending = this.queue.length > 0;
+
+            if (!this.isShowing) {
+                this.processQueue();
+            }
+            if (!this.current && this.queue.length === 0 && !this.openDeskTUI.isInputBlocked()) {
+                this.isPending = false;
+                this.openDeskTUI.focusInputAreaIfAvailable();
+            }
+            this.openDeskTUI.tui.requestRender();
+        } catch (err) {
+            logger.warn(`Permission notifyPermissionRulesChanged failed: ${err}`);
+        }
+    }
+
+    private resolveCurrentAfterRuleChange(item: QueuedPermissionRequest): boolean {
+        if (this.current !== item) return false;
+        const restored = this.closePermissionWidget(item);
+        this.current = null;
+        this.isShowing = false;
+        item.resolve({ decision: 'allow', rememberScope: 'none' });
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
+        return true;
+    }
+
+    private closePermissionWidget(item: QueuedPermissionRequest): Component | null {
+        const restored = item.widget ? this.openDeskTUI.closeInputPrompt(item.widget) : null;
+        item.widget = undefined;
+        return restored;
     }
 
     /**
@@ -537,18 +604,18 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             taskName: item.taskInfo?.taskName,
             queueSize: remainingCount
         });
+        item.widget = widget;
 
         widget.onDone = (response) => {
-            this.openDeskTUI.inputArea.hidePromptWidget(widget);
+            const restored = this.closePermissionWidget(item);
             this.isShowing = false;
             this.current = null;
             this.recordGrant(item, response);
             item.resolve(response);
+            this.openDeskTUI.focusAfterInputPromptClose(restored);
 
             if (this.queue.length > 0) {
                 this.processQueue();
-            } else {
-                this.openDeskTUI.focusInputAreaIfAvailable();
             }
             this.openDeskTUI.tui.requestRender();
         };

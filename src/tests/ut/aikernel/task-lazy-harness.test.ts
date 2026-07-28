@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import type { ModeDecl } from '../../../main/aikernel/agents/common.js';
 import { ReadableDirectoryRegistry } from '../../../main/aikernel/security/enforcer.js';
+import { HarnessContext } from '../../../main/aikernel/security/harness.js';
 import type { PermissionPromptProvider } from '../../../main/aikernel/security/permission.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { applyPersistentPermissionAllowForTask } from '../../../main/aikernel/task/permission.js';
@@ -228,5 +229,52 @@ describe('lazy task harness initialization', () => {
         } finally {
             registry.unregister(readableDirectory);
         }
+    });
+
+    test('releases retired lazy base enforcers after tasks stop inheriting from them', async () => {
+        tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-lazy-harness-'));
+        setCustomOpendeskDirectory(tempRootDir);
+
+        const manager = createManager();
+        const task = createTask(manager, 'task-retired-base', '/workspace/shared');
+        await manager.setupLazyHarnessInit(mode, '/workspace/shared', () => promptProvider);
+        manager.getTask(task.task_id);
+
+        const managerInternals = manager as unknown as {
+            _sharedHarnessBaseEnforcers: Set<unknown>;
+            pruneLazyHarnessBaseEnforcers?: () => void;
+        };
+        expect(managerInternals._sharedHarnessBaseEnforcers.size).toBe(1);
+
+        const nextMode = { ...mode, id: 'next-mode', name: 'Next mode' };
+        manager.updateLazyHarnessMode(nextMode);
+        expect(managerInternals._sharedHarnessBaseEnforcers.size).toBe(1);
+
+        task.harnessContext = await HarnessContext.createForMode('/workspace/shared', nextMode);
+        managerInternals.pruneLazyHarnessBaseEnforcers?.();
+
+        expect(managerInternals._sharedHarnessBaseEnforcers.size).toBe(0);
+    });
+
+    test('refreshes a lazy task system prompt with the mode used to initialize its harness', async () => {
+        const manager = createManager();
+        const task = createTask(manager, 'task-lazy-prompt', '/workspace/shared');
+        task.setSystemPrompt('system:old-mode');
+        const createSystemPrompt = jest.fn(async (activeMode: ModeDecl) => `system:${activeMode.id}`);
+        await manager.setupLazyHarnessInit(mode, '/workspace/shared', () => promptProvider, createSystemPrompt);
+
+        manager.getTask(task.task_id);
+        expect(task.chat_context.system_prompt?.content).toBe('system:old-mode');
+
+        const refreshLazyTaskSystemPrompt = (
+            manager as unknown as {
+                refreshLazyTaskSystemPrompt?: (taskState: TaskState) => Promise<boolean>;
+            }
+        ).refreshLazyTaskSystemPrompt;
+
+        expect(refreshLazyTaskSystemPrompt).toBeDefined();
+        await expect(refreshLazyTaskSystemPrompt!.call(manager, task)).resolves.toBe(true);
+        expect(createSystemPrompt).toHaveBeenCalledWith(mode, task);
+        expect(task.chat_context.system_prompt?.content).toBe('system:test');
     });
 });

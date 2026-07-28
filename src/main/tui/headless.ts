@@ -129,7 +129,8 @@ export class HeadlessRunner {
         await this.taskManagerState.setupLazyHarnessInit(
             this.activeMode,
             this.args.workspace,
-            () => new HeadlessPermissionPromptProvider()
+            () => new HeadlessPermissionPromptProvider(),
+            (mode, task) => this.agentDecl.createSystemPrompt(mode, task)
         );
     }
 
@@ -181,11 +182,14 @@ export class HeadlessRunner {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
 
-        // 仅对新任务设置 system prompt，resume 的任务保留原有 system prompt
-        if (!this.args.resume) {
+        const refreshedLazyPrompt = await this.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
+            this.agentDecl.createSystemPrompt(mode, taskState)
+        );
+        if (!this.args.resume || !refreshedLazyPrompt) {
             const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
             await task.setSystemPrompt(systemPrompt);
-        } else {
+        }
+        if (this.args.resume) {
             // resume 时需要先解析工具引用，再打印历史对话
             await task.ensureToolsResolved();
             this.printHistory(task);
