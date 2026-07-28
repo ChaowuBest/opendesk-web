@@ -73,6 +73,143 @@ function getOpenCodeRequestModelRef(body: unknown): unknown {
     return undefined;
 }
 
+function firstString(...values: unknown[]): string | undefined {
+    for (const value of values) {
+        if (typeof value !== 'string') continue;
+        const trimmed = value.trim();
+        if (trimmed.length > 0) {
+            return trimmed;
+        }
+    }
+    return undefined;
+}
+
+function getProviderIDFromModelRef(modelRef: unknown): string | undefined {
+    if (isRecord(modelRef)) {
+        const providerID = firstString(modelRef.providerID, modelRef.providerId, modelRef.provider);
+        if (providerID) {
+            return providerID;
+        }
+
+        const id = firstString(modelRef.id, modelRef.model);
+        if (id?.includes('/')) {
+            return id.split('/')[0];
+        }
+        return undefined;
+    }
+
+    if (typeof modelRef === 'string') {
+        const trimmed = modelRef.trim();
+        if (trimmed.includes('/')) {
+            return trimmed.split('/')[0];
+        }
+    }
+    return undefined;
+}
+
+function getModelIDFromModelRef(modelRef: unknown): string | undefined {
+    if (isRecord(modelRef)) {
+        const modelID = firstString(modelRef.modelID, modelRef.modelId, modelRef.model);
+        if (modelID && !modelID.includes('/')) {
+            return modelID;
+        }
+
+        const id = firstString(modelRef.id, modelID);
+        if (id?.includes('/')) {
+            return id.split('/').slice(1).join('/');
+        }
+        return modelID;
+    }
+
+    if (typeof modelRef === 'string') {
+        const trimmed = modelRef.trim();
+        if (trimmed.includes('/')) {
+            return trimmed.split('/').slice(1).join('/');
+        }
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+    return undefined;
+}
+
+interface OpenCodeModelInfo {
+    providerID: string;
+    modelID: string;
+    id: string;
+}
+
+const EMPTY_OPEN_CODE_MODEL_INFO: OpenCodeModelInfo = {
+    providerID: '',
+    modelID: '',
+    id: ''
+};
+
+function getOpenCodeModelInfo(task: any, requestModelRef?: unknown): OpenCodeModelInfo {
+    const setting = Setting.getInstance() as any;
+    const modelAlias = typeof task?.model === 'string' && task.model.length > 0 ? task.model : undefined;
+    let modelInstance: any;
+    try {
+        if (modelAlias && typeof setting.getModelInstance === 'function') {
+            modelInstance = setting.getModelInstance(modelAlias, 'chat');
+        } else if (!modelAlias && typeof setting.getDefaultModelInstance === 'function') {
+            modelInstance = setting.getDefaultModelInstance();
+        }
+    } catch {
+        modelInstance = undefined;
+    }
+    const data = typeof setting.getData === 'function' ? setting.getData() : setting.data;
+    const resolvedAlias = modelAlias ?? firstString(data?.default_model);
+    const configuredModel = Array.isArray(data?.models)
+        ? data.models.find((model: any) => model?.alias === resolvedAlias)
+        : undefined;
+    const providerID =
+        firstString(modelInstance?.getProviderName?.(), modelInstance?.provider_name, configuredModel?.provider_name) ??
+        getProviderIDFromModelRef(requestModelRef) ??
+        '';
+    const modelID =
+        firstString(modelInstance?.model_name, configuredModel?.model_name) ??
+        getModelIDFromModelRef(requestModelRef) ??
+        resolvedAlias ??
+        '';
+    const id = providerID && modelID ? `${providerID}/${modelID}` : modelID;
+    return { providerID, modelID, id };
+}
+
+function buildOpenCodeTelemetryMetadata(
+    sessionID: string,
+    route: string,
+    body: unknown,
+    modelInfo: OpenCodeModelInfo,
+    model: unknown
+): Record<string, unknown> {
+    const requestModel = getOpenCodeRequestModelRef(body);
+    return {
+        sessionID,
+        route,
+        model,
+        providerID: modelInfo.providerID,
+        modelID: modelInfo.modelID,
+        recordGenerations: modelInfo.providerID !== 'myagent',
+        ...(requestModel !== undefined ? { requestModel } : {})
+    };
+}
+
+function numericToken(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function usageToOpenCodeTokens(usage: unknown): Record<string, unknown> {
+    const data = isRecord(usage) ? usage : {};
+    return {
+        input: numericToken(data.prompt_tokens ?? data.input_tokens ?? data.inputTokens),
+        output: numericToken(data.completion_tokens ?? data.output_tokens ?? data.outputTokens),
+        reasoning: numericToken(data.reasoning_tokens ?? data.reasoningTokens),
+        cache: {
+            read: numericToken(data.cache_read_input_tokens ?? data.cacheReadInputTokens),
+            write: numericToken(data.cache_creation_input_tokens ?? data.cacheCreationInputTokens)
+        }
+    };
+}
+
 function stringHeaderValue(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
@@ -107,13 +244,24 @@ function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, st
     };
 }
 
-async function submitServerUserMessage(task: any, text: string, c: Context): Promise<void> {
-    const modelRequestOptions = buildModelRequestOptions(c);
-    if (modelRequestOptions) {
-        await task.submitUserMessage(text, undefined, modelRequestOptions);
-    } else {
-        await task.submitUserMessage(text);
+async function submitServerUserMessage(
+    task: any,
+    text: string,
+    c: Context,
+    telemetryContext?: {
+        input?: unknown;
+        metadata?: Record<string, unknown>;
+        output?: Record<string, unknown>;
     }
+): Promise<void> {
+    const modelRequestOptions = buildModelRequestOptions(c);
+    await task.submitUserMessage(text, {
+        modelRequestOptions,
+        instrumentationContext: {
+            traceId: getIncomingTraceHeader(c)?.value,
+            ...telemetryContext
+        }
+    });
 }
 
 function applyOpenCodeRequestModel(task: any, body: unknown): void {
@@ -270,11 +418,16 @@ async function submitServerUserMessageAndWait(
     task: any,
     text: string,
     c: Context,
+    telemetryContext?: {
+        input?: unknown;
+        metadata?: Record<string, unknown>;
+        output?: Record<string, unknown>;
+    },
     callback?: (chunk: TaskUpdateChunk) => void
 ): Promise<void> {
     const activeStatuses = ['running', 'waiting'];
     if (typeof task.addSubscriber !== 'function' || typeof task.removeSubscriber !== 'function') {
-        await submitServerUserMessage(task, text, c);
+        await submitServerUserMessage(task, text, c, telemetryContext);
         await waitUntilServerTaskFinished(task, callback);
         return;
     }
@@ -307,7 +460,7 @@ async function submitServerUserMessageAndWait(
     subscriptionID = task.addSubscriber(subscriber);
 
     try {
-        await submitServerUserMessage(task, text, c);
+        await submitServerUserMessage(task, text, c, telemetryContext);
         if (!activeStatuses.includes(task.task_status)) {
             settle();
         } else {
@@ -357,9 +510,16 @@ function makeAssistantMessageInfo(
     msgId: string,
     sessionID: string,
     parentID: string,
-    opts: { created?: number; completed?: number; workspace?: string } = {}
+    opts: {
+        created?: number;
+        completed?: number;
+        workspace?: string;
+        modelInfo?: OpenCodeModelInfo;
+        usage?: unknown;
+    } = {}
 ): Record<string, unknown> {
     const dir = opts.workspace || getTaskWorkspace(undefined);
+    const modelInfo = opts.modelInfo ?? EMPTY_OPEN_CODE_MODEL_INFO;
     return {
         id: msgId,
         sessionID,
@@ -369,13 +529,13 @@ function makeAssistantMessageInfo(
             ...(opts.completed ? { completed: opts.completed } : {})
         },
         parentID,
-        modelID: '',
-        providerID: '',
+        modelID: modelInfo.modelID,
+        providerID: modelInfo.providerID,
         mode: 'default',
         agent: 'explore',
         path: { cwd: dir, root: dir },
         cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        tokens: usageToOpenCodeTokens(opts.usage)
     };
 }
 
@@ -383,9 +543,10 @@ function makeUserMessageInfo(
     msgId: string,
     sessionID: string,
     workspace = getTaskWorkspace(undefined),
-    opts: { created?: number } = {}
+    opts: { created?: number; modelInfo?: OpenCodeModelInfo } = {}
 ): Record<string, unknown> {
     const dir = workspace;
+    const modelInfo = opts.modelInfo ?? EMPTY_OPEN_CODE_MODEL_INFO;
     return {
         id: msgId,
         sessionID,
@@ -394,7 +555,7 @@ function makeUserMessageInfo(
             created: opts.created ?? Date.now()
         },
         agent: 'explore',
-        model: { providerID: '', modelID: '', id: '' },
+        model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID, id: modelInfo.id },
         path: { cwd: dir, root: dir }
     };
 }
@@ -485,13 +646,15 @@ function messageToApiFormat(
     index: number,
     sessionID: string = '',
     workspace = getTaskWorkspace(undefined),
-    parentID = ''
+    parentID = '',
+    opts: { modelInfo?: OpenCodeModelInfo } = {}
 ) {
     const msgId = getStableMessageId(msg.message_id, `${sessionID}:message:${index}`);
     const parts = (msg.content || msg.parts || []).flatMap((p: any, partIndex: number) =>
         messagePartToApiParts(p, sessionID, msgId, partIndex)
     );
     const dir = workspace;
+    const modelInfo = opts.modelInfo ?? EMPTY_OPEN_CODE_MODEL_INFO;
 
     if (msg.role === 'assistant') {
         return {
@@ -504,13 +667,13 @@ function messageToApiFormat(
                     completed: msg.completed_at || Date.now()
                 },
                 parentID,
-                modelID: '',
-                providerID: '',
+                modelID: modelInfo.modelID,
+                providerID: modelInfo.providerID,
                 mode: 'default',
                 agent: 'explore',
                 path: { cwd: dir, root: dir },
                 cost: 0,
-                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+                tokens: usageToOpenCodeTokens(msg.usage)
             },
             parts
         };
@@ -525,7 +688,7 @@ function messageToApiFormat(
                 created: msg.timestamp || Date.now()
             },
             agent: 'explore',
-            model: { providerID: '', modelID: '', id: '' },
+            model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID, id: modelInfo.id },
             path: { cwd: dir, root: dir }
         },
         parts
@@ -944,7 +1107,8 @@ export function publishChunkEvents(
     sessionID: string,
     chunk: TaskUpdateChunk,
     parentUserMsgId: string,
-    workspace = getTaskWorkspace(undefined)
+    workspace = getTaskWorkspace(undefined),
+    modelInfo: OpenCodeModelInfo = EMPTY_OPEN_CODE_MODEL_INFO
 ): string | undefined {
     if (chunk.type === 'retry') {
         if (chunk.status === 'cleared') {
@@ -967,7 +1131,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp })
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp, modelInfo })
             }
         });
 
@@ -985,7 +1149,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp })
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp, modelInfo })
             }
         });
 
@@ -1011,7 +1175,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
+                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace, modelInfo })
             }
         });
         for (const part of parts) {
@@ -1028,7 +1192,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
+                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace, modelInfo })
             }
         });
 
@@ -1204,16 +1368,17 @@ export function SessionRoutes() {
         const limitStr = c.req.query('limit');
         const before = c.req.query('before');
         const workspace = getRequestOrTaskWorkspace(c, task);
+        const modelInfo = getOpenCodeModelInfo(task);
 
         let parentUserMessageID = '';
         const messages = task.chat_context.messages.map((msg, idx) => {
             const m = msg as any;
             if (m.role === 'user') {
-                const formatted = messageToApiFormat(m, idx, sessionID, workspace);
+                const formatted = messageToApiFormat(m, idx, sessionID, workspace, '', { modelInfo });
                 parentUserMessageID = formatted.info.id as string;
                 return formatted;
             }
-            return messageToApiFormat(m, idx, sessionID, workspace, parentUserMessageID);
+            return messageToApiFormat(m, idx, sessionID, workspace, parentUserMessageID, { modelInfo });
         });
 
         let result = messages;
@@ -1270,7 +1435,14 @@ export function SessionRoutes() {
         }
         const target = messages[msgIndex] as any;
         const parentID = target.role === 'assistant' ? parentUserMessageID : '';
-        const formatted = messageToApiFormat(target, msgIndex, sessionID, getRequestOrTaskWorkspace(c, task), parentID);
+        const formatted = messageToApiFormat(
+            target,
+            msgIndex,
+            sessionID,
+            getRequestOrTaskWorkspace(c, task),
+            parentID,
+            { modelInfo: getOpenCodeModelInfo(task) }
+        );
         return c.json(formatted);
     });
 
@@ -1299,15 +1471,31 @@ export function SessionRoutes() {
             await waitUntilServerTaskFinished(task);
         }
         applyOpenCodeRequestModel(task, body);
-
+        const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
+        const telemetryContext = {
+            input: body,
+            metadata: buildOpenCodeTelemetryMetadata(
+                sessionID,
+                'POST /session/:sessionID/message',
+                body,
+                modelInfo,
+                task.model
+            ),
+            output: {
+                sessionID,
+                mode: 'default',
+                agent: 'explore',
+                cost: 0
+            }
+        };
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
         try {
             // 发送消息并等待完成
             let parentUserMsgId = '';
-            await submitServerUserMessageAndWait(task, text, c, (chunk) => {
-                const publishedUserMsgId = publishChunkEvents(sessionID, chunk, parentUserMsgId, workspace);
+            await submitServerUserMessageAndWait(task, text, c, telemetryContext, (chunk) => {
+                const publishedUserMsgId = publishChunkEvents(sessionID, chunk, parentUserMsgId, workspace, modelInfo);
                 if (publishedUserMsgId) {
                     parentUserMsgId = publishedUserMsgId;
                 }
@@ -1325,7 +1513,8 @@ export function SessionRoutes() {
                     lastMessageIndex,
                     sessionID,
                     workspace,
-                    resolvedParentUserMsgId
+                    resolvedParentUserMsgId,
+                    { modelInfo }
                 );
                 (formatted.info as any).time = {
                     ...((formatted.info as any).time ?? {}),
@@ -1381,15 +1570,37 @@ export function SessionRoutes() {
             await waitUntilServerTaskFinished(task);
         }
         applyOpenCodeRequestModel(task, body);
-
+        const modelInfo = getOpenCodeModelInfo(task, getOpenCodeRequestModelRef(body));
+        const telemetryContext = {
+            input: body,
+            metadata: buildOpenCodeTelemetryMetadata(
+                sessionID,
+                'POST /session/:sessionID/prompt_async',
+                body,
+                modelInfo,
+                task.model
+            ),
+            output: {
+                sessionID,
+                mode: 'default',
+                agent: 'explore',
+                cost: 0
+            }
+        };
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
         void (async () => {
             try {
                 let parentUserMsgId = '';
-                await submitServerUserMessageAndWait(task, text, c, (chunk) => {
-                    const publishedUserMsgId = publishChunkEvents(sessionID, chunk, parentUserMsgId, workspace);
+                await submitServerUserMessageAndWait(task, text, c, telemetryContext, (chunk) => {
+                    const publishedUserMsgId = publishChunkEvents(
+                        sessionID,
+                        chunk,
+                        parentUserMsgId,
+                        workspace,
+                        modelInfo
+                    );
                     if (publishedUserMsgId) {
                         parentUserMsgId = publishedUserMsgId;
                     }
@@ -1410,7 +1621,8 @@ export function SessionRoutes() {
                         lastMessageIndex,
                         sessionID,
                         workspace,
-                        resolvedParentUserMsgId
+                        resolvedParentUserMsgId,
+                        { modelInfo }
                     );
                     (formatted.info as any).time = {
                         ...((formatted.info as any).time ?? {}),

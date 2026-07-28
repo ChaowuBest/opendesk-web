@@ -71,6 +71,67 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#export-quickpass-btn')).toBeNull();
     });
 
+    test('renders unified telemetry endpoints and saves a Langfuse endpoint', async () => {
+        const panel = createPanel();
+        panel.currentData.telemetry = {
+            opentelemetry: {
+                endpoints: [
+                    {
+                        name: 'local',
+                        url: 'http://localhost:4318/v1/traces',
+                        protocol: 'opentelemetry',
+                        enabled: true
+                    }
+                ]
+            },
+            langfuse: {
+                endpoints: [],
+                environment: 'development',
+                max_payload_chars: 20_000
+            }
+        };
+        panel.innerHTML = panel.renderTelemetrySection();
+        panel.insertAdjacentHTML(
+            'beforeend',
+            '<div id="modal-overlay" class="hidden"><div id="modal-container" class="hidden"><div id="modal-content"></div></div></div>'
+        );
+        panel.saveImmediately = jest.fn(async () => undefined);
+        panel.refreshTelemetrySection = jest.fn();
+        panel._bindTelemetryEvents();
+
+        expect(panel.querySelectorAll('.sp-card')).toHaveLength(1);
+        expect(panel.querySelector('.sp-card')?.textContent).toContain('OpenTelemetry');
+        expect(panel.querySelector('#telemetry-list')).not.toBeNull();
+
+        panel.showTelemetryEditModal(-1, 'langfuse');
+        expect((panel.querySelector('#telemetry-opentelemetry-fields') as HTMLElement).style.display).toBe('none');
+        expect((panel.querySelector('#telemetry-langfuse-fields') as HTMLElement).style.display).toBe('');
+        (panel.querySelector('#telemetry-name-input') as HTMLInputElement).value = 'internal';
+        (panel.querySelector('#telemetry-langfuse-base-url-input') as HTMLInputElement).value =
+            'https://langfuse.example.com';
+        (panel.querySelector('#telemetry-langfuse-public-key-input') as HTMLInputElement).value = 'pk-test';
+        (panel.querySelector('#telemetry-langfuse-secret-key-input') as HTMLInputElement).value = 'sk-test';
+        panel.querySelector('#telemetry-modal-save')?.dispatchEvent(new Event('click'));
+        await Promise.resolve();
+
+        expect(panel.currentData.telemetry.langfuse).toMatchObject({
+            environment: 'development',
+            max_payload_chars: 20_000,
+            endpoints: [
+                expect.objectContaining({
+                    name: 'internal',
+                    protocol: 'langfuse',
+                    enabled: true,
+                    base_url: 'https://langfuse.example.com',
+                    public_key: 'pk-test',
+                    secret_key: 'sk-test',
+                    export_mode: 'batched'
+                })
+            ]
+        });
+        expect(panel.saveImmediately).toHaveBeenCalledTimes(1);
+    });
+
     test('binds config management buttons to json and quickpass actions', () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();

@@ -13,7 +13,7 @@ import { getPlatform } from '../../platforms/base.js';
 import { logger } from './logger.js';
 import { isLogRawLlmRequestEnabled } from './setting.js';
 import { isLoopbackUrl } from './proxy.js';
-import { withSpan, SpanStatusCode } from '../telemetry/index.js';
+import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 
 export interface ModelNetworkConfig {
     base_url: string;
@@ -87,52 +87,49 @@ export async function fetchModelUrl(
     const requestInit = normalizeFetchInit(input, init);
     const method = requestInit?.method || 'GET';
 
-    return withSpan(
-        'llm.http_request',
-        async (span) => {
-            logger.info(`[LLM Request] ${method} ${url}`);
+    const operation = new TelemetryOperation('llm.http_request', {
+        'http.request.method': method,
+        'http.url': url,
+        'llm.base_url': model.base_url
+    });
+    return TelemetryOperationRegistry.aroundOperation(operation, async () => {
+        logger.info(`[LLM Request] ${method} ${url}`);
 
-            const logRaw = isLogRawLlmRequestEnabled();
+        const logRaw = isLogRawLlmRequestEnabled();
 
-            const response = await getPlatform().fetch(url, requestInit, {
-                forceEnvironmentProxy: true,
-                bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
-                skipTlsVerification: !!model.no_ssl
-            });
+        const response = await getPlatform().fetch(url, requestInit, {
+            forceEnvironmentProxy: true,
+            bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
+            skipTlsVerification: !!model.no_ssl
+        });
 
-            span.setAttribute('http.response.status_code', response.status);
-            span.setAttribute('http.status_text', response.statusText);
-            if (response.status >= 400) {
-                span.setStatus({ code: SpanStatusCode.ERROR, message: `HTTP ${response.status}` });
-            }
-
-            if (logRaw && response.body) {
-                const decoder = new TextDecoder();
-                const loggedBody = response.body.pipeThrough(
-                    new TransformStream({
-                        transform(chunk, controller) {
-                            try {
-                                logger.info(`[LLM Raw Response] ${decoder.decode(chunk, { stream: true })}`);
-                            } catch {
-                                // Logging must never break the response stream
-                            }
-                            controller.enqueue(chunk);
-                        }
-                    })
-                );
-                return new Response(loggedBody, {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: response.headers
-                });
-            }
-
-            return response;
-        },
-        {
-            'http.request.method': method,
-            'http.url': url,
-            'llm.base_url': model.base_url
+        operation.setAttribute('http.response.status_code', response.status);
+        operation.setAttribute('http.status_text', response.statusText);
+        if (response.status >= 400) {
+            operation.markError(`HTTP ${response.status}`);
         }
-    );
+
+        if (logRaw && response.body) {
+            const decoder = new TextDecoder();
+            const loggedBody = response.body.pipeThrough(
+                new TransformStream({
+                    transform(chunk, controller) {
+                        try {
+                            logger.info(`[LLM Raw Response] ${decoder.decode(chunk, { stream: true })}`);
+                        } catch {
+                            // Logging must never break the response stream
+                        }
+                        controller.enqueue(chunk);
+                    }
+                })
+            );
+            return new Response(loggedBody, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
+        }
+
+        return response;
+    });
 }

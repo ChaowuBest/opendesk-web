@@ -47,6 +47,7 @@ import {
     type TaskUpdateRetryChunk,
     type TaskModelRequestOptions
 } from './types.js';
+import { AgentExecutionInstrumentationRegistry } from '../../telemetry/agent-execution.js';
 
 function getAssistantResponseError(response: AssistantResponse): Error | undefined {
     if (response.finish_reason !== 'error') {
@@ -566,114 +567,147 @@ export async function processTaskCompletion(
                         `autoParseThinkTags=${autoParseThinkTags}`
                 );
                 assistant_message.beginCompletionRound(autoParseThinkTags);
-                for await (const chunk_resp of LLM.streamComplete(
-                    task.chat_context,
-                    requestModel,
-                    llmMessageOptions,
-                    requestOptions
-                )) {
-                    const responseError = getAssistantResponseError(chunk_resp);
-                    if (responseError) {
-                        throw responseError;
-                    }
+                await AgentExecutionInstrumentationRegistry.aroundModelRequest(
+                    {
+                        taskId: task.task_id,
+                        chatContext: task.chat_context,
+                        messageOptions: llmMessageOptions,
+                        assistantMessage: assistant_message,
+                        model: requestModel,
+                        metadata: {
+                            requestType: 'streamComplete'
+                        },
+                        getUsage: () => assistant_message.usage
+                    },
+                    async (instrumentationHeaders) => {
+                        const tracedRequestOptions = instrumentationHeaders
+                            ? {
+                                  ...requestOptions,
+                                  extraHeaders: {
+                                      ...requestOptions.extraHeaders,
+                                      ...instrumentationHeaders
+                                  }
+                              }
+                            : requestOptions;
+                        for await (const chunk_resp of LLM.streamComplete(
+                            task.chat_context,
+                            requestModel,
+                            llmMessageOptions,
+                            tracedRequestOptions
+                        )) {
+                            const responseError = getAssistantResponseError(chunk_resp);
+                            if (responseError) {
+                                throw responseError;
+                            }
 
-                    // 检查是否已停止或被新 turn 取代
-                    if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
-                        logger.info(
-                            `task ${task.task_id} completion interrupted by ${task.task_status === 'stopped' ? 'stop request' : 'new turn'}`
-                        );
-                        break;
-                    }
-
-                    // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
-                    // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
-                    const chunkHasNewToolCall = chunkIntroducesNewToolCall(chunk_resp.content, assistant_message);
-                    if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
-                        const existingCalls = collectToolCalls(assistant_message);
-                        const lastExisting = existingCalls[existingCalls.length - 1];
-                        if (lastExisting) {
-                            finalizeToolCallArgs(lastExisting);
-                            const feedback = await task.hooks.checkAfterParseToolcall(task, lastExisting);
-                            if (!isCurrentTurn()) return false;
-                            if (feedback.operation === 'reject') {
-                                removeToolCallsFrom(assistant_message, existingCalls.length - 1);
-                                if (chunk_resp.usage) {
-                                    assistant_message.usage = chunk_resp.usage;
-                                }
-                                logger.warn(
-                                    `task ${task.task_id}: afterParseToolcall rejected ` +
-                                        `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                            // 检查是否已停止或被新 turn 取代
+                            if (task.task_status === 'stopped' || task.getTurnGeneration() !== myGeneration) {
+                                logger.info(
+                                    `task ${task.task_id} completion interrupted by ${task.task_status === 'stopped' ? 'stop request' : 'new turn'}`
                                 );
-                                abortedByToolcallHook = true;
-                                await task.sendSubscriptionFeedback();
                                 break;
                             }
-                        }
-                    }
 
-                    // beforeToolcallCreated 钩子：在 merge 前检查是否应拒绝新的工具调用
-                    {
-                        const requestToolCalls = getCurrentRequestToolCalls();
-                        const feedback = await task.hooks.checkBeforeToolcallCreated(
-                            task,
-                            assistant_message,
-                            chunkHasNewToolCall,
-                            requestToolCalls
-                        );
-                        if (!isCurrentTurn()) return false;
-                        if (feedback.operation === 'reject') {
-                            logger.warn(`task ${task.task_id}: beforeToolcallCreated rejected: ${feedback.message}`);
+                            // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
+                            // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
+                            const chunkHasNewToolCall = chunkIntroducesNewToolCall(
+                                chunk_resp.content,
+                                assistant_message
+                            );
+                            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                                const existingCalls = collectToolCalls(assistant_message);
+                                const lastExisting = existingCalls[existingCalls.length - 1];
+                                if (lastExisting) {
+                                    finalizeToolCallArgs(lastExisting);
+                                    const feedback = await task.hooks.checkAfterParseToolcall(task, lastExisting);
+                                    if (!isCurrentTurn()) return false;
+                                    if (feedback.operation === 'reject') {
+                                        removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                                        if (chunk_resp.usage) {
+                                            assistant_message.usage = chunk_resp.usage;
+                                        }
+                                        logger.warn(
+                                            `task ${task.task_id}: afterParseToolcall rejected ` +
+                                                `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                                        );
+                                        abortedByToolcallHook = true;
+                                        await task.sendSubscriptionFeedback();
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // beforeToolcallCreated 钩子：在 merge 前检查是否应拒绝新的工具调用
+                            {
+                                const requestToolCalls = getCurrentRequestToolCalls();
+                                const feedback = await task.hooks.checkBeforeToolcallCreated(
+                                    task,
+                                    assistant_message,
+                                    chunkHasNewToolCall,
+                                    requestToolCalls
+                                );
+                                if (!isCurrentTurn()) return false;
+                                if (feedback.operation === 'reject') {
+                                    logger.warn(
+                                        `task ${task.task_id}: beforeToolcallCreated rejected: ${feedback.message}`
+                                    );
+                                    if (chunk_resp.usage) {
+                                        assistant_message.usage = chunk_resp.usage;
+                                    }
+                                    abortedByToolcallHook = true;
+                                    await task.sendSubscriptionFeedback();
+                                    break;
+                                }
+                            }
+
+                            const prevPartCount = assistant_message.content.length;
+                            const prevPartTypes = assistant_message.content.map((part) => part.type);
+                            assistant_message.mergeChunk(chunk_resp.content);
                             if (chunk_resp.usage) {
                                 assistant_message.usage = chunk_resp.usage;
                             }
-                            abortedByToolcallHook = true;
-                            await task.sendSubscriptionFeedback();
-                            break;
+                            task.applyRuntimeMetadataToAssistant(assistant_message);
+
+                            resolveStreamingToolCallsForTask(task, assistant_message);
+
+                            prevMergedToolCallCount = getCurrentRequestToolCalls().length;
+
+                            // When content length increases, a new part was created - the previous part is now complete
+                            if (assistant_message.content.length > prevPartCount) {
+                                const prevPartIndex = prevPartCount - 1;
+                                const prevPart = assistant_message.content[prevPartIndex];
+
+                                // Check if the previous part is a text part that hasn't been sent yet
+                                if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
+                                    task.onTextPartComplete?.(prevPart.text);
+                                    lastSentTextPartIndex = prevPartIndex;
+                                }
+                            }
+
+                            if (task.subscribers.length == 0) {
+                                // no subscribers, skip
+                                continue;
+                            }
+
+                            const rebasedPartIndex = findRebasedPartIndex(prevPartTypes, assistant_message.content);
+                            if (rebasedPartIndex !== -1) {
+                                await task.sendAssistantMessageReplace(assistant_message);
+                            } else if (assistant_message.content.length > prevPartCount) {
+                                // content 数组增长了（如 <think> 标签拆分产生新 part），
+                                // 需要同时更新被修改的旧 part 和新增的 part
+                                for (
+                                    let i = Math.max(0, prevPartCount - 1);
+                                    i < assistant_message.content.length;
+                                    i++
+                                ) {
+                                    await task.sendSubscriptionFeedback(i);
+                                }
+                            } else {
+                                await task.sendSubscriptionFeedback();
+                            }
                         }
                     }
-
-                    const prevPartCount = assistant_message.content.length;
-                    const prevPartTypes = assistant_message.content.map((part) => part.type);
-                    assistant_message.mergeChunk(chunk_resp.content);
-                    if (chunk_resp.usage) {
-                        assistant_message.usage = chunk_resp.usage;
-                    }
-                    task.applyRuntimeMetadataToAssistant(assistant_message);
-
-                    resolveStreamingToolCallsForTask(task, assistant_message);
-
-                    prevMergedToolCallCount = getCurrentRequestToolCalls().length;
-
-                    // When content length increases, a new part was created - the previous part is now complete
-                    if (assistant_message.content.length > prevPartCount) {
-                        const prevPartIndex = prevPartCount - 1;
-                        const prevPart = assistant_message.content[prevPartIndex];
-
-                        // Check if the previous part is a text part that hasn't been sent yet
-                        if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
-                            task.onTextPartComplete?.(prevPart.text);
-                            lastSentTextPartIndex = prevPartIndex;
-                        }
-                    }
-
-                    if (task.subscribers.length == 0) {
-                        // no subscribers, skip
-                        continue;
-                    }
-
-                    const rebasedPartIndex = findRebasedPartIndex(prevPartTypes, assistant_message.content);
-                    if (rebasedPartIndex !== -1) {
-                        await task.sendAssistantMessageReplace(assistant_message);
-                    } else if (assistant_message.content.length > prevPartCount) {
-                        // content 数组增长了（如 <think> 标签拆分产生新 part），
-                        // 需要同时更新被修改的旧 part 和新增的 part
-                        for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
-                            await task.sendSubscriptionFeedback(i);
-                        }
-                    } else {
-                        await task.sendSubscriptionFeedback();
-                    }
-                }
+                );
 
                 if (!isCurrentTurn()) return false;
 

@@ -784,7 +784,7 @@ export class AgentOfficeApplication extends BaseApplication {
                 runtime.resourcesDirectory,
                 scheduledTaskInProgress
             );
-            await task.submitUserMessage(prompt, prepared.image_data_uris);
+            await task.submitUserMessage(prompt, { imageDataUris: prepared.image_data_uris });
             if (task.getTurnGeneration() !== runtime.expectedGeneration) {
                 throw new Error(t('agentoffice.error.turnGenerationMismatch'));
             }

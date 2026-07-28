@@ -11,8 +11,13 @@
 
 import type { Command } from 'commander';
 import process from 'process';
+import { initTelemetry } from '../../telemetry/index.js';
 
 type ServeOptions = Record<string, string | undefined>;
+
+export async function initializeServeTelemetry(initializer: () => Promise<void> = initTelemetry): Promise<void> {
+    await initializer();
+}
 
 export function registerServeCommand(prog: Command): void {
     prog.command('serve')
@@ -88,6 +93,10 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     } else {
         interceptConsole();
     }
+
+    // serve 是独立 Commander 子命令，不会进入 CLI 默认入口；必须在 AI Kernel
+    // 初始化和开放请求前单独安装 Agent/Model/Tool instrumentation。
+    await initializeServeTelemetry();
 
     GlobalState.initialize();
     GlobalState.getInstance().setServerMode(true);

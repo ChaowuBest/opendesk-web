@@ -27,7 +27,7 @@ import { AnthropicAdapter } from './adapters/anthropic.js';
 import type { AdapterMessageBuildOptions } from './adapters/context.js';
 import { t } from '../../locale/index.js';
 import { fetchModelUrl } from '../utils/model-network.js';
-import { getTracer, withSpan, context, trace, SpanStatusCode, type Span } from '../telemetry/index.js';
+import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 import iconv from 'iconv-lite';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
@@ -285,13 +285,14 @@ class LLM {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
 
-        return withSpan('llm.embed', async (span) => {
-            span.setAttribute('llm.model', modelInstance.model_name);
-            span.setAttribute('llm.provider', modelInstance.getProviderName());
-            span.setAttribute('llm.request_type', 'embed');
-
+        const operation = new TelemetryOperation('llm.embed', {
+            'llm.model': modelInstance.model_name,
+            'llm.provider': modelInstance.getProviderName(),
+            'llm.request_type': 'embed'
+        });
+        return TelemetryOperationRegistry.aroundOperation(operation, async () => {
             const data = await LLM.__embedRequest(modelInstance, text, dimensions);
-            span.setAttribute('llm.usage.embedding_dimensions', data.data[0].embedding?.length ?? 0);
+            operation.setAttribute('llm.usage.embedding_dimensions', data.data[0].embedding?.length ?? 0);
             return data.data[0].embedding;
         });
     }
@@ -302,27 +303,30 @@ class LLM {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
 
-        return withSpan('llm.batchEmbed', async (span) => {
-            span.setAttribute('llm.model', modelInstance.model_name);
-            span.setAttribute('llm.provider', modelInstance.getProviderName());
-            span.setAttribute('llm.request_type', 'batchEmbed');
-            span.setAttribute('llm.embed.text_count', texts.length);
-            span.setAttribute('llm.embed.batch_size', batchSize);
-
-            const embeddings: number[][] = [];
-            for (let i = 0; i < texts.length; i += batchSize) {
-                logger.info(`progress ${i} / ${texts.length}`);
-                const batch = texts.slice(i, i + batchSize);
-                const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
-                embeddings.push(
-                    ...data.data
-                        .slice()
-                        .sort((a: any, b: any) => a.index - b.index)
-                        .map((d: any) => d.embedding)
-                );
+        return TelemetryOperationRegistry.aroundOperation(
+            new TelemetryOperation('llm.batchEmbed', {
+                'llm.model': modelInstance.model_name,
+                'llm.provider': modelInstance.getProviderName(),
+                'llm.request_type': 'batchEmbed',
+                'llm.embed.text_count': texts.length,
+                'llm.embed.batch_size': batchSize
+            }),
+            async () => {
+                const embeddings: number[][] = [];
+                for (let i = 0; i < texts.length; i += batchSize) {
+                    logger.info(`progress ${i} / ${texts.length}`);
+                    const batch = texts.slice(i, i + batchSize);
+                    const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
+                    embeddings.push(
+                        ...data.data
+                            .slice()
+                            .sort((a: any, b: any) => a.index - b.index)
+                            .map((d: any) => d.embedding)
+                    );
+                }
+                return embeddings;
             }
-            return embeddings;
-        });
+        );
     }
 
     /**
@@ -345,12 +349,13 @@ class LLM {
         }
         const modelInstance = LLM.__getModelInstance(model, undefined);
 
-        return withSpan('llm.rerank', async (span) => {
-            span.setAttribute('llm.model', modelInstance.model_name);
-            span.setAttribute('llm.provider', modelInstance.getProviderName());
-            span.setAttribute('llm.request_type', 'rerank');
-            span.setAttribute('llm.rerank.document_count', items.length);
-
+        const operation = new TelemetryOperation('llm.rerank', {
+            'llm.model': modelInstance.model_name,
+            'llm.provider': modelInstance.getProviderName(),
+            'llm.request_type': 'rerank',
+            'llm.rerank.document_count': items.length
+        });
+        return TelemetryOperationRegistry.aroundOperation(operation, async () => {
             // Reranker 使用自定义 REST API 而非 OpenAI SDK
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${modelInstance.api_key}`,
@@ -386,7 +391,7 @@ class LLM {
                     rerankedItems.push(items[index]);
                 }
             }
-            span.setAttribute('llm.rerank.result_count', rerankedItems.length);
+            operation.setAttribute('llm.rerank.result_count', rerankedItems.length);
             return rerankedItems;
         });
     }
@@ -439,17 +444,18 @@ class LLM {
         const adapter = LLM.__getAdapter(modelInstance);
         const visionSupported = await LLM.supportsVision(options.model);
 
-        return withSpan('llm.ask', async (span) => {
-            span.setAttribute('llm.model', modelInstance.model_name);
-            span.setAttribute('llm.provider', modelInstance.getProviderName());
-            span.setAttribute('llm.request_type', 'completeText');
-
+        const operation = new TelemetryOperation('llm.ask', {
+            'llm.model': modelInstance.model_name,
+            'llm.provider': modelInstance.getProviderName(),
+            'llm.request_type': 'completeText'
+        });
+        return TelemetryOperationRegistry.aroundOperation(operation, async () => {
             let finalResponse: string | object | undefined = undefined;
             let numRetries = 0;
             const chatContext = new ChatContext();
             chatContext.appendMessage(options.question);
 
-            const wrappedRequestOptions = LLM.__wrapOnUsage(options.requestOptions, span);
+            const wrappedRequestOptions = LLM.__wrapOnUsage(options.requestOptions, operation);
 
             while (finalResponse === undefined && numRetries < 5) {
                 let content = await adapter.completeText(chatContext, visionSupported, {}, wrappedRequestOptions);
@@ -479,7 +485,7 @@ class LLM {
                 throw new Error('failed to get a valid response after all retries');
             }
 
-            span.setAttribute('llm.retry_count', numRetries);
+            operation.setAttribute('llm.retry_count', numRetries);
             return finalResponse;
         });
     }
@@ -502,11 +508,11 @@ class LLM {
     }
 
     /**
-     * 包装 onUsage 回调，在原有回调基础上将 token 用量写入 OTel span 属性。
+     * 包装 onUsage 回调，在原有回调基础上将 token 用量写入遥测操作属性。
      */
     private static __wrapOnUsage(
         requestOptions: LLMRequestOptions | undefined,
-        span: Span
+        operation: TelemetryOperation
     ): LLMRequestOptions | undefined {
         if (!requestOptions) {
             return undefined;
@@ -515,14 +521,17 @@ class LLM {
         return {
             ...requestOptions,
             onUsage: async (usage: Usage, ctx) => {
-                span.setAttribute('llm.usage.prompt_tokens', usage.prompt_tokens ?? usage.input_tokens ?? 0);
-                span.setAttribute('llm.usage.completion_tokens', usage.completion_tokens ?? usage.output_tokens ?? 0);
-                span.setAttribute('llm.usage.total_tokens', usage.total_tokens ?? 0);
+                operation.setAttribute('llm.usage.prompt_tokens', usage.prompt_tokens ?? usage.input_tokens ?? 0);
+                operation.setAttribute(
+                    'llm.usage.completion_tokens',
+                    usage.completion_tokens ?? usage.output_tokens ?? 0
+                );
+                operation.setAttribute('llm.usage.total_tokens', usage.total_tokens ?? 0);
                 if (usage.cache_creation_input_tokens !== undefined) {
-                    span.setAttribute('llm.usage.cache_creation_input_tokens', usage.cache_creation_input_tokens);
+                    operation.setAttribute('llm.usage.cache_creation_input_tokens', usage.cache_creation_input_tokens);
                 }
                 if (usage.cache_read_input_tokens !== undefined) {
-                    span.setAttribute('llm.usage.cache_read_input_tokens', usage.cache_read_input_tokens);
+                    operation.setAttribute('llm.usage.cache_read_input_tokens', usage.cache_read_input_tokens);
                 }
                 if (originalOnUsage) {
                     await originalOnUsage(usage, ctx);
@@ -619,12 +628,13 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
 
-        return withSpan('llm.complete', async (span) => {
-            span.setAttribute('llm.model', modelInstance.model_name);
-            span.setAttribute('llm.provider', modelInstance.getProviderName());
-            span.setAttribute('llm.request_type', 'complete');
-
-            const wrappedOptions = LLM.__wrapOnUsage(requestOptions, span);
+        const operation = new TelemetryOperation('llm.complete', {
+            'llm.model': modelInstance.model_name,
+            'llm.provider': modelInstance.getProviderName(),
+            'llm.request_type': 'complete'
+        });
+        return TelemetryOperationRegistry.aroundOperation(operation, async () => {
+            const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
             return await this.__getAdapter(modelInstance).complete(
                 chatContext,
                 visionSupported,
@@ -644,47 +654,20 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
 
-        const span = getTracer().startSpan('llm.streamComplete');
-        span.setAttribute('llm.model', modelInstance.model_name);
-        span.setAttribute('llm.provider', modelInstance.getProviderName());
-        span.setAttribute('llm.request_type', 'streamComplete');
-        // async generator 无法用 withSpan 回调包裹，手动管理 span 生命周期。
-        // 用 context.bind 将 span context 绑定到迭代器 next 方法，
-        // 使 adapter 内部的 fetchModelUrl → withSpan('llm.http_request') 成为子 span。
-        const ctx = trace.setSpan(context.active(), span);
-        const boundNext = context.bind(ctx, (innerIter: AsyncIterator<AssistantResponse>) => innerIter.next());
-
-        const wrappedOptions = LLM.__wrapOnUsage(requestOptions, span);
+        const operation = new TelemetryOperation('llm.streamComplete', {
+            'llm.model': modelInstance.model_name,
+            'llm.provider': modelInstance.getProviderName(),
+            'llm.request_type': 'streamComplete'
+        });
+        const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
         const streamGen = this.__getAdapter(modelInstance).streamComplete(
             chatContext,
             visionSupported,
             options,
             wrappedOptions
         );
-        const innerIter = streamGen[Symbol.asyncIterator]();
-
-        try {
-            try {
-                let result = await boundNext(innerIter);
-                while (!result.done) {
-                    yield result.value;
-                    result = await boundNext(innerIter);
-                }
-            } finally {
-                // 确保调用方 break 时内部迭代器资源（HTTP 连接等）被清理
-                if (innerIter.return) {
-                    await innerIter.return();
-                }
-            }
-        } catch (err: unknown) {
-            span.recordException(err as Error);
-            span.setStatus({
-                code: SpanStatusCode.ERROR,
-                message: err instanceof Error ? err.message : String(err)
-            });
-            throw err;
-        } finally {
-            span.end();
+        for await (const response of TelemetryOperationRegistry.traceStream(operation, streamGen)) {
+            yield response;
         }
     }
 
@@ -696,7 +679,7 @@ class LLM {
         if (modelInstance.getModelType() !== 'chat') {
             throw new Error(t('error.model.not_chat'));
         }
-        await withSpan('llm.verify', async () => {
+        await TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.verify'), async () => {
             await this.__getAdapter(modelInstance).verify();
         });
     }
@@ -709,7 +692,7 @@ class LLM {
         if (modelInstance.getModelType() !== 'embedding') {
             throw new Error(t('error.model.not_embedding'));
         }
-        await withSpan('llm.verify', async () => {
+        await TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('llm.verify'), async () => {
             const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
             const embedding = data?.data?.[0]?.embedding;
             if (!Array.isArray(embedding) || embedding.length === 0) {

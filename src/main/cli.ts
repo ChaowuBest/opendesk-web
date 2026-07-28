@@ -35,7 +35,7 @@ import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { MainAgentDecl } from './aikernel/agents/main/agent.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
-import { StartupTrace } from './telemetry/startup-tracer.js';
+import { StartupTrace } from './telemetry/opentelemetry/startup-tracer.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
@@ -355,7 +355,7 @@ function parseCommandLineArgs() {
             process.exit(1);
         }
 
-        main({
+        await main({
             workspace: workspacePath,
             command: kwargs.command,
             taskName: kwargs.taskName?.trim() ? kwargs.taskName.trim() : undefined,
@@ -386,7 +386,7 @@ async function main(args: CommandLineArgs) {
     }
 
     // 初始化遥测系统（尽早初始化，在任何 LLM 请求之前）
-    initTelemetry();
+    await initTelemetry();
     const startupTrace = new StartupTrace('startup.cli');
 
     const t1 = startupTrace.createPhase('startup.cli.temp_dir');

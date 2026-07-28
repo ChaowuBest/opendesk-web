@@ -174,6 +174,6 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         expect(result).toEqual({ removedCount: 2, resubmitted: true, userMessageText: '/skill original prompt' });
         expect(task.chat_context.messages).toHaveLength(0);
-        expect(submit).toHaveBeenCalledWith('/skill original prompt', []);
+        expect(submit).toHaveBeenCalledWith('/skill original prompt', { imageDataUris: [] });
     });
 });
