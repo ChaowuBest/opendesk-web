@@ -62,7 +62,6 @@ export class TaskManagerState {
     tasks: TaskState[] = [];
     subscribers: BaseTaskManagerUpdateSubscriber[] = [];
     toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
-    private _deletedTaskIds: Set<string> = new Set();
     private _sharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
     private _activeSharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
     private _disposeReadableDirectoryListener?: () => void;
@@ -298,7 +297,6 @@ export class TaskManagerState {
                     // 旧格式索引：仅有 task_id，回退到全量加载。
                     const task = TaskState.load(taskFilePath, taskManagerState);
                     if (task.task_id !== taskId) {
-                        taskManagerState._deletedTaskIds.add(taskId);
                         needsIndexUpgrade = true;
                         throw new Error(
                             `task ID mismatch while loading ${taskFilePath}: expected ${taskId}, got ${task.task_id}`
@@ -475,7 +473,7 @@ export class TaskManagerState {
             const diskEntries: Record<string, unknown>[] = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
             for (const entry of diskEntries) {
                 const taskId = entry.task_id as string;
-                if (inMemoryIds.has(taskId) || this._deletedTaskIds.has(taskId)) {
+                if (inMemoryIds.has(taskId)) {
                     continue;
                 }
                 const taskFile = path.join(taskDirectory, `${taskId}.json`);
@@ -772,9 +770,10 @@ export class TaskManagerState {
         }
 
         this.tasks = this.tasks.filter((candidate) => candidate.task_id !== taskId);
-        this._deletedTaskIds.add(taskId);
         this.publishTaskListUpdate();
-        this.saveSync();
+        // 不合并磁盘条目：损坏任务的 .json 文件仍保留在磁盘上（供 /recover 恢复），
+        // 合并会把它重新写回 task_list.json 导致下次加载时反复出现。
+        this.saveSync({ mergeDiskEntries: false });
         return true;
     }
 
@@ -795,7 +794,6 @@ export class TaskManagerState {
         task.cleanup();
         deleteTaskTodos(taskId);
         removedIds.add(taskId);
-        this._deletedTaskIds.add(taskId);
     }
 
     /**
@@ -804,7 +802,6 @@ export class TaskManagerState {
     clearAllTasks(): string[] {
         const removedIds = this.tasks.map((task) => task.task_id);
         for (const task of this.tasks) {
-            this._deletedTaskIds.add(task.task_id);
             // 懒加载任务并未实际运行（status 已转为 failed），跳过 stop()
             // 以避免不必要的 ensureLoaded() 触发全量磁盘读取。
             // cleanup() 和 deleteTaskTodos() 仍会正常清理磁盘文件。

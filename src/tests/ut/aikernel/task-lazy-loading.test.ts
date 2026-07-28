@@ -229,7 +229,7 @@ describe('task lazy loading', () => {
         expect(fs.readFileSync(taskFile, 'utf8')).toBe(taskFileBeforeLoad);
     });
 
-    test('drops a mismatched legacy index entry without touching its task file', () => {
+    test('skips a mismatched legacy index entry during load but may revive it in the index', () => {
         const { taskDirectory, taskFile, taskListFile } = persistTaskFixture();
         const mismatchedJson = JSON.parse(fs.readFileSync(taskFile, 'utf8'));
         mismatchedJson.task_id = 'task-other';
@@ -247,10 +247,17 @@ describe('task lazy loading', () => {
 
         const manager = TaskManagerState.load()!;
 
+        // 不匹配的任务不会被加载到内存中
         expect(manager.tasks.map((task) => task.task_id)).toEqual(['task-valid']);
+        // 由于 .json 文件仍在磁盘上，合并写入时该条目会被保留（复活）。
+        // 这是可接受的：不丢失数据，下次访问时会被检测为 corrupted 并通过
+        // removeCorruptedTaskEntry({ mergeDiskEntries: false }) 正确清除。
         expect(
-            JSON.parse(fs.readFileSync(taskListFile, 'utf8')).map((entry: { task_id: string }) => entry.task_id)
-        ).toEqual(['task-valid']);
+            JSON.parse(fs.readFileSync(taskListFile, 'utf8'))
+                .map((entry: { task_id: string }) => entry.task_id)
+                .sort()
+        ).toEqual(['task-lazy', 'task-valid']);
+        // 物理文件不被触碰
         expect(fs.readFileSync(taskFile, 'utf8')).toBe(mismatchedContent);
     });
 
