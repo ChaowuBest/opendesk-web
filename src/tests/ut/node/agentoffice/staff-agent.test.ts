@@ -52,6 +52,7 @@ function staffListItem(id: string, enabled: boolean): StaffListItem {
         vendor_name: 'OpenDesk',
         title: 'Researcher',
         specialties: ['research'],
+        trigger_interval: 'never',
         hired_at: '2026-07-26T00:00:00.000Z',
         enabled,
         message_count: 0,

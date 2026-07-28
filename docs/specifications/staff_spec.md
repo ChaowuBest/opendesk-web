@@ -29,6 +29,7 @@
 - 独立的私有技能目录
 - 独立的消息历史和任务记录
 - 可选的专属模型和头像
+- 可由用户配置的定时触发间隔
 
 ### 1.2 与 Agent 系统的关系
 
@@ -76,6 +77,7 @@ staffs/{staffId}/
 │   ├── tasks.json                # 任务记录列表
 │   └── messages.jsonl            # 消息历史（每行一条 JSON）
 └── workspace/                    # Staff 专属工作空间
+    └── MEMORY.md                 # 跨任务持久化的状态、偏好与工作进展
 ```
 
 ### 2.3 目录访问权限
@@ -99,10 +101,12 @@ Staff 的身份定义文件。
 
 ```typescript
 {
-    name: string;           // 员工名称（必填，非空）
-    vendor_name: string;    // 供应商名称（必填，非空）
-    title: string;          // 职位头衔（必填，非空）
-    specialties: string[];  // 专长列表（默认空数组）
+    name: string;                    // 员工名称（必填，非空）
+    vendor_name: string;             // 供应商名称（必填，非空）
+    title: string;                   // 职位头衔（必填，非空）
+    specialties: string[];           // 专长列表（默认空数组）
+    trigger_interval:                // 定时触发间隔（默认 never）
+        '5m' | '10m' | '15m' | '30m' | '1h' | 'never';
 }
 ```
 
@@ -113,9 +117,14 @@ Staff 的身份定义文件。
     "name": "Avery",
     "vendor_name": "OpenDesk",
     "title": "Research Analyst",
-    "specialties": ["Information retrieval", "Industry research", "Analysis reports"]
+    "specialties": ["Information retrieval", "Industry research", "Analysis reports"],
+    "trigger_interval": "30m"
 }
 ```
+
+`trigger_interval` 属于可导入、导出的员工模板定义，只能由用户在 AgentOffice 管理界面配置。
+Staff Agent 对 `staff.json` 没有写权限，也没有修改触发间隔的工具。导入旧版本定义时，该字段按
+`never` 处理。
 
 ### 3.2 agent/agents.md
 
@@ -171,6 +180,7 @@ Staff 的运行时元数据，不受 Agent 直接控制。
     hired_at: string;            // 创建时间（ISO 8601）
     enabled: boolean;            // 是否启用
     model?: string;              // 专属模型别名（可选）
+    last_triggered_at?: string;  // 最近一次被调度器认领的触发时间
     usage_summary?: TaskUsageSummary;  // 累计 token 使用统计
 }
 ```
@@ -234,6 +244,8 @@ Staff 的任务记录列表。
     {
         task_id: string;              // 任务 ID
         message_ids: string[];        // 关联的消息 ID 列表
+        source: 'user' | 'scheduled'; // 用户消息任务或定时触发任务
+        triggered_at?: string;        // 定时触发发生时间
         status: string;               // 'running' | 'stopped' | 'waiting'
         created_at: string;           // 创建时间（ISO 8601）
         updated_at: string;           // 更新时间（ISO 8601）
@@ -331,12 +343,14 @@ Staff 使用 `createStaffPermissionEnforcer()` 创建专属的权限执行器，
 sendMessage(staffId, input)
   │
   ├── 获取 Staff 详情（验证 enabled 状态）
-  ├── 获取或创建任务（复用 running 任务或创建新任务）
+  ├── 获取或创建用户消息任务
+  │   ├── 有 running 用户消息任务：中断当前 turn 并追加消息
+  │   └── 只有 running 定时任务：另建用户消息任务，并在 prompt 中告知并行状态
   ├── 加载 Staff 自身 agent/ 配置
   │   ├── CustomAgent.loadFromPath(..., { purpose: 'staff' })
   │   ├── task.agentId = Staff Agent 的目录绝对路径
   │   └── 设置 Staff Agent 的 default mode 与工具过滤
-  ├── 初始化 workspace 和 harness（新任务）
+  ├── 初始化 workspace、MEMORY.md 和 harness（新任务）
   │   └── taskManager.initHarness(task, workspace, mode)
   ├── 设置 Staff 专属权限
   │   └── 使用 Staff 最新 permission.json 覆盖 harness permission
@@ -351,17 +365,34 @@ sendMessage(staffId, input)
   └── 提交消息，任务开始执行
 ```
 
-### 5.2 任务复用
+所有 Staff 任务的 system prompt 都会明确说明：任务结束后上下文会被清空。Agent 必须在任务开始时
+读取 `workspace/MEMORY.md`，并在结束前把后续任务仍需记住的状态、用户偏好、承诺、决定和工作进展
+写回该文件。
 
-当 Staff 有一个 `running` 状态的任务时，新消息会复用该任务，保持对话上下文连续。如果当前任务已停止，则创建新任务。
+### 5.2 用户消息任务与定时触发任务
+
+任务通过 `StaffTaskRecord.source` 区分：
+
+- `user`：用户在 AgentOffice 会话中发送消息创建的任务。
+- `scheduled`：到达 `trigger_interval` 后由调度器创建的独立任务。
+
+用户消息只会中断并复用正在运行的 `user` 任务。正在运行的 `scheduled` 任务不会被打断；系统会新建
+`user` 任务，并在 prompt 中告知 Agent 当前还有定时任务并行执行。
+
+定时触发发生时，系统立即创建 `waiting` 的 `scheduled` 任务。同一 Staff 的定时任务按触发顺序串行，
+并且在所有 `user` 任务结束后才开始。定时任务启动后会要求 Agent 根据员工设定、`MEMORY.md` 和最近
+办公室消息判断是否有工作或需要主动联系用户；若无事可做，应快速、静默结束。应用重启后会恢复仍为
+`waiting` 的定时任务，并把已经失去对应运行态的陈旧任务记录收敛为终态。
 
 ### 5.3 任务监控
 
 ```
-monitorTaskTurn(task, staffId, replyTask)
+monitorTaskTurn(task, staffId, source)
   │
-  ├── 监听 assistant 回复
-  │   └── 通过 sendReply 工具将回复写入 messages.jsonl
+  ├── 监听 sendReply
+  │   └── 每次调用都立即写入 messages.jsonl
+  ├── 用户消息任务未调用 sendReply：写入缺少回复错误
+  ├── 定时任务未调用 sendReply：正常静默结束
   ├── 任务完成后更新 tasks.json 和 metadata.json
   └── 更新 usage_summary（token 使用统计）
 ```
@@ -370,10 +401,10 @@ monitorTaskTurn(task, staffId, replyTask)
 
 Staff 任务附加了两个专属工具：
 
-| 工具                 | 功能                                                                 |
-| -------------------- | -------------------------------------------------------------------- |
-| `sendReply`          | Agent 通过此工具发送回复消息，消息被写入 `messages.jsonl` 并通知前端 |
-| `getHistoryMessages` | Agent 查询历史消息，支持按数量或时间范围检索                         |
+| 工具                 | 功能                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `sendReply`          | Agent 与用户交互的窗口；可在开始耗时工作前、执行进展中和最终交付时多次调用，每次消息都立即写入 `messages.jsonl` 并通知前端 |
+| `getHistoryMessages` | Agent 查询历史消息，支持按数量或时间范围检索                                                                               |
 
 ---
 

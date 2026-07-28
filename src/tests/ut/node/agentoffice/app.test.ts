@@ -6,6 +6,7 @@ import path from 'path';
 import type { AgentDecl, ModeDecl } from '../../../../main/aikernel/agents/common.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import type { StaffTaskRecord } from '../../../../main/applications/agentoffice/common.js';
+import { GlobalState } from '../../../../main/aikernel/states/global.js';
 import { setPlatform, type AbstractPlatform } from '../../../../platforms/base.js';
 import {
     acquireStaffTaskForMessage,
@@ -13,8 +14,20 @@ import {
     applyStaffModelToTask,
     applyStaffPermissionToTask,
     assignStaffAgentToTask,
+    findRunningStaffTaskBySource,
+    interpolateAgentOfficePrompt,
     mergeStaffTaskRecord
 } from '../../../../main/applications/agentoffice/app.js';
+
+test('agent office prompt interpolation preserves dollar sequences in workspace and message content', () => {
+    assert.equal(
+        interpolateAgentOfficePrompt('Workspace: ${workspace}\nMessage: ${message}', {
+            workspace: '/tmp/$&-workspace',
+            message: "keep $` and $' unchanged"
+        }),
+        "Workspace: /tmp/$&-workspace\nMessage: keep $` and $' unchanged"
+    );
+});
 
 test('application worker boundary keeps the result unwrapping function at runtime', async () => {
     const application = new AgentOfficeApplication();
@@ -150,6 +163,168 @@ test('a new staff task is created as an internal task', () => {
     assert.equal(selected.task, createdTask);
     assert.equal(selected.reused, false);
     assert.deepEqual(options, { taskName: '[Digital Staff] hello', internal: true });
+});
+
+test('a running scheduled task is not reused or interrupted by a user message', () => {
+    const scheduledTask = {
+        task_id: 'scheduled-task',
+        task_status: 'running',
+        getTurnGeneration: () => 1
+    } as unknown as TaskState;
+    const userTask = { task_id: 'user-task' } as TaskState;
+    let createCount = 0;
+    const manager = {
+        getTask: (taskId: string) => (taskId === scheduledTask.task_id ? scheduledTask : undefined),
+        createTask: () => {
+            createCount += 1;
+            return userTask;
+        }
+    } as unknown as Parameters<typeof acquireStaffTaskForMessage>[1];
+    const records: StaffTaskRecord[] = [
+        {
+            task_id: scheduledTask.task_id,
+            message_ids: [],
+            status: 'running',
+            source: 'scheduled',
+            triggered_at: '2026-07-19T10:00:00.000Z',
+            created_at: '2026-07-19T10:00:00.000Z',
+            updated_at: '2026-07-19T10:00:00.000Z'
+        }
+    ];
+    let interrupted = false;
+
+    const selected = acquireStaffTaskForMessage(records, manager, '[Digital Staff] hello', () => {
+        interrupted = true;
+    });
+
+    assert.equal(selected.task, userTask);
+    assert.equal(selected.reused, false);
+    assert.equal(createCount, 1);
+    assert.equal(interrupted, false);
+});
+
+test('running staff task selection keeps user and scheduled sources isolated', () => {
+    const userTask = { task_id: 'user-task', task_status: 'running' } as TaskState;
+    const scheduledTask = { task_id: 'scheduled-task', task_status: 'running' } as TaskState;
+    const manager = {
+        getTask: (taskId: string) => (taskId === userTask.task_id ? userTask : scheduledTask)
+    } as Pick<Parameters<typeof findRunningStaffTaskBySource>[1], 'getTask'>;
+    const records: StaffTaskRecord[] = [
+        {
+            task_id: userTask.task_id,
+            message_ids: [],
+            status: 'running',
+            created_at: '2026-07-19T10:00:00.000Z',
+            updated_at: '2026-07-19T10:00:00.000Z'
+        },
+        {
+            task_id: scheduledTask.task_id,
+            message_ids: [],
+            status: 'running',
+            source: 'scheduled',
+            created_at: '2026-07-19T10:01:00.000Z',
+            updated_at: '2026-07-19T10:01:00.000Z'
+        }
+    ];
+
+    assert.equal(findRunningStaffTaskBySource(records, manager, 'user'), userTask);
+    assert.equal(findRunningStaffTaskBySource(records, manager, 'scheduled'), scheduledTask);
+});
+
+test('scheduler recovery resumes waiting scheduled tasks and settles stale records', async (context) => {
+    const application = new AgentOfficeApplication() as any;
+    const scheduledWaitingTask = {
+        task_id: 'scheduled-waiting',
+        task_status: 'waiting',
+        usage_summary: undefined
+    } as TaskState;
+    const scheduledFailedTask = {
+        task_id: 'scheduled-failed',
+        task_status: 'failed',
+        usage_summary: { total_tokens: 4 }
+    } as TaskState;
+    const userWaitingTask = {
+        task_id: 'user-waiting',
+        task_status: 'waiting',
+        usage_summary: undefined
+    } as TaskState;
+    const tasks = new Map(
+        [scheduledWaitingTask, scheduledFailedTask, userWaitingTask].map((task) => [task.task_id, task])
+    );
+    const manager = GlobalState.getInstance().taskManagerState;
+    const originalGetTask = manager.getTask;
+    manager.getTask = (taskId: string) => tasks.get(taskId);
+    context.after(() => {
+        manager.getTask = originalGetTask;
+    });
+
+    const records: StaffTaskRecord[] = [
+        {
+            task_id: scheduledWaitingTask.task_id,
+            message_ids: [],
+            source: 'scheduled',
+            status: 'waiting',
+            created_at: '2026-07-19T10:00:00.000Z',
+            updated_at: '2026-07-19T10:00:00.000Z'
+        },
+        {
+            task_id: scheduledFailedTask.task_id,
+            message_ids: [],
+            source: 'scheduled',
+            status: 'running',
+            created_at: '2026-07-19T10:01:00.000Z',
+            updated_at: '2026-07-19T10:01:00.000Z'
+        },
+        {
+            task_id: userWaitingTask.task_id,
+            message_ids: [],
+            source: 'user',
+            status: 'running',
+            created_at: '2026-07-19T10:02:00.000Z',
+            updated_at: '2026-07-19T10:02:00.000Z'
+        }
+    ];
+    const resumed: string[] = [];
+    const updates: StaffTaskRecord[] = [];
+    application.enqueueScheduledTask = (_staffId: string, task: TaskState) => resumed.push(task.task_id);
+    application.callWorker = async (methodName: string, ...args: unknown[]) => {
+        if (methodName === 'listStaffs') {
+            return {
+                status: 'ok',
+                data: [
+                    {
+                        id: 'staff-id',
+                        name: 'Ada',
+                        vendor_name: 'OpenDesk',
+                        title: 'Researcher',
+                        specialties: [],
+                        trigger_interval: '5m',
+                        hired_at: '2026-07-19T09:00:00.000Z',
+                        enabled: true,
+                        message_count: 0,
+                        task_count: records.length
+                    }
+                ]
+            };
+        }
+        if (methodName === 'readTasks') return { status: 'ok', data: records };
+        if (methodName === 'upsertTask') {
+            updates.push(args[1] as StaffTaskRecord);
+            return { status: 'ok' };
+        }
+        throw new Error(`unexpected worker method: ${methodName}`);
+    };
+
+    await application.recoverStaffTaskRecords();
+
+    assert.deepEqual(resumed, ['scheduled-waiting']);
+    assert.deepEqual(
+        updates.map((record) => ({ task_id: record.task_id, status: record.status })),
+        [
+            { task_id: 'scheduled-failed', status: 'failed' },
+            { task_id: 'user-waiting', status: 'stopped' }
+        ]
+    );
 });
 
 test('reusing a staff task appends the new message while preserving task identity and creation time', () => {

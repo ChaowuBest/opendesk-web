@@ -22,10 +22,58 @@ test('creates an instance without eagerly creating workspace', (context) => {
         specialties: ['research']
     });
     assert.equal(staff.name, 'Ada');
+    assert.equal(staff.trigger_interval, 'never');
     assert.equal(staff.permission.network_access, true);
     assert.equal(fs.existsSync(repository.workspaceDirectory(staff.id)), false);
     assert.equal(repository.ensureWorkspace(staff.id), repository.workspaceDirectory(staff.id));
     assert.equal(fs.existsSync(repository.workspaceDirectory(staff.id)), true);
+    assert.match(fs.readFileSync(path.join(repository.workspaceDirectory(staff.id), 'MEMORY.md'), 'utf8'), /^#/);
+});
+
+test('claims configured staff triggers once per interval and resets the clock when humans change it', (context) => {
+    const { root, repository } = createRepository();
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const staff = repository.createStaff({
+        name: 'Ada',
+        vendor_name: 'OpenDesk',
+        title: 'Researcher',
+        specialties: [],
+        trigger_interval: '5m'
+    });
+    const metadataPath = path.join(repository.protectedDirectory(staff.id), 'metadata.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as { last_triggered_at: string };
+    const baseline = new Date(metadata.last_triggered_at).getTime();
+    const expectedTrigger = {
+        staff_id: staff.id,
+        triggered_at: new Date(baseline + 5 * 60 * 1000).toISOString(),
+        previous_triggered_at: metadata.last_triggered_at
+    };
+    const originalReadMessages = repository.readMessages;
+    repository.readMessages = () => {
+        throw new Error('trigger polling must not read message history');
+    };
+    context.after(() => {
+        repository.readMessages = originalReadMessages;
+    });
+
+    assert.deepEqual(repository.claimDueTriggers(new Date(baseline + 4 * 60 * 1000).toISOString()), []);
+    assert.deepEqual(repository.claimDueTriggers(expectedTrigger.triggered_at), [expectedTrigger]);
+    repository.releaseTriggerClaim(expectedTrigger);
+    assert.deepEqual(repository.claimDueTriggers(expectedTrigger.triggered_at), [expectedTrigger]);
+    assert.deepEqual(repository.claimDueTriggers(new Date(baseline + 6 * 60 * 1000).toISOString()), []);
+    repository.readMessages = originalReadMessages;
+
+    const updated = repository.updateStaff(staff.id, {
+        definition: {
+            name: staff.name,
+            vendor_name: staff.vendor_name,
+            title: staff.title,
+            specialties: staff.specialties,
+            trigger_interval: 'never'
+        }
+    });
+    assert.equal(updated.trigger_interval, 'never');
+    assert.deepEqual(repository.claimDueTriggers(new Date(baseline + 24 * 60 * 60 * 1000).toISOString()), []);
 });
 
 test('stores the staff model in protected instance metadata and can clear it', (context) => {
@@ -253,7 +301,8 @@ test('export contains definition only and import creates a fresh instance', (con
         name: 'Ada',
         vendor_name: 'OpenDesk',
         title: 'Researcher',
-        specialties: []
+        specialties: [],
+        trigger_interval: '30m'
     });
     repository.ensureWorkspace(staff.id);
     fs.writeFileSync(path.join(repository.workspaceDirectory(staff.id), 'secret.txt'), 'private');
@@ -278,6 +327,7 @@ test('export contains definition only and import creates a fresh instance', (con
     const imported = repository.importStaff(zipPath);
     assert.notEqual(imported.id, staff.id);
     assert.equal(imported.name, staff.name);
+    assert.equal(imported.trigger_interval, '30m');
     assert.equal(imported.message_count, 0);
 });
 

@@ -79,14 +79,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private query = '';
     private busy = false;
     private modal:
-        | 'new'
-        | 'delete'
-        | 'portrait'
-        | 'installed-skills'
-        | 'batch-skills'
-        | 'skill-url'
-        | 'skill-detail'
-        | null = null;
+        'new' | 'delete' | 'portrait' | 'installed-skills' | 'batch-skills' | 'skill-url' | 'skill-detail' | null =
+        null;
     private status = '';
     private previewHideTimer?: ReturnType<typeof setTimeout>;
     private portraitImage?: HTMLImageElement;
@@ -344,9 +338,16 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 detail.model && !this.modelCatalog.models.some((model) => model.alias === detail.model)
                     ? `<option value="${escapeHtml(detail.model)}" selected>${escapeHtml(detail.model)}</option>`
                     : '';
+            const triggerInterval = detail.trigger_interval ?? 'never';
+            const triggerOptions = ['5m', '10m', '15m', '30m', '1h', 'never']
+                .map(
+                    (value) =>
+                        `<option value="${value}" ${triggerInterval === value ? 'selected' : ''}>${escapeHtml(this.tr(`agentoffice.triggerInterval.${value}`))}</option>`
+                )
+                .join('');
             return `<div class="settings-page">
                 <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.basic'))}</h3></div><div class="stats"><div class="stat"><b>${detail.message_count}</b>${escapeHtml(this.tr('agentoffice.messagesStat'))}</div><div class="stat"><b>${detail.task_count}</b>${escapeHtml(this.tr('agentoffice.tasksStat'))}</div><div class="stat"><b>${usage.toLocaleString(this.locale)}</b>${escapeHtml(this.tr('agentoffice.tokensStat'))}</div><div class="stat"><b>${escapeHtml(new Date(detail.hired_at).toLocaleDateString(this.locale))}</b>${escapeHtml(this.tr('agentoffice.hiredAt'))}</div></div></section>
-                <section class="settings-section"><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field full"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.enableStaff'))}</span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
+                <section class="settings-section"><div class="form-grid settings-form"><div class="field" data-basic-field="name"><label for="f-name">${escapeHtml(this.tr('agentoffice.nameLabel'))}${required}</label><input id="f-name" value="${escapeHtml(detail.name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="vendor"><label for="f-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="f-vendor" value="${escapeHtml(detail.vendor_name)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field" data-basic-field="title"><label for="f-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="f-title" value="${escapeHtml(detail.title)}" required aria-required="true"><div class="field-error">${requiredError}</div></div><div class="field"><label for="f-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}</label><input id="f-specialties" value="${escapeHtml(detail.specialties.join(', '))}"></div><div class="field"><label for="f-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="f-trigger-interval">${triggerOptions}</select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div><div class="field"><label for="f-model">${escapeHtml(this.tr('agentoffice.modelLabel'))}</label><select id="f-model"><option value="">${escapeHtml(defaultModelLabel)}</option>${missingSelectedModel}${this.modelCatalog.models.map((model) => `<option value="${escapeHtml(model.alias)}" ${detail.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)} · ${escapeHtml(model.provider_name)} / ${escapeHtml(model.model_name)}</option>`).join('')}</select><div class="sub">${escapeHtml(this.tr('agentoffice.modelHint'))}</div></div><div class="field full"><div class="setting-check-row"><span class="setting-check-copy">${escapeHtml(this.tr('agentoffice.enableStaff'))}</span><label class="setting-toggle"><input type="checkbox" id="f-enabled" ${detail.enabled ? 'checked' : ''}><span class="setting-toggle-track"></span></label></div></div></div></section>
                 <section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.instructionsLabel'))}</h3></div><div class="field"><textarea id="f-agents">${escapeHtml(detail.agents_md)}</textarea></div></section>
             </div>`;
         }
@@ -384,7 +385,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                       .reverse()
                       .map(
                           (task) =>
-                              `<div class="list-row"><div><b>${escapeHtml(task.task_id)}</b><div class="sub">${escapeHtml(this.taskStatus(task.status))} · ${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))} · ${(task.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</div></div><button class="secondary" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`
+                              `<div class="list-row"><div><b>${escapeHtml(task.task_id)}</b><div class="sub">${escapeHtml(this.tr(`agentoffice.taskSource.${task.source ?? 'user'}`))} · ${escapeHtml(this.taskStatus(task.status))} · ${escapeHtml(new Date(task.updated_at).toLocaleString(this.locale))} · ${(task.usage_summary?.total_tokens ?? 0).toLocaleString(this.locale)} ${escapeHtml(this.tr('agentoffice.tokensStat'))}</div></div><button class="secondary" data-task="${escapeHtml(task.task_id)}">${escapeHtml(this.tr('agentoffice.openTask'))}</button></div>`
                       )
                       .join('');
         return `<div class="settings-page"><section class="settings-section"><div class="settings-section-head"><h3 class="settings-section-title">${escapeHtml(this.tr('agentoffice.tasks'))}</h3></div>${tasks}</section></div>`;
@@ -412,6 +413,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     <div class="field" data-new-field="vendor"><label for="new-vendor">${escapeHtml(this.tr('agentoffice.vendorLabel'))}${required}</label><input id="new-vendor" autocomplete="organization" required aria-required="true"><div class="field-error">${error}</div></div>
                     <div class="field" data-new-field="title"><label for="new-title">${escapeHtml(this.tr('agentoffice.titleLabel'))}${required}</label><input id="new-title" autocomplete="organization-title" required aria-required="true"><div class="field-error">${error}</div></div>
                     <div class="field"><label for="new-specialties">${escapeHtml(this.tr('agentoffice.specialtiesLabel'))}<span class="optional-mark">${escapeHtml(this.tr('agentoffice.optional'))}</span></label><input id="new-specialties" autocomplete="off"></div>
+                    <div class="field"><label for="new-trigger-interval">${escapeHtml(this.tr('agentoffice.triggerIntervalLabel'))}</label><select id="new-trigger-interval"><option value="5m">${escapeHtml(this.tr('agentoffice.triggerInterval.5m'))}</option><option value="10m">${escapeHtml(this.tr('agentoffice.triggerInterval.10m'))}</option><option value="15m">${escapeHtml(this.tr('agentoffice.triggerInterval.15m'))}</option><option value="30m">${escapeHtml(this.tr('agentoffice.triggerInterval.30m'))}</option><option value="1h">${escapeHtml(this.tr('agentoffice.triggerInterval.1h'))}</option><option value="never" selected>${escapeHtml(this.tr('agentoffice.triggerInterval.never'))}</option></select><div class="sub">${escapeHtml(this.tr('agentoffice.triggerIntervalHint'))}</div></div>
                 </div></div>
                 <div class="modal-footer"><button class="secondary" data-action="close-modal">${escapeHtml(this.tr('agentoffice.cancel'))}</button><button class="primary" data-action="create">${escapeHtml(this.tr('agentoffice.save'))}</button></div>
             </div></div>`;
@@ -806,6 +808,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.detail.model = model;
             this.queueStaffUpdate({ model: model ?? null }, true);
         });
+        this.shadowRoot
+            ?.querySelector<HTMLSelectElement>('#f-trigger-interval')
+            ?.addEventListener('change', (event) => {
+                if (!this.detail) return;
+                this.detail.trigger_interval = (event.target as HTMLSelectElement)
+                    .value as StaffDetail['trigger_interval'];
+                this.queueDefinitionUpdate(true);
+            });
         this.shadowRoot?.querySelector<HTMLInputElement>('#f-enabled')?.addEventListener('change', (event) => {
             if (!this.detail) return;
             const enabled = (event.target as HTMLInputElement).checked;
@@ -1077,7 +1087,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 specialties: value('#new-specialties')
                     .split(',')
                     .map((item) => item.trim())
-                    .filter(Boolean)
+                    .filter(Boolean),
+                trigger_interval:
+                    (this.shadowRoot?.querySelector<HTMLSelectElement>('#new-trigger-interval')?.value as
+                        StaffDetail['trigger_interval'] | undefined) ?? 'never'
             });
             this.modal = null;
             this.status = '';
@@ -1177,16 +1190,20 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.queueStaffUpdate({ mcp: parsed });
     }
 
-    private queueDefinitionUpdate(): void {
+    private queueDefinitionUpdate(immediate = false): void {
         if (!this.detail) return;
-        this.queueStaffUpdate({
-            definition: {
-                name: this.detail.name,
-                vendor_name: this.detail.vendor_name,
-                title: this.detail.title,
-                specialties: [...this.detail.specialties]
-            }
-        });
+        this.queueStaffUpdate(
+            {
+                definition: {
+                    name: this.detail.name,
+                    vendor_name: this.detail.vendor_name,
+                    title: this.detail.title,
+                    specialties: [...this.detail.specialties],
+                    trigger_interval: this.detail.trigger_interval ?? 'never'
+                }
+            },
+            immediate
+        );
     }
 
     private openPortraitEditor(): void {

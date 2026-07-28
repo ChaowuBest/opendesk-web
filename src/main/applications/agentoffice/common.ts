@@ -12,11 +12,14 @@
 import { z } from 'zod';
 import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
 
+export const StaffTriggerIntervalSchema = z.enum(['5m', '10m', '15m', '30m', '1h', 'never']);
+
 export const StaffDefinitionSchema = z.object({
     name: z.string().trim().min(1),
     vendor_name: z.string().trim().min(1),
     title: z.string().trim().min(1),
-    specialties: z.array(z.string().trim().min(1)).default([])
+    specialties: z.array(z.string().trim().min(1)).default([]),
+    trigger_interval: StaffTriggerIntervalSchema.default('never')
 });
 
 export const StaffDirectoryPermissionSchema = z.object({
@@ -49,6 +52,8 @@ export const StaffMessageSchema = z.object({
 });
 
 export type StaffDefinition = z.output<typeof StaffDefinitionSchema>;
+export type StaffDefinitionInput = z.input<typeof StaffDefinitionSchema>;
+export type StaffTriggerInterval = z.output<typeof StaffTriggerIntervalSchema>;
 export type StaffPermission = z.output<typeof StaffPermissionSchema>;
 export type StaffResourceContent = z.output<typeof StaffResourceContentSchema>;
 export type StaffMessage = z.output<typeof StaffMessageSchema>;
@@ -58,13 +63,18 @@ export interface StaffMetadata {
     hired_at: string;
     enabled: boolean;
     model?: string;
+    last_triggered_at?: string;
     usage_summary?: TaskUsageSummary;
 }
+
+export type StaffTaskSource = 'user' | 'scheduled';
 
 export interface StaffTaskRecord {
     task_id: string;
     message_ids: string[];
     status: string;
+    source?: StaffTaskSource;
+    triggered_at?: string;
     created_at: string;
     updated_at: string;
     usage_summary?: TaskUsageSummary;
@@ -120,7 +130,7 @@ export interface StaffSkillBatchImportResult {
 }
 
 export interface StaffUpdateInput {
-    definition?: StaffDefinition;
+    definition?: StaffDefinitionInput;
     agents_md?: string;
     mcp?: { servers: unknown[] };
     permission?: StaffPermission;
@@ -158,8 +168,26 @@ export interface PreparedMessage {
 
 export interface PresetStaffDefinition {
     key: string;
-    definition: StaffDefinition;
+    definition: StaffDefinitionInput;
     agents_md: string;
+}
+
+export interface DueStaffTrigger {
+    staff_id: string;
+    triggered_at: string;
+    previous_triggered_at?: string;
+}
+
+const STAFF_TRIGGER_INTERVAL_MS: Record<Exclude<StaffTriggerInterval, 'never'>, number> = {
+    '5m': 5 * 60 * 1000,
+    '10m': 10 * 60 * 1000,
+    '15m': 15 * 60 * 1000,
+    '30m': 30 * 60 * 1000,
+    '1h': 60 * 60 * 1000
+};
+
+export function staffTriggerIntervalMs(interval: StaffTriggerInterval): number | undefined {
+    return interval === 'never' ? undefined : STAFF_TRIGGER_INTERVAL_MS[interval];
 }
 
 export function unwrapAgentOfficeCallResult<T>(result: unknown, fallbackMessage: string): T {

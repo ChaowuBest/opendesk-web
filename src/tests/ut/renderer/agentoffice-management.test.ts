@@ -67,6 +67,7 @@ describe('agentoffice management form behavior', () => {
             vendor_name: 'Vendor',
             title: 'Title',
             specialties: ['Research'],
+            trigger_interval: 'never',
             hired_at: '2026-01-01T00:00:00.000Z',
             enabled: true,
             message_count: 0,
@@ -133,6 +134,32 @@ describe('agentoffice management form behavior', () => {
         expect(widget.queueStaffUpdate).toHaveBeenCalledWith({ enabled: false }, true);
         expect(widget.shadowRoot.querySelector('[data-action="save-basic"]')).toBeNull();
         expect(widget.shadowRoot.querySelector('#f-enabled + .setting-toggle-track')).not.toBeNull();
+    });
+
+    test('trigger interval changes update the template definition immediately', () => {
+        const widget = createWidget();
+        widget.detail = detail();
+        widget.activeTab = 'management';
+        widget.render();
+        widget.queueStaffUpdate = jest.fn();
+        const interval = widget.shadowRoot.querySelector('#f-trigger-interval');
+
+        Object.defineProperty(interval, 'value', { value: '15m' });
+        interval.dispatchEvent(new Event('change'));
+
+        expect(widget.detail.trigger_interval).toBe('15m');
+        expect(widget.queueStaffUpdate).toHaveBeenCalledWith(
+            {
+                definition: {
+                    name: 'Staff name',
+                    vendor_name: 'Vendor',
+                    title: 'Title',
+                    specialties: ['Research'],
+                    trigger_interval: '15m'
+                }
+            },
+            true
+        );
     });
 
     test('chat messages hide task ids and retain task navigation metadata for the context menu', () => {

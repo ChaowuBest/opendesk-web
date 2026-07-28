@@ -13,9 +13,10 @@ import { BaseWorker } from '../base.js';
 import { t } from '../../../locale/index.js';
 import { AgentOfficeRepository } from './repository.js';
 import type {
+    DueStaffTrigger,
     HistoryQuery,
     MessageAttachmentInput,
-    StaffDefinition,
+    StaffDefinitionInput,
     StaffMessage,
     StaffTaskRecord,
     StaffUpdateInput,
@@ -89,7 +90,7 @@ export default class AgentOfficeWorker extends BaseWorker {
         return this.repository.getStaffDetail(staffId);
     }
 
-    createStaff(definition: StaffDefinition, defaultAgentsMd?: string) {
+    createStaff(definition: StaffDefinitionInput, defaultAgentsMd?: string) {
         const detail = this.repository.createStaff(definition, defaultAgentsMd);
         void this.emitEvent('staffsChanged');
         return detail;
@@ -143,6 +144,14 @@ export default class AgentOfficeWorker extends BaseWorker {
     upsertTask(staffId: string, task: StaffTaskRecord) {
         this.repository.upsertTask(staffId, task);
         void this.emitEvent('staffTaskChanged', staffId, task.task_id);
+    }
+
+    claimDueTriggers(nowIso: string) {
+        return this.repository.claimDueTriggers(nowIso);
+    }
+
+    releaseTriggerClaim(trigger: DueStaffTrigger) {
+        this.repository.releaseTriggerClaim(trigger);
     }
 
     importStaff(zipPath: string) {
