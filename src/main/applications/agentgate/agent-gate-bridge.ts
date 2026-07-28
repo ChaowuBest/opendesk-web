@@ -28,6 +28,7 @@ import { getOpendeskDirectory } from '../../utils/setting.js';
 import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../../utils/shellExec.js';
 import { getOpenDeskAppHost } from '../../../../packages/appsdk/src/index.js';
 import { logger } from '../../utils/logger.js';
+import { electron } from '../../../utils/electron.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -145,6 +146,35 @@ class AgentGateBridge {
     }
 
     /**
+     * 解析应用根目录（node_modules 所在位置）。
+     * 打包环境下 app.getAppPath() 返回 app 资源目录；
+     * CLI 模式下回退到 process.cwd()（项目根目录）。
+     */
+    private getProjectRoot(): string {
+        // 1. Electron 打包环境：app.getAppPath() 返回 app 资源目录
+        try {
+            const { app } = electron();
+            const appPath = app?.getAppPath?.();
+            if (appPath) {
+                const resolved = path.resolve(appPath);
+                if (fs.existsSync(path.join(resolved, 'node_modules'))) {
+                    return resolved;
+                }
+            }
+        } catch { /* CLI 模式或 worker 线程中 electron 不可用 */ }
+        // 2. import.meta.dirname 回退：编译产物位于 dist/main/ 下，
+        //    上溯 1 级即 app 根目录（打包和 CLI 开发模式均适用）
+        try {
+            const rootFromDirname = path.resolve(import.meta.dirname, '..');
+            if (fs.existsSync(path.join(rootFromDirname, 'node_modules'))) {
+                return rootFromDirname;
+            }
+        } catch { /* import.meta.dirname 不可用 */ }
+        // 3. CLI 模式：process.cwd() 是项目根目录
+        return path.resolve(process.cwd());
+    }
+
+    /**
      * 解析 npm 包 bundle 路径。
      * 优先从插件目录（~/.opendesk/extensions/node_modules/）加载，
      * 回退到项目 node_modules/（本地开发 npm link 场景）。
@@ -156,7 +186,7 @@ class AgentGateBridge {
         // agent-moss 在 dist/cli.js。
         const cliRel = packageName === '@kenhkl/agent-gate' ? 'dist/v1/cli.js' : 'dist/cli.js';
         // 1. 项目 node_modules（预装依赖，优先）
-        const localBundle = path.resolve(process.cwd(), 'node_modules', packageName, cliRel);
+        const localBundle = path.resolve(this.getProjectRoot(), 'node_modules', packageName, cliRel);
         if (fs.existsSync(localBundle)) return localBundle;
 
         // 2. 旧版 extensions 目录（兼容历史安装）
@@ -178,7 +208,7 @@ class AgentGateBridge {
      *       ② npm hoist 到根的（node_modules/better-sqlite3）
      */
     private _findSqliteDirs(): string[] {
-        const projectRoot = path.resolve(process.cwd());
+        const projectRoot = this.getProjectRoot();
         return [
             path.join(projectRoot, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3'),
             path.join(projectRoot, 'node_modules', 'better-sqlite3')
@@ -354,7 +384,7 @@ class AgentGateBridge {
 
         // 包已作为 OpenDesk 的 dependencies 预装到 node_modules（离线 npm install 一次即就绪），
         // 不再运行时 npm install 到 extensions 目录。仅做存在性校验。
-        const projectRoot = path.resolve(process.cwd());
+        const projectRoot = this.getProjectRoot();
         const gatePkg = path.join(projectRoot, 'node_modules', '@kenhkl', 'agent-gate', 'package.json');
         if (!fs.existsSync(gatePkg)) {
             logger.warn('[AgentGateBridge] @kenhkl/agent-gate 未在 node_modules 中预装，安全网关无法启动');
@@ -382,11 +412,6 @@ class AgentGateBridge {
         // 解析 bundle 路径
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
-
-        // [DEBUG-LOG] 鸿蒙诊断：打印安装路径和数据目录，部署验证后删除此行
-        logger.info(
-            `[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, dataDir=${this.getAgentGateDataDir()}`
-        );
 
         // 找到空闲端口后并行启动
         // 注：不调用 ensureNativeModules——spawn 子进程方案下子进程用系统 node 跑，
