@@ -23,7 +23,7 @@ import {
 import { MANAGE_APPS_SKILL } from './skills.js';
 import { APPMGR_APPGUIDE_SKILL } from './skills/appguide.js';
 import { GlobalState } from '../../aikernel/states/global.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { logger } from '../../utils/logger.js';
 
@@ -207,7 +207,7 @@ export class AppMgrApplication extends BaseApplication {
             );
         } else {
             // 创建新 Agent 任务
-            const agent = new MainAgentDecl();
+            const agent = AgentRegistry.getMainAgent();
             const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
             const workspace = getPlatform().getEffectiveWorkspace();
 
@@ -216,7 +216,7 @@ export class AppMgrApplication extends BaseApplication {
 
             try {
                 await tm.initHarness(task, workspace, mode);
-                task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
+                await task.rebuildSystemPrompt();
                 await task.hooks.noticeBeforeTaskStart(task);
                 await task.submitUserMessage(
                     this._buildModifyPrompt(bundleName, versionDisplayName, versionCodePath, requirements, true)

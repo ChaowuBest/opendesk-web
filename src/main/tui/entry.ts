@@ -43,7 +43,7 @@ import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
 import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
-import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
+import { AgentRegistry } from '../aikernel/agents/registry.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
@@ -72,6 +72,7 @@ import { getPlatform } from '../../platforms/base.js';
 import { CliPlatform } from '../../platforms/cli.js';
 import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
+import { resolveTaskMode } from '../aikernel/task/mode.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -189,19 +190,17 @@ export class OpenDeskTUI {
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new MainAgentDecl();
+        this.agentDecl = AgentRegistry.getMainAgent();
 
         // 初始化默认 Mode（--allow-everything 等价于 --mode unlimited）
         {
             const modes = this.agentDecl.supportedModes();
             // allowEverything 优先级最高，等同于 unlimited mode
             const cliModeId = args.allowEverything ? 'unlimited' : args.mode?.toLowerCase();
-            const defaultId = this.agentDecl.defaultModeId();
             if (cliModeId) {
-                this._activeMode =
-                    modes.find((m) => m.id === cliModeId) ?? modes.find((m) => m.id === defaultId) ?? modes[0];
+                this._activeMode = modes.find((mode) => mode.id === cliModeId) ?? this.agentDecl.getDefaultMode();
             } else {
-                this._activeMode = modes.find((m) => m.id === defaultId) ?? modes[0];
+                this._activeMode = this.agentDecl.getDefaultMode();
             }
         }
 
@@ -831,8 +830,7 @@ export class OpenDeskTUI {
         const task = this.taskManagerState.getTask(this.activeTaskId);
         if (!task) return;
         try {
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
-            task.setSystemPrompt(systemPrompt);
+            await task.rebuildSystemPrompt();
         } catch (err) {
             logger.warn(`Failed to refresh active task system prompt after skill update: ${err}`);
         }
@@ -1043,8 +1041,7 @@ export class OpenDeskTUI {
         });
         this.pendingTaskName = null;
         await this.initTaskHarness(task);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
-        task.setSystemPrompt(systemPrompt);
+        await task.rebuildSystemPrompt();
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
@@ -1096,9 +1093,7 @@ export class OpenDeskTUI {
             return;
         }
 
-        await this.taskManagerState.refreshLazyTaskSystemPrompt(task, (mode, taskState) =>
-            this.agentDecl.createSystemPrompt(mode, taskState)
-        );
+        await this.taskManagerState.refreshLazyTaskSystemPrompt(task);
         task.ensureValidModelOrFallback();
 
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
@@ -1371,8 +1366,7 @@ export class OpenDeskTUI {
             });
             this.pendingTaskName = null;
             await this.initTaskHarness(this.taskView.taskState);
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.taskView.taskState);
-            this.taskView.taskState.setSystemPrompt(systemPrompt);
+            await this.taskView.taskState.rebuildSystemPrompt();
 
             if (this.profilePath) {
                 this.taskView.taskState.profiler = new TaskProfiler(this.taskView.taskState.task_id);
@@ -1853,7 +1847,7 @@ export class OpenDeskTUI {
      * 根据当前 activeMode 构建，并应用全局默认执行节点。
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
-        await this.taskManagerState.initHarness(task, this.workspace, this._activeMode);
+        await this.taskManagerState.initHarness(task, this.workspace, resolveTaskMode(task, this._activeMode));
         // 应用全局默认执行节点（如果设置了）
         const globalState = GlobalState.getInstance();
         const defaultNodeId = globalState.getDefaultExecutionNodeId();
@@ -2032,6 +2026,7 @@ export class OpenDeskTUI {
         const prepared: Array<{
             task: TaskState;
             context: HarnessContext;
+            mode: ModeDecl;
             systemPrompt: string;
             savedPrompt?: PermissionPromptProvider | null;
             inheritedChildren: TaskState[];
@@ -2040,10 +2035,15 @@ export class OpenDeskTUI {
             if (task.parent_id !== null || task.internal) continue;
             if (!task.harnessContext.workspace) continue;
             const taskWorkspace = task.getWorkspace() || this.workspace;
+            const taskAgent = task.getAgent();
+            const taskMode = taskAgent === AgentRegistry.getMainAgent() ? mode : task.getAgentMode();
             const savedEnv = task.harnessContext.environ;
             const savedPrompt = task.harnessContext.permissionPrompt;
             const savedExecutionHost = task.harnessContext.executionHost;
             const previousPermission = task.harnessContext.permission;
+            const previousModeId = task.activeModeId;
+            const previousAllowedTools = task.allowedTools;
+            const previousDisabledTools = task.disabledTools;
             const inheritedChildren = previousPermission
                 ? this.taskManagerState.tasks.filter((candidate) => {
                       if (candidate.parent_id === null || candidate.harnessContext.permission !== previousPermission) {
@@ -2061,20 +2061,30 @@ export class OpenDeskTUI {
                 : [];
 
             try {
-                const ctx = await HarnessContext.createForMode(taskWorkspace, mode);
+                const ctx = await HarnessContext.createForMode(taskWorkspace, taskMode);
                 ctx.environ = savedEnv;
                 ctx.permissionPrompt = savedPrompt;
                 ctx.executionHost = savedExecutionHost;
                 await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                const systemPrompt = await this.agentDecl.createSystemPrompt(mode, task);
+                task.activeModeId = taskMode.id;
+                task.allowedTools = taskMode.allowedTools;
+                task.disabledTools = taskMode.disabledTools;
+                const systemPrompt = await task.buildSystemPrompt();
+                task.activeModeId = previousModeId;
+                task.allowedTools = previousAllowedTools;
+                task.disabledTools = previousDisabledTools;
                 prepared.push({
                     task,
                     context: ctx,
+                    mode: taskMode,
                     systemPrompt,
                     savedPrompt,
                     inheritedChildren
                 });
             } catch (err) {
+                task.activeModeId = previousModeId;
+                task.allowedTools = previousAllowedTools;
+                task.disabledTools = previousDisabledTools;
                 logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
                 return false;
             }
@@ -2082,20 +2092,20 @@ export class OpenDeskTUI {
 
         this.taskManagerState.updateLazyHarnessMode(mode);
         for (const replacement of prepared) {
-            const { task, context, systemPrompt, savedPrompt, inheritedChildren } = replacement;
+            const { task, context, mode: taskMode, systemPrompt, savedPrompt, inheritedChildren } = replacement;
             task.harnessContext = context;
-            task.activeModeId = mode.id;
-            task.allowedTools = mode.allowedTools;
-            task.disabledTools = mode.disabledTools;
-            task.setSystemPrompt(systemPrompt);
+            task.activeModeId = taskMode.id;
+            task.allowedTools = taskMode.allowedTools;
+            task.disabledTools = taskMode.disabledTools;
+            task.installBuiltSystemPrompt(systemPrompt);
             this.taskManagerState.clearLazyTaskSystemPromptRefresh(task);
             for (const child of inheritedChildren) {
                 child.harnessContext.permission = context.permission;
-                child.activeModeId = mode.id;
-                child.allowedTools = mode.allowedTools;
-                child.disabledTools = mode.disabledTools;
+                child.activeModeId = taskMode.id;
+                child.allowedTools = taskMode.allowedTools;
+                child.disabledTools = taskMode.disabledTools;
             }
-            if (mode.bypassPermissionChecks && savedPrompt?.notifyPermissionRulesChanged && context.permission) {
+            if (taskMode.bypassPermissionChecks && savedPrompt?.notifyPermissionRulesChanged && context.permission) {
                 changedProviders.set(savedPrompt, context.permission);
             }
         }
@@ -2136,7 +2146,9 @@ export class OpenDeskTUI {
                 const activeTask = this.taskManagerState.getTask(this.activeTaskId);
                 if (activeTask) {
                     activeTask.workspace = newWorkspace;
-                    const mode = this._activeMode;
+                    const taskAgent = activeTask.getAgent();
+                    const mode =
+                        taskAgent.agentId === this.agentDecl.agentId ? this._activeMode : activeTask.getAgentMode();
                     const savedEnv = activeTask.harnessContext.environ;
                     const savedPrompt = activeTask.harnessContext.permissionPrompt;
                     try {
@@ -2149,6 +2161,9 @@ export class OpenDeskTUI {
                         logger.warn(`Failed to sync task harness for new workspace: ${err}`);
                         activeTask.harnessContext.workspace = newWorkspace;
                     }
+                    activeTask.activeModeId = mode.id;
+                    activeTask.allowedTools = mode.allowedTools;
+                    activeTask.disabledTools = mode.disabledTools;
                     activeTask.persistLater();
                 }
             }

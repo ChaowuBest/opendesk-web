@@ -36,6 +36,7 @@ export interface CustomAgentLoadOptions {
     agentName?: string;
     whenToUse?: string;
     skillBundleName?: string;
+    additionalSystemPrompt?: (taskCtx: TaskContext) => string | null;
 }
 
 // ─── Mode ─────────────────────────────────────────────────────
@@ -70,20 +71,16 @@ export class CustomAgent extends AgentDecl {
     readonly agentType: AgentType = 'custom';
     readonly agentName: string;
     readonly whenToUse: string;
+    readonly dispatchable: boolean;
     readonly mcpConfig: unknown;
 
-    private readonly _agentId: string;
     private readonly agentsMd: string;
     private readonly skillProvider: CustomAgentSkillProvider;
     private readonly skillBundleName: string;
     private readonly purpose: 'subtask' | 'staff';
+    private readonly additionalSystemPrompt?: (taskCtx: TaskContext) => string | null;
 
     private skillsRegistered = false;
-
-    /** 覆写基类 getter，返回自定义 agent 的配置目录路径 */
-    get agentId(): string {
-        return this._agentId;
-    }
 
     private constructor(
         meta: CustomAgentMeta,
@@ -93,13 +90,14 @@ export class CustomAgent extends AgentDecl {
         skills: Skill[],
         options: CustomAgentLoadOptions
     ) {
-        super();
-        this._agentId = configDir;
+        super('agentoffice');
         this.agentName = options.agentName ?? meta.name;
         this.whenToUse = options.whenToUse ?? meta.when_to_use;
         this.agentsMd = agentsMd;
         this.mcpConfig = mcpConfig;
         this.purpose = options.purpose ?? 'subtask';
+        this.dispatchable = this.purpose === 'subtask';
+        this.additionalSystemPrompt = options.additionalSystemPrompt;
         this.skillBundleName = options.skillBundleName ?? `custom:${configDir}`;
         this.skillProvider = new CustomAgentSkillProvider();
         for (const skill of skills) {
@@ -212,7 +210,7 @@ export class CustomAgent extends AgentDecl {
         return [CUSTOM_AGENT_DEFAULT_MODE];
     }
 
-    defaultModeId(): string {
+    protected defaultModeId(): string {
         return 'default';
     }
 
@@ -249,10 +247,13 @@ export class CustomAgent extends AgentDecl {
                 '无论任务成功、失败还是因缺少信息无法继续，都必须调用 planning-attemptCompletion 结束任务。'
             );
         }
-
         const base = parts.join('\n');
         const agentsMd = getAgentsMdSection(workspace);
-        return agentsMd ? `${base}\n\n${agentsMd}` : base;
+        const promptWithWorkspaceInstructions = agentsMd ? `${base}\n\n${agentsMd}` : base;
+        const additionalSystemPrompt = this.additionalSystemPrompt?.(taskCtx);
+        return additionalSystemPrompt
+            ? `${promptWithWorkspaceInstructions}\n\n${additionalSystemPrompt}`
+            : promptWithWorkspaceInstructions;
     }
 
     async dispose(): Promise<void> {

@@ -18,15 +18,12 @@ import type { TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../st
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
-import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import {
     registerSubTaskAttemptCompletionHook,
     appendSubTaskStopCompletion,
     extractAttemptCompletionResult,
     hasAttemptCompletion
 } from './harness.js';
-import { SkillRegistry } from '../skill.js';
-import { getSkillsSection } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
@@ -97,7 +94,7 @@ export interface StartSubTaskOptions {
 
 /**
  * 启动一个子任务
- * - 使用 SUBTASK_SYSTEM_PROMPT，并拼接与主任务一致的技能列表（SkillRegistry frontmatter XML）
+ * - 根据子任务绑定的 Agent 从 AgentRegistry 构建 system prompt
  * - 通过 UserMessage 传入任务目标、结果要求等信息
  * - 使用 TaskHooks 自动处理 attemptCompletion 检查
  */
@@ -119,20 +116,20 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     subTask.task_name = config.title || '未命名子任务';
 
     // 如果指定了 agentName，使用对应 Agent 的系统提示词、权限和工具过滤
-    const agentDecl = config.agentName ? AgentRegistry.getAgent(config.agentName) : undefined;
+    const agentDecl = config.agentName ? AgentRegistry.resolveDispatchableAgent(config.agentName) : undefined;
     if (config.agentName && !agentDecl) {
         logger.warn(
-            `[subtask] agent "${config.agentName}" not found in registry, falling back to default subtask agent`
+            `[subtask] agent "${config.agentName}" is unavailable for dispatch, falling back to default subtask agent`
         );
     }
 
     if (agentDecl) {
         subTask.agentId = agentDecl.agentId;
-        const defaultMode = agentDecl.supportedModes().find((m) => m.id === agentDecl.defaultModeId());
+        const defaultMode = agentDecl.getDefaultMode();
 
         // workspace 优先取父任务的当前值（可能已被用户切换）
         const workspace = parentTask.harnessContext.workspace || '';
-        if (workspace && defaultMode) {
+        if (workspace) {
             // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
             subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
             await subTask.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(subTask.task_id, false));
@@ -143,28 +140,27 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         } else {
             subTask.harnessContext = parentTask.harnessContext;
         }
-        const agentSystemPrompt = await agentDecl.createSystemPrompt(defaultMode, subTask);
-        subTask.setSystemPrompt(agentSystemPrompt);
 
         // 应用 Mode 级别的工具过滤
-        if (defaultMode) {
-            if (defaultMode.allowedTools && defaultMode.allowedTools.length > 0) {
-                subTask.allowedTools = [...defaultMode.allowedTools];
-            }
-            if (defaultMode.disabledTools && defaultMode.disabledTools.length > 0) {
-                subTask.disabledTools = [...defaultMode.disabledTools];
-            }
+        subTask.activeModeId = defaultMode.id;
+        if (defaultMode.allowedTools && defaultMode.allowedTools.length > 0) {
+            subTask.allowedTools = [...defaultMode.allowedTools];
         }
+        if (defaultMode.disabledTools && defaultMode.disabledTools.length > 0) {
+            subTask.disabledTools = [...defaultMode.disabledTools];
+        }
+        await subTask.rebuildSystemPrompt();
     } else {
         // 默认子任务：继承父任务的 harnessContext（复制 workspace、environ、权限引擎）
         subTask.harnessContext.environ = { ...parentTask.harnessContext.environ };
         subTask.harnessContext.permission = parentTask.harnessContext.permission;
         subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
         subTask.harnessContext.workspace = parentTask.harnessContext.workspace;
+        subTask.activeModeId = parentTask.activeModeId;
+        subTask.allowedTools = parentTask.allowedTools;
+        subTask.disabledTools = parentTask.disabledTools;
 
-        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
-        const subtaskSystemPrompt = [SUBTASK_SYSTEM_PROMPT.trim(), getSkillsSection(skillFrontmatters)].join('\n\n');
-        subTask.setSystemPrompt(subtaskSystemPrompt);
+        await subTask.rebuildSystemPrompt();
     }
 
     // 注册 attemptCompletion 检查钩子
@@ -494,7 +490,7 @@ const CreateSubTaskArgsSchema = z.object({
     objective: z.string().describe('完整的任务目标，尽可能详细地描述任务细节。这是唯一会带入子任务的上下文信息'),
     criteria: z.string().describe('子任务的输出结果要求，描述期望输出的内容，格式等要求'),
     isAsync: z.boolean().default(false).describe('是否异步执行'),
-    agentName: z.string().optional().describe('指定执行子任务的 Agent 名称，留空则使用默认通用子任务执行器')
+    agentName: z.string().optional().describe('指定执行子任务的规范 Agent ID，留空则使用默认通用子任务执行器')
 });
 
 export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> {

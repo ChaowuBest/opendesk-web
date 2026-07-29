@@ -39,9 +39,9 @@ export function InstanceRoutes() {
     app.get('/command', (c) => {
         const commands = AgentRegistry.getAgents().flatMap((agent) => {
             return agent.supportedModes().map((mode) => ({
-                id: `${agent.agentName}:${mode.id}`,
+                id: `${agent.agentId}:${mode.id}`,
                 name: mode.id,
-                description: mode.getSubPrompt?.() ?? ''
+                description: mode.description
             }));
         });
         return c.json(commands);
@@ -50,11 +50,12 @@ export function InstanceRoutes() {
     // GET /agent - 列出所有 Agent
     app.get('/agent', (c) => {
         const agents = AgentRegistry.getAgents().map((agent) => ({
-            name: agent.agentName,
+            name: agent.agentId,
             type: agent.agentType,
+            dispatchable: agent.dispatchable,
             modes: agent.supportedModes().map((m) => ({
                 id: m.id,
-                description: m.getSubPrompt?.() ?? ''
+                description: m.description
             }))
         }));
         return c.json(agents);

@@ -34,8 +34,9 @@
 ### 1.2 与 Agent 系统的关系
 
 Staff 直接从自身的 `agent/` 子目录加载一个与 CustomAgent 同格式的 Agent。AgentOffice 创建或复用
-Staff 任务时，将该 Agent 的目录绝对路径写入 `TaskState.agentId`，并直接把任务分配给它；Staff Agent
-不会注册进 `AgentRegistry`，因此不能被 `createSubTask` 或其他通用 Agent 派发机制创建。
+Staff 任务时，将 `agentoffice:staff:{staffId}` 写入 `TaskState.agentId`，并直接把任务分配给它。
+Staff Agent 会以 `dispatchable=false` 注册进 `AgentRegistry`，因此不能被 `createSubTask`
+或其他通用 Agent 派发机制创建。
 
 - Staff 专属的 `agents.md` 指令（作为 system prompt 主体）
 - Staff 专属的 MCP 和 Skills（按 `agentId` 隔离）
@@ -348,7 +349,7 @@ sendMessage(staffId, input)
   │   └── 只有 running 定时任务：另建用户消息任务，并在 prompt 中告知并行状态
   ├── 加载 Staff 自身 agent/ 配置
   │   ├── CustomAgent.loadFromPath(..., { purpose: 'staff' })
-  │   ├── task.agentId = Staff Agent 的目录绝对路径
+  │   ├── task.agentId = agentoffice:staff:{staffId}
   │   └── 设置 Staff Agent 的 default mode 与工具过滤
   ├── 初始化 workspace、MEMORY.md 和 harness（新任务）
   │   └── taskManager.initHarness(task, workspace, mode)
@@ -479,10 +480,10 @@ Staff 的 `agent/` 子目录是 Agent 配置的核心部分，包含指令、MCP
 ### 8.1 加载与隔离
 
 AgentOffice 在应用加载时扫描已启用 Staff，并通过 `CustomAgent.loadFromPath()` 加载其 `agent/`
-目录。Staff Agent 只保存在 AgentOffice 内部，不作为 `getAgents()` 的返回值，因此不会进入
-`AgentRegistry`。
+目录。Staff Agent 作为 `getAgents()` 的返回值进入 `AgentRegistry`，但其
+`dispatchable=false`，不会出现在通用派发列表中。
 
-- **MCP**：AgentOffice 将 Staff 的 `mcp.json` 连同 Agent 目录绝对路径组成的 `agentId` 交给
+- **MCP**：AgentOffice 将 Staff 的 `mcp.json` 连同 `agentoffice:staff:{staffId}` 形式的 `agentId` 交给
   MCPMgr。MCPMgr 负责连接、工具发现、调用和清理，并在管理界面中显示这些运行时 Server。
 - **Tools**：MCPMgr 生成的工具带有 `agentIds: [staffAgentId]`，只有对应 Staff 任务可见。
 - **Skills**：Staff 私有 Skill 注册为 `staff:{staffId}` provider，每个 Skill 同样带有

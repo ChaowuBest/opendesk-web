@@ -57,7 +57,7 @@ The main agent’s **mode** controls the **permission boundary** for file access
 - **Switch inside a session**: Change mode anytime in the TUI without restarting. Use **Shift+Tab** for the mode picker, or `/mode <id>` in the input box (see [Slash commands](#slash-commands)).
 - **Set at startup**: Pass `--mode <mode>` on the CLI to set the initial mode for this process. `--allow-everything` is equivalent to `--mode unlimited` (see [Command-line options](#command-line-options)).
 - **Planning workflow**: **Plan** mode is for read-only exploration plus writing only under `.plan`. After you approve a plan, you normally switch to **Standard** or **Solo** to implement it—Plan disables tools such as `editFile` and `writeFile` on the main codebase.
-- **Default**: When nothing else applies, the default is **standard** (matches `defaultModeId()` in code).
+- **Default**: When nothing else applies, the default is **standard** (provided by AgentDecl's `getDefaultMode()`).
 
 ### Available modes
 

@@ -51,6 +51,9 @@ class TaskState {
     // 可选字段
     model?: string; // LLM 模型名称
     reasoningEffort?: ReasoningEffort; // 推理力度
+    agentId?: string; // 绑定的规范 Agent ID；显式无 Agent 时为 undefined
+    agent_system_prompt?: string; // 由 Agent/Mode 派生，不单独触发落盘
+    custom_system_prompt?: string; // setSystemPrompt() 设置的持久化附加提示词
 
     // 不参与序列化
     harnessContext: HarnessContext;
@@ -65,8 +68,19 @@ class TaskState {
     total_elapsed_ms: number;
     bookmark_path?: string;
     origin?: Participant;
+
+    getAgent(): AgentDecl;
+    getAgentMode(): ModeDecl;
+    buildSystemPrompt(): Promise<string>;
+    rebuildSystemPrompt(): Promise<void>;
 }
 ```
+
+Task 自己拥有 Agent 绑定的解释权：`getAgent()` 通过 `AgentRegistry` 解析 `agentId`，并把
+失效绑定回退到主 Agent 的规范 ID；`getAgentMode()` 根据运行时 `activeModeId` 选择该 Agent 的 Mode；
+`buildSystemPrompt()` 再通过二者生成 prompt。普通调用使用 `rebuildSystemPrompt()` 完成构建和安装；
+只有需要原子延迟提交或二次包装 prompt 的流程才直接使用纯构建方法。`AgentRegistry` 本身不接收
+Task，也不创建 prompt。
 
 ---
 
@@ -78,21 +92,22 @@ class TaskState {
 
 **序列化字段（snake_case 命名）：**
 
-| 字段                            | 类型           | 必填 | 说明                 |
-| ------------------------------- | -------------- | ---- | -------------------- |
-| `task_id`                       | string         | 是   | 任务唯一标识符       |
-| `parent_id`                     | string \| null | 是   | 父任务 ID            |
-| `task_name`                     | string \| null | 是   | 任务名称             |
-| `task_status`                   | string         | 是   | 任务状态             |
-| `chat_context`                  | object         | 是   | 对话上下文           |
-| `tool_result_replacement_state` | object         | 是   | 工具结果替换状态     |
-| `auto_compact_state`            | object         | 是   | 自动压缩状态         |
-| `started_at`                    | string \| null | 是   | ISO 8601 时间戳      |
-| `finished_at`                   | string \| null | 是   | ISO 8601 时间戳      |
-| `total_elapsed_ms`              | number         | 是   | 总耗时（毫秒）       |
-| `bookmark_path`                 | string \| null | 否   | 书签路径             |
-| `origin`                        | object \| null | 否   | 任务来源（渠道发起） |
-| `stop_requested_by_user`        | boolean        | 是   | 用户是否请求停止     |
+| 字段                            | 类型           | 必填 | 说明                                 |
+| ------------------------------- | -------------- | ---- | ------------------------------------ |
+| `task_id`                       | string         | 是   | 任务唯一标识符                       |
+| `parent_id`                     | string \| null | 是   | 父任务 ID                            |
+| `task_name`                     | string \| null | 是   | 任务名称                             |
+| `task_status`                   | string         | 是   | 任务状态                             |
+| `agentId`                       | string \| null | 是   | 规范 Agent ID；null 表示显式无 Agent |
+| `chat_context`                  | object         | 是   | 对话上下文                           |
+| `tool_result_replacement_state` | object         | 是   | 工具结果替换状态                     |
+| `auto_compact_state`            | object         | 是   | 自动压缩状态                         |
+| `started_at`                    | string \| null | 是   | ISO 8601 时间戳                      |
+| `finished_at`                   | string \| null | 是   | ISO 8601 时间戳                      |
+| `total_elapsed_ms`              | number         | 是   | 总耗时（毫秒）                       |
+| `bookmark_path`                 | string \| null | 否   | 书签路径                             |
+| `origin`                        | object \| null | 否   | 任务来源（渠道发起）                 |
+| `stop_requested_by_user`        | boolean        | 是   | 用户是否请求停止                     |
 
 ### 简化序列化 (`toSimplifiedJSON()`)
 
@@ -1153,6 +1168,7 @@ ToolCall {
 | ----------- | -------------- | ----------------------------------------------------------------------- |
 | `task_id`   | string         | 任务唯一标识，格式 `task_<timestamp>_<random>`，如 `task_a1b2c3d4_x7yz` |
 | `parent_id` | string \| null | 父任务 ID，用于子任务/分支任务，null 表示主任务                         |
+| `agentId`   | string \| null | Agent ID；null 表示无 Agent；旧任务缺失时使用 `main`                    |
 
 ### 状态字段
 
@@ -1172,11 +1188,12 @@ ToolCall {
 
 ### 上下文字段
 
-| 字段                            | 类型   | 说明                               |
-| ------------------------------- | ------ | ---------------------------------- |
-| `chat_context`                  | object | 对话上下文，包含系统提示和消息历史 |
-| `tool_result_replacement_state` | object | 工具结果替换状态，用于上下文压缩   |
-| `auto_compact_state`            | object | 自动压缩熔断状态                   |
+| 字段                            | 类型           | 说明                                                       |
+| ------------------------------- | -------------- | ---------------------------------------------------------- |
+| `chat_context`                  | object         | 对话上下文；包含完整的 `system_prompt`，用于格式兼容和调试 |
+| `custom_system_prompt`          | string \| null | 调用 `setSystemPrompt()` 设置的附加提示词                  |
+| `tool_result_replacement_state` | object         | 工具结果替换状态，用于上下文压缩                           |
+| `auto_compact_state`            | object         | 自动压缩熔断状态                                           |
 
 ### 书签与来源
 
@@ -1190,6 +1207,7 @@ ToolCall {
 以下字段仅存在于运行时，不存储到 JSON：
 
 - `harnessContext`: 工程框架上下文（包含敏感环境变量）
+- `agent_system_prompt`: 根据 Agent 和 Mode 重建的提示词部分
 - `activeModeId`: 当前运行模式 ID
 - `disabledTools`: 禁用工具列表
 - `message_queue`: 运行时消息队列

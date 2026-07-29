@@ -19,7 +19,6 @@ import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
 import type { InboundChannelMessage, Participant } from '../../plugins/types.js';
-import type { AgentDecl } from '../../aikernel/agents/common.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
 
 export interface ChannelReply {
@@ -41,7 +40,6 @@ const taskMap = new Map<string, TaskEntry>();
 
 export class ChannelMessageRouter {
     private taskManagerState: TaskManagerState;
-    private agentDecl: AgentDecl;
     private model?: string;
     private workspace: string;
     private extraToolsets: BaseToolset[] = [];
@@ -52,9 +50,8 @@ export class ChannelMessageRouter {
      */
     onTaskResolved?: (task: TaskState, message: InboundChannelMessage) => void;
 
-    constructor(taskManagerState: TaskManagerState, agentDecl: AgentDecl, workspace: string, model?: string) {
+    constructor(taskManagerState: TaskManagerState, workspace: string, model?: string) {
         this.taskManagerState = taskManagerState;
-        this.agentDecl = agentDecl;
         this.workspace = workspace;
         this.model = model;
     }
@@ -283,7 +280,7 @@ export class ChannelMessageRouter {
         const task = this.taskManagerState.createTask(this.model);
         task.harnessContext = HarnessContext.createEmpty();
         task.harnessContext.workspace = this.workspace;
-        const systemPrompt = await this.agentDecl.createSystemPrompt(undefined, task);
+        const systemPrompt = await task.buildSystemPrompt();
 
         // Determine reply target: group ID for group chats, sender ID for direct messages
         const replyTarget = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
@@ -300,7 +297,8 @@ export class ChannelMessageRouter {
             .filter(Boolean)
             .join('\n');
 
-        await task.setSystemPrompt(channelContext);
+        task.agentId = undefined;
+        task.setSystemPrompt(channelContext);
 
         task.origin = {
             type: 'channel',

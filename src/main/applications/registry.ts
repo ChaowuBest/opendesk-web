@@ -225,16 +225,22 @@ export class ApplicationRegistry {
      * 重新收集应用提供的 Agent，并交给 AIKernel 注册表管理。
      */
     static async loadAvailableAgents(): Promise<void> {
-        await AgentRegistry.unloadCustomAgents();
-        const agents: AgentDecl[] = [];
+        AgentRegistry.beginApplicationAgentReload();
+        // Agent 构造期间可能注册私有 SkillProvider 等资源，先卸载旧实例以避免新旧资源重叠。
+        // replaceApplicationAgents 内部的再次卸载是无副作用的防御性清理。
+        await AgentRegistry.unloadApplicationAgents();
+        const applicationAgents: Array<{ bundleName: string; agents: AgentDecl[] }> = [];
         for (const application of this.applications.values()) {
             try {
-                agents.push(...((await application.getAgents()) as AgentDecl[]));
+                applicationAgents.push({
+                    bundleName: application.bundleName,
+                    agents: (await application.getAgents()) as AgentDecl[]
+                });
             } catch (error) {
                 logger.warn(`Failed to load agents from ${application.bundleName}: ${error}`);
             }
         }
-        await AgentRegistry.replaceCustomAgents(agents);
+        await AgentRegistry.replaceApplicationAgents(applicationAgents);
     }
 
     /**

@@ -67,7 +67,7 @@ async function loadAgentsThroughAgentOffice(): Promise<{
                 : undefined
     });
     const agents = (await application.getAgents()) as CustomAgent[];
-    await AgentRegistry.replaceCustomAgents(agents);
+    await AgentRegistry.replaceApplicationAgents([{ bundleName: application.bundleName, agents }]);
     return { agents, registrations };
 }
 
@@ -99,7 +99,7 @@ test.after(() => {
 
 test.afterEach(async () => {
     // 清理 AgentRegistry 中的残留 custom agent
-    await AgentRegistry.unloadCustomAgents();
+    await AgentRegistry.unloadApplicationAgents();
     // 清理 configDir/agents 目录，确保测试间无状态泄漏
     const agentsDir = path.join(configDir, 'agents');
     if (fs.existsSync(agentsDir)) {
@@ -184,12 +184,12 @@ test('supportedModes: 返回单个 default mode', async () => {
     assert.equal(modes[0].id, 'default');
 });
 
-test('defaultModeId: 返回 default', async () => {
+test('getDefaultMode: 返回 default mode', async () => {
     const dir = path.join(tmpDir, 'mode-id-test');
     writeAgentConfig(dir, { agentJson: VALID_AGENT_JSON, agentsMd: '# Mode ID Test' });
 
     const agent = await CustomAgent.loadFromPath(dir);
-    assert.equal(agent.defaultModeId(), 'default');
+    assert.equal(agent.getDefaultMode().id, 'default');
 });
 
 test('createSystemPrompt: 包含 agents.md 内容', async () => {
@@ -322,7 +322,7 @@ test('loadFromPath: 加载 mcp.json 配置', async () => {
             }
         ]
     });
-    assert.equal(agent.agentId, path.resolve(dir));
+    assert.equal(agent.agentId, 'agentoffice:mcp-agent');
 
     await agent.dispose();
 });
@@ -393,18 +393,18 @@ test('AgentOffice.getAgents: 从 agents 目录加载并注册自定义 agent', a
 
     const { registrations } = await loadAgentsThroughAgentOffice();
 
-    const agent = AgentRegistry.getAgent('registry-test-agent');
+    const agent = AgentRegistry.getApplicationAgent('agentoffice', 'registry-test-agent');
     assert.ok(agent, 'custom agent should be registered after AgentOffice loading');
     assert.equal(agent!.agentType, 'custom');
     assert.equal(registrations.length, 1);
-    assert.equal(registrations[0].agentId, path.resolve(agentDir));
+    assert.equal(registrations[0].agentId, 'agentoffice:registry-test-agent');
 
     // Cleanup
-    await AgentRegistry.unloadCustomAgents();
+    await AgentRegistry.unloadApplicationAgents();
     assert.equal(
-        AgentRegistry.getAgent('registry-test-agent'),
+        AgentRegistry.getApplicationAgent('agentoffice', 'registry-test-agent'),
         undefined,
-        'agent should be unregistered after unloadCustomAgents'
+        'agent should be unregistered after unloadApplicationAgents'
     );
 });
 
@@ -436,10 +436,14 @@ test('AgentOffice.getAgents: 加载失败的目录被跳过', async () => {
 
     await loadAgentsThroughAgentOffice();
 
-    assert.ok(AgentRegistry.getAgent('good-agent'), 'good agent should be loaded');
-    assert.equal(AgentRegistry.getAgent('bad-agent'), undefined, 'bad agent should be skipped');
+    assert.ok(AgentRegistry.getApplicationAgent('agentoffice', 'good-agent'), 'good agent should be loaded');
+    assert.equal(
+        AgentRegistry.getApplicationAgent('agentoffice', 'bad-agent'),
+        undefined,
+        'bad agent should be skipped'
+    );
 
-    await AgentRegistry.unloadCustomAgents();
+    await AgentRegistry.unloadApplicationAgents();
 });
 
 test('AgentOffice.getAgents: 重新收集时替换已加载 agent', async () => {
@@ -456,7 +460,7 @@ test('AgentOffice.getAgents: 重新收集时替换已加载 agent', async () => 
     );
 
     await loadAgentsThroughAgentOffice();
-    let agent = AgentRegistry.getAgent('reload-test-agent');
+    let agent = AgentRegistry.getApplicationAgent('agentoffice', 'reload-test-agent');
     assert.ok(agent);
     assert.equal(agent!.whenToUse, 'Before reload.');
 
@@ -470,9 +474,9 @@ test('AgentOffice.getAgents: 重新收集时替换已加载 agent', async () => 
     );
 
     await loadAgentsThroughAgentOffice();
-    agent = AgentRegistry.getAgent('reload-test-agent');
+    agent = AgentRegistry.getApplicationAgent('agentoffice', 'reload-test-agent');
     assert.ok(agent);
     assert.equal(agent!.whenToUse, 'After reload.');
 
-    await AgentRegistry.unloadCustomAgents();
+    await AgentRegistry.unloadApplicationAgents();
 });

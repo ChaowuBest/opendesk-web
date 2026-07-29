@@ -166,6 +166,7 @@ export const zhCn: Record<string, string> = {
     'mode.invalid': '无效的模式',
     'mode.not.found': '未找到模式 "',
     'mode.available': '可用模式: ',
+    'mode.unsupportedForAgent': 'Agent "${agentId}" 不支持模式 "${modeId}"',
     'mode.standard.name': '标准模式',
     'mode.standard.description': '默认工作模式，在工作空间内自由读写，工作空间外需确认',
     'mode.readonly.name': '只读模式',

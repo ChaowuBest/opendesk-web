@@ -260,8 +260,10 @@ describe('lazy task harness initialization', () => {
         const manager = createManager();
         const task = createTask(manager, 'task-lazy-prompt', '/workspace/shared');
         task.setSystemPrompt('system:old-mode');
-        const createSystemPrompt = jest.fn(async (activeMode: ModeDecl) => `system:${activeMode.id}`);
-        await manager.setupLazyHarnessInit(mode, '/workspace/shared', () => promptProvider, createSystemPrompt);
+        const buildSystemPrompt = jest
+            .spyOn(task, 'buildSystemPrompt')
+            .mockImplementation(async () => `system:${task.activeModeId}`);
+        await manager.setupLazyHarnessInit(mode, '/workspace/shared', () => promptProvider);
 
         manager.getTask(task.task_id);
         expect(task.chat_context.system_prompt?.content).toBe('system:old-mode');
@@ -274,7 +276,7 @@ describe('lazy task harness initialization', () => {
 
         expect(refreshLazyTaskSystemPrompt).toBeDefined();
         await expect(refreshLazyTaskSystemPrompt!.call(manager, task)).resolves.toBe(true);
-        expect(createSystemPrompt).toHaveBeenCalledWith(mode, task);
+        expect(buildSystemPrompt).toHaveBeenCalledWith();
         expect(task.chat_context.system_prompt?.content).toBe('system:test');
     });
 });

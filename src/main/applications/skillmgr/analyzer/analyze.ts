@@ -18,7 +18,7 @@
 import { SkillRegistry } from '../utils.js';
 import { setSkillStatus } from '../status.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
-import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
+import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import {
     loadAndValidateOpendeskMeta,
@@ -782,7 +782,7 @@ export class SkillAnalyzer {
 
             // ── 创建 Agent 任务（只创建一次，重试时复用同一 task）──
             const tm = GlobalState.getInstance().taskManagerState;
-            const agent = new MainAgentDecl();
+            const agent = AgentRegistry.getMainAgent();
             const modes = agent.supportedModes();
             const mode = modes.find((m) => m.id === 'solo') ?? modes[0];
             if (!mode) throw new Error('未找到可用 Agent 模式');
@@ -796,7 +796,7 @@ export class SkillAnalyzer {
             this.state.runningTaskIds.add(task.task_id);
 
             await tm.initHarness(task, getPlatform().getEffectiveWorkspace(), mode);
-            task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
+            await task.rebuildSystemPrompt();
             await task.hooks.noticeBeforeTaskStart(task);
 
             // 提交初始提示词
@@ -1126,7 +1126,7 @@ ${preScanSection}`;
             setSkillStatus(skillId, true);
 
             const tm = GlobalState.getInstance().taskManagerState;
-            const agent = new MainAgentDecl();
+            const agent = AgentRegistry.getMainAgent();
             const modes = agent.supportedModes();
             const mode = modes.find((m) => m.id === 'solo') ?? modes[0];
             if (!mode) throw new Error('未找到可用 Agent 模式');
@@ -1148,9 +1148,7 @@ ${preScanSection}`;
                 'initialization',
                 timeoutMs
             );
-            task.setSystemPrompt(
-                await this._awaitTestPhase(agent.createSystemPrompt(mode, task), deadline, 'initialization', timeoutMs)
-            );
+            await this._awaitTestPhase(task.rebuildSystemPrompt(), deadline, 'initialization', timeoutMs);
             await this._awaitTestPhase(task.hooks.noticeBeforeTaskStart(task), deadline, 'initialization', timeoutMs);
 
             // 第一步：发送测试执行 Prompt

@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import {
     AgentExecutionInstrumentationRegistry,
     normalizeTurnContext,
@@ -12,8 +13,14 @@ import {
     type OperationInstrumentation
 } from '../../../main/telemetry/operation.js';
 import { installProtocols, shutdownProtocols, type TelemetryProtocol } from '../../../main/telemetry/protocol.js';
+import { TaskManagerState } from '../../../main/aikernel/task/manager.js';
+import { TaskState } from '../../../main/aikernel/states/tasks.js';
 
 describe('Task turn instrumentation context', () => {
+    afterEach(() => {
+        AgentExecutionInstrumentationRegistry.reset();
+    });
+
     test('normalizes trace id and snapshots mutable metadata containers', () => {
         const metadata = { route: '/session/:id/message' };
         const output = { sessionID: 'session-1', cost: 0 };
@@ -34,6 +41,45 @@ describe('Task turn instrumentation context', () => {
         });
         expect(normalized?.metadata).not.toBe(metadata);
         expect(normalized?.output).not.toBe(output);
+    });
+
+    test('uses the task effective workspace, mode, and agent when an entry point does not override them', async () => {
+        let capturedContext: TaskTurnInstrumentationContext | undefined;
+        AgentExecutionInstrumentationRegistry.install([
+            {
+                async aroundTaskTurn<T>(context: TaskTurnInstrumentationContext, next: () => Promise<T>) {
+                    capturedContext = context;
+                    return await next();
+                },
+                async aroundModelRequest<T>(
+                    _context: ModelRequestInstrumentationContext,
+                    next: (headers?: Record<string, string>) => Promise<T>
+                ) {
+                    return await next();
+                },
+                recordToolCall() {}
+            }
+        ]);
+        const manager = new TaskManagerState();
+        jest.spyOn(manager, 'save').mockImplementation(() => undefined);
+        jest.spyOn(manager, 'publishTaskListUpdate').mockImplementation(() => undefined);
+        const task = new TaskState(manager);
+        task.harnessContext.workspace = '/effective-workspace';
+        task.activeModeId = 'standard';
+        task.task_status = 'stopped';
+        jest.spyOn(task.hooks, 'noticeBeforeTurnStart').mockResolvedValue(undefined);
+        jest.spyOn(task.hooks, 'noticeAfterFinishTurn').mockResolvedValue(undefined);
+
+        await task.processTaskTurn();
+
+        expect(capturedContext?.workspace).toBe('/effective-workspace');
+        expect(capturedContext?.getOutcome()).toEqual(
+            expect.objectContaining({
+                workspace: '/effective-workspace',
+                mode: 'standard',
+                agent: 'main'
+            })
+        );
     });
 });
 

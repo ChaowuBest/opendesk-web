@@ -17,7 +17,7 @@ import { z } from 'zod';
 
 import { normalizeWorkflowJSONValue } from '../../../aikernel/workflow.js';
 import type { ModeDecl } from '../../../aikernel/agents/common.js';
-import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
+import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import type { ToolCall } from '../../../aikernel/messages.js';
 import type {
     PermissionEnforcer,
@@ -95,7 +95,6 @@ export interface WorkflowAgentCompletionControl {
 }
 
 interface WorkflowAgentTaskContext {
-    agent: MainAgentDecl;
     mode: ModeDecl;
 }
 
@@ -201,12 +200,11 @@ export class WorkflowAgentRunner {
         hostTask: TaskState,
         request: WorkflowAgentRequest
     ): Promise<WorkflowAgentTaskContext> {
-        const agent = new MainAgentDecl();
+        const agent = AgentRegistry.getMainAgent();
         const modes = agent.supportedModes();
-        const modeId = hostTask.activeModeId ?? agent.defaultModeId();
-        const mode = modes.find((candidate) => candidate.id === modeId) ?? modes[0];
+        const mode = modes.find((candidate) => candidate.id === hostTask.activeModeId) ?? agent.getDefaultMode();
         const workspace = hostTask.getWorkspace();
-        if (!mode || !workspace) {
+        if (!workspace) {
             throw new Error('Workflow agent 需要宿主 Task 的 mode 和 workspace。');
         }
 
@@ -214,7 +212,7 @@ export class WorkflowAgentRunner {
         task.harnessContext.executionHost = hostTask.getExecutionHost();
         task.reasoningEffort = request.reasoningEffort;
         bindWorkflowAgentAccess(task, hostTask, request.allowedTools);
-        return { agent, mode };
+        return { mode };
     }
 
     private attachCompletionProtocol(
@@ -237,7 +235,8 @@ export class WorkflowAgentRunner {
         request: WorkflowAgentRequest,
         options: WorkflowAgentRunOptions
     ): Promise<void> {
-        const basePrompt = await context.agent.createSystemPrompt(context.mode, task);
+        const basePrompt = await task.buildSystemPrompt();
+        task.agentId = undefined;
         task.setSystemPrompt(buildWorkflowAgentSystemPrompt(basePrompt, request));
 
         const submit = await task.submitUserMessage(buildWorkflowAgentUserMessage(request));

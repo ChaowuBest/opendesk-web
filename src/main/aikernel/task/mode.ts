@@ -10,11 +10,21 @@
  */
 
 import type { ModeDecl } from '../agents/common.js';
+import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionPromptProvider } from '../security/permission.js';
 import type { TaskState } from '../states/tasks.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
+
+/**
+ * 为任务选择运行 mode。主 Agent 跟随入口选择的 mode，其他 Agent 始终使用自身绑定的 mode。
+ */
+export function resolveTaskMode(task: TaskState, mainAgentMode: ModeDecl): ModeDecl {
+    const taskAgent = task.getAgent();
+    return taskAgent.agentId === AgentRegistry.getMainAgent().agentId ? mainAgentMode : task.getAgentMode();
+}
 
 /**
  * 替换单个任务的 mode harness，并让 bypass mode 接管已经等待中的权限请求。
@@ -23,29 +33,46 @@ export async function replaceTaskHarnessForMode(
     task: TaskState,
     workspace: string,
     mode: ModeDecl,
-    permissionPromptFactory: () => PermissionPromptProvider,
-    createSystemPrompt?: () => Promise<string>
+    permissionPromptFactory: () => PermissionPromptProvider
 ): Promise<void> {
+    const taskAgent = task.getAgent();
+    const taskMode =
+        taskAgent === AgentRegistry.getMainAgent()
+            ? mode
+            : taskAgent.supportedModes().find((candidate) => candidate.id === mode.id);
+    if (!taskMode) {
+        throw new Error(t('mode.unsupportedForAgent', { agentId: taskAgent.agentId, modeId: mode.id }));
+    }
+
     const taskWorkspace = task.getWorkspace() || workspace;
     const savedEnv = task.harnessContext.environ;
     const savedExecutionHost = task.harnessContext.executionHost;
     const permissionPrompt = task.harnessContext.permissionPrompt || permissionPromptFactory();
-    const systemPrompt = await createSystemPrompt?.();
-    const ctx = await HarnessContext.createForMode(taskWorkspace, mode);
+    const ctx = await HarnessContext.createForMode(taskWorkspace, taskMode);
     ctx.environ = savedEnv;
     ctx.executionHost = savedExecutionHost;
     ctx.permissionPrompt = permissionPrompt;
     await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-    task.harnessContext = ctx;
-    task.activeModeId = mode.id;
-    task.allowedTools = mode.allowedTools;
-    task.disabledTools = mode.disabledTools;
-    if (systemPrompt !== undefined) {
-        task.setSystemPrompt(systemPrompt);
-        task.task_manager_state.clearLazyTaskSystemPromptRefresh(task);
+    const previousModeId = task.activeModeId;
+    const previousAllowedTools = task.allowedTools;
+    const previousDisabledTools = task.disabledTools;
+    task.activeModeId = taskMode.id;
+    task.allowedTools = taskMode.allowedTools;
+    task.disabledTools = taskMode.disabledTools;
+    let systemPrompt: string;
+    try {
+        systemPrompt = await task.buildSystemPrompt();
+    } catch (err) {
+        task.activeModeId = previousModeId;
+        task.allowedTools = previousAllowedTools;
+        task.disabledTools = previousDisabledTools;
+        throw err;
     }
+    task.harnessContext = ctx;
+    task.installBuiltSystemPrompt(systemPrompt);
+    task.task_manager_state.clearLazyTaskSystemPromptRefresh(task);
 
-    if (mode.bypassPermissionChecks && ctx.permission) {
+    if (taskMode.bypassPermissionChecks && ctx.permission) {
         try {
             await permissionPrompt.notifyPermissionRulesChanged?.(ctx.permission, [task.task_id]);
         } catch (err) {

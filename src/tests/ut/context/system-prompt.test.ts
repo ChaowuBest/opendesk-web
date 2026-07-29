@@ -138,10 +138,9 @@ describe('system prompt statistics', () => {
         expect(messageTokens).toBeGreaterThan(0);
     });
 
-    test('round-tripping a real task JSON preserves the same prompt statistics', () => {
+    test('round-tripping a real task JSON retains the effective system prompt for debugging', () => {
         const task = buildSampleLikeTask();
-        const originalPrompt = task.chat_context.system_prompt?.content;
-        const originalPromptTokens = estimateSystemPromptTokens(task.chat_context.system_prompt);
+        const originalSystemPrompt = task.chat_context.system_prompt?.content;
         const originalUsage = (task.chat_context.messages[1] as AssistantMessage).usage;
         const tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-system-prompt-'));
 
@@ -150,9 +149,7 @@ describe('system prompt statistics', () => {
             fs.writeFileSync(roundTripPath, JSON.stringify(task.toJSON(), null, 4), 'utf8');
 
             const reloadedTask = TaskState.load(roundTripPath, new TaskManagerState());
-            expect(reloadedTask.chat_context.system_prompt?.content).toBe(originalPrompt);
-            expect(estimateSystemPromptTokens(reloadedTask.chat_context.system_prompt)).toBe(originalPromptTokens);
-            expect(reloadedTask.chat_context.system_prompt?.content.length).toBe(targetSystemPromptChars);
+            expect(reloadedTask.chat_context.system_prompt?.content).toBe(originalSystemPrompt);
             expect((reloadedTask.chat_context.messages[1] as AssistantMessage).usage).toMatchObject(originalUsage!);
             expect(
                 estimateAssistantPostUsageVisibleTokens(reloadedTask.chat_context.messages[1] as AssistantMessage)

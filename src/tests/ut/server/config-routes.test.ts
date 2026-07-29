@@ -5,7 +5,6 @@ import { ProviderRoutes } from '../../../main/server/opencode/routes/provider.js
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
-import { SkillRegistry } from '../../../main/aikernel/skill.js';
 
 function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -309,6 +308,9 @@ describe('opencode config routes', () => {
             setSystemPrompt: jest.fn((prompt: string) => {
                 task.chat_context.system_prompt.content = prompt;
             }),
+            rebuildSystemPrompt: jest.fn(async () => {
+                task.setSystemPrompt('rebuilt prompt');
+            }),
             persistLater: jest.fn()
         };
         jest.spyOn(Setting, 'load').mockReturnValue({
@@ -324,10 +326,6 @@ describe('opencode config routes', () => {
                 tasks: [task]
             }
         } as any);
-        jest.spyOn(SkillRegistry, 'getInstance').mockReturnValue({
-            getSkillFrontmatterXml: jest.fn(async () => '<available_skills><skill>new</skill></available_skills>')
-        } as any);
-
         const response = await GlobalRoutes().request('/config', {
             method: 'PATCH',
             body: JSON.stringify({ config: {} }),
@@ -340,10 +338,8 @@ describe('opencode config routes', () => {
         expect(refresh).toHaveBeenCalledTimes(1);
         expect(task.buildToolsets).toHaveBeenCalledTimes(1);
         expect(attachToolsets).toHaveBeenCalledWith(expect.objectContaining({ name: 'skill' }));
-        expect(task.setSystemPrompt).toHaveBeenCalledWith(
-            'before <available_skills><skill>new</skill></available_skills> after'
-        );
-        expect(task.persistLater).toHaveBeenCalledTimes(1);
+        expect(task.setSystemPrompt).toHaveBeenCalledWith('rebuilt prompt');
+        expect(task.persistLater).not.toHaveBeenCalled();
         expect(postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 bundleName: '__system',

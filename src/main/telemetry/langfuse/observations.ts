@@ -82,9 +82,15 @@ interface LlmRequestObservationInput extends GenerationObservationInput {
 }
 
 interface LlmRequestObservationHandle {
+    taskId: string;
+    turnId: string;
     traceId: string;
     streamTextObservationId: string;
     doStreamObservationId: string;
+    context: ActiveTaskTurnTrace;
+    streamTextObservation: LangfuseSpan;
+    doStreamObservation: LangfuseSpan;
+    finished: boolean;
 }
 
 const activeTaskTurns = new Map<string, ActiveTaskTurnTrace>();
@@ -427,9 +433,15 @@ export function startLlmRequest(
         context.lastDoStreamObservation = doStreamObservation;
 
         return {
+            taskId,
+            turnId: context.turnId,
             traceId: context.traceId,
             streamTextObservationId: streamTextObservation.id,
-            doStreamObservationId: doStreamObservation.id
+            doStreamObservationId: doStreamObservation.id,
+            context,
+            streamTextObservation,
+            doStreamObservation,
+            finished: false
         };
     } catch (err) {
         logger.warn(`Langfuse LLM observation start failed: ${errorToMessage(err)}`);
@@ -437,16 +449,15 @@ export function startLlmRequest(
     }
 }
 
-export function finishLlmRequest(taskId: string, input: LlmRequestObservationInput = {}): void {
-    const context = activeTaskTurns.get(taskId);
-    if (!context) {
+export function finishLlmRequest(
+    handle: LlmRequestObservationHandle | undefined,
+    input: LlmRequestObservationInput = {}
+): void {
+    if (!handle || handle.finished) {
         return;
     }
-    const streamTextObservation = context.currentStreamTextObservation;
-    const doStreamObservation = context.currentDoStreamObservation;
-    if (!streamTextObservation || !doStreamObservation) {
-        return;
-    }
+    handle.finished = true;
+    const { context, streamTextObservation, doStreamObservation } = handle;
 
     try {
         const output = toJsonSafe(input.output, context.maxPayloadChars);
@@ -469,20 +480,26 @@ export function finishLlmRequest(taskId: string, input: LlmRequestObservationInp
     } catch (err) {
         logger.warn(`Langfuse LLM observation finish failed: ${errorToMessage(err)}`);
     } finally {
-        delete context.currentStreamTextObservation;
-        delete context.currentDoStreamObservation;
+        if (context.currentStreamTextObservation === streamTextObservation) {
+            delete context.currentStreamTextObservation;
+        }
+        if (context.currentDoStreamObservation === doStreamObservation) {
+            delete context.currentDoStreamObservation;
+        }
     }
 }
 
-export function recordGeneration(taskId: string, input: GenerationObservationInput): void {
-    const context = activeTaskTurns.get(taskId);
-    if (!context || !context.recordGenerations) {
+export function recordGeneration(
+    handle: LlmRequestObservationHandle | undefined,
+    input: GenerationObservationInput
+): void {
+    if (!handle || !handle.context.recordGenerations) {
         return;
     }
+    const { context } = handle;
 
     try {
-        const parentObservation =
-            context.currentDoStreamObservation ?? context.lastDoStreamObservation ?? context.turnObservation;
+        const parentObservation = handle.doStreamObservation;
         const generation = parentObservation.startObservation(
             'LLM.__call',
             {
@@ -502,14 +519,14 @@ export function recordGeneration(taskId: string, input: GenerationObservationInp
     }
 }
 
-export function recordTool(task: { task_id?: string }, toolCall: ToolCall): void {
+export function recordTool(task: { task_id?: string; turn_id?: string }, toolCall: ToolCall): void {
     const taskId = task.task_id;
     if (!taskId) {
         return;
     }
 
     const context = activeTaskTurns.get(taskId);
-    if (!context) {
+    if (!context || (task.turn_id !== undefined && task.turn_id !== context.turnId)) {
         return;
     }
 

@@ -23,7 +23,6 @@ import {
 import { GlobPermissionEnforcer, ReadableDirectoryRegistry } from '../security/enforcer.js';
 import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from '../security/permission.js';
 import { getPlatform } from '../../../platforms/base.js';
-import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../../plugins/types.js';
@@ -62,13 +61,11 @@ export class TaskManagerState {
     tasks: TaskState[] = [];
     subscribers: BaseTaskManagerUpdateSubscriber[] = [];
     toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
-    private _deletedTaskIds: Set<string> = new Set();
     private _sharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
     private _activeSharedHarnessBaseEnforcers: Set<GlobPermissionEnforcer> = new Set();
     private _disposeReadableDirectoryListener?: () => void;
     private _updateLazyHarnessMode?: (mode: ModeDecl) => void;
     private _lazyHarnessPromptModes: WeakMap<TaskState, ModeDecl> = new WeakMap();
-    private _lazySystemPromptFactory?: (mode: ModeDecl, task: TaskState) => Promise<string>;
     /**
      * Harness 延迟初始化回调，由宿主环境（Electron main / CLI）设置。
      * 当 getTaskLoadResult() 发现 task.harnessContext.workspace 为空时调用，
@@ -96,7 +93,6 @@ export class TaskManagerState {
         this._harnessInitializer = undefined;
         this._updateLazyHarnessMode = undefined;
         this._lazyHarnessPromptModes = new WeakMap();
-        this._lazySystemPromptFactory = undefined;
     }
 
     /**
@@ -110,19 +106,15 @@ export class TaskManagerState {
      * 为刚完成 lazy harness 初始化的任务刷新与该 mode 对应的 system prompt。
      * 生成失败时保留待刷新标记，允许后续入口重试。
      */
-    async refreshLazyTaskSystemPrompt(
-        task: TaskState,
-        createSystemPrompt: ((mode: ModeDecl, task: TaskState) => Promise<string>) | undefined = this
-            ._lazySystemPromptFactory
-    ): Promise<boolean> {
+    async refreshLazyTaskSystemPrompt(task: TaskState): Promise<boolean> {
         const mode = this._lazyHarnessPromptModes.get(task);
-        if (!mode || !createSystemPrompt) return false;
+        if (!mode) return false;
 
-        const systemPrompt = await createSystemPrompt(mode, task);
+        const systemPrompt = await task.buildSystemPrompt();
         if (this._lazyHarnessPromptModes.get(task) !== mode) {
             return false;
         }
-        task.setSystemPrompt(systemPrompt);
+        task.installBuiltSystemPrompt(systemPrompt);
         this._lazyHarnessPromptModes.delete(task);
         return true;
     }
@@ -166,10 +158,8 @@ export class TaskManagerState {
     async setupLazyHarnessInit(
         mode: ModeDecl,
         defaultWorkspace: string,
-        permissionPromptFactory: () => PermissionPromptProvider,
-        createSystemPrompt?: (mode: ModeDecl, task: TaskState) => Promise<string>
+        permissionPromptFactory: () => PermissionPromptProvider
     ): Promise<void> {
-        this._lazySystemPromptFactory = createSystemPrompt;
         this._activeSharedHarnessBaseEnforcers.clear();
         this.pruneLazyHarnessBaseEnforcers();
 
@@ -197,12 +187,18 @@ export class TaskManagerState {
             this.pruneLazyHarnessBaseEnforcers();
         };
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
-        const createSharedBaseEnforcer = (workspace: string): PermissionEnforcer | undefined => {
-            const existing = sharedBaseEnforcers.get(workspace);
+        const mainAgent = AgentRegistry.getMainAgent();
+        const createSharedBaseEnforcer = (
+            workspace: string,
+            agentId: string,
+            taskMode: ModeDecl
+        ): PermissionEnforcer | undefined => {
+            const cacheKey = `${agentId}\0${taskMode.id}\0${workspace}`;
+            const existing = sharedBaseEnforcers.get(cacheKey);
             if (existing) return existing;
             try {
-                const enforcer = createModePermissionEnforcer(workspace, currentMode, readableRegistry.getReadRules());
-                sharedBaseEnforcers.set(workspace, enforcer);
+                const enforcer = createModePermissionEnforcer(workspace, taskMode, readableRegistry.getReadRules());
+                sharedBaseEnforcers.set(cacheKey, enforcer);
                 if (enforcer instanceof GlobPermissionEnforcer) {
                     this._sharedHarnessBaseEnforcers.add(enforcer);
                     this._activeSharedHarnessBaseEnforcers.add(enforcer);
@@ -214,7 +210,7 @@ export class TaskManagerState {
             }
         };
         for (const workspace of uniqueWorkspaces) {
-            createSharedBaseEnforcer(workspace);
+            createSharedBaseEnforcer(workspace, mainAgent.agentId, currentMode);
         }
 
         // 监听后续注册的可读目录，传播到当前 manager 创建过的所有共享基础 enforcer。
@@ -240,7 +236,9 @@ export class TaskManagerState {
             if (task.harnessContext.workspace) return;
             const savedExecutionHost = task.harnessContext.executionHost;
             const taskWorkspace = task.workspace || defaultWorkspace;
-            const sharedBaseEnforcer = createSharedBaseEnforcer(taskWorkspace);
+            const taskAgent = task.getAgent();
+            const taskMode = taskAgent === mainAgent ? currentMode : task.getAgentMode();
+            const sharedBaseEnforcer = createSharedBaseEnforcer(taskWorkspace, taskAgent.agentId, taskMode);
             if (!sharedBaseEnforcer) {
                 task.harnessContext.workspace = taskWorkspace;
                 return;
@@ -255,10 +253,10 @@ export class TaskManagerState {
                     : sharedBaseEnforcer;
             task.harnessContext.executionHost = savedExecutionHost;
             task.harnessContext.permissionPrompt = permissionPromptFactory();
-            task.activeModeId = currentMode.id;
-            task.allowedTools = currentMode.allowedTools;
-            task.disabledTools = currentMode.disabledTools;
-            this._lazyHarnessPromptModes.set(task, currentMode);
+            task.activeModeId = taskMode.id;
+            task.allowedTools = taskMode.allowedTools;
+            task.disabledTools = taskMode.disabledTools;
+            this._lazyHarnessPromptModes.set(task, taskMode);
         });
     }
 
@@ -279,6 +277,7 @@ export class TaskManagerState {
 
         const taskManagerState = new TaskManagerState();
         let needsIndexUpgrade = false;
+        const rejectedLegacyTaskIds = new Set<string>();
         let taskList: Record<string, unknown>[];
         try {
             taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
@@ -298,7 +297,7 @@ export class TaskManagerState {
                     // 旧格式索引：仅有 task_id，回退到全量加载。
                     const task = TaskState.load(taskFilePath, taskManagerState);
                     if (task.task_id !== taskId) {
-                        taskManagerState._deletedTaskIds.add(taskId);
+                        rejectedLegacyTaskIds.add(taskId);
                         needsIndexUpgrade = true;
                         throw new Error(
                             `task ID mismatch while loading ${taskFilePath}: expected ${taskId}, got ${task.task_id}`
@@ -314,7 +313,7 @@ export class TaskManagerState {
         }
         if (taskManagerState.tasks.length > 0) {
             if (needsIndexUpgrade) {
-                taskManagerState.saveTaskListSync();
+                taskManagerState.saveTaskListSync({ excludedTaskIds: rejectedLegacyTaskIds });
             }
             return taskManagerState;
         }
@@ -466,7 +465,11 @@ export class TaskManagerState {
      * 构建合并后的任务列表：以内存任务为主，同时保留磁盘上由其他进程创建的任务条目。
      * 防止 CLI 和 GUI 同时运行时互相覆盖彼此的任务。
      */
-    private _buildMergedTaskList(taskDirectory: string, taskListFile: string): object[] {
+    private _buildMergedTaskList(
+        taskDirectory: string,
+        taskListFile: string,
+        excludedTaskIds: ReadonlySet<string> = new Set()
+    ): object[] {
         const inMemoryIds = new Set(this.tasks.map((t) => t.task_id));
         const mergedList: object[] = this.tasks.map((t) => t.toIndexJSON());
 
@@ -475,7 +478,7 @@ export class TaskManagerState {
             const diskEntries: Record<string, unknown>[] = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
             for (const entry of diskEntries) {
                 const taskId = entry.task_id as string;
-                if (inMemoryIds.has(taskId) || this._deletedTaskIds.has(taskId)) {
+                if (inMemoryIds.has(taskId) || excludedTaskIds.has(taskId)) {
                     continue;
                 }
                 const taskFile = path.join(taskDirectory, `${taskId}.json`);
@@ -491,13 +494,15 @@ export class TaskManagerState {
     }
 
     /** Persist only task_list.json without treating any full task file as modified. */
-    private saveTaskListSync(options: { mergeDiskEntries?: boolean } = {}): void {
+    private saveTaskListSync(
+        options: { mergeDiskEntries?: boolean; excludedTaskIds?: ReadonlySet<string> } = {}
+    ): void {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
         const mergedList =
             options.mergeDiskEntries === false
                 ? this.tasks.map((task) => task.toIndexJSON())
-                : this._buildMergedTaskList(taskDirectory, taskListFile);
+                : this._buildMergedTaskList(taskDirectory, taskListFile, options.excludedTaskIds);
         _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
@@ -505,7 +510,7 @@ export class TaskManagerState {
      * Synchronous write for operations that require immediate persistence
      * (e.g. rebuild, clear, remove — user may exit right after).
      */
-    saveSync(options: { mergeDiskEntries?: boolean } = {}): void {
+    saveSync(options: { mergeDiskEntries?: boolean; excludedTaskIds?: ReadonlySet<string> } = {}): void {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
@@ -536,7 +541,7 @@ export class TaskManagerState {
         const mergedList =
             options.mergeDiskEntries === false
                 ? this.tasks.map((task) => task.toIndexJSON())
-                : this._buildMergedTaskList(taskDirectory, taskListFile);
+                : this._buildMergedTaskList(taskDirectory, taskListFile, options.excludedTaskIds);
         _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
     }
 
@@ -666,33 +671,31 @@ export class TaskManagerState {
 
     /**
      * 将 prompt 分发给指定 Agent 执行：创建任务、初始化 harness、提交消息。
-     * @param agentName Agent 名称（'main' 或 AgentRegistry 中注册的名称）
+     * @param agent Agent 声明，或供 AIKernel 内部使用的规范 agentId
      * @param modeName 使用的 Mode 名称，undefined 则使用 Agent 的默认 Mode
      * @param prompt 要提交的用户消息
      * @returns 创建好的 TaskState（已提交消息，任务开始执行）
      */
     async dispatchPromptToAgent(
-        agentName: string,
+        agent: AgentDecl | string,
         modeName: string | undefined,
         prompt: string,
         options?: { workspace?: string; origin?: Participant }
     ): Promise<TaskState> {
-        // 解析 Agent
         let agentDecl: AgentDecl;
-        if (agentName === 'main') {
-            agentDecl = new MainAgentDecl();
-        } else {
-            const registered = AgentRegistry.getAgent(agentName);
+        if (typeof agent === 'string') {
+            const registered = AgentRegistry.resolveAgentReference(agent);
             if (!registered) {
-                throw new Error(`Agent "${agentName}" not found in AgentRegistry`);
+                throw new Error(`Agent "${agent}" not found in AgentRegistry`);
             }
             agentDecl = registered;
+        } else {
+            agentDecl = agent;
         }
 
         // 解析 Mode
         const modes = agentDecl.supportedModes();
-        const targetModeId = modeName || agentDecl.defaultModeId();
-        const activeMode = modes.find((m) => m.id === targetModeId) ?? modes[0];
+        const activeMode = modes.find((mode) => mode.id === modeName) ?? agentDecl.getDefaultMode();
 
         // 获取 workspace
         const workspace = options?.workspace || getPlatform().getEffectiveWorkspace();
@@ -716,8 +719,7 @@ export class TaskManagerState {
         this.publishTaskListUpdate();
 
         // 构建 system prompt 并设置
-        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
-        task.setSystemPrompt(systemPrompt);
+        await task.rebuildSystemPrompt();
 
         // 触发 beforeTaskStart 钩子（在 system prompt 已设置但用户消息尚未提交时）
         await task.hooks.noticeBeforeTaskStart(task);
@@ -755,7 +757,9 @@ export class TaskManagerState {
         if (removedIds.size > 0) {
             this.tasks = this.tasks.filter((t) => !removedIds.has(t.task_id));
             this.publishTaskListUpdate();
-            this.saveSync();
+            // 即使某个任务文件删除失败，也不能在合并磁盘索引时把已明确删除的任务重新加回来。
+            // 文件保留后仍可由手动恢复流程重新发现。
+            this.saveSync({ excludedTaskIds: removedIds });
         }
         return Array.from(removedIds);
     }
@@ -772,9 +776,10 @@ export class TaskManagerState {
         }
 
         this.tasks = this.tasks.filter((candidate) => candidate.task_id !== taskId);
-        this._deletedTaskIds.add(taskId);
         this.publishTaskListUpdate();
-        this.saveSync();
+        // 损坏任务的 .json 文件仍保留在磁盘上（供 /recover 恢复），因此本次合并必须
+        // 显式排除它；其他进程写入的有效任务条目仍应保留。
+        this.saveSync({ excludedTaskIds: new Set([taskId]) });
         return true;
     }
 
@@ -795,7 +800,6 @@ export class TaskManagerState {
         task.cleanup();
         deleteTaskTodos(taskId);
         removedIds.add(taskId);
-        this._deletedTaskIds.add(taskId);
     }
 
     /**
@@ -804,7 +808,6 @@ export class TaskManagerState {
     clearAllTasks(): string[] {
         const removedIds = this.tasks.map((task) => task.task_id);
         for (const task of this.tasks) {
-            this._deletedTaskIds.add(task.task_id);
             // 懒加载任务并未实际运行（status 已转为 failed），跳过 stop()
             // 以避免不必要的 ensureLoaded() 触发全量磁盘读取。
             // cleanup() 和 deleteTaskTodos() 仍会正常清理磁盘文件。

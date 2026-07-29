@@ -74,7 +74,8 @@ import {
 import { AgentExecutionInstrumentationRegistry, normalizeTurnContext } from '../../telemetry/agent-execution.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../../telemetry/operation.js';
 import { getPlatform } from '../../../platforms/base.js';
-import type { TaskSkillExposure } from '../agents/common.js';
+import { type AgentDecl, type ModeDecl, type TaskSkillExposure } from '../agents/common.js';
+import { AgentRegistry } from '../agents/registry.js';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { TaskExtensionManager } from '../task-extension.js';
 import type { TaskManagerState } from '../task/manager.js';
@@ -256,10 +257,133 @@ export class TaskState {
      */
     activeModeId?: string;
 
+    private _agentId: string | undefined = AgentRegistry.getMainAgent().agentId;
+
+    /**
+     * 由当前 AgentDecl 和 Mode 生成的 prompt。运行时派生，不单独触发持久化。
+     */
+    agent_system_prompt?: string;
+
+    /**
+     * 调用 setSystemPrompt() 设置的附加 prompt。它是任务数据的一部分，需要持久化。
+     */
+    custom_system_prompt?: string;
+
     /**
      * 当前任务对应的 Agent ID，用于筛选 agent 专属工具。
+     * 修改此字段会触发任务持久化；system prompt 等派生状态不会。
      */
-    agentId?: string;
+    get agentId(): string | undefined {
+        return this._agentId;
+    }
+
+    set agentId(agentId: string | undefined) {
+        if (this._agentId === agentId) return;
+        this._agentId = agentId;
+        this.agent_system_prompt = undefined;
+        this.updateEffectiveSystemPrompt();
+        if (this.task_manager_state.tasks.includes(this)) {
+            this.persistLater();
+        } else {
+            this._dirty = true;
+        }
+    }
+
+    /** 获取当前任务绑定的 Agent，并将失效的绑定修复为 main。 */
+    getAgent(): AgentDecl {
+        if (!this.agentId) {
+            return AgentRegistry.getMainAgent();
+        }
+        const agent = AgentRegistry.resolveAgentReference(this.agentId);
+        if (agent) {
+            return agent;
+        }
+
+        const mainAgent = AgentRegistry.getMainAgent();
+        if (!AgentRegistry.areApplicationAgentsReady()) {
+            return mainAgent;
+        }
+        if (this.agentId !== mainAgent.agentId) {
+            logger.warn(
+                `TaskState: agent "${this.agentId}" not found for task ${this.task_id}, ` +
+                    `falling back to ${mainAgent.agentId}`
+            );
+        }
+        this.agentId = mainAgent.agentId;
+        return mainAgent;
+    }
+
+    /**
+     * 获取当前任务绑定 Agent 下与 activeModeId 对应的模式。
+     */
+    getAgentMode(): ModeDecl {
+        const agent = this.getAgent();
+        const modes = agent.supportedModes();
+        return modes.find((candidate) => candidate.id === this.activeModeId) ?? agent.getDefaultMode();
+    }
+
+    /**
+     * 由当前任务绑定的 Agent 和运行模式重建 system prompt。
+     */
+    async buildSystemPrompt(): Promise<string> {
+        const agentSystemPrompt = this.agentId
+            ? await this.getAgent().createSystemPrompt(this.getAgentMode(), this)
+            : undefined;
+        return this.composeSystemPrompt(agentSystemPrompt);
+    }
+
+    /**
+     * 重建并安装当前任务的 system prompt。
+     */
+    async rebuildSystemPrompt(): Promise<void> {
+        const systemPrompt = await this.buildSystemPrompt();
+        this.installBuiltSystemPrompt(systemPrompt);
+    }
+
+    /**
+     * 安装由 buildSystemPrompt() 生成的完整 prompt，不改变 custom_system_prompt，也不触发 dirty。
+     */
+    installBuiltSystemPrompt(systemPrompt: string): void {
+        this.agent_system_prompt = this.extractAgentSystemPrompt(systemPrompt);
+        this.chat_context.system_prompt = new SystemMessage(systemPrompt);
+    }
+
+    /**
+     * 从落盘数据恢复 prompt 分层状态，同时保留 chat_context 中用于兼容和调试的完整 prompt。
+     */
+    restoreSystemPromptState(customSystemPrompt: unknown): void {
+        this.custom_system_prompt = typeof customSystemPrompt === 'string' ? customSystemPrompt : undefined;
+        const effectiveSystemPrompt = this.chat_context.system_prompt?.content;
+        this.agent_system_prompt =
+            typeof effectiveSystemPrompt === 'string'
+                ? this.extractAgentSystemPrompt(effectiveSystemPrompt)
+                : undefined;
+    }
+
+    private composeSystemPrompt(agentSystemPrompt = this.agent_system_prompt): string {
+        if (agentSystemPrompt && this.custom_system_prompt) {
+            return `${agentSystemPrompt}\n\n${this.custom_system_prompt}`;
+        }
+        return agentSystemPrompt ?? this.custom_system_prompt ?? '';
+    }
+
+    private extractAgentSystemPrompt(effectiveSystemPrompt: string): string | undefined {
+        const customSystemPrompt = this.custom_system_prompt;
+        if (customSystemPrompt === undefined) {
+            return this.agentId ? effectiveSystemPrompt : undefined;
+        }
+        if (effectiveSystemPrompt === customSystemPrompt) {
+            return undefined;
+        }
+        const suffix = `\n\n${customSystemPrompt}`;
+        return effectiveSystemPrompt.endsWith(suffix) ? effectiveSystemPrompt.slice(0, -suffix.length) : undefined;
+    }
+
+    private updateEffectiveSystemPrompt(): void {
+        const effectiveSystemPrompt = this.composeSystemPrompt();
+        this.chat_context.system_prompt =
+            effectiveSystemPrompt.length > 0 ? new SystemMessage(effectiveSystemPrompt) : undefined;
+    }
 
     /**
      * 当前模式需要排除的工具名列表。
@@ -478,11 +602,14 @@ export class TaskState {
     }
 
     async materializeExtensionPromptTurn(prompt: string, metadata: RuntimeMetadata, rawText?: string): Promise<void> {
-        await this.appendInternalUserMessage(prompt, metadata, rawText);
+        const effectiveMetadata =
+            this.withTurnGenerationMetadata(metadata, metadata.execution?.generation ?? this._turnGeneration) ??
+            metadata;
+        await this.appendInternalUserMessage(prompt, effectiveMetadata, rawText);
         const assistantMessage = new AssistantMessage();
-        assistantMessage.metadata = metadata;
+        assistantMessage.metadata = effectiveMetadata;
         this.chat_context.appendMessage(assistantMessage);
-        this._activeTurnMetadata = metadata;
+        this._activeTurnMetadata = effectiveMetadata;
     }
 
     private bindChatContextMessageAppend(): void {
@@ -771,8 +898,17 @@ export class TaskState {
     }
 
     setSystemPrompt(prompt: string) {
-        // logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
-        this.chat_context.system_prompt = new SystemMessage(prompt);
+        if (this.custom_system_prompt === prompt) {
+            this.updateEffectiveSystemPrompt();
+            return;
+        }
+        this.custom_system_prompt = prompt;
+        this.updateEffectiveSystemPrompt();
+        if (this.task_manager_state.tasks.includes(this)) {
+            this.persistLater();
+        } else {
+            this._dirty = true;
+        }
     }
 
     refreshEvidenceCardFeatureState(): boolean {
@@ -808,6 +944,10 @@ export class TaskState {
         return this._turnGeneration + 1;
     }
 
+    private getTurnId(generation: number): string {
+        return `${this.task_id}:${generation}`;
+    }
+
     private withTurnGenerationMetadata(
         metadata: RuntimeMetadata | undefined,
         generation: number
@@ -817,6 +957,7 @@ export class TaskState {
             ...metadata,
             execution: {
                 ...metadata.execution,
+                turnId: metadata.execution?.turnId ?? this.getTurnId(generation),
                 generation
             }
         };
@@ -1338,7 +1479,11 @@ export class TaskState {
         // （安全网关 skill 归因等）能从 message 反查到 turn 归属。
         user_message.metadata = {
             ...(user_message.metadata ?? {}),
-            execution: { ...(user_message.metadata?.execution ?? {}), generation }
+            execution: {
+                ...(user_message.metadata?.execution ?? {}),
+                turnId: user_message.metadata?.execution?.turnId ?? this.getTurnId(generation),
+                generation
+            }
         };
 
         const imagePaths = extractImagePaths(message);
@@ -1444,7 +1589,14 @@ export class TaskState {
         // 同时使 _activeTurnMetadata 非空，applyRuntimeMetadataToAssistant 不再 early-return（tasks.ts:763）。
         assistant_message.metadata = {
             ...(assistant_message.metadata ?? {}),
-            execution: { ...(assistant_message.metadata?.execution ?? {}), generation }
+            execution: {
+                ...(assistant_message.metadata?.execution ?? {}),
+                turnId:
+                    assistant_message.metadata?.execution?.turnId ??
+                    user_message.metadata?.execution?.turnId ??
+                    this.getTurnId(generation),
+                generation
+            }
         };
         this.chat_context.appendMessage(assistant_message);
 
@@ -1933,6 +2085,7 @@ export class TaskState {
                     new ReasoningMessagePart(`User requested skill "${name}", loading it now.`, 'reasoning_content')
                 );
                 assistantMessage.content.push(toolCallPart);
+                this.applyRuntimeMetadataToAssistant(assistantMessage);
 
                 await AgentExecutionInstrumentationRegistry.recordToolCall({
                     taskId: this.task_id,
@@ -2471,11 +2624,11 @@ export class TaskState {
         await AgentExecutionInstrumentationRegistry.aroundTaskTurn(
             {
                 taskId: this.task_id,
-                turnId: `${this.task_id}:${myGeneration}`,
+                turnId: this._activeTurnMetadata?.execution?.turnId ?? this.getTurnId(myGeneration),
                 taskName: this.task_name,
                 parentTaskId: this.parent_id,
                 userPrompt,
-                workspace: this.workspace,
+                workspace: this.getWorkspace(),
                 chatContext: this.chat_context,
                 externalContext: instrumentationContext,
                 model: modelInfo.model,
@@ -2491,11 +2644,11 @@ export class TaskState {
                 getOutcome: () => ({
                     taskID: this.task_id,
                     sessionID: instrumentationContext?.output?.sessionID,
-                    workspace: this.workspace,
+                    workspace: this.getWorkspace(),
                     providerID: modelInfo.provider,
                     modelID: modelInfo.model,
-                    mode: instrumentationContext?.output?.mode,
-                    agent: instrumentationContext?.output?.agent,
+                    mode: instrumentationContext?.output?.mode ?? this.activeModeId,
+                    agent: instrumentationContext?.output?.agent ?? this.agentId,
                     cost: instrumentationContext?.output?.cost,
                     completedAt: this.finished_at?.getTime(),
                     failure: turnFailure,

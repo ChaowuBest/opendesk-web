@@ -295,24 +295,10 @@ describe('ElectronPermissionPromptProvider queue', () => {
         task.disabledTools = MAIN_AGENT_STANDARD_MODE.disabledTools;
         task.setSystemPrompt('system:standard');
         const previousContext = task.harnessContext;
-        const atomicReplace = replaceTaskHarnessForMode as unknown as (
-            taskState: TaskState,
-            workspace: string,
-            mode: typeof MAIN_AGENT_UNLIMITED_MODE,
-            factory: () => typeof provider,
-            createSystemPrompt: () => Promise<string>
-        ) => Promise<void>;
+        jest.spyOn(task, 'buildSystemPrompt').mockRejectedValueOnce(new Error('prompt generation failed'));
 
         await expect(
-            atomicReplace(
-                task,
-                '/workspace',
-                MAIN_AGENT_UNLIMITED_MODE,
-                () => provider,
-                async () => {
-                    throw new Error('prompt generation failed');
-                }
-            )
+            replaceTaskHarnessForMode(task, '/workspace', MAIN_AGENT_UNLIMITED_MODE, () => provider)
         ).rejects.toThrow('prompt generation failed');
 
         expect(task.harnessContext).toBe(previousContext);

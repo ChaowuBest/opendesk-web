@@ -195,6 +195,7 @@ export async function startMemoryReviewTask(
     reviewTask.disabledTools = [];
     setExpectedUserPortraitContentForTask(reviewTask, currentPortrait);
     await reviewTask.attachToolset(createMemoryToolset());
+    reviewTask.agentId = undefined;
     reviewTask.setSystemPrompt(
         buildMemoryReviewSystemPrompt(
             getUserPortraitPath(),

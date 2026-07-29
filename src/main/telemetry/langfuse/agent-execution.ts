@@ -118,13 +118,13 @@ export class LangfuseAgentExecutionInstrumentation implements AgentExecutionInst
             const result = await next(headers);
             const output = extractAssistantVisibleTextSince(assistantMessage, assistantTextStart);
             const usage = context.getUsage();
-            recordGeneration(context.taskId, {
+            recordGeneration(observation, {
                 input,
                 output,
                 usage,
                 model: context.model
             });
-            finishLlmRequest(context.taskId, {
+            finishLlmRequest(observation, {
                 usage,
                 model: context.model,
                 output,
@@ -133,7 +133,7 @@ export class LangfuseAgentExecutionInstrumentation implements AgentExecutionInst
             return result;
         } catch (err) {
             const message = errorToMessage(err);
-            finishLlmRequest(context.taskId, {
+            finishLlmRequest(observation, {
                 output: message,
                 model: context.model,
                 level: 'ERROR',
@@ -145,6 +145,13 @@ export class LangfuseAgentExecutionInstrumentation implements AgentExecutionInst
     }
 
     recordToolCall(context: ToolCallInstrumentationContext): void {
-        recordTool({ task_id: context.taskId }, context.toolCall as ToolCall);
+        const toolCall = context.toolCall as ToolCall;
+        recordTool(
+            {
+                task_id: context.taskId,
+                turn_id: toolCall.metadata?.execution?.turnId
+            },
+            toolCall
+        );
     }
 }

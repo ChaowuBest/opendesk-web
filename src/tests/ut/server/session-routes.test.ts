@@ -75,6 +75,7 @@ function makeTask(workspace: string) {
         parent_id: null,
         task_name: null,
         task_status: 'waiting',
+        agentId: 'main',
         model: undefined as string | undefined,
         chat_context: {
             system_prompt: { content: 'system' },
@@ -87,6 +88,16 @@ function makeTask(workspace: string) {
         workspace,
         getWorkspace: jest.fn(() => workspace),
         getExecutionHost: jest.fn(() => ({ type: 'local' })),
+        getAgent: jest.fn(() => new MainAgentDecl()),
+        getAgentMode: jest.fn(() => ({
+            id: 'standard',
+            name: 'Standard',
+            description: '',
+            icon: '',
+            color: '',
+            permissionFactory: () => []
+        })),
+        rebuildSystemPrompt: jest.fn(async () => undefined),
         setSystemPrompt: jest.fn(),
         persistLater: jest.fn(),
         submitUserMessage: jest.fn(async () => undefined),
@@ -143,6 +154,28 @@ describe('opencode session routes', () => {
         expect(task.model).toBe('gpt4o');
     });
 
+    test('PATCH /session/:id persists title and model changes', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(`/ses_model?directory=${encodeURIComponent(workspace)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                title: 'Renamed session',
+                model: 'openai/gpt-4o'
+            }),
+            headers: { 'content-type': 'application/json' }
+        });
+
+        expect(response.status).toBe(200);
+        expect(task.task_name).toBe('Renamed session');
+        expect(task.model).toBe('gpt4o');
+        expect(task.persistLater).toHaveBeenCalledTimes(1);
+    });
+
     test('POST /session/:id/message uses requested opencode model object for the submitted turn', async () => {
         mockSessionDependencies();
         mockSetting();
@@ -175,6 +208,33 @@ describe('opencode session routes', () => {
                 })
             })
         );
+    });
+
+    test('POST /session/:id/message rebuilds the main prompt after a missing agent fallback', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        task.agentId = 'agentoffice:removed';
+        task.chat_context.system_prompt = { content: 'custom prompt' };
+        task.getAgent = jest.fn(() => {
+            task.agentId = 'main';
+            return new MainAgentDecl();
+        });
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ message: 'hello after fallback' }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(task.agentId).toBe('main');
+        expect(task.rebuildSystemPrompt).toHaveBeenCalledTimes(1);
     });
 
     test('POST /session/:id/message passes opencode request headers to the submitted turn', async () => {
@@ -217,8 +277,8 @@ describe('opencode session routes', () => {
                 }),
                 output: {
                     sessionID: 'ses_model',
-                    mode: 'default',
-                    agent: 'explore',
+                    mode: 'standard',
+                    agent: 'main',
                     cost: 0
                 }
             }
@@ -381,6 +441,33 @@ describe('opencode session routes', () => {
         expect(messages[3].info.parentID).toBe(messages[2].info.id);
         expect(messages[0].parts[0].messageID).toBe(messages[0].info.id);
         expect(messages[1].parts[0].messageID).toBe(messages[1].info.id);
+    });
+
+    test('DELETE /session/:id/message/:messageID accepts the public message id and persists removal', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const userMessage = new UserMessage('remove me');
+        userMessage.message_id = 'internal-message-to-delete';
+        task.chat_context.messages = [userMessage];
+        mockGlobalTaskManager(task);
+
+        const listResponse = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+        const messages = await listResponse.json();
+        const publicMessageID = messages[0].info.id;
+
+        const deleteResponse = await SessionRoutes().request(
+            `/ses_model/message/${publicMessageID}?directory=${encodeURIComponent(workspace)}`,
+            { method: 'DELETE' }
+        );
+
+        expect(deleteResponse.status).toBe(200);
+        expect(task.chat_context.messages).toEqual([]);
+        expect(task.persistLater).toHaveBeenCalledTimes(1);
     });
 
     test('GET /session/:id/message includes assistant error text', async () => {

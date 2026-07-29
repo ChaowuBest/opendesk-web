@@ -27,6 +27,7 @@ import { unwrapAgentOfficeCallResult } from './common.js';
 import { CustomAgent } from './custom-agent.js';
 import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
 import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import type {
     DueStaffTrigger,
     HistoryQuery,
@@ -226,8 +227,8 @@ export class AgentOfficeApplication extends BaseApplication {
     }
 
     /**
-     * 加载可派发的 Custom Agent，同时加载不进入 AgentRegistry 的 Staff Agent。
-     * 两类 Agent 的 MCP 都由 MCPMgr 统一管理。
+     * 加载用户 Custom Agent 和 Staff Agent。两类 Agent 都进入 AgentRegistry，
+     * Staff 通过 dispatchable=false 避免被主 Agent 派发。
      */
     async getAgents(): Promise<AgentDecl[]> {
         await this.disposeStaffAgents();
@@ -255,7 +256,7 @@ export class AgentOfficeApplication extends BaseApplication {
         }));
         await this.loadStaffAgents();
         await this.syncAgentMcpServers();
-        return agents;
+        return [...agents, ...this.staffAgents.values()];
     }
 
     private async loadStaffAgents(): Promise<void> {
@@ -287,7 +288,11 @@ export class AgentOfficeApplication extends BaseApplication {
             purpose: 'staff',
             agentName: `staff:${staffId}`,
             whenToUse: `${staff.name} — ${staff.title}`,
-            skillBundleName: `staff:${staffId}`
+            skillBundleName: `staff:${staffId}`,
+            additionalSystemPrompt: (taskContext) =>
+                interpolateAgentOfficePrompt(t('agentoffice.task.systemRule'), {
+                    memoryPath: path.join(taskContext.getWorkspace(), 'MEMORY.md')
+                })
         });
     }
 
@@ -318,6 +323,11 @@ export class AgentOfficeApplication extends BaseApplication {
         }
 
         await this.syncAgentMcpServers();
+        if (agent) {
+            await AgentRegistry.replaceApplicationAgent(this.bundleName, agent);
+        } else {
+            await AgentRegistry.removeApplicationAgent(this.bundleName, `staff:${staffId}`);
+        }
         if (loadError && throwOnError) {
             throw new Error(
                 t('agentoffice.error.agentLoadFailed', {
@@ -352,6 +362,7 @@ export class AgentOfficeApplication extends BaseApplication {
         this.staffAgents.delete(staffId);
         this.staffMcpRegistrations.delete(staffId);
         await agent?.dispose();
+        await AgentRegistry.removeApplicationAgent(this.bundleName, `staff:${staffId}`);
         await this.syncAgentMcpServers();
     }
 
@@ -836,8 +847,7 @@ export class AgentOfficeApplication extends BaseApplication {
         const memoryPath = path.join(workspace, 'MEMORY.md');
         const resourcesDirectory = path.join(this.staffDirectory(staffId), 'resources');
         const agent = await this.ensureStaffAgent(staffId, detail);
-        const mode = agent.supportedModes().find((candidate) => candidate.id === agent.defaultModeId());
-        if (!mode) throw new Error(t('agentoffice.error.agentModeUnavailable'));
+        const mode = agent.getDefaultMode();
         assignStaffAgentToTask(task, agent, mode);
         if (!reused) await taskManager.initHarness(task, workspace, mode);
         await applyStaffPermissionToTask(task, {
@@ -880,10 +890,7 @@ export class AgentOfficeApplication extends BaseApplication {
                     await this.callAgentOfficeWorker('getHistory', staffId, query)
             })
         );
-        const basePrompt = await agent.createSystemPrompt(mode, task);
-        task.setSystemPrompt(
-            `${basePrompt}\n\n${interpolateAgentOfficePrompt(t('agentoffice.task.systemRule'), { memoryPath })}`
-        );
+        await task.rebuildSystemPrompt();
         await task.hooks.noticeBeforeTaskStart(task);
         return { expectedGeneration, memoryPath, recent, resourcesDirectory };
     }
