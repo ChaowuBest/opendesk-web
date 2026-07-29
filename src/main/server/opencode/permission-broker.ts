@@ -151,6 +151,11 @@ function buildAlwaysPatterns(
     requests: PermissionRequest[],
     prefixOptions: { label: string; pattern: string }[]
 ): string[] {
+    if (requests[0]?.resourceType === 'file') {
+        const directoryPrefix = prefixOptions.find(({ pattern }) => pattern.endsWith('/**'))?.pattern;
+        if (directoryPrefix) return [directoryPrefix];
+    }
+
     const firstPrefix = prefixOptions[0]?.pattern;
     if (firstPrefix) return [firstPrefix];
     const firstPath = requests[0]?.resourcePath;
