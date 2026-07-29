@@ -474,7 +474,7 @@ function renderPreviewCard(opts: {
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
         <div class="border-t border-gray-100 bg-gray-50/40">
-            <div class="tool-preview-card${lang === 'svg' ? '' : ' max-h-[400px] overflow-y-auto'}" data-preview-lang="${lang}" data-raw-code="${rawB64}" data-base-dir="${escapeHtml(baseDir)}"></div>
+            <div class="tool-preview-card" data-preview-lang="${lang}" data-raw-code="${rawB64}" data-base-dir="${escapeHtml(baseDir)}"></div>
         </div>
     </details>`;
 }

@@ -3158,6 +3158,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
     width: 100%;
     contain: paint;
 }
+.tool-preview-card {
+    overflow: visible;
+    max-height: none;
+}
 .tool-preview-card .code-preview-shadow-host {
     padding: 10px;
 }
