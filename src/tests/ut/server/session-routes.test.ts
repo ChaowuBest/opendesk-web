@@ -86,6 +86,9 @@ function makeTask(workspace: string) {
         parent_id: null,
         task_name: null,
         task_status: 'waiting',
+        created_at: new Date('2026-01-01T00:00:00.000Z'),
+        started_at: undefined as Date | undefined,
+        updated_at: undefined as Date | undefined,
         agentId: 'main',
         model: undefined as string | undefined,
         chat_context: {
@@ -168,6 +171,27 @@ describe('opencode session routes', () => {
         expect(response.status).toBe(200);
         expect(taskManagerState.createTask).toHaveBeenCalledTimes(1);
         expect(task.model).toBe('gpt4o');
+    });
+
+    test('GET /session exposes stable task lifecycle timestamps for historical tasks', async () => {
+        const task = makeTask(workspace);
+        task.created_at = new Date('2026-01-01T08:00:00.000Z');
+        task.started_at = new Date('2026-02-02T09:30:00.000Z');
+        task.updated_at = undefined;
+        mockGlobalTaskManager(task);
+
+        const firstResponse = await SessionRoutes().request(`/?directory=${encodeURIComponent(workspace)}`);
+        const secondResponse = await SessionRoutes().request(`/?directory=${encodeURIComponent(workspace)}`);
+
+        expect(firstResponse.status).toBe(200);
+        expect(secondResponse.status).toBe(200);
+        const [firstSession] = (await firstResponse.json()) as Array<{ time: { created: number; updated: number } }>;
+        const [secondSession] = (await secondResponse.json()) as Array<{ time: { created: number; updated: number } }>;
+        expect(firstSession.time).toEqual({
+            created: task.created_at.getTime(),
+            updated: task.started_at.getTime()
+        });
+        expect(secondSession.time).toEqual(firstSession.time);
     });
 
     test('PATCH /session/:id persists title and model changes', async () => {

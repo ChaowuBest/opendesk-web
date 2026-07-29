@@ -30,6 +30,7 @@ import {
     getRequestWorkspaceID,
     getTaskWorkspace
 } from '../workspace.js';
+import { getOpenCodeSessionTime } from '../session-info.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -519,10 +520,7 @@ function taskToSessionInfo(task: any, workspace = getTaskWorkspace(task), worksp
         ...(parentID ? { parentID } : {}),
         version: '1',
         agent: 'explore',
-        time: {
-            created: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
-            updated: task.updated_at ? new Date(task.updated_at).getTime() : Date.now()
-        },
+        time: getOpenCodeSessionTime(task),
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         cost: 0
     };
