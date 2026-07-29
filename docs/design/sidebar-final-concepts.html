@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk 侧边栏 · 最终收敛版（按时间 / 按工作空间）</title>
+        <style>
+            /* ============ 页面框架 ============ */
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            :root {
+                /* 取自 src/renderer/theme/theme.css (light) 与 components/sidebar.js 实际值 */
+                --od-bg: #f5f5f5;
+                --od-card: #ffffff;
+                --od-subtle: #f3f4f6;
+                --od-hover: #f9fafb;
+                --od-text: #1f2937;
+                --od-text-2: #6b7280;
+                --od-text-3: #9ca3af;
+                --od-border: rgba(0, 0, 0, 0.08);
+                --od-border-strong: rgba(0, 0, 0, 0.14);
+                --brand: #c94c40; /* 当前任务高亮砖红（sidebar.js 现用） */
+                --brand-soft: rgba(201, 76, 64, 0.09);
+                --indigo: #4f46e5; /* “内部”徽章紫 */
+                --indigo-soft: #eef2ff;
+                --ok: #166534;
+                --ok-soft: #e2f4e9;
+                --ok-bar: #4ade80;
+                --err: #b91c1c;
+                --err-soft: #fdeaea;
+                --err-bar: #f87171;
+                --run-gray: #64748b;
+                --wait-gray: #cbd5e1;
+                --hairline: #f1f5f9;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+                background: #e9ebf0;
+                color: var(--od-text);
+                padding: 40px 32px 64px;
+                -webkit-font-smoothing: antialiased;
+            }
+            .page-header {
+                text-align: center;
+                margin-bottom: 36px;
+            }
+            .page-header h1 {
+                font-size: 24px;
+                letter-spacing: 0.5px;
+            }
+            .page-header p {
+                color: var(--od-text-2);
+                font-size: 13px;
+                margin-top: 8px;
+                line-height: 1.8;
+            }
+            .page-header code {
+                font-family: 'JetBrains Mono', ui-monospace, monospace;
+                font-size: 11px;
+                background: #fff;
+                border-radius: 5px;
+                padding: 1px 6px;
+                color: var(--brand);
+            }
+            .board {
+                display: flex;
+                gap: 36px;
+                justify-content: center;
+                align-items: flex-start;
+                flex-wrap: wrap;
+            }
+            .variant-label {
+                display: flex;
+                align-items: baseline;
+                gap: 8px;
+                margin-bottom: 12px;
+                padding: 0 4px;
+            }
+            .variant-label .tag {
+                font-size: 11px;
+                font-weight: 700;
+                color: #fff;
+                background: var(--od-text);
+                border-radius: 6px;
+                padding: 3px 8px;
+                letter-spacing: 1px;
+            }
+            .variant-label .name {
+                font-size: 14px;
+                font-weight: 600;
+            }
+            .variant-desc {
+                width: 316px;
+                margin-top: 14px;
+                padding: 0 6px;
+                font-size: 12px;
+                color: var(--od-text-2);
+                line-height: 1.9;
+            }
+            .variant-desc b {
+                color: var(--od-text);
+            }
+
+            /* ============ 侧栏骨架 ============ */
+            .sidebar {
+                width: 316px;
+                height: 740px;
+                border-radius: 20px;
+                background: var(--od-bg);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                box-shadow: 0 12px 40px rgba(20, 22, 40, 0.14);
+            }
+            .sb-head {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 16px 16px 12px;
+                flex: none;
+            }
+            .sb-head .logo {
+                width: 34px;
+                height: 34px;
+                border-radius: 50%;
+                background: conic-gradient(from 210deg, #ffb03a, #ff5f6d, #8b5cf6, #38bdf8, #ffb03a);
+                box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.65);
+                flex: none;
+            }
+            .sb-head .ttl {
+                flex: 1;
+                min-width: 0;
+            }
+            .sb-head .ttl b {
+                font-size: 15px;
+                display: block;
+                line-height: 1.2;
+            }
+            .sb-head .ttl span {
+                font-size: 10.5px;
+                color: var(--od-text-3);
+            }
+            .sb-head .collapse {
+                color: var(--od-text-3);
+                font-size: 13px;
+                padding: 4px;
+            }
+            .sb-search {
+                margin: 0 14px 10px;
+                flex: none;
+                background: var(--od-card);
+                border-radius: 10px;
+                padding: 8px 12px;
+                font-size: 12.5px;
+                color: var(--od-text-3);
+                border: 1px solid var(--od-border);
+            }
+            .sb-actions {
+                display: flex;
+                gap: 8px;
+                padding: 0 14px 12px;
+                flex: none;
+            }
+            .sb-actions button {
+                flex: 1;
+                border: 1px solid var(--od-border);
+                cursor: pointer;
+                background: var(--od-card);
+                border-radius: 10px;
+                padding: 8px 0;
+                font-size: 12.5px;
+                color: var(--od-text);
+                font-family: inherit;
+            }
+            .sb-actions button.on {
+                border-color: var(--brand);
+                color: var(--brand);
+                font-weight: 600;
+            }
+            .sb-foot {
+                padding: 12px 16px 16px;
+                display: flex;
+                justify-content: center;
+                flex: none;
+            }
+            .sb-foot .dock {
+                display: flex;
+                gap: 4px;
+                background: var(--od-card);
+                border-radius: 999px;
+                padding: 7px 10px;
+                border: 1px solid var(--od-border);
+                box-shadow: 0 4px 14px rgba(20, 22, 40, 0.08);
+            }
+            .sb-foot .dock i {
+                font-style: normal;
+                font-size: 14px;
+                width: 34px;
+                height: 28px;
+                border-radius: 8px;
+                display: grid;
+                place-items: center;
+                color: var(--od-text-2);
+                cursor: pointer;
+            }
+            .sb-foot .dock i.me {
+                background: var(--od-text);
+                color: #fff;
+                border-radius: 50%;
+                width: 28px;
+            }
+
+            /* ============ 共享元件 ============ */
+            .grp {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--od-text-3);
+                letter-spacing: 1.5px;
+                padding: 4px 2px 7px;
+            }
+            details summary {
+                list-style: none;
+                cursor: pointer;
+            }
+            details summary::-webkit-details-marker {
+                display: none;
+            }
+            .caret {
+                font-size: 9px;
+                color: var(--od-text-3);
+                transition: transform 0.15s;
+                flex: none;
+            }
+            details[open] > summary .caret {
+                transform: rotate(90deg);
+            }
+            @keyframes pulse {
+                0%,
+                100% {
+                    box-shadow: 0 0 0 0 rgba(201, 76, 64, 0.4);
+                }
+                60% {
+                    box-shadow: 0 0 0 5px rgba(201, 76, 64, 0);
+                }
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+            .mini-bar {
+                display: inline-block;
+                vertical-align: middle;
+                width: 52px;
+                height: 4px;
+                border-radius: 99px;
+                background: #ececef;
+                overflow: hidden;
+            }
+            .mini-bar i {
+                display: block;
+                height: 100%;
+                border-radius: 99px;
+                background: var(--run-gray);
+            }
+            .mini-bar.brand i {
+                background: var(--brand);
+            }
+            .loading {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                padding: 10px 0 8px;
+                font-size: 11px;
+                color: var(--od-text-3);
+            }
+            .loading i {
+                width: 11px;
+                height: 11px;
+                border-radius: 50%;
+                border: 2px solid #e2e4e8;
+                border-top-color: var(--brand);
+                animation: spin 0.8s linear infinite;
+            }
+
+            /* ============ 运行卡（两稿共用：无左色条、可展开子任务、右侧 spinner） ============ */
+            .run-zone {
+                flex: none;
+                padding: 0 14px 4px;
+            }
+            .run-card {
+                background: var(--od-card);
+                border: 1px solid var(--od-border);
+                border-radius: 12px;
+                margin-bottom: 6px;
+                overflow: hidden;
+            }
+            .run-card .rc-hd {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 11px 12px 10px;
+            }
+            .run-card .live-dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                flex: none;
+                background: var(--brand);
+                animation: pulse 1.6s infinite;
+            }
+            .run-card .t {
+                flex: 1;
+                min-width: 0;
+                font-size: 13px;
+                font-weight: 600;
+                line-height: 1.4;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .run-card .spinner {
+                width: 15px;
+                height: 15px;
+                border-radius: 50%;
+                flex: none;
+                border: 2px solid rgba(201, 76, 64, 0.18);
+                border-top-color: var(--brand);
+                animation: spin 0.9s linear infinite;
+            }
+            /* 子任务展开（沿用现有 subtask-details 模式） */
+            .rc-sub > summary {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                padding: 7px 12px;
+                border-top: 1px solid var(--hairline);
+                font-size: 10.5px;
+                color: var(--od-text-3);
+            }
+            .rc-sub > summary:hover {
+                background: var(--od-hover);
+            }
+            .rc-sub .chev {
+                font-size: 8px;
+                transition: transform 0.15s;
+            }
+            .rc-sub[open] .chev {
+                transform: rotate(90deg);
+            }
+            .rc-sub .sub-geo {
+                flex: 1;
+            }
+            .rc-sub .sub-status {
+                color: var(--od-text-2);
+                font-weight: 600;
+            }
+            .rc-sub .sub-list {
+                padding: 2px 8px 8px;
+            }
+            .sub-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 5px 8px;
+                border-radius: 7px;
+                font-size: 11.5px;
+                color: var(--od-text-2);
+            }
+            .sub-row:hover {
+                background: var(--od-hover);
+            }
+            .sub-row .dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                flex: none;
+            }
+            .sub-row .dot.ok {
+                background: var(--ok-bar);
+            }
+            .sub-row .dot.err {
+                background: var(--err-bar);
+            }
+            .sub-row .dot.run {
+                background: var(--run-gray);
+                animation: subpulse 1.4s infinite;
+            }
+            .sub-row .dot.wait {
+                background: var(--wait-gray);
+            }
+            @keyframes subpulse {
+                0%,
+                100% {
+                    opacity: 1;
+                }
+                50% {
+                    opacity: 0.35;
+                }
+            }
+            .sub-row .st {
+                margin-left: auto;
+                font-size: 10px;
+                color: var(--od-text-3);
+                flex: none;
+            }
+            .sub-row.doing {
+                color: var(--od-text);
+                font-weight: 550;
+            }
+
+            /* ============ 列表头 + 视图切换菜单 ============ */
+            .list-head {
+                flex: none;
+                position: relative;
+                z-index: 20;
+                display: flex;
+                align-items: center;
+                padding: 8px 16px 8px;
+            }
+            .lh-t {
+                flex: 1;
+                font-size: 12px;
+                font-weight: 700;
+                color: var(--od-text-2);
+                letter-spacing: 1px;
+            }
+            .view-menu {
+                position: relative;
+            }
+            .view-menu > summary {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                font-size: 11px;
+                color: var(--od-text-2);
+                background: var(--od-card);
+                border-radius: 8px;
+                border: 1px solid var(--od-border);
+                padding: 4.5px 10px;
+            }
+            .view-menu > summary:hover {
+                color: var(--od-text);
+            }
+            .vm-pop {
+                position: absolute;
+                right: 0;
+                top: calc(100% + 5px);
+                width: 158px;
+                background: var(--od-card);
+                border-radius: 12px;
+                border: 1px solid var(--od-border);
+                box-shadow: 0 12px 32px rgba(20, 22, 40, 0.16);
+                padding: 5px;
+                z-index: 40;
+            }
+            .vm-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 12px;
+                color: var(--od-text-2);
+                padding: 7.5px 9px;
+                border-radius: 8px;
+                cursor: pointer;
+            }
+            .vm-item:hover {
+                background: var(--od-subtle);
+            }
+            .vm-item.cur {
+                color: var(--brand);
+                font-weight: 600;
+            }
+            .vm-item .yes {
+                margin-left: auto;
+                font-size: 11px;
+            }
+
+            /* ============ 互斥手风琴 ============ */
+            .acc {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                padding: 0 10px 8px;
+            }
+            .acc-item {
+                flex: none;
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+            }
+            .acc-item > summary {
+                flex: none;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 9px 12px;
+                font-size: 12.5px;
+                font-weight: 600;
+                background: var(--od-card);
+                border: 1px solid var(--od-border);
+                border-radius: 11px;
+            }
+            .acc-item > summary .cnt {
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--od-text-3);
+                background: var(--od-subtle);
+                border-radius: 99px;
+                padding: 1.5px 7px;
+            }
+            .acc-item > summary .caret {
+                margin-left: auto;
+            }
+            .acc-item[open] {
+                flex: 1;
+            }
+            .acc-item .acc-body {
+                display: none;
+            }
+            .acc-item[open] .acc-body {
+                display: block;
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                padding: 2px 2px 0;
+            }
+            .acc-body::-webkit-scrollbar {
+                width: 5px;
+            }
+            .acc-body::-webkit-scrollbar-thumb {
+                background: rgba(20, 22, 40, 0.14);
+                border-radius: 99px;
+            }
+            .acc-body::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            /* 任务行（统一 ✓/✕） */
+            .tl-row {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+                padding: 7px 10px;
+                border-radius: 9px;
+                cursor: pointer;
+            }
+            .tl-row:hover {
+                background: rgba(255, 255, 255, 0.9);
+            }
+            .tl-row .ck {
+                width: 15px;
+                height: 15px;
+                border-radius: 50%;
+                flex: none;
+                background: var(--ok-soft);
+                color: var(--ok);
+                font-size: 9px;
+                display: grid;
+                place-items: center;
+                font-weight: 700;
+            }
+            .tl-row .ck.bad {
+                background: var(--err-soft);
+                color: var(--err);
+            }
+            .tl-row .t {
+                flex: 1;
+                min-width: 0;
+                font-size: 12.5px;
+                color: var(--od-text-2);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .tl-row .tm {
+                font-size: 10.5px;
+                color: var(--od-text-3);
+                flex: none;
+            }
+            .tl-row .tag-in {
+                flex: none;
+                font-size: 10px;
+                font-weight: 500;
+                background: var(--indigo-soft);
+                color: var(--indigo);
+                border-radius: 5px;
+                padding: 1px 6px;
+            }
+
+            /* ============ F1 · 按时间（展开态：品牌红文字） ============ */
+            .f1 .acc-item[open] > summary {
+                color: var(--brand);
+                border-color: rgba(201, 76, 64, 0.35);
+            }
+            .f1 .acc-item[open] > summary .cnt {
+                background: var(--brand-soft);
+                color: var(--brand);
+            }
+
+            /* ============ F2 · 按工作空间（展开态：品牌红描边） ============ */
+            .ws-ic {
+                width: 26px;
+                height: 26px;
+                border-radius: 8px;
+                flex: none;
+                display: grid;
+                place-items: center;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .ws-info {
+                flex: 1;
+                min-width: 0;
+            }
+            .ws-name {
+                font-size: 12.5px;
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .ws-path {
+                display: flex;
+                overflow: hidden;
+                white-space: nowrap;
+                font-size: 10px;
+                font-weight: 400;
+                color: var(--od-text-3);
+                margin-top: 2px;
+            }
+            .ws-path .s1 {
+                flex: 0 1 auto;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                direction: rtl;
+                text-align: left;
+            }
+            .ws-path .s2 {
+                flex: 0 0 auto;
+            }
+            .f2 .acc-item > summary .ws-cnt {
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--od-text-3);
+                background: var(--od-subtle);
+                border-radius: 99px;
+                padding: 1.5px 7px;
+                flex: none;
+            }
+            .f2 .acc-item[open] > summary {
+                border-color: rgba(201, 76, 64, 0.45);
+                box-shadow: 0 0 0 1px rgba(201, 76, 64, 0.25);
+            }
+            .f2 .acc-item[open] > summary .ws-name {
+                color: var(--brand);
+            }
+            .f2 .acc-item[open] > summary .ws-cnt {
+                background: var(--brand-soft);
+                color: var(--brand);
+            }
+        </style>
+    </head>
+    <body>
+        <header class="page-header">
+            <h1>OpenDesk 侧边栏 · 最终收敛版</h1>
+            <p>
+                色板取自 <code>theme.css</code> 与 <code>sidebar.js</code> 现值：品牌砖红 #C94C40 · 徽章紫 #4F46E5 ·
+                完成绿 #4ADE80 · 失败红 #F87171 · 灰 #64748B<br />
+                运行卡可展开子任务 · 右侧旋转环指示进行中 · 分组互斥展开，展开组内部滚动触发延迟加载，其余组头固定可见
+            </p>
+        </header>
+
+        <div class="board">
+            <!-- ================= F1 按时间整理 ================= -->
+            <section>
+                <div class="variant-label"><span class="tag">F1</span><span class="name">按时间整理</span></div>
+                <div class="sidebar f1">
+                    <div class="sb-head">
+                        <div class="logo"></div>
+                        <div class="ttl"><b>OpenDesk</b><span>一站式智慧办公空间</span></div>
+                        <span class="collapse">⫼</span>
+                    </div>
+                    <div class="sb-search">🔍&nbsp;&nbsp;搜索…</div>
+                    <div class="sb-actions">
+                        <button class="on">＋ 新任务</button><button>▦ 应用</button><button>✨ 技能</button>
+                    </div>
+
+                    <div class="run-zone">
+                        <div class="grp">正在运行 · 1</div>
+                        <div class="run-card">
+                            <div class="rc-hd">
+                                <i class="live-dot"></i>
+                                <div class="t">GUI任务列表偶发不显示</div>
+                                <span class="spinner"></span>
+                            </div>
+                            <details class="rc-sub" open>
+                                <summary>
+                                    <span class="chev">▶</span>
+                                    <span class="sub-geo">5 个子任务</span>
+                                    <span class="sub-status">3/5 完成</span>
+                                    <span class="mini-bar brand"><i style="width: 60%"></i></span>
+                                </summary>
+                                <div class="sub-list">
+                                    <div class="sub-row"><i class="dot ok"></i>复现列表不显示问题</div>
+                                    <div class="sub-row"><i class="dot ok"></i>编写复现单元测试</div>
+                                    <div class="sub-row"><i class="dot ok"></i>定位渲染时序根因</div>
+                                    <div class="sub-row doing">
+                                        <i class="dot run"></i>修复渲染时序<span class="st">运行中</span>
+                                    </div>
+                                    <div class="sub-row">
+                                        <i class="dot wait"></i>回归测试<span class="st">等待</span>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+
+                    <div class="list-head">
+                        <span class="lh-t">任务列表 · 41</span>
+                        <details class="view-menu">
+                            <summary>按时间 <span style="font-size: 8px">▾</span></summary>
+                            <div class="vm-pop">
+                                <div class="vm-item cur">按时间整理 <span class="yes">✓</span></div>
+                                <div class="vm-item">按工作空间整理</div>
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="acc">
+                        <details class="acc-item" open>
+                            <summary>今天 <span class="cnt">5</span> <span class="caret">▶</span></summary>
+                            <div class="acc-body">
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">数字员工触发器异常</span
+                                    ><span class="tm">10:42</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">Staff权限修复</span
+                                    ><span class="tm">09:58</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck bad">✕</span><span class="t">[沉浸桌面] 刷新智能卡片：北京天气</span
+                                    ><span class="tm">09:20</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">[沉浸桌面] 创建智能卡片：test</span
+                                    ><span class="tag-in">内部</span><span class="tm">09:05</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">[数字员工] 定时检查</span
+                                    ><span class="tm">08:30</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">早间邮件摘要</span
+                                    ><span class="tm">08:00</span>
+                                </div>
+                                <div class="loading"><i></i>加载更早</div>
+                            </div>
+                        </details>
+                        <details class="acc-item">
+                            <summary>本周 <span class="cnt">8</span> <span class="caret">▶</span></summary>
+                        </details>
+                        <details class="acc-item">
+                            <summary>更早的任务 <span class="cnt">23</span> <span class="caret">▶</span></summary>
+                        </details>
+                        <details class="acc-item">
+                            <summary>自动任务 <span class="cnt">5</span> <span class="caret">▶</span></summary>
+                        </details>
+                    </div>
+                    <div class="sb-foot">
+                        <div class="dock"><i>◧</i><i>📂</i><i>⚙️</i><i>⌨️</i><i class="me">李</i></div>
+                    </div>
+                </div>
+                <div class="variant-desc">
+                    <b>分组：</b>今天 / 本周 / 更早的任务 / 自动任务，互斥展开。<br />
+                    <b>展开态：</b>组头文字与计数胶囊变为品牌砖红 #C94C40，描边淡红。<br />
+                    <b>行：</b>✓/✕ 圆标 + 标题 + 时间；「内部」徽章沿用现有 #EEF2FF/#4F46E5。
+                </div>
+            </section>
+
+            <!-- ================= F2 按工作空间整理 ================= -->
+            <section>
+                <div class="variant-label"><span class="tag">F2</span><span class="name">按工作空间整理</span></div>
+                <div class="sidebar f2">
+                    <div class="sb-head">
+                        <div class="logo"></div>
+                        <div class="ttl"><b>OpenDesk</b><span>一站式智慧办公空间</span></div>
+                        <span class="collapse">⫼</span>
+                    </div>
+                    <div class="sb-search">🔍&nbsp;&nbsp;搜索…</div>
+                    <div class="sb-actions">
+                        <button class="on">＋ 新任务</button><button>▦ 应用</button><button>✨ 技能</button>
+                    </div>
+
+                    <div class="run-zone">
+                        <div class="grp">正在运行 · 1</div>
+                        <div class="run-card">
+                            <div class="rc-hd">
+                                <i class="live-dot"></i>
+                                <div class="t">GUI任务列表偶发不显示</div>
+                                <span class="spinner"></span>
+                            </div>
+                            <details class="rc-sub" open>
+                                <summary>
+                                    <span class="chev">▶</span>
+                                    <span class="sub-geo">5 个子任务</span>
+                                    <span class="sub-status">3/5 完成</span>
+                                    <span class="mini-bar brand"><i style="width: 60%"></i></span>
+                                </summary>
+                                <div class="sub-list">
+                                    <div class="sub-row"><i class="dot ok"></i>复现列表不显示问题</div>
+                                    <div class="sub-row"><i class="dot ok"></i>编写复现单元测试</div>
+                                    <div class="sub-row"><i class="dot ok"></i>定位渲染时序根因</div>
+                                    <div class="sub-row doing">
+                                        <i class="dot run"></i>修复渲染时序<span class="st">运行中</span>
+                                    </div>
+                                    <div class="sub-row">
+                                        <i class="dot wait"></i>回归测试<span class="st">等待</span>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+
+                    <div class="list-head">
+                        <span class="lh-t">任务列表 · 41</span>
+                        <details class="view-menu">
+                            <summary>按空间 <span style="font-size: 8px">▾</span></summary>
+                            <div class="vm-pop">
+                                <div class="vm-item">按时间整理</div>
+                                <div class="vm-item cur">按工作空间整理 <span class="yes">✓</span></div>
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="acc">
+                        <details class="acc-item" open>
+                            <summary>
+                                <span class="ws-ic" style="background: rgba(201, 76, 64, 0.12); color: #c94c40">O</span>
+                                <span class="ws-info">
+                                    <span class="ws-name">OpenDesk</span>
+                                    <span class="ws-path"
+                                        ><span class="s1">/Users/liyi/Projects/</span
+                                        ><span class="s2">OpenDesk</span></span
+                                    >
+                                </span>
+                                <span class="ws-cnt">6</span>
+                                <span class="caret">▶</span>
+                            </summary>
+                            <div class="acc-body">
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">数字员工触发器异常</span
+                                    ><span class="tm">10:42</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">Staff权限修复</span
+                                    ><span class="tm">09:58</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck bad">✕</span><span class="t">[沉浸桌面] 刷新智能卡片：北京天气</span
+                                    ><span class="tm">09:20</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">[沉浸桌面] 创建智能卡片：test</span
+                                    ><span class="tag-in">内部</span><span class="tm">09:05</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">[数字员工] 定时检查</span
+                                    ><span class="tm">08:30</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">CLI 启动速度优化</span
+                                    ><span class="tm">周二</span>
+                                </div>
+                                <div class="tl-row">
+                                    <span class="ck">✓</span><span class="t">修复 TUI 输入框焦点丢失</span
+                                    ><span class="tm">周二</span>
+                                </div>
+                                <div class="loading"><i></i>加载更早</div>
+                            </div>
+                        </details>
+                        <details class="acc-item">
+                            <summary>
+                                <span class="ws-ic" style="background: #eef2ff; color: #4f46e5">d</span>
+                                <span class="ws-info">
+                                    <span class="ws-name">design-research</span>
+                                    <span class="ws-path"
+                                        ><span class="s1">/Users/liyi/Projects/</span
+                                        ><span class="s2">design-research</span></span
+                                    >
+                                </span>
+                                <span class="ws-cnt">3</span>
+                                <span class="caret">▶</span>
+                            </summary>
+                        </details>
+                        <details class="acc-item">
+                            <summary>
+                                <span class="ws-ic" style="background: #fef3e2; color: #b45309">n</span>
+                                <span class="ws-info">
+                                    <span class="ws-name">notes</span>
+                                    <span class="ws-path"
+                                        ><span class="s1">/Users/liyi/Documents/项目归档/2026/工作/</span
+                                        ><span class="s2">notes</span></span
+                                    >
+                                </span>
+                                <span class="ws-cnt">2</span>
+                                <span class="caret">▶</span>
+                            </summary>
+                        </details>
+                        <details class="acc-item">
+                            <summary>自动任务 <span class="cnt">5</span> <span class="caret">▶</span></summary>
+                        </details>
+                    </div>
+                    <div class="sb-foot">
+                        <div class="dock"><i>◧</i><i>📂</i><i>⚙️</i><i>⌨️</i><i class="me">李</i></div>
+                    </div>
+                </div>
+                <div class="variant-desc">
+                    <b>分组：</b>任务列表中出现的所有工作空间 + 自动任务，互斥展开。<br />
+                    <b>组头：</b>目录名加粗 + 小字完整路径（看「notes」：/Users/liyi/…作/notes
+                    中间省略）；空间图标块用淡色底 + 彩字，克制不抢戏。<br />
+                    <b>展开态：</b>组头品牌红描边 + 目录名变红。
+                </div>
+            </section>
+        </div>
+    </body>
+</html>
