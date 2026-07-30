@@ -1224,5 +1224,5 @@ ToolCall {
 - 消息类型: `src/main/aikernel/messages.ts`
 - 自动压缩: `src/main/aikernel/compaction/auto-compact.ts`
 - 工具结果: `src/main/aikernel/compaction/tool-results.ts`
-- 插件类型: `src/main/aikernel/plugins/types.ts`
-- 测试用例: `src/tests/ut/aikernel/task-persistence.test.ts`
+- 插件类型: `src/main/plugins/types.ts`
+- 测试用例: `src/tests/ut/compact/task-persistence.test.ts`

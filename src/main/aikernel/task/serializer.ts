@@ -124,6 +124,7 @@ export function serializeTaskSimplified(task: TaskState): object {
         task_status: task.task_status,
         completion_status: task.getTaskCompletionStatus(),
         ...(task.internal === true ? { internal: true } : {}),
+        ...(task.name_pending ? { name_pending: true } : {}),
         created_at: task.created_at.toISOString(),
         started_at: task.started_at?.toISOString(),
         finished_at: task.finished_at?.toISOString(),

@@ -204,6 +204,8 @@ export class TaskState {
     task_status: TaskStatus = 'waiting';
     /** Internal tasks are hidden from normal GUI task lists unless developer mode is enabled. */
     internal?: boolean;
+    /** 内存标志：任务刚创建、名称待生成时为 true，submitUserMessage 后置 false。不持久化到磁盘。 */
+    name_pending: boolean = false;
     private _chat_context: ChatContext = new ChatContext();
     private _unbindChatContextMessageAppend?: () => void;
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
@@ -1615,6 +1617,7 @@ export class TaskState {
 
         if (this.task_name === null) {
             const taskConfig = Setting.getInstance().getData().task_config;
+            this.name_pending = false;
             if (taskConfig?.generate_taskname !== false) {
                 this.task_name = '未命名任务';
                 this.generateTaskName(message, telemetryRequestOptions).then(() => {

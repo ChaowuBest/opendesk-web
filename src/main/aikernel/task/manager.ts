@@ -625,6 +625,7 @@ export class TaskManagerState {
      */
     createTask(model?: string, options: { internal?: boolean; taskName?: string } = {}): TaskState {
         const task = new TaskState(this);
+        task.name_pending = true;
         if (model) {
             if (Setting.getInstance().getModelInstance(model, 'chat')) {
                 task.model = model;

@@ -127,7 +127,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/fork`         | 复制当前任务为新任务                          | `/fork`                                                  |
 | `/recover`      | 从任务文件重建任务列表                        | `/recover tasks`                                         |
 | `/compact`      | 压缩当前会话上下文                            | `/compact`                                               |
-| `/memory`       | 管理长期记忆                                  | `/memory`                                                |
+| `/context`      | 显示当前上下文诊断                            | `/context`、`/context --data`                            |
 | `/bookmark`     | 管理书签                                      | `/bookmark`                                              |
 | `/notification` | 管理通知设置                                  | `/notification`                                          |
 | `/undo`         | 选择用户消息，回退并放回输入框                | `/undo`                                                  |
@@ -135,7 +135,9 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/btw`          | 顺便提一下（添加补充信息）                    | `/btw [补充内容]`                                        |
 | `/mode`         | 查看或切换 Agent 运行模式（也可用 Shift+Tab） | `/mode plan`                                             |
 | `/reason`       | 调整思考深度与思考过程展示方式                | `/reason`、`/reason effort high`、`/reason display full` |
-| `/manual`       | 打开用户手册                                  | `/manual`                                                |
+| `/model`        | 查看或切换当前模型                            | `/model [别名]`                                          |
+| `/goal`         | 管理当前任务的 goal                           | `/goal help`、`/goal <objective>`、`/goal pause`         |
+| `/usage`        | 查看模型用量统计                              | `/usage`                                                 |
 
 ### 命令详细说明
 

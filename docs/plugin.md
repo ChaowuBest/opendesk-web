@@ -50,8 +50,8 @@ OpenDesk 的插件系统采用与 OpenClaw 兼容的设计，支持通过 npm �
 
 | 文件路径                                                                                      | 职责                       |
 | --------------------------------------------------------------------------------------------- | -------------------------- |
-| [`src/main/aikernel/plugins/manager.ts`](../src/main/aikernel/plugins/manager.ts)             | 插件安装、卸载、加载管理   |
-| [`src/main/aikernel/plugins/types.ts`](../src/main/aikernel/plugins/types.ts)                 | 插件类型定义               |
+| [`src/main/plugins/manager.ts`](../src/main/plugins/manager.ts)                               | 插件安装、卸载、加载管理   |
+| [`src/main/plugins/types.ts`](../src/main/plugins/types.ts)                                   | 插件类型定义               |
 | [`src/main/applications/channelmgr/app.ts`](../src/main/applications/channelmgr/app.ts)       | 消息插件应用，管理生命周期 |
 | [`src/main/applications/channelmgr/router.ts`](../src/main/applications/channelmgr/router.ts) | 消息路由，对接 AI Agent    |
 | [`src/main/cli.ts`](../src/main/cli.ts)                                                       | CLI 命令入口               |
@@ -104,7 +104,7 @@ OpenDesk 的插件系统采用与 OpenClaw 兼容的设计，支持通过 npm �
 **关键代码：**
 
 ```typescript
-// src/main/aikernel/plugins/manager.ts
+// src/main/plugins/manager.ts
 export async function installPlugin(npmSpec: string): Promise<{ success: boolean; id?: string; error?: string }> {
     const extensionsDir = getExtensionsDir();
     ensureExtensionPackageJson();

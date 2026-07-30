@@ -14,8 +14,17 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
+import {
+    buildSidebarTaskGroups,
+    buildSidebarSearchResults,
+    getSidebarRunningTasks,
+    isSidebarTaskVisible,
+    normalizeWorkspace
+} from '../sidebarTaskGroups.js';
+import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
 
 const TASK_PAGE_SIZE = 30;
+const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
 
 class SideBar extends HTMLElement {
     static get observedAttributes() {
@@ -31,12 +40,6 @@ class SideBar extends HTMLElement {
          */
         this.currentTaskId = null;
         this.taskList = [];
-        /** 当前已显示的根任务数量（子任务不计入） */
-        this._displayedRootCount = 0;
-        /** 是否正在加载更多 */
-        this._loadingMore = false;
-        /** 完整渲染列表的缓存 */
-        this._fullRenderList = [];
         this._searchQuery = '';
         /** 正在等待用户确认的任务 ID 集合 */
         this._waitingTaskIds = new Set();
@@ -51,6 +54,13 @@ class SideBar extends HTMLElement {
         this._experimentalFeature = false;
         this._t = createRendererTranslator();
         this._collapsed = false;
+        this._taskView = localStorage.getItem(TASK_VIEW_STORAGE_KEY) === 'workspace' ? 'workspace' : 'time';
+        this._favoritesView = false;
+        this._openTaskGroupId = null;
+        this._groupDisplayLimits = new Map();
+        this._groupScrollObservers = [];
+        this._loadingTaskGroups = new Set();
+        this._runningZoneClearTimer = null;
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -171,6 +181,11 @@ class SideBar extends HTMLElement {
         if (this._appPopoverBlurHandler) {
             window.removeEventListener('blur', this._appPopoverBlurHandler);
             this._appPopoverBlurHandler = null;
+        }
+        this._disconnectGroupScrollObservers();
+        if (this._runningZoneClearTimer !== null) {
+            clearTimeout(this._runningZoneClearTimer);
+            this._runningZoneClearTimer = null;
         }
     }
 
@@ -358,11 +373,11 @@ class SideBar extends HTMLElement {
         this.innerHTML = `
         <!-- 完整侧边栏 -->
         <div class="sb-full-wrapper h-full flex flex-col">
-            <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
-                <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
-                <div class="flex flex-col items-start flex-1 min-w-0">
-                    <span id="sidebar-banner" class="font-bold text-lg" style="color: var(--od-text);">OpenDesk</span>
-                    <p class="text-xs mt-0.5 text-gray-500 whitespace-nowrap">一站式智慧办公空间</p>
+            <header class="sb-header flex flex-row items-center flex-shrink-0">
+                <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="sb-header-logo"/>
+                <div class="sb-header-title flex flex-col items-start flex-1 min-w-0">
+                    <span id="sidebar-banner" class="font-bold" style="color: var(--od-text);">OpenDesk</span>
+                    <p data-sidebar-subtitle class="whitespace-nowrap">${this._t('renderer.sidebar.tagline')}</p>
                 </div>
                 <button
                     id="collapse-sidebar-btn"
@@ -380,16 +395,16 @@ class SideBar extends HTMLElement {
             <!-- Search -->
             <div class="sb-search-v2">
                 <i class="fa-solid fa-magnifying-glass sb-search-v2-icon"></i>
-                <input type="text" id="task-search-input" placeholder="搜索..." class="sb-search-v2-input" />
-                <button id="task-search-clear" class="sb-search-v2-clear" style="display:none;">
+                <input type="text" id="task-search-input" placeholder="${this._t('renderer.sidebar.search')}" class="sb-search-v2-input" />
+                <button id="task-search-clear" class="sb-search-v2-clear" style="display:none;" title="${this._t('renderer.sidebar.clearSearch')}" aria-label="${this._t('renderer.sidebar.clearSearch')}">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
 
-            <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0" style="margin: 4px 0; position: relative;">
+            <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0">
                 <button
                     id="create-task-btn"
-                    class="sb-nav-btn"
+                    class="sb-nav-btn sb-nav-btn-primary"
                     title="${this._t('renderer.sidebar.newTask')}"
                 >
                     <i class="fa-solid fa-house" style="font-size: 12px;"></i>
@@ -413,10 +428,10 @@ class SideBar extends HTMLElement {
                 </button>
             </div>
 
-            <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
+            <div id="task-list-container" class="sb-task-container">
             </div>
 
-            <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center py-3">
+            <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center pt-2 pb-6">
             </div>
         </div>
 
@@ -579,6 +594,20 @@ class SideBar extends HTMLElement {
             collapseButton.setAttribute('title', label);
             collapseButton.setAttribute('aria-label', label);
         }
+        const subtitle = this.querySelector('[data-sidebar-subtitle]');
+        if (subtitle) {
+            subtitle.textContent = this._t('renderer.sidebar.tagline');
+        }
+        const searchInput = this.querySelector('#task-search-input');
+        if (searchInput) {
+            searchInput.setAttribute('placeholder', this._t('renderer.sidebar.search'));
+        }
+        const searchClear = this.querySelector('#task-search-clear');
+        if (searchClear) {
+            const label = this._t('renderer.sidebar.clearSearch');
+            searchClear.setAttribute('title', label);
+            searchClear.setAttribute('aria-label', label);
+        }
         const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
         if (toolbar?.setButtons) {
             toolbar.setButtons(this._getBottomToolbarButtons());
@@ -669,122 +698,19 @@ class SideBar extends HTMLElement {
 
     _getFilteredTaskList() {
         const list = this.taskList.filter((task) => this._isTaskVisible(task));
-        // 搜索时显示全部（包括收藏的），否则从主列表中过滤掉已收藏的任务
         if (this._searchQuery) {
             const query = this._searchQuery.toLowerCase();
             return list.filter((task) => {
                 const name = (task.task_name || '').toLowerCase();
-                return name.includes(query);
+                const workspace = (task.workspace || '').toLowerCase();
+                return name.includes(query) || workspace.includes(query);
             });
         }
-        return list.filter((task) => !this._favoritedTaskIds.has(task.task_id));
+        return list;
     }
 
     _isTaskVisible(task) {
-        return this._developerMode || task?.internal !== true;
-    }
-
-    buildTaskRenderList() {
-        const list = this._getFilteredTaskList();
-        const childrenByParent = new Map();
-        const rootTasks = [];
-
-        for (const task of list) {
-            if (task.parent_id) {
-                if (!childrenByParent.has(task.parent_id)) {
-                    childrenByParent.set(task.parent_id, []);
-                }
-                childrenByParent.get(task.parent_id).push(task);
-            } else {
-                rootTasks.push(task);
-            }
-        }
-
-        const renderList = [];
-        const visited = new Set();
-        const appendTask = (task, depth) => {
-            if (!task || visited.has(task.task_id)) return;
-            visited.add(task.task_id);
-            renderList.push({ task, depth });
-            const children = childrenByParent.get(task.task_id) || [];
-            for (const child of [...children].reverse()) {
-                appendTask(child, depth + 1);
-            }
-        };
-
-        for (const rootTask of [...rootTasks].reverse()) {
-            appendTask(rootTask, 0);
-        }
-
-        for (const task of [...list].reverse()) {
-            if (!visited.has(task.task_id)) {
-                appendTask(task, 0);
-            }
-        }
-
-        return renderList;
-    }
-
-    _buildTaskItemHtml(item) {
-        const task = item.task;
-        const depth = item.depth;
-        const isCurrentTask = task.task_id === this.currentTaskId;
-        const isSubTask = depth > 0;
-
-        if (isSubTask) {
-            return this._buildSubTaskItemHtml(task, isCurrentTask);
-        }
-
-        const taskStyle = isCurrentTask
-            ? 'bg-[#C94C40] text-white font-semibold'
-            : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
-        const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
-
-        const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
-        const internalTag = SideBar.buildInternalTag(task, isCurrentTask, this._t);
-        const goalTerminalTag = SideBar.buildGoalTerminalTag(task, isCurrentTask, this._t);
-        const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
-        const browserIcon = this._browserActiveTaskIds.has(task.task_id)
-            ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
-            : '';
-        return `
-        <div
-            class="task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}"
-            data-task_id="${task.task_id}"
-            data-parent_id=""
-            data-depth="0"
-        >
-            <div class="flex items-center min-w-0 gap-2">
-                <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
-                ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
-                ${waitingTag}
-                ${goalTerminalTag}
-                ${internalTag}
-                ${channelTag}
-                ${browserIcon}
-                <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
-            </div>
-        </div>`;
-    }
-
-    _buildSubTaskItemHtml(task, isCurrentTask) {
-        const nameColor = isCurrentTask ? 'text-[#C94C40] font-medium' : 'text-[#64748b]';
-        const statusMeta = SideBar.getSubTaskStatusMeta(task);
-
-        return `
-        <div
-            class="task-item cursor-pointer flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#f8fafc] transition-colors duration-100"
-            data-task_id="${task.task_id}"
-            data-parent_id="${task.parent_id || ''}"
-            data-depth="1"
-            data-subtask-status="${statusMeta.key}"
-            title="${statusMeta.label}"
-        >
-            <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
-            <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
-            ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
-            <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
-        </div>`;
+        return isSidebarTaskVisible(task);
     }
 
     static getSubTaskStatusMeta(task) {
@@ -810,53 +736,11 @@ class SideBar extends HTMLElement {
     }
 
     _refreshWaitingTags() {
-        const container = this.querySelector('#task-list-container');
-        if (!container) return;
-        container.querySelectorAll('.task-item[data-task_id]').forEach((el) => {
-            const taskId = el.dataset.task_id;
-            const existing = el.querySelector('.waiting-tag');
-            if (this._waitingTaskIds.has(taskId)) {
-                if (!existing) {
-                    const tag = document.createElement('span');
-                    tag.className =
-                        'waiting-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap bg-orange-100 text-orange-600 border border-orange-200 flex-shrink-0';
-                    tag.textContent = '等待确认';
-                    const flexRow = el.querySelector('.flex');
-                    const deleteBtn = flexRow?.querySelector('.delete-task-btn');
-                    if (deleteBtn) {
-                        flexRow.insertBefore(tag, deleteBtn);
-                    } else if (flexRow) {
-                        flexRow.appendChild(tag);
-                    }
-                }
-            } else if (existing) {
-                existing.remove();
-            }
-        });
+        this.reloadTaskList();
     }
 
     _refreshBrowserIcons() {
-        const container = this.querySelector('#task-list-container');
-        if (!container) return;
-        container.querySelectorAll('.task-item[data-task_id]').forEach((el) => {
-            const taskId = el.dataset.task_id;
-            const existing = el.querySelector('.sidebar-browser-icon');
-            if (this._browserActiveTaskIds.has(taskId)) {
-                if (!existing) {
-                    const icon = document.createElement('i');
-                    icon.className = 'fas fa-globe sidebar-browser-icon';
-                    const flexRow = el.querySelector('.flex');
-                    const deleteBtn = flexRow?.querySelector('.delete-task-btn');
-                    if (deleteBtn) {
-                        flexRow.insertBefore(icon, deleteBtn);
-                    } else if (flexRow) {
-                        flexRow.appendChild(icon);
-                    }
-                }
-            } else if (existing) {
-                existing.remove();
-            }
-        });
+        this.reloadTaskList();
     }
 
     static buildWaitingTag(taskId, waitingSet, isCurrentTask) {
@@ -897,13 +781,6 @@ class SideBar extends HTMLElement {
         return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
     }
 
-    static buildInternalTag(task, isCurrentTask, t) {
-        if (!task.internal) return '';
-        const label = t ? t('renderer.task.internal') : '内部';
-        const cls = isCurrentTask ? 'bg-white/25 text-white' : 'bg-[#eef2ff] text-[#4f46e5]';
-        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}">${label}</span>`;
-    }
-
     static buildGoalTerminalTag(task, isCurrentTask, t) {
         if (task.goal?.status !== 'blocked') return '';
         const label = t('goal.label.status.blocked');
@@ -911,202 +788,24 @@ class SideBar extends HTMLElement {
         return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
     }
 
-    /**
-     * 获取截止到第 rootLimit 个根任务（含其所有子任务）的渲染列表
-     */
-    _sliceRenderList(renderList, rootLimit) {
-        const result = [];
-        let rootCount = 0;
-        for (const item of renderList) {
-            if (item.depth === 0) {
-                rootCount++;
-                if (rootCount > rootLimit) break;
-            }
-            result.push(item);
-        }
-        return result;
-    }
-
-    _countRootTasks(renderList) {
-        let count = 0;
-        for (const item of renderList) {
-            if (item.depth === 0) count++;
-        }
-        return count;
-    }
-
-    _loadMoreTasks() {
-        if (this._loadingMore) return;
-        const fullRenderList = this._fullRenderList;
-        const totalRootTasks = this._countRootTasks(fullRenderList);
-        if (this._displayedRootCount >= totalRootTasks) return;
-
-        this._loadingMore = true;
-        const taskListContainer = this.querySelector('#task-list-container');
-        const sentinel = this.querySelector('#task-list-sentinel');
-
-        const loadingEl = document.createElement('div');
-        loadingEl.id = 'task-list-loading';
-        loadingEl.className = 'flex items-center justify-center py-3';
-        loadingEl.innerHTML = `
-            <div class="flex items-center gap-2 text-gray-400 text-xs">
-                <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
-                <span>加载更多任务...</span>
-            </div>
-        `;
-        if (sentinel) {
-            taskListContainer.insertBefore(loadingEl, sentinel);
-        } else {
-            taskListContainer.appendChild(loadingEl);
-        }
-
-        setTimeout(() => {
-            const nextLimit = this._displayedRootCount + TASK_PAGE_SIZE;
-            const slicedBefore = this._sliceRenderList(fullRenderList, this._displayedRootCount);
-            const slicedAfter = this._sliceRenderList(fullRenderList, nextLimit);
-            const newItems = slicedAfter.slice(slicedBefore.length);
-
-            const loadingIndicator = this.querySelector('#task-list-loading');
-            if (loadingIndicator) loadingIndicator.remove();
-
-            const htmlParts = [];
-            let k = 0;
-            while (k < newItems.length) {
-                const item = newItems[k];
-                if (item.depth === 0) {
-                    const parentTask = item.task;
-                    const groupChildren = [];
-                    let m = k + 1;
-                    while (m < newItems.length && newItems[m].depth > 0) {
-                        groupChildren.push(newItems[m]);
-                        m++;
-                    }
-                    if (groupChildren.length > 0) {
-                        htmlParts.push(this._buildTaskCardWithChildren(parentTask, groupChildren));
-                    } else {
-                        htmlParts.push(this._buildTaskItemHtml(item));
-                    }
-                    k = m;
-                } else {
-                    htmlParts.push(this._buildTaskItemHtml(item));
-                    k++;
-                }
-            }
-
-            const fragment = document.createDocumentFragment();
-            for (const html of htmlParts) {
-                const wrapper = document.createElement('div');
-                wrapper.innerHTML = html;
-                const el = wrapper.firstElementChild;
-                el.style.opacity = '0';
-                el.style.transform = 'translateY(8px)';
-                el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-                fragment.appendChild(el);
-            }
-
-            const currentSentinel = this.querySelector('#task-list-sentinel');
-            if (currentSentinel?.parentElement === taskListContainer) {
-                taskListContainer.insertBefore(fragment, currentSentinel);
-            } else {
-                taskListContainer.appendChild(fragment);
-            }
-
-            requestAnimationFrame(() => {
-                taskListContainer.querySelectorAll('[style*="opacity: 0"], [style*="opacity:0"]').forEach((el) => {
-                    el.style.opacity = '1';
-                    el.style.transform = 'translateY(0)';
-                });
-            });
-
-            this._displayedRootCount = nextLimit;
-            this._loadingMore = false;
-
-            this._bindTaskItemEvents(taskListContainer);
-        }, 400);
-    }
-
     _updateTaskHighlight() {
         const container = this.querySelector('#task-list-container');
         if (!container) return;
 
-        container.querySelectorAll('.task-item[data-depth="1"]').forEach((item) => {
-            const taskId = item.dataset.task_id;
-            const isCurrentTask = taskId === this.currentTaskId;
-            const nameEl = item.querySelector('p');
-            if (nameEl) {
-                nameEl.classList.toggle('text-[#C94C40]', isCurrentTask);
-                nameEl.classList.toggle('font-medium', isCurrentTask);
-                nameEl.classList.toggle('text-[#64748b]', !isCurrentTask);
-            }
+        container.querySelectorAll('.sb-task-row, .sb-running-subtask-row').forEach((item) => {
+            item.classList.toggle('is-current', item.dataset.task_id === this.currentTaskId);
         });
-
-        container.querySelectorAll(':scope > .task-item[data-depth="0"]').forEach((item) => {
-            const taskId = item.dataset.task_id;
-            const isCurrentTask = taskId === this.currentTaskId;
-            item.classList.remove(
-                'bg-[#C94C40]',
-                'text-white',
-                'font-semibold',
-                'bg-white',
-                'text-[#1f2937]',
-                'hover:bg-[#f9fafb]'
-            );
-            if (isCurrentTask) {
-                item.classList.add('bg-[#C94C40]', 'text-white', 'font-semibold');
-            } else {
-                item.classList.add('bg-white', 'text-[#1f2937]', 'hover:bg-[#f9fafb]');
-            }
-
-            // 同步更新 channel-tag 样式
-            const channelTag = item.querySelector('.channel-tag');
-            if (channelTag) {
-                channelTag.classList.remove('bg-white/25', 'text-white', 'bg-[#f0f0f0]', 'text-[#888]');
-                if (isCurrentTask) {
-                    channelTag.removeAttribute('style');
-                    channelTag.classList.add('bg-white/25', 'text-white');
-                } else {
-                    const task = this.taskList?.find((t) => t.task_id === taskId);
-                    const channelId = task?.origin?.channel || '';
-                    const meta = SideBar.CHANNEL_META[channelId];
-                    if (meta?.color) {
-                        channelTag.setAttribute('style', `background:${meta.color};color:#fff`);
-                    } else {
-                        channelTag.removeAttribute('style');
-                        channelTag.classList.add('bg-[#f0f0f0]', 'text-[#888]');
-                    }
-                }
-            }
+        container.querySelectorAll('.sb-running-card').forEach((card) => {
+            const taskId = card.querySelector('.sb-running-header')?.dataset.task_id;
+            card.classList.toggle('is-current', taskId === this.currentTaskId);
         });
-
-        container.querySelectorAll('.task-card-group').forEach((group) => {
-            const parentId = group.dataset.parentId;
-            const isCurrentParent = parentId === this.currentTaskId;
-            const headerEl = group.querySelector('.task-item[data-depth="0"]');
-            if (headerEl) {
-                headerEl.classList.toggle('bg-[#C94C40]', isCurrentParent);
-                const nameEl = headerEl.querySelector('p');
-                if (nameEl) {
-                    nameEl.classList.toggle('text-white', isCurrentParent);
-                    nameEl.classList.toggle('font-semibold', isCurrentParent);
-                    nameEl.classList.toggle('text-[#1f2937]', !isCurrentParent);
-                }
-                const delBtn = headerEl.querySelector('.delete-task-btn');
-                if (delBtn) {
-                    delBtn.classList.toggle('text-white/50', isCurrentParent);
-                    delBtn.classList.toggle('text-[#cbd5e1]', !isCurrentParent);
-                }
-            }
-        });
-
-        this._renderFavoritesCard();
     }
 
     _dismissContextMenu() {
         const existing = this.querySelector('#task-context-menu');
         if (existing) existing.remove();
+        const wsMenu = this.querySelector('#workspace-context-menu');
+        if (wsMenu) wsMenu.remove();
     }
 
     _dismissAppContextMenu() {
@@ -1439,69 +1138,6 @@ class SideBar extends HTMLElement {
         }
         this._saveFavorites();
         this.reloadTaskList();
-        this._renderFavoritesCard();
-    }
-
-    _renderFavoritesCard() {
-        const existing = this.querySelector('#favorites-card');
-        if (existing) existing.remove();
-
-        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id) && this._isTaskVisible(t));
-        if (favTasks.length === 0) return;
-
-        const card = document.createElement('div');
-        card.id = 'favorites-card';
-        card.className = 'flex-shrink-0 w-full pr-2 mt-4';
-
-        const maxVisible = 5;
-        const itemHeight = 38;
-        const maxHeight = maxVisible * itemHeight;
-
-        let itemsHtml = '';
-        for (const task of favTasks) {
-            const isCurrentTask = task.task_id === this.currentTaskId;
-            const taskStyle = isCurrentTask
-                ? 'bg-[#C94C40] text-white font-semibold'
-                : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
-            const goalTerminalTag = SideBar.buildGoalTerminalTag(task, isCurrentTask, this._t);
-            itemsHtml += `
-            <div class="fav-task-item task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}" data-task_id="${task.task_id}">
-                <div class="flex items-center min-w-0 gap-2">
-                    <i class="fa-solid fa-star text-[10px] ${isCurrentTask ? 'text-white/70' : 'text-amber-400'} shrink-0"></i>
-                    <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
-                    ${goalTerminalTag}
-                    ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
-                </div>
-            </div>`;
-        }
-
-        card.innerHTML = `
-        <div class="overflow-hidden">
-            <div class="fav-list overflow-y-auto" style="max-height:${maxHeight}px;">
-                ${itemsHtml}
-            </div>
-        </div>`;
-
-        const toolbar = this.querySelector('#sidebar-bottom-toolbar');
-        if (toolbar) {
-            toolbar.parentNode.insertBefore(card, toolbar);
-        }
-
-        card.querySelectorAll('.fav-task-item').forEach((item) => {
-            item.addEventListener('click', (e) => {
-                const tid = item.dataset.task_id;
-                window.globalControlAPI.openTask(tid);
-                this.currentTaskId = tid;
-                this._updateTaskHighlight();
-                this._renderFavoritesCard();
-            });
-            item.addEventListener('contextmenu', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const tid = event.currentTarget.dataset.task_id;
-                this._showContextMenu(event.clientX, event.clientY, tid);
-            });
-        });
     }
 
     _showContextMenu(x, y, taskId) {
@@ -1532,14 +1168,27 @@ class SideBar extends HTMLElement {
             {
                 id: 'favorite',
                 icon: isFavorited ? 'fa-solid fa-star' : 'fa-regular fa-star',
-                label: isFavorited ? '取消收藏' : '收藏任务',
+                label: isFavorited ? this._t('renderer.sidebar.unfavorite') : this._t('renderer.sidebar.favorite'),
                 favoriteHighlight: !isFavorited
             },
-            { id: 'fork', icon: 'fa-solid fa-code-fork', label: '复制并创建任务' },
-            { id: 'rename', icon: 'fa-solid fa-pen', label: '重命名' },
-            { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
-            { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
+            { id: 'fork', icon: 'fa-solid fa-code-fork', label: this._t('renderer.sidebar.forkTask') },
+            { id: 'rename', icon: 'fa-solid fa-pen', label: this._t('renderer.sidebar.rename') },
+            { id: 'delete', icon: 'fa-solid fa-trash-can', label: this._t('renderer.sidebar.deleteTask'), danger: true }
         ];
+        if (this._taskView === 'workspace') {
+            items.push({
+                id: 'delete-workspace',
+                icon: 'fa-solid fa-folder-tree',
+                label: this._t('renderer.sidebar.deleteWorkspaceTasks'),
+                danger: true
+            });
+        }
+        items.push({
+            id: 'delete-all',
+            icon: 'fa-solid fa-trash',
+            label: this._t('renderer.sidebar.deleteAllTasks'),
+            danger: true
+        });
         if (this._developerMode) {
             items.splice(3, 0, {
                 id: 'developer-menu',
@@ -1645,10 +1294,10 @@ class SideBar extends HTMLElement {
                 icon: 'fa-trash-can',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '删除任务',
-                message: '确定要删除这个任务吗？<b>删除后无法恢复。</b>',
-                confirmText: '删除',
-                cancelText: '取消',
+                title: this._t('renderer.sidebar.deleteTask'),
+                message: this._t('renderer.sidebar.deleteTaskConfirm'),
+                confirmText: this._t('common.delete'),
+                cancelText: this._t('common.cancel'),
                 danger: true
             });
             if (!confirmed) return;
@@ -1665,10 +1314,10 @@ class SideBar extends HTMLElement {
                 icon: 'fa-trash',
                 iconBg: '#FEF2F2',
                 iconColor: '#DC2626',
-                title: '删除全部任务',
-                message: '确定要删除所有任务吗？<b>删除后无法恢复。</b>',
-                confirmText: '全部删除',
-                cancelText: '取消',
+                title: this._t('renderer.sidebar.deleteAllTasks'),
+                message: this._t('renderer.sidebar.deleteAllTasksConfirm'),
+                confirmText: this._t('renderer.sidebar.confirmDeleteAll'),
+                cancelText: this._t('common.cancel'),
                 danger: true
             });
             if (!confirmed) return;
@@ -1677,6 +1326,12 @@ class SideBar extends HTMLElement {
             this.currentTaskId = null;
             await window.taskManagerAPI.clearAllTasks();
             this.reloadTaskList();
+        });
+        menu.querySelector('[data-action="delete-workspace"]')?.addEventListener('click', async () => {
+            this._dismissContextMenu();
+            const task = this.taskList.find((t) => t.task_id === taskId);
+            const workspacePath = task?.workspace || '';
+            await this._deleteTasksInWorkspace(workspacePath);
         });
         menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
             this._dismissContextMenu();
@@ -1725,6 +1380,163 @@ class SideBar extends HTMLElement {
         setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
     }
 
+    _showWorkspaceContextMenu(x, y, workspacePath) {
+        this._dismissContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'workspace-context-menu';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'od-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            left: `${x}px`,
+            top: `${y}px`
+        });
+
+        const items = [
+            { id: 'create-task', icon: 'fa-solid fa-plus', label: this._t('renderer.sidebar.createTaskHere') }
+        ];
+        if (workspacePath) {
+            items.push({
+                id: 'open-workspace',
+                icon: 'fa-solid fa-folder-open',
+                label: this._t('renderer.sidebar.openWorkspace')
+            });
+        }
+        items.push({
+            id: 'delete-workspace-tasks',
+            icon: 'fa-solid fa-trash',
+            label: this._t('renderer.sidebar.deleteWorkspaceAllTasks'),
+            danger: true
+        });
+
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+
+        menu.innerHTML = items
+            .map((item, index) => {
+                const needSep = index > 0 && item.id === 'delete-workspace-tasks';
+                const sep = needSep
+                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
+                    : '';
+                const color = item.danger ? '#dc2626' : '#1f2937';
+                const iconColor = item.danger ? '#dc2626' : '#6b7280';
+                return (
+                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" style="${btnStyle} color:${color};">` +
+                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                );
+            })
+            .join('');
+
+        this.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            }
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            }
+        });
+
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            const isDanger = btn.dataset.danger === '1';
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
+                btn.style.color = isDanger ? '#b91c1c' : 'white';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = isDanger ? '#b91c1c' : 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = isDanger ? '#dc2626' : '#6b7280';
+            });
+        });
+
+        menu.querySelector('[data-action="create-task"]').addEventListener('click', async () => {
+            this._dismissContextMenu();
+            try {
+                const taskId = await window.taskManagerAPI.createTask();
+                if (workspacePath) {
+                    await window.taskManagerAPI.updateTaskWorkspace(taskId, workspacePath);
+                }
+                window.globalControlAPI.openTask(taskId);
+                this.currentTaskId = taskId;
+                this.reloadTaskList();
+            } catch (error) {
+                console.error('Failed to create task in workspace:', error);
+            }
+        });
+
+        menu.querySelector('[data-action="open-workspace"]')?.addEventListener('click', () => {
+            this._dismissContextMenu();
+            if (workspacePath) {
+                window.fsAPI?.openPath?.(workspacePath)?.catch?.(() => {});
+            }
+        });
+
+        menu.querySelector('[data-action="delete-workspace-tasks"]').addEventListener('click', async () => {
+            this._dismissContextMenu();
+            await this._deleteTasksInWorkspace(workspacePath);
+        });
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissContextMenu();
+                document.removeEventListener('click', dismissHandler, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
+    }
+
+    async _deleteTasksInWorkspace(workspacePath) {
+        const targetWs = normalizeWorkspace(workspacePath);
+        const tasksToDelete = this.taskList.filter((task) => {
+            if (task.internal) return false;
+            if (task.parent_id) return false;
+            if (this._favoritedTaskIds.has(task.task_id)) return false;
+            return normalizeWorkspace(task.workspace) === targetWs;
+        });
+        if (tasksToDelete.length === 0) return;
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this._t('renderer.sidebar.deleteWorkspaceAllTasks'),
+            message: this._t('renderer.sidebar.deleteWorkspaceTasksConfirm', { count: tasksToDelete.length }),
+            confirmText: this._t('common.delete'),
+            cancelText: this._t('common.cancel'),
+            danger: true
+        });
+        if (!confirmed) return;
+        let needOpenHome = false;
+        for (const task of tasksToDelete) {
+            window.globalControlAPI.removeTaskViewCache(task.task_id);
+            if (this.currentTaskId === task.task_id) {
+                needOpenHome = true;
+            }
+            await window.taskManagerAPI.removeTask(task.task_id);
+        }
+        if (needOpenHome) {
+            window.globalControlAPI.openTask(null);
+            this.currentTaskId = null;
+        }
+        this.reloadTaskList();
+    }
+
     _bindTaskItemEvents(container) {
         container.querySelectorAll('.task-item').forEach((item) => {
             if (item._bound) return;
@@ -1753,10 +1565,10 @@ class SideBar extends HTMLElement {
                     icon: 'fa-trash-can',
                     iconBg: '#FEF2F2',
                     iconColor: '#DC2626',
-                    title: '删除任务',
-                    message: '确定要删除这个任务吗？<b>删除后无法恢复。</b>',
-                    confirmText: '删除',
-                    cancelText: '取消',
+                    title: this._t('renderer.sidebar.deleteTask'),
+                    message: this._t('renderer.sidebar.deleteTaskConfirm'),
+                    confirmText: this._t('common.delete'),
+                    cancelText: this._t('common.cancel'),
                     danger: true
                 });
                 if (!confirmed) return;
@@ -1770,245 +1582,571 @@ class SideBar extends HTMLElement {
         });
     }
 
-    static SUBTASK_GROUP_MAX_HEIGHT = 340;
+    static escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
 
-    _buildTaskCardWithChildren(parentTask, children) {
-        const total = children.length;
-        const statusCounts = children.reduce(
-            (acc, c) => {
-                const status = SideBar.getSubTaskStatusMeta(c.task);
-                acc[status.key] = (acc[status.key] || 0) + 1;
-                if (status.terminal) acc.done++;
-                return acc;
-            },
-            { done: 0, running: 0, waiting: 0, success: 0, fail: 0, ask: 0, stopped: 0, pending: 0 }
-        );
-        const done = statusCounts.done;
-        const running = statusCounts.running;
-        const failed = statusCounts.fail + statusCounts.ask;
-        const success = statusCounts.success;
-        const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-        const isCurrentTask = parentTask.task_id === this.currentTaskId;
-
-        let childrenHtml = '';
-        for (const item of children) {
-            childrenHtml += this._buildSubTaskItemHtml(item.task, item.task.task_id === this.currentTaskId);
+    _taskGroupLabel(group) {
+        if (group.id.startsWith('workspace:')) {
+            return group.label || this._t('renderer.sidebar.defaultWorkspace');
         }
+        const labels = {
+            today: 'renderer.sidebar.today',
+            'this-week': 'renderer.sidebar.thisWeek',
+            earlier: 'renderer.sidebar.earlier',
+            'other-workspaces': 'renderer.sidebar.otherWorkspaces',
+            automatic: 'renderer.sidebar.automaticTasks'
+        };
+        return this._t(labels[group.id]);
+    }
 
-        const headerBg = isCurrentTask ? 'bg-[#C94C40]' : '';
-        const titleColor = isCurrentTask ? 'text-white font-semibold' : 'text-[#1f2937]';
-        const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
-        const internalTag = SideBar.buildInternalTag(parentTask, isCurrentTask, this._t);
-        const goalTerminalTag = SideBar.buildGoalTerminalTag(parentTask, isCurrentTask, this._t);
-
-        let statusSummary;
-        let progressColor = 'bg-[#94a3b8]';
-        if (running > 0) {
-            progressColor = 'bg-[#64748b]';
-            statusSummary = `<span class="flex items-center gap-1 text-[#64748b]"><span class="w-1 h-1 rounded-full bg-[#64748b] animate-pulse"></span>${running} 运行中</span>`;
-        } else if (failed > 0) {
-            progressColor = 'bg-[#f87171]';
-            const failText = statusCounts.ask > 0 ? `${failed} 异常` : `${failed} 失败`;
-            statusSummary = `<span class="text-[#b91c1c] font-medium">${done}/${total} 完成 · ${failText}</span>`;
-        } else if (total > 0 && success === total) {
-            progressColor = 'bg-[#4ade80]';
-            statusSummary = `<span class="text-[#166534] font-medium">全部完成</span>`;
-        } else if (total > 0 && done === total) {
-            statusSummary = `<span class="text-[#64748b] font-medium">全部结束</span>`;
-        } else {
-            statusSummary = `<span>${done}/${total} 完成</span>`;
+    _formatTaskTime(task) {
+        const value = task.updated_at || task.finished_at || task.created_at;
+        const date = value ? new Date(value) : null;
+        if (!date || Number.isNaN(date.getTime())) return '';
+        const now = new Date();
+        const sameDay =
+            date.getFullYear() === now.getFullYear() &&
+            date.getMonth() === now.getMonth() &&
+            date.getDate() === now.getDate();
+        if (sameDay) {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
 
-        const shouldOpen = running > 0 || (isCurrentTask && parentTask.task_status === 'running');
-
+    _buildSidebarTaskRow(item) {
+        const task = item.task;
+        const isCurrentTask = task.task_id === this.currentTaskId;
+        const isRunning = task.task_status === 'running';
+        const failed = task.task_status === 'failed' || ['fail', 'ask'].includes(task.completion_status);
+        const taskName = SideBar.escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
+        const time = SideBar.escapeHtml(this._formatTaskTime(task));
+        const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
+        const browserIcon = this._browserActiveTaskIds.has(task.task_id)
+            ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
+            : '';
+        const favoriteIcon = this._favoritedTaskIds.has(task.task_id)
+            ? '<i class="fa-solid fa-star sb-task-favorite" aria-hidden="true"></i>'
+            : '';
+        const resultIcon = isRunning
+            ? '<span class="sb-running-spinner" aria-hidden="true"></span>'
+            : `<span class="sb-task-result${failed ? ' is-failed' : ''}" aria-hidden="true">${failed ? '×' : '✓'}</span>`;
         return `
-        <div class="task-card-group mb-1.5 rounded-xl bg-white overflow-hidden" data-parent-id="${parentTask.task_id}">
-            <!-- Card Header (parent task title) -->
-            <div class="task-item cursor-pointer flex items-center justify-between px-3 py-2.5 gap-2 rounded-t-xl ${headerBg}" data-task_id="${parentTask.task_id}" data-parent_id="" data-depth="0">
-                <div class="flex items-center flex-1 min-w-0 gap-2">
-                    <p class="text-[13px] truncate leading-tight flex-1 min-w-0 ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
-                    ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
-                    ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
-                    ${goalTerminalTag}
-                    ${internalTag}
-                    ${this._browserActiveTaskIds.has(parentTask.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
-                </div>
-                <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>
-            </div>
-
-            <!-- Collapsible children section -->
-            <details class="subtask-details"${shouldOpen ? ' open' : ''}>
-                <summary class="flex items-center justify-between px-3 py-1.5 cursor-pointer select-none border-t border-[#f1f5f9] hover:bg-[#f8fafc] transition-colors">
-                    <div class="flex items-center gap-2 text-[10px] text-[#94a3b8]">
-                        <svg class="subtask-chevron w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-                        <span>${total} 个子任务</span>
-                    </div>
-                    <div class="flex items-center gap-2 text-[10px] text-[#94a3b8]">
-                        ${statusSummary}
-                        <div class="w-10 h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
-                            <div class="h-full rounded-full ${progressColor} transition-all duration-300" style="width:${percent}%"></div>
-                        </div>
-                    </div>
-                </summary>
-                <div class="subtask-group-scroll overflow-y-auto px-1.5 pb-1.5" style="max-height:${SideBar.SUBTASK_GROUP_MAX_HEIGHT}px;">
-                    ${childrenHtml}
-                </div>
-            </details>
+        <div
+            class="task-item sb-task-row${isCurrentTask ? ' is-current' : ''}"
+            data-task_id="${SideBar.escapeHtml(task.task_id)}"
+            data-parent_id=""
+            data-depth="0"
+        >
+            ${resultIcon}
+            <span class="sb-task-name">${taskName}</span>
+            ${favoriteIcon}
+            ${waitingTag}
+            ${browserIcon}
+            <span class="sb-task-time">${time}</span>
         </div>`;
     }
 
-    reloadTaskList() {
-        const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
-        const taskListContainer = this.querySelector('#task-list-container');
+    _buildRunningTaskCard(item) {
+        const task = item.task;
+        const isCurrentTask = task.task_id === this.currentTaskId;
+        const recentlyCompleted = item.recentlyCompleted === true;
+        const children = item.children;
+        const completed = children.filter((child) => SideBar.getSubTaskStatusMeta(child).terminal).length;
+        const childRows = children.map((child) => this._buildRunningSubtaskRow(child)).join('');
+        const childrenSection =
+            !recentlyCompleted && children.length > 0
+                ? `
+                <details class="sb-running-subtasks"${children.some((child) => child.task_status === 'running') ? ' open' : ''}>
+                    <summary>
+                        <span class="sb-running-chevron" aria-hidden="true">▶</span>
+                        <span>${this._t('renderer.sidebar.subtaskCount', { count: children.length })}</span>
+                        <span class="sb-running-progress-text">${this._t('renderer.sidebar.completedCount', {
+                            completed,
+                            total: children.length
+                        })}</span>
+                        <span class="sb-mini-progress"><i style="width:${children.length ? Math.round((completed / children.length) * 100) : 0}%"></i></span>
+                    </summary>
+                    <div class="sb-running-subtask-list">${childRows}</div>
+                </details>`
+                : '';
+        return `
+        <div class="sb-running-card${isCurrentTask ? ' is-current' : ''}${
+            recentlyCompleted ? ' is-recently-completed' : ''
+        }">
+            <div class="task-item sb-running-header" data-task_id="${SideBar.escapeHtml(task.task_id)}" data-depth="0">
+                ${recentlyCompleted ? '<i class="sb-completed-dot" aria-hidden="true"></i>' : ''}
+                <span class="sb-running-title">${SideBar.escapeHtml(
+                    task.task_name || this._t('renderer.sidebar.unnamedTask')
+                )}</span>
+                ${SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask)}
+                ${this._browserActiveTaskIds.has(task.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
+                ${
+                    recentlyCompleted
+                        ? `<span class="sb-running-completed-status">${this._t(
+                              'renderer.sidebar.justCompleted'
+                          )}</span>`
+                        : `<span class="sb-running-spinner" aria-label="${this._t('renderer.sidebar.running')}"></span>`
+                }
+            </div>
+            ${childrenSection}
+        </div>`;
+    }
 
-        // FLIP animation: record old positions of existing task items before DOM update
-        const oldPositions = new Map();
-        taskListContainer
-            .querySelectorAll('.task-item[data-task_id], .subtask-group-card[data-task_id]')
-            .forEach((el) => {
-                const taskId = el.dataset.task_id;
-                if (taskId) {
-                    oldPositions.set(taskId, el.getBoundingClientRect());
+    _buildRunningSubtaskRow(task) {
+        const status = SideBar.getSubTaskStatusMeta(task);
+        const statusLabels = {
+            running: 'renderer.sidebar.running',
+            waiting: 'renderer.sidebar.waiting'
+        };
+        const statusLabel = statusLabels[status.key] ? this._t(statusLabels[status.key]) : '';
+        return `
+        <div
+            class="task-item sb-running-subtask-row${status.key === 'running' ? ' is-running' : ''}"
+            data-task_id="${SideBar.escapeHtml(task.task_id)}"
+            data-parent_id="${SideBar.escapeHtml(task.parent_id || '')}"
+            data-depth="1"
+            data-subtask-status="${status.key}"
+            title="${SideBar.escapeHtml(status.label)}"
+        >
+            <i class="sb-subtask-dot is-${status.key}" aria-hidden="true"></i>
+            <span class="sb-subtask-name">${SideBar.escapeHtml(
+                task.task_name || this._t('renderer.sidebar.unnamedSubtask')
+            )}</span>
+            ${statusLabel ? `<span class="sb-subtask-status">${statusLabel}</span>` : ''}
+        </div>`;
+    }
+
+    _workspaceGroupSummary(group, index) {
+        const label = SideBar.escapeHtml(this._taskGroupLabel(group));
+        const workspace = group.workspace || '';
+        const normalizedWorkspace = workspace.replace(/\\/g, '/');
+        const pathSeparatorIndex = normalizedWorkspace.lastIndexOf('/');
+        const pathPrefix =
+            pathSeparatorIndex >= 0 ? normalizedWorkspace.slice(0, pathSeparatorIndex + 1) : normalizedWorkspace;
+        const pathTail =
+            pathSeparatorIndex >= 0 ? normalizedWorkspace.slice(pathSeparatorIndex + 1) : normalizedWorkspace;
+        const initial = SideBar.escapeHtml((group.label || this._t('renderer.sidebar.defaultWorkspace')).charAt(0));
+        const iconPalette = [
+            { background: 'rgba(201, 76, 64, 0.12)', color: '#c94c40' },
+            { background: '#eef2ff', color: '#4f46e5' },
+            { background: '#fef3e2', color: '#b45309' },
+            { background: '#e7f7f2', color: '#047857' }
+        ];
+        const iconColor = iconPalette[index % iconPalette.length];
+        return `
+            <span class="sb-workspace-icon" style="background:${iconColor.background};color:${iconColor.color}">${initial}</span>
+            <span class="sb-workspace-info">
+                <span class="sb-workspace-name">${label}</span>
+                <span class="sb-workspace-path" title="${SideBar.escapeHtml(
+                    workspace || this._t('renderer.sidebar.defaultWorkspace')
+                )}">
+                    ${
+                        workspace
+                            ? `<span class="sb-workspace-path-prefix">${SideBar.escapeHtml(
+                                  pathPrefix
+                              )}</span><span class="sb-workspace-path-tail">${SideBar.escapeHtml(pathTail)}</span>`
+                            : SideBar.escapeHtml(this._t('renderer.sidebar.defaultWorkspace'))
+                    }
+                </span>
+            </span>
+            <span class="sb-group-count">${group.items.length}</span>
+            <span class="sb-group-caret" aria-hidden="true">▶</span>`;
+    }
+
+    _buildSearchResultList(items) {
+        const limit = this._groupDisplayLimits.get('search-results') ?? TASK_PAGE_SIZE;
+        const visibleItems = items.slice(0, limit);
+        const taskRows = visibleItems.map((item) => this._buildSidebarTaskRow(item)).join('');
+        const hasMore = visibleItems.length < items.length;
+        return `
+        <div class="sb-task-group is-search" data-group-id="search-results">
+            <div class="sb-task-group-body">
+                ${taskRows}
+                ${
+                    hasMore
+                        ? `<div class="sb-load-more" data-group-id="search-results">
+                               <i aria-hidden="true"></i>
+                               ${this._t('renderer.sidebar.loadMore')}
+                           </div>`
+                        : ''
+                }
+            </div>
+        </div>`;
+    }
+
+    _buildFavoritesList(items) {
+        const limit = this._groupDisplayLimits.get('favorites') ?? TASK_PAGE_SIZE;
+        const visibleItems = items.slice(0, limit);
+        const taskRows = visibleItems.map((item) => this._buildSidebarTaskRow(item)).join('');
+        const hasMore = visibleItems.length < items.length;
+        return `
+        <div class="sb-task-group is-search" data-group-id="favorites">
+            <div class="sb-task-group-body">
+                ${taskRows}
+                ${
+                    hasMore
+                        ? `<div class="sb-load-more" data-group-id="favorites">
+                               <i aria-hidden="true"></i>
+                               ${this._t('renderer.sidebar.loadMore')}
+                           </div>`
+                        : ''
+                }
+            </div>
+        </div>`;
+    }
+
+    _buildTaskGroup(group, index) {
+        const limit = this._groupDisplayLimits.get(group.id) ?? TASK_PAGE_SIZE;
+        const visibleItems = group.items.slice(0, limit);
+        const taskRows = visibleItems.map((item) => this._buildSidebarTaskRow(item)).join('');
+        const hasMore = visibleItems.length < group.items.length;
+        const isWorkspace = group.id.startsWith('workspace:');
+        const summary = isWorkspace
+            ? this._workspaceGroupSummary(group, index)
+            : `${SideBar.escapeHtml(this._taskGroupLabel(group))}
+               <span class="sb-group-count">${group.items.length}</span>
+               <span class="sb-group-caret" aria-hidden="true">▶</span>`;
+        return `
+        <details class="sb-task-group${isWorkspace ? ' is-workspace' : ''}" data-group-id="${SideBar.escapeHtml(
+            group.id
+        )}"${this._openTaskGroupId === group.id ? ' open' : ''}>
+            <summary>${summary}</summary>
+            <div class="sb-task-group-body">
+                ${taskRows}
+                ${
+                    hasMore
+                        ? `<div class="sb-load-more" data-group-id="${SideBar.escapeHtml(group.id)}">
+                               <i aria-hidden="true"></i>
+                               ${this._t('renderer.sidebar.loadMore')}
+                           </div>`
+                        : ''
+                }
+            </div>
+        </details>`;
+    }
+
+    _disconnectGroupScrollObservers() {
+        this._groupScrollObservers.forEach((observer) => observer.disconnect());
+        this._groupScrollObservers = [];
+    }
+
+    _openTaskGroup(details) {
+        if (!details.isConnected) return;
+        details.open = true;
+        details.classList.remove('is-closing');
+        details.classList.add('is-opening');
+        this._openTaskGroupId = details.dataset.groupId;
+        setTimeout(() => details.classList.remove('is-opening'), 180);
+    }
+
+    _closeTaskGroup(details, onClosed) {
+        if (!details.open) {
+            onClosed?.();
+            return;
+        }
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            details.open = false;
+            onClosed?.();
+            return;
+        }
+        details.classList.remove('is-opening');
+        details.classList.add('is-closing');
+        setTimeout(() => {
+            if (!details.isConnected) return;
+            details.open = false;
+            details.classList.remove('is-closing');
+            onClosed?.();
+        }, 160);
+    }
+
+    _loadMoreTaskGroup(groupId, scrollTop, groupScrollTop) {
+        if (this._loadingTaskGroups.has(groupId)) return;
+        this._loadingTaskGroups.add(groupId);
+        this._openTaskGroupId = groupId;
+        this._groupDisplayLimits.set(
+            groupId,
+            (this._groupDisplayLimits.get(groupId) ?? TASK_PAGE_SIZE) + TASK_PAGE_SIZE
+        );
+        this.reloadTaskList();
+
+        const restoreScrollPosition = () => {
+            const group = [...this.querySelectorAll('.sb-task-group')].find((item) => item.dataset.groupId === groupId);
+            const body = group?.querySelector('.sb-task-group-body');
+            if (body) body.scrollTop = scrollTop;
+            const groupsContainer = this.querySelector('.sb-task-groups');
+            if (groupsContainer) groupsContainer.scrollTop = groupScrollTop;
+            this._loadingTaskGroups.delete(groupId);
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(restoreScrollPosition);
+        } else {
+            setTimeout(restoreScrollPosition, 0);
+        }
+    }
+
+    _bindSidebarTaskControls(container) {
+        const viewMenu = container.querySelector('#sidebar-task-view-menu');
+        container.querySelector('[data-favorites-toggle]')?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this._favoritesView = !this._favoritesView;
+            if (!this._favoritesView) {
+                this._groupDisplayLimits.delete('favorites');
+            }
+            this._openTaskGroupId = null;
+            this.reloadTaskList();
+        });
+        container.querySelectorAll('[data-task-view]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const nextView = event.currentTarget.dataset.taskView;
+                if (nextView === this._taskView && !this._favoritesView) {
+                    viewMenu?.removeAttribute('open');
+                    return;
+                }
+                this._taskView = nextView;
+                this._favoritesView = false;
+                this._openTaskGroupId = null;
+                this._groupDisplayLimits.clear();
+                localStorage.setItem(TASK_VIEW_STORAGE_KEY, nextView);
+                this.reloadTaskList();
+            });
+        });
+        container.querySelectorAll('.sb-task-group').forEach((details) => {
+            details.querySelector(':scope > summary')?.addEventListener('click', (event) => {
+                event.preventDefault();
+                if (details.classList.contains('is-closing')) return;
+                if (details.open) {
+                    this._closeTaskGroup(details, () => {
+                        if (this._openTaskGroupId === details.dataset.groupId) {
+                            this._openTaskGroupId = null;
+                        }
+                    });
+                    return;
+                }
+                const currentlyOpen = container.querySelector('.sb-task-group[open]');
+                if (currentlyOpen && currentlyOpen !== details) {
+                    this._closeTaskGroup(currentlyOpen, () => this._openTaskGroup(details));
+                } else {
+                    this._openTaskGroup(details);
                 }
             });
+            // 工作空间分组右键菜单
+            if (details.classList.contains('is-workspace')) {
+                const ws = details.dataset.groupId?.replace(/^workspace:/, '') || '';
+                details.querySelector(':scope > summary')?.addEventListener('contextmenu', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this._showWorkspaceContextMenu(event.clientX, event.clientY, ws);
+                });
+            }
+        });
+        container.querySelectorAll('.sb-load-more').forEach((sentinel) => {
+            const groupId = sentinel.dataset.groupId;
+            const body = sentinel.closest('.sb-task-group-body');
+            if (!groupId || !body) return;
+            const groupsContainer = container.querySelector('.sb-task-groups');
+            const loadMore = () => this._loadMoreTaskGroup(groupId, body.scrollTop, groupsContainer?.scrollTop ?? 0);
+            const Observer = window.IntersectionObserver ?? globalThis.IntersectionObserver;
+            if (typeof Observer === 'function') {
+                const observer = new Observer(
+                    (entries) => {
+                        if (entries.some((entry) => entry.isIntersecting)) loadMore();
+                    },
+                    { root: body, threshold: 0.1 }
+                );
+                observer.observe(sentinel);
+                this._groupScrollObservers.push(observer);
+                return;
+            }
+            body.addEventListener(
+                'scroll',
+                () => {
+                    if (body.scrollHeight - body.scrollTop - body.clientHeight <= 24) loadMore();
+                },
+                { passive: true }
+            );
+        });
+    }
 
-        taskListContainer.innerHTML = '';
+    _updateRunningZone(zone, runningTasks) {
+        const label = zone.querySelector('.sb-section-label');
+        const list = zone.querySelector('.sb-running-list');
+        if (!label || !list) return;
 
-        const fullRenderList = this.buildTaskRenderList();
-        this._fullRenderList = fullRenderList;
-        const totalRootTasks = this._countRootTasks(fullRenderList);
+        if (this._runningZoneClearTimer !== null) {
+            clearTimeout(this._runningZoneClearTimer);
+            this._runningZoneClearTimer = null;
+        }
 
-        const initialSlice = this._sliceRenderList(fullRenderList, TASK_PAGE_SIZE);
-        this._displayedRootCount = Math.min(TASK_PAGE_SIZE, totalRootTasks);
-
-        const htmlParts = [];
-        let i = 0;
-        while (i < initialSlice.length) {
-            const item = initialSlice[i];
-            if (item.depth === 0) {
-                const parentTask = item.task;
-                const groupChildren = [];
-                let j = i + 1;
-                while (j < initialSlice.length && initialSlice[j].depth > 0) {
-                    groupChildren.push(initialSlice[j]);
-                    j++;
-                }
-                if (groupChildren.length > 0) {
-                    htmlParts.push(this._buildTaskCardWithChildren(parentTask, groupChildren));
-                } else {
-                    htmlParts.push(this._buildTaskItemHtml(item));
-                }
-                i = j;
+        if (runningTasks.length === 0) {
+            zone.dataset.hasTasks = 'false';
+            zone.setAttribute('aria-hidden', 'true');
+            const wasEmpty = zone.classList.contains('is-empty');
+            zone.classList.add('is-empty');
+            const clearContent = () => {
+                if (zone.dataset.hasTasks !== 'false') return;
+                label.textContent = '';
+                list.innerHTML = '';
+                this._runningZoneClearTimer = null;
+            };
+            if (wasEmpty) {
+                clearContent();
             } else {
-                htmlParts.push(this._buildTaskItemHtml(item));
-                i++;
+                this._runningZoneClearTimer = setTimeout(clearContent, 220);
+            }
+            return;
+        }
+
+        const wasEmpty = zone.classList.contains('is-empty');
+        zone.dataset.hasTasks = 'true';
+        zone.setAttribute('aria-hidden', 'false');
+        label.textContent = `${this._t('renderer.sidebar.runningTasks')} · ${runningTasks.length}`;
+        list.innerHTML = runningTasks.map((item) => this._buildRunningTaskCard(item)).join('');
+        const showZone = () => {
+            if (zone.dataset.hasTasks === 'true') {
+                zone.classList.remove('is-empty');
+            }
+        };
+        if (wasEmpty && typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(showZone);
+        } else {
+            showZone();
+        }
+    }
+
+    reloadTaskList() {
+        const taskListContainer = this.querySelector('#task-list-container');
+        if (!taskListContainer) return;
+        const scrollState = captureSidebarScrollState(taskListContainer);
+        this._disconnectGroupScrollObservers();
+        const filteredTasks = this._getFilteredTaskList();
+        const runningTasks = getSidebarRunningTasks(filteredTasks);
+        const isSearching = Boolean(this._searchQuery);
+
+        let groups;
+        let searchResults;
+        let favoritesResults;
+        let historyCount;
+
+        if (isSearching) {
+            searchResults = buildSidebarSearchResults(filteredTasks);
+            historyCount = searchResults.length;
+        } else if (this._favoritesView) {
+            this._groupDisplayLimits.delete('search-results');
+            const favoritedTasks = filteredTasks.filter((t) => this._favoritedTaskIds.has(t.task_id));
+            favoritesResults = buildSidebarSearchResults(favoritedTasks);
+            historyCount = favoritesResults.length;
+        } else {
+            this._groupDisplayLimits.delete('search-results');
+            this._groupDisplayLimits.delete('favorites');
+            groups = buildSidebarTaskGroups(filteredTasks, this._taskView);
+            historyCount = groups.reduce((total, group) => total + group.items.length, 0);
+            const availableGroupIds = new Set(groups.map((group) => group.id));
+            if (!this._openTaskGroupId || !availableGroupIds.has(this._openTaskGroupId)) {
+                this._openTaskGroupId = groups.find((group) => group.items.length > 0)?.id ?? groups[0]?.id ?? null;
             }
         }
 
-        if (totalRootTasks > TASK_PAGE_SIZE) {
-            htmlParts.push(`
-            <div id="task-list-sentinel" class="flex items-center justify-center py-2 text-gray-400 text-xs">
-                <span>↓ 滚动加载更多（共 ${totalRootTasks} 个任务）</span>
-            </div>
-            `);
+        const viewIsTime = this._taskView === 'time';
+        if (!taskListContainer.querySelector('.sb-running-zone')) {
+            taskListContainer.innerHTML = `
+                <section class="sb-running-zone is-empty" data-has-tasks="false" aria-hidden="true">
+                    <div class="sb-section-label"></div>
+                    <div class="sb-running-list"></div>
+                </section>
+                <header class="sb-task-list-header"></header>
+                <div class="sb-task-groups"></div>`;
         }
 
-        if (this._getFilteredTaskList().length > 0) {
-            htmlParts.push(`
-            <div id="delete-all-tasks-btn" class="${standardClass} bg-white text-sm text-gray-700 hover:bg-[#C94C40] hover:text-white flex items-center justify-center gap-2">
-                <i class="fa-solid fa-trash"></i>
-                <span>全部删除</span>
-            </div>
-            `);
-        }
+        const runningZone = taskListContainer.querySelector('.sb-running-zone');
+        const listHeader = taskListContainer.querySelector('.sb-task-list-header');
+        const groupsContainer = taskListContainer.querySelector('.sb-task-groups');
+        this._updateRunningZone(runningZone, runningTasks);
 
-        taskListContainer.innerHTML = htmlParts.join('');
-
-        // FLIP animation: animate items that changed position
-        if (oldPositions.size > 0) {
-            taskListContainer
-                .querySelectorAll('.task-item[data-task_id], .subtask-group-card[data-task_id]')
-                .forEach((el) => {
-                    const taskId = el.dataset.task_id;
-                    if (!taskId || !oldPositions.has(taskId)) return;
-                    const oldRect = oldPositions.get(taskId);
-                    const newRect = el.getBoundingClientRect();
-                    const deltaY = oldRect.top - newRect.top;
-                    if (Math.abs(deltaY) < 2) return;
-                    el.style.transform = `translateY(${deltaY}px)`;
-                    el.style.transition = 'none';
-                    requestAnimationFrame(() => {
-                        el.style.transition = 'transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-                        el.style.transform = '';
-                        el.addEventListener(
-                            'transitionend',
-                            () => {
-                                el.style.transition = '';
-                            },
-                            { once: true }
-                        );
-                    });
-                });
+        if (isSearching) {
+            listHeader.innerHTML = `<span>${this._t('renderer.sidebar.searchResults')} · ${historyCount}</span>`;
+            groupsContainer.className = 'sb-task-groups is-search-view';
+            groupsContainer.innerHTML = this._buildSearchResultList(searchResults);
+        } else if (this._favoritesView) {
+            listHeader.innerHTML = `
+                <span>${this._t('renderer.sidebar.favorites')} · ${historyCount}</span>
+                <button class="sb-fav-toggle is-active" data-favorites-toggle aria-label="收藏夹">
+                    <i class="fa-solid fa-star" aria-hidden="true"></i>
+                </button>
+                <details id="sidebar-task-view-menu" class="sb-view-menu">
+                    <summary>
+                        ${this._t(
+                            viewIsTime ? 'renderer.sidebar.viewByTimeShort' : 'renderer.sidebar.viewByWorkspaceShort'
+                        )}
+                        <span class="sb-view-menu-caret" aria-hidden="true">▾</span>
+                    </summary>
+                    <div class="sb-view-menu-popover">
+                        <button class="${viewIsTime ? 'is-current' : ''}" data-task-view="time">
+                            ${this._t('renderer.sidebar.viewByTime')}
+                            ${viewIsTime ? '<i class="fa-solid fa-check"></i>' : ''}
+                        </button>
+                        <button class="${viewIsTime ? '' : 'is-current'}" data-task-view="workspace">
+                            ${this._t('renderer.sidebar.viewByWorkspace')}
+                            ${viewIsTime ? '' : '<i class="fa-solid fa-check"></i>'}
+                        </button>
+                    </div>
+                </details>`;
+            groupsContainer.className = 'sb-task-groups is-search-view';
+            groupsContainer.innerHTML = this._buildFavoritesList(favoritesResults);
+        } else {
+            listHeader.innerHTML = `
+                <span>${this._t('renderer.sidebar.taskList')} · ${historyCount}</span>
+                <button class="sb-fav-toggle" data-favorites-toggle aria-label="收藏夹">
+                    <i class="fa-regular fa-star" aria-hidden="true"></i>
+                </button>
+                <details id="sidebar-task-view-menu" class="sb-view-menu">
+                    <summary>
+                        ${this._t(
+                            viewIsTime ? 'renderer.sidebar.viewByTimeShort' : 'renderer.sidebar.viewByWorkspaceShort'
+                        )}
+                        <span class="sb-view-menu-caret" aria-hidden="true">▾</span>
+                    </summary>
+                    <div class="sb-view-menu-popover">
+                        <button class="${viewIsTime ? 'is-current' : ''}" data-task-view="time">
+                            ${this._t('renderer.sidebar.viewByTime')}
+                            ${viewIsTime ? '<i class="fa-solid fa-check"></i>' : ''}
+                        </button>
+                        <button class="${viewIsTime ? '' : 'is-current'}" data-task-view="workspace">
+                            ${this._t('renderer.sidebar.viewByWorkspace')}
+                            ${viewIsTime ? '' : '<i class="fa-solid fa-check"></i>'}
+                        </button>
+                    </div>
+                </details>`;
+            groupsContainer.className = `sb-task-groups ${viewIsTime ? 'is-time-view' : 'is-workspace-view'}`;
+            groupsContainer.innerHTML = groups.map((group, index) => this._buildTaskGroup(group, index)).join('');
         }
 
         this._bindTaskItemEvents(taskListContainer);
-
-        this.querySelector('#delete-all-tasks-btn')?.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            const confirmed = await showConfirmModal({
-                icon: 'fa-trash',
-                iconBg: '#FEF2F2',
-                iconColor: '#DC2626',
-                title: '删除全部任务',
-                message: '确定要删除所有任务吗？<b>删除后无法恢复。</b>',
-                confirmText: '全部删除',
-                cancelText: '取消',
-                danger: true
+        this._bindSidebarTaskControls(taskListContainer);
+        restoreSidebarScrollState(taskListContainer, scrollState);
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                if (taskListContainer.isConnected) {
+                    restoreSidebarScrollState(taskListContainer, scrollState);
+                }
             });
-            if (!confirmed) return;
-            window.globalControlAPI.clearAllTaskViewCache();
-            window.globalControlAPI.openHomePage();
-            this.currentTaskId = null;
-            await window.taskManagerAPI.clearAllTasks();
-            this.reloadTaskList();
-        });
-
-        const sentinel = this.querySelector('#task-list-sentinel');
-        if (sentinel) {
-            if (this._scrollObserver) {
-                this._scrollObserver.disconnect();
-            }
-            this._scrollObserver = new IntersectionObserver(
-                (entries) => {
-                    for (const entry of entries) {
-                        if (entry.isIntersecting) {
-                            this._loadMoreTasks();
-                            const totalRoot = this._countRootTasks(this._fullRenderList);
-                            if (this._displayedRootCount >= totalRoot) {
-                                this._scrollObserver.disconnect();
-                                const s = this.querySelector('#task-list-sentinel');
-                                if (s) s.remove();
-                            }
-                        }
-                    }
-                },
-                { root: taskListContainer, threshold: 0.1 }
-            );
-            this._scrollObserver.observe(sentinel);
         }
-
-        taskListContainer.querySelectorAll('.subtask-group-scroll').forEach((el) => {
-            el.scrollTop = el.scrollHeight;
-        });
-
-        this._renderFavoritesCard();
     }
 
     _startInlineRename(taskId) {
         const taskItem = this.querySelector(`.task-item[data-task_id="${taskId}"]`);
         if (!taskItem) return;
 
-        const nameEl = taskItem.querySelector('p');
+        const nameEl = taskItem.querySelector('.sb-task-name, .sb-running-title, p');
         if (!nameEl) return;
 
         const originalName = nameEl.textContent;
@@ -2016,7 +2154,7 @@ class SideBar extends HTMLElement {
         // Replace <p> with <input>
         const input = document.createElement('input');
         input.type = 'text';
-        input.value = originalName === '未命名任务' ? '' : originalName;
+        input.value = originalName === this._t('renderer.sidebar.unnamedTask') ? '' : originalName;
         input.className = nameEl.className;
         input.style.cssText =
             'font-size:13px; background:transparent; border:1px solid #C94C40; border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
