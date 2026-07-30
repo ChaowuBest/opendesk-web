@@ -50,7 +50,7 @@ const LIVE_UPDATE_INTERVAL_MS = 200;
 
 // 过滤 bash 在某些受限环境下启动时的 getcwd 噪音警告
 const SHELL_CWD_WARNING_RE =
-    /^shell-init: error retrieving current directory: getcwd: cannot access parent directories: Permission denied\r?\n?/gm;
+    /^shell-init: error retrieving current directory: getcwd: cannot access parent directories: (?:Permission denied|Not supported)\r?\n?/gm;
 
 function filterShellEnvironmentWarnings(text: string): string {
     return text.replace(SHELL_CWD_WARNING_RE, '');
