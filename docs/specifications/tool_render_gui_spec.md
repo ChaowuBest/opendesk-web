@@ -86,7 +86,7 @@
 | --------------- | -------------------------- | --------------------------------------------- |
 | getCurrentTime  | `far fa-clock`             | 获取当前时间 2026-05-04 11:22                 |
 | grepFiles       | `fas fa-code`              | 内容搜索 TODO · src/ · 3 文件 / 12 处匹配     |
-| readFiles       | `fas fa-file-lines`        | 读取文件 src/main.ts · 3 个文件               |
+| readFiles       | `fas fa-file-lines`        | 读取文件 src/main/main.ts · 3 个文件          |
 | writeFile       | `fas fa-file-pen`          | 写入文件 output.txt · 1,234 字符              |
 | listRecentTasks | `fas fa-list-ul`           | 列出任务 2026-05-01 ~ 2026-05-03，共 5 个任务 |
 | getTaskHistory  | `fas fa-clock-rotate-left` | 获取历史 abc12345… · 最近 10 条 · 返回 8 条   |

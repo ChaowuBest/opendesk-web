@@ -319,7 +319,7 @@ parentPort?.on('message', (message) => {
 
 ## IPC 接口
 
-渲染进程通过以下 IPC 句柄与配置系统交互（定义于 [`src/main/main.js`](src/main/main.js:399)）：
+渲染进程通过以下 IPC 句柄与配置系统交互（定义于 [`src/main/main.ts`](src/main/main.ts:399)）：
 
 | IPC 句柄                    | 描述                                |
 | --------------------------- | ----------------------------------- |
