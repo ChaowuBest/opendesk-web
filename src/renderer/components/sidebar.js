@@ -407,7 +407,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn sb-nav-btn-primary"
                     title="${this._t('renderer.sidebar.newTask')}"
                 >
-                    <i class="fa-solid fa-house" style="font-size: 12px;"></i>
+                    <i class="fa-solid fa-house" style="font-size: var(--icon-md);"></i>
                     <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
                 </button>
                 <button
@@ -415,7 +415,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.apps')}"
                 >
-                    <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
+                    <i class="fa-solid fa-th-large" style="font-size: var(--icon-md);"></i>
                     <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
                 </button>
                 <button
@@ -423,7 +423,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.skills')}"
                 >
-                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
+                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: var(--icon-md);"></i>
                     <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
                 </button>
             </div>
@@ -748,7 +748,7 @@ class SideBar extends HTMLElement {
         const cls = isCurrentTask
             ? 'bg-white/25 text-white border-white/30'
             : 'bg-orange-100 text-orange-600 border-orange-200';
-        return `<span class="waiting-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap ${cls} flex-shrink-0">等待确认</span>`;
+        return `<span class="waiting-tag inline-flex items-center px-2 py-1 rounded fs-xs leading-none font-medium whitespace-nowrap ${cls} flex-shrink-0">等待确认</span>`;
     }
 
     static CHANNEL_META = {
@@ -778,14 +778,14 @@ class SideBar extends HTMLElement {
         } else {
             cls = 'bg-[#f0f0f0] text-[#888]';
         }
-        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
+        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded fs-sm leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
     }
 
     static buildGoalTerminalTag(task, isCurrentTask, t) {
         if (task.goal?.status !== 'blocked') return '';
         const label = t('goal.label.status.blocked');
         const cls = isCurrentTask ? 'bg-white/25 text-white border-white/30' : 'bg-red-50 text-red-700 border-red-200';
-        return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
+        return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded fs-xs leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
     }
 
     _updateTaskHighlight() {
@@ -848,7 +848,7 @@ class SideBar extends HTMLElement {
     }
     .od-taskinfo-icon i { font-size: 18px; color: #2563EB; }
     .od-taskinfo-title {
-        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+        font-size: var(--fs-xl); font-weight: 700; color: #1d1d1f; line-height: 1.3;
     }
     .od-taskinfo-rows { margin-bottom: 22px; }
     .od-taskinfo-row {
@@ -857,11 +857,11 @@ class SideBar extends HTMLElement {
     }
     .od-taskinfo-row:last-child { border-bottom: none; }
     .od-taskinfo-label {
-        font-size: 12px; font-weight: 600; color: #86868b;
+        font-size: var(--fs-md); font-weight: 600; color: #86868b;
         min-width: 90px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;
     }
     .od-taskinfo-value {
-        font-size: 13px; color: #1d1d1f; font-family: 'JetBrains Mono', 'SF Mono', monospace;
+        font-size: var(--fs-base); color: #1d1d1f; font-family: 'JetBrains Mono', 'SF Mono', monospace;
         flex: 1; word-break: break-all; margin-right: 6px;
     }
     .od-taskinfo-copy-btn {
@@ -872,12 +872,12 @@ class SideBar extends HTMLElement {
     }
     .od-taskinfo-copy-btn:hover { background: #F0F0F0; color: #2563EB; }
     .od-taskinfo-copy-btn:active { transform: scale(0.92); }
-    .od-taskinfo-copy-btn i { font-size: 13px; }
+    .od-taskinfo-copy-btn i { font-size: var(--icon-lg); }
     .od-taskinfo-loading {
-        text-align: center; padding: 32px; color: #86868b; font-size: 14px;
+        text-align: center; padding: 32px; color: #86868b; font-size: var(--fs-lg);
     }
     .od-taskinfo-error {
-        text-align: center; padding: 32px; color: #DC2626; font-size: 14px;
+        text-align: center; padding: 32px; color: #DC2626; font-size: var(--fs-lg);
     }
     .od-taskinfo-footer {
         display: flex; justify-content: flex-end; gap: 10px;
@@ -885,7 +885,7 @@ class SideBar extends HTMLElement {
     }
     .od-taskinfo-close-btn {
         padding: 10px 24px; border-radius: 12px; border: none;
-        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        font-size: var(--fs-lg); font-weight: 600; cursor: pointer; transition: all 0.15s;
         background: #1d1d1f; color: #fff;
     }
     .od-taskinfo-close-btn:hover { background: #333; }
@@ -1048,8 +1048,8 @@ class SideBar extends HTMLElement {
             items.push({ id: 'edit', icon: 'fa-solid fa-pen-to-square', label: '编辑应用' });
         }
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
 
         menu.innerHTML = items
             .map((item, i) => {
@@ -1198,8 +1198,8 @@ class SideBar extends HTMLElement {
             });
         }
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
         const submenuStyle = `display:none; position:absolute; left:calc(100% + 4px); top:0; min-width:160px; padding:4px; border-radius:10px; background:rgba(255,255,255,0.94); backdrop-filter:blur(40px) saturate(1.8); -webkit-backdrop-filter:blur(40px) saturate(1.8); border:0.5px solid rgba(0,0,0,0.08); box-shadow:0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04);`;
 
         menu.innerHTML = items
@@ -1215,7 +1215,7 @@ class SideBar extends HTMLElement {
                         `${sep}<div class="ctx-submenu-wrap" style="position:relative;">` +
                         `<button data-action="${item.id}" data-submenu="1" style="${btnStyle} color:${color};">` +
                         `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span style="flex:1;">${item.label}</span>` +
-                        '<i class="fa-solid fa-chevron-right" style="font-size:10px; color:#9ca3af;"></i></button>' +
+                        '<i class="fa-solid fa-chevron-right" style="font-size:var(--icon-sm); color:#9ca3af;"></i></button>' +
                         `<div class="ctx-submenu" style="${submenuStyle}">` +
                         `<button data-action="trigger-task-review" style="${btnStyle} color:#1f2937;">` +
                         `<i class="fa-solid fa-clipboard-check" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
@@ -1420,8 +1420,8 @@ class SideBar extends HTMLElement {
             danger: true
         });
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
 
         menu.innerHTML = items
             .map((item, index) => {
@@ -2157,7 +2157,7 @@ class SideBar extends HTMLElement {
         input.value = originalName === this._t('renderer.sidebar.unnamedTask') ? '' : originalName;
         input.className = nameEl.className;
         input.style.cssText =
-            'font-size:13px; background:transparent; border:1px solid #C94C40; border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
+            'font-size:var(--fs-base); background:transparent; border:1px solid #C94C40; border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
 
         // If the current task is the active one, match the active styles
         if (taskId === this.currentTaskId) {

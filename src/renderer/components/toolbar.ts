@@ -125,15 +125,15 @@ export class ElasticToolbarWidget extends HTMLElement {
         const subtitleHTML = this.toolbarSubtitle
             ? `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" title="${this.toolbarSubtitle}">
                 <i class="fa-solid fa-briefcase"></i>
-                <span class="ws-label" style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;${this.subtitleLabel ? '' : 'display:none;'}">${this.subtitleLabel || ''}</span>
+                <span class="ws-label" style="font-size: var(--fs-sm);color:#6b7280;white-space:nowrap;flex-shrink:0;${this.subtitleLabel ? '' : 'display:none;'}">${this.subtitleLabel || ''}</span>
                 <span class="ws-path">${this.toolbarSubtitle}</span>
-                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+                <i class="fa-solid fa-chevron-down" style="font-size: var(--icon-xs); opacity: 0.5;"></i>
                </button>`
             : `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" style="display:none;" title="">
                 <i class="fa-solid fa-briefcase"></i>
                 <span class="ws-label" style="display:none;"></span>
                 <span class="ws-path"></span>
-                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+                <i class="fa-solid fa-chevron-down" style="font-size: var(--icon-xs); opacity: 0.5;"></i>
                </button>`;
 
         this.innerHTML = `

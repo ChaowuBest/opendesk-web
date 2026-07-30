@@ -529,9 +529,9 @@ export class TaskArtifactsGoalController {
         return `
         <section class="goal-creation-section">
             <div class="goal-creation-header">
-                <i class="fa-solid fa-bullseye" style="color:#7C4DFF;font-size:14px;"></i>
+                <i class="fa-solid fa-bullseye" style="color:#7C4DFF;font-size: var(--fs-lg);"></i>
                 <div>
-                    <div style="font-weight:500;font-size:13px;color:var(--color-text-primary)">${escapeHtml(this._t('goal.renderer.followup_create_title'))}</div>
+                    <div style="font-weight:500;font-size: var(--fs-base);color:var(--color-text-primary)">${escapeHtml(this._t('goal.renderer.followup_create_title'))}</div>
                     <div class="goal-creation-subtitle">${escapeHtml(this._t('goal.renderer.followup_create_description'))}</div>
                 </div>
             </div>
@@ -921,7 +921,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 align-items: center;
                 gap: 8px;
                 min-width: 0;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 font-weight: 600;
                 color: #1f2937;
             }
@@ -930,7 +930,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 1px solid #b4b2a9;
                 border-radius: 999px;
                 padding: 1px 6px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 font-weight: 500;
                 color: #5f5e5a;
                 background: #f1efe8;
@@ -969,7 +969,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 color: #374151;
                 border-radius: 4px;
                 padding: 3px 7px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: 1.3;
                 cursor: pointer;
             }
@@ -989,7 +989,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 0;
                 background: transparent;
                 color: #4b5563;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 line-height: 1.5;
                 padding: 0;
                 text-align: left;
@@ -1015,7 +1015,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 1px solid #d1d5db;
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 line-height: 1.5;
                 color: #374151;
                 background: #fff;
@@ -1039,7 +1039,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 align-items: center;
                 justify-content: space-between;
                 gap: 8px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: #6b7280;
             }
 
@@ -1059,7 +1059,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 gap: 8px;
                 min-width: 0;
                 color: #4b5563;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 line-height: 1.5;
             }
 
@@ -1067,7 +1067,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 flex: none;
                 margin-top: 2px;
                 color: #7C4DFF;
-                font-size: 12px;
+                font-size: var(--fs-md);
             }
 
             .goal-suggestion-actions {
@@ -1090,13 +1090,13 @@ export function getTaskArtifactsGoalCSS(): string {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 font-weight: 500;
                 color: #1f2937;
             }
             .goal-creation-subtitle {
                 margin-top: 2px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 line-height: 1.4;
                 font-weight: 400;
                 color: #6b7280;
@@ -1112,7 +1112,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 gap: 4px;
             }
             .goal-form-label {
-                font-size: 12px;
+                font-size: var(--fs-md);
                 font-weight: 500;
                 color: #374151;
             }
@@ -1127,7 +1127,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 1px solid #d1d5db;
                 border-radius: 6px;
                 padding: 8px 10px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 line-height: 1.5;
                 color: #374151;
                 background: #fff;
@@ -1144,7 +1144,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 1px solid #d1d5db;
                 border-radius: 6px;
                 padding: 6px 10px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 color: #374151;
                 background: #fff;
                 box-sizing: border-box;
@@ -1179,13 +1179,13 @@ export function getTaskArtifactsGoalCSS(): string {
                 border: 1px solid #d1d5db;
                 border-radius: 999px;
                 padding: 2px 7px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: #4b5563;
                 background: #fff;
             }
 
             .goal-eval-stack {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: #6b7280;
             }
             .goal-eval-stack summary {
@@ -1205,7 +1205,7 @@ export function getTaskArtifactsGoalCSS(): string {
                 padding: 7px 8px;
                 background: #f0f7ff;
                 color: #1f4f82;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: 1.45;
             }
 
@@ -1259,12 +1259,12 @@ export function getTaskArtifactsGoalCSS(): string {
             .goal-continuation {
                 border-left: 3px solid #fac775;
                 padding-left: 8px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: #854f0b;
             }
 
             .goal-timeline {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: #6b7280;
             }
 
@@ -1324,19 +1324,19 @@ export function getTaskArtifactsGoalCSS(): string {
             }
 
             .goal-timeline-revision {
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #9ca3af;
             }
 
             .goal-timeline-time {
                 margin-left: auto;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #9ca3af;
                 font-variant-numeric: tabular-nums;
             }
 
             .goal-timeline-anchor-icon {
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #7c4dff;
             }
 
@@ -1349,7 +1349,7 @@ export function getTaskArtifactsGoalCSS(): string {
             .goal-timeline-objective-label {
                 flex-shrink: 0;
                 color: #9ca3af;
-                font-size: 10px;
+                font-size: var(--fs-xs);
             }
 
             .goal-timeline-objective-text {

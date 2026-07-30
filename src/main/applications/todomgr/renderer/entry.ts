@@ -52,6 +52,7 @@ type CardExpandedState = TriggerType | null;
 
 const TODOMGR_CSS = `
 /* ---- Root ---- */
+:root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
 .tm-root {
     --tm-bg: #FAFAFA;
     --tm-surface: #fff;
@@ -106,13 +107,13 @@ html[data-theme='dark'] .tm-root {
     flex-shrink: 0;
 }
 .tm-toolbar-title {
-    font-size: 16px;
+    font-size: var(--fs-xl);
     font-weight: 700;
     color: #1d1d1f;
     letter-spacing: -0.01em;
 }
 .tm-toolbar-subtitle {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #8E8E93;
     font-weight: 400;
     margin-top: 2px;
@@ -146,7 +147,7 @@ html[data-theme='dark'] .tm-root {
     padding: 20px 24px 0;
 }
 .tm-section-title {
-    font-size: 13px;
+    font-size: var(--fs-base);
     font-weight: 700;
     color: #1d1d1f;
     margin-bottom: 12px;
@@ -189,17 +190,17 @@ html[data-theme='dark'] .tm-root {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
 }
 .tm-tpl-title {
-    font-size: 13px;
+    font-size: var(--fs-base);
     font-weight: 600;
     color: #1d1d1f;
     line-height: 1.35;
 }
 .tm-tpl-desc {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #8E8E93;
     line-height: 1.45;
     overflow: hidden;
@@ -217,7 +218,7 @@ html[data-theme='dark'] .tm-root {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: var(--fs-base);
     flex-shrink: 0;
 }
 
@@ -318,7 +319,7 @@ html[data-theme='dark'] .tm-root {
     background: transparent;
     cursor: pointer;
     color: #8E8E93;
-    font-size: 12px;
+    font-size: var(--fs-md);
     transition: all 0.12s;
 }
 .tm-todo-card-action-btn:hover {
@@ -327,7 +328,7 @@ html[data-theme='dark'] .tm-root {
 }
 
 .tm-todo-card-title {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: #1d1d1f;
     line-height: 1.4;
@@ -336,7 +337,7 @@ html[data-theme='dark'] .tm-root {
     white-space: nowrap;
 }
 .tm-todo-card-desc {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #8E8E93;
     line-height: 1.45;
     overflow: hidden;
@@ -355,11 +356,11 @@ html[data-theme='dark'] .tm-root {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: #8E8E93;
 }
 .tm-todo-card-trigger i {
-    font-size: 10px;
+    font-size: var(--fs-xs);
 }
 .tm-todo-type-badge {
     display: inline-flex;
@@ -367,7 +368,7 @@ html[data-theme='dark'] .tm-root {
     gap: 3px;
     padding: 1px 7px;
     border-radius: 5px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 500;
     line-height: 1.6;
 }
@@ -380,7 +381,7 @@ html[data-theme='dark'] .tm-root {
     justify-content: center;
     padding: 40px 12px;
     color: #C7C7CC;
-    font-size: 13px;
+    font-size: var(--fs-base);
     gap: 6px;
     grid-column: 1 / -1;
 }
@@ -465,7 +466,7 @@ html[data-theme='dark'] .tm-root {
     background: transparent;
     cursor: pointer;
     color: #8E8E93;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     flex-shrink: 0;
     transition: all 0.15s;
 }
@@ -479,7 +480,7 @@ html[data-theme='dark'] .tm-root {
     margin-bottom: 20px;
 }
 .tm-detail-section-title {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: #8E8E93;
     text-transform: uppercase;
@@ -487,7 +488,7 @@ html[data-theme='dark'] .tm-root {
     margin-bottom: 8px;
 }
 .tm-detail-content {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     color: #3C3C43;
     line-height: 1.65;
     white-space: pre-wrap;
@@ -499,7 +500,7 @@ html[data-theme='dark'] .tm-root {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 8px 16px;
-    font-size: 13px;
+    font-size: var(--fs-base);
 }
 .tm-detail-attr-label {
     color: #8E8E93;
@@ -527,7 +528,7 @@ html[data-theme='dark'] .tm-root {
     gap: 6px;
     padding: 8px 18px;
     border-radius: 10px;
-    font-size: 13px;
+    font-size: var(--fs-base);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -556,7 +557,7 @@ html[data-theme='dark'] .tm-root {
 }
 .tm-edit-label {
     display: block;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
     color: #8E8E93;
     margin-bottom: 5px;
@@ -568,7 +569,7 @@ html[data-theme='dark'] .tm-root {
     padding: 9px 12px;
     border: 1.5px solid #E5E5EA;
     border-radius: 10px;
-    font-size: 13px;
+    font-size: var(--fs-base);
     color: #1d1d1f;
     background: #fff;
     outline: none;
@@ -597,7 +598,7 @@ html[data-theme='dark'] .tm-root {
     flex-wrap: wrap;
 }
 .tm-cron-row label {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #3C3C43;
     font-weight: 500;
     white-space: nowrap;
@@ -607,7 +608,7 @@ html[data-theme='dark'] .tm-root {
     padding: 6px 10px;
     border: 1.5px solid #E5E5EA;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #1d1d1f;
     background: #fff;
     outline: none;
@@ -620,7 +621,7 @@ html[data-theme='dark'] .tm-root {
     padding: 8px 12px;
     background: #F5F5F7;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: #3C3C43;
     font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
 }
@@ -636,7 +637,7 @@ html[data-theme='dark'] .tm-root {
     border: 1.5px solid #E5E5EA;
     background: #fff;
     color: #3C3C43;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -658,7 +659,7 @@ html[data-theme='dark'] .tm-root {
     padding: 7px 10px;
     border: 1.5px solid #E5E5EA;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-family: 'Maple Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
     color: #1d1d1f;
     background: #fff;
@@ -672,7 +673,7 @@ html[data-theme='dark'] .tm-root {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     color: #8E8E93;
     margin-top: 6px;
     text-decoration: none;
@@ -738,12 +739,12 @@ html[data-theme='dark'] .tm-root {
     flex-shrink: 0;
 }
 .tm-modal-title {
-    font-size: 16px;
+    font-size: var(--fs-xl);
     font-weight: 700;
     color: #1d1d1f;
 }
 .tm-modal-message {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     color: #3C3C43;
     line-height: 1.6;
     margin-bottom: 22px;
@@ -758,7 +759,7 @@ html[data-theme='dark'] .tm-root {
 .tm-modal-btn {
     padding: 10px 24px;
     border-radius: 12px;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -796,13 +797,13 @@ html[data-theme='dark'] .tm-root {
     padding: 9px 12px;
     cursor: pointer;
     user-select: none;
-    font-size: 13px;
+    font-size: var(--fs-base);
     color: var(--tm-text);
     transition: background 0.12s;
 }
 .tm-dt-display:hover { background: var(--tm-surface-hover); }
 .tm-dt-display-text { flex: 1; }
-.tm-dt-display-icon { color: var(--tm-text-muted); font-size: 14px; margin-left: 8px; }
+.tm-dt-display-icon { color: var(--tm-text-muted); font-size: var(--fs-lg); margin-left: 8px; }
 .tm-dt-placeholder { color: var(--tm-text-muted); }
 .tm-dt-panel {
     border-top: 1px solid var(--tm-border);
@@ -819,7 +820,7 @@ html[data-theme='dark'] .tm-root {
     margin-bottom: 10px;
 }
 .tm-dt-cal-title {
-    font-size: 13px;
+    font-size: var(--fs-base);
     font-weight: 600;
     color: var(--tm-text);
 }
@@ -834,7 +835,7 @@ html[data-theme='dark'] .tm-root {
     border: 1px solid var(--tm-border-strong);
     background: var(--tm-surface);
     color: var(--tm-text-secondary);
-    font-size: 12px;
+    font-size: var(--fs-md);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -851,7 +852,7 @@ html[data-theme='dark'] .tm-root {
 }
 .tm-dt-cal-wd {
     text-align: center;
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--tm-text-muted);
     padding: 4px 0;
@@ -863,7 +864,7 @@ html[data-theme='dark'] .tm-root {
 }
 .tm-dt-cal-day {
     text-align: center;
-    font-size: 12px;
+    font-size: var(--fs-md);
     padding: 6px 0;
     border-radius: 8px;
     cursor: pointer;
@@ -888,7 +889,7 @@ html[data-theme='dark'] .tm-root {
     border-top: 1px solid var(--tm-border);
 }
 .tm-dt-time-label {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--tm-text-secondary);
     font-weight: 500;
     white-space: nowrap;
@@ -897,7 +898,7 @@ html[data-theme='dark'] .tm-root {
     padding: 6px 10px;
     border: 1.5px solid var(--tm-border-strong);
     border-radius: 8px;
-    font-size: 13px;
+    font-size: var(--fs-base);
     color: var(--tm-text);
     background: var(--tm-surface);
     outline: none;
@@ -911,7 +912,7 @@ html[data-theme='dark'] .tm-root {
     color: var(--tm-text);
 }
 .tm-dt-time-colon {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--tm-text-secondary);
 }
@@ -924,7 +925,7 @@ html[data-theme='dark'] .tm-root {
     border-top: 1px solid var(--tm-border);
 }
 .tm-dt-today-btn {
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--tm-accent);
     background: none;
     border: none;
@@ -939,7 +940,7 @@ html[data-theme='dark'] .tm-root {
 .tm-dt-confirm-btn {
     padding: 7px 20px;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer;
     border: none;
@@ -1502,11 +1503,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 </div>
                 <div style="display:flex;gap:8px;">
                     <button class="tm-btn" id="tm-quick-add-btn" style="padding:8px 16px;">
-                        <i class="fas fa-wand-magic-sparkles" style="font-size:12px;"></i>
+                        <i class="fas fa-wand-magic-sparkles" style="font-size: var(--fs-md);"></i>
                         一句话创建
                     </button>
                     <button class="tm-btn tm-btn-primary" id="tm-create-btn" style="padding:8px 16px;">
-                        <i class="fas fa-plus" style="font-size:12px;"></i>
+                        <i class="fas fa-plus" style="font-size: var(--fs-md);"></i>
                         创建
                     </button>
                 </div>
@@ -1548,7 +1549,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             return `<div class="tm-empty">
                 <i class="fas fa-inbox"></i>
                 <span>暂无自动化任务</span>
-                <span style="font-size:11px;">点击上方模板快速创建</span>
+                <span style="font-size: var(--fs-sm);">点击上方模板快速创建</span>
             </div>`;
         }
         return this.globalTodos
@@ -1584,7 +1585,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <div class="tm-todo-card-desc">${escapeHtml(t.content)}</div>
                 <div class="tm-todo-card-footer">
                     <div><span class="tm-todo-type-badge" style="background:${cfg.iconBg};color:${cfg.iconColor};">
-                        <i class="fas ${cfg.icon}" style="font-size:9px;"></i>
+                        <i class="fas ${cfg.icon}" style="font-size: var(--fs-2xs);"></i>
                         ${cfg.label}
                     </span></div>
                     <span class="tm-todo-card-trigger">
@@ -1850,9 +1851,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             <div style="flex:1;min-width:0;">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                     <div class="tm-card-icon" style="background:${cardCfg.iconBg};color:${cardCfg.iconColor};width:32px;height:32px;border-radius:9px;">
-                        <i class="fas ${cardCfg.icon}" style="font-size:14px;"></i>
+                        <i class="fas ${cardCfg.icon}" style="font-size: var(--fs-lg);"></i>
                     </div>
-                    <span style="font-size:12px;color:#8E8E93;font-weight:500;">${cardCfg.label}</span>
+                    <span style="font-size: var(--fs-md);color:#8E8E93;font-weight:500;">${cardCfg.label}</span>
                 </div>
                 <div class="tm-detail-title">${escapeHtml(todo.title)}</div>
             </div>
@@ -1883,7 +1884,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         todo.trigger?.type === 'cron' && todo.trigger.cronExpression
                             ? `
                     <span class="tm-detail-attr-label">Cron 表达式</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size:12px;">${escapeHtml(todo.trigger.cronExpression)}</span>
+                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size: var(--fs-md);">${escapeHtml(todo.trigger.cronExpression)}</span>
                     `
                             : ''
                     }
@@ -1940,10 +1941,10 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         footer.style.display = 'flex';
         footer.innerHTML = `
-        <button class="tm-btn" id="tm-btn-edit"><i class="fas fa-pen" style="font-size:12px;"></i> 编辑</button>
-        <button class="tm-btn tm-btn-danger" id="tm-btn-delete"><i class="fas fa-trash-can" style="font-size:12px;"></i> 删除</button>
+        <button class="tm-btn" id="tm-btn-edit"><i class="fas fa-pen" style="font-size: var(--fs-md);"></i> 编辑</button>
+        <button class="tm-btn tm-btn-danger" id="tm-btn-delete"><i class="fas fa-trash-can" style="font-size: var(--fs-md);"></i> 删除</button>
         <div style="flex:1;"></div>
-        <button class="tm-btn tm-btn-primary" id="tm-btn-execute"><i class="fas fa-play" style="font-size:12px;"></i> 立即执行</button>`;
+        <button class="tm-btn tm-btn-primary" id="tm-btn-execute"><i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行</button>`;
 
         this.querySelector('#tm-close-detail')?.addEventListener('click', () => this._closeDetail());
         this.querySelector('#tm-btn-edit')?.addEventListener('click', () => this._enterEditMode(todo));
@@ -2004,7 +2005,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <label class="tm-edit-label">状态</label>
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                     <input type="checkbox" id="tm-edit-enabled" ${isEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#3B82F6;" />
-                    <span style="font-size:13px;color:var(--tm-text,#1d1d1f);">${isEnabled ? '启用中' : '未启用'}</span>
+                    <span style="font-size: var(--fs-base);color:var(--tm-text,#1d1d1f);">${isEnabled ? '启用中' : '未启用'}</span>
                 </label>
             </div>
             <div class="tm-edit-field">
@@ -2021,14 +2022,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <select class="tm-edit-select" id="tm-edit-workspace">
                     ${workspaceOptionsHtml}
                 </select>
-                <div id="tm-edit-workspace-hint" style="font-size:11px;color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
+                <div id="tm-edit-workspace-hint" style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">发送到</label>
                 <select class="tm-edit-select" id="tm-edit-deliver-target">
                     <option value="">默认</option>
                 </select>
-                <div style="font-size:11px;color:var(--text-tertiary,#888);margin-top:4px;">指定后，任务产生的回复将自动发送到该渠道</div>
+                <div style="font-size: var(--fs-sm);color:var(--text-tertiary,#888);margin-top:4px;">指定后，任务产生的回复将自动发送到该渠道</div>
             </div>
         </div>`;
 
@@ -2041,7 +2042,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         footer.innerHTML = `
         <button class="tm-btn" id="tm-edit-cancel">取消</button>
         <div style="flex:1;"></div>
-        <button class="tm-btn tm-btn-primary" id="tm-edit-save"><i class="fas fa-check" style="font-size:12px;"></i> ${isNew ? '创建' : '保存'}</button>`;
+        <button class="tm-btn tm-btn-primary" id="tm-edit-save"><i class="fas fa-check" style="font-size: var(--fs-md);"></i> ${isNew ? '创建' : '保存'}</button>`;
 
         const cancelHandler = () => {
             if (isNew) this._closeDetail();
@@ -2288,8 +2289,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     <div class="tm-dt-cal-header">
                         <span class="tm-dt-cal-title" id="tm-dt-cal-title"></span>
                         <div class="tm-dt-cal-nav">
-                            <button class="tm-dt-cal-nav-btn" id="tm-dt-prev-month" type="button"><i class="fa-solid fa-chevron-left" style="font-size:10px;"></i></button>
-                            <button class="tm-dt-cal-nav-btn" id="tm-dt-next-month" type="button"><i class="fa-solid fa-chevron-right" style="font-size:10px;"></i></button>
+                            <button class="tm-dt-cal-nav-btn" id="tm-dt-prev-month" type="button"><i class="fa-solid fa-chevron-left" style="font-size: var(--fs-xs);"></i></button>
+                            <button class="tm-dt-cal-nav-btn" id="tm-dt-next-month" type="button"><i class="fa-solid fa-chevron-right" style="font-size: var(--fs-xs);"></i></button>
                         </div>
                     </div>
                     <div class="tm-dt-cal-weekdays">
@@ -2572,7 +2573,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     value="${escapeHtml(customCron)}"
                     placeholder="例如: 0 9 * * 1-5（工作日每天9点，使用本地时间）">
                 <a class="tm-cron-help-link" href="https://support.huaweicloud.com/usermanual-coc/coc_um_05_03_03.html" target="_blank" rel="noopener">
-                    <i class="fas fa-circle-question" style="font-size:11px;"></i>
+                    <i class="fas fa-circle-question" style="font-size: var(--fs-sm);"></i>
                     什么是 Cron 表达式？
                 </a>
             </div>
@@ -2902,7 +2903,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.innerHTML = '<i class="fas fa-check" style="font-size:12px;"></i> 重试';
+                saveBtn.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-md);"></i> 重试';
             }
             console.error('Save failed:', err);
         }
@@ -3051,21 +3052,21 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const btn = this.querySelector('#tm-btn-execute') as HTMLButtonElement;
             if (btn) {
                 btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size:12px;"></i> 触发中...';
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size: var(--fs-md);"></i> 触发中...';
             }
             await window.applicationAPI.callMainWorld('triggerGlobalTodoNowFromUI', todo.id);
             if (btn) {
-                btn.innerHTML = '<i class="fas fa-check" style="font-size:12px;color:#34C759;"></i> 已触发';
+                btn.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-md);color:#34C759;"></i> 已触发';
                 setTimeout(() => {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-play" style="font-size:12px;"></i> 立即执行';
+                    btn.innerHTML = '<i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行';
                 }, 2000);
             }
         } catch (err: any) {
             const btn = this.querySelector('#tm-btn-execute') as HTMLButtonElement;
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-play" style="font-size:12px;"></i> 立即执行';
+                btn.innerHTML = '<i class="fas fa-play" style="font-size: var(--fs-md);"></i> 立即执行';
             }
             console.error('Execute failed:', err);
         }

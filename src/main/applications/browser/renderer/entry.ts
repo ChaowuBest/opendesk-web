@@ -210,6 +210,7 @@ class BrowserEntryWidget extends HTMLElement {
     private render(): void {
         this.innerHTML = `
         <style>
+            :root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
             .wb {
                 width: 100%; height: 100%;
                 display: flex; flex-direction: column;
@@ -250,7 +251,7 @@ class BrowserEntryWidget extends HTMLElement {
                 gap: 6px;
                 height: 30px;
                 padding: 0 12px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 color: #6b7280;
                 background: transparent;
                 border: none;
@@ -296,7 +297,7 @@ class BrowserEntryWidget extends HTMLElement {
                 color: #9ca3af; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 border-radius: 50%;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 flex-shrink: 0;
                 opacity: 0;
                 transition: all 0.15s;
@@ -314,7 +315,7 @@ class BrowserEntryWidget extends HTMLElement {
                 flex-shrink: 0;
                 border-radius: 8px;
                 margin-left: 8px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 transition: all 0.15s;
             }
             .wb-tab-add-btn:hover { background: #d1d5db; color: #374151; }
@@ -335,7 +336,7 @@ class BrowserEntryWidget extends HTMLElement {
                 cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 transition: all 0.15s; color: #6b7280;
-                font-size: 12px; flex-shrink: 0;
+                font-size: var(--fs-md); flex-shrink: 0;
             }
             .wb-btn:hover { background: #f3f4f6; color: #374151; }
             .wb-btn:active { background: #e5e7eb; }
@@ -357,11 +358,11 @@ class BrowserEntryWidget extends HTMLElement {
                 box-shadow: 0 0 0 2px rgba(59,130,246,0.12);
                 background: white;
             }
-            .wb-lock { color: #10b981; flex-shrink: 0; font-size: 11px; }
+            .wb-lock { color: #10b981; flex-shrink: 0; font-size: var(--fs-sm); }
             .wb-url-input {
                 flex: 1; min-width: 0;
                 border: none; background: transparent; outline: none;
-                font-size: 13px; color: #1f2937;
+                font-size: var(--fs-base); color: #1f2937;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 line-height: 1.4;
             }
@@ -390,16 +391,16 @@ class BrowserEntryWidget extends HTMLElement {
                 display: flex; align-items: center; gap: 8px;
                 padding: 7px 12px;
                 cursor: pointer;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
                 transition: background 0.1s;
             }
             .wb-suggestion-item:first-child { border-radius: 8px 8px 0 0; }
             .wb-suggestion-item:last-child { border-radius: 0 0 8px 8px; }
             .wb-suggestion-item:hover,
             .wb-suggestion-item.wb-sg-active { background: #f3f4f6; }
-            .wb-sg-icon { color: #9ca3af; font-size: 11px; flex-shrink: 0; width: 16px; text-align: center; }
+            .wb-sg-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; width: 16px; text-align: center; }
             .wb-sg-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-sg-url { color: #9ca3af; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+            .wb-sg-url { color: #9ca3af; font-size: var(--fs-sm); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 
             /* ---- Bookmark bar ---- */
             .wb-bookmark-bar {
@@ -417,7 +418,7 @@ class BrowserEntryWidget extends HTMLElement {
                 display: flex; align-items: center; gap: 4px;
                 padding: 3px 8px;
                 border-radius: 4px;
-                font-size: 12px; color: #4b5563;
+                font-size: var(--fs-md); color: #4b5563;
                 cursor: pointer;
                 white-space: nowrap;
                 transition: background 0.12s;
@@ -425,10 +426,10 @@ class BrowserEntryWidget extends HTMLElement {
                 max-width: 160px;
             }
             .wb-bm-item:hover { background: #e5e7eb; }
-            .wb-bm-item i { font-size: 10px; color: #9ca3af; }
+            .wb-bm-item i { font-size: var(--fs-xs); color: #9ca3af; }
             .wb-bm-item-label { overflow: hidden; text-overflow: ellipsis; }
             .wb-bm-empty {
-                font-size: 12px; color: #9ca3af; padding: 3px 8px;
+                font-size: var(--fs-md); color: #9ca3af; padding: 3px 8px;
             }
 
             /* ---- Webview area ---- */
@@ -495,11 +496,11 @@ class BrowserEntryWidget extends HTMLElement {
                 box-shadow: 0 2px 12px rgba(59,130,246,0.08);
             }
             .wb-hp-search-icon {
-                color: #9ca3af; margin-right: 10px; font-size: 14px; flex-shrink: 0;
+                color: #9ca3af; margin-right: 10px; font-size: var(--fs-lg); flex-shrink: 0;
             }
             .wb-hp-search-input {
                 flex: 1; border: none; outline: none; background: transparent;
-                font-size: 14px; color: #1f2937;
+                font-size: var(--fs-lg); color: #1f2937;
                 font-family: inherit;
             }
             .wb-hp-search-input::placeholder { color: #b0b3b8; }
@@ -508,7 +509,7 @@ class BrowserEntryWidget extends HTMLElement {
                 margin-top: 36px;
             }
             .wb-hp-section-title {
-                font-size: 12px; font-weight: 600;
+                font-size: var(--fs-md); font-weight: 600;
                 color: #9ca3af; text-transform: uppercase;
                 letter-spacing: 0.5px;
                 margin-bottom: 12px; padding-left: 4px;
@@ -543,7 +544,7 @@ class BrowserEntryWidget extends HTMLElement {
                 object-fit: contain;
             }
             .wb-hp-tile-label {
-                font-size: 11px; color: #6b7280;
+                font-size: var(--fs-sm); color: #6b7280;
                 max-width: 90px; text-align: center;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                 line-height: 1.3;
@@ -567,14 +568,14 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-tm-item {
                 display: flex; align-items: center; gap: 10px;
                 padding: 8px 16px;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
                 cursor: pointer;
                 transition: background 0.1s;
             }
             .wb-tm-item:hover { background: #f3f4f6; }
-            .wb-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
+            .wb-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
             .wb-tm-label { flex: 1; }
-            .wb-tm-shortcut { color: #9ca3af; font-size: 11px; }
+            .wb-tm-shortcut { color: #9ca3af; font-size: var(--fs-sm); }
             .wb-tm-flyout {
                 display: none;
                 position: fixed;
@@ -589,18 +590,18 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-tm-flyout.wb-visible { display: block; }
             .wb-tm-flyout .wb-tm-item {
                 padding: 7px 12px;
-                font-size: 12px;
+                font-size: var(--fs-md);
             }
-            .wb-tm-flyout .wb-tm-item i { font-size: 12px; }
+            .wb-tm-flyout .wb-tm-item i { font-size: var(--fs-md); }
             .wb-tm-divider {
                 height: 1px; background: #f0f0f0; margin: 4px 0;
             }
             .wb-tm-zoom-row {
                 display: flex; align-items: center; gap: 6px;
                 padding: 6px 16px;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
             }
-            .wb-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
+            .wb-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
             .wb-tm-zoom-label { flex: 1; }
             .wb-tm-zoom-controls {
                 display: flex; align-items: center; gap: 4px;
@@ -609,11 +610,11 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 24px; height: 24px; border-radius: 4px;
                 border: 1px solid #e5e7eb; background: white;
                 cursor: pointer; display: flex; align-items: center; justify-content: center;
-                font-size: 11px; color: #6b7280;
+                font-size: var(--fs-sm); color: #6b7280;
                 transition: background 0.1s;
             }
             .wb-tm-zoom-btn:hover { background: #f3f4f6; }
-            .wb-tm-zoom-val { font-size: 12px; min-width: 36px; text-align: center; }
+            .wb-tm-zoom-val { font-size: var(--fs-md); min-width: 36px; text-align: center; }
 
             /* ---- Tool menu anchor (relative positioning) ---- */
             .wb-toolbar-right {
@@ -641,7 +642,7 @@ class BrowserEntryWidget extends HTMLElement {
                 flex-shrink: 0;
             }
             .wb-panel-header-title {
-                flex: 1; font-size: 15px; font-weight: 600; color: #1f2937;
+                flex: 1; font-size: var(--fs-lg); font-weight: 600; color: #1f2937;
             }
             .wb-panel-close {
                 width: 28px; height: 28px; border: none; background: transparent;
@@ -653,7 +654,7 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-panel-search {
                 margin: 8px 16px; padding: 6px 10px;
                 border: 1px solid #e5e7eb; border-radius: 6px;
-                font-size: 13px; outline: none;
+                font-size: var(--fs-base); outline: none;
                 transition: border-color 0.15s;
             }
             .wb-panel-search:focus { border-color: #93c5fd; }
@@ -661,7 +662,7 @@ class BrowserEntryWidget extends HTMLElement {
                 flex: 1; overflow-y: auto; padding: 4px 0;
             }
             .wb-panel-empty {
-                text-align: center; color: #9ca3af; padding: 32px 16px; font-size: 13px;
+                text-align: center; color: #9ca3af; padding: 32px 16px; font-size: var(--fs-base);
             }
 
             /* History items */
@@ -672,16 +673,16 @@ class BrowserEntryWidget extends HTMLElement {
                 transition: background 0.1s;
             }
             .wb-history-item:hover { background: #f9fafb; }
-            .wb-hi-icon { color: #9ca3af; font-size: 11px; flex-shrink: 0; }
+            .wb-hi-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; }
             .wb-hi-content { flex: 1; min-width: 0; }
-            .wb-hi-title { font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-hi-url { font-size: 11px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-hi-time { font-size: 11px; color: #b0b3b8; flex-shrink: 0; }
+            .wb-hi-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hi-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hi-time { font-size: var(--fs-sm); color: #b0b3b8; flex-shrink: 0; }
             .wb-hi-delete {
                 width: 22px; height: 22px; border: none; background: transparent;
                 border-radius: 4px; cursor: pointer; color: #d1d5db;
                 display: flex; align-items: center; justify-content: center;
-                opacity: 0; transition: all 0.12s; font-size: 10px;
+                opacity: 0; transition: all 0.12s; font-size: var(--fs-xs);
             }
             .wb-history-item:hover .wb-hi-delete { opacity: 1; }
             .wb-hi-delete:hover { background: #fee2e2; color: #ef4444; }
@@ -694,10 +695,10 @@ class BrowserEntryWidget extends HTMLElement {
                 transition: background 0.1s;
             }
             .wb-bm-mgr-item:hover { background: #f9fafb; }
-            .wb-bm-mgr-icon { color: #f59e0b; font-size: 11px; flex-shrink: 0; }
+            .wb-bm-mgr-icon { color: #f59e0b; font-size: var(--fs-sm); flex-shrink: 0; }
             .wb-bm-mgr-content { flex: 1; min-width: 0; }
-            .wb-bm-mgr-title { font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-bm-mgr-url { font-size: 11px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-bm-mgr-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-bm-mgr-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             .wb-bm-mgr-actions {
                 display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s;
             }
@@ -706,7 +707,7 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 22px; height: 22px; border: none; background: transparent;
                 border-radius: 4px; cursor: pointer; color: #9ca3af;
                 display: flex; align-items: center; justify-content: center;
-                font-size: 10px; transition: all 0.12s;
+                font-size: var(--fs-xs); transition: all 0.12s;
             }
             .wb-bm-mgr-btn:hover { background: #f3f4f6; color: #374151; }
             .wb-bm-mgr-btn.wb-bm-delete:hover { background: #fee2e2; color: #ef4444; }
@@ -714,7 +715,7 @@ class BrowserEntryWidget extends HTMLElement {
             /* Inline edit input for bookmark rename */
             .wb-bm-edit-input {
                 border: 1px solid #93c5fd; border-radius: 4px;
-                padding: 2px 6px; font-size: 13px; outline: none;
+                padding: 2px 6px; font-size: var(--fs-base); outline: none;
                 width: 100%;
             }
 
@@ -728,18 +729,18 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-dl-item:last-child { border-bottom: none; }
             .wb-dl-item:hover { background: #f9fafb; }
             .wb-dl-icon {
-                color: #3b82f6; font-size: 16px; flex-shrink: 0;
+                color: #3b82f6; font-size: var(--fs-xl); flex-shrink: 0;
                 width: 24px; text-align: center;
             }
             .wb-dl-icon.wb-dl-done { color: #10b981; }
             .wb-dl-icon.wb-dl-cancelled { color: #9ca3af; }
             .wb-dl-content { flex: 1; min-width: 0; }
             .wb-dl-filename {
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
             }
             .wb-dl-meta {
-                font-size: 11px; color: #9ca3af;
+                font-size: var(--fs-sm); color: #9ca3af;
                 margin-top: 2px;
             }
             .wb-dl-progress-wrap {
@@ -760,7 +761,7 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 26px; height: 26px; border: none; background: transparent;
                 border-radius: 4px; cursor: pointer; color: #9ca3af;
                 display: flex; align-items: center; justify-content: center;
-                font-size: 11px; transition: all 0.12s;
+                font-size: var(--fs-sm); transition: all 0.12s;
             }
             .wb-dl-btn:hover { background: #f3f4f6; color: #374151; }
             .wb-dl-btn.wb-dl-cancel:hover { background: #fee2e2; color: #ef4444; }
@@ -775,7 +776,7 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 100%; padding: 6px 0;
                 border: 1px solid #e5e7eb; border-radius: 6px;
                 background: white; cursor: pointer;
-                font-size: 13px; color: #ef4444;
+                font-size: var(--fs-base); color: #ef4444;
                 transition: background 0.12s;
             }
             .wb-clear-btn:hover { background: #fef2f2; }
@@ -814,7 +815,7 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-fav-tree-search {
                 margin: 8px 12px; padding: 6px 10px;
                 border: 1px solid #e5e7eb; border-radius: 6px;
-                font-size: 13px; outline: none;
+                font-size: var(--fs-base); outline: none;
                 transition: border-color 0.15s;
             }
             .wb-fav-tree-search:focus { border-color: #93c5fd; }
@@ -825,15 +826,15 @@ class BrowserEntryWidget extends HTMLElement {
                 display: flex; align-items: center; gap: 6px;
                 padding: 7px 12px 7px 16px;
                 cursor: pointer;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
                 transition: background 0.1s;
             }
             .wb-fav-tree-item:hover { background: #f3f4f6; }
             .wb-fav-tree-item.wb-selected { background: #eff6ff; color: #1d4ed8; font-weight: 500; }
-            .wb-fav-tree-item i { width: 16px; text-align: center; font-size: 12px; color: #9ca3af; flex-shrink: 0; }
+            .wb-fav-tree-item i { width: 16px; text-align: center; font-size: var(--fs-md); color: #9ca3af; flex-shrink: 0; }
             .wb-fav-tree-item.wb-selected i { color: #3b82f6; }
             .wb-fav-tree-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-fav-tree-item-count { font-size: 11px; color: #9ca3af; flex-shrink: 0; }
+            .wb-fav-tree-item-count { font-size: var(--fs-sm); color: #9ca3af; flex-shrink: 0; }
             .wb-fav-tree-item.wb-indent { padding-left: 32px; }
 
             .wb-fav-detail {
@@ -847,7 +848,7 @@ class BrowserEntryWidget extends HTMLElement {
                 flex-shrink: 0;
                 background: white;
             }
-            .wb-fav-detail-title { font-size: 14px; font-weight: 500; color: #374151; flex: 1; }
+            .wb-fav-detail-title { font-size: var(--fs-lg); font-weight: 500; color: #374151; flex: 1; }
             .wb-fav-detail-body {
                 flex: 1; overflow-y: auto; padding: 8px 0;
             }
@@ -858,11 +859,11 @@ class BrowserEntryWidget extends HTMLElement {
                 transition: background 0.1s;
             }
             .wb-fav-detail-item:hover { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-            .wb-fav-detail-icon { color: #f59e0b; font-size: 12px; flex-shrink: 0; }
+            .wb-fav-detail-icon { color: #f59e0b; font-size: var(--fs-md); flex-shrink: 0; }
             .wb-fav-detail-icon.wb-folder-icon { color: #6b7280; }
             .wb-fav-detail-content { flex: 1; min-width: 0; }
-            .wb-fav-detail-name { font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-fav-detail-url { font-size: 11px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-fav-detail-name { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-fav-detail-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             .wb-fav-detail-actions {
                 display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s;
             }
@@ -871,12 +872,12 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 26px; height: 26px; border: none; background: transparent;
                 border-radius: 4px; cursor: pointer; color: #9ca3af;
                 display: flex; align-items: center; justify-content: center;
-                font-size: 11px; transition: all 0.12s;
+                font-size: var(--fs-sm); transition: all 0.12s;
             }
             .wb-fav-detail-btn:hover { background: #f3f4f6; color: #374151; }
             .wb-fav-detail-btn.wb-del:hover { background: #fee2e2; color: #ef4444; }
             .wb-fav-detail-empty {
-                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: 13px;
+                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: var(--fs-base);
             }
 
             /* History management page */
@@ -892,14 +893,14 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-hist-search {
                 flex: 1; padding: 8px 12px;
                 border: 1px solid #e5e7eb; border-radius: 8px;
-                font-size: 13px; outline: none;
+                font-size: var(--fs-base); outline: none;
                 background: white;
                 transition: border-color 0.15s, box-shadow 0.15s;
             }
             .wb-hist-search:focus { border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(59,130,246,0.08); }
             .wb-hist-clear-btn {
                 padding: 8px 16px; border: 1px solid #e5e7eb; border-radius: 8px;
-                background: white; cursor: pointer; font-size: 13px; color: #ef4444;
+                background: white; cursor: pointer; font-size: var(--fs-base); color: #ef4444;
                 transition: background 0.12s; flex-shrink: 0;
             }
             .wb-hist-clear-btn:hover { background: #fef2f2; }
@@ -908,7 +909,7 @@ class BrowserEntryWidget extends HTMLElement {
             }
             .wb-hist-date-group { margin-bottom: 16px; }
             .wb-hist-date-label {
-                font-size: 13px; font-weight: 600; color: #374151;
+                font-size: var(--fs-base); font-weight: 600; color: #374151;
                 padding: 8px 8px 4px; position: sticky; top: 0;
                 background: #f8f9fb; z-index: 1;
             }
@@ -919,27 +920,27 @@ class BrowserEntryWidget extends HTMLElement {
                 transition: background 0.1s;
             }
             .wb-hist-item:hover { background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-            .wb-hist-item-icon { color: #9ca3af; font-size: 11px; flex-shrink: 0; }
+            .wb-hist-item-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; }
             .wb-hist-item-content { flex: 1; min-width: 0; }
-            .wb-hist-item-title { font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-hist-item-url { font-size: 11px; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .wb-hist-item-time { font-size: 11px; color: #b0b3b8; flex-shrink: 0; }
+            .wb-hist-item-title { font-size: var(--fs-base); color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hist-item-url { font-size: var(--fs-sm); color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .wb-hist-item-time { font-size: var(--fs-sm); color: #b0b3b8; flex-shrink: 0; }
             .wb-hist-item-del {
                 width: 24px; height: 24px; border: none; background: transparent;
                 border-radius: 4px; cursor: pointer; color: #d1d5db;
                 display: flex; align-items: center; justify-content: center;
-                opacity: 0; transition: all 0.12s; font-size: 10px;
+                opacity: 0; transition: all 0.12s; font-size: var(--fs-xs);
             }
             .wb-hist-item:hover .wb-hist-item-del { opacity: 1; }
             .wb-hist-item-del:hover { background: #fee2e2; color: #ef4444; }
             .wb-hist-empty {
-                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: 13px;
+                text-align: center; color: #9ca3af; padding: 48px 16px; font-size: var(--fs-base);
             }
 
             /* Panel manage button */
             .wb-panel-manage-btn {
                 padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 5px;
-                background: white; cursor: pointer; font-size: 12px; color: #6b7280;
+                background: white; cursor: pointer; font-size: var(--fs-md); color: #6b7280;
                 transition: all 0.12s; flex-shrink: 0;
             }
             .wb-panel-manage-btn:hover { background: #f3f4f6; color: #374151; }
@@ -948,7 +949,7 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-bs-btn {
                 padding: 6px 14px; border-radius: 6px;
                 border: 1px solid #e5e7eb; background: white;
-                cursor: pointer; font-size: 13px; color: #374151;
+                cursor: pointer; font-size: var(--fs-base); color: #374151;
                 display: inline-flex; align-items: center; gap: 6px;
                 transition: all 0.12s;
             }
@@ -1360,7 +1361,7 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-tm-item" data-action="toggleDebugMenu" data-flyout-trigger="debug">
                 <i class="fas fa-terminal"></i>
                 <span class="wb-tm-label">调试</span>
-                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size:9px"></i></span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
             </div>
             <div class="wb-tm-flyout" data-flyout="debug">
                 <div class="wb-tm-item" data-action="consoleDebug">
@@ -1376,7 +1377,7 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-tm-item" data-action="toggleClearDataFlyout" data-flyout-trigger="clearData">
                 <i class="fas fa-trash-can"></i>
                 <span class="wb-tm-label">删除浏览数据</span>
-                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size:9px"></i></span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size: var(--fs-2xs)"></i></span>
             </div>
             <div class="wb-tm-flyout" data-flyout="clearData">
                 <div class="wb-tm-item" data-action="clearHistoryData">
@@ -3859,19 +3860,19 @@ class BrowserEntryWidget extends HTMLElement {
 
             <!-- 密码与自动填充 -->
             <div style="padding:20px 24px;max-width:600px">
-                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
                     <i class="fas fa-key" style="margin-right:8px;color:#6b7280"></i>密码与自动填充
                 </div>
-                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
                     管理浏览器保存的密码和表单自动填充数据
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
                     <div style="display:flex;align-items:center;justify-content:space-between">
                         <div>
-                            <div style="font-size:14px;font-weight:500;color:#374151">自动填充</div>
-                            <div style="font-size:12px;color:#9ca3af;margin-top:2px">登录时保存密码，下次自动填充表单</div>
+                            <div style="font-size: var(--fs-lg);font-weight:500;color:#374151">自动填充</div>
+                            <div style="font-size: var(--fs-md);color:#9ca3af;margin-top:2px">登录时保存密码，下次自动填充表单</div>
                         </div>
-                        <span style="font-size:12px;color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">已启用</span>
+                        <span style="font-size: var(--fs-md);color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">已启用</span>
                     </div>
                     <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-clear-autofill" style="margin-top:12px">
                         <i class="fas fa-trash-can"></i> 清除密码与自动填充数据
@@ -3881,25 +3882,25 @@ class BrowserEntryWidget extends HTMLElement {
 
             <!-- 证书管理 -->
             <div style="padding:0 24px 20px;max-width:600px">
-                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
                     <i class="fas fa-certificate" style="margin-right:8px;color:#6b7280"></i>证书管理
                 </div>
-                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
                     管理自定义根证书。导入的证书将在浏览器标签页和内置浏览器中生效。
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                        <span style="font-size:14px;font-weight:500;color:#374151">已导入的根证书</span>
+                        <span style="font-size: var(--fs-lg);font-weight:500;color:#374151">已导入的根证书</span>
                         <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-import-cert">
                             <i class="fas fa-plus"></i> 导入证书
                         </button>
                     </div>
                     <div id="wb-cert-list">
-                        <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">
+                        <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">
                             <i class="fas fa-spinner fa-pulse"></i> 加载中…
                         </div>
                     </div>
-                    <div style="margin-top:12px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:12px;color:#0369a1">
+                    <div style="margin-top:12px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size: var(--fs-md);color:#0369a1">
                         <i class="fas fa-info-circle"></i> 系统根证书已默认受信任。此处导入的自定义根证书将额外添加到浏览器信任链中。
                     </div>
                 </div>
@@ -3907,10 +3908,10 @@ class BrowserEntryWidget extends HTMLElement {
 
             <!-- User Agent -->
             <div style="padding:0 24px 20px;max-width:600px">
-                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                <div style="font-size: var(--fs-xl);font-weight:600;color:#1f2937;margin-bottom:4px">
                     <i class="fas fa-globe" style="margin-right:8px;color:#6b7280"></i>User Agent
                 </div>
-                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                <p style="font-size: var(--fs-base);color:#9ca3af;margin:0 0 16px 0">
                     自定义浏览器 User Agent 标识。留空则使用系统默认值。
                 </p>
                 <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
@@ -3919,10 +3920,10 @@ class BrowserEntryWidget extends HTMLElement {
                         type="text"
                         placeholder="留空使用系统默认 UA"
                         value="${this._escapeHtml(this._cachedUserAgent)}"
-                        style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:monospace;color:#374151;outline:none"
+                        style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size: var(--fs-base);font-family:monospace;color:#374151;outline:none"
                     />
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
-                        <span style="font-size:11px;color:#9ca3af">
+                        <span style="font-size: var(--fs-sm);color:#9ca3af">
                             <i class="fas fa-info-circle"></i> 修改后新建的标签页生效，已有标签页不受影响
                         </span>
                         <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-save-useragent">
@@ -4004,7 +4005,7 @@ class BrowserEntryWidget extends HTMLElement {
         const registryAPI = (window as any).applicationRegistryAPI;
         if (!registryAPI?.callMainWorld) {
             certListEl.innerHTML =
-                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">当前环境不支持证书管理</div>';
+                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">当前环境不支持证书管理</div>';
             return;
         }
 
@@ -4014,7 +4015,7 @@ class BrowserEntryWidget extends HTMLElement {
 
             if (certs.length === 0) {
                 certListEl.innerHTML =
-                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">暂无已导入的证书</div>';
+                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size: var(--fs-base)">暂无已导入的证书</div>';
                 return;
             }
 
@@ -4022,13 +4023,13 @@ class BrowserEntryWidget extends HTMLElement {
                 .map(
                     (cert) => `
                 <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0;border-radius:6px;background:#f9fafb;border:1px solid #f0f0f0">
-                    <i class="fas fa-certificate" style="color:#3b82f6;font-size:16px;flex-shrink:0"></i>
+                    <i class="fas fa-certificate" style="color:#3b82f6;font-size: var(--fs-xl);flex-shrink:0"></i>
                     <div style="flex:1;min-width:0">
-                        <div style="font-size:13px;font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
-                        <div style="font-size:11px;color:#9ca3af">颁发者: ${this.escapeHtml(cert.issuer)}</div>
-                        <div style="font-size:11px;color:#b0b3b8">有效期: ${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
+                        <div style="font-size: var(--fs-base);font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
+                        <div style="font-size: var(--fs-sm);color:#9ca3af">颁发者: ${this.escapeHtml(cert.issuer)}</div>
+                        <div style="font-size: var(--fs-sm);color:#b0b3b8">有效期: ${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
                     </div>
-                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size:11px;padding:4px 10px">
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
                         <i class="fas fa-xmark"></i>
                     </button>
                 </div>`
@@ -4069,7 +4070,7 @@ class BrowserEntryWidget extends HTMLElement {
             });
         } catch {
             certListEl.innerHTML =
-                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size:13px">加载证书失败</div>';
+                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">加载证书失败</div>';
         }
     }
 

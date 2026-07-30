@@ -304,9 +304,11 @@ export class AgentOfficeRepository {
                     trigger_interval: detail.trigger_interval,
                     hired_at: detail.hired_at,
                     enabled: detail.enabled,
+                    model: detail.model,
                     portrait_url: detail.portrait_url,
                     message_count: detail.message_count,
                     task_count: detail.task_count,
+                    skill_count: detail.skill_count,
                     usage_summary: detail.usage_summary,
                     active_task_id: detail.active_task_id
                 });
@@ -339,6 +341,7 @@ export class AgentOfficeRepository {
                 : undefined,
             message_count: messages.length,
             task_count: tasks.length,
+            skill_count: this.countSkills(staffId),
             usage_summary: metadata.usage_summary ?? sumTaskUsage(tasks),
             active_task_id: tasks.findLast((task) => task.status === 'running')?.task_id,
             agents_md: fs.existsSync(agentsPath) ? fs.readFileSync(agentsPath, 'utf8') : '',
@@ -679,6 +682,16 @@ export class AgentOfficeRepository {
         addDirectoryToZip(zip, path.join(directory, 'agent'), 'agent');
         zip.writeZip(zipPath);
         return zipPath;
+    }
+
+    /** 轻量计数：仅统计含 SKILL.md 的技能目录，不解析文件内容。 */
+    private countSkills(staffId: string): number {
+        const skillsDirectory = path.join(this.staffDirectory(staffId), 'agent', 'skills');
+        if (!fs.existsSync(skillsDirectory)) return 0;
+        return fs
+            .readdirSync(skillsDirectory, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .filter((entry) => fs.existsSync(path.join(skillsDirectory, entry.name, 'SKILL.md'))).length;
     }
 
     listSkills(staffId: string): StaffSkillSummary[] {

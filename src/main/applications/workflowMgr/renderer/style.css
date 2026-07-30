@@ -228,7 +228,7 @@ workflowmgr-entry-widget {
 .workflow-detail-action > i {
     display: block;
     width: 12px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     line-height: 1;
     text-align: center;
 }
@@ -246,7 +246,7 @@ workflowmgr-entry-widget {
     background: #18181b;
     color: #e5e7eb;
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
-    font-size: 11px;
+    font-size: var(--fs-sm);
     line-height: 1.4;
     text-align: left;
     white-space: nowrap;

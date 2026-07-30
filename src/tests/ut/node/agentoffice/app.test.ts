@@ -302,7 +302,8 @@ test('scheduler recovery resumes waiting scheduled tasks and settles stale recor
                         hired_at: '2026-07-19T09:00:00.000Z',
                         enabled: true,
                         message_count: 0,
-                        task_count: records.length
+                        task_count: records.length,
+                        skill_count: 0
                     }
                 ]
             };

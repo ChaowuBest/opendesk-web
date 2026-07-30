@@ -40,7 +40,7 @@
     margin: 0;
     color: var(--md-text);
     font-family: var(--md-font-sans);
-    font-size: 14px;
+    font-size: var(--fs-base);
     line-height: 1.5;
     word-wrap: break-word;
 }

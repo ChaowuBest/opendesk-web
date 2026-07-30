@@ -233,13 +233,13 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
 .od-fsitem {
     display: flex; align-items: center; gap: 6px;
     padding: 5px 10px; cursor: pointer; border: none; background: none;
-    text-align: left; width: 100%; font-size: 12px; color: var(--od-text, #374151);
+    text-align: left; width: 100%; font-size: var(--fs-md); color: var(--od-text, #374151);
     transition: background 0.1s; font-family: inherit;
 }
 .od-fsitem:hover { background: var(--od-bg-subtle, #f3f4f6); }
 .od-fsitem.selected { background: var(--od-accent, #3b82f6); color: #fff; }
 .od-fsitem.selected .od-fsitem-chevron { color: #fff; }
-.od-fsitem-icon { font-size: 12px; color: var(--od-text-muted, #6b7280); flex-shrink: 0; }
+.od-fsitem-icon { font-size: var(--fs-md); color: var(--od-text-muted, #6b7280); flex-shrink: 0; }
 .od-fsitem.selected .od-fsitem-icon { color: #dbeafe; }
 .od-fsitem[data-is-drive="1"] { font-weight: 500; }
 .od-fsitem-size { flex-shrink: 0; margin-left: auto; }
@@ -251,12 +251,12 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
     overflow: visible;
     text-overflow: clip;
 }
-.od-fsitem-chevron { font-size: 9px; color: var(--od-text-muted, #9ca3af); flex-shrink: 0; }
-.od-fscol-empty { padding: 12px; font-size: 11px; color: var(--od-text-disabled, #9ca3af); text-align: center; }
+.od-fsitem-chevron { font-size: var(--fs-2xs); color: var(--od-text-muted, #9ca3af); flex-shrink: 0; }
+.od-fscol-empty { padding: 12px; font-size: var(--fs-sm); color: var(--od-text-disabled, #9ca3af); text-align: center; }
 
 /* inline 编辑输入框 */
 .od-fsitem-edit {
-    flex: 1; min-width: 0; font-size: 12px; font-family: inherit;
+    flex: 1; min-width: 0; font-size: var(--fs-md); font-family: inherit;
     border: 1px solid var(--od-accent, #3b82f6); border-radius: 3px; outline: none;
     padding: 1px 4px; color: var(--od-text, #1f2937); background: var(--od-bg-elevated, #fff);
 }
@@ -276,11 +276,11 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
 .od-fsel-ctx-item {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 14px; cursor: pointer; border: none; background: none;
-    text-align: left; width: 100%; font-size: 12px; color: var(--od-text, #374151);
+    text-align: left; width: 100%; font-size: var(--fs-md); color: var(--od-text, #374151);
     font-family: inherit; transition: background 0.1s;
 }
 .od-fsel-ctx-item:hover { background: var(--od-bg-subtle, #f3f4f6); }
-.od-fsel-ctx-item i { font-size: 11px; color: var(--od-text-muted, #6b7280); width: 14px; text-align: center; }
+.od-fsel-ctx-item i { font-size: var(--fs-sm); color: var(--od-text-muted, #6b7280); width: 14px; text-align: center; }
 .od-fsel-ctx-danger { color: #dc2626; }
 .od-fsel-ctx-danger:hover { background: rgba(220, 38, 38, 0.08); }
 .od-fsel-ctx-danger i { color: #dc2626; }
@@ -397,7 +397,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         if (usedPercent > 80) color = '#dc2626';
         else if (usedPercent > 60) color = '#f59e0b';
 
-        return `<span class="od-fsitem-size" style="font-size:10px;color:${color};margin-left:4px;">${usedGB}/${totalGB}GB</span>`;
+        return `<span class="od-fsitem-size" style="font-size: var(--fs-xs);color:${color};margin-left:4px;">${usedGB}/${totalGB}GB</span>`;
     }
 
     /* ───────── item click ───────── */

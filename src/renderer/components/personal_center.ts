@@ -721,7 +721,7 @@ class PersonalCenter extends HTMLElement {
                     .updated-at {
                         margin-top: 5px;
                         color: var(--pc-muted, #6b7280);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                     }
 
                     .icon-button {
@@ -735,7 +735,7 @@ class PersonalCenter extends HTMLElement {
                         background: var(--pc-button-bg, rgba(255, 255, 255, 0.78));
                         color: var(--pc-muted, #64748b);
                         cursor: pointer;
-                        font-size: 16px;
+                        font-size: var(--fs-xl);
                     }
 
                     .icon-button:hover {
@@ -810,7 +810,7 @@ class PersonalCenter extends HTMLElement {
                         justify-content: space-between;
                         gap: 12px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         font-weight: 650;
                     }
 
@@ -838,7 +838,7 @@ class PersonalCenter extends HTMLElement {
                     .metric-label {
                         margin-top: 6px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                     }
 
                     .metric-token {
@@ -850,7 +850,7 @@ class PersonalCenter extends HTMLElement {
                         gap: 10px;
                         flex-wrap: wrap;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                     }
 
                     .panel {
@@ -874,7 +874,7 @@ class PersonalCenter extends HTMLElement {
 
                     h2 {
                         color: var(--pc-heading, #111827);
-                        font-size: 15px;
+                        font-size: var(--fs-lg);
                         line-height: 1.3;
                         font-weight: 720;
                     }
@@ -882,7 +882,7 @@ class PersonalCenter extends HTMLElement {
                     .panel-header p {
                         margin-top: 4px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                     }
 
                     .rank-period-select {
@@ -891,7 +891,7 @@ class PersonalCenter extends HTMLElement {
                         border-radius: 6px;
                         background: var(--pc-button-bg, rgba(255, 255, 255, 0.78));
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         cursor: pointer;
                         appearance: none;
                         -webkit-appearance: none;
@@ -928,7 +928,7 @@ class PersonalCenter extends HTMLElement {
 
                     .trend-chart text {
                         fill: var(--pc-muted, #64748b);
-                        font-size: 10px;
+                        font-size: var(--fs-xs);
                     }
 
                     .axis {
@@ -974,7 +974,7 @@ class PersonalCenter extends HTMLElement {
                         border-radius: 8px;
                         background: var(--pc-tooltip-bg, rgba(15, 23, 42, 0.92));
                         color: var(--pc-tooltip-text, #f1f5f9);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         line-height: 1.6;
                         pointer-events: none;
                         white-space: nowrap;
@@ -1037,7 +1037,7 @@ class PersonalCenter extends HTMLElement {
                         gap: 14px;
                         margin-top: 10px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                     }
 
                     .legend span {
@@ -1109,7 +1109,7 @@ class PersonalCenter extends HTMLElement {
                         justify-content: center;
                         background: var(--pc-index-bg, rgba(217, 77, 69, 0.12));
                         color: var(--pc-input, #d94d45);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         font-weight: 700;
                     }
 
@@ -1122,7 +1122,7 @@ class PersonalCenter extends HTMLElement {
                         display: block;
                         min-width: 0;
                         color: var(--pc-heading, #111827);
-                        font-size: 13px;
+                        font-size: var(--fs-base);
                         font-weight: 650;
                         overflow: hidden;
                         text-overflow: ellipsis;
@@ -1133,7 +1133,7 @@ class PersonalCenter extends HTMLElement {
                         display: block;
                         margin-top: 2px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 11px;
+                        font-size: var(--fs-sm);
                         overflow: hidden;
                         text-overflow: ellipsis;
                         white-space: nowrap;
@@ -1173,7 +1173,7 @@ class PersonalCenter extends HTMLElement {
                         flex-direction: column;
                         align-items: flex-end;
                         gap: 2px;
-                        font-size: 11px;
+                        font-size: var(--fs-sm);
                     }
 
                     .rank-detail-input,
@@ -1194,7 +1194,7 @@ class PersonalCenter extends HTMLElement {
                     }
 
                     .rank-arrow {
-                        font-size: 10px;
+                        font-size: var(--fs-xs);
                         opacity: 0.65;
                     }
 
@@ -1209,7 +1209,7 @@ class PersonalCenter extends HTMLElement {
                         gap: 8px;
                         text-align: center;
                         color: var(--pc-muted, #64748b);
-                        font-size: 13px;
+                        font-size: var(--fs-base);
                     }
 
                     .empty-state.compact {
@@ -1218,14 +1218,14 @@ class PersonalCenter extends HTMLElement {
 
                     .state-title {
                         color: var(--pc-heading, #111827);
-                        font-size: 14px;
+                        font-size: var(--fs-lg);
                         font-weight: 650;
                     }
 
                     .state-detail {
                         max-width: 520px;
                         color: var(--pc-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         line-height: 1.6;
                     }
 
