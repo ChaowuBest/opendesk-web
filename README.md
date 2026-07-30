@@ -8,14 +8,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/平台-OpenHarmony%20%7C%20Windows%20%7C%20macOS-blue?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/版本-0.2.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/版本-0.3.1-green?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
   <a href="./README.md">中文</a> | <a href="./README_EN.md">English</a>
 </p>
 
-Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相比于
+Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相比于市面上其他同类产品，Opendesk 提供了以下优势：
 
 ## 🚀 为什么选择 Opendesk
 
