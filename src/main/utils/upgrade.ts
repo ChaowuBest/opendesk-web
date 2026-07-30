@@ -11,6 +11,9 @@
 
 import * as https from 'https';
 import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
 import { asyncShellExec } from './shellExec.js';
 
 const PACKAGE_NAME = '@bitclub.ai/opendesk-cli';
@@ -27,14 +30,32 @@ export interface VersionInfo {
 
 /**
  * 内部函数：获取 npm 全局安装信息（版本和是否安装）
- * 直接读取全局 node_modules 中的 package.json，比 npm list 快很多
+ * 优先从 CLI 二进制旁的 package.json 读取（不依赖 npm 命令，不受 NPM_CONFIG_PREFIX 干扰）；
+ * 回退到 `npm root -g` + `npm list -g`（stripNpmPrefix 避免环境变量干扰）。
  * @returns 版本号和是否通过 npm 安装
  */
 async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalled: boolean }> {
+    // 方法0：直接从 CLI 二进制所在目录读取 package.json
+    // 发布包结构: opendesk + package.json 在同一目录
     try {
-        // 方法1：通过 npm root 获取全局目录，直接读取 package.json
+        const binDir = path.dirname(fileURLToPath(import.meta.url));
+        const pkgJsonPath = path.join(binDir, 'package.json');
+        if (fs.existsSync(pkgJsonPath)) {
+            const content = fs.readFileSync(pkgJsonPath, 'utf-8');
+            const pkg = JSON.parse(content);
+            if (pkg.name === PACKAGE_NAME && pkg.version) {
+                return { version: pkg.version, isInstalled: true };
+            }
+        }
+    } catch {
+        // import.meta.url 不可用或文件读取失败，继续回退
+    }
+
+    // 方法1：通过 npm root 获取全局目录，直接读取 package.json
+    try {
         const { stdout: globalRoot } = await asyncShellExec('npm root -g', {
-            timeout: 10000
+            timeout: 10000,
+            stripNpmPrefix: true
         });
         const packageJsonPath = `${globalRoot.trim()}/${PACKAGE_NAME}/package.json`;
 
@@ -51,7 +72,8 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
         // 方法2：回退到 npm list（较慢但可靠）
         try {
             const { stdout } = await asyncShellExec(`npm list -g '${PACKAGE_NAME}' --depth=0 --json`, {
-                timeout: 15000
+                timeout: 15000,
+                stripNpmPrefix: true
             });
             const result = JSON.parse(stdout);
             if (result && result.dependencies && result.dependencies[PACKAGE_NAME]) {
@@ -84,6 +106,32 @@ export async function isNpmInstalled(): Promise<boolean> {
 export async function getCurrentVersion(): Promise<string | null> {
     const info = await getNpmInstallInfo();
     return info.version;
+}
+
+/**
+ * 读取用户配置的 npm registry 地址。
+ * 优先级：环境变量 npm_config_registry → ~/.npmrc → 默认 registry.npmjs.org
+ * @returns registry URL（不含尾部斜杠）
+ */
+export function getConfiguredRegistry(): string {
+    // 1. npm 脚本运行时注入的环境变量
+    if (process.env.npm_config_registry) {
+        return process.env.npm_config_registry.replace(/\/+$/, '');
+    }
+    // 2. 读取用户 ~/.npmrc
+    try {
+        const npmrcPath = path.join(os.homedir(), '.npmrc');
+        if (fs.existsSync(npmrcPath)) {
+            const content = fs.readFileSync(npmrcPath, 'utf-8');
+            for (const line of content.split('\n')) {
+                const m = line.match(/^\s*registry\s*=\s*["']?([^"'\s]+)["']?\s*$/);
+                if (m) return m[1].replace(/\/+$/, '');
+            }
+        }
+    } catch {
+        // 忽略读取错误
+    }
+    return 'https://registry.npmjs.org';
 }
 
 /**
@@ -134,8 +182,9 @@ function fetchNpmRegistry(url: string, timeout: number = 15000): Promise<Record<
  */
 export async function getNpmVersion(packageName: string, tag: string = 'latest'): Promise<string | null> {
     try {
-        // 使用 HTTPS 直接访问 npm registry，比 npm view 命令快很多
-        const registryUrl = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
+        // 使用 HTTPS 直接访问用户配置的 registry，比 npm view 命令快很多
+        const registry = getConfiguredRegistry();
+        const registryUrl = `${registry}/${encodeURIComponent(packageName)}`;
         const data = await fetchNpmRegistry(registryUrl, 15000);
 
         if (data) {
@@ -155,7 +204,8 @@ export async function getNpmVersion(packageName: string, tag: string = 'latest')
         // 回退到 npm view 命令
         try {
             const { stdout } = await asyncShellExec(`npm view '${packageName}' version --tag ${tag}`, {
-                timeout: 30000
+                timeout: 30000,
+                stripNpmPrefix: true
             });
             return stdout.trim() || null;
         } catch {
@@ -274,7 +324,8 @@ export async function installVersion(
     // 执行全局安装
     const installCmd = `npm install -g '${PACKAGE_NAME}@${tag}'`;
     await asyncShellExec(installCmd, {
-        timeout: 120000
+        timeout: 120000,
+        stripNpmPrefix: true
     });
 
     // 检查安装是否成功

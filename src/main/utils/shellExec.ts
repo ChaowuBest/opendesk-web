@@ -182,6 +182,14 @@ export interface ShellExecOptions {
     cwd?: string;
     timeout?: number;
     env?: NodeJS.ProcessEnv;
+    /**
+     * 从子进程环境中移除 NPM_CONFIG_PREFIX 和 npm_config_prefix。
+     *
+     * buildInterpretersEnv 会为所有子进程注入 NPM_CONFIG_PREFIX 指向
+     * interpreters 沙箱目录，这会导致 `npm root -g`、`npm install -g` 等
+     * 命令操作到错误的全局目录。npm 相关命令应设置此选项。
+     */
+    stripNpmPrefix?: boolean;
 }
 
 export interface ShellExecResult {
@@ -553,6 +561,10 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
         const env = buildChildProcessEnv(options.env);
+        if (options.stripNpmPrefix) {
+            delete env.NPM_CONFIG_PREFIX;
+            delete env.npm_config_prefix;
+        }
         // detached 让子进程在新会话中运行（POSIX setsid），使其没有控制终端。
         // 这样 open("/dev/tty") 直接失败（ENXIO），所有工具自动回退非交互模式，
         // 不依赖逐个工具的环境变量兼容性。Windows 无 /dev/tty 问题，跳过。
@@ -642,6 +654,10 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 export function shellExec(command: string, options: ShellExecOptions = {}): ShellExecResult {
     const { shellPath, shellArgs } = getDefaultShell();
     const env = buildChildProcessEnv(options.env);
+    if (options.stripNpmPrefix) {
+        delete env.NPM_CONFIG_PREFIX;
+        delete env.npm_config_prefix;
+    }
     // 不使用内置 encoding 以获取原始 Buffer，后续手动解码处理 Windows GBK 乱码
     const result = spawnSync(shellPath, [...shellArgs, command], {
         cwd: options.cwd,

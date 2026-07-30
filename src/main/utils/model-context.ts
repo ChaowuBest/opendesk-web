@@ -234,6 +234,7 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Kimi / Moonshot
     // ═══════════════════════════════════════════════
+    'kimi-k3': { contextSize: 1048576, maxOutputTokens: 0, vision: true },
     'kimi-k2-7-code': { contextSize: 262144, maxOutputTokens: 0, vision: true },
     'kimi-k2-6': { contextSize: 262144, maxOutputTokens: 0, vision: true },
     'kimi-k2-5': { contextSize: 262144, maxOutputTokens: 0, vision: true },
