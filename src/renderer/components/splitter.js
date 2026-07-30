@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const DEFAULT_SIDEBAR_WIDTH = 340;
+const DEFAULT_SIDEBAR_WIDTH = 316;
 
 class SplitterWidget extends HTMLElement {
     constructor() {
@@ -72,7 +72,7 @@ class SplitterWidget extends HTMLElement {
             }
             .resizer {
                 position: relative;
-                background: transparent;
+                background: var(--od-bg, #f5f5f5);
                 width: 6px;
                 min-width: 6px;
                 cursor: col-resize;

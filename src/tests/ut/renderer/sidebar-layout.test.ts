@@ -85,5 +85,16 @@ describe('desktop sidebar layout', () => {
         expect(splitter.hasAttribute('resizing')).toBe(true);
         splitter._stopResize();
         expect(splitter.hasAttribute('resizing')).toBe(false);
+
+        const defaultSplitter = document.createElement('splitter-widget') as HTMLElement & {
+            shadowRoot: ShadowRoot;
+        };
+        document.body.appendChild(defaultSplitter);
+
+        const defaultLeftPanel = defaultSplitter.shadowRoot.getElementById('leftPanel') as HTMLElement;
+        expect(defaultLeftPanel.style.width).toBe('316px');
+        expect(defaultSplitter.shadowRoot.querySelector('style')?.textContent).toContain(
+            'background: var(--od-bg, #f5f5f5);'
+        );
     });
 });
