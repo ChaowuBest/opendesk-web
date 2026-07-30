@@ -591,15 +591,25 @@ class TaskView extends HTMLElement {
         return canShowWaitingAssistantPlaceholder(taskStatus, goal);
     }
 
+    static formatContextRatioText(totalTokens, contextSize) {
+        if (contextSize <= 0 || totalTokens <= 0) return '';
+        const ratio = totalTokens / contextSize;
+        const pctNum = ratio * 100;
+        if (pctNum > 100) {
+            // 占比超过 100% 意味着回复的 token 数大于当前配置的上下文窗口。常见原因：
+            // 切换到更小上下文窗口的模型，或在设置中手动把上下文长度设得很小。此时仍展示
+            // 真实比值并标注已超限，而非把数值截断成 100%，便于用户察觉窗口配置偏小。
+            const pct = pctNum.toFixed(1);
+            return `, 上下文占比 ${pct}%（已超限，当前上下文窗口配置偏小，回复 token 数超出窗口大小）`;
+        }
+        return `, 上下文占比 ${pctNum.toFixed(1)}%`;
+    }
+
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
         if (!TaskView.hasDisplayableUsage(usage)) return '';
         const { promptTokens, completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
         const titleParts = `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`;
-        let ratioText = '';
-        if (contextSize > 0 && totalTokens > 0) {
-            const pct = ((totalTokens / contextSize) * 100).toFixed(1);
-            ratioText = `, 上下文占比 ${pct}%`;
-        }
+        const ratioText = TaskView.formatContextRatioText(totalTokens, contextSize);
         const spinnerDisplay = isStreaming ? '' : 'display:none;';
         return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
     }
@@ -1288,11 +1298,7 @@ class TaskView extends HTMLElement {
             }
             const titleParts =
                 totalTokens > 0 ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}` : '';
-            let ratioText = '';
-            if (this._modelContextSize > 0 && totalTokens > 0) {
-                const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
-                ratioText = `, 上下文占比 ${pct}%`;
-            }
+            const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
             usageEl.title = titleParts;
             usageEl.dataset.promptTokens = String(promptTokens);
             usageEl.dataset.completionTokens = String(completionTokens);
@@ -1652,11 +1658,7 @@ class TaskView extends HTMLElement {
         if (!lastUsage) return;
         const completionTokens = parseInt(lastUsage.dataset.completionTokens || '0', 10);
         const totalTokens = parseInt(lastUsage.dataset.totalTokens || '0', 10);
-        let ratioText = '';
-        if (this._modelContextSize > 0 && totalTokens > 0) {
-            const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
-            ratioText = `, 上下文占比 ${pct}%`;
-        }
+        const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
         const textEl = lastUsage.querySelector('.usage-text');
         if (textEl) {
             textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
