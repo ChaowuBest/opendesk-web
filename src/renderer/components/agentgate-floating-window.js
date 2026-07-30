@@ -153,7 +153,10 @@ const CSS = `
     gap: 8px;
     font-weight: 760;
     color: inherit;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    /* 未展开时不被右侧内容压缩（右侧 count-tag 4 位数字变宽时，
+       title 的 overflow:hidden 会裁掉 moss 指示灯 → 指示灯消失。
+       flex:0 0 auto 让 title 盾牌+指示灯区不被压，压缩交给 actions 内部消化） */
     overflow: hidden;
 }
 
@@ -318,16 +321,18 @@ const CSS = `
     color: inherit;
 }
 
-/* Moss health indicator dot */
+/* Moss health indicator dot — 置于 floating-title 内盾牌之后，紧贴盾牌。
+   title 已 flex:0 0 auto 不可压缩，overflow:hidden 不会裁掉它。
+   margin-left 负值抵消 title gap(8px)，让指示灯贴近盾牌而非被 gap 推远。 */
 .moss-health-dot {
     display: inline-block;
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-left: 6px;
+    margin-left: -3px;
     background: #9CA3AF;
     vertical-align: middle;
-    flex-shrink: 0;
+    flex: 0 0 auto;
 }
 .moss-health-dot.ok {
     background: #22C55E;
@@ -1111,11 +1116,13 @@ class AgentGateFloatingWindow extends HTMLElement {
         titleDiv.innerHTML = `${SHIELD_ICON}<span class="floating-title-label"></span>`;
         this._titleLabel = titleDiv.querySelector('.floating-title-label');
         this._titleLabel.textContent = t('floatingTitle');
-        // Moss health dot (appended after title text)
+        // Moss health dot — 放回 floating-title 内，插在盾牌与 label 之间紧贴盾牌。
+        // 安全前提：title 已设 flex:0 0 auto（不可收缩），盒宽不会被压到小于内容，
+        // 故 overflow:hidden 不会裁掉 dot（区别于最初 flex:0 1 auto 会压裁的版本）。
         this._mossDot = document.createElement('span');
         this._mossDot.className = 'moss-health-dot';
         this._mossDot.title = 'AgentMoss';
-        titleDiv.appendChild(this._mossDot);
+        titleDiv.insertBefore(this._mossDot, this._titleLabel);
 
         this._actionsDiv = document.createElement('div');
         this._actionsDiv.className = 'floating-actions';
