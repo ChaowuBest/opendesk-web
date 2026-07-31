@@ -1094,7 +1094,7 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.search': '搜索…',
     'renderer.sidebar.clearSearch': '清除搜索',
     'renderer.sidebar.searchResults': '搜索结果',
-    'renderer.sidebar.runningTasks': '正在运行',
+    'renderer.sidebar.runningTasks': '最近任务',
     'renderer.sidebar.taskList': '任务列表',
     'renderer.sidebar.viewByTime': '按时间整理',
     'renderer.sidebar.viewByWorkspace': '按工作空间整理',

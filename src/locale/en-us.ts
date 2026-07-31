@@ -1120,7 +1120,7 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.search': 'Search…',
     'renderer.sidebar.clearSearch': 'Clear search',
     'renderer.sidebar.searchResults': 'Search Results',
-    'renderer.sidebar.runningTasks': 'RUNNING',
+    'renderer.sidebar.runningTasks': 'RECENT',
     'renderer.sidebar.taskList': 'TASKS',
     'renderer.sidebar.viewByTime': 'Group by time',
     'renderer.sidebar.viewByWorkspace': 'Group by workspace',

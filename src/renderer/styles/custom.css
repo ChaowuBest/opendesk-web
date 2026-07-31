@@ -1925,9 +1925,6 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
     border-radius: 50%;
     animation: sb-spinner 0.9s linear infinite;
 }
-.sb-running-card.is-recently-completed {
-    border-color: color-mix(in srgb, #4ade80 30%, var(--od-border));
-}
 .sb-running-completed-status {
     flex: none;
     color: #15803d;
@@ -2168,14 +2165,6 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
 .sb-task-group.is-workspace {
     --sb-group-summary-height: 48px;
 }
-.sb-task-group[open] > summary {
-    color: #c94c40;
-    border-color: rgba(201, 76, 64, 0.35);
-}
-.sb-task-group[open].is-workspace > summary {
-    border-color: rgba(201, 76, 64, 0.45);
-    box-shadow: 0 0 0 1px rgba(201, 76, 64, 0.25);
-}
 .sb-group-count {
     padding: 1.5px 7px;
     color: var(--od-text-disabled);
@@ -2183,10 +2172,6 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
     font-weight: 600;
     background: var(--od-bg-subtle);
     border-radius: 99px;
-}
-.sb-task-group[open] .sb-group-count {
-    color: #c94c40;
-    background: rgba(201, 76, 64, 0.09);
 }
 .sb-group-caret {
     margin-left: auto;
@@ -2340,9 +2325,6 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
 }
 .sb-workspace-path-tail {
     flex: 0 0 auto;
-}
-.sb-task-group[open] .sb-workspace-name {
-    color: #c94c40;
 }
 .sb-load-more {
     display: flex;

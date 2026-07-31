@@ -350,20 +350,6 @@ html[data-theme='dark'] .task-card-group {
     color: var(--od-text);
 }
 
-/* 任务列表分组标签展开状态：深色模式下将暗红色调亮为柔和珊瑚色，改善可见度 */
-html[data-theme='dark'] .sb-task-group[open] > summary {
-    color: #e8857d;
-    border-color: rgba(232, 133, 125, 0.3);
-}
-html[data-theme='dark'] .sb-task-group[open].is-workspace > summary {
-    border-color: rgba(232, 133, 125, 0.4);
-    box-shadow: 0 0 0 1px rgba(232, 133, 125, 0.2);
-}
-html[data-theme='dark'] .sb-task-group[open] .sb-group-count {
-    color: #e8857d;
-    background: rgba(232, 133, 125, 0.1);
-}
-
 /* 主壳：sidebar.js 等使用的 Tailwind 任意 hex 字色（非 text-gray-*） */
 html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1f2937]'],
 html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1d1d1f]'] {
@@ -1390,21 +1376,7 @@ html[data-theme='dark'] .agent-send-menu-item-label {
     color: var(--od-text) !important;
 }
 
-/* 侧边栏左下角设置按钮栏 */
-html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
-    background: var(--od-bg-elevated) !important;
-    border: 1px solid var(--od-border-strong) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
-}
-
-html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
-    background: var(--od-bg-muted) !important;
-    color: var(--od-accent) !important;
-}
+/* 侧边栏左下角导航栏：深色模式由 toolbar.css sidebar-bottom 变体统一管理 */
 
 html[data-theme='dark'] browser-entry-widget .wb,
 html[data-theme='dark'] browser-entry-widget .wb-drag-pad {
