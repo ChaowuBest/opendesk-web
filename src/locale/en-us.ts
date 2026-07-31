@@ -1276,9 +1276,9 @@ export const enUs: Record<string, string> = {
     'renderer.developer.viewTaskInfo': 'View Task Info',
     'renderer.developer.triggerTaskReview': 'Trigger Task Review',
     'renderer.developer.reviewTriggered': 'Task Review Triggered',
-    'renderer.developer.reviewTriggeredDetail': 'Task review has started in the background',
+    'renderer.developer.reviewTriggeredDetail': 'Task review has started or been queued in the background',
     'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
-    'renderer.developer.reviewNotTriggeredDetail': 'A task review is already running, or review could not be started',
+    'renderer.developer.reviewNotTriggeredDetail': 'The task review request could not be accepted',
     'renderer.developer.triggerFailed': 'Trigger Failed',
 
     // Main - Log Export
