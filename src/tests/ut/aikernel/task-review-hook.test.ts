@@ -87,6 +87,30 @@ describe('onTaskReview hook', () => {
         await expect(noopTask.hooks.noticeTaskReview(noopTask, 0)).resolves.toBe(false);
     });
 
+    test('preserves the earliest review start index across interactions in the same idle window', async () => {
+        const task = new TaskState(new TaskManagerState());
+        const callback = jest.fn();
+        HookRegistry.onTaskReview(callback);
+
+        task.recordTaskInteraction();
+        task.chat_context.appendMessage(new UserMessage('message A'));
+        const assistantA = new AssistantMessage();
+        assistantA.appendText('answer A');
+        task.chat_context.appendMessage(assistantA);
+
+        await jest.advanceTimersByTimeAsync(60);
+
+        task.recordTaskInteraction();
+        task.chat_context.appendMessage(new UserMessage('message B'));
+
+        await jest.advanceTimersByTimeAsync(99);
+        expect(callback).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(1);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(task, 0);
+    });
+
     test('resets the idle window when a new user or assistant message is appended', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();
