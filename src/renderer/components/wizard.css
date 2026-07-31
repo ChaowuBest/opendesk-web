@@ -1,0 +1,570 @@
+/* =========================================
+   Setup Wizard · 轻盈留白 SOFT WHITE
+   纯白底 + 品牌红 · 14px 圆角 · 胶囊按钮 · 柔和投影
+   ========================================= */
+
+setup-wizard {
+    --wiz-accent: #de4433;
+    --wiz-accent-soft: #fbedea;
+    --wiz-sel-bg: #fcf1ee;
+    --wiz-canvas: #ffffff;
+    --wiz-card: #ffffff;
+    --wiz-line: #e7e7e3;
+    --wiz-ink: #26262b;
+    --wiz-ink-2: #6f6f74;
+    --wiz-ink-3: #a5a5aa;
+    --wiz-icon-chip-bg: #f5f4f1;
+    --wiz-input-bg: #fafaf9;
+    --wiz-input-line: #e5e5e1;
+    --wiz-r-card: 14px;
+    --wiz-r-ctl: 9px;
+    --wiz-r-btn: 999px;
+    --wiz-ctl-h: 34px;
+    --wiz-btn-h: 34px;
+    --wiz-title-size: 18px;
+    --wiz-btn-primary-bg: linear-gradient(180deg, #e6512f, #d53d24);
+    --wiz-btn-shadow: 0 4px 14px rgba(222, 68, 51, 0.26);
+    --wiz-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px rgba(0, 0, 0, 0.06);
+    --wiz-dot-halo: 0 0 0 4px rgba(222, 68, 51, 0.13);
+    --wiz-check-shadow: 0 2px 6px rgba(222, 68, 51, 0.35);
+    --wiz-green: #43a26a;
+}
+
+/* 根容器 */
+setup-wizard .wizard-root {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    background: var(--wiz-canvas);
+    color: var(--wiz-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* 左侧步骤导航 rail */
+setup-wizard .wizard-rail {
+    flex: none;
+    width: 126px;
+    padding: 30px 0 0 26px;
+    display: flex;
+    flex-direction: column;
+}
+
+setup-wizard .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+setup-wizard .rail-dot {
+    width: 21px;
+    height: 21px;
+    flex: none;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    background: #ddddd7;
+    color: #fff;
+}
+
+setup-wizard .rail-item.done .rail-dot {
+    background: var(--wiz-accent);
+}
+
+setup-wizard .rail-item.active .rail-dot {
+    background: var(--wiz-accent);
+    box-shadow: var(--wiz-dot-halo);
+}
+
+setup-wizard .rail-label {
+    font-size: 11px;
+    color: var(--wiz-ink-3);
+}
+
+setup-wizard .rail-item.active .rail-label {
+    color: var(--wiz-ink);
+    font-weight: 600;
+}
+
+setup-wizard .rail-item.done .rail-label {
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .rail-line {
+    width: 1px;
+    height: 30px;
+    margin: 3px 0 3px 10px;
+    background: #e2e2dc;
+}
+
+/* 右侧内容区 */
+setup-wizard .wizard-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+setup-wizard .wizard-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 30px 34px 22px 6px;
+}
+
+setup-wizard .step-tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--wiz-accent);
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+}
+
+setup-wizard .wizard-body h2 {
+    font-size: var(--wiz-title-size);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+}
+
+setup-wizard .ob-desc {
+    font-size: 12px;
+    color: var(--wiz-ink-2);
+    line-height: 1.65;
+    margin-top: 7px;
+    max-width: 560px;
+}
+
+/* ---- 选项卡 (Step 1) ---- */
+setup-wizard .opt-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+    max-width: 720px;
+}
+
+setup-wizard .opt-card {
+    position: relative;
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    padding: 14px 14px 12px;
+    cursor: pointer;
+    transition: all 0.16s;
+    box-shadow: var(--wiz-card-shadow);
+}
+
+setup-wizard .opt-card:hover:not(.disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(80, 66, 50, 0.08);
+    border-color: #d8d8d2;
+}
+
+setup-wizard .opt-card.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+setup-wizard .opt-card.selected {
+    border: 1.5px solid var(--wiz-accent);
+    background: var(--wiz-sel-bg);
+    padding: 13.5px 13.5px 11.5px;
+}
+
+setup-wizard .opt-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--wiz-icon-chip-bg);
+    color: #8a8a8f;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+setup-wizard .opt-name {
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+setup-wizard .opt-desc {
+    font-size: 10.5px;
+    color: var(--wiz-ink-2);
+    line-height: 1.55;
+    margin-top: 4px;
+}
+
+setup-wizard .opt-badge {
+    position: absolute;
+    top: 11px;
+    right: 32px;
+    font-size: 9px;
+    color: #8b8b90;
+    background: #f0f0ed;
+    border-radius: 4px;
+    padding: 2px 5px;
+}
+
+setup-wizard .opt-lock {
+    position: absolute;
+    top: 11px;
+    right: 11px;
+    color: #b9b9be;
+    font-size: 11px;
+}
+
+setup-wizard .opt-check {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--wiz-accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--wiz-check-shadow);
+    font-size: 8px;
+}
+
+/* ---- 占位页面 ---- */
+setup-wizard .placeholder-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 0;
+    margin-top: 16px;
+    max-width: 640px;
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    box-shadow: var(--wiz-card-shadow);
+}
+
+setup-wizard .placeholder-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #fff7ed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    font-size: 28px;
+    color: #f59e0b;
+}
+
+setup-wizard .placeholder-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--wiz-ink);
+    margin-bottom: 6px;
+}
+
+setup-wizard .placeholder-sub {
+    font-size: 12px;
+    color: var(--wiz-ink-3);
+}
+
+/* ---- 表单卡 (Step 2) ---- */
+setup-wizard .form-card {
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    box-shadow: var(--wiz-card-shadow);
+    padding: 20px 22px;
+    margin-top: 16px;
+    max-width: 640px;
+}
+
+setup-wizard .f-row {
+    margin-bottom: 12px;
+}
+
+setup-wizard .f-row:last-child {
+    margin-bottom: 0;
+}
+
+setup-wizard .f-grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+setup-wizard .f-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--wiz-ink-2);
+    margin-bottom: 5px;
+}
+
+setup-wizard .f-ctl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--wiz-ctl-h);
+    background: var(--wiz-input-bg);
+    border: 1px solid var(--wiz-input-line);
+    border-radius: var(--wiz-r-ctl);
+    padding: 0 10px;
+    font-size: 12px;
+    color: var(--wiz-ink);
+    width: 100%;
+    box-sizing: border-box;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
+}
+
+setup-wizard .f-ctl:focus-within {
+    border-color: var(--wiz-accent);
+    box-shadow: 0 0 0 3px rgba(222, 68, 51, 0.12);
+}
+
+setup-wizard .f-select {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A5A5AA' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
+}
+
+setup-wizard .f-ctl-with-btn {
+    padding: 0;
+}
+
+setup-wizard .f-ctl-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 12px;
+    color: var(--wiz-ink);
+    height: 100%;
+    padding: 0 10px;
+}
+
+setup-wizard .f-ctl-input::placeholder {
+    color: var(--wiz-ink-3);
+}
+
+setup-wizard .f-ctl-btn {
+    flex: none;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--wiz-ink-3);
+    padding: 0 10px;
+    height: 100%;
+    font-size: 12px;
+    transition: color 0.15s;
+}
+
+setup-wizard .f-ctl-btn:hover {
+    color: var(--wiz-ink);
+}
+
+setup-wizard .f-checks {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+}
+
+setup-wizard .f-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--wiz-ink-2);
+    cursor: pointer;
+}
+
+setup-wizard .f-check input[type='checkbox'] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--wiz-accent);
+    cursor: pointer;
+}
+
+/* ---- 验证结果 ---- */
+setup-wizard .verify-result {
+    font-size: 12px;
+    padding: 10px 12px;
+    border-radius: var(--wiz-r-ctl);
+    border: 1px solid;
+    max-height: 48px;
+    overflow-y: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+setup-wizard .verify-result.hidden {
+    display: none;
+}
+
+setup-wizard .verify-success {
+    color: #16a34a;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+setup-wizard .verify-error {
+    color: #dc2626;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+setup-wizard .verify-info {
+    color: #2563eb;
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+
+/* ---- 按钮 ---- */
+setup-wizard .f-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+setup-wizard .f-actions .wiz-btn-primary {
+    flex: 1.4;
+}
+
+setup-wizard .f-actions .wiz-btn-secondary {
+    flex: 1;
+}
+
+setup-wizard .wiz-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: var(--wiz-r-btn);
+    padding: 0 16px;
+    height: var(--wiz-btn-h);
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+setup-wizard .wiz-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+setup-wizard .wiz-btn-primary {
+    background: var(--wiz-btn-primary-bg);
+    color: #fff;
+    box-shadow: var(--wiz-btn-shadow);
+}
+
+setup-wizard .wiz-btn-primary:hover:not(:disabled) {
+    filter: brightness(0.94);
+}
+
+setup-wizard .wiz-btn-secondary {
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-btn-secondary:hover {
+    border-color: #d5d5cf;
+    color: var(--wiz-ink);
+}
+
+setup-wizard .wiz-btn-lg {
+    height: 42px;
+    padding: 0 28px;
+    font-size: 13px;
+}
+
+setup-wizard .wiz-btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--wiz-ink-2);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 7px 10px;
+    border-radius: var(--wiz-r-btn);
+    font-family: inherit;
+    transition: all 0.15s;
+}
+
+setup-wizard .wiz-btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.045);
+    color: var(--wiz-ink);
+}
+
+/* ---- 完成页面 ---- */
+setup-wizard .done-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 72px 0;
+    margin-top: 16px;
+    max-width: 640px;
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    box-shadow: var(--wiz-card-shadow);
+}
+
+setup-wizard .done-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: #f0fdf4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    font-size: 40px;
+    color: var(--wiz-green);
+}
+
+setup-wizard .done-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--wiz-ink);
+    margin-bottom: 20px;
+}
+
+/* ---- 底部导航 ---- */
+setup-wizard .wizard-footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 34px 16px 6px;
+    border-top: 1px solid #ecece8;
+}
+
+setup-wizard .wizard-footer #wizard-next-btn {
+    margin-left: auto;
+}
