@@ -183,6 +183,22 @@ const McpCallToolSchema = z.object({
     arguments: z.record(z.string(), z.unknown()).default({}).describe(t('mcpmgr.gateway.call.arguments'))
 });
 
+function unwrapNestedArguments(args: Record<string, unknown>, tool: McpToolInfo): Record<string, unknown> {
+    if (Object.keys(args).length !== 1) return args;
+    const wrapperKeys = ['query', 'arguments', 'params', 'parameters'];
+    for (const key of wrapperKeys) {
+        if (key in args && typeof args[key] === 'object' && args[key] !== null && !Array.isArray(args[key])) {
+            const nested = args[key] as Record<string, unknown>;
+            const toolParamKeys = new Set(Object.keys((tool.inputSchema as any)?.properties || {}));
+            const nestedKeys = Object.keys(nested);
+            if (nestedKeys.length > 0 && nestedKeys.every((k) => toolParamKeys.has(k))) {
+                return nested;
+            }
+        }
+    }
+    return args;
+}
+
 export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
     constructor(
         private readonly tools: readonly McpToolInfo[],
@@ -201,7 +217,8 @@ export class McpCallToolTool extends BaseTool<typeof McpCallToolSchema> {
                     })
                 );
             }
-            return callTool(tool, args.arguments);
+            const toolArgs = unwrapNestedArguments(args.arguments, tool);
+            return callTool(tool, toolArgs);
         });
     }
 }

@@ -263,7 +263,8 @@ export const enUs: Record<string, string> = {
         'Call a deferred MCP tool. First find it with mcpSearchTools and load its exact input schema with mcpGetTool.',
     'mcpmgr.gateway.call.serverId': 'MCP server ID returned by mcpSearchTools',
     'mcpmgr.gateway.call.toolName': 'Original MCP tool name to call',
-    'mcpmgr.gateway.call.arguments': 'Tool arguments matching the inputSchema returned by mcpGetTool',
+    'mcpmgr.gateway.call.arguments':
+        'Arguments object passed directly to the MCP tool - keys must exactly match inputSchema.properties from mcpGetTool, do NOT wrap under extra query/params keys. If tool expects {query: string, top_k?: number}, pass {query: "...", top_k: 10} directly',
     'mcpmgr.gateway.toolNotFound': 'Deferred MCP tool not found: ${serverId}/${toolName}',
     'mcpmgr.toolCallFailed': 'MCP tool call failed',
 

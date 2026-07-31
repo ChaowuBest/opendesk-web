@@ -256,7 +256,8 @@ export const zhCn: Record<string, string> = {
         '调用一个延迟加载的 MCP 工具。应先通过 mcpSearchTools 查找，再通过 mcpGetTool 获取准确的输入参数结构。',
     'mcpmgr.gateway.call.serverId': 'mcpSearchTools 返回的 MCP Server ID',
     'mcpmgr.gateway.call.toolName': '要调用的原始 MCP 工具名',
-    'mcpmgr.gateway.call.arguments': '符合 mcpGetTool 所返回 inputSchema 的工具参数对象',
+    'mcpmgr.gateway.call.arguments':
+        '直接传递给 MCP 工具的参数对象，键值对必须与 mcpGetTool 返回的 inputSchema.properties 完全匹配，不要额外包装在 query/params 等键下。例如工具需要 {query: string, top_k?: number}，这里就直接传 {query: "...", top_k: 10}',
     'mcpmgr.gateway.toolNotFound': '未找到延迟 MCP 工具：${serverId}/${toolName}',
     'mcpmgr.toolCallFailed': 'MCP 工具调用失败',
 

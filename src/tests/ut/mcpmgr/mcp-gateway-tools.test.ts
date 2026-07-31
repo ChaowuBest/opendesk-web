@@ -92,6 +92,47 @@ describe('MCP layered tool loading', () => {
         expect(callTool).toHaveBeenCalledWith(tools[0], { query: 'Button' });
     });
 
+    test('automatically unwraps incorrectly nested arguments (common AI mistake with query-wrapping)', async () => {
+        const tools = [
+            tool({
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        query: { type: 'string' },
+                        top_k: { type: 'integer', default: 5 }
+                    },
+                    required: ['query']
+                }
+            })
+        ];
+        const callTool = jest.fn(async () => 'ok');
+        const callGateway = new McpCallToolTool(tools, callTool);
+
+        // AI错误地把参数包装在query下，这是用户报告的问题
+        await callGateway.execute({
+            serverId: 'arkts-id',
+            toolName: 'search_components',
+            arguments: { query: { query: '获取所有屏幕显示信息', top_k: 10 } }
+        });
+
+        expect(callTool).toHaveBeenCalledWith(tools[0], { query: '获取所有屏幕显示信息', top_k: 10 });
+    });
+
+    test('does not unwrap when wrapper key does not match nested schema keys', async () => {
+        const tools = [tool()];
+        const callTool = jest.fn(async () => 'ok');
+        const callGateway = new McpCallToolTool(tools, callTool);
+
+        // 当有不匹配的键时，不应该解包
+        await callGateway.execute({
+            serverId: 'arkts-id',
+            toolName: 'search_components',
+            arguments: { query: { wrong_key: 'value' } }
+        });
+
+        expect(callTool).toHaveBeenCalledWith(tools[0], { query: { wrong_key: 'value' } });
+    });
+
     test('application exposes gateway tools instead of a large server definition set', async () => {
         const discoveredTools = [
             tool({
