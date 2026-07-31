@@ -102,12 +102,12 @@ import { escapeHtml } from '../../common/utils/escape.js';
 function statusIcon(status: TodoStatus): string {
     switch (status) {
         case 'completed':
-            return '<i class="fas fa-check-circle" style="color:#10b981;font-size:13px;"></i>';
+            return '<i class="fas fa-check-circle" style="color:#10b981;font-size: var(--fs-base);"></i>';
         case 'in_progress':
-            return '<i class="fas fa-circle-notch fa-spin" style="color:#3b82f6;font-size:13px;"></i>';
+            return '<i class="fas fa-circle-notch fa-spin" style="color:#3b82f6;font-size: var(--fs-base);"></i>';
         case 'pending':
         default:
-            return '<i class="far fa-circle" style="color:#d1d5db;font-size:13px;"></i>';
+            return '<i class="far fa-circle" style="color:#d1d5db;font-size: var(--fs-base);"></i>';
     }
 }
 
@@ -1183,7 +1183,7 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.innerHTML = `<i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i> ${formatCompactDuration(now - start)}`;
+            node.innerHTML = `<i class="fas fa-clock" style="font-size: var(--fs-2xs);margin-right:2px;"></i> ${formatCompactDuration(now - start)}`;
         });
     }
 
@@ -1202,13 +1202,13 @@ class TaskArtifacts extends HTMLElement {
                 durationHtml = `<span class="todo-duration todo-duration-running"
                     data-running="1" data-start="${escapeHtml(startIso)}"
                     title="已执行 ${escapeHtml(formatCompactDuration(durationMs))}">
-                    <i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i>
+                    <i class="fas fa-clock" style="font-size: var(--fs-2xs);margin-right:2px;"></i>
                     ${escapeHtml(formatCompactDuration(durationMs))}
                 </span>`;
             } else if (todo.status === 'completed') {
                 durationHtml = `<span class="todo-duration todo-duration-done"
                     title="用时 ${escapeHtml(formatCompactDuration(durationMs))}">
-                    <i class="fas fa-check" style="font-size:9px;margin-right:2px;"></i>
+                    <i class="fas fa-check" style="font-size: var(--fs-2xs);margin-right:2px;"></i>
                     ${escapeHtml(formatCompactDuration(durationMs))}
                 </span>`;
             }
@@ -1420,7 +1420,7 @@ class TaskArtifacts extends HTMLElement {
                 align-items: center;
                 gap: 4px;
                 padding: 10px 12px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: #6b7280;
                 background: transparent;
                 border: none;
@@ -1484,11 +1484,11 @@ class TaskArtifacts extends HTMLElement {
                 opacity: 0.4;
             }
             .placeholder-content p {
-                font-size: 13px;
+                font-size: var(--fs-base);
                 margin: 0;
             }
             .placeholder-hint {
-                font-size: 11px !important;
+                font-size: var(--fs-sm) !important;
                 color: #b0b6c0;
                 max-width: 220px;
                 line-height: 1.5;
@@ -1497,7 +1497,7 @@ class TaskArtifacts extends HTMLElement {
                 background: #f1f5f9;
                 padding: 1px 4px;
                 border-radius: 3px;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #6b7280;
             }
 
@@ -1517,7 +1517,7 @@ class TaskArtifacts extends HTMLElement {
 
             .task-progress-heading {
                 margin: 0 4px 6px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 font-weight: 600;
                 line-height: 1.4;
                 color: #374151;
@@ -1556,7 +1556,7 @@ class TaskArtifacts extends HTMLElement {
                 min-width: 0;
             }
             .todo-title {
-                font-size: 13px;
+                font-size: var(--fs-base);
                 font-weight: 500;
                 line-height: 1.5;
                 color: #1f2937;
@@ -1579,7 +1579,7 @@ class TaskArtifacts extends HTMLElement {
             .todo-duration {
                 display: inline-flex;
                 align-items: center;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: 1;
                 font-weight: 500;
                 font-variant-numeric: tabular-nums;
@@ -1594,13 +1594,13 @@ class TaskArtifacts extends HTMLElement {
             /* Session memory styles */
             .session-memory-content {
                 padding: 16px;
-                font-size: 13px;
+                font-size: var(--fs-base);
                 line-height: 1.6;
                 color: #1f2937;
                 overflow-wrap: break-word;
             }
             .session-memory-content h1 {
-                font-size: 16px;
+                font-size: var(--fs-xl);
                 font-weight: 700;
                 margin: 16px 0 8px;
                 padding-bottom: 4px;
@@ -1611,7 +1611,7 @@ class TaskArtifacts extends HTMLElement {
                 margin-top: 0;
             }
             .session-memory-content h2 {
-                font-size: 14px;
+                font-size: var(--fs-lg);
                 font-weight: 600;
                 margin: 12px 0 6px;
                 color: #1f2937;
@@ -1634,7 +1634,7 @@ class TaskArtifacts extends HTMLElement {
                 background: #f1f5f9;
                 padding: 1px 4px;
                 border-radius: 3px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: #334155;
             }
             .session-memory-content pre {
@@ -1644,7 +1644,7 @@ class TaskArtifacts extends HTMLElement {
                 padding: 10px 12px;
                 overflow-x: auto;
                 margin: 8px 0;
-                font-size: 12px;
+                font-size: var(--fs-md);
             }
             .session-memory-content pre code {
                 background: none;
@@ -1661,7 +1661,7 @@ class TaskArtifacts extends HTMLElement {
             .changes-summary {
                 flex-shrink: 0;
                 padding: 10px 12px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: #374151;
                 background: #f9fafb;
                 border-bottom: 1px solid #e5e7eb;
@@ -1673,7 +1673,7 @@ class TaskArtifacts extends HTMLElement {
             .changes-toggle-all-btn {
                 margin-left: auto;
                 padding: 2px 8px;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: 1.6;
                 color: #6b7280;
                 background: #fff;
@@ -1725,7 +1725,7 @@ class TaskArtifacts extends HTMLElement {
                 transition: transform 0.2s ease;
             }
             .changes-file-name {
-                font-size: 12px;
+                font-size: var(--fs-md);
                 font-weight: 600;
                 color: #1f2937;
                 font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
@@ -1736,7 +1736,7 @@ class TaskArtifacts extends HTMLElement {
                 min-width: 0;
             }
             .changes-file-dir {
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #9ca3af;
                 white-space: nowrap;
                 overflow: hidden;
@@ -1746,7 +1746,7 @@ class TaskArtifacts extends HTMLElement {
             }
             .changes-file-stats {
                 margin-left: auto;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 flex-shrink: 0;
                 display: flex;
                 gap: 6px;
@@ -1761,7 +1761,7 @@ class TaskArtifacts extends HTMLElement {
             }
             .diff-change-label {
                 padding: 4px 12px;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #6b7280;
                 background: #fafafa;
                 border-bottom: 1px solid #f1f5f9;
@@ -1769,13 +1769,13 @@ class TaskArtifacts extends HTMLElement {
             .diff-hunk-body {
                 overflow-x: auto;
                 font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: 1.55;
                 tab-size: 4;
             }
             .diff-hunk-header {
                 padding: 2px 8px;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 color: #6b7280;
                 background: #f0f4ff;
                 border-bottom: 1px solid #e5e7eb;
@@ -1805,7 +1805,7 @@ class TaskArtifacts extends HTMLElement {
                 color: #9ca3af;
                 user-select: none;
                 flex-shrink: 0;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 line-height: inherit;
             }
             .diff-op {
@@ -1816,7 +1816,7 @@ class TaskArtifacts extends HTMLElement {
                 user-select: none;
                 flex-shrink: 0;
                 font-weight: 600;
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 line-height: inherit;
             }
             .diff-line-added .diff-op {

@@ -270,6 +270,10 @@ const STYLE = `
     --ag-input-border: rgba(0,0,0,.08);
     --ag-input-focus-ring: rgba(0,122,255,.3);
     --ag-divider: rgba(0,0,0,.06);
+    /* 统一字号体系 */
+    --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px;
+    --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px;
+    --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px;
     --ag-code-bg: rgba(0,0,0,.04);
     --ag-danger-bg: rgba(255,59,48,.06);
     --ag-danger-border: rgba(255,59,48,.18);
@@ -337,7 +341,7 @@ const STYLE = `
     background: transparent;
 }
 .ag-tab {
-    padding: 8px 16px 7px; font-size: 13px; font-weight: 500;
+    padding: 8px 16px 7px; font-size: var(--fs-base); font-weight: 500;
     cursor: pointer; border-bottom: 2px solid transparent;
     user-select: none; color: var(--ag-tab-inactive); transition: color .2s;
 }
@@ -356,22 +360,22 @@ const STYLE = `
 }
 :host([data-theme="dark"]) .ag-card { box-shadow: 0 4px 12px rgba(0,0,0,.25); }
 .ag-section-title {
-    font-size: 13px; font-weight: 600; color: var(--ag-text-heading);
+    font-size: var(--fs-base); font-weight: 600; color: var(--ag-text-heading);
     margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
 }
 .ag-section-title::before {
     content: ''; display: block; width: 3px; height: 14px;
     background: var(--ag-accent); border-radius: 2px;
 }
-.ag-section-desc { font-size: 12px; color: var(--ag-text-secondary); line-height: 1.5; margin: 0 0 14px; }
+.ag-section-desc { font-size: var(--fs-md); color: var(--ag-text-secondary); line-height: 1.5; margin: 0 0 14px; }
 .ag-form-row { margin-bottom: 14px; }
 .ag-form-row:last-child { margin-bottom: 0; }
-.ag-label { display: block; font-size: 12px; font-weight: 500; color: var(--ag-text-secondary); margin-bottom: 6px; }
+.ag-label { display: block; font-size: var(--fs-md); font-weight: 500; color: var(--ag-text-secondary); margin-bottom: 6px; }
 .ag-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 /* Inputs & Selects */
 .ag-input, .ag-select {
-    width: 100%; padding: 8px 10px; font-size: 13px;
+    width: 100%; padding: 8px 10px; font-size: var(--fs-base);
     border: 1px solid var(--ag-input-border); border-radius: 8px;
     background: var(--ag-input-bg); color: var(--ag-text);
     outline: none; transition: border-color .2s, box-shadow .2s;
@@ -410,12 +414,12 @@ const STYLE = `
 }
 .ag-toggle.on .ag-toggle-knob { transform: translateX(18px); }
 .ag-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.ag-toggle-row-label { font-size: 13px; font-weight: 500; color: var(--ag-text); }
+.ag-toggle-row-label { font-size: var(--fs-base); font-weight: 500; color: var(--ag-text); }
 
 /* Buttons */
 .ag-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    padding: 6px 14px; font-size: 12px; font-weight: 500;
+    padding: 6px 14px; font-size: var(--fs-md); font-weight: 500;
     border-radius: 8px; cursor: pointer; transition: all .2s; border: none; gap: 6px;
 }
 .ag-btn-primary { background: var(--ag-accent); color: #fff; }
@@ -426,22 +430,22 @@ const STYLE = `
 .ag-btn-danger:hover { background: var(--ag-danger-bg); }
 .ag-btn-muted { background: transparent; color: var(--ag-text-secondary); }
 .ag-btn-muted:hover { background: rgba(0,0,0,.04); }
-.ag-btn-sm { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
+.ag-btn-sm { padding: 4px 10px; font-size: var(--fs-sm); border-radius: 6px; }
 
 /* Rules List */
 .ag-rule-item {
     display: flex; align-items: center; gap: 8px; padding: 8px 0;
-    border-bottom: 1px solid var(--ag-divider); font-size: 13px;
+    border-bottom: 1px solid var(--ag-divider); font-size: var(--fs-base);
 }
 .ag-rule-item:last-child { border-bottom: none; }
 .ag-rule-pattern {
     flex: 1; background: var(--ag-code-bg); padding: 3px 6px; border-radius: 5px;
-    font-family: 'SF Mono', monospace; font-size: 11px; color: var(--ag-text);
+    font-family: 'SF Mono', monospace; font-size: var(--fs-sm); color: var(--ag-text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ag-badge {
     display: inline-block; min-width: 48px; text-align: center;
-    padding: 2px 6px; border-radius: 8px; font-size: 10px; font-weight: 600;
+    padding: 2px 6px; border-radius: 8px; font-size: var(--fs-xs); font-weight: 600;
 }
 .ag-badge-deny { background: var(--ag-badge-deny-bg); color: var(--ag-red); }
 .ag-badge-allow { background: var(--ag-badge-allow-bg); color: var(--ag-green); }
@@ -454,7 +458,7 @@ const STYLE = `
 
 /* Status */
 .ag-status-row {
-    display: flex; align-items: center; font-size: 13px; color: var(--ag-text-secondary); padding: 4px 0;
+    display: flex; align-items: center; font-size: var(--fs-base); color: var(--ag-text-secondary); padding: 4px 0;
 }
 .ag-status-label { width: 90px; flex-shrink: 0; }
 .ag-status-dot {
@@ -492,7 +496,7 @@ const STYLE = `
     align-items: center;
     gap: 8px;
     padding: 12px 14px;
-    font-size: 12px;
+    font-size: var(--fs-md);
     color: var(--ag-text);
     background: rgba(255,255,255,.88);
     border: 1px solid rgba(0,0,0,.10);
@@ -510,7 +514,7 @@ const STYLE = `
     border: 1px solid rgba(0,0,0,.14);
     background: rgba(255,255,255,.9);
     color: var(--ag-text);
-    font-size: 12px;
+    font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
@@ -540,7 +544,7 @@ const STYLE = `
     border: 1px solid rgba(0,0,0,.14);
     background: rgba(255,255,255,.9);
     color: var(--ag-text);
-    font-size: 12px;
+    font-size: var(--fs-md);
     cursor: pointer;
 }
 `;
@@ -599,7 +603,7 @@ const DASH_LIGHT = `
 }
 .ag-dash-panel .clock,
 .ag-dash-panel #clock {
-    font-size: 13px !important;
+    font-size: var(--fs-base) !important;
     color: var(--ag-text-tertiary) !important;
     font-variant-numeric: tabular-nums !important;
 }
@@ -632,7 +636,7 @@ const DASH_LIGHT = `
 }
 .ag-dash-panel .stat-label,
 .ag-dash-panel .stat-card .label {
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     font-weight: 500 !important;
     color: var(--ag-text-secondary) !important;
     text-transform: uppercase !important;
@@ -674,7 +678,7 @@ const DASH_LIGHT = `
     display: flex !important;
     flex-wrap: wrap !important;
     gap: 12px !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     color: var(--ag-text-secondary) !important;
 }
 .ag-dash-panel .risk-dot {
@@ -697,7 +701,7 @@ const DASH_LIGHT = `
 }
 .ag-dash-panel .tab {
     padding: 8px 16px !important;
-    font-size: 13px !important;
+    font-size: var(--fs-base) !important;
     font-weight: 500 !important;
     color: var(--ag-tab-inactive) !important;
     cursor: pointer !important;
@@ -721,7 +725,7 @@ const DASH_LIGHT = `
 .ag-dash-panel table {
     width: 100% !important;
     border-collapse: collapse !important;
-    font-size: 12px !important;
+    font-size: var(--fs-md) !important;
     background: var(--ag-card-bg) !important;
     backdrop-filter: blur(24px) !important;
     -webkit-backdrop-filter: blur(24px) !important;
@@ -734,7 +738,7 @@ const DASH_LIGHT = `
 .ag-dash-panel th {
     padding: 12px 14px !important;
     text-align: left !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     font-weight: 600 !important;
     color: var(--ag-text-secondary) !important;
     text-transform: uppercase !important;
@@ -760,7 +764,7 @@ const DASH_LIGHT = `
     padding: 2px 6px !important;
     border-radius: 4px !important;
     font-family: 'SF Mono', 'JetBrains Mono', monospace !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     color: var(--ag-text) !important;
 }
 
@@ -771,7 +775,7 @@ const DASH_LIGHT = `
     align-items: center !important;
     padding: 2px 8px !important;
     border-radius: 6px !important;
-    font-size: 10px !important;
+    font-size: var(--fs-xs) !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
     letter-spacing: .3px !important;
@@ -796,7 +800,7 @@ const DASH_LIGHT = `
 /* Recent Calls — 控制条 + 勾选框列 + 列宽拖动 + toast */
 .ag-dash-panel .ag-calls-bar {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px; font-size: 12px;
+    padding: 8px 14px; font-size: var(--fs-md);
     background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
     border-radius: 10px; margin-bottom: 8px;
 }
@@ -811,11 +815,11 @@ const DASH_LIGHT = `
 .ag-dash-panel .ag-tab-actions .ag-tab-action { margin-left: 0; }
 /* 复制格式切换器（TSV/JSON segmented control）+ 工具栏内 delete/copy 按钮组 */
 .ag-dash-panel .ag-copy-fmt { display: inline-flex; border: 1px solid var(--ag-input-border); border-radius: 6px; overflow: hidden; }
-.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: 12px; border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
+.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: var(--fs-md); border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
 .ag-dash-panel .ag-fmt-btn.active { background: var(--ag-accent); color: #fff; }
 .ag-dash-panel .ag-bar-group { display: inline-flex; align-items: center; gap: 8px; }
 .ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
-    padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
+    padding: 5px 12px; border-radius: 6px; font-size: var(--fs-md); cursor: pointer; transition: all .15s;
 }
 .ag-dash-panel .ag-btn-danger {
     border: 1px solid var(--ag-danger-border); background: var(--ag-danger-bg); color: var(--ag-red);
@@ -859,7 +863,7 @@ const DASH_LIGHT = `
     position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%) translateY(20px);
     background: var(--ag-card-bg); color: var(--ag-text); border: 1px solid var(--ag-card-border);
     padding: 10px 18px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
-    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
+    font-size: var(--fs-base); opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
 }
 .ag-dash-panel .ag-toast.ag-toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .ag-dash-panel .ag-toast.is-error { color: var(--ag-red); border-color: var(--ag-danger-border); background: var(--ag-danger-bg); }
@@ -868,7 +872,7 @@ const DASH_LIGHT = `
     position: fixed; z-index: 100001; max-width: 520px;
     background: var(--ag-card-bg); color: var(--ag-text);
     border: 1px solid var(--ag-card-border); border-radius: 8px;
-    padding: 8px 12px; font-size: 12px; line-height: 1.5;
+    padding: 8px 12px; font-size: var(--fs-md); line-height: 1.5;
     box-shadow: 0 4px 16px rgba(0,0,0,.14); pointer-events: none;
     white-space: pre-wrap; word-break: break-word;
 }
@@ -926,7 +930,7 @@ const DASH_DARK = `
 }
 .ag-dash-panel .clock,
 .ag-dash-panel #clock {
-    font-size: 13px !important;
+    font-size: var(--fs-base) !important;
     color: var(--ag-text-tertiary) !important;
     font-variant-numeric: tabular-nums !important;
 }
@@ -959,7 +963,7 @@ const DASH_DARK = `
 }
 .ag-dash-panel .stat-label,
 .ag-dash-panel .stat-card .label {
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     font-weight: 500 !important;
     color: var(--ag-text-secondary) !important;
     text-transform: uppercase !important;
@@ -1001,7 +1005,7 @@ const DASH_DARK = `
     display: flex !important;
     flex-wrap: wrap !important;
     gap: 12px !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     color: var(--ag-text-secondary) !important;
 }
 .ag-dash-panel .risk-dot {
@@ -1024,7 +1028,7 @@ const DASH_DARK = `
 }
 .ag-dash-panel .tab {
     padding: 8px 16px !important;
-    font-size: 13px !important;
+    font-size: var(--fs-base) !important;
     font-weight: 500 !important;
     color: var(--ag-tab-inactive) !important;
     cursor: pointer !important;
@@ -1048,7 +1052,7 @@ const DASH_DARK = `
 .ag-dash-panel table {
     width: 100% !important;
     border-collapse: collapse !important;
-    font-size: 12px !important;
+    font-size: var(--fs-md) !important;
     background: var(--ag-card-bg) !important;
     backdrop-filter: blur(24px) !important;
     -webkit-backdrop-filter: blur(24px) !important;
@@ -1061,7 +1065,7 @@ const DASH_DARK = `
 .ag-dash-panel th {
     padding: 12px 14px !important;
     text-align: left !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     font-weight: 600 !important;
     color: var(--ag-text-secondary) !important;
     text-transform: uppercase !important;
@@ -1087,7 +1091,7 @@ const DASH_DARK = `
     padding: 2px 6px !important;
     border-radius: 4px !important;
     font-family: 'SF Mono', 'JetBrains Mono', monospace !important;
-    font-size: 11px !important;
+    font-size: var(--fs-sm) !important;
     color: var(--ag-text) !important;
 }
 
@@ -1098,7 +1102,7 @@ const DASH_DARK = `
     align-items: center !important;
     padding: 2px 8px !important;
     border-radius: 6px !important;
-    font-size: 10px !important;
+    font-size: var(--fs-xs) !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
     letter-spacing: .3px !important;
@@ -1123,7 +1127,7 @@ const DASH_DARK = `
 /* Recent Calls — 控制条 + 勾选框列 + 列宽拖动 + toast（变量自动适配深色） */
 .ag-dash-panel .ag-calls-bar {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px; font-size: 12px;
+    padding: 8px 14px; font-size: var(--fs-md);
     background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
     border-radius: 10px; margin-bottom: 8px;
 }
@@ -1138,11 +1142,11 @@ const DASH_DARK = `
 .ag-dash-panel .ag-tab-actions .ag-tab-action { margin-left: 0; }
 /* 复制格式切换器（TSV/JSON segmented control）+ 工具栏内 delete/copy 按钮组 */
 .ag-dash-panel .ag-copy-fmt { display: inline-flex; border: 1px solid var(--ag-input-border); border-radius: 6px; overflow: hidden; }
-.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: 12px; border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
+.ag-dash-panel .ag-fmt-btn { padding: 4px 12px; font-size: var(--fs-md); border: none; background: transparent; color: var(--ag-text-secondary); cursor: pointer; transition: all .15s; }
 .ag-dash-panel .ag-fmt-btn.active { background: var(--ag-accent); color: #fff; }
 .ag-dash-panel .ag-bar-group { display: inline-flex; align-items: center; gap: 8px; }
 .ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
-    padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
+    padding: 5px 12px; border-radius: 6px; font-size: var(--fs-md); cursor: pointer; transition: all .15s;
 }
 .ag-dash-panel .ag-btn-danger {
     border: 1px solid var(--ag-danger-border); background: var(--ag-danger-bg); color: var(--ag-red);
@@ -1186,7 +1190,7 @@ const DASH_DARK = `
     position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%) translateY(20px);
     background: var(--ag-card-bg); color: var(--ag-text); border: 1px solid var(--ag-card-border);
     padding: 10px 18px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
-    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
+    font-size: var(--fs-base); opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
 }
 .ag-dash-panel .ag-toast.ag-toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .ag-dash-panel .ag-toast.is-error { color: var(--ag-red); border-color: var(--ag-danger-border); background: var(--ag-danger-bg); }
@@ -1195,7 +1199,7 @@ const DASH_DARK = `
     position: fixed; z-index: 100001; max-width: 520px;
     background: var(--ag-card-bg); color: var(--ag-text);
     border: 1px solid var(--ag-card-border); border-radius: 8px;
-    padding: 8px 12px; font-size: 12px; line-height: 1.5;
+    padding: 8px 12px; font-size: var(--fs-md); line-height: 1.5;
     box-shadow: 0 4px 16px rgba(0,0,0,.14); pointer-events: none;
     white-space: pre-wrap; word-break: break-word;
 }
@@ -1275,10 +1279,10 @@ function injectDashLocale(panel: HTMLElement): void {
 function connectingHTML(): string {
     return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
   <div style="font-size:48px;margin-bottom:16px;line-height:1;">🔗</div>
-  <h2 style="font-size:16px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('connecting')}</h2>
-  <p style="font-size:13px;margin:0 0 24px;color:var(--ag-text-secondary);">${isZh() ? '请确认安全网关服务已启动（默认端口 9100）' : 'Please ensure the security gateway service is running (default port 9100)'}</p>
-  <div id="ag-bridge-error" style="display:none;max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;"></div>
-  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
+  <h2 style="font-size: var(--fs-xl);font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('connecting')}</h2>
+  <p style="font-size: var(--fs-base);margin:0 0 24px;color:var(--ag-text-secondary);">${isZh() ? '请确认安全网关服务已启动（默认端口 9100）' : 'Please ensure the security gateway service is running (default port 9100)'}</p>
+  <div id="ag-bridge-error" style="display:none;max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;"></div>
+  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
 </div>`;
 }
 
@@ -1286,8 +1290,8 @@ function emptyDashboardHTML(): string {
     return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
   <div style="font-size:64px;margin-bottom:16px;line-height:1;">🛡️</div>
   <h2 style="font-size:18px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('masterSwitchOff')}</h2>
-  <p style="font-size:14px;margin:0;color:var(--ag-text-secondary);line-height:1.6;">${tr('masterSwitchOffHint')}</p>
-  <p style="font-size:12px;margin-top:20px;color:var(--ag-text-tertiary);">${isZh() ? '切换到「设置」标签页开启总开关' : 'Switch to the Config tab to enable the master switch'}</p>
+  <p style="font-size: var(--fs-lg);margin:0;color:var(--ag-text-secondary);line-height:1.6;">${tr('masterSwitchOffHint')}</p>
+  <p style="font-size: var(--fs-md);margin-top:20px;color:var(--ag-text-tertiary);">${isZh() ? '切换到「设置」标签页开启总开关' : 'Switch to the Config tab to enable the master switch'}</p>
 </div>`;
 }
 
@@ -1299,7 +1303,7 @@ function configHTML(): string {
     <div class="ag-toggle-row">
         <div>
             <div class="ag-toggle-row-label">${tr('masterSwitch')}</div>
-            <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('masterSwitchDesc')}</div>
+            <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('masterSwitchDesc')}</div>
         </div>
         <button id="ag-master" class="ag-toggle on" role="switch" aria-checked="true"><span class="ag-toggle-knob"></span></button>
     </div>
@@ -1328,7 +1332,7 @@ function configHTML(): string {
     <div class="ag-toggle-row">
         <div>
             <span class="ag-toggle-row-label">${tr('maliciousSkillEnable')}</span>
-            <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('maliciousSkillDesc')}</div>
+            <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('maliciousSkillDesc')}</div>
         </div>
         <button id="ag-malskill-toggle" class="ag-toggle on" role="switch" aria-checked="true"><span class="ag-toggle-knob"></span></button>
     </div>
@@ -1344,7 +1348,7 @@ function configHTML(): string {
             <option value="high">${tr('securityLevelHigh')}</option>
         </select>
     </div>
-    <div id="ag-sec-desc" style="font-size:12px;color:var(--ag-text-secondary);line-height:1.5;"></div>
+    <div id="ag-sec-desc" style="font-size: var(--fs-md);color:var(--ag-text-secondary);line-height:1.5;"></div>
 </div>
 
 <div class="ag-card">
@@ -1376,7 +1380,7 @@ function configHTML(): string {
     <div class="ag-toggle-row">
         <div>
             <div class="ag-toggle-row-label">${tr('floatingWindowSwitch')}</div>
-            <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowSwitchDesc')}</div>
+            <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowSwitchDesc')}</div>
         </div>
         <button id="ag-floating-toggle" class="ag-toggle" role="switch" aria-checked="false"><span class="ag-toggle-knob"></span></button>
     </div>
@@ -1384,9 +1388,9 @@ function configHTML(): string {
         <label class="ag-label">${tr('floatingWindowOpacity')}</label>
         <div style="display:flex;align-items:center;gap:10px;">
             <input id="ag-floating-opacity" type="range" min="0.3" max="1.0" step="0.02" value="0.76" class="ag-range" style="flex:1;">
-            <span id="ag-floating-opacity-val" style="font-size:13px;color:var(--ag-text-secondary);min-width:36px;">0.76</span>
+            <span id="ag-floating-opacity-val" style="font-size: var(--fs-base);color:var(--ag-text-secondary);min-width:36px;">0.76</span>
         </div>
-        <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowOpacityDesc')}</div>
+        <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowOpacityDesc')}</div>
     </div>
     <div style="margin-top:12px;text-align:right;">
         <button id="ag-floating-reset" class="ag-btn ag-btn-muted ag-btn-sm">${tr('resetFloatingWindow')}</button>
@@ -1401,20 +1405,20 @@ function configHTML(): string {
     <h3 class="ag-section-title" style="margin-top:0;">${tr('storageTitle')}</h3>
     <!-- Radio 选择存储类型 -->
     <div style="display:flex;gap:16px;margin-bottom:12px;">
-        <label id="ag-storage-sqlite-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:14px;">
+        <label id="ag-storage-sqlite-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size: var(--fs-lg);">
             <input type="radio" id="ag-storage-sqlite" name="ag-storage-type" value="sqlite" style="accent-color:var(--ag-accent);">
             <span>${tr('storageSqlite')}</span>
-            <span id="ag-storage-sqlite-active" class="ag-storage-active-tag" style="display:none;font-size:11px;color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
+            <span id="ag-storage-sqlite-active" class="ag-storage-active-tag" style="display:none;font-size: var(--fs-sm);color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
         </label>
-        <label id="ag-storage-json-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:14px;">
+        <label id="ag-storage-json-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size: var(--fs-lg);">
             <input type="radio" id="ag-storage-json" name="ag-storage-type" value="json" style="accent-color:var(--ag-accent);">
             <span>${tr('storageJson')}</span>
-            <span id="ag-storage-json-active" class="ag-storage-active-tag" style="display:none;font-size:11px;color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
+            <span id="ag-storage-json-active" class="ag-storage-active-tag" style="display:none;font-size: var(--fs-sm);color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
         </label>
     </div>
     <!-- SQLite 路径 -->
     <div id="ag-sqlite-path-section" style="margin-bottom:8px;">
-        <div style="font-size:12px;color:var(--ag-text-secondary);margin-bottom:4px;">${tr('dbPathLabel')}</div>
+        <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-bottom:4px;">${tr('dbPathLabel')}</div>
         <div class="ag-form-row">
             <input id="ag-db" readonly class="ag-input" style="color:var(--ag-text-secondary);">
         </div>
@@ -1423,11 +1427,11 @@ function configHTML(): string {
             <button id="ag-db-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="display:none;">${tr('pathApply')}</button>
             <button id="ag-db-cancel" class="ag-btn ag-btn-muted ag-btn-sm" style="display:none;">${tr('cancel')}</button>
         </div>
-        <div id="ag-db-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
+        <div id="ag-db-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
     </div>
     <!-- JSON 路径 -->
     <div id="ag-json-path-section" style="display:none;margin-bottom:8px;">
-        <div style="font-size:12px;color:var(--ag-text-secondary);margin-bottom:4px;">${tr('jsonPathLabel')}</div>
+        <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-bottom:4px;">${tr('jsonPathLabel')}</div>
         <div class="ag-form-row">
             <input id="ag-json-dir" readonly class="ag-input" style="color:var(--ag-text-secondary);">
         </div>
@@ -1436,22 +1440,22 @@ function configHTML(): string {
             <button id="ag-json-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="display:none;">${tr('pathApply')}</button>
             <button id="ag-json-cancel" class="ag-btn ag-btn-muted ag-btn-sm" style="display:none;">${tr('cancel')}</button>
         </div>
-        <div id="ag-json-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
+        <div id="ag-json-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
     </div>
     <!-- 切换存储类型警告 -->
-    <div id="ag-storage-switch-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">
+    <div id="ag-storage-switch-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.4;">
         ${tr('storageSwitchWarning')}
         <button id="ag-storage-switch-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="margin-left:8px;">${tr('pathApply')}</button>
     </div>
     <!-- SQLite 不可用警告 -->
-    <div id="ag-sqlite-unavailable-msg" style="display:none;margin-top:10px;padding:10px;background:rgba(255,149,0,.06);border:1px solid rgba(255,149,0,.18);border-radius:8px;font-size:12px;color:var(--ag-orange);line-height:1.4;">${tr('storageSqliteUnavailable')}</div>
+    <div id="ag-sqlite-unavailable-msg" style="display:none;margin-top:10px;padding:10px;background:rgba(255,149,0,.06);border:1px solid rgba(255,149,0,.18);border-radius:8px;font-size: var(--fs-md);color:var(--ag-orange);line-height:1.4;">${tr('storageSqliteUnavailable')}</div>
 </div>
 
 <div class="ag-card">
     <h3 class="ag-section-title" style="margin-top:0;">${tr('statusTitle')}</h3>
-    <div class="ag-status-row"><span class="ag-status-label">${tr('labelMoss')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-moss-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr"></span></div>
-    <div class="ag-status-row" style="margin-top:4px;"><span class="ag-status-label">${tr('labelGate')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-gate-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr"></span></div>
-    <div id="ag-bridge-error" style="display:none;margin-top:8px;padding:8px 12px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:6px;font-size:12px;color:var(--ag-red);line-height:1.5;word-break:break-all;white-space:pre-wrap;"></div>
+    <div class="ag-status-row"><span class="ag-status-label">${tr('labelMoss')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-moss-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size: var(--fs-md);" id="ag-moss-addr"></span></div>
+    <div class="ag-status-row" style="margin-top:4px;"><span class="ag-status-label">${tr('labelGate')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-gate-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size: var(--fs-md);" id="ag-gate-addr"></span></div>
+    <div id="ag-bridge-error" style="display:none;margin-top:8px;padding:8px 12px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:6px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.5;word-break:break-all;white-space:pre-wrap;"></div>
 </div>`;
 }
 
@@ -1600,7 +1604,7 @@ class AgentGateEntryWidget extends HTMLElement {
     async _connectDash(retry = 0) {
         const panel = this.shadow.querySelector('#ag-dash') as HTMLElement;
         if (retry === 0)
-            panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ag-text-secondary);font-size:14px;">${tr('dashboardLoading')}</div>`;
+            panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ag-text-secondary);font-size: var(--fs-lg);">${tr('dashboardLoading')}</div>`;
 
         let healthData: any = null;
         try {
@@ -1645,9 +1649,9 @@ class AgentGateEntryWidget extends HTMLElement {
         if (!bridgeRunning && bridgeError && retry >= 9) {
             panel.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
   <div style="font-size:48px;margin-bottom:16px;line-height:1;">⚠️</div>
-  <h2 style="font-size:16px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('statusStartFailed')}</h2>
-  <div style="max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;">${bridgeError}</div>
-  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
+  <h2 style="font-size: var(--fs-xl);font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('statusStartFailed')}</h2>
+  <div style="max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;">${bridgeError}</div>
+  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
 </div>`;
             const btn = this.shadow.querySelector('#ag-retry');
             btn?.addEventListener('click', () => this._connectDash(0));
@@ -1662,9 +1666,9 @@ class AgentGateEntryWidget extends HTMLElement {
             // 重试耗尽，显示无法连接状态
             panel.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
   <div style="font-size:48px;margin-bottom:16px;line-height:1;">⚠️</div>
-  <h2 style="font-size:16px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('dashboardUnreachable')}</h2>
-  <p style="font-size:13px;margin:0 0 24px;color:var(--ag-text-secondary);">${isZh() ? '请确认安全网关服务已启动（默认端口 9100）' : 'Please ensure the security gateway service is running (default port 9100)'}</p>
-  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
+  <h2 style="font-size: var(--fs-xl);font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('dashboardUnreachable')}</h2>
+  <p style="font-size: var(--fs-base);margin:0 0 24px;color:var(--ag-text-secondary);">${isZh() ? '请确认安全网关服务已启动（默认端口 9100）' : 'Please ensure the security gateway service is running (default port 9100)'}</p>
+  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
 </div>`;
             const btn = this.shadow.querySelector('#ag-retry');
             btn?.addEventListener('click', () => this._connectDash(0));
@@ -3171,7 +3175,7 @@ class AgentGateEntryWidget extends HTMLElement {
         if (!el) return;
         if (!r) r = await this._getRules();
         if (!r.length) {
-            el.innerHTML = `<div style="font-size:12px;color:var(--ag-text-secondary);padding:8px 0;">${isZh() ? '暂无自定义规则' : 'No custom rules'}</div>`;
+            el.innerHTML = `<div style="font-size: var(--fs-md);color:var(--ag-text-secondary);padding:8px 0;">${isZh() ? '暂无自定义规则' : 'No custom rules'}</div>`;
             return;
         }
         el.innerHTML = r
@@ -3180,8 +3184,8 @@ class AgentGateEntryWidget extends HTMLElement {
             <div class="ag-rule-item">
                 <code class="ag-rule-pattern">${x.pattern}</code>
                 <span class="ag-badge ${x.action === 'Deny' ? 'ag-badge-deny' : 'ag-badge-allow'}">${x.action}</span>
-                <span style="font-size:10px;color:var(--ag-orange);min-width:48px;text-align:center;">${x.severity}</span>
-                <button class="ag-btn ag-btn-muted ag-btn-sm" style="padding:2px 6px;font-size:12px;">✕</button>
+                <span style="font-size: var(--fs-xs);color:var(--ag-orange);min-width:48px;text-align:center;">${x.severity}</span>
+                <button class="ag-btn ag-btn-muted ag-btn-sm" style="padding:2px 6px;font-size: var(--fs-md);">✕</button>
             </div>
         `
             )

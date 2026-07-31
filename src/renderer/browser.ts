@@ -245,7 +245,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 gap: 4px;
                 height: 26px;
                 padding: 0 10px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: #6b7280;
                 background: transparent;
                 border: none;
@@ -291,7 +291,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 color: #9ca3af; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 border-radius: 50%;
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 flex-shrink: 0;
                 opacity: 0;
                 transition: all 0.15s;
@@ -309,7 +309,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 flex-shrink: 0;
                 border-radius: 8px;
                 margin-left: 8px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 transition: all 0.15s;
             }
             .bw-tab-add-btn:hover { background: #d1d5db; color: #374151; }
@@ -330,7 +330,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 transition: all 0.15s; color: #6b7280;
-                font-size: 11px; flex-shrink: 0;
+                font-size: var(--fs-sm); flex-shrink: 0;
             }
             .bw-btn:hover { background: #f3f4f6; color: #374151; }
             .bw-btn:active { background: #e5e7eb; }
@@ -341,7 +341,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 gap: 4px;
             }
             .bw-fullscreen-label {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 white-space: nowrap;
                 max-width: 0;
                 overflow: hidden;
@@ -365,11 +365,11 @@ export class EmbeddedBrowser extends BrowserInstance {
                 border-color: #93c5fd;
                 box-shadow: 0 0 0 2px rgba(59,130,246,0.12);
             }
-            .bw-lock { color: #10b981; flex-shrink: 0; font-size: 10px; }
+            .bw-lock { color: #10b981; flex-shrink: 0; font-size: var(--fs-xs); }
             .bw-url-input {
                 flex: 1; min-width: 0;
                 border: none; background: transparent; outline: none;
-                font-size: 11px; color: #1f2937;
+                font-size: var(--fs-sm); color: #1f2937;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 line-height: 1.4;
             }
@@ -396,23 +396,23 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-tm-item {
                 display: flex; align-items: center; gap: 10px;
                 padding: 8px 16px;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
                 cursor: pointer;
                 transition: background 0.1s;
             }
             .bw-tm-item:hover { background: #f3f4f6; }
-            .bw-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
+            .bw-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
             .bw-tm-label { flex: 1; }
-            .bw-tm-shortcut { color: #9ca3af; font-size: 11px; }
+            .bw-tm-shortcut { color: #9ca3af; font-size: var(--fs-sm); }
             .bw-tm-divider {
                 height: 1px; background: #f0f0f0; margin: 4px 0;
             }
             .bw-tm-zoom-row {
                 display: flex; align-items: center; gap: 6px;
                 padding: 6px 16px;
-                font-size: 13px; color: #374151;
+                font-size: var(--fs-base); color: #374151;
             }
-            .bw-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
+            .bw-tm-zoom-row i { width: 16px; text-align: center; color: #6b7280; font-size: var(--fs-base); }
             .bw-tm-zoom-label { flex: 1; }
             .bw-tm-zoom-controls {
                 display: flex; align-items: center; gap: 4px;
@@ -421,11 +421,11 @@ export class EmbeddedBrowser extends BrowserInstance {
                 width: 24px; height: 24px; border-radius: 4px;
                 border: 1px solid #e5e7eb; background: white;
                 cursor: pointer; display: flex; align-items: center; justify-content: center;
-                font-size: 11px; color: #6b7280;
+                font-size: var(--fs-sm); color: #6b7280;
                 transition: background 0.1s;
             }
             .bw-tm-zoom-btn:hover { background: #f3f4f6; }
-            .bw-tm-zoom-val { font-size: 12px; min-width: 36px; text-align: center; }
+            .bw-tm-zoom-val { font-size: var(--fs-md); min-width: 36px; text-align: center; }
 
             /* ---- Webview area ---- */
             .bw-webview-container {

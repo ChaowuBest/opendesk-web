@@ -145,7 +145,7 @@ export class BrowserPip {
 
         const titleLabel = document.createElement('span');
         titleLabel.style.cssText = `
-            font-size: 10px;
+            font-size: var(--fs-xs);
             color: rgba(255,255,255,0.85);
             overflow: hidden;
             text-overflow: ellipsis;
@@ -228,7 +228,7 @@ export class BrowserPip {
             padding: 0 8px;
             background: #111827;
             border-top: 1px solid rgba(255,255,255,0.06);
-            font-size: 10px;
+            font-size: var(--fs-xs);
             color: rgba(255,255,255,0.55);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             gap: 5px;
@@ -294,7 +294,7 @@ export class BrowserPip {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 9px;
+            font-size: var(--fs-2xs);
             transition: background 0.15s;
             padding: 0;
         `;
@@ -486,7 +486,7 @@ export class BrowserPip {
             }
         }
         this._statusEl.innerHTML = `
-            <i class="fas fa-layer-group" style="font-size: 10px;"></i>
+            <i class="fas fa-layer-group" style="font-size: var(--fs-xs);"></i>
             <span>${tabCount} 个标签页</span>
             ${urlDisplay ? `<span style="margin-left: auto; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${urlDisplay}</span>` : ''}
         `;

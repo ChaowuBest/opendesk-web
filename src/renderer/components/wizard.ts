@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import './wizard.css';
+
 type LoginChoice = 'opendesk' | 'enterprise' | 'nologin';
 
 type ResultType = 'success' | 'error' | 'info';
@@ -81,7 +83,7 @@ declare global {
 class SetupWizard extends HTMLElement {
     private currentStep = 1;
     private readonly totalSteps = 3;
-    private loginChoice: LoginChoice | null = null;
+    private loginChoice: LoginChoice | null = 'nologin';
     private providerTemplates: ProviderTemplate[] = [];
     private currentData: SettingData | null = null;
     private _verifying = false;
@@ -95,15 +97,15 @@ class SetupWizard extends HTMLElement {
 
     private _render(): void {
         this.innerHTML = `
-        <div class="wizard-root w-full h-full overflow-hidden flex bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
-            <div class="wizard-stepper flex-shrink-0 w-20 flex flex-col items-center py-12">
+        <div class="wizard-root">
+            <div class="wizard-rail">
                 ${this._renderStepper()}
             </div>
-            <div class="flex-1 flex flex-col overflow-hidden">
-                <div class="flex-1 overflow-y-auto px-12 py-12">
+            <div class="wizard-content">
+                <div class="wizard-body">
                     ${this._renderStepContent()}
                 </div>
-                <div class="wizard-nav flex-shrink-0 px-12 py-6 border-t border-gray-100/50">
+                <div class="wizard-footer">
                     ${this._renderNavButtons()}
                 </div>
             </div>
@@ -112,23 +114,22 @@ class SetupWizard extends HTMLElement {
     }
 
     private _renderStepper(): string {
+        const labels = ['账号选择', '模型配置', '完成'];
         let html = '';
         for (let i = 1; i <= this.totalSteps; i++) {
             const isActive = i === this.currentStep;
             const isCompleted = i < this.currentStep;
-            const circleClass = isActive
-                ? 'w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center text-sm font-semibold shadow-lg shadow-indigo-200'
-                : isCompleted
-                  ? 'w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center text-sm font-semibold'
-                  : 'w-10 h-10 rounded-full bg-gray-200 text-gray-400 flex items-center justify-center text-sm font-semibold';
+            const itemClass = isActive ? 'rail-item active' : isCompleted ? 'rail-item done' : 'rail-item';
 
-            html += `<div class="${circleClass}">`;
-            html += isCompleted ? '<i class="fas fa-check text-xs"></i>' : `${i}`;
+            const dotContent = isCompleted ? '<i class="fas fa-check" style="font-size:9px"></i>' : `${i}`;
+
+            html += `<div class="${itemClass}">`;
+            html += `<div class="rail-dot">${dotContent}</div>`;
+            html += `<span class="rail-label">${labels[i - 1]}</span>`;
             html += '</div>';
 
             if (i < this.totalSteps) {
-                const lineClass = isCompleted ? 'w-0.5 h-16 bg-indigo-500' : 'w-0.5 h-16 bg-gray-200';
-                html += `<div class="${lineClass}"></div>`;
+                html += '<div class="rail-line"></div>';
             }
         }
         return html;
@@ -150,15 +151,13 @@ class SetupWizard extends HTMLElement {
     // =================== Step 1 ===================
     private _renderStep1(): string {
         return `
-        <div class="max-w-3xl">
-            <p class="text-sm font-medium text-indigo-500 mb-2">Step 1</p>
-            <h1 class="text-3xl font-bold text-gray-900 mb-3">您希望如何登录 OpenDesk？</h1>
-            <p class="text-base text-gray-500 mb-10 leading-relaxed">我们支持使用个人账号或企业账号接入，也支持您配置自己的模型服务。无论使用何种登录方式，我们提供的功能都一视同仁。</p>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                ${this._renderChoiceCard('opendesk', 'fa-user-circle', 'OpenDesk 账号', '正在建设中', true)}
-                ${this._renderChoiceCard('enterprise', 'fa-building', '企业账号', '正在建设中', true)}
-                ${this._renderChoiceCard('nologin', 'fa-plug', '不登录账号', '使用自定义的大模型服务，无需登录任何账号', false)}
-            </div>
+        <span class="step-tag">Step 1 · 账号选择</span>
+        <h2>您希望如何登录 OpenDesk？</h2>
+        <p class="ob-desc">我们支持使用个人账号或企业账号接入，也支持您配置自己的模型服务。无论使用何种登录方式，我们提供的功能都一视同仁。</p>
+        <div class="opt-grid">
+            ${this._renderChoiceCard('opendesk', 'fa-user', 'OpenDesk 账号', '个人账号，同步任务、技能与偏好设置', true)}
+            ${this._renderChoiceCard('enterprise', 'fa-building', '企业账号', '企业统一身份认证（SSO）接入', true)}
+            ${this._renderChoiceCard('nologin', 'fa-plug', '不登录账号', '使用自定义的大模型服务，无需登录任何账号', false)}
         </div>
         `;
     }
@@ -171,22 +170,19 @@ class SetupWizard extends HTMLElement {
         disabled: boolean
     ): string {
         const isSelected = this.loginChoice === value;
-        const disabledClass = disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer';
-        const selectedClass = isSelected
-            ? 'border-indigo-400 bg-indigo-50/50 ring-2 ring-indigo-400/30'
-            : 'border-gray-200 bg-white/70 hover:border-gray-300 hover:shadow-md';
-        const pointerEvents = disabled ? 'pointer-events-none' : '';
+        const classes = ['opt-card', disabled ? 'disabled' : '', isSelected ? 'selected' : '']
+            .filter(Boolean)
+            .join(' ');
 
         return `
-        <div class="wizard-choice-card relative rounded-2xl border-2 p-6 transition-all duration-200 backdrop-blur-xl ${selectedClass} ${disabledClass} ${pointerEvents}"
+        <div class="${classes}"
              data-choice="${value}" ${disabled ? 'data-disabled="true"' : ''}>
-            ${isSelected ? '<div class="absolute top-3 right-3"><i class="fas fa-check-circle text-indigo-500"></i></div>' : ''}
-            ${disabled ? '<div class="absolute top-3 right-3"><i class="fas fa-lock text-gray-300 text-xs"></i></div>' : ''}
-            <div class="w-12 h-12 rounded-xl ${disabled ? 'bg-gray-100' : 'bg-indigo-50'} flex items-center justify-center mb-4">
-                <i class="fas ${icon} text-xl ${disabled ? 'text-gray-300' : 'text-indigo-500'}"></i>
-            </div>
-            <h3 class="font-semibold text-gray-800 mb-1">${title}</h3>
-            <p class="text-xs text-gray-400 leading-relaxed">${subtitle}</p>
+            ${disabled ? '<span class="opt-badge">建设中</span>' : ''}
+            ${disabled ? '<i class="fas fa-lock opt-lock"></i>' : ''}
+            ${isSelected ? '<span class="opt-check"><i class="fas fa-check"></i></span>' : ''}
+            <div class="opt-icon"><i class="fas ${icon}"></i></div>
+            <div class="opt-name">${title}</div>
+            <div class="opt-desc">${subtitle}</div>
         </div>
         `;
     }
@@ -207,17 +203,13 @@ class SetupWizard extends HTMLElement {
 
     private _renderPlaceholder(title: string, description: string): string {
         return `
-        <div class="max-w-3xl">
-            <p class="text-sm font-medium text-indigo-500 mb-2">Step 2</p>
-            <h1 class="text-3xl font-bold text-gray-900 mb-3">${this._escapeHtml(title)}</h1>
-            <p class="text-base text-gray-500 mb-10 leading-relaxed">${this._escapeHtml(description)}</p>
-            <div class="flex flex-col items-center justify-center py-16 bg-white/70 backdrop-blur-xl rounded-2xl border border-gray-100">
-                <div class="w-20 h-20 rounded-full bg-amber-50 flex items-center justify-center mb-6">
-                    <i class="fas fa-hard-hat text-3xl text-amber-400"></i>
-                </div>
-                <p class="text-lg font-semibold text-gray-700 mb-2">正在建设中</p>
-                <p class="text-sm text-gray-400">此功能尚未上线，请选择其他登录方式</p>
-            </div>
+        <span class="step-tag">Step 2 · ${this._escapeHtml(title)}</span>
+        <h2>${this._escapeHtml(title)}</h2>
+        <p class="ob-desc">${this._escapeHtml(description)}</p>
+        <div class="placeholder-card">
+            <div class="placeholder-icon"><i class="fas fa-hard-hat"></i></div>
+            <p class="placeholder-title">正在建设中</p>
+            <p class="placeholder-sub">此功能尚未上线，请选择其他登录方式</p>
         </div>
         `;
     }
@@ -231,64 +223,62 @@ class SetupWizard extends HTMLElement {
             .join('');
 
         return `
-        <div class="max-w-2xl">
-            <p class="text-xs font-medium text-indigo-500 mb-1">Step 2</p>
-            <h1 class="text-2xl font-bold text-gray-900 mb-2">配置您的模型服务</h1>
-            <p class="text-sm text-gray-400 mb-6">请选择一个模型提供方并填入对应的密钥和模型名称。</p>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-sm p-5 space-y-3.5">
+        <span class="step-tag">Step 2 · 模型配置</span>
+        <h2>配置您的模型服务</h2>
+        <p class="ob-desc">请选择一个模型提供方并填入对应的密钥和模型名称。</p>
+        <div class="form-card">
+            <div class="f-row">
+                <label class="f-label">模型提供方</label>
+                <select id="wizard-provider-select" class="f-ctl f-select">
+                    <option value="">请选择模型提供方</option>
+                    ${templateOptions}
+                    <option value="__custom__">自定义</option>
+                </select>
+            </div>
+            <div class="f-row f-grid2">
                 <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">模型提供方</label>
-                    <select id="wizard-provider-select" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
-                        <option value="">请选择模型提供方</option>
-                        ${templateOptions}
-                        <option value="__custom__">自定义</option>
+                    <label class="f-label">协议类型</label>
+                    <select id="wizard-provider-type" class="f-ctl f-select">
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
                     </select>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">协议类型</label>
-                        <select id="wizard-provider-type" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
-                            <option value="openai">OpenAI</option>
-                            <option value="anthropic">Anthropic</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">模型名称</label>
-                        <input id="wizard-model-name" type="text" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="例如: gpt-4o, deepseek-chat">
-                    </div>
-                </div>
                 <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">API 地址 (Base URL)</label>
-                    <input id="wizard-base-url" type="text" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="https://api.example.com/v1">
+                    <label class="f-label">模型名称</label>
+                    <input id="wizard-model-name" type="text" class="f-ctl" placeholder="例如: gpt-4o, deepseek-chat">
                 </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">API 密钥</label>
-                    <div class="relative">
-                        <input id="wizard-api-key" type="password" class="w-full px-3.5 py-2 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="sk-...">
-                        <button id="wizard-toggle-key" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
-                            <i class="fas fa-eye text-xs"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="flex items-center gap-6 pt-1">
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                        <input id="wizard-no-proxy" type="checkbox" class="w-3.5 h-3.5 rounded border-gray-300 text-indigo-500 focus:ring-indigo-400/30">
-                        <span class="text-xs text-gray-500">禁用代理</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                        <input id="wizard-no-ssl" type="checkbox" class="w-3.5 h-3.5 rounded border-gray-300 text-indigo-500 focus:ring-indigo-400/30">
-                        <span class="text-xs text-gray-500">跳过SSL证书校验</span>
-                    </label>
-                </div>
-                <div id="wizard-verify-result" class="text-xs hidden max-h-36 overflow-y-auto"></div>
-                <div class="flex gap-3">
-                    <button id="wizard-save-btn" class="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
-                        <i class="fas fa-save mr-2"></i>仅保存
-                    </button>
-                    <button id="wizard-verify-btn" class="flex-1 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-lg hover:shadow-md hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                        <i class="fas fa-check-double mr-2"></i>验证配置并保存
+            </div>
+            <div class="f-row">
+                <label class="f-label">API 地址 (Base URL)</label>
+                <input id="wizard-base-url" type="text" class="f-ctl" placeholder="https://api.example.com/v1">
+            </div>
+            <div class="f-row">
+                <label class="f-label">API 密钥</label>
+                <div class="f-ctl f-ctl-with-btn">
+                    <input id="wizard-api-key" type="password" class="f-ctl-input" placeholder="sk-...">
+                    <button id="wizard-toggle-key" class="f-ctl-btn" type="button">
+                        <i class="fas fa-eye"></i>
                     </button>
                 </div>
+            </div>
+            <div class="f-row f-checks">
+                <label class="f-check">
+                    <input id="wizard-no-proxy" type="checkbox">
+                    <span>禁用代理</span>
+                </label>
+                <label class="f-check">
+                    <input id="wizard-no-ssl" type="checkbox">
+                    <span>跳过 SSL 证书校验</span>
+                </label>
+            </div>
+            <div id="wizard-verify-result" class="verify-result hidden"></div>
+            <div class="f-actions">
+                <button id="wizard-save-btn" class="wiz-btn wiz-btn-secondary" type="button">
+                    <i class="fas fa-save"></i>仅保存
+                </button>
+                <button id="wizard-verify-btn" class="wiz-btn wiz-btn-primary" type="button">
+                    <i class="fas fa-check-double"></i>验证配置并保存
+                </button>
             </div>
         </div>
         `;
@@ -297,19 +287,15 @@ class SetupWizard extends HTMLElement {
     // =================== Step 3 ===================
     private _renderStep3(): string {
         return `
-        <div class="max-w-3xl">
-            <p class="text-sm font-medium text-indigo-500 mb-2">Step 3</p>
-            <h1 class="text-3xl font-bold text-gray-900 mb-3">配置已完成</h1>
-            <p class="text-base text-gray-500 mb-10 leading-relaxed">使用 OpenDesk 完成你的第一个任务吧！</p>
-            <div class="flex flex-col items-center justify-center py-20 bg-white/70 backdrop-blur-xl rounded-2xl border border-gray-100">
-                <div class="w-24 h-24 rounded-full bg-green-50 flex items-center justify-center mb-8">
-                    <i class="fas fa-check-circle text-5xl text-green-500"></i>
-                </div>
-                <p class="text-lg font-semibold text-gray-700 mb-6">一切就绪！</p>
-                <button id="wizard-create-task-btn" class="px-8 py-3 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
-                    <i class="fas fa-plus mr-2"></i>点击创建任务
-                </button>
-            </div>
+        <span class="step-tag">Step 3 · 完成</span>
+        <h2>配置已完成</h2>
+        <p class="ob-desc">使用 OpenDesk 完成你的第一个任务吧！</p>
+        <div class="done-card">
+            <div class="done-icon"><i class="fas fa-check-circle"></i></div>
+            <p class="done-title">一切就绪！</p>
+            <button id="wizard-create-task-btn" class="wiz-btn wiz-btn-primary wiz-btn-lg" type="button">
+                <i class="fas fa-plus"></i>点击创建任务
+            </button>
         </div>
         `;
     }
@@ -323,36 +309,30 @@ class SetupWizard extends HTMLElement {
 
         if (showBack) {
             return `
-        <div class="flex items-center gap-3">
-            <button id="wizard-back-btn" class="px-6 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
-                <i class="fas fa-arrow-left mr-2"></i>上一步
-            </button>
-        </div>
+        <button id="wizard-back-btn" class="wiz-btn-ghost" type="button">
+            <i class="fas fa-arrow-left"></i>上一步
+        </button>
         `;
         }
 
         return `
-        <div class="flex items-center justify-between gap-3">
-            <button id="wizard-return-btn" class="px-6 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
-                <i class="fas fa-arrow-left mr-2"></i>${this._escapeHtml(returnLabel)}
-            </button>
-            <div class="flex items-center gap-3">
-            ${
-                showNext
-                    ? `
-            <button id="wizard-next-btn" class="px-6 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed" ${nextDisabled ? 'disabled' : ''}>
-                下一步<i class="fas fa-arrow-right ml-2"></i>
-            </button>`
-                    : ''
-            }
-            </div>
-        </div>
+        <button id="wizard-return-btn" class="wiz-btn-ghost" type="button">
+            <i class="fas fa-arrow-left"></i>${this._escapeHtml(returnLabel)}
+        </button>
+        ${
+            showNext
+                ? `
+        <button id="wizard-next-btn" class="wiz-btn wiz-btn-primary" type="button" ${nextDisabled ? 'disabled' : ''}>
+            下一步<i class="fas fa-arrow-right"></i>
+        </button>`
+                : ''
+        }
         `;
     }
 
     // =================== Events ===================
     private _bindEvents(): void {
-        this.querySelectorAll<HTMLElement>('.wizard-choice-card').forEach((card) => {
+        this.querySelectorAll<HTMLElement>('.opt-card').forEach((card) => {
             card.addEventListener('click', () => {
                 if (card.dataset.disabled === 'true') return;
                 this.loginChoice = card.dataset.choice as LoginChoice;
@@ -538,7 +518,7 @@ class SetupWizard extends HTMLElement {
         this._verifying = true;
         if (verifyBtn) {
             verifyBtn.disabled = true;
-            verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>正在验证...';
+            verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>正在验证...';
         }
         this._showResult(resultDiv, 'info', '正在验证模型配置，请稍候...');
 
@@ -569,7 +549,7 @@ class SetupWizard extends HTMLElement {
             this._verifying = false;
             if (verifyBtn) {
                 verifyBtn.disabled = false;
-                verifyBtn.innerHTML = '<i class="fas fa-check-double mr-2"></i>验证配置并保存';
+                verifyBtn.innerHTML = '<i class="fas fa-check-double"></i>验证配置并保存';
             }
         }
     }
@@ -577,18 +557,13 @@ class SetupWizard extends HTMLElement {
     private _showResult(el: HTMLElement | null, type: ResultType, message: string): void {
         if (!el) return;
         el.classList.remove('hidden');
-        const colorMap: Record<ResultType, string> = {
-            success: 'text-green-600 bg-green-50 border-green-200',
-            error: 'text-red-600 bg-red-50 border-red-200',
-            info: 'text-blue-600 bg-blue-50 border-blue-200'
-        };
+        el.className = `verify-result verify-${type}`;
         const iconMap: Record<ResultType, string> = {
             success: 'fa-check-circle',
             error: 'fa-times-circle',
             info: 'fa-info-circle'
         };
-        el.className = `text-sm p-3 rounded-xl border ${colorMap[type]} max-h-48 overflow-y-auto`;
-        el.innerHTML = `<i class="fas ${iconMap[type]} mr-2"></i>${this._escapeHtml(message)}`;
+        el.innerHTML = `<i class="fas ${iconMap[type]}"></i>${this._escapeHtml(message)}`;
     }
 
     private _escapeHtml(text: string | null | undefined): string {

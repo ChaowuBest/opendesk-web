@@ -1603,6 +1603,9 @@ export const enUs: Record<string, string> = {
     'agentoffice.modelGlobalDefault': 'Use global default model',
     'agentoffice.modelHint':
         'When specified, this staff member uses the selected model when starting or continuing tasks. Leave it blank to use the global default.',
+    'agentoffice.modelShort': 'Model',
+    'agentoffice.metaSkills': '${count} skills',
+    'agentoffice.onboardDays': '${days}d onboard',
     'agentoffice.triggerIntervalLabel': 'Trigger interval',
     'agentoffice.triggerIntervalHint':
         'OpenDesk wakes this staff member on this interval so they can decide whether any work or communication is needed.',

@@ -586,7 +586,7 @@ class RecommendationPanel extends HTMLElement {
                 border: none;
                 border-radius: 9999px;
                 background: transparent;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: #9ca3af;
                 cursor: pointer;
                 transition: color 0.2s ease, background 0.2s ease;
@@ -594,7 +594,7 @@ class RecommendationPanel extends HTMLElement {
                 flex-shrink: 0;
             }
             .rec-tab i {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 transition: color 0.2s ease;
             }
             .rec-tab:hover {
@@ -693,7 +693,7 @@ class RecommendationPanel extends HTMLElement {
                 transition: background 0.2s ease, box-shadow 0.2s ease;
             }
             .rec-item-icon i {
-                font-size: 13px;
+                font-size: var(--fs-base);
                 color: #3b82f6;
             }
 
@@ -705,14 +705,14 @@ class RecommendationPanel extends HTMLElement {
                 gap: 1px;
             }
             .rec-item-title {
-                font-size: 13px;
+                font-size: var(--fs-base);
                 font-weight: 500;
                 color: rgba(0, 0, 0, 0.72);
                 line-height: 1.4;
                 transition: color 0.2s ease;
             }
             .rec-item-desc {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: rgba(0, 0, 0, 0.35);
                 line-height: 1.4;
                 display: -webkit-box;
@@ -725,7 +725,7 @@ class RecommendationPanel extends HTMLElement {
             .rec-item-arrow {
                 flex-shrink: 0;
                 color: rgba(0, 0, 0, 0.12);
-                font-size: 10px;
+                font-size: var(--fs-xs);
                 transition: color 0.2s ease, transform 0.2s ease;
             }
             .rec-item:hover .rec-item-arrow {
@@ -763,7 +763,7 @@ class RecommendationPanel extends HTMLElement {
             .search-error {
                 padding: 10px 12px;
                 border-radius: 16px;
-                font-size: 12px;
+                font-size: var(--fs-md);
                 color: var(--od-text-muted);
                 background: color-mix(in srgb, var(--od-bg-muted) 76%, transparent);
                 border: 1px solid color-mix(in srgb, var(--od-border) 72%, transparent);
@@ -830,14 +830,14 @@ class RecommendationPanel extends HTMLElement {
                 gap: 2px;
             }
             .search-file-title {
-                font-size: 13px;
+                font-size: var(--fs-base);
                 color: var(--od-text);
                 font-weight: 600;
             }
             .search-file-path,
             .search-snippet,
             .search-meta {
-                font-size: 11px;
+                font-size: var(--fs-sm);
                 color: var(--od-text-muted);
                 overflow: hidden;
                 text-overflow: ellipsis;

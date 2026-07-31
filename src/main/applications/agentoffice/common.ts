@@ -84,15 +84,16 @@ export interface StaffListItem extends StaffDefinition {
     id: string;
     hired_at: string;
     enabled: boolean;
+    model?: string;
     portrait_url?: string;
     message_count: number;
     task_count: number;
+    skill_count: number;
     usage_summary?: TaskUsageSummary;
     active_task_id?: string;
 }
 
 export interface StaffDetail extends StaffListItem {
-    model?: string;
     agents_md: string;
     mcp: { servers: unknown[] };
     permission: StaffPermission;

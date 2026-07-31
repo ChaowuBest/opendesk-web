@@ -72,6 +72,7 @@ describe('agentoffice management form behavior', () => {
             enabled: true,
             message_count: 0,
             task_count: 0,
+            skill_count: 0,
             agents_md: 'Instructions',
             mcp: { servers: [] },
             permission: { network_access: false, directories: [] },

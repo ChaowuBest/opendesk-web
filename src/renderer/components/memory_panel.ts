@@ -289,7 +289,7 @@ class MemoryPanel extends HTMLElement {
                         background: transparent;
                         color: var(--mp-tab-color, rgba(15, 23, 42, 0.56));
                         font: inherit;
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         font-weight: 500;
                         line-height: 1;
                         cursor: pointer;
@@ -334,7 +334,7 @@ class MemoryPanel extends HTMLElement {
                         color: var(--mp-muted, #64748b);
                         cursor: pointer;
                         font: inherit;
-                        font-size: 15px;
+                        font-size: var(--fs-lg);
                         line-height: 1;
                     }
 
@@ -376,14 +376,14 @@ class MemoryPanel extends HTMLElement {
 
                     .state-title {
                         color: var(--mp-text, #0f172a);
-                        font-size: 14px;
+                        font-size: var(--fs-lg);
                         font-weight: 600;
                     }
 
                     .state-detail {
                         max-width: 460px;
                         color: var(--mp-muted, #64748b);
-                        font-size: 12px;
+                        font-size: var(--fs-md);
                         line-height: 1.6;
                     }
 
@@ -423,7 +423,7 @@ class MemoryPanel extends HTMLElement {
                         margin: 0;
                         min-width: 0;
                         color: var(--mp-text, #0f172a);
-                        font-size: 14px;
+                        font-size: var(--fs-lg);
                         line-height: 1.35;
                         font-weight: 600;
                         overflow-wrap: anywhere;
@@ -435,7 +435,7 @@ class MemoryPanel extends HTMLElement {
                         align-items: center;
                         gap: 8px;
                         color: var(--mp-muted, #64748b);
-                        font-size: 11px;
+                        font-size: var(--fs-sm);
                         line-height: 1;
                         white-space: nowrap;
                     }
@@ -461,7 +461,7 @@ class MemoryPanel extends HTMLElement {
 
                     .memory-content {
                         color: var(--mp-text, #0f172a);
-                        font-size: 13px;
+                        font-size: var(--fs-base);
                         line-height: 1.6;
                         white-space: pre-wrap;
                         overflow-wrap: anywhere;
@@ -472,7 +472,7 @@ class MemoryPanel extends HTMLElement {
                         font-family:
                             ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
                             monospace;
-                        font-size: 11px;
+                        font-size: var(--fs-sm);
                     }
 
                     .spinner {
@@ -497,7 +497,7 @@ class MemoryPanel extends HTMLElement {
                         padding: 0;
                         background: transparent;
                         color: var(--mp-text, #0f172a);
-                        font-size: 14px;
+                        font-size: var(--fs-lg);
                         line-height: 1.68;
                     }
 

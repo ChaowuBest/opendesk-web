@@ -201,13 +201,13 @@ export function getFileExplorerCSS(): string {
             gap: 6px;
             min-width: 0;
             flex: 1;
-            font-size: 12px;
+            font-size: var(--fs-md);
             color: #334155;
             font-weight: 500;
         }
         .ws-path-icon {
             color: #64748b;
-            font-size: 11px;
+            font-size: var(--fs-sm);
             flex-shrink: 0;
         }
         .ws-path-text {
@@ -235,12 +235,12 @@ export function getFileExplorerCSS(): string {
             border-radius: 5px;
             cursor: pointer;
             color: #6b7280;
-            font-size: 11px;
+            font-size: var(--fs-sm);
             transition: background 0.15s, color 0.15s, box-shadow 0.15s;
             white-space: nowrap;
         }
         .ws-view-btn i {
-            font-size: 10px;
+            font-size: var(--fs-xs);
         }
         .ws-view-btn:hover {
             color: #374151;
@@ -262,7 +262,7 @@ export function getFileExplorerCSS(): string {
             border-radius: 5px;
             cursor: pointer;
             color: #9ca3af;
-            font-size: 11px;
+            font-size: var(--fs-sm);
             transition: color 0.15s, background 0.15s;
             flex-shrink: 0;
         }
@@ -279,7 +279,7 @@ export function getFileExplorerCSS(): string {
         }
 
         /* Tree view */
-        .ws-tree { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
+        .ws-tree { flex: 1; overflow: auto; padding: 4px 0; font-size: var(--fs-md); }
         .ws-tree-row {
             display: flex; align-items: center; gap: 4px;
             padding: 3px 12px 3px 10px; cursor: pointer; user-select: none;
@@ -287,14 +287,14 @@ export function getFileExplorerCSS(): string {
         }
         .ws-tree-row:hover { background: #f3f4f6; }
         .ws-tree-row.ws-file-selected { background: #e0edff; }
-        .ws-tree-caret { width: 10px; color: #9ca3af; font-size: 9px; flex-shrink: 0; text-align: center; }
-        .ws-tree-icon { flex-shrink: 0; font-size: 12px; }
+        .ws-tree-caret { width: 10px; color: #9ca3af; font-size: var(--fs-2xs); flex-shrink: 0; text-align: center; }
+        .ws-tree-icon { flex-shrink: 0; font-size: var(--fs-md); }
         .ws-tree-icon-dir { color: #f59e0b; }
         .ws-tree-icon-file { color: #94a3b8; }
         .ws-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .ws-tree-size { font-size: 10px; color: #9ca3af; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+        .ws-tree-size { font-size: var(--fs-xs); color: #9ca3af; flex-shrink: 0; font-variant-numeric: tabular-nums; }
         .ws-tree-loading, .ws-tree-empty, .ws-tree-error {
-            display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 11px; color: #9ca3af;
+            display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: var(--fs-sm); color: #9ca3af;
         }
         .ws-tree-error { color: #b91c1c; }
 
@@ -302,16 +302,16 @@ export function getFileExplorerCSS(): string {
         .ws-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; }
         .ws-crumb {
             display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-            padding: 6px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px;
+            padding: 6px 12px; border-bottom: 1px solid #e5e7eb; font-size: var(--fs-sm);
             color: #6b7280; background: #f9fafb;
         }
         .ws-crumb-seg {
             background: transparent; border: none; padding: 2px 6px;
-            border-radius: 4px; cursor: pointer; color: #6b7280; font-size: 11px;
+            border-radius: 4px; cursor: pointer; color: #6b7280; font-size: var(--fs-sm);
         }
         .ws-crumb-seg:hover { background: #f3f4f6; color: #1f2937; }
         .ws-crumb-seg-current { color: #1f2937; font-weight: 500; }
-        .ws-crumb-sep { font-size: 9px; color: #cbd5e1; }
+        .ws-crumb-sep { font-size: var(--fs-2xs); color: #cbd5e1; }
 
         .ws-grid-body { flex: 1; overflow: auto; padding: 8px 12px; }
         .ws-grid-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; }
@@ -327,13 +327,13 @@ export function getFileExplorerCSS(): string {
         .ws-grid-icon-file { color: #94a3b8; }
         .ws-grid-icon-up { color: #64748b; }
         .ws-grid-name {
-            font-size: 11px; color: #1f2937; width: 100%;
+            font-size: var(--fs-sm); color: #1f2937; width: 100%;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3;
         }
-        .ws-grid-size { font-size: 9px; color: #9ca3af; font-variant-numeric: tabular-nums; }
+        .ws-grid-size { font-size: var(--fs-2xs); color: #9ca3af; font-variant-numeric: tabular-nums; }
         .ws-grid-loading, .ws-grid-error, .ws-grid-empty {
             display: flex; align-items: center; justify-content: center;
-            gap: 6px; padding: 20px; font-size: 11px; color: #9ca3af; grid-column: 1 / -1;
+            gap: 6px; padding: 20px; font-size: var(--fs-sm); color: #9ca3af; grid-column: 1 / -1;
         }
         .ws-grid-error { color: #b91c1c; }
 
@@ -364,22 +364,22 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-empty {
             display: flex; align-items: center; justify-content: center;
-            gap: 6px; padding: 10px 12px; font-size: 11px; color: #9ca3af;
+            gap: 6px; padding: 10px 12px; font-size: var(--fs-sm); color: #9ca3af;
         }
         .ws-preview-header {
             display: flex; align-items: center; gap: 6px;
             padding: 6px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
-            font-size: 12px; color: #334155; flex-shrink: 0;
+            font-size: var(--fs-md); color: #334155; flex-shrink: 0;
         }
-        .ws-preview-header > i { color: #64748b; font-size: 11px; }
+        .ws-preview-header > i { color: #64748b; font-size: var(--fs-sm); }
         .ws-preview-name {
             flex: 1; min-width: 0; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; font-weight: 500;
         }
-        .ws-preview-size { font-size: 10px; color: #9ca3af; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+        .ws-preview-size { font-size: var(--fs-xs); color: #9ca3af; font-variant-numeric: tabular-nums; flex-shrink: 0; }
         .ws-preview-close {
             width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
-            background: transparent; border: none; border-radius: 4px; color: #6b7280; cursor: pointer; font-size: 11px;
+            background: transparent; border: none; border-radius: 4px; color: #6b7280; cursor: pointer; font-size: var(--fs-sm);
         }
         .ws-preview-close:hover { background: #f3f4f6; color: #1f2937; }
         .ws-preview-body { flex: 1; overflow: auto; overflow-x: auto; background: #fafafa; min-height: 60px; }
@@ -393,14 +393,14 @@ export function getFileExplorerCSS(): string {
         .ws-preview-pre {
             margin: 0; padding: 10px 12px;
             font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: 11px; line-height: 1.55; color: #1f2937; white-space: pre; min-width: max-content;
+            font-size: var(--fs-sm); line-height: 1.55; color: #1f2937; white-space: pre; min-width: max-content;
         }
         .ws-preview-info {
             display: flex; align-items: flex-start; gap: 8px;
-            padding: 12px 14px; font-size: 12px; color: #475569;
+            padding: 12px 14px; font-size: var(--fs-md); color: #475569;
         }
-        .ws-preview-info > i { font-size: 14px; color: #64748b; margin-top: 2px; }
-        .ws-preview-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+        .ws-preview-info > i { font-size: var(--fs-lg); color: #64748b; margin-top: 2px; }
+        .ws-preview-hint { font-size: var(--fs-sm); color: #94a3b8; margin-top: 2px; }
         .ws-editor-host {
             flex: 1;
             display: flex;
@@ -423,12 +423,12 @@ export function getFileExplorerCSS(): string {
             text-overflow: ellipsis;
             white-space: nowrap;
             color: #334155;
-            font-size: 12px;
+            font-size: var(--fs-md);
             font-weight: 500;
         }
         .ws-editor-status {
             color: #858585;
-            font-size: 11px;
+            font-size: var(--fs-sm);
             flex-shrink: 0;
             display: flex;
             align-items: center;
@@ -443,7 +443,7 @@ export function getFileExplorerCSS(): string {
             border-radius: 4px;
             background: #0e639c;
             color: #ffffff;
-            font-size: 11px;
+            font-size: var(--fs-sm);
             cursor: pointer;
             flex-shrink: 0;
             transition: background 0.15s;
@@ -454,6 +454,8 @@ export function getFileExplorerCSS(): string {
             flex: 1;
             min-height: 60px;
             min-width: 0;
+            font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: var(--fs-base);
         }
         .ws-preview-code-host { flex: 1; overflow: auto; overflow-x: auto; min-height: 60px; background: #fafafa; }
         .ws-preview-code-host::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -466,7 +468,7 @@ export function getFileExplorerCSS(): string {
         .ws-preview-code-container {
             margin: 0; padding: 10px 12px;
             font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: 11px; line-height: 1.55; white-space: pre; min-width: max-content;
+            font-size: var(--fs-sm); line-height: 1.55; white-space: pre; min-width: max-content;
         }
         .ws-preview-code-container > span { white-space: pre; }
 
@@ -497,7 +499,7 @@ export function getFileExplorerCSS(): string {
             justify-content: center;
             width: 22px; height: 22px;
             background: transparent; border: none; border-radius: 4px;
-            cursor: pointer; color: #9ca3af; font-size: 10px;
+            cursor: pointer; color: #9ca3af; font-size: var(--fs-xs);
             transition: color 0.15s, background 0.15s;
             flex-shrink: 0;
         }
@@ -869,7 +871,7 @@ const MARKDOWN_PREVIEW_CSS = `
     }
     .markdown-body {
         font-family: var(--font-sans);
-        font-size: 12px;
+        font-size: var(--fs-md);
         line-height: 1.7;
         color: var(--od-md-color, #1f2937);
         padding: 12px 14px;
@@ -900,11 +902,11 @@ const MARKDOWN_PREVIEW_CSS = `
         background: var(--od-md-pre-bg, #f8fafc);
         border: 1px solid var(--od-md-pre-border, #e2e8f0);
         border-radius: 6px;
-        overflow-x: auto; font-size: 11px; line-height: 1.5;
+        overflow-x: auto; font-size: var(--fs-sm); line-height: 1.5;
     }
     .markdown-body pre code { padding: 0; background: none; border-radius: 0; font-size: inherit; }
     .markdown-body table {
-        font-size: 11px; margin: 0.5em 0; width: 100%;
+        font-size: var(--fs-sm); margin: 0.5em 0; width: 100%;
         border-collapse: collapse; border: 1px solid var(--od-md-table-border, #e2e8f0); border-radius: 6px;
     }
     .markdown-body th { background: var(--od-md-th-bg, #f8fafc); font-weight: 600; text-align: left; }
@@ -1277,10 +1279,10 @@ export class FileExplorer {
         const btnStyle = `
             display:flex; align-items:center; gap:8px; width:100%;
             padding:6px 10px; border:none; border-radius:6px;
-            background:transparent; font-size:12px; color:${btnColor};
+            background:transparent; font-size: var(--fs-md); color:${btnColor};
             cursor:pointer; text-align:left; transition:background 0.1s;
         `.trim();
-        const iconStyle = `width:16px; text-align:center; font-size:12px; color:${iconColor}; flex-shrink:0;`;
+        const iconStyle = `width:16px; text-align:center; font-size: var(--fs-md); color:${iconColor}; flex-shrink:0;`;
 
         const dangerBtnStyle = btnStyle.replace(`color:${btnColor}`, 'color:#dc2626');
         const dangerIconStyle = iconStyle.replace(`color:${iconColor}`, 'color:#dc2626');
@@ -1948,7 +1950,11 @@ export class FileExplorer {
 
         const style = document.createElement('style');
         style.id = 'ace-shadow-styles';
-        style.textContent = aceCss + '\n' + themeCssText;
+        style.textContent =
+            aceCss +
+            '\n' +
+            themeCssText +
+            "\n.ace_editor, .ace_editor * { font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important; }";
         (rn as unknown as Node).appendChild(style);
     }
 
@@ -1974,6 +1980,8 @@ export class FileExplorer {
             theme: `ace/theme/${theme}`,
             showPrintMargin: false,
             fontSize: 13,
+            fontFamily:
+                "'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
             tabSize: 4,
             showLineNumbers: true
         });
@@ -2045,7 +2053,7 @@ export class FileExplorer {
         if (!statusEl || !saveBtn || !filenameEl) return;
 
         if (this._editorSaveError) {
-            statusEl.innerHTML = `<i class="fas fa-triangle-exclamation" style="font-size:10px;"></i> ${escapeHtml(this._editorSaveError)}`;
+            statusEl.innerHTML = `<i class="fas fa-triangle-exclamation" style="font-size: var(--fs-xs);"></i> ${escapeHtml(this._editorSaveError)}`;
             statusEl.style.color = '#dc2626';
             saveBtn.style.display = 'inline-flex';
             saveBtn.dataset.disabled = '0';
@@ -2053,7 +2061,7 @@ export class FileExplorer {
         }
 
         if (this._editorSaving) {
-            statusEl.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="font-size:10px;"></i> 保存中…';
+            statusEl.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="font-size: var(--fs-xs);"></i> 保存中…';
             statusEl.style.color = '#3b82f6';
             saveBtn.style.display = 'inline-flex';
             saveBtn.dataset.disabled = '0';
@@ -2072,7 +2080,7 @@ export class FileExplorer {
         }
 
         if (this._editorStatus === 'saved') {
-            statusEl.innerHTML = '<i class="fas fa-check" style="font-size:10px;"></i> 已保存';
+            statusEl.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-xs);"></i> 已保存';
             statusEl.style.color = '#16a34a';
             saveBtn.style.display = 'none';
             saveBtn.dataset.disabled = '1';
@@ -2314,7 +2322,7 @@ export class FileExplorer {
                 <span class="ws-editor-filename" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
                 <span class="ws-editor-status"></span>
                 <button class="ws-editor-save-btn" data-action="editor-save" title="保存 (Ctrl+S)" style="display:none;">
-                    <i class="fas fa-floppy-disk" style="font-size: 10px;"></i> 保存
+                    <i class="fas fa-floppy-disk" style="font-size: var(--fs-xs);"></i> 保存
                 </button>
                 <button class="ws-fullscreen-btn" title="全屏预览" data-action="preview-fullscreen">
                     <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>

@@ -42,10 +42,10 @@ const CONFIRM_MODAL_STYLES = `
     }
     .od-confirm-modal-icon i { font-size: 18px; }
     .od-confirm-modal-title {
-        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+        font-size: var(--fs-xl); font-weight: 700; color: #1d1d1f; line-height: 1.3;
     }
     .od-confirm-modal-message {
-        font-size: 14px; color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
+        font-size: var(--fs-lg); color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
     }
     .od-confirm-modal-footer {
         display: flex; justify-content: flex-end; gap: 10px;
@@ -53,7 +53,7 @@ const CONFIRM_MODAL_STYLES = `
     }
     .od-confirm-btn {
         padding: 10px 24px; border-radius: 12px; border: none;
-        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        font-size: var(--fs-lg); font-weight: 600; cursor: pointer; transition: all 0.15s;
     }
     .od-confirm-btn:active { transform: scale(0.97); }
     .od-confirm-btn-cancel {
@@ -111,10 +111,10 @@ ${CONFIRM_MODAL_STYLES}
         transition: max-height 0.25s ease, opacity 0.2s ease, margin-bottom 0.25s ease;
     }
     .od-duplicate-input-section.od-visible { max-height: 80px; opacity: 1; }
-    .od-duplicate-input-label { font-size: 13px; color: #6B6B6B; margin-bottom: 8px; }
+    .od-duplicate-input-label { font-size: var(--fs-base); color: #6B6B6B; margin-bottom: 8px; }
     .od-duplicate-input {
         width: 100%; padding: 10px 14px; border-radius: 10px;
-        border: 1.5px solid #E5E5EA; font-size: 14px; font-family: inherit;
+        border: 1.5px solid #E5E5EA; font-size: var(--fs-lg); font-family: inherit;
         outline: none; transition: border-color 0.15s; box-sizing: border-box;
     }
     .od-duplicate-input:focus { border-color: #1d1d1f; }

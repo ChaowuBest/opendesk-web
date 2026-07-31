@@ -131,19 +131,19 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         padding: 18px 22px 14px; border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
     }
     .od-ws-header-title {
-        font-size: 16px; font-weight: 700; color: var(--od-text, #1d1d1f);
+        font-size: var(--fs-xl); font-weight: 700; color: var(--od-text, #1d1d1f);
         display: flex; align-items: center; gap: 8px;
     }
     .od-ws-close-btn {
         width: 28px; height: 28px; border-radius: 8px; border: none;
-        background: transparent; color: var(--od-text-muted, #8e8e93); font-size: 14px;
+        background: transparent; color: var(--od-text-muted, #8e8e93); font-size: var(--fs-lg);
         cursor: pointer; display: flex; align-items: center; justify-content: center;
         transition: all 0.15s;
     }
     .od-ws-close-btn:hover { background: var(--od-bg-subtle, #f5f5f7); color: var(--od-text, #1d1d1f); }
     .od-ws-current {
         padding: 10px 22px; background: var(--od-bg-muted, #f9fafb); border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
-        font-size: 12px; color: var(--od-text-muted, #6b7280); display: flex; align-items: center; gap: 6px;
+        font-size: var(--fs-md); color: var(--od-text-muted, #6b7280); display: flex; align-items: center; gap: 6px;
         min-width: 0;
     }
     .od-ws-current-path {
@@ -155,7 +155,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     /* 最近使用 - 紧凑单行布局 */
     .od-ws-recent { padding: 8px 22px 4px; }
     .od-ws-recent-title {
-        font-size: 11px; font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
+        font-size: var(--fs-sm); font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
         letter-spacing: 0.5px; margin-bottom: 4px;
     }
     .od-ws-recent-list { display: flex; flex-direction: column; gap: 1px; max-height: 100px; overflow-y: auto; }
@@ -166,26 +166,26 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         min-width: 0;
     }
     .od-ws-recent-item:hover { background: var(--od-bg-subtle, #f3f4f6); }
-    .od-ws-recent-item-icon { color: var(--od-text-muted, #9ca3af); font-size: 11px; flex-shrink: 0; }
+    .od-ws-recent-item-icon { color: var(--od-text-muted, #9ca3af); font-size: var(--fs-sm); flex-shrink: 0; }
     .od-ws-recent-item-name {
-        font-size: 12px; font-weight: 500; color: var(--od-text, #1f2937);
+        font-size: var(--fs-md); font-weight: 500; color: var(--od-text, #1f2937);
         white-space: nowrap; flex-shrink: 0; max-width: 160px;
         overflow: hidden; text-overflow: ellipsis;
     }
     .od-ws-recent-item-path {
-        font-size: 11px; color: var(--od-text-muted, #9ca3af);
+        font-size: var(--fs-sm); color: var(--od-text-muted, #9ca3af);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         min-width: 0; flex: 1;
     }
     .od-ws-recent-remove {
         width: 20px; height: 20px; border-radius: 4px; border: none;
-        background: transparent; color: var(--od-text-muted, #9ca3af); font-size: 10px;
+        background: transparent; color: var(--od-text-muted, #9ca3af); font-size: var(--fs-xs);
         cursor: pointer; display: flex; align-items: center; justify-content: center;
         flex-shrink: 0; opacity: 0; transition: all 0.12s; padding: 0;
     }
     .od-ws-recent-item:hover .od-ws-recent-remove { opacity: 1; }
     .od-ws-recent-remove:hover { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
-    .od-ws-recent-empty { font-size: 12px; color: var(--od-text-disabled, #9ca3af); padding: 4px 0; }
+    .od-ws-recent-empty { font-size: var(--fs-md); color: var(--od-text-disabled, #9ca3af); padding: 4px 0; }
 
     /* 分隔线 */
     .od-ws-divider { height: 1px; background: var(--od-border, #f0f0f0); margin: 4px 22px; }
@@ -194,12 +194,12 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     .od-ws-browser-section { padding: 8px 22px 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .od-ws-browser-title {
         display: flex; align-items: center; justify-content: space-between;
-        font-size: 11px; font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
+        font-size: var(--fs-sm); font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
         letter-spacing: 0.5px; margin-bottom: 8px; flex-shrink: 0;
     }
     .od-ws-show-hidden {
         display: flex; align-items: center; gap: 4px;
-        font-size: 11px; font-weight: 400; color: var(--od-text-muted, #8e8e93);
+        font-size: var(--fs-sm); font-weight: 400; color: var(--od-text-muted, #8e8e93);
         text-transform: none; letter-spacing: 0; cursor: pointer;
         user-select: none;
     }
@@ -214,13 +214,13 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         padding: 12px 22px 16px; border-top: 1px solid var(--od-border, rgba(0,0,0,0.08)); gap: 12px;
     }
     .od-ws-selected-path {
-        flex: 1; min-width: 0; font-size: 12px; color: var(--od-text-muted, #6b7280);
+        flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--od-text-muted, #6b7280);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .od-ws-footer-btns { display: flex; gap: 8px; flex-shrink: 0; }
     .od-ws-btn {
         padding: 8px 20px; border-radius: 10px; border: none;
-        font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        font-size: var(--fs-base); font-weight: 600; cursor: pointer; transition: all 0.15s;
     }
     .od-ws-btn:active { transform: scale(0.97); }
     .od-ws-btn-cancel { background: var(--od-bg-elevated, #fff); color: var(--od-text, #1d1d1f); border: 1.5px solid var(--od-border-strong, #e5e5ea); }
@@ -251,7 +251,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         </button>
     </div>
     <div class="od-ws-current">
-        <i class="fa-solid fa-folder-open" style="font-size:11px;flex-shrink:0"></i>
+        <i class="fa-solid fa-folder-open" style="font-size: var(--fs-sm);flex-shrink:0"></i>
         <span style="flex-shrink:0">当前：</span>
         <span class="od-ws-current-path">${currentWorkspace || '未设置'}</span>
     </div>

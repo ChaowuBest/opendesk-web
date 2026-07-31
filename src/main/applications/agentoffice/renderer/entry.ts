@@ -50,6 +50,7 @@ type AutoSaveState = 'idle' | 'saving' | 'saved' | 'invalid' | 'error';
 
 const PORTRAIT_CANVAS_SIZE = 512;
 const PORTRAIT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const AVATAR_GRADIENTS = ['av-g1', 'av-g2', 'av-g3', 'av-g4'] as const;
 
 export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private strings: Record<string, string> = {};
@@ -79,8 +80,14 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private query = '';
     private busy = false;
     private modal:
-        'new' | 'delete' | 'portrait' | 'installed-skills' | 'batch-skills' | 'skill-url' | 'skill-detail' | null =
-        null;
+        | 'new'
+        | 'delete'
+        | 'portrait'
+        | 'installed-skills'
+        | 'batch-skills'
+        | 'skill-url'
+        | 'skill-detail'
+        | null = null;
     private status = '';
     private previewHideTimer?: ReturnType<typeof setTimeout>;
     private portraitImage?: HTMLImageElement;
@@ -95,6 +102,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private autoSaveDetail = '';
     private readonly pendingAutoSaves = new Map<string, StaffUpdateInput>();
     private readonly failedAutoSaveStaffIds = new Set<string>();
+    private readonly portraitCache = new Map<string, string>();
     private readonly onStaffsChanged = () => void this.refreshStaffSummaries();
     private readonly onMessagesChanged = (staffId: string) => {
         if (staffId !== this.selectedStaffId) return;
@@ -179,6 +187,28 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
+    private async preloadPortraits(): Promise<void> {
+        const uncached = this.staffs.filter((staff) => staff.portrait_url && !this.portraitCache.has(staff.id));
+        await Promise.all(uncached.map((staff) => this.preloadPortrait(staff)));
+    }
+
+    private async preloadPortrait(staff: StaffListItem): Promise<void> {
+        if (!staff.portrait_url) return;
+        try {
+            const response = await fetch(staff.portrait_url);
+            const blob = await response.blob();
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+            this.portraitCache.set(staff.id, dataUrl);
+        } catch {
+            this.portraitCache.set(staff.id, staff.portrait_url);
+        }
+    }
+
     private async reloadStaffs(): Promise<void> {
         this.staffs = await this.call('listStaffs');
         if (this.selectedStaffId && !this.staffs.some((staff) => staff.id === this.selectedStaffId)) {
@@ -187,6 +217,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.messages = [];
         }
         if (!this.selectedStaffId && this.staffs.length > 0) this.selectedStaffId = this.staffs[0].id;
+        await this.preloadPortraits();
         if (this.activeTab === 'office' && this.selectedStaffId) await this.loadMessages();
         if (this.activeTab === 'management' && this.detail) await this.openDetail(this.detail.id);
         this.render();
@@ -194,6 +225,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private async refreshStaffSummaries(): Promise<void> {
         try {
+            const previousStaffId = this.selectedStaffId;
             this.staffs = await this.call('listStaffs');
             if (this.selectedStaffId && !this.staffs.some((staff) => staff.id === this.selectedStaffId)) {
                 this.selectedStaffId = null;
@@ -201,7 +233,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                 this.messages = [];
             }
             if (!this.selectedStaffId && this.staffs.length > 0) this.selectedStaffId = this.staffs[0].id;
-            if (this.activeTab === 'office' && this.selectedStaffId) {
+            await this.preloadPortraits();
+            if (this.activeTab === 'office' && this.selectedStaffId && this.selectedStaffId !== previousStaffId) {
                 await this.loadMessages();
             } else if (!this.detail) {
                 this.render();
@@ -230,8 +263,10 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.closeSendMenu();
         this.shadowRoot.innerHTML = `<style>${css}</style><div class="root ${this.busy ? 'busy' : ''}">
             <div class="tabs">
-                ${this.tabButton('office', this.tr('agentoffice.tab.office'))}
-                ${this.tabButton('management', this.tr('agentoffice.tab.management'))}
+                <div class="tab-group">
+                    ${this.tabButton('office', this.tr('agentoffice.tab.office'))}
+                    ${this.tabButton('management', this.tr('agentoffice.tab.management'))}
+                </div>
             </div>
             <div class="body">${this.activeTab === 'office' ? this.renderOffice() : this.renderManagement()}</div>
             ${this.renderModal()}
@@ -249,9 +284,26 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
         const staff = this.staffs.find((item) => item.id === this.selectedStaffId) ?? this.staffs[0];
         const normalizedQuery = this.query.trim().toLowerCase();
+        const statusClass = staff.active_task_id ? 'run' : staff.enabled ? 'on' : '';
+        const statusText = staff.active_task_id
+            ? this.tr('agentoffice.running')
+            : staff.enabled
+              ? this.tr('agentoffice.enabled')
+              : this.tr('agentoffice.disabled');
+        const specialtyChip = staff.specialties[0]
+            ? `<span class="chip chip-role">${escapeHtml(staff.specialties[0])}</span>`
+            : '';
+        const meta = [
+            staff.title,
+            this.formatText('agentoffice.metaSkills', { count: staff.skill_count }),
+            this.formatText('agentoffice.onboardDays', { days: this.onboardDays(staff.hired_at) }),
+            `${this.formatTokens(staff.usage_summary?.total_tokens ?? 0)} ${this.tr('agentoffice.tokensStat')}`
+        ]
+            .map((part) => escapeHtml(part))
+            .join(' \u00b7 ');
         return `<div class="office">
             <section class="chat">
-                <div class="chat-head">${this.avatar(staff)}<div><div class="chat-title">${escapeHtml(staff.name)}</div><div class="sub"><span class="status-dot ${staff.active_task_id ? 'run' : staff.enabled ? 'on' : ''}"></span>${escapeHtml(staff.active_task_id ? this.tr('agentoffice.running') : staff.enabled ? this.tr('agentoffice.enabled') : this.tr('agentoffice.disabled'))} · ${escapeHtml(staff.title)}</div></div></div>
+                <div class="chat-head">${this.avatar(staff, 'lg')}<div class="chat-who"><div class="chat-title">${escapeHtml(staff.name)}${specialtyChip}<span class="chip chip-status ${statusClass}">● ${escapeHtml(statusText)}</span></div><div class="chat-meta">${meta}</div></div><div class="chat-head-spacer"></div>${this.renderChatModelSelect(staff)}</div>
                 <div class="messages" id="messages">${this.renderMessages(staff.id)}</div>
                 <div class="composer">
                     ${this.status ? `<div class="notice">${escapeHtml(this.status)}</div>` : ''}
@@ -272,7 +324,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     </div>
                 </div>
             </section>
-            <aside class="staff-panel"><div class="panel-head"><input class="search" id="staff-search" value="${escapeHtml(this.query)}" placeholder="${escapeHtml(this.tr('agentoffice.searchStaff'))}"></div><div class="staff-list">${this.staffs
+            <aside class="staff-panel"><div class="panel-head"><input class="search" id="staff-search" value="${escapeHtml(this.query)}" placeholder="${escapeHtml(this.tr('agentoffice.searchStaff'))}"><button class="staff-add" data-action="new" title="${escapeHtml(this.tr('agentoffice.newStaff'))}" aria-label="${escapeHtml(this.tr('agentoffice.newStaff'))}"><i class="fa-solid fa-plus"></i></button></div><div class="staff-list">${this.staffs
                 .map((item) => {
                     const searchText = `${item.name} ${item.title}`.toLowerCase();
                     return `<button class="staff-row ${item.id === staff.id ? 'active' : ''}" data-staff="${item.id}" data-search-text="${escapeHtml(searchText)}" ${normalizedQuery && !searchText.includes(normalizedQuery) ? 'hidden' : ''}><span class="staff-avatar-trigger" data-staff-preview="${item.id}">${this.avatar(item)}</span><span class="staff-copy"><b class="ellipsis">${escapeHtml(item.name)}</b><span class="sub ellipsis"><span class="status-dot ${item.active_task_id ? 'run' : item.enabled ? 'on' : ''}"></span>${escapeHtml(item.title)}</span></span></button>`;
@@ -281,10 +333,48 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         </div>`;
     }
 
-    private avatar(staff: StaffListItem): string {
-        return staff.portrait_url
-            ? `<img class="avatar" src="${escapeHtml(staff.portrait_url)}" alt="">`
-            : `<span class="avatar">${escapeHtml(staff.name.slice(0, 1).toUpperCase())}</span>`;
+    private avatar(staff: StaffListItem, size: '' | 'lg' = ''): string {
+        const gradient = AVATAR_GRADIENTS[this.avatarGradientIndex(staff.name)];
+        const portraitSrc = staff.portrait_url ? (this.portraitCache.get(staff.id) ?? staff.portrait_url) : null;
+        const inner = portraitSrc
+            ? `<img class="avatar-img" src="${escapeHtml(portraitSrc)}" alt="">`
+            : escapeHtml(staff.name.slice(0, 1).toUpperCase());
+        return `<span class="avatar ${gradient}${size ? ` ${size}` : ''}">${inner}</span>`;
+    }
+
+    private avatarGradientIndex(name: string): number {
+        let hash = 0;
+        for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 997;
+        return hash % AVATAR_GRADIENTS.length;
+    }
+
+    private onboardDays(hiredAt: string): number {
+        const hired = new Date(hiredAt).getTime();
+        if (Number.isNaN(hired)) return 0;
+        return Math.max(0, Math.floor((Date.now() - hired) / 86_400_000));
+    }
+
+    private formatTokens(value: number): string {
+        if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+        if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+        return String(value);
+    }
+
+    private renderChatModelSelect(staff: StaffListItem): string {
+        const defaultLabel = this.modelCatalog.default_model
+            ? `${this.tr('agentoffice.modelGlobalDefault')} (${this.modelCatalog.default_model})`
+            : this.tr('agentoffice.modelGlobalDefault');
+        const missing =
+            staff.model && !this.modelCatalog.models.some((model) => model.alias === staff.model)
+                ? `<option value="${escapeHtml(staff.model)}" selected>${escapeHtml(staff.model)}</option>`
+                : '';
+        const options = this.modelCatalog.models
+            .map((model) => {
+                const title = `${model.provider_name} / ${model.model_name}`;
+                return `<option value="${escapeHtml(model.alias)}" title="${escapeHtml(title)}" ${staff.model === model.alias ? 'selected' : ''}>${escapeHtml(model.alias)}</option>`;
+            })
+            .join('');
+        return `<label class="chat-model" title="${escapeHtml(this.tr('agentoffice.modelHint'))}"><span class="chat-model-label">${escapeHtml(this.tr('agentoffice.modelShort'))}</span><span class="chat-model-dot"></span><select id="chat-model-select"><option value="">${escapeHtml(defaultLabel)}</option>${missing}${options}</select></label>`;
     }
 
     private renderMessages(staffId: string): string {
@@ -544,6 +634,17 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot
             ?.querySelector('[data-action="attach"]')
             ?.addEventListener('click', () => void this.pickAttachments());
+        this.shadowRoot?.querySelector<HTMLSelectElement>('#chat-model-select')?.addEventListener('change', (event) => {
+            const value = (event.target as HTMLSelectElement).value;
+            const staffId = this.selectedStaffId;
+            if (!staffId) return;
+            const staff = this.staffs.find((item) => item.id === staffId);
+            if (staff) staff.model = value || undefined;
+            this.call('updateStaff', staffId, { model: value || null }).catch((error: unknown) => {
+                this.status = `${this.tr('agentoffice.operationFailed')}: ${this.errorText(error)}`;
+                this.render();
+            });
+        });
         this.shadowRoot
             ?.querySelector('[data-action="send"]')
             ?.addEventListener('click', () => void this.sendMessage());
@@ -1090,7 +1191,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     .filter(Boolean),
                 trigger_interval:
                     (this.shadowRoot?.querySelector<HTMLSelectElement>('#new-trigger-interval')?.value as
-                        StaffDetail['trigger_interval'] | undefined) ?? 'never'
+                        | StaffDetail['trigger_interval']
+                        | undefined) ?? 'never'
             });
             this.modal = null;
             this.status = '';
@@ -1365,6 +1467,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         try {
             await this.call('updateStaff', this.detail.id, { portrait_data_uri: canvas.toDataURL('image/png') });
             const staffId = this.detail.id;
+            this.portraitCache.delete(staffId);
             this.modal = null;
             this.portraitImage = undefined;
             await this.openDetail(staffId);
@@ -1614,6 +1717,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         const staffId = this.detail.id;
         this.pendingAutoSaves.delete(staffId);
         this.failedAutoSaveStaffIds.delete(staffId);
+        this.portraitCache.delete(staffId);
         await this.call('deleteStaff', staffId, mode);
         this.detail = null;
         this.modal = null;

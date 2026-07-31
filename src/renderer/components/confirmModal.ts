@@ -100,10 +100,10 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
     }
     .od-confirm-modal-icon i { font-size: 18px; }
     .od-confirm-modal-title {
-        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+        font-size: var(--fs-xl); font-weight: 700; color: #1d1d1f; line-height: 1.3;
     }
     .od-confirm-modal-message {
-        font-size: 14px; color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
+        font-size: var(--fs-lg); color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
     }
     .od-confirm-modal-footer {
         display: flex; justify-content: flex-end; gap: 10px;
@@ -111,7 +111,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
     }
     .od-confirm-btn {
         padding: 10px 24px; border-radius: 12px; border: none;
-        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        font-size: var(--fs-lg); font-weight: 600; cursor: pointer; transition: all 0.15s;
     }
     .od-confirm-btn:active { transform: scale(0.97); }
     .od-confirm-btn-cancel {
