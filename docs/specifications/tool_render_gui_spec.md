@@ -22,15 +22,15 @@
 
 ### 关键约束
 
-| 项目      | 要求                                                                                                         |
-| --------- | ------------------------------------------------------------------------------------------------------------ |
-| 样式框架  | Tailwind CSS（通过 class 控制），不使用内联 style（除历史遗留）                                              |
-| 宽度      | `w-full`（占满父容器），由父容器控制最大宽度                                                                 |
-| 外观      | **无内外阴影**，统一使用 `border border-gray-200`（浅色边框）和 `rounded-lg`（统一圆角）                     |
-| 文本截断  | 使用 CSS `truncate` / `line-clamp-N` 实现自适应截断，**不在 JS 中手动 `.slice()`**                           |
-| HTML 安全 | 所有用户可控文本必须经过 `escapeHtml()` 处理；markdown 内容使用 `marked.parse()`                             |
-| 国际化    | 所有工具显示名称必须使用 `t('tools.xxx.name')` 获取，键定义在 `src/locale/zh-cn.ts` 和 `src/locale/en-us.ts` |
-| Unicode   | 不在代码中直接写 `\uXXXX` 转义序列，使用正确的字符                                                           |
+| 项目      | 要求                                                                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 样式框架  | Tailwind CSS（通过 class 控制），不使用内联 style（除历史遗留）                                                                                                         |
+| 宽度      | `w-full`（占满父容器），由父容器控制最大宽度                                                                                                                            |
+| 外观      | 统一使用 `border border-gray-200`（浅色边框）、`rounded-[14px]`（14px 圆角）和 `od-card-shadow`（柔和分层投影：`0 1px 2px rgba(0,0,0,.02), 0 2px 8px rgba(0,0,0,.03)`） |
+| 文本截断  | 使用 CSS `truncate` / `line-clamp-N` 实现自适应截断，**不在 JS 中手动 `.slice()`**                                                                                      |
+| HTML 安全 | 所有用户可控文本必须经过 `escapeHtml()` 处理；markdown 内容使用 `marked.parse()`                                                                                        |
+| 国际化    | 所有工具显示名称必须使用 `t('tools.xxx.name')` 获取，键定义在 `src/locale/zh-cn.ts` 和 `src/locale/en-us.ts`                                                            |
+| Unicode   | 不在代码中直接写 `\uXXXX` 转义序列，使用正确的字符                                                                                                                      |
 
 ---
 
@@ -120,9 +120,9 @@
 ### HTML 模板
 
 ```html
-<details class="my-1.5 rounded-lg border {borderColor} bg-white overflow-hidden w-full" open>
+<details class="od-card-shadow my-2 rounded-[14px] border {borderColor} bg-white overflow-hidden w-full" open>
     <summary
-        class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none
+        class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none font-medium
                      hover:bg-gray-50/60 transition-colors duration-150"
     >
         <span class="inline-flex items-center justify-center w-5 h-5 rounded {iconBg}">
@@ -141,7 +141,7 @@
             <path d="M6 9l6 6 6-6" />
         </svg>
     </summary>
-    <div class="border-t border-gray-100 bg-gray-50/40">
+    <div class="border-t border-gray-200 bg-gray-50/40">
         <div class="max-h-[240px] overflow-y-auto">{bodyContent}</div>
     </div>
 </details>
@@ -170,7 +170,7 @@
 | 成功 (结构化) | 自定义布局（如问答选项、工具调用序列） |
 | 错误          | 红色文字错误信息                       |
 
-Body 容器固定样式：`border-t border-gray-100 bg-gray-50/40`，内容区域设置 `max-h-[200px]`~`max-h-[280px]` 和 `overflow-y-auto`。
+Body 容器固定样式：`border-t border-gray-200 bg-gray-50/40`，内容区域设置 `max-h-[200px]`~`max-h-[280px]` 和 `overflow-y-auto`。
 
 ### 状态徽章规范
 
@@ -277,10 +277,10 @@ Body 容器固定样式：`border-t border-gray-100 bg-gray-50/40`，内容区�
 用户发送的消息使用与详细卡片一致的边框风格：
 
 ```html
-<div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">${content}</div>
+<div class="bg-white text-gray-900 rounded-[14px] px-3 py-1.5 max-w-3xl border border-gray-200">${content}</div>
 ```
 
-**不使用** `shadow-sm`、`backdrop-blur`、`rounded-2xl` 等花哨效果。
+**不使用** `shadow`、`backdrop-blur` 等花哨效果；圆角与详细卡片保持一致（`rounded-[14px]`），但不添加阴影。
 
 ### 深色模式适配
 
@@ -312,12 +312,17 @@ Body 容器固定样式：`border-t border-gray-100 bg-gray-50/40`，内容区�
     | 琥珀 (等待)   | `rgba(251, 191, 36, 0.1)`  | `#fcd34d` |
     | 紫色          | `rgba(168, 85, 247, 0.1)`  | `#d8b4fe` |
 
+5. **阴影移除**：卡片在浅色模式下使用 `od-card-shadow` 类提供柔和分层投影；深色模式下通过全局规则 `html[data-theme='dark'] .od-card-shadow { box-shadow: none !important; }` 统一移除阴影，避免在深色背景上产生不必要的视觉噪音。
+
 #### 参考实现：终端类工具
 
 终端类工具（`executeBash`/`executePowerShell`/`executeZsh`）是深色模式适配的参考标准：
 
 ```css
 /* theme-dark.css */
+html[data-theme='dark'] .od-card-shadow {
+    box-shadow: none !important;
+}
 html[data-theme='dark'] .terminal-tool {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
@@ -325,7 +330,8 @@ html[data-theme='dark'] .terminal-tool {
 html[data-theme='dark'] .terminal-tool .bg-gray-50\/40 {
     background: var(--od-bg-muted) !important;
 }
-html[data-theme='dark'] .terminal-tool .border-gray-100 {
+html[data-theme='dark'] .terminal-tool .border-gray-100,
+html[data-theme='dark'] .terminal-tool .border-gray-200 {
     border-color: var(--od-border-strong) !important;
 }
 html[data-theme='dark'] .terminal-tool .text-gray-600 {
@@ -339,7 +345,9 @@ html[data-theme='dark'] .terminal-tool summary:hover {
 HTML 侧只需添加 `.terminal-tool` 类：
 
 ```html
-<details class="terminal-tool my-1.5 rounded-lg border border-gray-200 bg-white overflow-hidden" open>...</details>
+<details class="terminal-tool od-card-shadow my-2 rounded-[14px] border border-gray-200 bg-white overflow-hidden" open>
+    ...
+</details>
 ```
 
 #### 新增工具类型的适配步骤

@@ -304,8 +304,8 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
         }
 
         return `
-        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+        <details class="od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-circle-question text-[10px]"></i>
                 </span>
@@ -316,7 +316,7 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
                     <path d="M6 9l6 6 6-6"/>
                 </svg>
             </summary>
-            ${bodyContent ? `<div class="border-t border-gray-100 bg-gray-50/40">${bodyContent}</div>` : ''}
+            ${bodyContent ? `<div class="border-t border-gray-200 bg-gray-50/40">${bodyContent}</div>` : ''}
         </details>`;
     }
 

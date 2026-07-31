@@ -1618,6 +1618,11 @@ html[data-theme='dark'] [data-od-widget] [class*='border-gray-100'] {
     border-color: var(--od-border-strong) !important;
 }
 
+/* 卡片阴影：深色模式下移除 */
+html[data-theme='dark'] .od-card-shadow {
+    box-shadow: none !important;
+}
+
 /* 终端工具 GUI 渲染卡片 */
 html[data-theme='dark'] .terminal-tool {
     background: var(--od-bg-elevated) !important;
@@ -1626,7 +1631,8 @@ html[data-theme='dark'] .terminal-tool {
 html[data-theme='dark'] .terminal-tool .bg-gray-50\/40 {
     background: var(--od-bg-muted) !important;
 }
-html[data-theme='dark'] .terminal-tool .border-gray-100 {
+html[data-theme='dark'] .terminal-tool .border-gray-100,
+html[data-theme='dark'] .terminal-tool .border-gray-200 {
     border-color: var(--od-border-strong) !important;
 }
 html[data-theme='dark'] .terminal-tool .text-gray-700 {
@@ -1651,7 +1657,8 @@ html[data-theme='dark'] #app-root task-view .subtask-tool {
 html[data-theme='dark'] #app-root task-view .subtask-tool .bg-gray-50\/40 {
     background: var(--od-bg-muted) !important;
 }
-html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-100 {
+html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-100,
+html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-200 {
     border-color: var(--od-border-strong) !important;
 }
 html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-700 {

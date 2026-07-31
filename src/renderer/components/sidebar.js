@@ -404,7 +404,7 @@ class SideBar extends HTMLElement {
             <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0">
                 <button
                     id="create-task-btn"
-                    class="sb-nav-btn sb-nav-btn-primary"
+                    class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.newTask')}"
                 >
                     <i class="fa-solid fa-house" style="font-size: var(--icon-md);"></i>

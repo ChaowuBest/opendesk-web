@@ -462,8 +462,8 @@ function renderPreviewCard(opts: {
     const detailHtml = opts.detail ? ` · ${escapeHtml(opts.detail)}` : '';
     const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
 
-    return `<details class="file-tool-card my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
                 <i class="${opts.icon} text-[10px]"></i>
             </span>
@@ -473,7 +473,7 @@ function renderPreviewCard(opts: {
             ${editorBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             <div class="tool-preview-card" data-preview-lang="${lang}" data-raw-code="${rawB64}" data-base-dir="${escapeHtml(baseDir)}"></div>
         </div>
     </details>`;
@@ -491,8 +491,8 @@ function renderPreviewPlaceholder(opts: { icon: string; title: string; filePath:
     const fileName = path.basename(opts.filePath);
     const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
 
-    return `<details class="file-tool-card my-1.5 rounded-lg border border-gray-200 bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card od-card-shadow my-2 rounded-[14px] border border-gray-200 bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
                 <i class="${opts.icon} text-[10px]"></i>
             </span>
@@ -502,7 +502,7 @@ function renderPreviewPlaceholder(opts: { icon: string; title: string; filePath:
             ${editorBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             <div class="flex items-center justify-center py-8 text-gray-400 gap-2">
                 <i class="fa-solid fa-file-pen text-lg"></i>
                 <span class="text-[13px]">${escapeHtml(t('filemgr.generatingPlaceholder'))}</span>
@@ -614,8 +614,8 @@ function renderDiffCard(
             ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ml-1"></span>'
             : '';
 
-    return `<div class="diff-card my-1 rounded-lg border border-slate-200 overflow-hidden w-full">
-        <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
+    return `<div class="diff-card od-card-shadow my-2 rounded-[14px] border border-slate-200 overflow-hidden w-full">
+        <div class="flex items-center gap-2 px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 cursor-pointer select-none font-medium" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
             <span class="text-xs text-slate-500 shrink-0">${escapeHtml(t('filemgr.editFile.name'))}</span>
             <span class="text-xs font-medium text-slate-700 truncate">${escapeHtml(fileName)}</span>
             ${statusDot}
@@ -1416,8 +1416,8 @@ function renderFileToolDetailsCard(opts: {
         ? `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.editorFilePath)}"${editorLine}>${escapeHtml(t('filemgr.openInEditor'))}</span>`
         : '';
 
-    return `<details class="file-tool-card ${className} my-1.5 rounded-lg border ${tone.borderColor} bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card ${className} od-card-shadow my-2 rounded-[14px] border ${tone.borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded ${tone.iconBg}">
                 <i class="${escapeHtml(opts.icon)} text-[10px]"></i>
             </span>
@@ -1427,7 +1427,7 @@ function renderFileToolDetailsCard(opts: {
             ${editorBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             ${opts.body}
         </div>
     </details>`;
