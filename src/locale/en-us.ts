@@ -1270,6 +1270,13 @@ export const enUs: Record<string, string> = {
     'renderer.taskartifacts.tab.goalExecution': 'Goal Execution',
     'renderer.taskartifacts.tab.taskProgress': 'Task Progress',
     'renderer.taskartifacts.todo.title': 'Current Todos',
+    'renderer.taskartifacts.todo.totalItems': 'All ${count} items',
+    'renderer.taskartifacts.todo.completed': 'completed',
+    'renderer.taskartifacts.todo.summary': 'Completed ${completed} · In progress ${inProgress} · Pending ${pending}',
+    'renderer.taskartifacts.todo.inProgress': 'In progress',
+    'renderer.taskartifacts.todo.notStarted': 'Not started',
+    'renderer.taskartifacts.todo.elapsed': 'Elapsed ${duration}',
+    'renderer.taskartifacts.todo.took': 'Took ${duration}',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',

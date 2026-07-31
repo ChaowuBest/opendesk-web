@@ -1243,6 +1243,13 @@ export const zhCn: Record<string, string> = {
     'renderer.taskartifacts.tab.goalExecution': '目标执行',
     'renderer.taskartifacts.tab.taskProgress': '任务进展',
     'renderer.taskartifacts.todo.title': '当前待办',
+    'renderer.taskartifacts.todo.totalItems': '全部 ${count} 项',
+    'renderer.taskartifacts.todo.completed': '项已完成',
+    'renderer.taskartifacts.todo.summary': '已完成 ${completed} 项 · 进行中 ${inProgress} 项 · 未开始 ${pending} 项',
+    'renderer.taskartifacts.todo.inProgress': '进行中',
+    'renderer.taskartifacts.todo.notStarted': '待开始',
+    'renderer.taskartifacts.todo.elapsed': '已执行 ${duration}',
+    'renderer.taskartifacts.todo.took': '用时 ${duration}',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',
