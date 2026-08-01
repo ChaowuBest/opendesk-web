@@ -15,7 +15,7 @@
   <a href="./README.md">中文</a> | <a href="./README_EN.md">English</a>
 </p>
 
-Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相比于
+Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相比于市面上其他同类产品，Opendesk 提供了以下优势：
 
 ## 🚀 为什么选择 Opendesk
 

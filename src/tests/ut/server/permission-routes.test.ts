@@ -20,7 +20,10 @@ describe('opencode permission routes', () => {
         void broker.prompt(
             [{ resourceType: 'file', action: 'read', resourcePath: 'D:/repo/README.md' }],
             'readFile',
-            [{ label: 'README.md', pattern: 'D:/repo/README.md' }],
+            [
+                { label: 'README.md', pattern: 'D:/repo/README.md' },
+                { label: 'D:/repo/', pattern: 'D:/repo/**' }
+            ],
             { taskId: 'task_abc', taskName: 'test' },
             { toolCallId: 'call_1', messageId: 'msg_1', input: { file_path: 'D:/repo/README.md' } }
         );
@@ -34,7 +37,7 @@ describe('opencode permission routes', () => {
             sessionID: 'ses_abc',
             permission: 'read',
             patterns: ['D:/repo/README.md'],
-            always: ['D:/repo/README.md'],
+            always: ['D:/repo/**'],
             tool: { messageID: 'msg_1', callID: 'call_1' }
         });
         expect(body[0].id).toMatch(/^per_/);
@@ -85,8 +88,19 @@ describe('opencode permission routes', () => {
         await expect(prompt).resolves.toEqual({
             decision: 'allow',
             rememberScope: 'prefix',
-            selectedPrefixPattern: 'D:/repo/src/a.ts'
+            selectedPrefixPattern: 'D:/repo/src/**'
         });
+    });
+
+    test('keeps an exact file pattern when no directory prefix is available', async () => {
+        void broker.prompt(
+            [{ resourceType: 'file', action: 'read', resourcePath: 'D:/repo/README.md' }],
+            'readFile',
+            [{ label: 'README.md', pattern: 'D:/repo/README.md' }],
+            { taskId: 'task_abc', taskName: null }
+        );
+
+        expect(broker.list()[0].always).toEqual(['D:/repo/README.md']);
     });
 
     test('resolves reject reply as user denial', async () => {

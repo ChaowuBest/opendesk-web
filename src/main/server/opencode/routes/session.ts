@@ -23,12 +23,14 @@ import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
 import { Setting } from '../../../utils/setting.js';
 import iconv from 'iconv-lite';
+import { isCompactBoundaryMessage, type CompactSeparatorMessage } from '../../../aikernel/messages.js';
 import {
     getRequestOrTaskWorkspace,
     getRequestWorkspace,
     getRequestWorkspaceID,
     getTaskWorkspace
 } from '../workspace.js';
+import { getOpenCodeSessionTime } from '../session-info.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -287,6 +289,22 @@ function applyOpenCodeRequestModel(task: any, body: unknown): void {
     }
 }
 
+function resolveConfiguredOpenCodeModelAlias(providerID: string, modelID: string): string | undefined {
+    const data = Setting.getInstance().getData();
+    const provider = data.providers.find((candidate) => candidate.name === providerID);
+    if (!provider || provider.enabled === false) {
+        return undefined;
+    }
+
+    const model = data.models.find(
+        (candidate) =>
+            candidate.provider_name === providerID &&
+            candidate.model_type !== 'embedding' &&
+            (candidate.alias === modelID || candidate.model_name === modelID)
+    );
+    return model?.alias;
+}
+
 /**
  * 生成单调递增的 ID（基于 ULID 思路：时间戳前缀 + 递增计数器 + 随机后缀）。
  * TUI 使用 binary search 按 id 排序，因此 id 必须字典序递增。
@@ -502,10 +520,7 @@ function taskToSessionInfo(task: any, workspace = getTaskWorkspace(task), worksp
         ...(parentID ? { parentID } : {}),
         version: '1',
         agent: 'explore',
-        time: {
-            created: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
-            updated: task.updated_at ? new Date(task.updated_at).getTime() : Date.now()
-        },
+        time: getOpenCodeSessionTime(task),
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         cost: 0
     };
@@ -698,6 +713,114 @@ function messageToApiFormat(
         },
         parts
     };
+}
+
+interface OpenCodeMessageWithParts {
+    info: Record<string, unknown>;
+    parts: Record<string, unknown>[];
+}
+
+function compactBoundaryTimestamp(boundary: CompactSeparatorMessage): number {
+    const created = Date.parse(boundary.metadata.created_at);
+    return Number.isFinite(created) ? created : Date.now();
+}
+
+function compactBoundaryToApiMessages(
+    boundary: CompactSeparatorMessage,
+    sessionID: string,
+    workspace: string,
+    modelInfo: OpenCodeModelInfo = EMPTY_OPEN_CODE_MODEL_INFO
+): [OpenCodeMessageWithParts, OpenCodeMessageWithParts] {
+    const boundaryID = boundary.metadata.boundary_id;
+    const created = compactBoundaryTimestamp(boundary);
+    const userMessageID = getStableMessageId(undefined, `${sessionID}:compaction:${boundaryID}:user`);
+    const assistantMessageID = getStableMessageId(undefined, `${sessionID}:compaction:${boundaryID}:assistant`);
+    const userInfo = makeUserMessageInfo(userMessageID, sessionID, workspace, { created, modelInfo });
+    const compactionPart = {
+        id: getStablePartId(userMessageID, 'compaction'),
+        sessionID,
+        messageID: userMessageID,
+        type: 'compaction',
+        auto: boundary.metadata.trigger === 'auto'
+    };
+
+    const assistantInfo = {
+        ...makeAssistantMessageInfo(assistantMessageID, sessionID, userMessageID, {
+            created,
+            completed: created,
+            workspace,
+            modelInfo
+        }),
+        mode: 'compaction',
+        agent: 'compaction',
+        summary: true,
+        finish: 'stop'
+    };
+    const summaryPart = {
+        id: getStablePartId(assistantMessageID, 'summary'),
+        sessionID,
+        messageID: assistantMessageID,
+        type: 'text',
+        text: boundary.summary
+    };
+
+    return [
+        { info: userInfo, parts: [compactionPart] },
+        { info: assistantInfo, parts: [summaryPart] }
+    ];
+}
+
+function messagesToApiFormat(
+    messages: any[],
+    sessionID: string,
+    workspace: string,
+    modelInfo: OpenCodeModelInfo = EMPTY_OPEN_CODE_MODEL_INFO
+): OpenCodeMessageWithParts[] {
+    let parentUserMessageID = '';
+    return messages.flatMap((message, index): OpenCodeMessageWithParts[] => {
+        if (isCompactBoundaryMessage(message)) {
+            const compactMessages = compactBoundaryToApiMessages(message, sessionID, workspace, modelInfo);
+            parentUserMessageID = compactMessages[0].info.id as string;
+            return compactMessages;
+        }
+
+        const formatted = messageToApiFormat(
+            message,
+            index,
+            sessionID,
+            workspace,
+            message.role === 'assistant' ? parentUserMessageID : '',
+            { modelInfo }
+        ) as OpenCodeMessageWithParts;
+        if (message.role === 'user') {
+            parentUserMessageID = formatted.info.id as string;
+        }
+        return [formatted];
+    });
+}
+
+function publishCompactionMessages(
+    boundary: CompactSeparatorMessage,
+    sourceMessages: any[],
+    sessionID: string,
+    workspace: string,
+    modelInfo: OpenCodeModelInfo
+): void {
+    // 先按物理消息顺序分配稳定 ID，保证首次通过 SSE 看到 compact 时仍满足 OpenCode 的 ID 排序约定。
+    messagesToApiFormat(sourceMessages, sessionID, workspace, modelInfo);
+    for (const message of compactBoundaryToApiMessages(boundary, sessionID, workspace, modelInfo)) {
+        EventBus.publish({
+            type: 'message.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                info: message.info
+            }
+        });
+        for (const part of message.parts) {
+            publishMessagePartUpdated(sessionID, workspace, part);
+        }
+    }
 }
 
 function getParentUserMessageIdForIndex(messages: any[], assistantIndex: number, sessionID: string): string {
@@ -1363,6 +1486,78 @@ export function SessionRoutes() {
         );
     });
 
+    // POST /session/:sessionID/summarize - 使用 OpenDesk 原生压缩能力总结会话
+    app.post('/:sessionID/summarize', async (c) => {
+        const body = await c.req.json().catch(() => undefined);
+        if (!isRecord(body)) {
+            return c.json({ error: 'Invalid summarize request body' }, 400);
+        }
+
+        const providerID = stringHeaderValue(body.providerID);
+        const modelID = stringHeaderValue(body.modelID);
+        if (!providerID || !modelID) {
+            return c.json({ error: 'providerID and modelID are required' }, 400);
+        }
+        if (body.auto !== undefined && typeof body.auto !== 'boolean') {
+            return c.json({ error: 'auto must be a boolean' }, 400);
+        }
+        if (body.auto === true) {
+            return c.json({ error: 'auto=true is not supported yet' }, 400);
+        }
+
+        const sessionID = c.req.param('sessionID');
+        const taskId = toInternalId(sessionID);
+        const tms = GlobalState.getInstance().taskManagerState;
+        const task = tms.getTask(taskId);
+        if (!task) {
+            return c.json({ error: 'Session not found' }, 404);
+        }
+
+        const modelAlias = resolveConfiguredOpenCodeModelAlias(providerID, modelID);
+        if (!modelAlias) {
+            return c.json({ error: `Model not found: ${providerID}/${modelID}` }, 400);
+        }
+
+        const workspace = getRequestOrTaskWorkspace(c, task);
+        await ensureServerTaskHarness(tms, task, workspace);
+        if (task.task_status === 'running') {
+            await waitUntilServerTaskFinished(task);
+        }
+
+        publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
+        try {
+            const result = await task.compactTaskContext({
+                model: modelAlias,
+                modelRequestOptions: buildModelRequestOptions(c)
+            });
+            if (result.compacted && result.boundary && isCompactBoundaryMessage(result.boundary)) {
+                publishCompactionMessages(result.boundary, task.chat_context.messages, sessionID, workspace, {
+                    providerID,
+                    modelID,
+                    id: modelID
+                });
+            }
+            EventBus.publish({
+                type: 'session.compacted',
+                directory: workspace,
+                properties: { sessionID }
+            });
+            return c.json(true);
+        } catch (err) {
+            EventBus.publish({
+                type: 'session.error',
+                directory: workspace,
+                properties: {
+                    sessionID,
+                    error: err instanceof Error ? err.message : String(err)
+                }
+            });
+            throw err;
+        } finally {
+            publishSessionStatus(sessionID, workspace, { type: 'idle' }, task);
+        }
+    });
+
     // GET /session/:sessionID/message - 获取会话消息列表
     app.get('/:sessionID/message', (c) => {
         const sessionID = c.req.param('sessionID');
@@ -1379,16 +1574,7 @@ export function SessionRoutes() {
         const workspace = getRequestOrTaskWorkspace(c, task);
         const modelInfo = getOpenCodeModelInfo(task);
 
-        let parentUserMessageID = '';
-        const messages = task.chat_context.messages.map((msg, idx) => {
-            const m = msg as any;
-            if (m.role === 'user') {
-                const formatted = messageToApiFormat(m, idx, sessionID, workspace, '', { modelInfo });
-                parentUserMessageID = formatted.info.id as string;
-                return formatted;
-            }
-            return messageToApiFormat(m, idx, sessionID, workspace, parentUserMessageID, { modelInfo });
-        });
+        const messages = messagesToApiFormat(task.chat_context.messages, sessionID, workspace, modelInfo);
 
         let result = messages;
 
@@ -1424,34 +1610,26 @@ export function SessionRoutes() {
             return c.json({ error: 'Session not found' }, 404);
         }
 
-        const messages = task.chat_context.messages;
-        const msgIndex = messages.findIndex((m: any, idx: number) => {
-            return (
-                m.message_id === messageID ||
-                getStableMessageId(m.message_id, `${sessionID}:message:${idx}`) === messageID
-            );
-        });
-        if (msgIndex === -1) {
+        const sourceMessages = task.chat_context.messages;
+        const messages = messagesToApiFormat(
+            sourceMessages,
+            sessionID,
+            getRequestOrTaskWorkspace(c, task),
+            getOpenCodeModelInfo(task)
+        );
+        let formatted = messages.find((message) => message.info.id === messageID);
+        if (!formatted) {
+            const sourceIndex = sourceMessages.findIndex((message: any) => message.message_id === messageID);
+            if (sourceIndex !== -1) {
+                const source = sourceMessages[sourceIndex] as any;
+                const stableID = getStableMessageId(source.message_id, `${sessionID}:message:${sourceIndex}`);
+                formatted = messages.find((message) => message.info.id === stableID);
+            }
+        }
+        if (!formatted) {
             return c.json({ error: 'Message not found' }, 404);
         }
 
-        let parentUserMessageID = '';
-        for (let i = 0; i < msgIndex; i++) {
-            const m = messages[i] as any;
-            if (m.role === 'user') {
-                parentUserMessageID = getStableMessageId(m.message_id, `${sessionID}:message:${i}`);
-            }
-        }
-        const target = messages[msgIndex] as any;
-        const parentID = target.role === 'assistant' ? parentUserMessageID : '';
-        const formatted = messageToApiFormat(
-            target,
-            msgIndex,
-            sessionID,
-            getRequestOrTaskWorkspace(c, task),
-            parentID,
-            { modelInfo: getOpenCodeModelInfo(task) }
-        );
         return c.json(formatted);
     });
 

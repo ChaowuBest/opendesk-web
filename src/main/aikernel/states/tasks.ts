@@ -139,6 +139,18 @@ import {
 } from '../task/types.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
+export interface TaskCompactOptions {
+    /** 仅用于本次压缩，不修改任务后续对话所使用的模型。 */
+    model?: string;
+    modelRequestOptions?: TaskModelRequestOptions;
+}
+
+export interface TaskCompactResult {
+    compacted: boolean;
+    boundary?: CompactSeparatorMessage;
+    summary?: string;
+}
+
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
@@ -1385,6 +1397,7 @@ export class TaskState {
 
     /** 当 TUI 层已经执行过压缩时置 true，防止 submitUserMessage 重复压缩 */
     private _compactedBeforeSubmit = false;
+    private _compactPromise?: Promise<TaskCompactResult>;
 
     /** 标记外部已经完成一次压缩，submitUserMessage 应跳过自动压缩 */
     markCompacted() {
@@ -1395,15 +1408,44 @@ export class TaskState {
         return this.parent_id === null ? 'main' : 'subtask';
     }
 
-    async manualCompact(): Promise<boolean> {
-        const model = this.ensureValidModelOrFallback();
-        const compacted = await compactContext(this.chat_context, model, {
-            taskId: this.task_id
-        });
-        if (compacted) {
-            this.clearFileReadStateAfterContextCompaction('manual_full_compact');
+    async compactTaskContext(options: TaskCompactOptions = {}): Promise<TaskCompactResult> {
+        if (this._compactPromise) {
+            return this._compactPromise;
         }
-        return compacted;
+
+        const compactPromise = (async (): Promise<TaskCompactResult> => {
+            const model = options.model ?? this.ensureValidModelOrFallback();
+            const compacted = await compactContext(this.chat_context, model, {
+                taskId: this.task_id,
+                requestOptions: this.withUsageTelemetry(options.modelRequestOptions)
+            });
+            if (!compacted) {
+                return { compacted: false };
+            }
+
+            const boundary = this.chat_context.findCompactBoundary()?.message;
+            this.clearFileReadStateAfterContextCompaction('manual_full_compact');
+            this.markCompacted();
+            this.persistLater();
+            return {
+                compacted: true,
+                boundary,
+                summary: boundary?.summary
+            };
+        })();
+
+        this._compactPromise = compactPromise;
+        try {
+            return await compactPromise;
+        } finally {
+            if (this._compactPromise === compactPromise) {
+                this._compactPromise = undefined;
+            }
+        }
+    }
+
+    async manualCompact(): Promise<boolean> {
+        return (await this.compactTaskContext()).compacted;
     }
 
     clearFileReadStateAfterContextCompaction(reason: string): void {
@@ -1454,6 +1496,15 @@ export class TaskState {
         | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
     > {
         const instrumentationContext = normalizeTurnContext(options.instrumentationContext);
+        const pendingCompact = this._compactPromise;
+        if (pendingCompact) {
+            try {
+                await pendingCompact;
+            } catch {
+                // 压缩请求会向其调用方报告错误；新 turn 等待其结束后仍可继续。
+            }
+        }
+
         await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
         const extensionInputResult = await this.extensions.handleUserMessage(message, options.imageDataUris);
         if (extensionInputResult) return extensionInputResult;

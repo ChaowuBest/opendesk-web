@@ -140,16 +140,77 @@ describe('file read state invalidation after context compaction', () => {
         expect(task.getFileReadState().size).toBe(0);
     });
 
-    test('manual compact no-op keeps task-local file read state', async () => {
+    test('task compact uses a one-shot model override and persists the compact boundary', async () => {
+        createTempAppDirectory();
+        const taskManager = new TaskManagerState();
+        const saveSpy = jest.spyOn(taskManager, 'save').mockImplementation(() => undefined);
+        const task = new TaskState(taskManager, null);
+        task.model = 'conversation-model';
+        task.chat_context = createCompactableChatContext();
+        task._dirty = false;
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact summary');
+
+        const result = await task.compactTaskContext({ model: 'summary-model' });
+
+        expect(result).toEqual(
+            expect.objectContaining({
+                compacted: true,
+                summary: 'full compact summary'
+            })
+        );
+        expect(result.boundary?.summary).toBe('full compact summary');
+        expect(askSpy).toHaveBeenCalledWith(expect.any(UserMessage), 'summary-model', expect.any(Object));
+        expect(task.model).toBe('conversation-model');
+        expect(task._dirty).toBe(true);
+        expect(saveSpy).toHaveBeenCalled();
+    });
+
+    test('concurrent task compaction requests share the in-flight compact operation', async () => {
+        createTempAppDirectory();
+        const task = createTask();
+        task.chat_context = createCompactableChatContext();
+        let resolveSummary: ((summary: string) => void) | undefined;
+        const summaryPromise = new Promise<string>((resolve) => {
+            resolveSummary = resolve;
+        });
+        const askSpy = jest.spyOn(LLM, 'ask').mockReturnValue(summaryPromise);
+
+        const first = task.compactTaskContext({ model: 'summary-model' });
+        const second = task.compactTaskContext({ model: 'other-model' });
+        resolveSummary?.('shared compact summary');
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+
+        expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(firstResult).toBe(secondResult);
+        expect(firstResult.summary).toBe('shared compact summary');
+    });
+
+    test('manual compact keeps a short context as a no-op', async () => {
         createTempAppDirectory();
         const task = createTask();
         task.chat_context.appendMessage(new UserMessage('single message'));
         seedReadState(task);
-        jest.spyOn(LLM, 'ask').mockResolvedValue('unused summary');
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('unused summary');
 
         const compacted = await task.manualCompact();
 
         expect(compacted).toBe(false);
+        expect(askSpy).not.toHaveBeenCalled();
+        expect(task.chat_context.findCompactBoundary()).toBeUndefined();
+        expect(task.getFileReadState().get('C:/repo/read.txt')).toBeDefined();
+    });
+
+    test('non-forced compact keeps the automatic short-context no-op behavior', async () => {
+        createTempAppDirectory();
+        const task = createTask();
+        task.chat_context.appendMessage(new UserMessage('single message'));
+        seedReadState(task);
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('unused summary');
+
+        const result = await task.compactTaskContext();
+
+        expect(result.compacted).toBe(false);
+        expect(askSpy).not.toHaveBeenCalled();
         expect(task.getFileReadState().get('C:/repo/read.txt')).toBeDefined();
     });
 

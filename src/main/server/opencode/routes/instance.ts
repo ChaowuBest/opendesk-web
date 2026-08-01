@@ -14,6 +14,7 @@ import path from 'path';
 import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { SkillRegistry } from '../../../aikernel/skill.js';
+import { getOpenCodeSessionTime } from '../session-info.js';
 import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '../workspace.js';
 
 /**
@@ -166,8 +167,7 @@ export function InstanceRoutes() {
             const startTs = parseInt(startStr, 10);
             if (!isNaN(startTs)) {
                 tasks = tasks.filter((t: any) => {
-                    const created = t.started_at ? new Date(t.started_at).getTime() : Date.now();
-                    return created >= startTs;
+                    return getOpenCodeSessionTime(t).created >= startTs;
                 });
             }
         }
@@ -202,10 +202,7 @@ export function InstanceRoutes() {
                     ...(parentID ? { parentID } : {}),
                     version: '1',
                     agent: 'explore',
-                    time: {
-                        created: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
-                        updated: task.updated_at ? new Date(task.updated_at).getTime() : Date.now()
-                    },
+                    time: getOpenCodeSessionTime(task),
                     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
                     cost: 0
                 };
