@@ -858,6 +858,7 @@ export const zhCn: Record<string, string> = {
     'reasoning.card.title': '深度思考',
     'reasoning.elapsed.seconds': '已思考 ${seconds} 秒',
     'reasoning.elapsed.minutes': '已思考 ${minutes} 分 ${seconds} 秒',
+    'reasoning.elapsed.chars': ' · 输出 ${chars} 词',
     'reasoning.show.content': '显示思考内容',
     'reasoning.hide.content': '收起',
     'reasoning.partial.hint': '…… (使用 /reason display full 来显示完整思考内容)',

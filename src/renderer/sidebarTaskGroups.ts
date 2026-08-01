@@ -125,7 +125,7 @@ export function getSidebarRunningTasks(tasks: SidebarTask[], now: Date = new Dat
             if (item.task.internal === true || item.task.task_status === 'running') return false;
             const finishedAt = timestamp(item.task.finished_at);
             const elapsed = nowTimestamp - finishedAt;
-            return finishedAt > 0 && elapsed >= 0 && elapsed <= 10 * 60 * 1000;
+            return finishedAt > 0 && elapsed >= 0 && elapsed <= 5 * 60 * 1000;
         })
         .sort((left, right) => timestamp(right.task.finished_at) - timestamp(left.task.finished_at))
         .slice(0, 2)

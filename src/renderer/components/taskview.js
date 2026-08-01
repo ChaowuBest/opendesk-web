@@ -133,13 +133,20 @@ function getRenderedUserPartSet(renderedUserParts, messageId) {
     return renderedSet;
 }
 
-function formatReasoningElapsedTime(seconds) {
+function formatReasoningElapsedTime(seconds, chars = null) {
+    let timeStr;
     if (seconds < 60) {
-        return taskViewT('reasoning.elapsed.seconds', { seconds });
+        timeStr = taskViewT('reasoning.elapsed.seconds', { seconds });
+    } else {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        timeStr = taskViewT('reasoning.elapsed.minutes', { minutes, seconds: remainingSeconds });
     }
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return taskViewT('reasoning.elapsed.minutes', { minutes, seconds: remainingSeconds });
+    if (chars != null) {
+        const tokens = Math.max(1, Math.round(chars / 3));
+        timeStr += taskViewT('reasoning.elapsed.chars', { chars: tokens });
+    }
+    return timeStr;
 }
 
 class TaskView extends HTMLElement {
@@ -632,10 +639,9 @@ class TaskView extends HTMLElement {
         const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
 
         // Pre-fill elapsed time for completed (e.g. historical) reasoning blocks
+        const chars = (rendered || '').length;
         const timeText =
-            !isStreaming && elapsedSeconds != null && elapsedSeconds > 0
-                ? `（${formatReasoningElapsedTime(elapsedSeconds)}）`
-                : '';
+            !isStreaming && elapsedSeconds != null ? `（${formatReasoningElapsedTime(elapsedSeconds, chars)}）` : '';
 
         const isBubble = guiReasonDisplayMode === 'bubble';
 
@@ -685,23 +691,31 @@ class TaskView extends HTMLElement {
      */
     static updateReasoningPreview(el, text) {
         if (!el) return;
+        el._reasoningTextLength = (text || '').length;
 
-        // Start a per-second time updater on first call
-        if (!el._reasoningTimeInterval) {
-            const updateTime = () => {
+        // Time display refresh (created once per element)
+        if (!el._refreshReasoningTime) {
+            el._refreshReasoningTime = () => {
                 if (el.classList.contains('reasoning-completed')) return;
                 const startTime = parseInt(el.dataset.reasoningStart || '0', 10);
                 if (startTime > 0) {
                     const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
                     const timeEl = el.querySelector('.reasoning-time');
                     if (timeEl) {
-                        timeEl.textContent = `（${formatReasoningElapsedTime(elapsed)}）`;
+                        timeEl.textContent = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
                     }
                 }
             };
-            updateTime();
-            el._reasoningTimeInterval = setInterval(updateTime, 1000);
         }
+
+        // Start per-second timer on first call
+        if (!el._reasoningTimeInterval) {
+            el._refreshReasoningTime();
+            el._reasoningTimeInterval = setInterval(el._refreshReasoningTime, 1000);
+        }
+
+        // Refresh time display on every content update (real-time char count)
+        el._refreshReasoningTime();
 
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
@@ -771,7 +785,7 @@ class TaskView extends HTMLElement {
             const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
             const timeEl = el.querySelector('.reasoning-time');
             if (timeEl) {
-                timeEl.textContent = `（${formatReasoningElapsedTime(elapsed)}）`;
+                timeEl.textContent = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
             }
         }
 
@@ -1202,7 +1216,29 @@ class TaskView extends HTMLElement {
         const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
         if (!message_content) return;
 
-        message_content.innerHTML = this.renderAssistantParts(progress.parts);
+        // When the task is still running and the last part is reasoning (still being streamed),
+        // render it as streaming so the real-time timer starts. Otherwise the block would be
+        // created as completed with no data-reasoning-start, and the timer would never work.
+        const isRunning = progress.task_status === 'running';
+        const parts = progress.parts;
+        const lastPartIndex = parts.length - 1;
+        const lastPart = parts[lastPartIndex];
+
+        if (isRunning && lastPart && lastPart.type === 'reasoning') {
+            const beforeLastHtml = parts
+                .slice(0, lastPartIndex)
+                .map((part) => this.renderAssistantPart(part))
+                .join('');
+            const streamingHtml = TaskView.createReasoningPartHtml(lastPart.rendered || '', true);
+            message_content.innerHTML = beforeLastHtml + streamingHtml;
+            // Start the timer and initialise content for the streaming reasoning block
+            const streamingEl = message_content.children[lastPartIndex];
+            if (streamingEl) {
+                TaskView.updateReasoningPreview(streamingEl, lastPart.rendered || '');
+            }
+        } else {
+            message_content.innerHTML = this.renderAssistantParts(parts);
+        }
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
 
