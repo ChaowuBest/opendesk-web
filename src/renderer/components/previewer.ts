@@ -49,14 +49,50 @@ const PREVIEW_RENDERERS: Record<string, PreviewRenderer> = {
 const PREVIEWABLE_LANGS = new Set(Object.keys(PREVIEW_RENDERERS));
 
 function renderHtmlPreview(shadowRoot: ShadowRoot, rawCode: string, baseDir?: string): void {
+    // Use an iframe instead of direct shadowRoot.innerHTML so that full HTML
+    // documents (with <html>, <head>, <body>, <link>, etc.) render correctly.
+    // Shadow DOM does not support <base>, treats <head>/<body> as ordinary
+    // elements, and cannot resolve relative resource paths — all of which cause
+    // style loss.  An iframe with srcdoc creates a proper browsing context.
+    const iframe = document.createElement('iframe');
+    iframe.sandbox.add('allow-same-origin');
+    iframe.style.cssText = 'width:100%;border:none;display:block;background:#fff;min-height:100px;';
+
+    let srcdoc = rawCode;
     if (baseDir) {
         const baseUrl = 'file://' + (baseDir.startsWith('/') ? '' : '/') + baseDir.replace(/\\/g, '/');
         const baseHref = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
-        const baseTag = `<base href="${baseHref}">`;
-        shadowRoot.innerHTML = baseTag + rawCode;
-    } else {
-        shadowRoot.innerHTML = rawCode;
+        const hasBase = /<base\s/i.test(rawCode);
+        if (!hasBase) {
+            const baseTag = `<base href="${baseHref}">`;
+            if (/<head[\s>]/i.test(rawCode)) {
+                srcdoc = rawCode.replace(/(<head[^>]*>)/i, `$1${baseTag}`);
+            } else if (/<html[\s>]/i.test(rawCode)) {
+                srcdoc = rawCode.replace(/(<html[^>]*>)/i, `$1<head>${baseTag}</head>`);
+            } else {
+                srcdoc = `<!DOCTYPE html><html><head>${baseTag}</head><body>${rawCode}</body></html>`;
+            }
+        }
     }
+
+    iframe.srcdoc = srcdoc;
+
+    // Auto-resize iframe to fit content height
+    iframe.addEventListener('load', () => {
+        try {
+            const doc = iframe.contentDocument;
+            if (doc) {
+                const height = doc.documentElement?.scrollHeight || doc.body?.scrollHeight || 0;
+                if (height > 0) {
+                    iframe.style.height = height + 'px';
+                }
+            }
+        } catch {
+            // cross-origin access blocked — leave default min-height
+        }
+    });
+
+    shadowRoot.appendChild(iframe);
 }
 
 function renderSvgPreview(shadowRoot: ShadowRoot, rawCode: string, _baseDir?: string): void {

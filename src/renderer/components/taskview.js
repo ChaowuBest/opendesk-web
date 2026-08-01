@@ -2317,6 +2317,20 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 处理聊天区域中 [data-open-file] 元素的点击事件。
+     * 使用系统默认应用打开文件。
+     */
+    _handleOpenFileClick(e) {
+        const target = e.target.closest('[data-open-file]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const filePath = target.dataset.openFile;
+        if (!filePath) return;
+        window.fsAPI?.openPath?.(filePath);
+    }
+
+    /**
      * 处理聊天区域中 [data-open-preview] 元素的点击事件。
      * 展开侧边栏 → 切换到工作空间 tab → 在预览模式下打开文件。
      */
@@ -2838,6 +2852,10 @@ class TaskView extends HTMLElement {
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
         this.addEventListener('click', this._handleEditorOpenClick);
 
+        // 添加系统默认应用打开按钮的点击事件监听（事件代理）
+        this._handleOpenFileClick = this._handleOpenFileClick.bind(this);
+        this.addEventListener('click', this._handleOpenFileClick);
+
         // 添加预览打开按钮的点击事件监听（事件代理）
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
@@ -3072,6 +3090,7 @@ class TaskView extends HTMLElement {
             artifacts.setTaskTodos([]);
         }
         this.removeEventListener('click', this._handleEditorOpenClick);
+        this.removeEventListener('click', this._handleOpenFileClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);

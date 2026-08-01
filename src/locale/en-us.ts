@@ -800,6 +800,7 @@ export const enUs: Record<string, string> = {
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
     'filemgr.openInEditor': 'Edit',
+    'filemgr.openWithDefault': 'Open',
     'filemgr.generating': 'Generating',
     'filemgr.generatingPlaceholder': 'Writing file...',
 

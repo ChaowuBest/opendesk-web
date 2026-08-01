@@ -780,6 +780,7 @@ export const zhCn: Record<string, string> = {
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
     'filemgr.openInEditor': '编辑',
+    'filemgr.openWithDefault': '打开',
     'filemgr.generating': '执行中',
     'filemgr.generatingPlaceholder': '文件生成中……',
 
