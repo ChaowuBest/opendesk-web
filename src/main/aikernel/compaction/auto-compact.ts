@@ -245,6 +245,11 @@ async function resolveMaxOutputTokens(model?: string): Promise<number> {
             }
         }
 
+        // 用户配置优先
+        if (modelInstance.max_output_tokens && modelInstance.max_output_tokens > 0) {
+            return modelInstance.max_output_tokens;
+        }
+
         const knownMaxOutput = lookupKnownMaxOutputTokens(modelInstance.model_name);
         if (knownMaxOutput > 0) {
             return knownMaxOutput;

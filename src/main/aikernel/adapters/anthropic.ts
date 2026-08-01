@@ -26,6 +26,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { readWithIdleTimeout, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
@@ -205,11 +206,12 @@ export class AnthropicAdapter {
         return await response.json();
     }
 
-    private requestMaxCompletionTokens(
-        requestOptions: AnthropicAdapterRequestOptions | undefined,
-        defaultValue: number
-    ): number {
-        return normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? defaultValue;
+    private requestMaxCompletionTokens(requestOptions: AnthropicAdapterRequestOptions | undefined): number {
+        return (
+            normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ??
+            this.modelInstance.max_output_tokens ??
+            (lookupKnownMaxOutputTokens(this.modelInstance.model_name) || 16384)
+        );
     }
 
     private static textBlock(text: string): object[] {
@@ -768,7 +770,7 @@ export class AnthropicAdapter {
                 this.createMessage(
                     {
                         model: this.modelInstance.model_name,
-                        max_tokens: this.requestMaxCompletionTokens(requestOptions, 4096),
+                        max_tokens: this.requestMaxCompletionTokens(requestOptions),
                         ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
                         messages: anthropicMessages.messages
                     },
@@ -792,7 +794,7 @@ export class AnthropicAdapter {
                 this.createMessage(
                     {
                         model: this.modelInstance.model_name,
-                        max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                        max_tokens: this.requestMaxCompletionTokens(requestOptions),
                         ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
                         messages: anthropicMessages.messages,
                         ...AnthropicAdapter.buildToolOptions(chatContext)
@@ -818,7 +820,7 @@ export class AnthropicAdapter {
             for await (const response of this.streamMessages(
                 {
                     model: this.modelInstance.model_name,
-                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                    max_tokens: this.requestMaxCompletionTokens(requestOptions),
                     stream: true,
                     ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
                     messages: anthropicMessages.messages,

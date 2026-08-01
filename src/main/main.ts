@@ -102,7 +102,12 @@ import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
 import { parseGoalEditIfMatch } from '../common/goal/command.js';
 import { marked } from './aikernel/messages.js';
-import { lookupKnownContextSize, lookupKnownVisionSupport, fetchContextSizeFromAPI } from './utils/model-context.js';
+import {
+    lookupKnownContextSize,
+    lookupKnownMaxOutputTokens,
+    lookupKnownVisionSupport,
+    fetchContextSizeFromAPI
+} from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
 import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
@@ -2079,6 +2084,7 @@ const registerSettingAPIHandlers = () => {
                     !!no_ssl,
                     '',
                     undefined,
+                    undefined,
                     false,
                     custom_headers,
                     provider_type,
@@ -2412,6 +2418,10 @@ const registerSettingAPIHandlers = () => {
         ipcMain.handle('setting:estimateContextSize', (_event, modelName: string) => {
             if (!modelName || typeof modelName !== 'string') return { status: 'ok', data: 0 };
             return { status: 'ok', data: lookupKnownContextSize(modelName) };
+        }),
+        ipcMain.handle('setting:estimateMaxOutputTokens', (_event, modelName: string) => {
+            if (!modelName || typeof modelName !== 'string') return { status: 'ok', data: 0 };
+            return { status: 'ok', data: lookupKnownMaxOutputTokens(modelName) };
         }));
 };
 
