@@ -121,6 +121,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
     subTask.model = parentTask.model;
     subTask.task_name = config.title || '未命名子任务';
+    subTask.interactionToolset = parentTask.interactionToolset;
 
     // 如果指定了 agentName，使用对应 Agent 的系统提示词、权限和工具过滤
     const agentDecl = config.agentName ? AgentRegistry.resolveDispatchableAgent(config.agentName) : undefined;
@@ -176,6 +177,8 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     logger.info(
         `[subtask] created subtask=${subTask.task_id} parent=${parentTask.task_id} title="${config.title}" async=${config.isAsync}`
     );
+
+    parentTask.notifySubTaskCreated(subTask);
 
     // 通知子任务已创建
     onCreated?.(subTask);
@@ -752,6 +755,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                 modelRequestOptions: taskState.getActiveModelRequestOptions(),
                 onCreated: (st) => {
                     asyncSubTaskState = st;
+                    toolResult.updateResultObject({ subtask_id: st.task_id });
                 }
             });
 
@@ -805,12 +809,20 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         }
 
         // 同步模式：等待子任务完成
+        let childTaskID: string | undefined;
         const result = await startSubTask({
             parentTask: taskState,
             config,
             modelRequestOptions: taskState.getActiveModelRequestOptions(),
+            onCreated: (subTask) => {
+                childTaskID = subTask.task_id;
+                toolResult.updateResultObject({ subtask_id: subTask.task_id });
+            },
             onProgress: (progress) => {
-                toolResult.updateResultObject({ subtask_progress: progress });
+                toolResult.updateResultObject({
+                    ...(childTaskID ? { subtask_id: childTaskID } : {}),
+                    subtask_progress: progress
+                });
             }
         });
 

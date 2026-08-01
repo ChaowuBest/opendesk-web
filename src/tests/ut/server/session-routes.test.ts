@@ -834,6 +834,69 @@ describe('opencode session routes', () => {
         expect(messages[0].parts[0].input).toBeUndefined();
     });
 
+    test('GET /session/:id/message maps OpenDesk subtasks to opencode task parts', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-subtask';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_subtask',
+            'planning-createSubTask',
+            JSON.stringify({
+                title: 'Inspect logs',
+                objective: 'Find the failure',
+                criteria: 'Return the root cause',
+                isAsync: false,
+                agentName: 'explore'
+            })
+        );
+        toolCall.status = 'success';
+        toolCall.result = JSON.stringify({
+            success: true,
+            result: 'Found the root cause',
+            subtask_id: 'task_child'
+        });
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                callID: 'call_subtask',
+                tool: 'task',
+                state: expect.objectContaining({
+                    status: 'completed',
+                    input: {
+                        description: 'Inspect logs',
+                        prompt: 'Find the failure\n\nReturn the root cause',
+                        subagent_type: 'explore',
+                        background: false,
+                        task_id: 'ses_child'
+                    },
+                    metadata: expect.objectContaining({
+                        parentSessionId: 'ses_model',
+                        sessionId: 'ses_child',
+                        background: false,
+                        originalTool: 'planning-createSubTask'
+                    })
+                })
+            })
+        );
+    });
+
     test('GET /session/:id/message expands every tool call in a shared OpenDesk part', async () => {
         mockSessionDependencies();
         mockSetting();

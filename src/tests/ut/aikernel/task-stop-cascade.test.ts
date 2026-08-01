@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { startSubTask, waitSubTaskResult } from '../../../main/aikernel/planning/tools.js';
+import { CreateSubTaskTool, startSubTask, waitSubTaskResult } from '../../../main/aikernel/planning/tools.js';
 import { SkillRegistry } from '../../../main/aikernel/skill.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { Setting } from '../../../main/utils/setting.js';
@@ -190,6 +190,101 @@ describe('TaskState.stop() child task cascade', () => {
         });
 
         expect(submitSpy).toHaveBeenCalledWith(expect.any(String), { modelRequestOptions });
+    });
+
+    test('notifies the parent after a child task is configured and inherits interaction handling', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task-parent';
+        parent.task_status = 'running';
+        parent.model = 'parent-model';
+        parent.interactionToolset = {} as any;
+        manager.tasks.push(parent);
+        jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+        const listener = jest.fn();
+        parent.onSubTaskCreated(listener);
+        await startSubTask({
+            parentTask: parent,
+            config: {
+                title: 'configured child',
+                objective: 'do work',
+                criteria: 'return result',
+                isAsync: false
+            },
+            onCreated: (child) => {
+                jest.spyOn(child, 'submitUserMessage').mockResolvedValue({ status: 'ok' });
+                jest.spyOn(child, 'waitUntilFinished').mockImplementation(async () => {
+                    child.task_status = 'stopped';
+                });
+            }
+        });
+
+        expect(listener).toHaveBeenCalledWith(
+            expect.objectContaining({
+                task_name: 'configured child',
+                model: 'parent-model',
+                interactionToolset: parent.interactionToolset
+            })
+        );
+    });
+
+    test('keeps the child task id in createSubTask progress updates', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task-parent';
+        parent.task_status = 'running';
+        manager.tasks.push(parent);
+        jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+        parent.onSubTaskCreated((child) => {
+            jest.spyOn(child, 'submitUserMessage').mockResolvedValue({ status: 'ok' });
+            jest.spyOn(child, 'waitUntilFinished').mockImplementation(async (callback) => {
+                await callback?.({
+                    type: 'assistant',
+                    task_id: child.task_id,
+                    task_status: 'running',
+                    message_id: 'child-progress',
+                    last_part_index: 0,
+                    last_part: {
+                        type: 'tool_call',
+                        toolcalls: [{ name: 'filemgr-readFile', status: 'running' }]
+                    }
+                } as any);
+                child.task_status = 'stopped';
+            });
+        });
+
+        const updates: Array<Record<string, unknown>> = [];
+        const result = await new CreateSubTaskTool().execute(
+            {
+                title: 'inspect files',
+                objective: 'inspect the current directory',
+                criteria: 'return a summary',
+                isAsync: false
+            },
+            (toolResult) => {
+                if (toolResult.result_object) {
+                    updates.push(structuredClone(toolResult.result_object) as Record<string, unknown>);
+                }
+            },
+            parent
+        );
+
+        const progressUpdate = updates.find((update) => update.subtask_progress !== undefined);
+        expect(result.status).toBe('success');
+        expect(progressUpdate).toEqual(
+            expect.objectContaining({
+                subtask_id: expect.stringMatching(/^task_/),
+                subtask_progress: expect.any(Object)
+            })
+        );
     });
 
     test('allows a normally finished task to start a new user turn', async () => {

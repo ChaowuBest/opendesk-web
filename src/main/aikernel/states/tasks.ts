@@ -489,6 +489,7 @@ export class TaskState {
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
     private _activeModelRequestOptions?: TaskModelRequestOptions;
+    private _subTaskCreatedListeners = new Set<(subTask: TaskState) => void>();
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -616,6 +617,21 @@ export class TaskState {
 
     getActiveModelRequestOptions(): TaskModelRequestOptions | undefined {
         return this._activeModelRequestOptions;
+    }
+
+    onSubTaskCreated(listener: (subTask: TaskState) => void): () => void {
+        this._subTaskCreatedListeners.add(listener);
+        return () => this._subTaskCreatedListeners.delete(listener);
+    }
+
+    notifySubTaskCreated(subTask: TaskState): void {
+        for (const listener of this._subTaskCreatedListeners) {
+            try {
+                listener(subTask);
+            } catch (err) {
+                logger.error(`task ${this.task_id}: subtask created listener failed: ${errorToMessage(err)}`);
+            }
+        }
     }
 
     async materializeExtensionPromptTurn(prompt: string, metadata: RuntimeMetadata, rawText?: string): Promise<void> {

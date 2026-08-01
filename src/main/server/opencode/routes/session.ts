@@ -604,9 +604,11 @@ function partToMessagePart(
         const toolName = tc.name || tc.tool_name || p.tool_name || '';
         const argsString = tc.args_string ?? tc.arguments ?? '';
         const { input, raw } = parseToolInput(argsString);
-        const mappedTool = mapOpenDeskToolForOpenCode(toolName, input);
         const status = tc.status || p.status;
-        const output = stringifyToolOutput(tc.result ?? p.result ?? tc.result_object ?? p.result_object);
+        const outputValue = tc.result ?? p.result ?? tc.result_object ?? p.result_object;
+        const resultObject = tc.result_object ?? p.result_object;
+        const output = stringifyToolOutput(outputValue);
+        const mappedTool = mapOpenDeskToolForOpenCode(toolName, input, sessionID, outputValue, resultObject);
         return {
             ...base,
             type: 'tool',
@@ -1021,9 +1023,42 @@ function openCodeToolMetadata(
 
 function mapOpenDeskToolForOpenCode(
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    sessionID: string,
+    outputValue?: unknown,
+    resultObject?: unknown
 ): { toolName: string; input: Record<string, unknown>; metadata: Record<string, unknown> } {
     const lowerName = toolName.toLowerCase();
+
+    if (lowerName === 'planning-createsubtask' || lowerName === 'createsubtask') {
+        const title = stringInput(input, ['title', 'description']);
+        const objective = stringInput(input, ['objective', 'prompt']);
+        const criteria = stringInput(input, ['criteria']);
+        const agentName = stringInput(input, ['agentName', 'subagent_type']);
+        const decodedOutput = typeof outputValue === 'string' ? tryParseJson(outputValue) : outputValue;
+        const parsedOutput = isRecord(decodedOutput) ? decodedOutput : undefined;
+        const parsedResultObject = isRecord(resultObject) ? resultObject : undefined;
+        const childTaskID = firstString(parsedResultObject?.subtask_id, parsedOutput?.subtask_id);
+        const childSessionID = childTaskID ? toExternalId(childTaskID) : undefined;
+        const background = typeof input.isAsync === 'boolean' ? input.isAsync : false;
+        const prompt = [objective, criteria].filter((value): value is string => value !== undefined).join('\n\n');
+        const mappedInput: Record<string, unknown> = {
+            ...(title ? { description: title } : {}),
+            ...(prompt ? { prompt } : {}),
+            subagent_type: agentName ?? 'general',
+            background,
+            ...(childSessionID ? { task_id: childSessionID } : {})
+        };
+        return {
+            toolName: 'task',
+            input: mappedInput,
+            metadata: openCodeToolMetadata(toolName, input, {
+                ...(sessionID ? { parentSessionId: sessionID } : {}),
+                ...(childSessionID ? { sessionId: childSessionID } : {}),
+                background
+            })
+        };
+    }
 
     if (lowerName === 'skill-manager-loadskill' || lowerName === 'loadskill') {
         const name = stringInput(input, ['skillName', 'name']);
