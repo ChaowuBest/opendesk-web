@@ -304,12 +304,26 @@
                 currentOpenAppBundleName = null;
                 if (nonAppSlot) nonAppSlot.style.display = '';
                 if (appFramesContainer) appFramesContainer.style.display = 'none';
+                notifyViewChanged();
             }
 
             function showAppFrames() {
                 ensureSlots();
                 if (nonAppSlot) nonAppSlot.style.display = 'none';
                 if (appFramesContainer) appFramesContainer.style.display = 'block';
+                notifyViewChanged();
+            }
+
+            /** 广播当前视图状态，供侧边栏底部导航栏更新激活态 */
+            function notifyViewChanged() {
+                window.dispatchEvent(
+                    new CustomEvent('od-view-changed', {
+                        detail: {
+                            view: currentNonAppContent,
+                            appBundle: currentOpenAppBundleName
+                        }
+                    })
+                );
             }
 
             /**

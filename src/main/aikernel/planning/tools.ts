@@ -701,8 +701,8 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         }
 
         return `
-        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+        <details class="subtask-tool od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-diagram-project text-[10px]"></i>
                 </span>
@@ -715,7 +715,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     <path d="M6 9l6 6 6-6"/>
                 </svg>
             </summary>
-            ${bodyContent ? `<div class="border-t border-gray-100 bg-gray-50/40"><div class="max-h-[200px] overflow-y-auto">${bodyContent}</div></div>` : ''}
+            ${bodyContent ? `<div class="border-t border-gray-200 bg-gray-50/40"><div class="max-h-[200px] overflow-y-auto">${bodyContent}</div></div>` : ''}
         </details>`;
     }
 
@@ -932,8 +932,8 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         }
 
         return `
-        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+        <details class="subtask-tool od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-hourglass-half text-[10px]"></i>
                 </span>
@@ -944,7 +944,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                     <path d="M6 9l6 6 6-6"/>
                 </svg>
             </summary>
-            ${bodyContent ? `<div class="border-t border-gray-100 bg-gray-50/40"><div class="max-h-[240px] overflow-y-auto">${bodyContent}</div></div>` : ''}
+            ${bodyContent ? `<div class="border-t border-gray-200 bg-gray-50/40"><div class="max-h-[240px] overflow-y-auto">${bodyContent}</div></div>` : ''}
         </details>`;
     }
 
@@ -1037,8 +1037,8 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
             </div>`;
 
         return `
-        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+        <details class="subtask-tool od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-paper-plane text-[10px]"></i>
                 </span>
@@ -1049,7 +1049,7 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
                     <path d="M6 9l6 6 6-6"/>
                 </svg>
             </summary>
-            <div class="border-t border-gray-100 bg-gray-50/40">
+            <div class="border-t border-gray-200 bg-gray-50/40">
                 ${bodyContent}
             </div>
         </details>`;
@@ -1149,7 +1149,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         if (args.type === 'fail') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="subtask-tool subtask-result subtask-result--fail my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+            <div class="subtask-tool subtask-result subtask-result--fail my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
                 <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                     <div class="flex items-center gap-2">
                         <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">
@@ -1170,7 +1170,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         if (args.type === 'ask') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="subtask-tool subtask-result subtask-result--ask my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+            <div class="subtask-tool subtask-result subtask-result--ask my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
                 <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                     <div class="flex items-center gap-2">
                         <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">
@@ -1191,7 +1191,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         // success
         const messageHtml = args.message ? await marked.parse(args.message) : '';
         return `
-        <div class="subtask-tool subtask-result subtask-result--success my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+        <div class="subtask-tool subtask-result subtask-result--success my-2 w-full rounded-[14px] border bg-white overflow-hidden od-card-shadow">
             <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                 <div class="flex items-center gap-2">
                     <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">

@@ -1144,6 +1144,9 @@ const registerTaskManagerAPIHandlers = () => {
             task.harnessContext.workspace = workspace;
             task.workspace = workspace;
         }
+        // harness 初始化设置了 task.workspace 等属性，需要通知前端更新，
+        // 否则前端在 createTask() 发出的 taskListUpdate 中看到的是空 workspace
+        globalState.taskManagerState.publishTaskListUpdate();
         return { status: 'ok', data: task.task_id };
     });
 
@@ -3182,7 +3185,8 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

@@ -780,6 +780,7 @@ export const zhCn: Record<string, string> = {
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
     'filemgr.openInEditor': '编辑',
+    'filemgr.openWithDefault': '打开',
     'filemgr.generating': '执行中',
     'filemgr.generatingPlaceholder': '文件生成中……',
 
@@ -1094,7 +1095,7 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.search': '搜索…',
     'renderer.sidebar.clearSearch': '清除搜索',
     'renderer.sidebar.searchResults': '搜索结果',
-    'renderer.sidebar.runningTasks': '正在运行',
+    'renderer.sidebar.runningTasks': '最近任务',
     'renderer.sidebar.taskList': '任务列表',
     'renderer.sidebar.viewByTime': '按时间整理',
     'renderer.sidebar.viewByWorkspace': '按工作空间整理',
@@ -1243,6 +1244,13 @@ export const zhCn: Record<string, string> = {
     'renderer.taskartifacts.tab.goalExecution': '目标执行',
     'renderer.taskartifacts.tab.taskProgress': '任务进展',
     'renderer.taskartifacts.todo.title': '当前待办',
+    'renderer.taskartifacts.todo.totalItems': '全部 ${count} 项',
+    'renderer.taskartifacts.todo.completed': '项已完成',
+    'renderer.taskartifacts.todo.summary': '已完成 ${completed} 项 · 进行中 ${inProgress} 项 · 未开始 ${pending} 项',
+    'renderer.taskartifacts.todo.inProgress': '进行中',
+    'renderer.taskartifacts.todo.notStarted': '待开始',
+    'renderer.taskartifacts.todo.elapsed': '已执行 ${duration}',
+    'renderer.taskartifacts.todo.took': '用时 ${duration}',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',

@@ -53,34 +53,138 @@ elastic-toolbar-widget.pill-buttons button span {
     font-size: var(--fs-md) !important;
 }
 
-/* ===== 侧边栏底部工具栏变体：白色胶囊 + 灰色小胶囊悬停 ===== */
+/* ===== 侧边栏底部导航栏：水平排列 · 悬停右展 · 推挤后续（设计稿 §04） ===== */
+elastic-toolbar-widget.sidebar-bottom {
+    display: block !important;
+    width: 100% !important;
+}
+
 elastic-toolbar-widget.sidebar-bottom header {
     height: auto !important;
-    padding: 0 !important;
-    justify-content: center !important;
+    padding: 10px 14px 0 !important;
+    justify-content: flex-start !important;
+    border-top: 1px solid var(--od-border, rgba(0, 0, 0, 0.06));
 }
 
 elastic-toolbar-widget.sidebar-bottom header > div {
-    padding: 0.125rem !important;
-    gap: 0.0625rem !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    gap: 6px !important;
+    border: none !important;
+    border-radius: 0 !important;
+    flex-wrap: nowrap !important;
 }
 
-elastic-toolbar-widget.sidebar-bottom button {
-    font-size: var(--fs-base) !important;
-    padding: 0.3125rem 0.5rem !important;
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn {
+    display: flex !important;
+    align-items: center !important;
+    height: 28px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: none !important;
+    cursor: pointer !important;
+    color: var(--od-text-muted, #8a8580) !important;
+    padding: 0 !important;
+    font-family: inherit !important;
+    flex: none !important;
+    white-space: nowrap !important;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease !important;
+    gap: 0 !important;
 }
 
-elastic-toolbar-widget.sidebar-bottom button span {
-    font-size: var(--fs-sm) !important;
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn i,
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn .elastic-icon-wrap {
+    flex: none !important;
+    width: 28px !important;
+    height: 28px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 14px !important;
 }
 
-elastic-toolbar-widget.sidebar-bottom button:disabled {
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn .elastic-icon-wrap svg {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-label {
+    font-size: 11px !important;
+    color: var(--od-text, #4a4642) !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    overflow: hidden !important;
+    margin-left: 0 !important;
+    padding-right: 0 !important;
+    transition:
+        max-width 0.18s ease,
+        opacity 0.12s ease 0.05s,
+        padding-right 0.18s ease !important;
+    font-weight: 400 !important;
+    letter-spacing: 0 !important;
+    line-height: 1.25rem !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
+    background: rgba(0, 0, 0, 0.06) !important;
+    color: var(--od-text-muted, #8a8580) !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover .elastic-label {
+    max-width: 56px !important;
+    opacity: 1 !important;
+    padding-right: 8px !important;
+}
+
+/* Active (current page) state */
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active {
+    color: #df4436 !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active .elastic-label {
+    color: #df4436 !important;
+    font-weight: 500 !important;
+    max-width: 56px !important;
+    opacity: 1 !important;
+    padding-right: 8px !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active:hover {
+    background: #fdeeec !important;
+    color: #df4436 !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active:hover .elastic-label {
+    color: #df4436 !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:disabled {
     opacity: 0.5 !important;
     cursor: not-allowed !important;
 }
 
-elastic-toolbar-widget.sidebar-bottom button:disabled:hover {
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:disabled:hover {
     background: transparent !important;
+}
+
+/* Dark theme: hover #33302D, active hover rgba accent */
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
+    background: #33302d !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active {
+    color: #e8563f !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active .elastic-label {
+    color: #e8563f !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active:hover {
+    background: rgba(232, 86, 63, 0.16) !important;
 }
 
 /* ===== 邮箱头部工具栏变体：与侧边栏底部一致的扁平悬停效果 ===== */

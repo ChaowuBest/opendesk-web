@@ -110,11 +110,27 @@ describe('sidebar task grouping', () => {
 
         expect(groups.map((group) => group.id)).toEqual(['today', 'this-week', 'earlier', 'automatic']);
         expect(groups.map((group) => group.items.map((item) => item.task.task_id))).toEqual([
-            ['today'],
+            ['running', 'today'],
             ['this-week'],
             ['earlier'],
             ['automatic']
         ]);
+    });
+
+    test('includes running tasks in task list groups alongside stopped tasks', () => {
+        const tasks = [
+            task('stopped-today', '2026-07-29T09:00:00'),
+            task('running-today', '2026-07-29T11:00:00', { task_status: 'running' }),
+            task('running-this-week', '2026-07-27T10:00:00', { task_status: 'running' })
+        ];
+
+        const groups = buildSidebarTaskGroups(tasks, 'time', now);
+
+        const todayIds = groups.find((g) => g.id === 'today')!.items.map((i) => i.task.task_id);
+        const thisWeekIds = groups.find((g) => g.id === 'this-week')!.items.map((i) => i.task.task_id);
+        expect(todayIds).toContain('running-today');
+        expect(todayIds).toContain('stopped-today');
+        expect(thisWeekIds).toContain('running-this-week');
     });
 
     test('groups history by normalized workspace and keeps automatic tasks separate', () => {

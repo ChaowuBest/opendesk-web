@@ -19,6 +19,9 @@ import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const HELPER_RELATIVE_DIR = path.join('native', 'darwin', 'speech-helper');
 const HELPER_BINARY_FILE = 'opendesk-speech-helper';
+// TCC on macOS 26+ requires the helper to be inside an .app bundle so that
+// privacy usage descriptions in Contents/Info.plist are recognised.
+const HELPER_APP_BINARY = path.join('opendesk-speech-helper.app', 'Contents', 'MacOS', HELPER_BINARY_FILE);
 
 interface HelperResponse {
     id?: number;
@@ -269,8 +272,13 @@ function normalizeSpeechLocale(locale?: string | null): string | null {
 
 function resolveHelperBinaryPath(): string {
     const candidates = app.isPackaged
-        ? [path.join(process.resourcesPath, HELPER_RELATIVE_DIR, HELPER_BINARY_FILE)]
+        ? [
+              path.join(process.resourcesPath, HELPER_RELATIVE_DIR, HELPER_APP_BINARY),
+              path.join(process.resourcesPath, HELPER_RELATIVE_DIR, HELPER_BINARY_FILE)
+          ]
         : [
+              path.join(process.cwd(), HELPER_RELATIVE_DIR, HELPER_APP_BINARY),
+              path.join(app.getAppPath(), HELPER_RELATIVE_DIR, HELPER_APP_BINARY),
               path.join(process.cwd(), HELPER_RELATIVE_DIR, HELPER_BINARY_FILE),
               path.join(app.getAppPath(), HELPER_RELATIVE_DIR, HELPER_BINARY_FILE)
           ];

@@ -324,6 +324,11 @@ function openFileButton(filePath: string): string {
     return `<button onclick="window.fsAPI.openPath('${escaped.replace(/'/g, "\\'")}')" class="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-slate-200 transition-colors" title="打开文件"><svg class="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`;
 }
 
+/** Badge that opens the file with the system default application (data-open-file). */
+function openFileBadge(filePath: string): string {
+    return `<span class="bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-blue-600 transition-colors" data-open-file="${escapeHtml(filePath)}">${escapeHtml(t('filemgr.openWithDefault'))}</span>`;
+}
+
 function statusDot(status: string): string {
     if (status === 'running') {
         return '<div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>';
@@ -461,9 +466,10 @@ function renderPreviewCard(opts: {
     const borderColor = opts.status === 'error' ? 'border-red-200' : 'border-gray-200';
     const detailHtml = opts.detail ? ` · ${escapeHtml(opts.detail)}` : '';
     const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+    const openBadge = openFileBadge(opts.filePath);
 
-    return `<details class="file-tool-card my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
                 <i class="${opts.icon} text-[10px]"></i>
             </span>
@@ -471,9 +477,10 @@ function renderPreviewCard(opts: {
             <span class="text-[12px] text-gray-600 truncate flex-1" title="${escapeHtml(opts.filePath)}">${escapeHtml(fileName)}${detailHtml}</span>
             ${statusBadge}
             ${editorBadge}
+            ${openBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             <div class="tool-preview-card" data-preview-lang="${lang}" data-raw-code="${rawB64}" data-base-dir="${escapeHtml(baseDir)}"></div>
         </div>
     </details>`;
@@ -490,9 +497,10 @@ function renderPreviewCard(opts: {
 function renderPreviewPlaceholder(opts: { icon: string; title: string; filePath: string }): string {
     const fileName = path.basename(opts.filePath);
     const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+    const openBadge = openFileBadge(opts.filePath);
 
-    return `<details class="file-tool-card my-1.5 rounded-lg border border-gray-200 bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card od-card-shadow my-2 rounded-[14px] border border-gray-200 bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
                 <i class="${opts.icon} text-[10px]"></i>
             </span>
@@ -500,9 +508,10 @@ function renderPreviewPlaceholder(opts: { icon: string; title: string; filePath:
             <span class="text-[12px] text-gray-600 truncate flex-1" title="${escapeHtml(opts.filePath)}">${escapeHtml(fileName)}</span>
             <span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>${escapeHtml(t('filemgr.generating'))}</span>
             ${editorBadge}
+            ${openBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             <div class="flex items-center justify-center py-8 text-gray-400 gap-2">
                 <i class="fa-solid fa-file-pen text-lg"></i>
                 <span class="text-[13px]">${escapeHtml(t('filemgr.generatingPlaceholder'))}</span>
@@ -607,6 +616,7 @@ function renderDiffCard(
     const fileName = path.basename(filePath);
     const extBadge = getFileExtBadge(filePath);
     const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+    const openBadge = openFileBadge(filePath);
     const statsHtml = `<span class="text-emerald-600 font-medium">+${addedCount}</span> <span class="text-rose-500 font-medium">-${removedCount}</span>`;
 
     const statusDot =
@@ -614,14 +624,15 @@ function renderDiffCard(
             ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ml-1"></span>'
             : '';
 
-    return `<div class="diff-card my-1 rounded-lg border border-slate-200 overflow-hidden w-full">
-        <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
+    return `<div class="diff-card od-card-shadow my-2 rounded-[14px] border border-slate-200 overflow-hidden w-full">
+        <div class="flex items-center gap-2 px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 cursor-pointer select-none font-medium" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]')||ev.target.closest('[data-open-file]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
             <span class="text-xs text-slate-500 shrink-0">${escapeHtml(t('filemgr.editFile.name'))}</span>
             <span class="text-xs font-medium text-slate-700 truncate">${escapeHtml(fileName)}</span>
             ${statusDot}
             <span class="text-[11px] text-slate-400 ml-auto shrink-0">${statsHtml}</span>
             ${extBadge}
             ${editBadge}
+            ${openBadge}
             <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </div>
         <div class="diff-body overflow-x-auto bg-white">
@@ -1415,9 +1426,10 @@ function renderFileToolDetailsCard(opts: {
     const editorBadge = opts.editorFilePath
         ? `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.editorFilePath)}"${editorLine}>${escapeHtml(t('filemgr.openInEditor'))}</span>`
         : '';
+    const openBadge = opts.editorFilePath ? openFileBadge(opts.editorFilePath) : '';
 
-    return `<details class="file-tool-card ${className} my-1.5 rounded-lg border ${tone.borderColor} bg-white overflow-hidden w-full" open>
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+    return `<details class="file-tool-card ${className} od-card-shadow my-2 rounded-[14px] border ${tone.borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
             <span class="inline-flex items-center justify-center w-5 h-5 rounded ${tone.iconBg}">
                 <i class="${escapeHtml(opts.icon)} text-[10px]"></i>
             </span>
@@ -1425,9 +1437,10 @@ function renderFileToolDetailsCard(opts: {
             <span class="text-[12px] text-gray-600 truncate flex-1"${summaryTitle}>${escapeHtml(opts.summary)}</span>
             ${renderFileToolStatusBadge(opts.status)}
             ${editorBadge}
+            ${openBadge}
             <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </summary>
-        <div class="border-t border-gray-100 bg-gray-50/40">
+        <div class="border-t border-gray-200 bg-gray-50/40">
             ${opts.body}
         </div>
     </details>`;

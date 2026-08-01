@@ -78,30 +78,40 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
     if (typeof timestamp === 'string' && timestamp.trim().length > 0) {
         metaItems.push(formatLocalDateTime(timestamp));
     }
-    const messageHtml = message
-        ? `<div class="od-goal-eval-message" style="margin-top:4px;color:#4b5563;line-height:1.45;">${escapeHtml(message)}</div>`
-        : '';
+
+    const kind = getGoalEvaluationDisplayKind(evaluation);
+    const palette = {
+        running: { border: '#F0E3DD', accent: '#DE4433', bg: '#FBEDEA', titleColor: '#26262B' },
+        success: {
+            border: '#D9EEE1',
+            accent: '#43A26A',
+            bg: 'linear-gradient(180deg,#F2FAF5,#EFF8F2)',
+            titleColor: '#1F7A4D'
+        },
+        warning: { border: '#FEF3C7', accent: '#F59E0B', bg: '#FFFBEB', titleColor: '#854d0e' },
+        danger: { border: '#FECACA', accent: '#EF4444', bg: '#FEF2F2', titleColor: '#C62828' }
+    };
+    const colors = palette[kind] || palette.warning;
+
     const metaHtml =
         metaItems.length > 0
-            ? `<div class="od-goal-eval-meta" style="margin-top:3px;color:#6b7280;font-size:11px;">${escapeHtml(metaItems.join(' · '))}</div>`
+            ? `<span class="od-goal-eval-meta" style="margin-left:auto;font-size:10px;color:#A5A5AA;font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;white-space:nowrap;">${escapeHtml(metaItems.join(' · '))}</span>`
             : '';
+    const messageHtml = message
+        ? `<div class="od-goal-eval-message" style="font-size:11px;color:#3A3A3F;line-height:1.6;">${escapeHtml(message)}</div>`
+        : '';
     const evidenceHtml =
         evidence.length > 0
-            ? `<div class="od-goal-eval-evidence" style="margin-top:6px;">
-                <div style="font-weight:600;color:#374151;margin-bottom:3px;">${escapeHtml(t('goal.eval.evidence'))}</div>
-                <ul style="margin:0;padding-left:18px;color:#4b5563;line-height:1.45;">${evidence
-                    .map((item) => `<li>${escapeHtml(item)}</li>`)
-                    .join('')}</ul>
-            </div>`
+            ? `<div class="od-goal-eval-evidence" style="border-top:1px dashed ${colors.border};padding-top:8px;display:flex;flex-direction:column;gap:3px;">
+            <span style="font-size:10px;font-weight:600;color:${colors.titleColor};">${escapeHtml(t('goal.eval.evidence'))}</span>
+            <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px;">${evidence
+                .map(
+                    (item) =>
+                        `<li style="font-size:10px;line-height:1.6;color:#4A4A4F;display:flex;gap:6px;"><span style="flex:none;width:4px;height:4px;border-radius:50%;background:${colors.accent};margin-top:6px;"></span>${escapeHtml(item)}</li>`
+                )
+                .join('')}</ul>
+        </div>`
             : '';
-    const borderColor =
-        phase === 'start'
-            ? '#378add'
-            : status === 'met'
-              ? '#10b981'
-              : status === 'blocked' || status === 'error'
-                ? '#ef4444'
-                : '#f59e0b';
     const attrs = [
         `id="${escapeHtml(selectorId)}"`,
         'class="od-goal-eval-container od-goal-eval-' +
@@ -118,12 +128,12 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
         .join(' ');
 
     return `
-        <div ${attrs} style="margin:8px 0;padding:8px 12px;border-left:3px solid ${borderColor};background:#f9fafb;color:#374151;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
-            <div style="display:flex;align-items:center;gap:7px;font-weight:600;color:#1f2937;">
-                <i class="fa-solid ${getGoalEvalIconClass(evaluation)}" aria-hidden="true"></i>
-                <span>${escapeHtml(title)}</span>
+        <div ${attrs} style="margin:8px 0;padding:12px 14px;border:1px solid ${colors.border};border-left:3px solid ${colors.accent};border-radius:14px;background:${colors.bg};display:flex;flex-direction:column;gap:8px;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
+            <div style="display:flex;align-items:center;gap:7px;">
+                <i class="fa-solid ${getGoalEvalIconClass(evaluation)}" style="color:${colors.accent};flex:none;" aria-hidden="true"></i>
+                <span style="font-size:12px;font-weight:600;color:${colors.titleColor};">${escapeHtml(title)}</span>
+                ${metaHtml}
             </div>
-            ${metaHtml}
             ${messageHtml}
             ${evidenceHtml}
         </div>

@@ -16,8 +16,10 @@ type ToolbarLayout = 'capsule' | 'spread';
 interface Button {
     id: string;
     icon: string;
+    iconSvg?: string;
     label: string;
     labelStayVisible?: boolean;
+    active?: boolean;
     action: () => void;
 }
 
@@ -51,6 +53,20 @@ export class ElasticToolbarWidget extends HTMLElement {
     setButtons(buttons: Button[]) {
         this.buttons = buttons;
         this.render();
+    }
+
+    /**
+     * 更新指定按钮的激活状态（不触发完整重渲染）
+     * @param activeId 需要激活的按钮 id，传 null 清除所有激活态
+     */
+    setActiveButton(activeId: string | null) {
+        this.buttons.forEach((button) => {
+            button.active = button.id === activeId;
+            const btnEl = this.querySelector(`#${button.id}-${this.uid}`);
+            if (btnEl) {
+                btnEl.classList.toggle('navbar-active', button.active);
+            }
+        });
     }
 
     setToolbarTitle(toolbarTitle: string) {
@@ -156,11 +172,16 @@ export class ElasticToolbarWidget extends HTMLElement {
             .map((button) => {
                 const labelStayVisible = !!button.labelStayVisible;
                 const labelCls = labelStayVisible ? 'elastic-label elastic-label--visible' : 'elastic-label';
+                const activeCls = button.active ? ' navbar-active' : '';
+                const iconHTML = button.iconSvg
+                    ? `<span class="elastic-icon-wrap">${button.iconSvg}</span>`
+                    : `<i class="fa-solid ${button.icon}"></i>`;
                 return `
             <button id='${button.id}-${this.uid}' class="elastic-capsule-btn flex items-center px-2 py-2 rounded-full
                         bg-transparent
-                        text-gray-700">
-                <i class="fa-solid ${button.icon}"></i>
+                        text-gray-700${activeCls}"
+                title="${button.label}">
+                ${iconHTML}
                 <span class="${labelCls}">
                     ${button.label}
                 </span>

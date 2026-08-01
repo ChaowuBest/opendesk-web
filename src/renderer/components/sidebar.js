@@ -152,6 +152,12 @@ class SideBar extends HTMLElement {
             attributes: true,
             attributeFilter: ['data-theme']
         });
+
+        // 监听视图切换，更新底部导航栏激活态
+        this._viewChangedHandler = (e) => {
+            this._updateNavActive(e.detail?.view, e.detail?.appBundle);
+        };
+        window.addEventListener('od-view-changed', this._viewChangedHandler);
     }
 
     disconnectedCallback() {
@@ -173,6 +179,10 @@ class SideBar extends HTMLElement {
         if (this._themeObserver) {
             this._themeObserver.disconnect();
             this._themeObserver = null;
+        }
+        if (this._viewChangedHandler) {
+            window.removeEventListener('od-view-changed', this._viewChangedHandler);
+            this._viewChangedHandler = null;
         }
         if (this._appPopoverDismissHandler) {
             document.removeEventListener('click', this._appPopoverDismissHandler, true);
@@ -404,7 +414,7 @@ class SideBar extends HTMLElement {
             <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0">
                 <button
                     id="create-task-btn"
-                    class="sb-nav-btn sb-nav-btn-primary"
+                    class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.newTask')}"
                 >
                     <i class="fa-solid fa-house" style="font-size: var(--icon-md);"></i>
@@ -431,7 +441,7 @@ class SideBar extends HTMLElement {
             <div id="task-list-container" class="sb-task-container">
             </div>
 
-            <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center pt-2 pb-6">
+            <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-start items-center pt-0 pb-3">
             </div>
         </div>
 
@@ -456,10 +466,10 @@ class SideBar extends HTMLElement {
             </div>
             <div class="sb-collapsed-bottom flex flex-col items-center gap-3 pb-4">
                 <button id="sb-collapsed-settings" class="sb-collapsed-btn" title="${this._t('renderer.toolbar.settings')}">
-                    <i class="fa-solid fa-cog"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 </button>
                 <button id="sb-collapsed-personal" class="sb-collapsed-btn" title="${this._t('renderer.toolbar.personalCenter')}">
-                    <i class="fa-solid fa-user-circle"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </button>
             </div>
         </div>
@@ -471,10 +481,15 @@ class SideBar extends HTMLElement {
     }
 
     _getBottomToolbarButtons() {
+        const svg = (path) =>
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
         return [
             {
                 id: 'open-memory-btn',
-                icon: 'fa-hard-drive',
+                icon: '',
+                iconSvg: svg(
+                    '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>'
+                ),
                 label: this._t('renderer.toolbar.memory'),
                 action: () => {
                     window.globalControlAPI.openMemory();
@@ -482,7 +497,8 @@ class SideBar extends HTMLElement {
             },
             {
                 id: 'open-file-system-btn',
-                icon: 'fa-folder-open',
+                icon: '',
+                iconSvg: svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
                 label: this._t('renderer.toolbar.fileSystem'),
                 action: () => {
                     window.globalControlAPI.openApplication('filemgr');
@@ -490,7 +506,10 @@ class SideBar extends HTMLElement {
             },
             {
                 id: 'open-setting-editor-btn',
-                icon: 'fa-cog',
+                icon: '',
+                iconSvg: svg(
+                    '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+                ),
                 label: this._t('renderer.toolbar.settings'),
                 action: () => {
                     window.globalControlAPI.openSettingEditor();
@@ -498,7 +517,8 @@ class SideBar extends HTMLElement {
             },
             {
                 id: 'open-dev-tools-btn',
-                icon: 'fa-terminal',
+                icon: '',
+                iconSvg: svg('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
                 label: this._t('renderer.toolbar.devTools'),
                 action: () => {
                     window.settingAPI.openDevTools();
@@ -506,7 +526,8 @@ class SideBar extends HTMLElement {
             },
             {
                 id: 'open-personal-center-btn',
-                icon: 'fa-user-circle',
+                icon: '',
+                iconSvg: svg('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
                 label: this._t('renderer.toolbar.personalCenter'),
                 action: () => {
                     window.globalControlAPI.openPersonalCenter();
@@ -524,6 +545,21 @@ class SideBar extends HTMLElement {
         if (container) {
             container.appendChild(toolbar);
         }
+    }
+
+    /** 根据当前视图更新底部导航栏的激活态 */
+    _updateNavActive(view, appBundle) {
+        const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
+        if (!toolbar?.setActiveButton) return;
+
+        // 映射视图到导航按钮 ID
+        let activeId = null;
+        if (view === 'memory') activeId = 'open-memory-btn';
+        else if (appBundle === 'filemgr') activeId = 'open-file-system-btn';
+        else if (view === 'setting' || view === 'wizard') activeId = 'open-setting-editor-btn';
+        else if (view === 'personal-center') activeId = 'open-personal-center-btn';
+
+        toolbar.setActiveButton(activeId);
     }
 
     _bindCollapsedButtons() {

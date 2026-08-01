@@ -28,10 +28,8 @@ import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
+import goalCss from '../styles/goal.css?inline';
 import {
-    getTaskArtifactsGoalDarkCSS,
-    getTaskArtifactsGoalCSS,
-    getTaskArtifactsGoalSuggestionDarkCSS,
     TaskArtifactsGoalController,
     type GoalEvalProgressLike,
     type GoalRenderSummaryLike
@@ -102,12 +100,12 @@ import { escapeHtml } from '../../common/utils/escape.js';
 function statusIcon(status: TodoStatus): string {
     switch (status) {
         case 'completed':
-            return '<i class="fas fa-check-circle" style="color:#10b981;font-size: var(--fs-base);"></i>';
+            return '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="6" fill="currentColor"/><path d="M3.4 6.3l1.8 1.8L8.8 4.5" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         case 'in_progress':
-            return '<i class="fas fa-circle-notch fa-spin" style="color:#3b82f6;font-size: var(--fs-base);"></i>';
+            return '<svg class="todo-dot-spin" width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.8" stroke="currentColor" stroke-width="1.6" stroke-dasharray="15 8" stroke-linecap="round"/></svg>';
         case 'pending':
         default:
-            return '<i class="far fa-circle" style="color:#d1d5db;font-size: var(--fs-base);"></i>';
+            return '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5.2" stroke="currentColor" stroke-width="1.4"/></svg>';
     }
 }
 
@@ -725,17 +723,19 @@ class TaskArtifacts extends HTMLElement {
         const tabBar = root.querySelector<HTMLElement>('.tab-bar');
         if (!tabBar) return;
         const tabs = this._getTabs();
-        tabBar.innerHTML = tabs
-            .map((tab) => {
-                const isActive = tab.id === this._activeTab;
-                const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
-                const label = this._getTabLabel(tab);
-                return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
+        tabBar.innerHTML =
+            '<div class="tab-slider"></div>' +
+            tabs
+                .map((tab) => {
+                    const isActive = tab.id === this._activeTab;
+                    const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
+                    const label = this._getTabLabel(tab);
+                    return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
                 <i class="fas ${tab.icon} text-xs${iconExtra}"></i>
                 <span>${escapeHtml(label)}</span>
             </button>`;
-            })
-            .join('');
+                })
+                .join('');
         tabBar.querySelectorAll<HTMLButtonElement>('.tab-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const next = btn.dataset.tab as TabSpec['id'] | undefined;
@@ -795,6 +795,7 @@ class TaskArtifacts extends HTMLElement {
         root.querySelectorAll<HTMLElement>('.tab-content').forEach((panel) => {
             panel.style.display = panel.dataset.tab === tabId ? '' : 'none';
         });
+        this._updateSlider();
         if (tabId === 'workspace') {
             this._mountFileExplorer();
         } else if (tabId === 'browser') {
@@ -802,6 +803,16 @@ class TaskArtifacts extends HTMLElement {
         } else if (tabId === 'changes') {
             this.refreshChanges();
         }
+    }
+
+    private _updateSlider(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const slider = root.querySelector<HTMLElement>('.tab-slider');
+        const activeBtn = root.querySelector<HTMLElement>('.tab-btn.tab-active');
+        if (!slider || !activeBtn) return;
+        slider.style.transform = `translateX(${activeBtn.offsetLeft}px)`;
+        slider.style.width = `${activeBtn.offsetWidth}px`;
     }
 
     private _mountFileExplorer(): void {
@@ -1183,7 +1194,7 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.innerHTML = `<i class="fas fa-clock" style="font-size: var(--fs-2xs);margin-right:2px;"></i> ${formatCompactDuration(now - start)}`;
+            node.innerHTML = `${escapeHtml(formatCompactDuration(now - start))} · ${escapeHtml(t('renderer.taskartifacts.todo.inProgress'))}`;
         });
     }
 
@@ -1191,35 +1202,34 @@ class TaskArtifacts extends HTMLElement {
 
     private _renderTodoItem(todo: TaskTodoLike | GlobalTodoLike, _opts: { showPriority?: boolean } = {}): string {
         const isCompleted = todo.status === 'completed';
+        const isInProgress = todo.status === 'in_progress';
+        const isPending = todo.status === 'pending';
         const title = todo.title || todo.content || '';
 
         const now = Date.now();
         const durationMs = computeDurationMs(todo, now);
         let durationHtml = '';
-        if (durationMs !== null) {
-            if (todo.status === 'in_progress') {
-                const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
-                durationHtml = `<span class="todo-duration todo-duration-running"
-                    data-running="1" data-start="${escapeHtml(startIso)}"
-                    title="已执行 ${escapeHtml(formatCompactDuration(durationMs))}">
-                    <i class="fas fa-clock" style="font-size: var(--fs-2xs);margin-right:2px;"></i>
-                    ${escapeHtml(formatCompactDuration(durationMs))}
-                </span>`;
-            } else if (todo.status === 'completed') {
-                durationHtml = `<span class="todo-duration todo-duration-done"
-                    title="用时 ${escapeHtml(formatCompactDuration(durationMs))}">
-                    <i class="fas fa-check" style="font-size: var(--fs-2xs);margin-right:2px;"></i>
-                    ${escapeHtml(formatCompactDuration(durationMs))}
-                </span>`;
-            }
+        if (isInProgress) {
+            const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
+            const durText = durationMs !== null ? formatCompactDuration(durationMs) : '';
+            durationHtml = `<span class="todo-duration todo-duration-running todo-time"
+                data-running="1" data-start="${escapeHtml(startIso)}"
+                title="${escapeHtml(t('renderer.taskartifacts.todo.elapsed', { duration: durText }))}">${escapeHtml(durText)} · ${escapeHtml(t('renderer.taskartifacts.todo.inProgress'))}</span>`;
+        } else if (isCompleted && durationMs !== null) {
+            const durText = formatCompactDuration(durationMs);
+            durationHtml = `<span class="todo-duration todo-duration-done todo-time"
+                title="${escapeHtml(t('renderer.taskartifacts.todo.took', { duration: durText }))}">${escapeHtml(durText)}</span>`;
+        } else if (isPending) {
+            durationHtml = `<span class="todo-duration todo-duration-pending todo-time">${escapeHtml(t('renderer.taskartifacts.todo.notStarted'))}</span>`;
         }
 
-        const statusCls = todo.status === 'in_progress' ? 'todo-in-progress' : isCompleted ? 'todo-completed' : '';
+        const statusCls = isInProgress ? 'todo-in-progress' : isCompleted ? 'todo-completed' : 'todo-pending';
+        const bodyClass = isInProgress ? 'todo-running-block' : 'todo-body';
 
         return `
         <div class="todo-item ${statusCls}">
             <span class="todo-status-icon">${statusIcon(todo.status)}</span>
-            <div class="todo-body">
+            <div class="${bodyClass}">
                 <span class="todo-title">${escapeHtml(title)}</span>
                 ${durationHtml ? `<div class="todo-meta-row">${durationHtml}</div>` : ''}
             </div>
@@ -1247,14 +1257,37 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _renderTaskTodoListHtml(): string {
-        return this._taskTodos.length > 0
-            ? `<section class="task-progress-section task-todo-section">
-                <div class="task-progress-heading">${escapeHtml(t('renderer.taskartifacts.todo.title'))}</div>
-                <div class="task-plan-list">
-                    ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
+        if (this._taskTodos.length === 0) return '';
+
+        const total = this._taskTodos.length;
+        const completed = this._taskTodos.filter((td) => td.status === 'completed').length;
+        const inProgress = this._taskTodos.filter((td) => td.status === 'in_progress').length;
+        const pending = this._taskTodos.filter((td) => td.status === 'pending').length;
+        const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        const itemsHtml = this._taskTodos
+            .map((td) => this._renderTodoItem(td))
+            .join('<div class="todo-connector"></div>');
+
+        return `<section class="task-progress-section task-todo-section">
+            <div class="progress-summary">
+                <div class="progress-summary-label-row">
+                    <span class="progress-summary-label">${escapeHtml(t('renderer.taskartifacts.todo.title'))}</span>
+                    <span class="progress-summary-caption">${escapeHtml(t('renderer.taskartifacts.todo.totalItems', { count: total }))}</span>
                 </div>
-            </section>`
-            : '';
+                <div class="progress-summary-num-row">
+                    <span class="progress-summary-big">${completed}</span>
+                    <span class="progress-summary-sub">/${total} ${escapeHtml(t('renderer.taskartifacts.todo.completed'))}</span>
+                </div>
+                <div class="progress-summary-bar"><i style="width:${percent}%"></i></div>
+                <div class="progress-summary-meta">${escapeHtml(t('renderer.taskartifacts.todo.summary', { completed, inProgress, pending }))}</div>
+            </div>
+            <div class="tl-card">
+                <div class="task-plan-list">
+                    ${itemsHtml}
+                </div>
+            </div>
+        </section>`;
     }
 
     private _renderTaskTodosOnly(): void {
@@ -1348,19 +1381,56 @@ class TaskArtifacts extends HTMLElement {
                 flex-direction: column;
                 height: 100%;
                 width: 100%;
-                background: #fafafa;
+                background: #fff;
+                --brand-red: #DE4433;
+                --brand-red-soft: #FBEDEA;
+                --brand-red-gradient: linear-gradient(90deg, #E6512F, #D53D24);
+                --tl-card-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.06);
+                --tl-line: #ECECE8;
+                --tl-conn: #ECECE8;
             }
 
             :host([data-theme="dark"]) {
                 background: #1e1e1e !important;
                 color: #cccccc !important;
+                --brand-red: #FF6B5A;
+                --brand-red-soft: rgba(222, 68, 51, 0.12);
+                --brand-red-gradient: linear-gradient(90deg, #FF6B5A, #E85A4A);
+                --tl-card-shadow: 0 1px 2px rgba(0,0,0,.2), 0 12px 32px rgba(0,0,0,.3);
+                --tl-line: rgba(255,255,255,0.1);
+                --tl-conn: rgba(255,255,255,0.1);
+            }
+
+            .tab-header {
+                display: flex;
+                align-items: center;
+                flex-shrink: 0;
+                margin: 14px 16px 12px;
+                padding: 4px;
+                background: #F5F4F1;
+                border-radius: 999px;
             }
 
             .tab-bar {
                 display: flex;
-                padding: 0 4px;
-                min-height: 40px;
-                align-items: flex-end;
+                gap: 2px;
+                align-items: stretch;
+                position: relative;
+            }
+
+            .tab-slider {
+                position: absolute;
+                top: 0;
+                left: 0;
+                height: 100%;
+                width: 0;
+                background: #fff;
+                border-radius: 999px;
+                box-shadow: 0 1px 3px rgba(0,0,0,.08);
+                transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                            width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                z-index: 0;
+                pointer-events: none;
             }
 
             .tab-bar-container {
@@ -1382,22 +1452,13 @@ class TaskArtifacts extends HTMLElement {
                 display: none; /* Chrome, Safari, Opera */
             }
 
-            .tab-header {
-                display: flex;
-                align-items: stretch;
-                flex-shrink: 0;
-                border-bottom: 1px solid #e5e7eb;
-                background: white;
-            }
-
             .tab-scroll-btn {
                 display: none;
                 align-items: center;
                 justify-content: center;
                 width: 24px;
                 height: 100%;
-                min-height: 40px;
-                background: white;
+                background: transparent;
                 border: none;
                 cursor: pointer;
                 color: #6b7280;
@@ -1406,38 +1467,34 @@ class TaskArtifacts extends HTMLElement {
             }
             .tab-scroll-btn:hover {
                 color: #374151;
-                background: #f3f4f6;
-            }
-            .tab-scroll-btn-left {
-                border-right: 1px solid #e5e7eb;
-            }
-            .tab-scroll-btn-right {
-                border-left: 1px solid #e5e7eb;
             }
 
             .tab-btn {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 gap: 4px;
-                padding: 10px 12px;
+                padding: 0 14px;
+                height: 28px;
+                line-height: 1;
                 font-size: var(--fs-md);
-                color: #6b7280;
+                color: #6F6F74;
                 background: transparent;
                 border: none;
-                border-bottom: 2px solid transparent;
+                border-radius: 999px;
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: color 0.2s;
                 white-space: nowrap;
-                flex-shrink: 0; /* tab 按钮不收缩 */
+                flex-shrink: 0;
+                position: relative;
+                z-index: 1;
             }
             .tab-btn:hover {
                 color: #374151;
-                background: #f3f4f6;
             }
             .tab-btn.tab-active {
-                color: #2563eb;
-                border-bottom-color: #2563eb;
-                font-weight: 500;
+                color: var(--brand-red);
+                font-weight: 600;
             }
 
             @keyframes browser-pulse {
@@ -1501,26 +1558,79 @@ class TaskArtifacts extends HTMLElement {
                 color: #6b7280;
             }
 
-            /* Task progress panel — flat sections (no card wrapping) */
+            /* Task progress panel */
             .task-progress-section {
-                margin: 0 12px;
-                padding: 12px 0;
-                border-top: 1px solid #e5e7eb;
+                padding: 0 16px;
             }
 
             .task-progress-section:first-child,
             .goal-section:first-child,
             .goal-creation-section:first-child,
             .goal-suggestion-section:first-child {
-                border-top: 0;
+                padding-top: 0;
+                margin-bottom: 10px;
             }
 
             .task-progress-heading {
-                margin: 0 4px 6px;
-                font-size: var(--fs-md);
-                font-weight: 600;
+                margin: 0 0 8px;
+                font-size: var(--fs-sm);
+                font-weight: 500;
                 line-height: 1.4;
-                color: #374151;
+                color: #A5A5AA;
+            }
+
+            /* Progress summary */
+            .progress-summary {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                padding: 8px 4px 12px;
+            }
+            .progress-summary-label-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .progress-summary-label {
+                font-size: var(--fs-sm);
+                font-weight: 500;
+                color: #A5A5AA;
+            }
+            .progress-summary-caption {
+                font-size: var(--fs-sm);
+                color: #A5A5AA;
+            }
+            .progress-summary-num-row {
+                display: flex;
+                align-items: baseline;
+                gap: 6px;
+            }
+            .progress-summary-big {
+                font-size: 26px;
+                font-weight: 600;
+                color: #26262B;
+                line-height: 1;
+            }
+            .progress-summary-sub {
+                font-size: var(--fs-md);
+                color: #A5A5AA;
+            }
+            .progress-summary-bar {
+                height: 6px;
+                border-radius: 3px;
+                background: #F1F1EE;
+                overflow: hidden;
+            }
+            .progress-summary-bar i {
+                display: block;
+                height: 100%;
+                background: var(--brand-red-gradient);
+                border-radius: 3px;
+                transition: width 0.4s ease;
+            }
+            .progress-summary-meta {
+                font-size: var(--fs-sm);
+                color: #A5A5AA;
             }
 
             .task-plan-list {
@@ -1529,45 +1639,95 @@ class TaskArtifacts extends HTMLElement {
                 padding: 0;
             }
 
-            .todo-separator {
-                height: 1px;
-                background: #f1f5f9;
-                margin: 0 4px;
+            /* Timeline card */
+            .tl-card {
+                background: #fff;
+                border: 1px solid #E7E7E3;
+                border-radius: 14px;
+                box-shadow: var(--tl-card-shadow);
+                padding: 14px;
+            }
+
+            .todo-connector {
+                width: 2px;
+                height: 9px;
+                background: var(--tl-conn);
+                border-radius: 1px;
+                margin: 3px 0 3px 5px;
             }
 
             .todo-item {
                 display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 12px 4px;
+                gap: 10px;
+                align-items: flex-start;
+                padding: 0;
             }
 
             .todo-status-icon {
                 flex-shrink: 0;
-                width: 20px;
-                height: 20px;
+                width: 12px;
+                height: 12px;
+                margin-top: 2px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
+            }
+            .todo-completed .todo-status-icon { color: #43A26A; }
+            .todo-in-progress .todo-status-icon { color: var(--brand-red); }
+            .todo-pending .todo-status-icon { color: #D5D5CF; }
+
+            @keyframes tl-dot-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+            .todo-dot-spin {
+                animation: tl-dot-spin 1.5s linear infinite;
+                transform-origin: center;
             }
 
             .todo-body {
                 flex: 1;
                 min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
             }
             .todo-title {
-                font-size: var(--fs-base);
-                font-weight: 500;
-                line-height: 1.5;
-                color: #1f2937;
+                font-size: var(--fs-md);
+                font-weight: 400;
+                line-height: 17px;
+                color: #3A3A3F;
                 word-break: break-word;
             }
             .todo-completed .todo-title {
                 text-decoration: line-through;
-                color: #9ca3af;
+                color: #A5A5AA;
                 font-weight: 400;
             }
-            ${getTaskArtifactsGoalCSS()}
+            .todo-in-progress .todo-title {
+                font-weight: 500;
+                color: #26262B;
+            }
+            .todo-pending .todo-title {
+                color: #A5A5AA;
+            }
+
+            /* Running block for in-progress items */
+            .todo-running-block {
+                flex: 1;
+                min-width: 0;
+                background: var(--brand-red-soft);
+                border-radius: 10px;
+                padding: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+            }
+            .todo-running-block .todo-title {
+                font-weight: 500;
+                color: #26262B;
+            }
+            ${goalCss}
 
             .todo-meta-row {
                 display: flex;
@@ -1585,10 +1745,21 @@ class TaskArtifacts extends HTMLElement {
                 font-variant-numeric: tabular-nums;
             }
             .todo-duration-running {
-                color: #3b82f6;
+                color: var(--brand-red);
             }
             .todo-duration-done {
-                color: #10b981;
+                color: #43A26A;
+            }
+            .todo-duration-pending {
+                color: #C4C4C9;
+            }
+            .todo-time {
+                font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+                font-size: var(--fs-xs);
+                line-height: 1;
+            }
+            .todo-pending .todo-time {
+                font-family: inherit;
             }
 
             /* Session memory styles */
@@ -1848,33 +2019,26 @@ class TaskArtifacts extends HTMLElement {
 
             /* ── 深色模式覆盖 ── */
             :host([data-theme="dark"]) .tab-header {
-                background: #252526 !important;
-                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+                background: rgba(255, 255, 255, 0.08) !important;
             }
             :host([data-theme="dark"]) .tab-scroll-btn {
-                background: #252526 !important;
                 color: #ababab !important;
             }
             :host([data-theme="dark"]) .tab-scroll-btn:hover {
-                background: #333333 !important;
                 color: #cccccc !important;
-            }
-            :host([data-theme="dark"]) .tab-scroll-btn-left {
-                border-right-color: rgba(255, 255, 255, 0.12) !important;
-            }
-            :host([data-theme="dark"]) .tab-scroll-btn-right {
-                border-left-color: rgba(255, 255, 255, 0.12) !important;
             }
             :host([data-theme="dark"]) .tab-btn {
                 color: #ababab !important;
             }
             :host([data-theme="dark"]) .tab-btn:hover {
                 color: #cccccc !important;
-                background: #333333 !important;
+            }
+            :host([data-theme="dark"]) .tab-slider {
+                background: #2a2a2a !important;
+                box-shadow: 0 1px 3px rgba(0,0,0,.3) !important;
             }
             :host([data-theme="dark"]) .tab-btn.tab-active {
-                color: #93c5fd !important;
-                border-bottom-color: #93c5fd !important;
+                color: var(--brand-red) !important;
             }
             :host([data-theme="dark"]) .placeholder-content {
                 color: #787878 !important;
@@ -1892,19 +2056,46 @@ class TaskArtifacts extends HTMLElement {
             :host([data-theme="dark"]) .todo-completed .todo-title {
                 color: #787878 !important;
             }
-            :host([data-theme="dark"]) .todo-separator {
+            :host([data-theme="dark"]) .todo-in-progress .todo-title {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .todo-pending .todo-title {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .todo-connector {
                 background: rgba(255, 255, 255, 0.1) !important;
             }
-            :host([data-theme="dark"]) .task-progress-section,
-            :host([data-theme="dark"]) .goal-section,
-            :host([data-theme="dark"]) .goal-creation-section,
-            :host([data-theme="dark"]) .goal-suggestion-section {
-                border-top-color: rgba(255, 255, 255, 0.12) !important;
-            }
             :host([data-theme="dark"]) .task-progress-heading {
-                color: #cccccc !important;
+                color: #787878 !important;
             }
-            ${getTaskArtifactsGoalSuggestionDarkCSS()}
+            :host([data-theme="dark"]) .tl-card {
+                background: #252526 !important;
+                border-color: rgba(255, 255, 255, 0.08) !important;
+            }
+            :host([data-theme="dark"]) .progress-summary-big {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .progress-summary-label,
+            :host([data-theme="dark"]) .progress-summary-caption,
+            :host([data-theme="dark"]) .progress-summary-sub,
+            :host([data-theme="dark"]) .progress-summary-meta {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .progress-summary-bar {
+                background: rgba(255, 255, 255, 0.08) !important;
+            }
+            :host([data-theme="dark"]) .todo-running-block {
+                background: rgba(222, 68, 51, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .todo-running-block .todo-title {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .todo-pending .todo-status-icon {
+                color: rgba(255, 255, 255, 0.2) !important;
+            }
+            :host([data-theme="dark"]) .todo-duration-pending {
+                color: rgba(255, 255, 255, 0.2) !important;
+            }
             :host([data-theme="dark"]) .session-memory-content {
                 color: #cccccc !important;
             }
@@ -2014,7 +2205,6 @@ class TaskArtifacts extends HTMLElement {
             :host([data-theme="dark"]) .changes-file-list::-webkit-scrollbar-thumb:hover {
                 background: rgba(255, 255, 255, 0.28) !important;
             }
-            ${getTaskArtifactsGoalDarkCSS()}
         </style>
 
         <div class="tab-header">
@@ -2025,6 +2215,7 @@ class TaskArtifacts extends HTMLElement {
             </button>
             <div class="tab-bar-container">
                 <div class="tab-bar tab-bar-scrollable">
+                    <div class="tab-slider"></div>
                     ${tabsHTML}
                 </div>
             </div>
@@ -2076,6 +2267,9 @@ class TaskArtifacts extends HTMLElement {
 
         // 监听滚动和大小变化来更新按钮显示状态
         this._initTabScrollObserver();
+
+        // 滑块初始定位
+        requestAnimationFrame(() => this._updateSlider());
 
         this._renderTaskPlanPanel();
 

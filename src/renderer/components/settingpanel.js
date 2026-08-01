@@ -84,18 +84,49 @@ class SettingPanel extends HTMLElement {
             this._switchTab(this._activeTab);
             return;
         }
+        const svg = (p) =>
+            `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
         const tabs = [
-            { id: 'models', icon: 'fa-brain', label: '模型设置' },
-            { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
-            { id: 'search', icon: 'fa-magnifying-glass', label: '搜索设置' },
-            { id: 'general', icon: 'fa-sliders', label: '通用设置' }
+            {
+                id: 'models',
+                label: '模型设置',
+                iconSvg: svg(
+                    '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6"/>'
+                )
+            },
+            {
+                id: 'tasks',
+                label: '任务设置',
+                iconSvg: svg(
+                    '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'
+                )
+            },
+            {
+                id: 'search',
+                label: '搜索设置',
+                iconSvg: svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')
+            },
+            {
+                id: 'general',
+                label: '通用设置',
+                iconSvg: svg(
+                    '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
+                )
+            },
+            {
+                id: 'wizard',
+                label: '设置向导',
+                iconSvg: svg(
+                    '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>'
+                )
+            }
         ];
 
         const tabButtons = tabs
             .map((t) => {
                 const active = t.id === this._activeTab;
-                return `<button class="seg-item ${active ? 'active' : ''}" data-tab="${t.id}">
-                <i class="fas ${t.icon} seg-icon"></i> ${t.label}
+                return `<button class="sp-nav-item ${active ? 'active' : ''}" data-tab="${t.id}">
+                ${t.iconSvg} ${t.label}
             </button>`;
             })
             .join('');
@@ -104,110 +135,127 @@ class SettingPanel extends HTMLElement {
         <style>
             /* ═══ CSS Variables ═══ */
             :root {
-                --sp-color-primary: #6366f1;
-                --sp-color-primary-hover: #4f46e5;
-                --sp-color-primary-light: #eef2ff;
-                --sp-color-text: #111827;
-                --sp-color-text-secondary: #6b7280;
-                --sp-color-text-tertiary: #9ca3af;
-                --sp-color-border: #e5e7eb;
-                --sp-color-border-light: #f3f4f6;
-                --sp-color-bg: #ffffff;
-                --sp-color-bg-page: #f9fafb;
-                --sp-color-success: #10b981;
+                --sp-color-primary: #DF4436;
+                --sp-color-primary-hover: #C83A2D;
+                --sp-color-primary-light: #FDEEEC;
+                --sp-color-primary-bg: #FEF9F8;
+                --sp-color-text: #1C1917;
+                --sp-color-text-secondary: #4A4642;
+                --sp-color-text-tertiary: #8A8580;
+                --sp-color-text-quaternary: #B4AFA9;
+                --sp-color-border: #E7E5E2;
+                --sp-color-border-light: #EFEEEA;
+                --sp-color-bg: #FFFFFF;
+                --sp-color-bg-page: #F5F4F2;
+                --sp-color-bg-sidebar: #FAF9F7;
+                --sp-color-bg-hover: #F0EFEC;
+                --sp-color-success: #1F9D66;
+                --sp-color-success-light: #E7F5EE;
                 --sp-color-danger: #ef4444;
-                --sp-color-warning: #f59e0b;
-                --sp-radius-sm: 6px;
+                --sp-color-warning: #B87503;
+                --sp-color-warning-light: #FDF3E3;
+                --sp-color-blue: #4267B2;
+                --sp-color-blue-light: #EBF1FB;
+                --sp-radius-sm: 8px;
                 --sp-radius-md: 8px;
                 --sp-radius-lg: 12px;
-                --sp-radius-xl: 16px;
-                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-                --sp-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
-                --sp-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                --sp-radius-xl: 14px;
+                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+                --sp-shadow-md: 0 1px 2px rgba(28,25,23,.04), 0 8px 24px rgba(28,25,23,.05);
+                --sp-font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
             }
 
             /* Dark theme overrides — use app-level variables */
+            /* Dark theme overrides (design spec dark mode) */
             html[data-theme='dark'] {
-                --sp-color-primary: var(--od-accent, #818cf8);
-                --sp-color-primary-hover: color-mix(in srgb, var(--od-accent, #818cf8) 80%, white);
-                --sp-color-primary-light: color-mix(in srgb, var(--od-accent, #818cf8) 15%, transparent);
-                --sp-color-text: var(--od-text, #e5e7eb);
-                --sp-color-text-secondary: var(--od-text-muted, #9ca3af);
-                --sp-color-text-tertiary: var(--od-text-disabled, #6b7280);
-                --sp-color-border: var(--od-border-strong, #374151);
-                --sp-color-border-light: var(--od-border, #1f2937);
-                --sp-color-bg: var(--od-bg-elevated, #1f2937);
-                --sp-color-bg-page: var(--od-bg, #111827);
-                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-                --sp-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4), 0 2px 4px -2px rgba(0,0,0,0.3);
+                --sp-color-primary: #E8563F;
+                --sp-color-primary-hover: #D93826;
+                --sp-color-primary-light: rgba(232,86,63,.16);
+                --sp-color-primary-bg: rgba(232,86,63,.09);
+                --sp-color-text: #EFEDEA;
+                --sp-color-text-secondary: #D5D1CB;
+                --sp-color-text-tertiary: #9B968F;
+                --sp-color-text-quaternary: #6F6A63;
+                --sp-color-border: #3B3835;
+                --sp-color-border-light: #33302D;
+                --sp-color-bg: #2A2826;
+                --sp-color-bg-page: var(--od-bg);
+                --sp-color-bg-sidebar: var(--od-bg-muted);
+                --sp-color-bg-hover: #33302D;
+                --sp-color-success: #3DBF82;
+                --sp-color-success-light: rgba(61,191,130,.15);
+                --sp-color-warning: #E2A23B;
+                --sp-color-warning-light: rgba(226,162,59,.15);
+                --sp-color-blue: #7AA2E8;
+                --sp-color-blue-light: rgba(122,162,232,.16);
+                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.25);
+                --sp-shadow-md: 0 1px 2px rgba(0,0,0,.25), 0 8px 24px rgba(0,0,0,.3);
             }
 
-            /* ── Segmented Control (Tabs) — keep as is ── */
-            .seg-control {
-                display: inline-flex; min-width: 0;
-                background: var(--sp-seg-control-bg, rgba(0, 0, 0, 0.04));
-                border-radius: 10px; padding: 3px; gap: 2px;
+            /* ── Left sidebar navigation (Tabs) ── */
+            .sp-nav {
+                width: 164px; flex: none;
+                display: flex; flex-direction: column; gap: 2px;
             }
-            .seg-item {
-                padding: 7px 13px; border-radius: 8px; border: none;
-                background: transparent; color: var(--sp-seg-item-color, rgba(0, 0, 0, 0.44));
-                font-size: 12px; font-weight: 500; cursor: pointer;
-                transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+            .sp-nav-item {
+                width: 100%; justify-content: flex-start;
+                background: none; border: 0; border-radius: 8px;
+                padding: 8px 10px; font-family: inherit; font-size: 12.5px;
+                color: var(--sp-color-text-secondary); cursor: pointer;
+                display: inline-flex; align-items: center; gap: 6px;
+                transition: background .15s ease, color .15s ease;
                 white-space: nowrap;
-                display: inline-flex; align-items: center; gap: 5px; line-height: 1;
             }
-            .seg-item:hover {
-                color: var(--sp-seg-item-hover-color, rgba(0, 0, 0, 0.64));
-                background: var(--sp-seg-item-hover-bg, transparent);
+            .sp-nav-item svg {
+                flex-shrink: 0;
             }
-            .seg-item:focus-visible {
-                outline: 2px solid var(--od-accent);
+            .sp-nav-item:hover {
+                background: var(--sp-color-bg-hover, #F0EFEC);
+            }
+            .sp-nav-item:focus-visible {
+                outline: 2px solid var(--sp-color-primary);
                 outline-offset: 2px;
             }
-            .seg-item.active {
-                background: var(--sp-seg-active-bg, #fff);
-                color: var(--sp-seg-active-color, #1d1d1f);
-                box-shadow: var(--sp-seg-active-shadow, 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03));
+            .sp-nav-item.active {
+                background: var(--sp-color-primary-light, #FDEEEC);
+                color: var(--sp-color-primary, #DF4436);
             }
-            .seg-item .seg-icon { font-size: 13px; }
-            html[data-theme='dark'] setting-panel {
-                --sp-seg-control-bg: rgba(255, 255, 255, 0.08);
-                --sp-seg-item-color: var(--od-text-muted);
-                --sp-seg-item-hover-color: var(--od-text);
-                --sp-seg-item-hover-bg: rgba(255, 255, 255, 0.06);
-                --sp-seg-active-bg: rgba(255, 255, 255, 0.14);
-                --sp-seg-active-color: var(--od-text);
-                --sp-seg-active-shadow: 0 1px 4px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+            html[data-theme='dark'] .sp-nav-item:hover {
+                background: #33302D;
+            }
+            html[data-theme='dark'] .sp-nav-item.active {
+                background: rgba(232, 86, 63, .16);
+                color: #E8563F;
             }
 
             /* ── Section ── */
             .sp-section {
-                margin-bottom: 24px;
+                margin-bottom: 20px;
             }
             .sp-section-card {
                 background: var(--sp-color-bg);
                 border: 1px solid var(--sp-color-border);
                 border-radius: var(--sp-radius-lg);
-                padding: 20px;
+                padding: 14px;
             }
             .sp-section-title {
                 font-size: 14px;
                 font-weight: 600;
                 color: var(--sp-color-text);
-                margin-bottom: 12px;
+                margin-bottom: 10px;
                 display: flex;
                 align-items: center;
                 gap: 8px;
             }
             .sp-section-subtitle {
-                font-size: 12px;
-                color: var(--sp-color-text-secondary);
-                margin-left: 4px;
+                font-size: 11.5px;
+                color: var(--sp-color-text-tertiary);
+                margin-left: 6px;
                 font-weight: 400;
             }
             .sp-section-desc {
-                font-size: 13px;
-                color: var(--sp-color-text-secondary);
+                font-size: 11.5px;
+                color: var(--sp-color-text-tertiary);
                 margin-bottom: 20px;
             }
             .sp-section-divider {
@@ -236,20 +284,20 @@ class SettingPanel extends HTMLElement {
             }
             .sp-form-input {
                 width: 100%;
-                padding: 8px 12px;
-                font-size: 13px;
+                padding: 6px 10px;
+                font-size: 12px;
                 border: 1px solid var(--sp-color-border);
-                border-radius: var(--sp-radius-lg);
+                border-radius: var(--sp-radius-sm);
                 background: var(--sp-color-bg);
                 color: var(--sp-color-text);
                 transition: border-color 0.15s, box-shadow 0.15s;
                 outline: none;
                 font-family: var(--sp-font-sans);
             }
-            .sp-form-input::placeholder { color: var(--sp-color-text-tertiary); }
+            .sp-form-input::placeholder { color: var(--sp-color-text-quaternary); }
             .sp-form-input:focus {
                 border-color: var(--sp-color-primary);
-                box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+                outline: none;
             }
             textarea.sp-form-input {
                 resize: vertical;
@@ -257,10 +305,10 @@ class SettingPanel extends HTMLElement {
             }
             select.sp-form-input {
                 appearance: none;
-                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238A8580' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
                 background-repeat: no-repeat;
-                background-position: right 12px center;
-                padding-right: 36px;
+                background-position: right 9px center;
+                padding-right: 26px;
                 cursor: pointer;
             }
 
@@ -268,28 +316,28 @@ class SettingPanel extends HTMLElement {
             .sp-toggle-row {
                 display: flex;
                 align-items: center;
-                gap: 12px;
-                padding: 10px 0;
+                gap: 14px;
+                padding: 13px 0;
                 border-bottom: 1px solid var(--sp-color-border-light);
             }
             .sp-toggle-row:last-child { border-bottom: none; }
             .sp-toggle-info { flex: 1; min-width: 0; }
             .sp-toggle-label {
                 font-size: 13px;
-                font-weight: 600;
+                font-weight: 500;
                 color: var(--sp-color-text);
             }
             .sp-toggle-desc {
-                font-size: 12px;
-                color: var(--sp-color-text-secondary);
-                margin-top: 2px;
+                font-size: 11.5px;
+                color: var(--sp-color-text-tertiary);
+                margin-top: 3px;
             }
             .sp-toggle-switch {
                 position: relative;
-                width: 40px;
-                height: 22px;
+                width: 36px;
+                height: 20px;
                 flex-shrink: 0;
-                margin-left: 16px;
+                margin-left: 14px;
             }
             .sp-toggle-switch input {
                 opacity: 0;
@@ -299,8 +347,8 @@ class SettingPanel extends HTMLElement {
             .sp-toggle-track {
                 position: absolute;
                 inset: 0;
-                background: #d1d5db;
-                border-radius: 11px;
+                background: #D8D4CE;
+                border-radius: 999px;
                 cursor: pointer;
                 transition: background 0.2s;
             }
@@ -309,8 +357,8 @@ class SettingPanel extends HTMLElement {
                 position: absolute;
                 top: 2px;
                 left: 2px;
-                width: 18px;
-                height: 18px;
+                width: 16px;
+                height: 16px;
                 background: #fff;
                 border-radius: 50%;
                 transition: transform 0.2s;
@@ -320,9 +368,9 @@ class SettingPanel extends HTMLElement {
                 background: var(--sp-color-primary);
             }
             .sp-toggle-switch input:checked + .sp-toggle-track::after {
-                transform: translateX(18px);
+                transform: translateX(16px);
             }
-            html[data-theme='dark'] .sp-toggle-track { background: #4b5563; }
+            html[data-theme='dark'] .sp-toggle-track { background: #4A4642; }
 
             /* ── Buttons ── */
             .sp-btn {
@@ -330,10 +378,10 @@ class SettingPanel extends HTMLElement {
                 align-items: center;
                 justify-content: center;
                 gap: 4px;
-                padding: 8px 16px;
-                font-size: 13px;
+                padding: 6px 14px;
+                font-size: 12px;
                 font-weight: 600;
-                border-radius: var(--sp-radius-lg);
+                border-radius: var(--sp-radius-sm);
                 border: none;
                 cursor: pointer;
                 transition: all 0.15s;
@@ -370,14 +418,14 @@ class SettingPanel extends HTMLElement {
             }
             html[data-theme='dark'] .sp-btn-danger:hover { background: rgba(239,68,68,0.15); }
             .sp-btn-block { width: 100%; }
-            .sp-btn-sm { padding: 5px 12px; font-size: 12px; }
+            .sp-btn-sm { padding: 4px 10px; font-size: 11.5px; }
 
             /* ── Cards (Provider / Model / Search) ── */
             .sp-card {
                 background: var(--sp-color-bg);
                 border: 1px solid var(--sp-color-border);
                 border-radius: var(--sp-radius-lg);
-                padding: 14px;
+                padding: 11px 13px;
             }
             .sp-card-actions { display: flex; gap: 4px; }
             .sp-card-action-btn {
@@ -398,20 +446,19 @@ class SettingPanel extends HTMLElement {
             /* ── Add button (dashed border) ── */
             .sp-add-btn {
                 width: 100%;
-                padding: 10px;
-                font-size: 13px;
-                color: var(--sp-color-text-secondary);
+                padding: 12px;
+                font-size: 12.5px;
+                color: var(--sp-color-text-tertiary);
                 background: transparent;
-                border: 2px dashed var(--sp-color-border);
+                border: 1.5px dashed #D8D4CE;
                 border-radius: var(--sp-radius-lg);
                 cursor: pointer;
                 transition: all 0.15s;
                 font-family: var(--sp-font-sans);
             }
             .sp-add-btn:hover {
-                color: var(--sp-color-text);
-                border-color: var(--sp-color-text-tertiary);
-                background: rgba(0,0,0,0.02);
+                color: var(--sp-color-primary);
+                border-color: var(--sp-color-primary);
             }
             html[data-theme='dark'] .sp-add-btn:hover {
                 background: rgba(255,255,255,0.03);
@@ -422,9 +469,9 @@ class SettingPanel extends HTMLElement {
                 display: inline-flex;
                 align-items: center;
                 padding: 1px 7px;
-                font-size: 11px;
-                font-weight: 600;
-                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 500;
+                border-radius: 5px;
                 white-space: nowrap;
                 flex-shrink: 0;
             }
@@ -434,24 +481,24 @@ class SettingPanel extends HTMLElement {
                 border: 1px solid #c7d2fe;
             }
             .sp-tag-success {
-                background: #ecfdf5;
+                background: var(--sp-color-success-light);
                 color: var(--sp-color-success);
-                border: 1px solid #a7f3d0;
+                border: none;
             }
             .sp-tag-warning {
-                background: #fffbeb;
+                background: var(--sp-color-warning-light);
                 color: var(--sp-color-warning);
-                border: 1px solid #fde68a;
+                border: none;
             }
             .sp-tag-neutral {
-                background: var(--sp-color-border-light);
-                color: var(--sp-color-text-secondary);
-                border: 1px solid var(--sp-color-border);
+                background: #F1EFEC;
+                color: var(--sp-color-text-tertiary);
+                border: none;
             }
             .sp-tag-blue {
-                background: #eff6ff;
-                color: #3b82f6;
-                border: 1px solid #bfdbfe;
+                background: var(--sp-color-blue-light);
+                color: var(--sp-color-blue);
+                border: none;
             }
             .sp-tag-sky {
                 background: #f0f9ff;
@@ -507,7 +554,7 @@ class SettingPanel extends HTMLElement {
             .sp-telemetry-url:focus {
                 border-color: var(--sp-color-primary);
                 background: var(--sp-color-bg);
-                box-shadow: 0 0 0 2px var(--sp-color-primary-light, rgba(129,140,248,0.15));
+                outline: none;
             }
             .sp-telemetry-delete-btn:hover {
                 color: var(--sp-color-danger, #ef4444) !important;
@@ -522,7 +569,7 @@ class SettingPanel extends HTMLElement {
                 padding: 10px 14px;
                 border-radius: var(--sp-radius-md, 8px);
                 border: 1px solid var(--sp-color-border-light);
-                background: var(--sp-color-bg-page, #f9fafb);
+                background: var(--sp-color-bg-page, #F5F4F2);
                 transition: border-color 0.15s, box-shadow 0.15s;
             }
             .sp-telemetry-row:hover {
@@ -587,6 +634,7 @@ class SettingPanel extends HTMLElement {
             .sp-color-swatch.selected {
                 border-color: var(--sp-color-primary);
                 box-shadow: 0 0 0 2px var(--sp-color-bg), 0 0 0 4px var(--sp-color-primary);
+                transform: scale(1.05);
             }
 
             /* ── Slider ── */
@@ -600,6 +648,7 @@ class SettingPanel extends HTMLElement {
                 flex: 1;
                 accent-color: var(--sp-color-primary);
                 height: 4px;
+                cursor: pointer;
             }
             .sp-slider-value {
                 font-size: 14px;
@@ -684,35 +733,35 @@ class SettingPanel extends HTMLElement {
             /* ── Header ── */
             .sp-header {
                 position: sticky; top: 0; z-index: 10;
-                background: rgba(255,255,255,0.85);
+                background: color-mix(in srgb, var(--sp-color-bg-page) 88%, transparent);
                 backdrop-filter: blur(12px);
                 border-bottom: 1px solid var(--sp-color-border);
             }
             html[data-theme='dark'] .sp-header {
-                background: color-mix(in srgb, var(--od-bg, #111827) 85%, transparent);
-                border-bottom-color: var(--od-border-strong, #374151);
+                background: color-mix(in srgb, var(--od-bg) 85%, transparent);
+                border-bottom-color: #3B3835;
             }
             .sp-header-title {
-                font-size: 18px;
-                font-weight: 700;
+                font-size: 17px;
+                font-weight: 650;
                 color: var(--sp-color-text);
             }
 
             /* ── Footer ── */
             .sp-footer {
                 flex-shrink: 0;
-                padding: 12px 24px;
-                border-top: 1px solid var(--sp-color-border);
+                padding: 14px 22px 8px;
+                border-top: 1px solid var(--sp-color-border-light);
                 text-align: center;
                 background: var(--sp-color-bg);
             }
             .sp-footer-text {
-                font-size: 12px;
-                color: var(--sp-color-text-tertiary);
+                font-size: 11px;
+                color: var(--sp-color-text-quaternary);
             }
             .sp-footer-link {
-                font-size: 12px;
-                color: var(--od-accent, #3b82f6);
+                font-size: 11px;
+                color: var(--sp-color-primary, #DF4436);
                 cursor: pointer;
                 text-decoration: none;
                 margin-left: 16px;
@@ -720,12 +769,31 @@ class SettingPanel extends HTMLElement {
             .sp-footer-link:hover {
                 text-decoration: underline;
             }
+
+            /* ── Dark mode component overrides (design spec) ── */
+            html[data-theme='dark'] .sp-add-btn {
+                border-color: #4A4642;
+            }
+            html[data-theme='dark'] .sp-tag-neutral {
+                background: #2E2B28;
+            }
+            html[data-theme='dark'] .sp-form-input::placeholder {
+                color: #6F6A63;
+            }
+            html[data-theme='dark'] .sp-telemetry-row {
+                background: rgba(255,255,255,0.03);
+                border-color: var(--od-border, #33302D);
+            }
+            html[data-theme='dark'] .sp-telemetry-row:hover {
+                border-color: var(--od-border-strong, #3B3835);
+                background: rgba(255,255,255,0.05);
+            }
         </style>
         <div class="w-full h-full overflow-hidden flex flex-col" style="background:var(--sp-color-bg-page)">
             <!-- 固定在右上角的工具栏 -->
             <div id="setting-panel-toolbar" class="sp-fixed-toolbar"></div>
 
-            <!-- 顶部标题栏 + Tab -->
+            <!-- 顶部标题栏 -->
             <div class="sp-header">
                 <div class="px-6 py-4 flex items-center">
                     <h1 class="sp-header-title">设置</h1>
@@ -733,39 +801,43 @@ class SettingPanel extends HTMLElement {
                         <i class="fas fa-check-circle"></i> 已保存
                     </span>
                 </div>
-                <!-- Tab 栏：保持不变 -->
-                <div class="px-6 pb-3 flex items-center gap-3">
-                    <div class="seg-control">
+            </div>
+
+            <!-- 主体：左栏导航 + 内容区 -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+                <div class="flex-1 flex overflow-hidden">
+                    <!-- 左栏导航 -->
+                    <nav class="sp-nav" style="background:var(--sp-color-bg-sidebar); border-right:1px solid var(--sp-color-border); padding:16px 12px;">
                         ${tabButtons}
-                        <button id="quick-setup-btn" class="seg-item">
-                            <i class="fa-solid fa-magic seg-icon"></i> 设置向导
-                        </button>
+                    </nav>
+
+                    <!-- 可滚动内容区 -->
+                    <div class="sp-scroll-content flex-1 overflow-y-auto" style="padding:16px 22px 8px;">
+                        <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-5">
+                            ${this.renderProvidersSection()}
+                            ${this.renderModelsSection()}
+                            ${this.renderDefaultModelsSection()}
+                        </div>
+                        <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-5">
+                            ${this.renderTaskSection()}
+                        </div>
+                        <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-5">
+                            ${this.renderSearchSection()}
+                        </div>
+                        <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-5">
+                            ${this.renderGeneralSection()}
+                        </div>
+                        <div id="tab-wizard" class="${this._activeTab === 'wizard' ? '' : 'hidden'} space-y-5">
+                            ${this.renderWizardSection()}
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 可滚动内容区 -->
-            <div class="sp-scroll-content flex-1 overflow-y-auto px-6 py-6">
-                <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-8">
-                    ${this.renderProvidersSection()}
-                    ${this.renderModelsSection()}
-                    ${this.renderDefaultModelsSection()}
+                <!-- 底部版本信息栏 -->
+                <div class="sp-footer">
+                    <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'} · ${this.buildTime || ''}</span>
+                    <a class="sp-footer-link" id="privacy-link">隐私协议</a>
                 </div>
-                <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-8">
-                    ${this.renderTaskSection()}
-                </div>
-                <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-8">
-                    ${this.renderSearchSection()}
-                </div>
-                <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-8">
-                    ${this.renderGeneralSection()}
-                </div>
-            </div>
-
-            <!-- 底部版本信息栏 -->
-            <div class="sp-footer">
-                <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'} · ${this.buildTime || ''}</span>
-                <a class="sp-footer-link" id="privacy-link">隐私协议</a>
             </div>
         </div>
 
@@ -788,14 +860,31 @@ class SettingPanel extends HTMLElement {
 
     _switchTab(tab) {
         this._activeTab = tab;
-        this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
+        this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'search', 'general'];
+        const tabIds = ['models', 'tasks', 'search', 'general', 'wizard'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
+    }
+
+    renderWizardSection() {
+        return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">设置向导</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">重新运行初始化向导</div>
+                    <div class="sp-toggle-desc">重新配置工作空间、模型提供方与搜索渠道，适合首次迁移或重置配置时使用。</div>
+                </div>
+                <button class="sp-btn sp-btn-secondary" id="run-wizard-btn">运行向导</button>
+            </div>
+            </div>
+        </section>
+        `;
     }
 
     renderTaskSection() {
@@ -886,7 +975,7 @@ class SettingPanel extends HTMLElement {
                 const bgColor = isDefault ? 'bg-emerald-50/30' : '';
 
                 return `
-            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-light)' : ''}">
+            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-bg)' : ''}">
                 <div class="flex items-start justify-between">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2">
@@ -939,7 +1028,7 @@ class SettingPanel extends HTMLElement {
             .map((ch) => {
                 const isDefault = ch.id === defaultAcademic;
                 return `
-            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-light)' : ''}">
+            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-bg)' : ''}">
                 <div class="flex items-start justify-between">
                     <div>
                         <div class="flex items-center gap-2">
@@ -1182,7 +1271,7 @@ class SettingPanel extends HTMLElement {
                             ${scaleSteps
                                 .map(
                                     (step, i) => `
-                                <button class="scale-step-btn" style="width:12px;height:12px;border-radius:50%;border:2px solid ${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-border)'};background:${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-bg)'};cursor:pointer;transition:all 0.15s;padding:0;${i === activeStep ? 'box-shadow:0 0 0 3px rgba(99,102,241,0.15);' : ''}" data-step="${i}" data-value="${step}"></button>
+                                <button class="scale-step-btn" style="width:12px;height:12px;border-radius:50%;border:2px solid ${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-border)'};background:${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-bg)'};cursor:pointer;transition:all 0.15s;padding:0;${i === activeStep ? 'box-shadow:0 0 0 3px rgba(223,68,54,0.15);' : ''}" data-step="${i}" data-value="${step}"></button>
                             `
                                 )
                                 .join('')}
@@ -1862,7 +1951,7 @@ class SettingPanel extends HTMLElement {
 
     setUpEventListeners() {
         // Tab 切换
-        this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
+        this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const newTab = btn.dataset.tab;
                 if (newTab === this._activeTab) return;
@@ -1870,8 +1959,8 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 快捷操作
-        this.querySelector('#quick-setup-btn')?.addEventListener('click', () => {
+        // 设置向导：运行向导按钮
+        this.querySelector('#run-wizard-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openWizard();
         });
 

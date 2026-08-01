@@ -907,7 +907,7 @@ const MARKDOWN_PREVIEW_CSS = `
     .markdown-body pre code { padding: 0; background: none; border-radius: 0; font-size: inherit; }
     .markdown-body table {
         font-size: var(--fs-sm); margin: 0.5em 0; width: 100%;
-        border-collapse: collapse; border: 1px solid var(--od-md-table-border, #e2e8f0); border-radius: 6px;
+        border-collapse: collapse; border: 1px solid var(--od-md-table-border, #e2e8f0); border-radius: 12px;
     }
     .markdown-body th { background: var(--od-md-th-bg, #f8fafc); font-weight: 600; text-align: left; }
     .markdown-body th, .markdown-body td { padding: 0.4em 0.7em; border-bottom: 1px solid var(--od-md-border-light, #f1f5f9); }
