@@ -32,6 +32,7 @@ import {
     type StaffUpdateInput
 } from '../common.js';
 import css from './style.css?raw';
+import contextMenuCss from '../../../../renderer/styles/context-menu.css?raw';
 
 type DetailSection = 'basic' | 'skills' | 'mcp' | 'security' | 'tasks';
 
@@ -117,8 +118,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     };
     private readonly dismissMessageContextMenu = (event?: Event) => {
         const target = event?.composedPath()[0];
-        if (target instanceof Element && target.closest('.message-context-menu')) return;
-        this.shadowRoot?.querySelector('.message-context-menu')?.remove();
+        if (target instanceof Element && target.closest('.ctx-menu')) return;
+        this.shadowRoot?.querySelector('.ctx-menu')?.remove();
         window.removeEventListener('mousedown', this.dismissMessageContextMenu);
     };
     private readonly closeSendMenuHandler = (event?: Event) => {
@@ -261,7 +262,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
     private render(): void {
         if (!this.shadowRoot) return;
         this.closeSendMenu();
-        this.shadowRoot.innerHTML = `<style>${css}</style><div class="root ${this.busy ? 'busy' : ''}">
+        this.shadowRoot.innerHTML = `<style>${contextMenuCss}${css}</style><div class="root ${this.busy ? 'busy' : ''}">
             <div class="tabs">
                 <div class="tab-group">
                     ${this.tabButton('office', this.tr('agentoffice.tab.office'))}
@@ -712,7 +713,6 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             element.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                (window as any).contextMenuAPI?.suppress?.();
                 this.showMessageContextMenu(event.clientX, event.clientY, element);
             })
         );
@@ -958,8 +958,8 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         const message = this.messages.find((item) => item.id === element.dataset.messageId);
         if (!message || !this.shadowRoot) return;
         const menu = document.createElement('div');
-        menu.className = 'message-context-menu';
-        menu.innerHTML = `<button data-message-menu="copy"><i class="fa-solid fa-copy"></i><span>${escapeHtml(this.tr('agentoffice.copy'))}</span></button><button data-message-menu="copy-plain"><i class="fa-solid fa-font"></i><span>${escapeHtml(this.tr('agentoffice.copyPlain'))}</span></button><div class="message-context-menu-separator"></div><button data-message-menu="open-task"><i class="fa-solid fa-arrow-up-right-from-square"></i><span>${escapeHtml(this.tr('agentoffice.openTask'))}</span></button>`;
+        menu.className = 'ctx-menu' + (this.dataset.theme === 'dark' ? ' ctx-menu-dark' : '');
+        menu.innerHTML = `<button class="ctx-item" data-message-menu="copy"><span class="ctx-icon-sm"><i class="fa-solid fa-copy"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copy'))}</span></button><button class="ctx-item" data-message-menu="copy-plain"><span class="ctx-icon-sm"><i class="fa-solid fa-font"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.copyPlain'))}</span></button><div class="ctx-divider"></div><button class="ctx-item" data-message-menu="open-task"><span class="ctx-icon-sm"><i class="fa-solid fa-arrow-up-right-from-square"></i></span><span class="ctx-label">${escapeHtml(this.tr('agentoffice.openTask'))}</span></button>`;
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
         this.shadowRoot.querySelector('.root')?.appendChild(menu);

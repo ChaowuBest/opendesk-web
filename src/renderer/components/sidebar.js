@@ -398,7 +398,7 @@ class SideBar extends HTMLElement {
                     aria-controls="leftPanel"
                     aria-expanded="true"
                 >
-                    <i class="fa-solid fa-table-columns"></i>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>
                 </button>
             </header>
 
@@ -417,7 +417,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.newTask')}"
                 >
-                    <i class="fa-solid fa-house" style="font-size: var(--icon-md);"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 3.5l8 7V20a1 1 0 0 1-1 1h-4v-6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v6H5a1 1 0 0 1-1-1z"/></svg>
                     <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
                 </button>
                 <button
@@ -425,7 +425,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.apps')}"
                 >
-                    <i class="fa-solid fa-th-large" style="font-size: var(--icon-md);"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg>
                     <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
                 </button>
                 <button
@@ -433,7 +433,7 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.skills')}"
                 >
-                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: var(--icon-md);"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
                     <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
                 </button>
             </div>
@@ -455,13 +455,13 @@ class SideBar extends HTMLElement {
                     <img id="sidebar-icon-collapsed" src="./images/icon_round.png" alt="OpenDesk" />
                 </button>
                 <button id="sb-collapsed-new-task" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.newTask')}">
-                    <i class="fa-solid fa-house"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 3.5l8 7V20a1 1 0 0 1-1 1h-4v-6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v6H5a1 1 0 0 1-1-1z"/></svg>
                 </button>
                 <button id="sb-collapsed-apps" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.apps')}">
-                    <i class="fa-solid fa-th-large"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg>
                 </button>
                 <button id="sb-collapsed-skills" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.skills')}">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
                 </button>
             </div>
             <div class="sb-collapsed-bottom flex flex-col items-center gap-3 pb-4">
@@ -1057,23 +1057,10 @@ class SideBar extends HTMLElement {
 
         const menu = document.createElement('div');
         menu.id = 'app-context-menu';
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '9999',
-            minWidth: '180px',
-            padding: '4px',
-            borderRadius: '10px',
-            background: 'rgba(255, 255, 255, 0.88)',
-            backdropFilter: 'blur(40px) saturate(1.8)',
-            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: '0.5px solid rgba(0, 0, 0, 0.08)',
-            boxShadow:
-                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
-            animation: 'od-ctx-appear 0.12s ease-out',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            left: `${x}px`,
-            top: `${y}px`
-        });
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '180px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
 
         const isUserApp = appSource === 'user';
         const items = [
@@ -1084,20 +1071,14 @@ class SideBar extends HTMLElement {
             items.push({ id: 'edit', icon: 'fa-solid fa-pen-to-square', label: '编辑应用' });
         }
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
-
         menu.innerHTML = items
             .map((item, i) => {
                 const needSep = i > 0 && item.id === 'edit';
-                const sep = needSep
-                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
-                    : '';
-                const color = '#1f2937';
-                const iconColor = '#6b7280';
+                const sep = needSep ? '<div class="ctx-divider"></div>' : '';
                 return (
-                    `${sep}<button data-action="${item.id}" style="${btnStyle} color:${color};">` +
-                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                    `${sep}<button class="ctx-item" data-action="${item.id}">` +
+                    `<span class="ctx-icon-sm"><i class="${item.icon}"></i></span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
                 );
             })
             .join('');
@@ -1112,21 +1093,6 @@ class SideBar extends HTMLElement {
             if (rect.bottom > window.innerHeight) {
                 menu.style.top = `${window.innerHeight - rect.height - 8}px`;
             }
-        });
-
-        menu.querySelectorAll('[data-action]').forEach((btn) => {
-            btn.addEventListener('mouseenter', () => {
-                btn.style.background = '#3b82f6';
-                btn.style.color = 'white';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = 'white';
-            });
-            btn.addEventListener('mouseleave', () => {
-                btn.style.background = 'transparent';
-                btn.style.color = '#1f2937';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = '#6b7280';
-            });
         });
 
         menu.querySelector('[data-action="open"]').addEventListener('click', () => {
@@ -1181,23 +1147,10 @@ class SideBar extends HTMLElement {
 
         const menu = document.createElement('div');
         menu.id = 'task-context-menu';
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '9999',
-            minWidth: '180px',
-            padding: '4px',
-            borderRadius: '10px',
-            background: 'rgba(255, 255, 255, 0.88)',
-            backdropFilter: 'blur(40px) saturate(1.8)',
-            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: '0.5px solid rgba(0, 0, 0, 0.08)',
-            boxShadow:
-                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
-            animation: 'od-ctx-appear 0.12s ease-out',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            left: `${x}px`,
-            top: `${y}px`
-        });
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '180px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
 
         const isFavorited = this._favoritedTaskIds.has(taskId);
         const items = [
@@ -1234,35 +1187,29 @@ class SideBar extends HTMLElement {
             });
         }
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
-        const submenuStyle = `display:none; position:absolute; left:calc(100% + 4px); top:0; min-width:160px; padding:4px; border-radius:10px; background:rgba(255,255,255,0.94); backdrop-filter:blur(40px) saturate(1.8); -webkit-backdrop-filter:blur(40px) saturate(1.8); border:0.5px solid rgba(0,0,0,0.08); box-shadow:0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04);`;
-
         menu.innerHTML = items
             .map((item, _i) => {
                 const needSep = item.id === 'delete';
-                const sep = needSep
-                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
-                    : '';
-                const color = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#1f2937';
-                const iconColor = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#6b7280';
+                const sep = needSep ? '<div class="ctx-divider"></div>' : '';
+                const itemCls = `ctx-item${item.danger ? ' danger' : ''}${item.favoriteHighlight ? ' favorite' : ''}`;
                 if (item.submenu) {
                     return (
-                        `${sep}<div class="ctx-submenu-wrap" style="position:relative;">` +
-                        `<button data-action="${item.id}" data-submenu="1" style="${btnStyle} color:${color};">` +
-                        `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span style="flex:1;">${item.label}</span>` +
-                        '<i class="fa-solid fa-chevron-right" style="font-size:var(--icon-sm); color:#9ca3af;"></i></button>' +
-                        `<div class="ctx-submenu" style="${submenuStyle}">` +
-                        `<button data-action="trigger-task-review" style="${btnStyle} color:#1f2937;">` +
-                        `<i class="fa-solid fa-clipboard-check" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
-                        `<button data-action="view-task-info" style="${btnStyle} color:#1f2937;">` +
-                        `<i class="fa-solid fa-circle-info" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.viewTaskInfo')}</span></button>` +
+                        `${sep}<div class="ctx-submenu-wrap">` +
+                        `<button class="${itemCls}" data-action="${item.id}" data-submenu="1">` +
+                        `<span class="ctx-icon-sm"><i class="${item.icon}"></i></span><span class="ctx-label">${item.label}</span>` +
+                        '<span class="ctx-arrow">▶</span></button>' +
+                        `<div class="ctx-submenu">` +
+                        `<button class="ctx-item" data-action="trigger-task-review">` +
+                        `<span class="ctx-icon-sm"><i class="fa-solid fa-clipboard-check"></i></span><span class="ctx-label">${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
+                        `<button class="ctx-item" data-action="view-task-info">` +
+                        `<span class="ctx-icon-sm"><i class="fa-solid fa-circle-info"></i></span><span class="ctx-label">${this._t('renderer.developer.viewTaskInfo')}</span></button>` +
                         '</div></div>'
                     );
                 }
                 return (
-                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" data-fav="${item.favoriteHighlight ? '1' : ''}" style="${btnStyle} color:${color};">` +
-                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                    `${sep}<button class="${itemCls}" data-action="${item.id}">` +
+                    `<span class="ctx-icon-sm"><i class="${item.icon}"></i></span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
                 );
             })
             .join('');
@@ -1277,34 +1224,6 @@ class SideBar extends HTMLElement {
             if (rect.bottom > window.innerHeight) {
                 menu.style.top = `${window.innerHeight - rect.height - 8}px`;
             }
-        });
-
-        menu.querySelectorAll('[data-action]').forEach((btn) => {
-            const isDanger = btn.dataset.danger === '1';
-            const isFav = btn.dataset.fav === '1';
-            const isSubmenuTrigger = btn.dataset.submenu === '1';
-            btn.addEventListener('mouseenter', () => {
-                btn.style.background = isDanger ? '#fef2f2' : isFav ? '#fffbeb' : '#3b82f6';
-                btn.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
-                if (isSubmenuTrigger) {
-                    const submenu = btn.parentElement?.querySelector('.ctx-submenu');
-                    if (submenu) submenu.style.display = 'block';
-                }
-            });
-            btn.addEventListener('mouseleave', () => {
-                btn.style.background = 'transparent';
-                btn.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#1f2937';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#6b7280';
-            });
-        });
-        menu.querySelectorAll('.ctx-submenu-wrap').forEach((wrap) => {
-            wrap.addEventListener('mouseleave', () => {
-                const submenu = wrap.querySelector('.ctx-submenu');
-                if (submenu) submenu.style.display = 'none';
-            });
         });
 
         menu.querySelector('[data-action="favorite"]').addEventListener('click', () => {
@@ -1421,23 +1340,10 @@ class SideBar extends HTMLElement {
 
         const menu = document.createElement('div');
         menu.id = 'workspace-context-menu';
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '9999',
-            minWidth: '180px',
-            padding: '4px',
-            borderRadius: '10px',
-            background: 'rgba(255, 255, 255, 0.88)',
-            backdropFilter: 'blur(40px) saturate(1.8)',
-            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: '0.5px solid rgba(0, 0, 0, 0.08)',
-            boxShadow:
-                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
-            animation: 'od-ctx-appear 0.12s ease-out',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            left: `${x}px`,
-            top: `${y}px`
-        });
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '180px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
 
         const items = [
             { id: 'create-task', icon: 'fa-solid fa-plus', label: this._t('renderer.sidebar.createTaskHere') }
@@ -1456,20 +1362,15 @@ class SideBar extends HTMLElement {
             danger: true
         });
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:var(--fs-md); cursor:pointer; text-align:left; transition:background 0.1s;`;
-        const iconStyle = 'width:16px; text-align:center; font-size:var(--icon-md); flex-shrink:0;';
-
         menu.innerHTML = items
             .map((item, index) => {
                 const needSep = index > 0 && item.id === 'delete-workspace-tasks';
-                const sep = needSep
-                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
-                    : '';
-                const color = item.danger ? '#dc2626' : '#1f2937';
-                const iconColor = item.danger ? '#dc2626' : '#6b7280';
+                const sep = needSep ? '<div class="ctx-divider"></div>' : '';
+                const itemCls = `ctx-item${item.danger ? ' danger' : ''}`;
                 return (
-                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" style="${btnStyle} color:${color};">` +
-                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                    `${sep}<button class="${itemCls}" data-action="${item.id}">` +
+                    `<span class="ctx-icon-sm"><i class="${item.icon}"></i></span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
                 );
             })
             .join('');
@@ -1484,22 +1385,6 @@ class SideBar extends HTMLElement {
             if (rect.bottom > window.innerHeight) {
                 menu.style.top = `${window.innerHeight - rect.height - 8}px`;
             }
-        });
-
-        menu.querySelectorAll('[data-action]').forEach((btn) => {
-            const isDanger = btn.dataset.danger === '1';
-            btn.addEventListener('mouseenter', () => {
-                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
-                btn.style.color = isDanger ? '#b91c1c' : 'white';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#b91c1c' : 'white';
-            });
-            btn.addEventListener('mouseleave', () => {
-                btn.style.background = 'transparent';
-                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#dc2626' : '#6b7280';
-            });
         });
 
         menu.querySelector('[data-action="create-task"]').addEventListener('click', async () => {

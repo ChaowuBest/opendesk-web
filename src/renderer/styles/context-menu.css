@@ -1,0 +1,632 @@
+/*
+ * 公共上下文菜单样式
+ * 对应设计稿: context-menu-design.html 方案 A（暖白实底）
+ * - 01 纯文本: 无图标条目（剪切/复制/粘贴 等文本编辑场景）
+ * - 02 小图标: 14px 图标 + 文字（任务列表/文件操作等场景）
+ *
+ * 使用方式:
+ * - 容器: <div class="ctx-menu" style="left:..; top:..">
+ * - 条目: <button class="ctx-item">[<span class="ctx-icon-sm"><i class="fa-solid fa-xxx"></i></span>]<span class="ctx-label">..</span>[<span class="ctx-shortcut">..</span>]</button>
+ * - 分隔: <div class="ctx-divider"></div>
+ * - 危险: .ctx-item.danger / 禁用: .ctx-item.disabled / 强调: .ctx-item.favorite
+ * - 子菜单: .ctx-submenu-wrap > .ctx-item + .ctx-submenu（hover 展开）
+ * - 暗色: 跟随 html[data-theme='dark']；局部暗色场景给容器附加 .ctx-menu-dark
+ */
+
+:root {
+    --ctx-bg: #ffffff;
+    --ctx-bg-soft: #f5f4f2;
+    --ctx-border: #e7e5e2;
+    --ctx-shadow: 0 1px 2px rgba(28, 25, 23, 0.04), 0 4px 14px rgba(28, 25, 23, 0.07);
+    --ctx-hover: #f0efec;
+    --ctx-ink: #1c1917;
+    --ctx-ink2: #4a4642;
+    --ctx-ink3: #8a8580;
+    --ctx-ink4: #b4afa9;
+    --ctx-sep: #efeeea;
+    --ctx-danger: #dc2626;
+    --ctx-danger-soft: #fee2e2;
+    --ctx-accent: #df4436;
+    --ctx-accent-soft: #fdeeec;
+    --ctx-green: #1f9d66;
+    --ctx-green-soft: #e7f5ee;
+    --ctx-amber: #b45309;
+    --ctx-amber-soft: #fffbeb;
+    --ctx-blue: #4267b2;
+    --ctx-blue-soft: #ebf1fb;
+}
+
+html[data-theme='dark'],
+.ctx-menu-dark {
+    --ctx-bg: rgba(37, 37, 38, 0.94);
+    --ctx-bg-soft: rgba(255, 255, 255, 0.06);
+    --ctx-border: rgba(255, 255, 255, 0.14);
+    --ctx-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+    --ctx-hover: rgba(255, 255, 255, 0.08);
+    --ctx-ink: #e5e7eb;
+    --ctx-ink2: #e5e7eb;
+    --ctx-ink3: #a1a1aa;
+    --ctx-ink4: #71717a;
+    --ctx-sep: rgba(255, 255, 255, 0.12);
+    --ctx-danger: #f87171;
+    --ctx-danger-soft: rgba(220, 38, 38, 0.18);
+    --ctx-accent: #f87171;
+    --ctx-accent-soft: rgba(220, 38, 38, 0.15);
+    --ctx-green: #34d399;
+    --ctx-green-soft: rgba(16, 185, 129, 0.15);
+    --ctx-amber: #f59e0b;
+    --ctx-amber-soft: rgba(245, 158, 11, 0.12);
+    --ctx-blue: #7a9bd4;
+    --ctx-blue-soft: rgba(66, 103, 178, 0.2);
+}
+
+/* ===== 容器 ===== */
+.ctx-menu {
+    position: fixed;
+    z-index: 9999;
+    background: var(--ctx-bg);
+    border: 1px solid var(--ctx-border);
+    border-radius: 12px;
+    padding: 5px;
+    min-width: 200px;
+    box-shadow: var(--ctx-shadow);
+    display: flex;
+    flex-direction: column;
+    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+    animation: ctx-fade-in 0.2s ease-out;
+}
+@keyframes ctx-fade-in {
+    from {
+        opacity: 0;
+        transform: scale(0.97) translateY(-3px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* ===== 条目 ===== */
+.ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+        background 0.12s ease,
+        color 0.12s ease;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    border-radius: 7px;
+    color: var(--ctx-ink2);
+}
+.ctx-item:hover {
+    background: var(--ctx-hover);
+}
+.ctx-item .ctx-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--ctx-ink2);
+}
+.ctx-item:hover .ctx-label {
+    color: var(--ctx-ink);
+}
+.ctx-item .ctx-shortcut {
+    font-size: 11px;
+    color: var(--ctx-ink4);
+    font-family: var(--font-mono, monospace);
+    margin-left: 16px;
+    flex: none;
+}
+.ctx-item .ctx-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    flex: none;
+}
+.ctx-badge.danger {
+    background: var(--ctx-danger-soft);
+    color: var(--ctx-danger);
+}
+.ctx-badge.green {
+    background: var(--ctx-green-soft);
+    color: var(--ctx-green);
+}
+
+/* ===== 小图标（方案 02）===== */
+.ctx-icon-sm {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ctx-ink3);
+    font-size: 12px;
+}
+.ctx-icon-sm i {
+    font-size: inherit;
+    line-height: 1;
+}
+.ctx-item:hover .ctx-icon-sm {
+    color: var(--ctx-ink2);
+}
+
+/* ===== 分隔线 ===== */
+.ctx-divider {
+    height: 1px;
+    background: var(--ctx-sep);
+    margin: 4px 6px;
+    border: 0;
+    flex: none;
+}
+
+/* ===== 危险项 ===== */
+.ctx-item.danger .ctx-label,
+.ctx-item.danger .ctx-icon-sm {
+    color: var(--ctx-danger);
+}
+.ctx-item.danger:hover {
+    background: var(--ctx-danger);
+}
+.ctx-item.danger:hover .ctx-label,
+.ctx-item.danger:hover .ctx-icon-sm {
+    color: #fff;
+}
+
+/* ===== 禁用项 ===== */
+.ctx-item.disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* ===== 强调项（收藏等）===== */
+.ctx-item.favorite .ctx-label,
+.ctx-item.favorite .ctx-icon-sm {
+    color: var(--ctx-amber);
+}
+.ctx-item.favorite:hover {
+    background: var(--ctx-amber-soft);
+}
+.ctx-item.favorite:hover .ctx-label,
+.ctx-item.favorite:hover .ctx-icon-sm {
+    color: var(--ctx-amber);
+}
+
+/* ===== 子菜单 ===== */
+.ctx-submenu-wrap {
+    position: relative;
+}
+.ctx-arrow {
+    font-size: 10px;
+    color: var(--ctx-ink4);
+    margin-left: 8px;
+    flex: none;
+}
+.ctx-submenu {
+    display: none;
+    position: absolute;
+    left: calc(100% + 4px);
+    top: -5px;
+    min-width: 160px;
+    padding: 5px;
+    border-radius: 12px;
+    background: var(--ctx-bg);
+    border: 1px solid var(--ctx-border);
+    box-shadow: var(--ctx-shadow);
+    animation: ctx-fade-in 0.18s ease-out;
+}
+.ctx-submenu-wrap:hover > .ctx-submenu,
+.ctx-submenu-wrap:focus-within > .ctx-submenu {
+    display: block;
+}
+
+/* ===== 底部提示（hint）===== */
+.ctx-hint {
+    display: none;
+    margin: 4px 4px 2px;
+    padding: 6px 8px;
+    border-top: 1px solid var(--ctx-sep);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--ctx-ink3);
+}
+.ctx-hint.visible {
+    display: block;
+}
+
+/* ============================================================
+   方案 03 · 大图标 + 说明（右侧）
+   ============================================================ */
+.ctx-item-rich {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    border-radius: 8px;
+    color: var(--ctx-ink2);
+}
+.ctx-item-rich:hover {
+    background: var(--ctx-hover);
+}
+.ctx-icon-lg {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--ctx-hover);
+    color: var(--ctx-ink3);
+    margin-top: -1px; /* 补偿：让图标视觉中心与标题首行对齐 */
+    font-size: 13px;
+}
+.ctx-item-rich:hover .ctx-icon-lg {
+    background: var(--ctx-accent-soft);
+    color: var(--ctx-accent);
+}
+.ctx-rich-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.ctx-rich-label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ctx-ink2);
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ctx-item-rich:hover .ctx-rich-label {
+    color: var(--ctx-ink);
+}
+.ctx-rich-desc {
+    font-size: 11px;
+    color: var(--ctx-ink3);
+    margin-top: 3px;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ctx-item-rich.danger:hover {
+    background: var(--ctx-danger);
+}
+.ctx-item-rich.danger:hover .ctx-icon-lg {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+.ctx-item-rich.danger:hover .ctx-rich-label {
+    color: #fff;
+}
+.ctx-item-rich.danger:hover .ctx-rich-desc {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* ============================================================
+   方案 04 · 大图标 + 说明（下方）
+   ============================================================ */
+.ctx-item-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    border-radius: 8px;
+    color: var(--ctx-ink2);
+}
+.ctx-item-block:hover {
+    background: var(--ctx-hover);
+}
+.ctx-icon-xl {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--ctx-hover);
+    color: var(--ctx-ink3);
+    font-size: 16px;
+}
+.ctx-item-block:hover .ctx-icon-xl {
+    background: var(--ctx-accent-soft);
+    color: var(--ctx-accent);
+}
+.ctx-block-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.ctx-block-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ctx-ink2);
+    line-height: 1.35;
+}
+.ctx-item-block:hover .ctx-block-label {
+    color: var(--ctx-ink);
+}
+.ctx-block-desc {
+    font-size: 11.5px;
+    color: var(--ctx-ink3);
+    margin-top: 4px;
+    line-height: 1.55;
+    white-space: normal;
+    word-break: break-word;
+}
+.ctx-item-block.danger:hover {
+    background: var(--ctx-danger);
+}
+.ctx-item-block.danger:hover .ctx-icon-xl {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+.ctx-item-block.danger:hover .ctx-block-label {
+    color: #fff;
+}
+.ctx-item-block.danger:hover .ctx-block-desc {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* ============================================================
+   方案 05 · 搜索框
+   ============================================================ */
+.ctx-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    margin: 2px 2px 4px;
+    border-radius: 7px;
+    background: var(--ctx-bg-soft);
+    flex: none;
+}
+.ctx-search svg,
+.ctx-search i {
+    width: 12px;
+    height: 12px;
+    font-size: 12px;
+    color: var(--ctx-ink4);
+    flex: none;
+}
+.ctx-search input {
+    border: 0;
+    background: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--ctx-ink2);
+    width: 100%;
+}
+.ctx-search input::placeholder {
+    color: var(--ctx-ink4);
+}
+
+/* ============================================================
+   通用组件（选中勾 / 状态 / 滚动列表 / 空态 / 页脚 / 开关）
+   ============================================================ */
+
+/* 隐藏态：AgentInput 等常驻面板默认隐藏，打开时移除 */
+.ctx-menu-hidden {
+    display: none !important;
+}
+
+/* 选中勾 */
+.ctx-item-check {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ctx-accent);
+    font-size: 11px;
+}
+
+/* 选中 / 键盘选中态 */
+.ctx-item.active,
+.ctx-item-rich.active,
+.ctx-item-block.active {
+    background: var(--ctx-accent-soft);
+}
+.ctx-item.active .ctx-label,
+.ctx-item-rich.active .ctx-rich-label,
+.ctx-item-block.active .ctx-block-label {
+    color: var(--ctx-ink);
+}
+.ctx-item.hovered,
+.ctx-item-rich.hovered,
+.ctx-item-rich.selected {
+    background: var(--ctx-hover);
+}
+
+/* 条目内的行内 id 后缀（如模式 (standard)） */
+.ctx-item-id {
+    color: var(--ctx-ink3);
+    font-weight: 400;
+    font-size: 11px;
+}
+
+/* 徽标变体 */
+.ctx-badge.blue {
+    background: var(--ctx-blue-soft);
+    color: var(--ctx-blue);
+}
+
+/* 滚动列表（ctx-menu 为 flex column 时的可滚动区域） */
+.ctx-menu-list {
+    overflow-y: auto;
+    padding: 4px;
+    flex: 1;
+    min-height: 0;
+}
+.ctx-menu-list::-webkit-scrollbar {
+    width: 4px;
+}
+.ctx-menu-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.14);
+    border-radius: 2px;
+}
+html[data-theme='dark'] .ctx-menu-list::-webkit-scrollbar-thumb,
+.ctx-menu-dark .ctx-menu-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+/* 空状态 */
+.ctx-empty {
+    padding: 16px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ctx-ink4);
+}
+
+/* 页脚操作 */
+.ctx-menu-footer {
+    border-top: 1px solid var(--ctx-sep);
+    padding: 6px 8px;
+    flex: none;
+}
+.ctx-install-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 100%;
+    padding: 6px 0;
+    border: 1px dashed var(--ctx-border);
+    background: transparent;
+    border-radius: 8px;
+    color: var(--ctx-ink3);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.ctx-install-btn:hover {
+    border-color: var(--ctx-accent);
+    color: var(--ctx-accent);
+    background: var(--ctx-accent-soft);
+}
+
+/* iOS 风格开关（发送选项等） */
+.ctx-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    display: inline-block;
+}
+.ctx-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+.ctx-toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: #d1d1d6;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.25s ease;
+}
+.ctx-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    transition: transform 0.25s ease;
+}
+.ctx-toggle input:checked + .ctx-toggle-slider {
+    background: #34c759;
+}
+.ctx-toggle input:checked + .ctx-toggle-slider::after {
+    transform: translateX(16px);
+}
+
+/* ============================================================
+   AgentInput 面板适配（B1-B7）
+   ============================================================ */
+
+/* 条目内直接使用彩色 tile 图标（模型项） */
+.ctx-item .agent-icon-tile {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    flex: none;
+}
+.ctx-item > svg {
+    flex: none;
+}
+.ctx-icon-xl .agent-icon-tile {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+}
+
+/* 面板宽度与 positionPanel 传参保持一致 */
+#agent-input-model-panel {
+    width: 240px;
+}
+#agent-input-effort-submenu {
+    width: 180px;
+}
+#agent-input-mode-panel {
+    width: 340px;
+}
+#agent-input-node-panel {
+    width: 260px;
+}
+#agent-input-skill-panel {
+    width: 280px;
+}
+#agent-input-autocomplete {
+    width: 300px;
+    max-height: 260px;
+}
+
+/* 模式面板：图标直接显示彩色 tile，去掉灰色外框，图标放大 */
+#agent-input-mode-panel .ctx-icon-xl {
+    background: transparent;
+}
+#agent-input-mode-panel .ctx-icon-xl .agent-icon-tile {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+}
+#agent-input-mode-panel .ctx-icon-xl .agent-icon-tile svg {
+    width: 18px;
+    height: 18px;
+}

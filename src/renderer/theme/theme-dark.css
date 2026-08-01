@@ -561,8 +561,24 @@ html[data-theme='dark'] #task-list-container [class*='bg-[#f1f5f9]'] {
     background-color: var(--od-bg-subtle) !important;
 }
 html[data-theme='dark'] .hp-workspace-bar {
-    background: var(--od-bg-muted) !important;
-    border: 1px solid var(--od-border) !important;
+    background: transparent !important;
+    border: none !important;
+}
+html[data-theme='dark'] home-page .hp-ws-label {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] home-page .hp-ws-icon,
+html[data-theme='dark'] home-page .hp-ws-sep,
+html[data-theme='dark'] home-page .hp-workspace-switch {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] home-page .hp-workspace-path {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] home-page .hp-workspace-bar:hover .hp-workspace-path,
+html[data-theme='dark'] home-page .hp-workspace-bar:hover .hp-ws-icon,
+html[data-theme='dark'] home-page .hp-workspace-bar:hover .hp-workspace-switch {
+    color: #e8563f !important;
 }
 
 /* 首页：问候语、对话框、推荐区 */
@@ -572,10 +588,6 @@ html[data-theme='dark'] home-page .text-gray-800 {
 }
 
 html[data-theme='dark'] home-page [style*='color:#6b7280'] {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] home-page .hp-workspace-path {
     color: var(--od-text-muted) !important;
 }
 
@@ -605,15 +617,56 @@ html[data-theme='dark'] agent-input [class*='placeholder-gray']::placeholder {
     opacity: 1;
 }
 
+html[data-theme='dark'] agent-input .agent-input-toolbar {
+    border-top-color: var(--od-border) !important;
+}
+
 html[data-theme='dark'] agent-input .agent-input-toolbar-control {
-    background: var(--od-bg-subtle) !important;
-    border-color: var(--od-border-strong) !important;
+    background: transparent !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control i {
     color: var(--od-text-muted) !important;
 }
 
 html[data-theme='dark'] agent-input .agent-input-toolbar-control:hover {
     background: var(--od-bg-muted) !important;
     color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control:hover i {
+    color: var(--od-text) !important;
+}
+
+/* Icon tiles dark mode */
+html[data-theme='dark'] agent-input .agent-icon-tile.mode-standard {
+    background: rgba(52, 211, 153, 0.15) !important;
+    color: #34d399 !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.mode-unlimited {
+    background: rgba(223, 68, 54, 0.15) !important;
+    color: #e8563f !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.mode-readonly {
+    background: rgba(96, 165, 250, 0.15) !important;
+    color: #60a5fa !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.mode-plan {
+    background: rgba(251, 191, 36, 0.15) !important;
+    color: #fbbf24 !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.mode-solo {
+    background: rgba(52, 211, 153, 0.15) !important;
+    color: #34d399 !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.model-vision {
+    background: rgba(96, 165, 250, 0.15) !important;
+    color: #60a5fa !important;
+}
+html[data-theme='dark'] agent-input .agent-icon-tile.model-chat {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: var(--od-text-muted) !important;
 }
 
 html[data-theme='dark'] agent-input .text-gray-600,
@@ -630,8 +683,19 @@ html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-inactive {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] agent-input .agent-send-btn.agent-send-inactive ~ .agent-send-divider {
-    background: var(--od-border-strong) !important;
+html[data-theme='dark'] agent-input .agent-send-btn.agent-send-active {
+    background: var(--od-text) !important;
+    color: var(--od-bg) !important;
+}
+html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-active {
+    background: var(--od-text) !important;
+    color: var(--od-bg) !important;
+}
+html[data-theme='dark'] agent-input .agent-send-btn.agent-send-active:hover {
+    background: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-active:hover {
+    background: var(--od-text-muted) !important;
 }
 
 /* AgentInput 语音按钮 */
@@ -646,6 +710,17 @@ html[data-theme='dark'] agent-input .agent-speech-btn-round:hover:not(:disabled)
 html[data-theme='dark'] agent-input .agent-speech-btn-round:active:not(:disabled) {
     background: var(--od-bg-elevated) !important;
     color: var(--od-text) !important;
+}
+
+/* AgentInput 文件提示 */
+html[data-theme='dark'] agent-input .agent-input-file-hint,
+html[data-theme='dark'] agent-input .agent-input-file-hint i {
+    color: var(--od-text-muted) !important;
+}
+
+/* Taskview 面板展开激活色（暗色更亮的朱红） */
+html[data-theme='dark'] elastic-toolbar-widget .toolbar-spread-btn.toolbar-spread-btn-on {
+    color: #e8563f !important;
 }
 
 /* AgentInput 队列提示 */
@@ -1149,231 +1224,6 @@ html[data-theme='dark'] recommendation-panel .rec-item-arrow {
 
 html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-arrow {
     color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .skill-panel-visible,
-html[data-theme='dark'] .popup-panel-visible {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    color: var(--od-text);
-}
-
-html[data-theme='dark'] .popup-panel-item-name {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item-desc {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item-id {
-    color: var(--od-text-muted) !important;
-}
-
-/* AgentInput popup panels - dark mode */
-html[data-theme='dark'] .popup-panel-visible {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow:
-        0 12px 40px -8px rgba(0, 0, 0, 0.4),
-        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-html[data-theme='dark'] .popup-panel-search {
-    border-bottom-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .popup-panel-search-input {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .popup-panel-search-input::placeholder {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb {
-    background: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item:hover {
-    background: var(--od-bg-muted) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item.active {
-    background: var(--od-bg-subtle) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item.active::before {
-    background: var(--od-accent) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item.hovered {
-    background: var(--od-bg-subtle) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item-icon {
-    background: var(--od-bg-muted) !important;
-    border-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item-check {
-    color: var(--od-accent) !important;
-}
-
-html[data-theme='dark'] .popup-panel-item-arrow i {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .popup-panel-empty {
-    color: var(--od-text-muted) !important;
-}
-
-/* Popup submenu (reasoning effort) */
-html[data-theme='dark'] .popup-panel-submenu.popup-panel-visible {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow:
-        0 12px 40px -8px rgba(0, 0, 0, 0.4),
-        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-/* Skill panel - dark mode */
-html[data-theme='dark'] .skill-panel-visible {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow:
-        0 12px 40px -8px rgba(0, 0, 0, 0.4),
-        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-html[data-theme='dark'] .skill-panel-search {
-    border-bottom-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .skill-panel-search-input {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .skill-panel-search-input::placeholder {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .skill-panel-list::-webkit-scrollbar-thumb {
-    background: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .skill-panel-item {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .skill-panel-item:hover {
-    background: var(--od-bg-muted) !important;
-}
-
-html[data-theme='dark'] .skill-panel-item-icon {
-    background: var(--od-bg-muted) !important;
-    border-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .skill-panel-item-name {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .skill-panel-item-desc {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .skill-panel-empty {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .skill-panel-footer {
-    border-top-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .skill-panel-install-btn {
-    border-color: var(--od-border-strong) !important;
-    color: var(--od-text-muted) !important;
-    background: var(--od-bg-subtle) !important;
-}
-
-html[data-theme='dark'] .skill-panel-install-btn:hover {
-    border-color: var(--od-accent) !important;
-    color: var(--od-accent) !important;
-    background: var(--od-bg-muted) !important;
-}
-
-/* Autocomplete panel - dark mode */
-html[data-theme='dark'] .autocomplete-panel-visible {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow:
-        0 8px 30px -6px rgba(0, 0, 0, 0.4),
-        0 4px 10px -2px rgba(0, 0, 0, 0.3) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb {
-    background: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item:hover,
-html[data-theme='dark'] .autocomplete-panel-item.selected {
-    background: var(--od-bg-muted) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item-icon {
-    background: var(--od-bg-muted) !important;
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item-icon.skill-icon {
-    background: rgba(124, 58, 237, 0.2) !important;
-    color: #a78bfa !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item-icon.dir-icon {
-    color: #fbbf24 !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item-name {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-item-desc {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] .autocomplete-panel-hint {
-    border-top-color: var(--od-border-strong) !important;
-    color: var(--od-text-muted) !important;
-}
-
-/* Agent send options menu - dark mode */
-html[data-theme='dark'] .agent-send-options-panel {
-    background: rgba(30, 30, 35, 0.92) !important;
-    backdrop-filter: blur(40px) saturate(1.8) !important;
-    -webkit-backdrop-filter: blur(40px) saturate(1.8) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-    box-shadow:
-        0 12px 40px -8px rgba(0, 0, 0, 0.5),
-        0 0 0 0.5px rgba(255, 255, 255, 0.05),
-        inset 0 0.5px 0 rgba(255, 255, 255, 0.08) !important;
-}
-
-html[data-theme='dark'] .agent-send-menu-item:hover {
-    background: rgba(255, 255, 255, 0.06) !important;
-}
-
-html[data-theme='dark'] .agent-send-menu-item-label {
-    color: var(--od-text) !important;
 }
 
 /* 侧边栏左下角导航栏：深色模式由 toolbar.css sidebar-bottom 变体统一管理 */
@@ -2383,33 +2233,8 @@ html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item:focus
     border-color: color-mix(in srgb, #60a5fa 60%, var(--od-border-strong)) !important;
 }
 
-html[data-theme='dark'] .mailbox-attachment-menu {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42) !important;
-}
-
-html[data-theme='dark'] .mailbox-attachment-menu button {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] .mailbox-attachment-menu button:hover,
-html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible {
-    background: var(--od-bg-subtle) !important;
-    color: var(--od-accent) !important;
-}
-
-html[data-theme='dark'] .mailbox-attachment-menu button i {
-    color: var(--od-text-muted) !important;
-}
-
 html[data-theme='dark'] mailbox-entry-widget .mailbox-open-attachment-item .mailbox-attachment-file-icon {
     color: #93c5fd !important;
-}
-
-html[data-theme='dark'] .mailbox-attachment-menu button:hover i,
-html[data-theme='dark'] .mailbox-attachment-menu button:focus-visible i {
-    color: var(--od-accent) !important;
 }
 
 html[data-theme='dark'] mailbox-entry-widget elastic-toolbar-widget.mailbox-header button {

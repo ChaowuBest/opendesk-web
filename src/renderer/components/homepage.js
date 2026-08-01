@@ -433,9 +433,10 @@ class HomePage extends HTMLElement {
                     ${greeting}
                 </h1>
                 <button id="hp-workspace-bar" class="hp-workspace-bar" title="${t('workspace.defaultLabel')}">
-                    <i class="fa-solid fa-briefcase"></i>
-                    <span style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;">${t('workspace.defaultLabel')}</span>
-                    <span id="hp-workspace-path" class="hp-workspace-path">加载中...</span>
+                    <i class="fa-solid fa-folder-open hp-ws-icon"></i>
+                    <span class="hp-ws-label">${t('workspace.shortLabel')}</span>
+                    <span class="hp-ws-sep">·</span>
+                    <span id="hp-workspace-path" class="hp-workspace-path">…</span>
                     <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
                 </button>
             </div>

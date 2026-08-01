@@ -11,7 +11,6 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
-import { getContextMenuPalette } from '../utils/context-menu-theme.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -29,6 +28,11 @@ import {
     isWaitingForAssistantReply,
     mergeGoalSummary
 } from './taskview-goal/controller.js';
+
+const SIDEBAR_TOGGLE_SVG =
+    '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
+const EXPORT_DOWNLOAD_SVG =
+    '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
 import {
     findActiveGoalEvalProgress,
     getGoalEvaluationRecordsForMessage,
@@ -2717,12 +2721,7 @@ class TaskView extends HTMLElement {
     _updateSidebarToggleIcon(isExpanded) {
         const btn = this.querySelector(`[id^="taskview-sidebar-toggle-btn"]`);
         if (!btn) return;
-        const icon = btn.querySelector('i');
-        if (icon) {
-            icon.className = isExpanded
-                ? 'fa-solid fa-table-columns text-sm text-blue-600'
-                : 'fa-solid fa-table-columns text-sm';
-        }
+        btn.classList.toggle('toolbar-spread-btn-on', isExpanded);
     }
 
     async _initToolbarWorkspace() {
@@ -2823,16 +2822,18 @@ class TaskView extends HTMLElement {
                 [
                     {
                         id: 'taskview-export-btn',
-                        icon: 'fa-download',
+                        iconSvg: EXPORT_DOWNLOAD_SVG,
                         label: '导出',
+                        expandLabel: true,
                         action: () => {
                             this.exportTask();
                         }
                     },
                     {
                         id: 'taskview-sidebar-toggle-btn',
-                        icon: this._rightSidebarExpanded ? 'fa-table-columns' : 'fa-table-columns',
+                        iconSvg: SIDEBAR_TOGGLE_SVG,
                         label: '面板',
+                        expandLabel: true,
                         action: () => {
                             this._toggleRightSidebar();
                         }
@@ -3517,16 +3518,22 @@ class TaskView extends HTMLElement {
             showImageLightbox(img.src);
         });
 
-        // 用户消息气泡的右键菜单（样式与侧边栏一致）
+        // 右键菜单：用户消息气泡 → 完整消息菜单；其他区域（assistant 消息 / 终端工具等）有选中文本 → 复制选中内容菜单
         chatHistory.addEventListener('contextmenu', (e) => {
             const bubble = e.target.closest('.od-user-msg');
-            if (!bubble) return;
-            const container = bubble.closest('.od-user-msg-container');
-            if (!container?.dataset?.messageId) return;
+            if (bubble) {
+                const container = bubble.closest('.od-user-msg-container');
+                if (!container?.dataset?.messageId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble, container);
+                return;
+            }
+            const selectedText = window.getSelection()?.toString().trim() || '';
+            if (!selectedText) return;
             e.preventDefault();
             e.stopPropagation();
-            if (window.contextMenuAPI) window.contextMenuAPI.suppress();
-            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble, container);
+            TaskView._showSelectionContextMenu(e.clientX, e.clientY, selectedText);
         });
 
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
@@ -3547,8 +3554,53 @@ class TaskView extends HTMLElement {
         }
     };
 
+    static _dismissSelectionContextMenu() {
+        document.getElementById('od-selection-ctx')?.remove();
+        document.removeEventListener('mousedown', TaskView._selectionCtxDismissHandler);
+    }
+
+    static _selectionCtxDismissHandler = (e) => {
+        if (!e.target.closest('#od-selection-ctx')) {
+            TaskView._dismissSelectionContextMenu();
+        }
+    };
+
+    static _showSelectionContextMenu(x, y, selectedText) {
+        TaskView._dismissSelectionContextMenu();
+        TaskView._dismissUserMsgContextMenu();
+
+        const dark = document.documentElement.dataset.theme === 'dark' || document.body.dataset.theme === 'dark';
+        const menu = document.createElement('div');
+        menu.id = 'od-selection-ctx';
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '160px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        menu.innerHTML = `<button class="ctx-item" data-action="copy"><span class="ctx-icon-sm"><i class="fa-solid fa-copy"></i></span><span class="ctx-label">${taskViewT('renderer.taskview.menu.copy')}</span></button>`;
+
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const margin = 14;
+            const rect = menu.getBoundingClientRect();
+            const left = Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - rect.width - margin));
+            const top = Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - rect.height - margin));
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+
+        menu.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(selectedText).catch(() => {});
+            TaskView._dismissSelectionContextMenu();
+        });
+
+        document.addEventListener('mousedown', TaskView._selectionCtxDismissHandler);
+    }
+
     static _showUserMsgContextMenu(x, y, bubble, messageContainer) {
         TaskView._dismissUserMsgContextMenu();
+        TaskView._dismissSelectionContextMenu();
 
         const taskView = bubble.closest('task-view');
         const messageId = messageContainer?.dataset?.messageId || '';
@@ -3557,26 +3609,13 @@ class TaskView extends HTMLElement {
             taskView?.dataset?.theme === 'dark' ||
             document.documentElement.dataset.theme === 'dark' ||
             document.body.dataset.theme === 'dark';
-        const palette = getContextMenuPalette(dark);
         const menu = document.createElement('div');
         menu.id = 'od-user-msg-ctx';
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '9999',
-            minWidth: '196px',
-            maxWidth: '280px',
-            padding: '4px',
-            borderRadius: '10px',
-            background: palette.background,
-            backdropFilter: 'blur(40px) saturate(1.8)',
-            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: `0.5px solid ${palette.border}`,
-            boxShadow: palette.shadow,
-            animation: 'od-ctx-appear 0.12s ease-out',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            left: `${x}px`,
-            top: `${y}px`
-        });
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '196px';
+        menu.style.maxWidth = '280px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
 
         const items = [
             { id: 'copy', icon: 'fa-solid fa-copy', label: taskViewT('renderer.taskview.menu.copy') },
@@ -3599,22 +3638,16 @@ class TaskView extends HTMLElement {
             }
         ];
 
-        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:${palette.text};`;
-        const disabledBtnStyle = `opacity:0.45; cursor:not-allowed;`;
-        const iconStyle = `width:16px; text-align:center; font-size:12px; flex-shrink:0; color:${palette.secondary};`;
-
         const buttonsHtml = items
             .map((item) => {
-                const sep = item.separatorBefore
-                    ? `<div style="height:1px;background:${palette.separator};margin:4px 2px;"></div>`
-                    : '';
+                const sep = item.separatorBefore ? '<div class="ctx-divider"></div>' : '';
+                const cls = 'ctx-item' + (item.disabled ? ' disabled' : '');
                 const disabled = item.disabled ? ' disabled aria-disabled="true"' : '';
                 const hint = item.hint ? ` data-hint="${escapeHtml(item.hint)}"` : '';
-                const extraStyle = item.disabled ? disabledBtnStyle : '';
-                return `${sep}<button data-action="${item.id}"${hint}${disabled} style="${btnStyle}${extraStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${escapeHtml(item.label)}</span></button>`;
+                return `${sep}<button class="${cls}" data-action="${item.id}"${hint}${disabled}><span class="ctx-icon-sm"><i class="${item.icon}"></i></span><span class="ctx-label">${escapeHtml(item.label)}</span></button>`;
             })
             .join('');
-        menu.innerHTML = `${buttonsHtml}<div data-role="hint" style="display:none;margin:4px 4px 2px;padding:6px 8px;border-top:1px solid ${palette.separator};font-size:11px;line-height:1.45;color:${palette.secondary};"></div>`;
+        menu.innerHTML = `${buttonsHtml}<div class="ctx-hint" data-role="hint"></div>`;
 
         document.body.appendChild(menu);
 
@@ -3630,26 +3663,14 @@ class TaskView extends HTMLElement {
         const hintEl = menu.querySelector('[data-role="hint"]');
         menu.querySelectorAll('[data-action]').forEach((btn) => {
             btn.addEventListener('mouseenter', () => {
-                if (btn.disabled) return;
-                btn.style.background = '#3b82f6';
-                btn.style.color = 'white';
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = 'white';
-                if (btn.dataset.hint && hintEl) {
-                    hintEl.textContent = btn.dataset.hint;
-                    hintEl.style.display = 'block';
-                }
+                if (btn.disabled || !btn.dataset.hint || !hintEl) return;
+                hintEl.textContent = btn.dataset.hint;
+                hintEl.classList.add('visible');
             });
             btn.addEventListener('mouseleave', () => {
-                if (btn.disabled) return;
-                btn.style.background = 'transparent';
-                btn.style.color = palette.text;
-                const icon = btn.querySelector('i');
-                if (icon) icon.style.color = palette.secondary;
-                if (btn.dataset.hint && hintEl) {
-                    hintEl.textContent = '';
-                    hintEl.style.display = 'none';
-                }
+                if (btn.disabled || !btn.dataset.hint || !hintEl) return;
+                hintEl.textContent = '';
+                hintEl.classList.remove('visible');
             });
         });
 

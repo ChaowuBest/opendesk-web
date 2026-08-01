@@ -156,20 +156,20 @@ function showMailboxAttachmentMenu(event, item, translate, onAction) {
     dismissMailboxAttachmentMenu();
 
     const menu = document.createElement('div');
-    menu.className = 'mailbox-attachment-menu';
+    menu.className = 'ctx-menu';
     menu.setAttribute('role', 'menu');
     menu.innerHTML = `
-        <button type="button" role="menuitem" data-action="open">
-            <i class="fa fa-external-link-alt" aria-hidden="true"></i>
-            <span>${translate('renderer.mailbox.attachment.open')}</span>
+        <button type="button" class="ctx-item" role="menuitem" data-action="open">
+            <span class="ctx-icon-sm"><i class="fa fa-external-link-alt" aria-hidden="true"></i></span>
+            <span class="ctx-label">${translate('renderer.mailbox.attachment.open')}</span>
         </button>
-        <button type="button" role="menuitem" data-action="saveAs">
-            <i class="fa fa-save" aria-hidden="true"></i>
-            <span>${translate('renderer.mailbox.attachment.saveAs')}</span>
+        <button type="button" class="ctx-item" role="menuitem" data-action="saveAs">
+            <span class="ctx-icon-sm"><i class="fa fa-save" aria-hidden="true"></i></span>
+            <span class="ctx-label">${translate('renderer.mailbox.attachment.saveAs')}</span>
         </button>
-        <button type="button" role="menuitem" data-action="saveAll">
-            <i class="fa fa-folder-open" aria-hidden="true"></i>
-            <span>${translate('renderer.mailbox.attachment.saveAll')}</span>
+        <button type="button" class="ctx-item" role="menuitem" data-action="saveAll">
+            <span class="ctx-icon-sm"><i class="fa fa-folder-open" aria-hidden="true"></i></span>
+            <span class="ctx-label">${translate('renderer.mailbox.attachment.saveAll')}</span>
         </button>
     `;
     document.body.appendChild(menu);
