@@ -690,7 +690,6 @@ pre.terminal-tool-output {
     padding: 7px 10px;
     gap: 6px;
     flex-wrap: nowrap;
-    border-top: 1px solid #efeeea;
 }
 .agent-input-toolbar-left {
     display: flex;

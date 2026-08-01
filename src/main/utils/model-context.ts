@@ -213,14 +213,14 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // GLM / Zhipu
     // ═══════════════════════════════════════════════
-    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 131072, vision: false },
-    'glm-5-1': { contextSize: 200000, maxOutputTokens: 131072, vision: false },
-    'glm-5': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
-    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 131072, vision: false },
-    'glm-5v-turbo': { contextSize: 200000, maxOutputTokens: 131072, vision: true },
-    'glm-4-7': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
-    'glm-4-7-flashx': { contextSize: 200000, maxOutputTokens: 131072, vision: false },
-    'glm-4-6': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
+    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 128000, vision: false },
+    'glm-5-1': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-5': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
+    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-5v-turbo': { contextSize: 200000, maxOutputTokens: 128000, vision: true },
+    'glm-4-7': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
+    'glm-4-7-flashx': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-4-6': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
     'glm-4-6v': { contextSize: 128000, maxOutputTokens: 32768, vision: true },
     'glm-4-5': { contextSize: 131072, maxOutputTokens: 98304, vision: false },
     'glm-4-5-air': { contextSize: 131072, maxOutputTokens: 98304, vision: false },
