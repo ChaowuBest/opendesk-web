@@ -1585,7 +1585,8 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
         background 0.15s ease,
         color 0.15s ease;
 }
-.sb-collapsed-btn i {
+.sb-collapsed-btn i,
+.sb-collapsed-btn svg {
     pointer-events: none;
 }
 .sb-collapsed-btn:hover {
@@ -2242,6 +2243,10 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
 .sb-task-row.is-current {
     color: #fff;
     background: #c94c40;
+}
+.sb-task-row.is-current .sb-running-spinner {
+    border-color: rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
 }
 .sb-task-result {
     display: grid;

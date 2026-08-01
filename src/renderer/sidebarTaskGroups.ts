@@ -147,7 +147,7 @@ export function buildSidebarTaskGroups(
 ): SidebarTaskGroup[] {
     const rootItems = buildRootItems(tasks);
     const automaticItems = rootItems.filter((item) => item.task.internal === true);
-    const regularItems = rootItems.filter((item) => item.task.internal !== true && item.task.task_status !== 'running');
+    const regularItems = rootItems.filter((item) => item.task.internal !== true);
 
     if (view === 'workspace') {
         const workspaceGroups = new Map<string, SidebarTaskTreeItem[]>();
