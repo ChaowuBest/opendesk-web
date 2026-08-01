@@ -159,6 +159,9 @@ export function resolveStreamingToolCallsForTask(task: TaskState, message: Assis
         const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
         for (const tc of toolcalls) {
             if (!tc) continue;
+            // 已执行完成的工具调用不再重新解析 args_object，
+            // 避免 sanitizeOutboundMessage 等后续修改 args_string 后覆盖正确的 args_object
+            if (tc.status !== 'pending') continue;
             if (!tc.tool && tc.tool_name) {
                 const tool = task.chat_context.getTool(tc.tool_name);
                 if (tool) tc.setTool(tool);
@@ -244,7 +247,10 @@ export function finalizeToolCallArgs(tc: ToolCall): boolean {
         }
         // fallback: jsonrepair
         try {
-            tc.args_object = JSON.parse(jsonrepair(raw));
+            const repaired = jsonrepair(raw);
+            tc.args_object = JSON.parse(repaired);
+            // 同步更新为修复后的合法 JSON，与 processToolCall 保持一致
+            tc.args_string = repaired;
             return true;
         } catch {
             tc.args_object = undefined;
