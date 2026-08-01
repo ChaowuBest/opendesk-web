@@ -143,6 +143,49 @@ function filterChatModels(models) {
     return (models || []).filter(isChatModel);
 }
 
+// --- SVG icon tiles for toolbar (scheme E: soft-colored tiles) ---
+
+const MODE_SVG = {
+    standard: '<path d="M9 2 4 9h3.5l-1 5L12 7H8.5l.5-5Z"/>',
+    readonly: '<rect x="3.5" y="7" width="9" height="6" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+    plan: '<path d="M5 2.5h6v2H5z"/><path d="M4 4.5h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z"/><path d="M5.5 8h5M5.5 10.5h3"/>',
+    solo: '<path d="M4.5 5a2 2 0 0 0-2 2v2.5a2 2 0 0 0 2 2c.7 0 1.2-.3 1.4-.9l.2-.6h3.8l.2.6c.2.6.7.9 1.4.9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-7Z"/><path d="M6 8.5h2M7 7.5v2"/><circle cx="10" cy="7.5" r=".7" fill="currentColor" stroke="none"/><circle cx="10" cy="9.5" r=".7" fill="currentColor" stroke="none"/>',
+    unlimited:
+        '<path d="M4.5 5C2.5 5 1.5 6.3 1.5 8s1 3 3 3c2.5 0 3.5-3 3.5-3s1-3 3.5-3c2 0 3 1.3 3 3s-1 3-3 3c-2.5 0-3.5-3-3.5-3S7 5 4.5 5Z"/>'
+};
+
+function getModeIconTile(modeId) {
+    const svgPath = MODE_SVG[modeId];
+    if (!svgPath) return '';
+    return `<span class="agent-icon-tile mode-${modeId}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg></span>`;
+}
+
+function getModelIconTile(hasVision) {
+    const cls = hasVision ? 'model-vision' : 'model-chat';
+    const svgPath = hasVision
+        ? '<path d="M1.5 8S3.5 4.5 8 4.5s6.5 3.5 6.5 3.5-2 3.5-6.5 3.5S1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>'
+        : '<path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H6l-3 2.5V5Z"/>';
+    return `<span class="agent-icon-tile ${cls}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg></span>`;
+}
+
+const SKILL_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>';
+
+// --- Reasoning effort SVG icons (scheme 1: energy bars) ---
+
+const EFFORT_BAR_SVG = {
+    '': '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/>',
+    none: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><path d="M2.5 13.5 13.5 2.5" stroke="#8A8580" stroke-width="1.4" stroke-linecap="round"/>',
+    low: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/>',
+    medium: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/>',
+    high: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/>'
+};
+
+function getEffortIconSVG(effortValue) {
+    const paths = EFFORT_BAR_SVG[effortValue] || EFFORT_BAR_SVG[''];
+    return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
+}
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -479,27 +522,25 @@ class AgentInput extends HTMLElement {
     _updateModeButton() {
         const mode = this.availableModes.find((m) => m.id === this.selectedModeId);
         if (!mode) return;
-        const modeBtnIcon = this.querySelector('#agent-input-mode-btn span:first-child');
-        const modeBtnText = this.querySelector('#agent-input-mode-btn span:last-child');
-        if (modeBtnIcon) modeBtnIcon.textContent = mode.icon;
+        const modeBtnIcon = this.querySelector('#agent-input-mode-btn > span:first-child');
+        const modeBtnText = this.querySelector('#agent-input-mode-btn > span:last-child');
+        if (modeBtnIcon) modeBtnIcon.innerHTML = getModeIconTile(mode.id);
         if (modeBtnText) modeBtnText.textContent = mode.name;
     }
 
     renderModeItem(mode) {
         const isActive = mode.id === this.selectedModeId ? 'active' : '';
         const checkMark =
-            mode.id === this.selectedModeId
-                ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
-                : '';
-        return `<button class="popup-panel-item mode-panel-item ${isActive}" data-mode-id="${escapeHtml(mode.id)}">
-            <div class="popup-panel-item-icon mode-panel-item-icon">${escapeHtml(mode.icon)}</div>
-            <div class="popup-panel-item-info">
-                <div class="popup-panel-item-name">
+            mode.id === this.selectedModeId ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
+        return `<button class="ctx-item-block mode-panel-item ${isActive}" data-mode-id="${escapeHtml(mode.id)}">
+            <span class="ctx-icon-xl">${getModeIconTile(mode.id)}</span>
+            <span class="ctx-block-body">
+                <span class="ctx-block-label">
                     ${escapeHtml(mode.name)}
-                    <span class="popup-panel-item-id">(${escapeHtml(mode.id)})</span>
-                </div>
-                <div class="popup-panel-item-desc">${escapeHtml(mode.description || '')}</div>
-            </div>
+                    <span class="ctx-item-id">(${escapeHtml(mode.id)})</span>
+                </span>
+                <span class="ctx-block-desc">${escapeHtml(mode.description || '')}</span>
+            </span>
             ${checkMark}
         </button>`;
     }
@@ -1121,23 +1162,18 @@ class AgentInput extends HTMLElement {
                 const isActive = m.alias === this.selectedModel ? 'active' : '';
                 const checkMark =
                     m.alias === this.selectedModel
-                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
                         : '';
                 const hasVision = this.visionMap[m.alias] === true;
-                const iconHTML = hasVision
-                    ? '<i class="fas fa-eye text-blue-500 text-xs"></i>'
-                    : '<i class="fas fa-comments text-gray-400 text-xs"></i>';
+                const iconHTML = getModelIconTile(hasVision);
                 const visionTagHTML = hasVision
-                    ? `<span class="popup-panel-item-tag">${this.t('renderer.agentInput.model.visionTag')}</span>`
+                    ? `<span class="ctx-badge blue">${this.t('renderer.agentInput.model.visionTag')}</span>`
                     : '';
-                return `<button class="popup-panel-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
-                    <div class="popup-panel-item-icon">${iconHTML}</div>
-                    <div class="popup-panel-item-info">
-                        <div class="popup-panel-item-name">${m.alias}</div>
-                        ${visionTagHTML}
-                    </div>
+                return `<button class="ctx-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
+                    ${iconHTML}
+                    <span class="ctx-label">${m.alias}${visionTagHTML}</span>
                     ${checkMark}
-                    <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>
+                    <span class="ctx-arrow"><i class="fas fa-chevron-right"></i></span>
                 </button>`;
             })
             .join('');
@@ -1145,31 +1181,31 @@ class AgentInput extends HTMLElement {
         const modeItems = this.availableModes.map((m) => this.renderModeItem(m)).join('');
 
         const nodeItems = [
-            `<button class="popup-panel-item ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
-                <div class="popup-panel-item-icon"><i class="fas fa-laptop text-gray-500 text-xs"></i></div>
-                <div class="popup-panel-item-info">
-                    <div class="popup-panel-item-name">Local</div>
-                    <div class="popup-panel-item-desc">本机执行</div>
-                </div>
-                ${this.selectedExecutionNodeId ? '' : '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'}
+            `<button class="ctx-item-rich ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
+                <span class="ctx-icon-lg"><i class="fas fa-laptop"></i></span>
+                <span class="ctx-rich-body">
+                    <span class="ctx-rich-label">Local</span>
+                    <span class="ctx-rich-desc">本机执行</span>
+                </span>
+                ${this.selectedExecutionNodeId ? '' : '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'}
             </button>`,
             ...this.availableNodes.map((node) => {
                 const label = node.displayName || node.nodeId;
                 const isActive = node.nodeId === this.selectedExecutionNodeId ? 'active' : '';
                 const checkMark =
                     node.nodeId === this.selectedExecutionNodeId
-                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
                         : '';
                 const shells =
                     Array.isArray(node.shells) && node.shells.length > 0 ? node.shells.join(', ') : '无 shell 声明';
                 const workspace = typeof node.workspace === 'string' && node.workspace ? `cwd: ${node.workspace}` : '';
                 const desc = [node.platform || '未知平台', shells, workspace].filter(Boolean).join(' · ');
-                return `<button class="popup-panel-item ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
-                    <div class="popup-panel-item-icon"><i class="fas fa-network-wired text-emerald-500 text-xs"></i></div>
-                    <div class="popup-panel-item-info">
-                        <div class="popup-panel-item-name">${escapeHtml(label)}</div>
-                        <div class="popup-panel-item-desc">${escapeHtml(desc)}</div>
-                    </div>
+                return `<button class="ctx-item-rich ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
+                    <span class="ctx-icon-lg"><i class="fas fa-network-wired" style="color:#10b981"></i></span>
+                    <span class="ctx-rich-body">
+                        <span class="ctx-rich-label">${escapeHtml(label)}</span>
+                        <span class="ctx-rich-desc">${escapeHtml(desc)}</span>
+                    </span>
                     ${checkMark}
                 </button>`;
             })
@@ -1177,9 +1213,12 @@ class AgentInput extends HTMLElement {
 
         const currentModelLabel = this.getModelButtonLabel();
         const currentModelHasVision = this.visionMap[this.selectedModel] === true;
+        const currentEffortIcon =
+            this.selectedReasoningEffort && this.selectedReasoningEffort !== ''
+                ? getEffortIconSVG(this.selectedReasoningEffort)
+                : '';
         const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
-        const currentModeIcon = currentMode ? currentMode.icon : '';
         const currentNodeLabel = this.selectedExecutionNodeLabel || 'Local';
         const inputPlaceholder = this.getInputPlaceholder();
         const submitTitle = this.getSubmitTitle();
@@ -1193,10 +1232,10 @@ class AgentInput extends HTMLElement {
                 : `
                         <button
                             id="agent-goal-btn"
-                            class="agent-input-toolbar-control flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 hover:text-indigo-700 hover:border hover:border-indigo-200"
+                            class="agent-input-toolbar-control"
                             title="${escapeHtml(this._t('goal.renderer.create'))}"
                         >
-                            <i class="fa-solid fa-bullseye text-[10px]"></i>
+                            <i class="fa-solid fa-bullseye"></i>
                             <span>${escapeHtml(this._t('goal.renderer.create'))}</span>
                         </button>`;
 
@@ -1228,18 +1267,19 @@ class AgentInput extends HTMLElement {
                                 ? `
                         <div class="agent-input-toolbar-item" data-toolbar-priority="1">
                             <button id="agent-input-model-btn" class="agent-input-toolbar-control">
-                                <i class="fas ${currentModelHasVision ? 'fa-eye' : 'fa-comments'}"></i>
+                                ${getModelIconTile(currentModelHasVision)}
+                                ${currentEffortIcon ? `<span class="agent-effort-icon">${currentEffortIcon}</span>` : ''}
                                 <span>${currentModelLabel}</span>
                             </button>
-                            <div id="agent-input-model-panel" class="popup-panel-hidden">
-                                <div class="popup-panel-search">
-                                    <i class="fas fa-search text-gray-400 text-xs"></i>
-                                    <input id="agent-input-model-search" type="text" placeholder="搜索模型" class="popup-panel-search-input" />
+                            <div id="agent-input-model-panel" class="ctx-menu ctx-menu-hidden">
+                                <div class="ctx-search">
+                                    <i class="fas fa-search"></i>
+                                    <input id="agent-input-model-search" type="text" placeholder="搜索模型" />
                                 </div>
-                                <div id="agent-input-model-list" class="popup-panel-list">${modelItems}</div>
+                                <div id="agent-input-model-list" class="ctx-menu-list">${modelItems}</div>
                             </div>
-                            <div id="agent-input-effort-submenu" class="popup-panel-hidden popup-panel-submenu">
-                                <div id="agent-input-effort-submenu-list" class="popup-panel-list"></div>
+                            <div id="agent-input-effort-submenu" class="ctx-menu ctx-menu-hidden">
+                                <div id="agent-input-effort-submenu-list" class="ctx-menu-list"></div>
                             </div>
                         </div>
                         `
@@ -1250,11 +1290,11 @@ class AgentInput extends HTMLElement {
                                 ? `
                         <div class="agent-input-toolbar-item" data-toolbar-priority="2">
                             <button id="agent-input-mode-btn" class="agent-input-toolbar-control">
-                                <span>${currentModeIcon}</span>
+                                <span>${getModeIconTile(this.selectedModeId)}</span>
                                 <span>${escapeHtml(currentModeLabel)}</span>
                             </button>
-                            <div id="agent-input-mode-panel" class="popup-panel-hidden">
-                                <div id="agent-input-mode-list" class="popup-panel-list">${modeItems}</div>
+                            <div id="agent-input-mode-panel" class="ctx-menu ctx-menu-hidden">
+                                <div id="agent-input-mode-list" class="ctx-menu-list">${modeItems}</div>
                             </div>
                         </div>
                         `
@@ -1268,8 +1308,8 @@ class AgentInput extends HTMLElement {
                                 <i class="fas fa-network-wired"></i>
                                 <span>${escapeHtml(currentNodeLabel)}</span>
                             </button>
-                            <div id="agent-input-node-panel" class="popup-panel-hidden">
-                                <div id="agent-input-node-list" class="popup-panel-list">${nodeItems}</div>
+                            <div id="agent-input-node-panel" class="ctx-menu ctx-menu-hidden">
+                                <div id="agent-input-node-list" class="ctx-menu-list">${nodeItems}</div>
                             </div>
                         </div>
                         `
@@ -1277,18 +1317,18 @@ class AgentInput extends HTMLElement {
                         }
                         <div class="agent-input-toolbar-item" data-toolbar-priority="4">
                             <button id="agent-input-skill-btn" class="agent-input-toolbar-control">
-                                <i class="fas fa-wand-magic-sparkles"></i>
+                                ${SKILL_ICON_SVG}
                                 <span>技能</span>
                             </button>
-                            <div id="agent-input-skill-panel" class="skill-panel-hidden">
-                                <div class="skill-panel-search">
-                                    <i class="fas fa-search text-gray-400 text-xs"></i>
-                                    <input id="agent-input-skill-search" type="text" placeholder="搜索技能" class="skill-panel-search-input" />
+                            <div id="agent-input-skill-panel" class="ctx-menu ctx-menu-hidden">
+                                <div class="ctx-search">
+                                    <i class="fas fa-search"></i>
+                                    <input id="agent-input-skill-search" type="text" placeholder="搜索技能" />
                                 </div>
-                                <div id="agent-input-skill-list" class="skill-panel-list"></div>
-                                <div class="skill-panel-footer">
-                                    <button id="agent-input-skill-install-btn" class="skill-panel-install-btn">
-                                        <i class="fas fa-plus text-[10px]"></i>
+                                <div id="agent-input-skill-list" class="ctx-menu-list"></div>
+                                <div class="ctx-menu-footer">
+                                    <button id="agent-input-skill-install-btn" class="ctx-install-btn">
+                                        <i class="fas fa-plus"></i>
                                         <span>安装技能</span>
                                     </button>
                                 </div>
@@ -1296,11 +1336,11 @@ class AgentInput extends HTMLElement {
                         </div>
                         <button
                             id="agent-search-toggle"
-                            class="agent-input-toolbar-control agent-search-toggle flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 ${this.searchMode ? 'is-active' : ''}"
+                            class="agent-input-toolbar-control agent-search-toggle ${this.searchMode ? 'is-active' : ''}"
                             title="${searchToggleTitle}"
                             aria-pressed="${this.searchMode ? 'true' : 'false'}"
                         >
-                            <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
+                            <i class="fa-solid fa-magnifying-glass"></i>
                             <span>${searchToggleLabel}</span>
                         </button>
                         ${goalButton}
@@ -1352,8 +1392,8 @@ class AgentInput extends HTMLElement {
             ${this.getAttribute('hide-disclaimer') !== null ? '' : '<p id="agent-input-disclaimer" class="agent-input-footer-text">内容由 AI 生成，请核实重要信息。</p>'}
         </div>
         <!-- 内联补全面板 -->
-        <div id="agent-input-autocomplete" class="autocomplete-panel-hidden">
-            <div id="agent-input-autocomplete-list" class="autocomplete-panel-list"></div>
+        <div id="agent-input-autocomplete" class="ctx-menu ctx-menu-hidden">
+            <div id="agent-input-autocomplete-list" class="ctx-menu-list"></div>
         </div>
         `;
 
@@ -1433,14 +1473,33 @@ class AgentInput extends HTMLElement {
     }
 
     /**
-     * 生成模型按钮的显示文字：模型名 (推理配额)，默认时不显示括号
+     * 生成模型按钮的显示文字：模型名
      */
     getModelButtonLabel() {
-        const modelName = this.selectedModel || '模型';
-        if (!this.selectedReasoningEffort) return modelName;
-        const effortLabel = REASONING_EFFORT_OPTIONS.find((o) => o.value === this.selectedReasoningEffort)?.label;
-        if (!effortLabel || this.selectedReasoningEffort === '') return modelName;
-        return `${modelName} (${effortLabel})`;
+        return this.selectedModel || '模型';
+    }
+
+    /**
+     * 更新模型按钮中的推理深度图标（非默认时显示）
+     */
+    _updateEffortIcon() {
+        const btn = this.querySelector('#agent-input-model-btn');
+        if (!btn) return;
+        const existing = btn.querySelector('.agent-effort-icon');
+        if (this.selectedReasoningEffort && this.selectedReasoningEffort !== '') {
+            const svg = getEffortIconSVG(this.selectedReasoningEffort);
+            if (existing) {
+                existing.innerHTML = svg;
+            } else {
+                const span = document.createElement('span');
+                span.className = 'agent-effort-icon';
+                span.innerHTML = svg;
+                const labelSpan = btn.querySelector('> span:last-child');
+                if (labelSpan) btn.insertBefore(span, labelSpan);
+            }
+        } else if (existing) {
+            existing.remove();
+        }
     }
 
     /**
@@ -1491,15 +1550,16 @@ class AgentInput extends HTMLElement {
     toggleModelPanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-model-panel');
         if (!panel) return;
-        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+        if (forceClose || panel.classList.contains('ctx-menu-visible')) {
             this.closeModelPanel(true);
         } else {
             this.closeAllPanels();
-            panel.classList.remove('popup-panel-hidden');
-            panel.classList.add('popup-panel-visible');
+            panel.classList.remove('ctx-menu-hidden');
+            panel.classList.add('ctx-menu-visible');
             this.modelPanelOpen = true;
+            this.renderModelList();
             const btn = this.querySelector('#agent-input-model-btn');
-            if (btn) this.positionPanel(btn, panel);
+            if (btn) this.positionPanel(btn, panel, 240);
             const searchInput = this.querySelector('#agent-input-model-search');
             if (searchInput) {
                 searchInput.value = '';
@@ -1511,8 +1571,8 @@ class AgentInput extends HTMLElement {
     closeModelPanel(_force = false) {
         const panel = this.querySelector('#agent-input-model-panel');
         if (!panel) return;
-        panel.classList.remove('popup-panel-visible');
-        panel.classList.add('popup-panel-hidden');
+        panel.classList.remove('ctx-menu-visible');
+        panel.classList.add('ctx-menu-hidden');
         this.modelPanelOpen = false;
         this.hideEffortSubmenu();
     }
@@ -1520,37 +1580,38 @@ class AgentInput extends HTMLElement {
     toggleModePanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-mode-panel');
         if (!panel) return;
-        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+        if (forceClose || panel.classList.contains('ctx-menu-visible')) {
             this.closeModePanel(true);
         } else {
             this.closeAllPanels();
             this.renderModeList();
-            panel.classList.remove('popup-panel-hidden');
-            panel.classList.add('popup-panel-visible');
+            panel.classList.remove('ctx-menu-hidden');
+            panel.classList.add('ctx-menu-visible');
             this.modePanelOpen = true;
             const btn = this.querySelector('#agent-input-mode-btn');
-            if (btn) this.positionPanel(btn, panel, 340, 340);
+            // 模式面板不限制高度，让所有可选模式直接暴露（无需滚动）
+            if (btn) this.positionPanel(btn, panel, 340, 9999);
         }
     }
 
     closeModePanel(_force = false) {
         const panel = this.querySelector('#agent-input-mode-panel');
         if (!panel) return;
-        panel.classList.remove('popup-panel-visible');
-        panel.classList.add('popup-panel-hidden');
+        panel.classList.remove('ctx-menu-visible');
+        panel.classList.add('ctx-menu-hidden');
         this.modePanelOpen = false;
     }
 
     toggleNodePanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-node-panel');
         if (!panel) return;
-        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+        if (forceClose || panel.classList.contains('ctx-menu-visible')) {
             this.closeNodePanel(true);
         } else {
             this.closeAllPanels();
             this.renderNodeList();
-            panel.classList.remove('popup-panel-hidden');
-            panel.classList.add('popup-panel-visible');
+            panel.classList.remove('ctx-menu-hidden');
+            panel.classList.add('ctx-menu-visible');
             this.nodePanelOpen = true;
             const btn = this.querySelector('#agent-input-node-btn');
             if (btn) this.positionPanel(btn, panel, 260, 320);
@@ -1560,8 +1621,8 @@ class AgentInput extends HTMLElement {
     closeNodePanel(_force = false) {
         const panel = this.querySelector('#agent-input-node-panel');
         if (!panel) return;
-        panel.classList.remove('popup-panel-visible');
-        panel.classList.add('popup-panel-hidden');
+        panel.classList.remove('ctx-menu-visible');
+        panel.classList.add('ctx-menu-hidden');
         this.nodePanelOpen = false;
     }
 
@@ -1569,31 +1630,31 @@ class AgentInput extends HTMLElement {
         const listEl = this.querySelector('#agent-input-node-list');
         if (!listEl) return;
         const items = [
-            `<button class="popup-panel-item ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
-                <div class="popup-panel-item-icon"><i class="fas fa-laptop text-gray-500 text-xs"></i></div>
-                <div class="popup-panel-item-info">
-                    <div class="popup-panel-item-name">Local</div>
-                    <div class="popup-panel-item-desc">本机执行</div>
-                </div>
-                ${this.selectedExecutionNodeId ? '' : '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'}
+            `<button class="ctx-item-rich ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
+                <span class="ctx-icon-lg"><i class="fas fa-laptop"></i></span>
+                <span class="ctx-rich-body">
+                    <span class="ctx-rich-label">Local</span>
+                    <span class="ctx-rich-desc">本机执行</span>
+                </span>
+                ${this.selectedExecutionNodeId ? '' : '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'}
             </button>`,
             ...this.availableNodes.map((node) => {
                 const label = node.displayName || node.nodeId;
                 const isActive = node.nodeId === this.selectedExecutionNodeId ? 'active' : '';
                 const checkMark =
                     node.nodeId === this.selectedExecutionNodeId
-                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
                         : '';
                 const shells =
                     Array.isArray(node.shells) && node.shells.length > 0 ? node.shells.join(', ') : '无 shell 声明';
                 const workspace = typeof node.workspace === 'string' && node.workspace ? `cwd: ${node.workspace}` : '';
                 const desc = [node.platform || '未知平台', shells, workspace].filter(Boolean).join(' · ');
-                return `<button class="popup-panel-item ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
-                    <div class="popup-panel-item-icon"><i class="fas fa-network-wired text-emerald-500 text-xs"></i></div>
-                    <div class="popup-panel-item-info">
-                        <div class="popup-panel-item-name">${escapeHtml(label)}</div>
-                        <div class="popup-panel-item-desc">${escapeHtml(desc)}</div>
-                    </div>
+                return `<button class="ctx-item-rich ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
+                    <span class="ctx-icon-lg"><i class="fas fa-network-wired" style="color:#10b981"></i></span>
+                    <span class="ctx-rich-body">
+                        <span class="ctx-rich-label">${escapeHtml(label)}</span>
+                        <span class="ctx-rich-desc">${escapeHtml(desc)}</span>
+                    </span>
                     ${checkMark}
                 </button>`;
             })
@@ -1618,29 +1679,25 @@ class AgentInput extends HTMLElement {
             : this.availableModels;
 
         if (filtered.length === 0) {
-            listEl.innerHTML = '<div class="popup-panel-empty">未找到匹配的模型</div>';
+            listEl.innerHTML = '<div class="ctx-empty">未找到匹配的模型</div>';
         } else {
             listEl.innerHTML = filtered
                 .map((m) => {
                     const isActive = m.alias === this.selectedModel ? 'active' : '';
                     const checkMark =
                         m.alias === this.selectedModel
-                            ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                            ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
                             : '';
                     const hasVision = this.visionMap[m.alias] === true;
-                    const iconHTML = hasVision
-                        ? '<i class="fas fa-eye text-blue-500 text-xs"></i>'
-                        : '<i class="fas fa-comments text-gray-400 text-xs"></i>';
+                    const iconHTML = getModelIconTile(hasVision);
                     const visionTagHTML = hasVision
-                        ? `<span class="popup-panel-item-tag">${this.t('renderer.agentInput.model.visionTag')}</span>`
+                        ? `<span class="ctx-badge blue">${this.t('renderer.agentInput.model.visionTag')}</span>`
                         : '';
-                    return `<button class="popup-panel-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
-                        <div class="popup-panel-item-icon">${iconHTML}</div>
-                        <div class="popup-panel-item-info">
-                            <div class="popup-panel-item-name">${m.alias}${visionTagHTML}</div>
-                        </div>
+                    return `<button class="ctx-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
+                        ${iconHTML}
+                        <span class="ctx-label">${m.alias}${visionTagHTML}</span>
                         ${checkMark}
-                        <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>
+                        <span class="ctx-arrow"><i class="fas fa-chevron-right"></i></span>
                     </button>`;
                 })
                 .join('');
@@ -1649,13 +1706,13 @@ class AgentInput extends HTMLElement {
     }
 
     bindModelItemEvents() {
-        const modelItems = this.querySelectorAll('#agent-input-model-list .popup-panel-item');
+        const modelItems = this.querySelectorAll('#agent-input-model-list .ctx-item');
         modelItems.forEach((item) => {
             item.addEventListener('mouseenter', () => {
                 const alias = item.dataset.modelAlias;
                 if (!alias) return;
                 // 清除其他模型项的 hovered 状态，给当前项加上
-                this.querySelectorAll('#agent-input-model-list .popup-panel-item.hovered').forEach((el) => {
+                this.querySelectorAll('#agent-input-model-list .ctx-item.hovered').forEach((el) => {
                     el.classList.remove('hovered');
                 });
                 item.classList.add('hovered');
@@ -1682,22 +1739,11 @@ class AgentInput extends HTMLElement {
         submenuList.innerHTML = REASONING_EFFORT_OPTIONS.map((o) => {
             const isActive =
                 modelAlias === this.selectedModel && o.value === this.selectedReasoningEffort ? 'active' : '';
-            const checkMark = isActive ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>' : '';
-            const icon =
-                o.value === ''
-                    ? 'fa-gauge'
-                    : o.value === 'none'
-                      ? 'fa-ban'
-                      : o.value === 'low'
-                        ? 'fa-gauge-simple'
-                        : o.value === 'medium'
-                          ? 'fa-gauge'
-                          : 'fa-gauge-high';
-            return `<button class="popup-panel-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
-                <div class="popup-panel-item-icon"><i class="fas ${icon} text-blue-500 text-xs"></i></div>
-                <div class="popup-panel-item-info">
-                    <div class="popup-panel-item-name">${o.label}</div>
-                </div>
+            const checkMark = isActive ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
+            const effortIcon = getEffortIconSVG(o.value);
+            return `<button class="ctx-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
+                ${effortIcon}
+                <span class="ctx-label">${o.label}</span>
                 ${checkMark}
             </button>`;
         }).join('');
@@ -1721,12 +1767,12 @@ class AgentInput extends HTMLElement {
         }
 
         // 重播弹出动画：先移除再添加 visible 类
-        submenu.classList.remove('popup-panel-visible');
-        submenu.classList.add('popup-panel-hidden');
+        submenu.classList.remove('ctx-menu-visible');
+        submenu.classList.add('ctx-menu-hidden');
         // 强制 reflow 以重启动画
         void submenu.offsetWidth;
-        submenu.classList.remove('popup-panel-hidden');
-        submenu.classList.add('popup-panel-visible');
+        submenu.classList.remove('ctx-menu-hidden');
+        submenu.classList.add('ctx-menu-visible');
 
         // 绑定子菜单项事件
         this.bindEffortSubmenuEvents();
@@ -1735,17 +1781,17 @@ class AgentInput extends HTMLElement {
     hideEffortSubmenu() {
         const submenu = this.querySelector('#agent-input-effort-submenu');
         if (!submenu) return;
-        submenu.classList.remove('popup-panel-visible');
-        submenu.classList.add('popup-panel-hidden');
+        submenu.classList.remove('ctx-menu-visible');
+        submenu.classList.add('ctx-menu-hidden');
         // 清除模型项的 hovered 状态
-        this.querySelectorAll('#agent-input-model-list .popup-panel-item.hovered').forEach((el) => {
+        this.querySelectorAll('#agent-input-model-list .ctx-item.hovered').forEach((el) => {
             el.classList.remove('hovered');
         });
         this._hoveredModelAlias = null;
     }
 
     bindEffortSubmenuEvents() {
-        const items = this.querySelectorAll('#agent-input-effort-submenu-list .popup-panel-item');
+        const items = this.querySelectorAll('#agent-input-effort-submenu-list .ctx-item');
         items.forEach((item) => {
             item.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -1759,9 +1805,10 @@ class AgentInput extends HTMLElement {
                 });
                 this.closeModelPanel();
                 this.hideEffortSubmenu();
-                // 更新按钮文字
-                const modelBtn = this.querySelector('#agent-input-model-btn span');
+                // 更新按钮文字和推理图标
+                const modelBtn = this.querySelector('#agent-input-model-btn > span:last-child');
                 if (modelBtn) modelBtn.textContent = this.getModelButtonLabel();
+                this._updateEffortIcon();
                 // 如果之前因为模型未选择而禁用，现在启用了输入
                 if (this.isModelNotSelected) {
                     this.isModelNotSelected = false;
@@ -1778,7 +1825,7 @@ class AgentInput extends HTMLElement {
     }
 
     bindModeItemEvents() {
-        const items = this.querySelectorAll('#agent-input-mode-list .popup-panel-item');
+        const items = this.querySelectorAll('#agent-input-mode-list .ctx-item-block');
         items.forEach((item) => {
             item.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1786,11 +1833,11 @@ class AgentInput extends HTMLElement {
                 if (!modeId) return;
                 this.setMode(modeId);
                 this.closeModePanel();
-                const modeBtnIcon = this.querySelector('#agent-input-mode-btn span:first-child');
-                const modeBtnText = this.querySelector('#agent-input-mode-btn span:last-child');
+                const modeBtnIcon = this.querySelector('#agent-input-mode-btn > span:first-child');
+                const modeBtnText = this.querySelector('#agent-input-mode-btn > span:last-child');
                 const mode = this.availableModes.find((m) => m.id === modeId);
                 if (mode) {
-                    if (modeBtnIcon) modeBtnIcon.textContent = mode.icon;
+                    if (modeBtnIcon) modeBtnIcon.innerHTML = getModeIconTile(mode.id);
                     if (modeBtnText) modeBtnText.textContent = mode.name;
                 }
             });
@@ -1798,7 +1845,7 @@ class AgentInput extends HTMLElement {
     }
 
     bindNodeItemEvents() {
-        const items = this.querySelectorAll('#agent-input-node-list .popup-panel-item');
+        const items = this.querySelectorAll('#agent-input-node-list .ctx-item-rich');
         items.forEach((item) => {
             item.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -1823,9 +1870,9 @@ class AgentInput extends HTMLElement {
     toggleSkillPanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-skill-panel');
         if (!panel) return;
-        if (forceClose || panel.classList.contains('skill-panel-visible')) {
-            panel.classList.remove('skill-panel-visible');
-            panel.classList.add('skill-panel-hidden');
+        if (forceClose || panel.classList.contains('ctx-menu-visible')) {
+            panel.classList.remove('ctx-menu-visible');
+            panel.classList.add('ctx-menu-hidden');
             this.skillPanelOpen = false;
         } else {
             this.closeModelPanel(true);
@@ -1833,8 +1880,8 @@ class AgentInput extends HTMLElement {
             this.closeNodePanel(true);
             this.loadSkills().then(() => {
                 this.renderSkillList();
-                panel.classList.remove('skill-panel-hidden');
-                panel.classList.add('skill-panel-visible');
+                panel.classList.remove('ctx-menu-hidden');
+                panel.classList.add('ctx-menu-visible');
                 this.skillPanelOpen = true;
 
                 const btn = this.querySelector('#agent-input-skill-btn');
@@ -1862,21 +1909,21 @@ class AgentInput extends HTMLElement {
             : this.availableSkills;
 
         if (filtered.length === 0) {
-            listEl.innerHTML = `<div class="skill-panel-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
+            listEl.innerHTML = `<div class="ctx-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
         } else {
             listEl.innerHTML = filtered
                 .map((s) => {
                     const color = getSkillPastel(s.name);
                     const initial = getSkillInitial(s.name);
                     return `
-                <button class="skill-panel-item" data-skill-name="${s.name}">
-                    <div class="skill-panel-item-icon" style="background:${color.bg};color:${color.text};border-color:transparent;font-weight:700;font-size:14px;">
+                <button class="ctx-item-rich" data-skill-name="${s.name}">
+                    <span class="ctx-icon-lg" style="background:${color.bg};color:${color.text};border-color:transparent;font-weight:700;font-size:14px;">
                         ${initial}
-                    </div>
-                    <div class="skill-panel-item-info">
-                        <div class="skill-panel-item-name">${s.name}</div>
-                        <div class="skill-panel-item-desc">${s.description}</div>
-                    </div>
+                    </span>
+                    <span class="ctx-rich-body">
+                        <span class="ctx-rich-label">${s.name}</span>
+                        <span class="ctx-rich-desc">${s.description}</span>
+                    </span>
                 </button>
             `;
                 })
@@ -1886,7 +1933,7 @@ class AgentInput extends HTMLElement {
     }
 
     bindSkillItemEvents() {
-        const items = this.querySelectorAll('.skill-panel-item');
+        const items = this.querySelectorAll('#agent-input-skill-list .ctx-item-rich');
         const textarea = this.querySelector('#agent-input-textarea');
         items.forEach((item) => {
             item.addEventListener('click', (e) => {
@@ -1922,23 +1969,22 @@ class AgentInput extends HTMLElement {
 
         const menu = document.createElement('div');
         menu.id = 'agent-send-options-menu';
-        menu.className = 'agent-send-options-panel';
+        menu.className = 'ctx-menu';
 
         Object.assign(menu.style, {
             position: 'fixed',
-            zIndex: '10002',
-            animation: 'od-ctx-appear 0.12s ease-out'
+            zIndex: '10002'
         });
 
         const checked = this.ctrlEnterSend;
         menu.innerHTML = `
-            <div class="agent-send-menu-item" data-action="toggle-ctrl-enter">
-                <span class="agent-send-menu-item-label">按 Ctrl+Enter 发送</span>
-                <label class="agent-send-toggle">
+            <button class="ctx-item" data-action="toggle-ctrl-enter">
+                <span class="ctx-label">按 Ctrl+Enter 发送</span>
+                <span class="ctx-toggle">
                     <input type="checkbox" ${checked ? 'checked' : ''}>
-                    <span class="agent-send-toggle-slider"></span>
-                </label>
-            </div>
+                    <span class="ctx-toggle-slider"></span>
+                </span>
+            </button>
         `;
 
         document.body.appendChild(menu);
@@ -2273,27 +2319,27 @@ class AgentInput extends HTMLElement {
                 let iconContent;
                 if (item.isCommand) {
                     // Slash command：使用 FontAwesome 图标
-                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};"><i class="fas ${item.icon}" style="font-size:14px;"></i></div>`;
+                    iconContent = `<span class="ctx-icon-lg ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};"><i class="fas ${item.icon}" style="font-size:14px;"></i></span>`;
                 } else if (item.initial) {
                     // Skill：首字母 / 表情图标
-                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};font-weight:700;font-size:12px;">${item.initial}</div>`;
+                    iconContent = `<span class="ctx-icon-lg ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};font-weight:700;font-size:12px;">${item.initial}</span>`;
                 } else {
-                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></div>`;
+                    iconContent = `<span class="ctx-icon-lg ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></span>`;
                 }
                 return `
-            <button class="autocomplete-panel-item${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
+            <button class="ctx-item-rich${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
                 ${iconContent}
-                <div class="autocomplete-panel-item-info">
-                    <div class="autocomplete-panel-item-name">${this.autocompleteMode === 'file' ? '' : '/'}${item.label}</div>
-                    ${item.description ? `<div class="autocomplete-panel-item-desc">${item.description}</div>` : ''}
-                </div>
+                <span class="ctx-rich-body">
+                    <span class="ctx-rich-label">${this.autocompleteMode === 'file' ? '' : '/'}${item.label}</span>
+                    ${item.description ? `<span class="ctx-rich-desc">${item.description}</span>` : ''}
+                </span>
             </button>
         `;
             })
             .join('');
 
-        panel.classList.remove('autocomplete-panel-hidden');
-        panel.classList.add('autocomplete-panel-visible');
+        panel.classList.remove('ctx-menu-hidden');
+        panel.classList.add('ctx-menu-visible');
         this.autocompleteOpen = true;
 
         // 使用触发时记录的光标位置，如果没有则使用 textarea 位置作为后备
@@ -2310,8 +2356,10 @@ class AgentInput extends HTMLElement {
 
         if (spaceAbove >= panelHeight + 8) {
             panel.style.top = baseTop - panelHeight - 4 + 'px';
+            panel.style.maxHeight = '';
         } else if (spaceBelow >= panelHeight + 8) {
             panel.style.top = baseTop + 20 + 'px'; // 光标高度约 20px
+            panel.style.maxHeight = '';
         } else if (spaceAbove >= spaceBelow) {
             const h = Math.max(100, spaceAbove - 12);
             panel.style.top = baseTop - h - 4 + 'px';
@@ -2333,15 +2381,15 @@ class AgentInput extends HTMLElement {
     closeAutocompletePanel() {
         const panel = this.querySelector('#agent-input-autocomplete');
         if (!panel) return;
-        panel.classList.remove('autocomplete-panel-visible');
-        panel.classList.add('autocomplete-panel-hidden');
+        panel.classList.remove('ctx-menu-visible');
+        panel.classList.add('ctx-menu-hidden');
         this.autocompleteOpen = false;
         this.autocompleteMode = null;
         this._autocompleteTriggerPosition = null;
     }
 
     bindAutocompleteItemEvents() {
-        const items = this.querySelectorAll('#agent-input-autocomplete-list .autocomplete-panel-item');
+        const items = this.querySelectorAll('#agent-input-autocomplete-list .ctx-item-rich');
         items.forEach((item) => {
             item.addEventListener('mousedown', (e) => {
                 e.preventDefault();
@@ -2358,7 +2406,7 @@ class AgentInput extends HTMLElement {
     }
 
     updateAutocompleteSelection() {
-        const items = this.querySelectorAll('#agent-input-autocomplete-list .autocomplete-panel-item');
+        const items = this.querySelectorAll('#agent-input-autocomplete-list .ctx-item-rich');
         items.forEach((el, i) => {
             if (i === this.autocompleteSelectedIndex) {
                 el.classList.add('selected');

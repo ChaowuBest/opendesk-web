@@ -1233,34 +1233,9 @@ export class FileExplorer {
         ev.stopPropagation();
         this._dismissContextMenu();
 
-        const isDark = document.documentElement.dataset.theme === 'dark';
-        const menuBg = isDark ? 'rgba(37, 37, 38, 0.95)' : 'rgba(255, 255, 255, 0.88)';
-        const menuBorder = isDark ? '0.5px solid rgba(255, 255, 255, 0.12)' : '0.5px solid rgba(0, 0, 0, 0.08)';
-        const menuShadow = isDark
-            ? '0 12px 40px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.06), inset 0 0.5px 0 rgba(255,255,255,0.04)'
-            : '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)';
-        const btnColor = isDark ? '#cccccc' : '#1f2937';
-        const iconColor = isDark ? '#ababab' : '#6b7280';
-        const sepColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-        const hoverBg = isDark ? '#3b82f6' : '#3b82f6';
-        const hoverColor = 'white';
-        const dangerHoverBg = isDark ? 'rgba(220, 38, 38, 0.15)' : '#fef2f2';
-
         const menu = document.createElement('div');
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '9999',
-            minWidth: '180px',
-            padding: '4px',
-            borderRadius: '10px',
-            background: menuBg,
-            backdropFilter: 'blur(40px) saturate(1.8)',
-            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: menuBorder,
-            boxShadow: menuShadow,
-            animation: 'ws-ctx-appear 0.12s ease-out',
-            fontFamily: 'system-ui, -apple-system, sans-serif'
-        });
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '200px';
 
         const items: { icon: string; label: string; action: string; danger?: boolean }[] = [];
         if (!isDirectory) {
@@ -1276,26 +1251,15 @@ export class FileExplorer {
         items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
         items.push({ icon: 'fa-trash-can', label: '删除', action: 'delete', danger: true });
 
-        const btnStyle = `
-            display:flex; align-items:center; gap:8px; width:100%;
-            padding:6px 10px; border:none; border-radius:6px;
-            background:transparent; font-size: var(--fs-md); color:${btnColor};
-            cursor:pointer; text-align:left; transition:background 0.1s;
-        `.trim();
-        const iconStyle = `width:16px; text-align:center; font-size: var(--fs-md); color:${iconColor}; flex-shrink:0;`;
-
-        const dangerBtnStyle = btnStyle.replace(`color:${btnColor}`, 'color:#dc2626');
-        const dangerIconStyle = iconStyle.replace(`color:${iconColor}`, 'color:#dc2626');
-
         menu.innerHTML = items
-            .map((it, i) => {
-                const needSep = (i > 0 && it.action === 'copy-path') || it.action === 'delete';
-                const sep = needSep ? `<div style="height:1px; margin:3px 8px; background:${sepColor};"></div>` : '';
-                const bStyle = it.danger ? dangerBtnStyle : btnStyle;
-                const iStyle = it.danger ? dangerIconStyle : iconStyle;
+            .map((it) => {
+                const needSep = it.action === 'copy-path' || it.action === 'delete';
+                const sep = needSep ? '<div class="ctx-divider"></div>' : '';
+                const cls = it.danger ? 'ctx-item danger' : 'ctx-item';
                 return (
-                    `${sep}<button data-ctx-action="${it.action}" data-danger="${it.danger ? '1' : ''}" style="${bStyle}">` +
-                    `<i class="fas ${it.icon}" style="${iStyle}"></i><span>${it.label}</span></button>`
+                    `${sep}<button class="${cls}" data-ctx-action="${it.action}">` +
+                    `<span class="ctx-icon-sm"><i class="fas ${it.icon}"></i></span>` +
+                    `<span class="ctx-label">${it.label}</span></button>`
                 );
             })
             .join('');
@@ -1315,19 +1279,6 @@ export class FileExplorer {
         this._ctxMenuEl = menu;
 
         menu.querySelectorAll<HTMLElement>('[data-ctx-action]').forEach((btn) => {
-            const isDanger = btn.dataset.danger === '1';
-            btn.addEventListener('mouseenter', () => {
-                btn.style.background = isDanger ? dangerHoverBg : hoverBg;
-                btn.style.color = isDanger ? '#dc2626' : hoverColor;
-                const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : hoverColor;
-            });
-            btn.addEventListener('mouseleave', () => {
-                btn.style.background = 'transparent';
-                btn.style.color = isDanger ? '#dc2626' : btnColor;
-                const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : iconColor;
-            });
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const action = btn.dataset.ctxAction;

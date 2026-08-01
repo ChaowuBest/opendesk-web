@@ -31,6 +31,7 @@ export const enUs: Record<string, string> = {
 
     // Workspace
     'workspace.defaultLabel': 'Default workspace',
+    'workspace.shortLabel': 'Workspace',
     'workspace.defaultPickerTitle': 'Select default workspace',
     'workspace.taskLabel': 'Task workspace',
     'workspace.taskPickerTitle': 'Select task workspace',

@@ -31,6 +31,7 @@ export const zhCn: Record<string, string> = {
 
     // Workspace
     'workspace.defaultLabel': '当前默认工作空间',
+    'workspace.shortLabel': '默认工作空间',
     'workspace.defaultPickerTitle': '选择默认工作空间',
     'workspace.taskLabel': '当前任务工作空间',
     'workspace.taskPickerTitle': '选择当前任务工作空间',

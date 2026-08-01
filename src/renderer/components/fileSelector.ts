@@ -260,30 +260,6 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
     border: 1px solid var(--od-accent, #3b82f6); border-radius: 3px; outline: none;
     padding: 1px 4px; color: var(--od-text, #1f2937); background: var(--od-bg-elevated, #fff);
 }
-
-/* 右键菜单 */
-.od-fsel-ctx {
-    position: fixed; z-index: 100000;
-    background: var(--od-bg-elevated, #fff); border: 1px solid var(--od-border-strong, #e5e7eb); border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.14); padding: 4px 0;
-    min-width: 140px;
-    animation: od-fsel-ctx-in 120ms ease-out forwards;
-}
-@keyframes od-fsel-ctx-in {
-    from { opacity: 0; transform: scale(0.96) translateY(-4px); }
-    to   { opacity: 1; transform: scale(1) translateY(0); }
-}
-.od-fsel-ctx-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 14px; cursor: pointer; border: none; background: none;
-    text-align: left; width: 100%; font-size: var(--fs-md); color: var(--od-text, #374151);
-    font-family: inherit; transition: background 0.1s;
-}
-.od-fsel-ctx-item:hover { background: var(--od-bg-subtle, #f3f4f6); }
-.od-fsel-ctx-item i { font-size: var(--fs-sm); color: var(--od-text-muted, #6b7280); width: 14px; text-align: center; }
-.od-fsel-ctx-danger { color: #dc2626; }
-.od-fsel-ctx-danger:hover { background: rgba(220, 38, 38, 0.08); }
-.od-fsel-ctx-danger i { color: #dc2626; }
 `;
         document.head.appendChild(style);
         this._styleInjected = true;
@@ -515,7 +491,8 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
 
     private _createMenu(x: number, y: number): HTMLDivElement {
         const menu = document.createElement('div');
-        menu.className = 'od-fsel-ctx';
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '140px';
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
         document.body.appendChild(menu);
@@ -531,8 +508,8 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
 
     private _addMenuItem(menu: HTMLDivElement, icon: string, label: string, action: () => void, danger = false): void {
         const btn = document.createElement('button');
-        btn.className = 'od-fsel-ctx-item' + (danger ? ' od-fsel-ctx-danger' : '');
-        btn.innerHTML = `<i class="fa-solid ${icon}"></i><span>${label}</span>`;
+        btn.className = 'ctx-item' + (danger ? ' danger' : '');
+        btn.innerHTML = `<span class="ctx-icon-sm"><i class="fa-solid ${icon}"></i></span><span class="ctx-label">${label}</span>`;
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             action();

@@ -19,6 +19,8 @@ interface Button {
     iconSvg?: string;
     label: string;
     labelStayVisible?: boolean;
+    /** spread 布局下，悬停时在图标右侧展开文本 label */
+    expandLabel?: boolean;
     active?: boolean;
     action: () => void;
 }
@@ -121,27 +123,30 @@ export class ElasticToolbarWidget extends HTMLElement {
     private _renderSpread() {
         const buttonsHTML = this.buttons
             .map((button) => {
+                const iconHTML = button.iconSvg
+                    ? `<span class="elastic-icon-wrap">${button.iconSvg}</span>`
+                    : `<i class="fa-solid ${button.icon} text-[15px]"></i>`;
+                const labelHTML = button.expandLabel ? `<span class="elastic-label">${button.label}</span>` : '';
                 return `
             <button id='${button.id}-${this.uid}'
-                class="toolbar-spread-btn flex items-center justify-center w-8 h-8 rounded-lg
-                       bg-transparent hover:bg-gray-100 active:bg-gray-200
-                       transition-colors duration-150
-                       text-gray-500 hover:text-gray-800"
+                class="toolbar-spread-btn flex items-center justify-center rounded-lg
+                       transition-colors duration-150${button.expandLabel ? ' expand-label' : ''}"
                 title="${button.label}">
-                <i class="fa-solid ${button.icon} text-[15px]"></i>
+                ${iconHTML}
+                ${labelHTML}
             </button>
             `;
             })
             .join('');
 
         const titleHTML = this.toolbarTitle
-            ? `<span id="toolbar-title-${this.uid}" class="text-[18px] font-bold text-gray-900 truncate" title="${this.toolbarTitle}">${this.toolbarTitle}</span>`
+            ? `<span id="toolbar-title-${this.uid}" class="text-[18px] font-bold truncate" style="color: var(--od-text);" title="${this.toolbarTitle}">${this.toolbarTitle}</span>`
             : '';
 
         const subtitleHTML = this.toolbarSubtitle
             ? `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" title="${this.toolbarSubtitle}">
                 <i class="fa-solid fa-briefcase"></i>
-                <span class="ws-label" style="font-size: var(--fs-sm);color:#6b7280;white-space:nowrap;flex-shrink:0;${this.subtitleLabel ? '' : 'display:none;'}">${this.subtitleLabel || ''}</span>
+                <span class="ws-label" style="font-size: var(--fs-sm);color:var(--od-text-muted, #6b7280);white-space:nowrap;flex-shrink:0;${this.subtitleLabel ? '' : 'display:none;'}">${this.subtitleLabel || ''}</span>
                 <span class="ws-path">${this.toolbarSubtitle}</span>
                 <i class="fa-solid fa-chevron-down" style="font-size: var(--icon-xs); opacity: 0.5;"></i>
                </button>`

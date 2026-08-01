@@ -14,6 +14,7 @@ import Alpine from 'alpinejs';
 import '../theme/theme.css';
 import '../styles/common.css';
 import '../styles/custom.css';
+import '../styles/context-menu.css';
 
 import '../components/loading.js';
 import '../components/agentinput.js';

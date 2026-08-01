@@ -1522,10 +1522,6 @@ if (shouldExposeMainWindowAPIs()) {
         window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
     });
 
-    safeExposeInMainWorld('contextMenuAPI', {
-        suppress: () => ipcRenderer.send('context-menu:suppress')
-    });
-
     // 暴露系统平台信息，用于 magic pointer 等功能的平台适配
     safeExposeInMainWorld('systemInfo', {
         platform: process.platform,

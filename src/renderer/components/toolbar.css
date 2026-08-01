@@ -231,11 +231,12 @@ elastic-toolbar-widget.align-left header {
 
 /* ===== Spread 布局：顶部分栏底线 ===== */
 elastic-toolbar-widget .toolbar-spread-header {
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--od-border, #f0f0f0);
 }
 
 elastic-toolbar-widget .toolbar-spread-btn {
     position: relative;
+    color: var(--od-text-muted, #6b7280);
 }
 
 elastic-toolbar-widget .toolbar-spread-btn::after {
@@ -244,12 +245,56 @@ elastic-toolbar-widget .toolbar-spread-btn::after {
     inset: 2px;
     border-radius: 6px;
     opacity: 0;
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--od-bg-subtle, rgba(0, 0, 0, 0.04));
     transition: opacity 0.15s;
 }
 
 elastic-toolbar-widget .toolbar-spread-btn:hover::after {
     opacity: 1;
+}
+
+/* SVG 图标包装：继承按钮颜色、居中 */
+elastic-toolbar-widget .elastic-icon-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+elastic-toolbar-widget .elastic-icon-wrap svg {
+    display: block;
+}
+
+/* 面板展开激活色（朱红，对齐 settings 稿色盘） */
+elastic-toolbar-widget .toolbar-spread-btn.toolbar-spread-btn-on {
+    color: #df4436;
+}
+elastic-toolbar-widget .toolbar-spread-btn.toolbar-spread-btn-on:hover {
+    color: #df4436;
+}
+
+/* Spread 按钮：悬停右侧展开 label（对齐 sidebar-bottom 效果） */
+elastic-toolbar-widget .toolbar-spread-btn.expand-label {
+    width: auto !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    padding: 0 8px !important;
+}
+elastic-toolbar-widget .toolbar-spread-btn.expand-label .elastic-label {
+    max-width: 0 !important;
+    opacity: 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    font-weight: 400 !important;
+    line-height: 1 !important;
+    margin-left: 4px !important;
+    transition:
+        max-width 0.18s ease,
+        opacity 0.12s ease 0.05s !important;
+}
+elastic-toolbar-widget .toolbar-spread-btn.expand-label:hover .elastic-label {
+    max-width: 56px !important;
+    opacity: 1 !important;
 }
 
 /* ===== Spread subtitle (workspace path) ===== */
@@ -265,12 +310,12 @@ elastic-toolbar-widget .toolbar-spread-btn:hover::after {
     transition: all 0.15s ease;
     min-width: 0;
     font-size: var(--fs-sm);
-    color: #9ca3af;
+    color: var(--od-text-disabled, #9ca3af);
     line-height: 1.3;
 }
 .toolbar-spread-subtitle:hover {
-    background: #f3f4f6;
-    color: #6b7280;
+    background: var(--od-bg-subtle, #f3f4f6);
+    color: var(--od-text-muted, #6b7280);
 }
 .toolbar-spread-subtitle i:first-child {
     font-size: var(--icon-sm);

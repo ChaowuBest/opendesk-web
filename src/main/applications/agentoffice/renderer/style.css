@@ -407,47 +407,6 @@ button {
     color: var(--muted);
     align-items: center;
 }
-.message-context-menu {
-    position: fixed;
-    z-index: 50;
-    min-width: 188px;
-    padding: 4px;
-    border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    box-shadow: 0 14px 42px rgba(15, 23, 42, 0.18);
-    backdrop-filter: blur(28px) saturate(1.5);
-}
-.message-context-menu button {
-    width: 100%;
-    padding: 7px 9px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    color: var(--text);
-    text-align: left;
-    font-size: var(--fs-md);
-}
-.message-context-menu button:hover {
-    background: var(--accent);
-    color: #fff;
-}
-.message-context-menu button i {
-    width: 15px;
-    color: var(--muted);
-    text-align: center;
-}
-.message-context-menu button:hover i {
-    color: #fff;
-}
-.message-context-menu-separator {
-    height: 1px;
-    margin: 4px 2px;
-    background: var(--border);
-}
 .resource {
     margin-top: 8px;
     max-width: 360px;

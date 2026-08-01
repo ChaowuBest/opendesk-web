@@ -655,73 +655,9 @@ const createWindow = () => {
         return true;
     };
 
-    // renderer 可以通过 IPC 抑制下一次默认右键菜单（用于自定义右键菜单场景）
-    let suppressNextContextMenu = false;
-    ipcMain.on('context-menu:suppress', () => {
-        suppressNextContextMenu = true;
-    });
-
-    // 缓存上一次的右键菜单，避免 macOS 原生 NSMenuItem 引用泄漏
-    let _lastContextMenu: Electron.Menu | null = null;
-
-    mainWindow.webContents.on('context-menu', (_event, params) => {
-        if (suppressNextContextMenu) {
-            suppressNextContextMenu = false;
-            return;
-        }
-        const menuItems: Electron.MenuItemConstructorOptions[] = [];
-        if (params.mediaType === 'image' && params.srcURL) {
-            menuItems.push({
-                label: '复制图片',
-                click: () => {
-                    mainWindow.webContents.copyImageAt(params.x, params.y);
-                }
-            });
-            menuItems.push({
-                label: '另存为图片…',
-                click: async () => {
-                    const url = params.srcURL;
-                    const ext = url.startsWith('data:image/png') ? '.png' : '.jpg';
-                    const { canceled, filePath: savePath } = await dialog.showSaveDialog(mainWindow, {
-                        defaultPath: path.join(app.getPath('desktop'), `image${ext}`),
-                        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
-                    });
-                    if (canceled || !savePath) return;
-                    try {
-                        if (url.startsWith('data:')) {
-                            const base64 = url.replace(/^data:image\/\w+;base64,/, '');
-                            await fsPromises.writeFile(savePath, Buffer.from(base64, 'base64'));
-                        }
-                    } catch {
-                        /* ignore */
-                    }
-                }
-            });
-        }
-        if (params.editFlags.canCut) {
-            menuItems.push({ label: '剪切', role: 'cut' });
-        }
-        if (params.editFlags.canCopy || params.selectionText) {
-            menuItems.push({ label: '复制', role: 'copy' });
-        }
-        if (params.editFlags.canPaste) {
-            menuItems.push({ label: '粘贴', role: 'paste' });
-        }
-        if (params.editFlags.canSelectAll) {
-            menuItems.push({ label: '全选', role: 'selectAll' });
-        }
-        if (menuItems.length > 0) {
-            // 先关闭前一个菜单，释放原生 NSMenuItem 引用
-            if (_lastContextMenu) {
-                _lastContextMenu.closePopup();
-                _lastContextMenu = null;
-            }
-            _lastContextMenu = Menu.buildFromTemplate(menuItems);
-            _lastContextMenu.on('menu-will-close', () => {
-                _lastContextMenu = null;
-            });
-            _lastContextMenu.popup({ window: mainWindow });
-        }
+    // 全局右键菜单已禁用：所有右键菜单均由 renderer 侧自定义实现（公共样式见 styles/context-menu.css）。
+    mainWindow.webContents.on('context-menu', () => {
+        return;
     });
 
     mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
