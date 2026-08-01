@@ -519,7 +519,7 @@ describe('opencode session routes', () => {
         });
     });
 
-    test('POST /session/:id/message does not pass model headers when cookie or trace is missing', async () => {
+    test('POST /session/:id/message passes each available model header independently', async () => {
         mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
@@ -541,13 +541,14 @@ describe('opencode session routes', () => {
         );
 
         expect(response.status).toBe(200);
-        expect(task.submitUserMessage).toHaveBeenCalledWith(
-            'hello without complete headers',
-            expect.objectContaining({
-                modelRequestOptions: undefined,
-                instrumentationContext: expect.any(Object)
-            })
-        );
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers', {
+            modelRequestOptions: {
+                extraHeaders: {
+                    cookie: 'sid=abc'
+                }
+            },
+            instrumentationContext: expect.any(Object)
+        });
     });
 
     test('POST /session/:id/message publishes busy and idle session events', async () => {

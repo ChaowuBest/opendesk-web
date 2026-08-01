@@ -488,6 +488,7 @@ export class TaskState {
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
+    private _activeModelRequestOptions?: TaskModelRequestOptions;
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -611,6 +612,10 @@ export class TaskState {
 
     getTurnGeneration(): number {
         return this._turnGeneration;
+    }
+
+    getActiveModelRequestOptions(): TaskModelRequestOptions | undefined {
+        return this._activeModelRequestOptions;
     }
 
     async materializeExtensionPromptTurn(prompt: string, metadata: RuntimeMetadata, rawText?: string): Promise<void> {
@@ -1512,6 +1517,7 @@ export class TaskState {
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
         const generation = ++this._turnGeneration;
+        this._activeModelRequestOptions = options.modelRequestOptions;
         this.clearRuntimeInterruptForNewTurn();
         this.recordTaskInteraction();
         this.started_at = new Date();
@@ -2920,6 +2926,7 @@ export class TaskState {
                     if (this._turnGeneration === myGeneration) {
                         this._turnRunning = false;
                         this._activeTurnMetadata = undefined;
+                        this._activeModelRequestOptions = undefined;
                     }
                 }
             }

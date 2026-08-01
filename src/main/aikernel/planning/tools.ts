@@ -14,7 +14,12 @@ import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Markdown } from '@earendil-works/pi-tui';
-import type { TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../states/tasks.js';
+import type {
+    TaskModelRequestOptions,
+    TaskState,
+    TaskUpdateAssistantChunk,
+    TaskUpdateChunk
+} from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
@@ -90,6 +95,8 @@ export interface StartSubTaskOptions {
     onProgress?: (progress: SubTaskProgressInfo) => void;
     /** 子任务创建后的回调 */
     onCreated?: (subTask: TaskState) => void;
+    /** 父 turn 的模型请求上下文，仅传给本次子任务请求，不持久化。 */
+    modelRequestOptions?: TaskModelRequestOptions;
 }
 
 /**
@@ -99,7 +106,7 @@ export interface StartSubTaskOptions {
  * - 使用 TaskHooks 自动处理 attemptCompletion 检查
  */
 export async function startSubTask(options: StartSubTaskOptions): Promise<SubTaskResult> {
-    const { parentTask, config, onProgress, onCreated } = options;
+    const { parentTask, config, onProgress, onCreated, modelRequestOptions } = options;
 
     // 检查父任务状态
     if (parentTask.task_status === 'stopped' || !parentTask.task_manager_state.getTask(parentTask.task_id)) {
@@ -193,7 +200,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             objective: config.objective,
             criteria: config.criteria
         });
-        await subTask.submitUserMessage(userMessage);
+        await subTask.submitUserMessage(userMessage, { modelRequestOptions });
         await subTask.waitUntilFinished(progressCallback, true, true);
 
         // 如果子任务仍在运行（因父任务立即发送消息而被"分离"），转为后台异步子任务
@@ -742,6 +749,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             const promise = startSubTask({
                 parentTask: taskState,
                 config,
+                modelRequestOptions: taskState.getActiveModelRequestOptions(),
                 onCreated: (st) => {
                     asyncSubTaskState = st;
                 }
@@ -800,6 +808,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const result = await startSubTask({
             parentTask: taskState,
             config,
+            modelRequestOptions: taskState.getActiveModelRequestOptions(),
             onProgress: (progress) => {
                 toolResult.updateResultObject({ subtask_progress: progress });
             }

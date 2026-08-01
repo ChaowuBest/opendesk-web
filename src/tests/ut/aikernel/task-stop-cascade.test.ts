@@ -154,6 +154,44 @@ describe('TaskState.stop() child task cascade', () => {
         });
     });
 
+    test('passes the parent turn model request options to a child task', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task-parent';
+        parent.task_status = 'running';
+        manager.tasks.push(parent);
+        jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+        let submitSpy!: ReturnType<typeof jest.spyOn>;
+        const modelRequestOptions = {
+            extraHeaders: {
+                cookie: 'sid=abc',
+                trace_id: 'trace-123'
+            }
+        };
+        await startSubTask({
+            parentTask: parent,
+            config: {
+                title: 'child',
+                objective: 'do work',
+                criteria: 'return result',
+                isAsync: false
+            },
+            modelRequestOptions,
+            onCreated: (child) => {
+                submitSpy = jest.spyOn(child, 'submitUserMessage').mockResolvedValue({ status: 'ok' });
+                jest.spyOn(child, 'waitUntilFinished').mockImplementation(async () => {
+                    child.task_status = 'stopped';
+                });
+            }
+        });
+
+        expect(submitSpy).toHaveBeenCalledWith(expect.any(String), { modelRequestOptions });
+    });
+
     test('allows a normally finished task to start a new user turn', async () => {
         Setting.updateInstanceData({
             default_model: 'mock-model',

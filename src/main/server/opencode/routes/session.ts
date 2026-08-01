@@ -246,17 +246,16 @@ function getIncomingTraceHeader(c: Context): { name: 'x-tracerId' | 'x-trace-id'
 function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, string> } | undefined {
     const cookie = stringHeaderValue(c.req.header('cookie'));
     const traceHeader = getIncomingTraceHeader(c);
+    const extraHeaders: Record<string, string> = {};
 
-    if (!cookie || !traceHeader) {
-        return undefined;
+    if (cookie) {
+        extraHeaders.cookie = iconv.encode(cookie, 'latin1').toString('latin1');
+    }
+    if (traceHeader) {
+        extraHeaders.trace_id = iconv.encode(traceHeader.value, 'latin1').toString('latin1');
     }
 
-    return {
-        extraHeaders: {
-            cookie: iconv.encode(cookie, 'latin1').toString('latin1'),
-            trace_id: iconv.encode(traceHeader.value, 'latin1').toString('latin1')
-        }
-    };
+    return Object.keys(extraHeaders).length > 0 ? { extraHeaders } : undefined;
 }
 
 async function submitServerUserMessage(
