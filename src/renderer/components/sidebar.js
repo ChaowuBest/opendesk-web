@@ -2078,12 +2078,7 @@ class SideBar extends HTMLElement {
         input.value = originalName === this._t('renderer.sidebar.unnamedTask') ? '' : originalName;
         input.className = nameEl.className;
         input.style.cssText =
-            'font-size:var(--fs-base); background:transparent; border:1px solid #C94C40; border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
-
-        // If the current task is the active one, match the active styles
-        if (taskId === this.currentTaskId) {
-            input.style.color = 'white';
-        }
+            'font-size:var(--fs-base); background:transparent; border:1px solid var(--od-border); border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
 
         nameEl.replaceWith(input);
         input.focus();
