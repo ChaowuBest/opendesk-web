@@ -572,6 +572,8 @@ const createWindow = () => {
         y: windowY,
         width: windowWidth,
         height: windowHeight,
+        minHeight: 400,
+        minWidth: 850,
         frame: false,
         icon: appIcon,
         show: false, // 等 ready-to-show 后再显示，避免白屏闪烁

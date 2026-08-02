@@ -397,11 +397,23 @@ export function initializeRegistry() {
     ApplicationRegistry.markAsReady();
 }
 
+// Worker 重启相关状态
+let cachedRuntimeOptions: WorkerRuntimeOptions = {};
+let workerRestartCount = 0;
+const MAX_WORKER_RESTARTS = 5;
+let settingUpdateCallbackRegistered = false;
+
 /**
  * 初始化 Worker 和协议 handlers
  * 在 app.whenReady() 之后调用
  */
 export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = {}) {
+    cachedRuntimeOptions = runtimeOptions;
+    workerRestartCount = 0;
+    spawnGlobalWorker(runtimeOptions);
+}
+
+function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     // 生产环境 worker 已由 electron-vite 编译为 worker.js，不可再传 execArgv: ['tsx']，
     // 否则子 Node 进程参数非法，在 OpenHarmony 等环境下会导致 Worker 创建失败、globalWorker 一直为 null。
     let worker: Worker;
@@ -419,12 +431,14 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
             }
         });
     } catch (error) {
-        logger.error('initializeRegistryWorker: failed to spawn global worker', error);
-        ApplicationRegistry.globalWorker = null;
+        logger.error('spawnGlobalWorker: failed to spawn global worker', error);
+        scheduleWorkerRestart();
         return;
     }
 
     ApplicationRegistry.globalWorker = worker;
+    // worker 成功创建后重置重启计数
+    workerRestartCount = 0;
 
     const rejectPendingWorkerRequests = (error: Error) => {
         for (const pending of ApplicationRegistry.pendingRequests.values()) {
@@ -452,6 +466,7 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
         if (ApplicationRegistry.globalWorker === worker) {
             ApplicationRegistry.globalWorker = null;
         }
+        scheduleWorkerRestart();
     });
 
     worker.on('exit', (code) => {
@@ -462,6 +477,7 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
         const error = new Error(`global worker exited with code ${code}`);
         logger.error(error.message);
         rejectPendingWorkerRequests(error);
+        scheduleWorkerRestart();
     });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
@@ -725,18 +741,39 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
     });
 
     // 网络配置变更时同步到 Worker，确保代理/SSL 设置在 Worker 中实时生效
-    Setting.afterSetDataCallbacks.push(() => {
-        const nc = Setting.getInstance().getData().network_config;
-        if (worker && nc) {
-            worker.postMessage({
-                type: '__network_config_updated',
-                config: {
-                    no_ssl: nc.no_ssl,
-                    use_proxy: nc.use_proxy,
-                    custom_proxy_addr: nc.custom_proxy_addr,
-                    no_proxy: nc.no_proxy
-                }
-            });
-        }
-    });
+    // 只注册一次回调，worker 重启后自动使用 ApplicationRegistry.globalWorker 获取新实例
+    if (!settingUpdateCallbackRegistered) {
+        settingUpdateCallbackRegistered = true;
+        Setting.afterSetDataCallbacks.push(() => {
+            const nc = Setting.getInstance().getData().network_config;
+            if (ApplicationRegistry.globalWorker && nc) {
+                ApplicationRegistry.globalWorker.postMessage({
+                    type: '__network_config_updated',
+                    config: {
+                        no_ssl: nc.no_ssl,
+                        use_proxy: nc.use_proxy,
+                        custom_proxy_addr: nc.custom_proxy_addr,
+                        no_proxy: nc.no_proxy
+                    }
+                });
+            }
+        });
+    }
+}
+
+/**
+ * 调度 worker 重启，带指数退避和最大重试次数限制
+ */
+function scheduleWorkerRestart(): void {
+    if (workerRestartCount >= MAX_WORKER_RESTARTS) {
+        logger.error(`global worker crashed and max restart attempts (${MAX_WORKER_RESTARTS}) exceeded, giving up`);
+        return;
+    }
+    workerRestartCount++;
+    const delay = Math.min(1000 * Math.pow(2, workerRestartCount - 1), 30000);
+    logger.info(`global worker will restart in ${delay}ms (attempt ${workerRestartCount}/${MAX_WORKER_RESTARTS})`);
+    setTimeout(() => {
+        // 重新读取当前设置，确保重启后的 worker 拿到最新配置
+        spawnGlobalWorker(cachedRuntimeOptions);
+    }, delay);
 }

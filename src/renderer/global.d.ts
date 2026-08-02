@@ -17,6 +17,16 @@ declare module '*.css?raw' {
     export default content;
 }
 
+declare module '*.yaml?raw' {
+    const content: string;
+    export default content;
+}
+
+declare module '*.jsonl?raw' {
+    const content: string;
+    export default content;
+}
+
 declare global {
     interface Window {
         settingErrorAPI: {
