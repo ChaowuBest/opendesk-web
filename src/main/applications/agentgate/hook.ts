@@ -338,6 +338,22 @@ function extractCommand(toolCall: ToolCall): string {
     if (matchesAny(toolName, ['executeBash', 'executeZsh', 'executePowerShell'])) {
         return String(args['command'] || '');
     }
+    // 邮件发送/回复: to/cc/subject + attachments(路径数组，不截断) + content 预览。
+    // attachments 是本地文件路径数组，必须完整透传给 AgentMoss，否则 L3 看不到
+    // 是否带 .env/密钥等敏感文件外传。content 用 preview 给语义判断空间又不撑爆。
+    if (matchesAny(toolName, ['sendEmail', 'replyEmail'])) {
+        const to = preview(args['to'] || args['uid'] || '?');
+        const subject = preview(args['subject'] || '');
+        const parts = [`to=${to}`, `subject=${subject}`];
+        const attachments = args['attachments'];
+        if (Array.isArray(attachments) && attachments.length > 0) {
+            // 路径不截断（截断丢文件名，敏感路径正则匹配不到）
+            parts.push(`附件=${(attachments as string[]).join(', ')}`);
+        }
+        const content = args['content'];
+        if (content) parts.push(`正文=${preview(content)}`);
+        return `发送邮件: ${parts.join(', ')}`;
+    }
     // 文件读取: file_path 或 path（不截断路径）
     if (matchesAny(toolName, ['readFile', 'extractText'])) {
         return `读取文件: ${args['file_path'] || args['path'] || args['filePath'] || '?'}`;

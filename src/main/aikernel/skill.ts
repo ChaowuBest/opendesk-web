@@ -725,6 +725,27 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
             logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
 
+            // skill 内部工具执行前送审 AgentGate 安全网关。
+            // executeToolCall 的 checkBeforeToolCall 只针对 CallSkillTool 本身
+            // （action_detail 只有 bundleName/skillName/toolName，无真实命令），
+            // skill 内部工具的真实命令（如 executeBash 的 command）必须在此送审，
+            // 否则 rm -rf / 类危险操作逃过 AgentMoss。
+            const innerToolCall = new ToolCall(
+                0,
+                `inner-${args.toolName}-${Date.now()}`,
+                args.toolName,
+                JSON.stringify(toolArgs)
+            );
+            innerToolCall.args_object = toolArgs;
+            if (taskState?.hooks) {
+                const innerFeedback = await taskState.hooks.checkBeforeToolCall(taskState, innerToolCall);
+                if (innerFeedback?.operation === 'deny') {
+                    const msg = innerFeedback.message || 'skill 内部工具被安全网关拦截';
+                    parentResult.updateResult(`skill 内部工具 ${args.toolName} 被拦截: ${msg}`);
+                    throw new Error(`skill tool ${args.toolName} denied by hook: ${msg}`);
+                }
+            }
+
             const innerResult = await tool.execute(
                 toolArgs,
                 (innerToolResult) => {
