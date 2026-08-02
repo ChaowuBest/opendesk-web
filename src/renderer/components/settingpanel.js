@@ -2108,10 +2108,10 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
             this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-            this.refreshGeneralSection();
+            this.refreshAll();
             void this.saveImmediately().then(() => {
                 this._t = createRendererTranslator(this.currentData);
-                this.refreshGeneralSection();
+                this.refreshAll();
             });
         });
 
@@ -2552,9 +2552,7 @@ class SettingPanel extends HTMLElement {
 
             await window.settingAPI.saveSettingObject(jsonData);
             await this.loadData();
-            this._hasRendered = false;
-            this.render();
-            this.setUpEventListeners();
+            this.refreshAll();
             window.notificationAPI.sendNotification(
                 'info',
                 this._t('renderer.settings.notificationTitle'),
@@ -3447,6 +3445,12 @@ class SettingPanel extends HTMLElement {
         }
     }
 
+    refreshAll() {
+        this._hasRendered = false;
+        this.render();
+        this.setUpEventListeners();
+    }
+
     refreshGeneralSection() {
         const tabGeneral = this.querySelector('#tab-general');
         if (!tabGeneral) return;
@@ -3458,10 +3462,10 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
                 this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-                this.refreshGeneralSection();
+                this.refreshAll();
                 void this.saveImmediately().then(() => {
                     this._t = createRendererTranslator(this.currentData);
-                    this.refreshGeneralSection();
+                    this.refreshAll();
                 });
             });
             this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
@@ -3693,9 +3697,7 @@ class SettingPanel extends HTMLElement {
 
                 // 刷新数据
                 await this.loadData();
-                this._hasRendered = false;
-                this.render();
-                this.setUpEventListeners();
+                this.refreshAll();
             } catch (error) {
                 resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: this.escapeHtml(error.message) })}</span>`;
             }
