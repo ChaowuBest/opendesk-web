@@ -1044,7 +1044,7 @@ class AppMgrEntryWidget extends HTMLElement {
         });
         // 支持 Ctrl+Enter 提交修改需求
         this.shadowRoot.querySelector('#modifyInput')?.addEventListener('keydown', (event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) {
                 event.preventDefault();
                 this.requestModify();
             }

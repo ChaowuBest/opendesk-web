@@ -1159,7 +1159,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 editor.on('keydown', (e) => {
                     if (e.key === 'Escape') this._hideFloatingToolbar();
                     // 分割线自动补全：输入 --- 后按回车，转换为 <hr>
-                    if (e.key === 'Enter') {
+                    if (e.key === 'Enter' && !e.isComposing) {
                         this._handleHorizontalRuleShortcut(editor, e);
                     }
                 });

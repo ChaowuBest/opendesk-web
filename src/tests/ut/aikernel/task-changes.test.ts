@@ -4,6 +4,7 @@ import path from 'path';
 import { jest } from '@jest/globals';
 import { AssistantMessage, ToolCall, ToolCallMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import '../../../main/applications/filemgr/harness/index.js';
 
 function createTaskWithWorkspace(): { task: TaskState; workspace: string } {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-task-changes-'));
@@ -175,5 +176,28 @@ describe('TaskState.rewindToUserMessage()', () => {
         expect(result).toEqual({ removedCount: 2, resubmitted: true, userMessageText: '/skill original prompt' });
         expect(task.chat_context.messages).toHaveLength(0);
         expect(submit).toHaveBeenCalledWith('/skill original prompt', { imageDataUris: [] });
+    });
+
+    test('clears file read state cache so re-reads are not skipped after rewind', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        const task = new TaskState(manager, null);
+        const user = new UserMessage('read a file');
+        task.chat_context.appendMessage(user);
+        task.chat_context.appendMessage(new AssistantMessage());
+
+        // Simulate a file read that populated the cache
+        task.getFileReadState().set('/tmp/example.txt', {
+            content: 'hello',
+            timestamp: Date.now(),
+            offset: 1,
+            isPartialView: false
+        });
+        expect(task.getFileReadState().size).toBe(1);
+
+        await task.rewindToUserMessage(user.message_id);
+
+        expect(task.getFileReadState().size).toBe(0);
     });
 });

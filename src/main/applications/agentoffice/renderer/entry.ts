@@ -658,6 +658,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             }
         });
         this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input')?.addEventListener('keydown', (event) => {
+            if (event.isComposing) return;
             if (event.key === 'Enter' && !event.shiftKey) {
                 if (this.ctrlEnterSend) {
                     if (event.ctrlKey) {

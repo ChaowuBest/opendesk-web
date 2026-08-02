@@ -21,7 +21,7 @@ import { ApplicationRegistry } from '../registry.js';
 import { buildFileNavigationSkill } from './skills.js';
 import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
-import './harness/circuit-breaker.js';
+import './harness/index.js';
 
 function probeErrorMessage(code) {
     return code === 'dim_unsupported' ? t('filemgr.alert.dim_unsupported') : t('filemgr.alert.embedding_unavailable');

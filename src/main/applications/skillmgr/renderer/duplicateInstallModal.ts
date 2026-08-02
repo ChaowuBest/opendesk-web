@@ -186,7 +186,7 @@ ${CONFIRM_MODAL_STYLES}
         });
 
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 const name = input.value.trim();
                 if (name) {

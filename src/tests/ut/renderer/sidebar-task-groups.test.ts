@@ -73,10 +73,10 @@ describe('sidebar task grouping', () => {
                 finished_at: '2026-07-29T11:58:00'
             }),
             task('completed-second', '2026-07-29T10:00:00', {
-                finished_at: '2026-07-29T11:55:00'
+                finished_at: '2026-07-29T11:56:00'
             }),
             task('completed-third', '2026-07-29T10:00:00', {
-                finished_at: '2026-07-29T11:53:00'
+                finished_at: '2026-07-29T11:54:00'
             }),
             task('completed-too-old', '2026-07-29T10:00:00', {
                 finished_at: '2026-07-29T11:49:00'

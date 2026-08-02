@@ -19,6 +19,28 @@ import { setPlatform } from '../platforms/base.js';
 import { WorkerPlatform } from '../platforms/worker.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
+import { logger } from './utils/logger.js';
+import { handleWorkerUncaughtException, handleWorkerUnhandledRejection } from './utils/worker-errors.js';
+
+// 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
+// 当 IPC 管道断开（如主进程繁忙或休眠恢复）时，写入操作可能触发 EPIPE
+process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+
+// Worker 线程全局异常兜底：EPIPE 等可恢复错误不应导致 worker 崩溃
+process.on('uncaughtException', (err, origin) => {
+    handleWorkerUncaughtException(err, origin, logger);
+});
+
+process.on('unhandledRejection', (reason) => {
+    handleWorkerUnhandledRejection(reason, logger);
+});
 
 setPlatform(new WorkerPlatform());
 initAgentGateHook();

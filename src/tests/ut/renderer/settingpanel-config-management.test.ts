@@ -195,6 +195,26 @@ describe('setting-panel config management', () => {
         expect(options).toEqual(['', 'vision-model']);
     });
 
+    test.each(['1.5', '9007199254740992'])('rejects non-integer max output tokens %s', async (value) => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-max-output-tokens-input') as HTMLInputElement).value = value;
+        panel.saveImmediately = jest.fn(async () => undefined);
+
+        await panel.saveModel();
+
+        expect(window.notificationAPI.sendNotification).toHaveBeenCalledWith(
+            'error',
+            '系统设置',
+            '最大补全长度必须为非负整数'
+        );
+        expect(panel.currentData.models).toHaveLength(0);
+        expect(panel.saveImmediately).not.toHaveBeenCalled();
+    });
+
     test('exports current settings as json and omits runtime locale field', async () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();

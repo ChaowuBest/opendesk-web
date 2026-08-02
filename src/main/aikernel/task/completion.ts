@@ -18,7 +18,11 @@ import {
 } from '../compaction/compact-trace.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
 import { Setting } from '../../utils/setting.js';
-import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/model-context.js';
+import {
+    lookupKnownContextSize,
+    lookupKnownMaxOutputTokens,
+    fetchContextSizeFromAPI
+} from '../../utils/model-context.js';
 import { logger } from '../../utils/logger.js';
 import {
     getEvidenceCardPreviewOptions,
@@ -499,7 +503,12 @@ export async function processTaskCompletion(
                 if (contextWindow > 0) {
                     const remaining = contextWindow - estimatedContextTokens;
                     if (remaining > 0) {
-                        dynamicMaxCompletionTokens = Math.min(remaining, 16384);
+                        const modelName = modelInstance?.model_name ?? model ?? '';
+                        const configuredMaxOutput =
+                            modelInstance?.max_output_tokens && modelInstance.max_output_tokens > 0
+                                ? modelInstance.max_output_tokens
+                                : lookupKnownMaxOutputTokens(modelName) || 16384;
+                        dynamicMaxCompletionTokens = Math.min(remaining, configuredMaxOutput);
                     }
                 }
             } catch {

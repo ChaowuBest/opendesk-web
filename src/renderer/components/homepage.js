@@ -107,6 +107,7 @@ class HomePage extends HTMLElement {
             this._setSearchMode(true);
         }
         this.subscribeToUnreadCounts();
+        this._setupRecFitObserver();
     }
 
     disconnectedCallback() {
@@ -117,6 +118,10 @@ class HomePage extends HTMLElement {
         if (this.__search_timeout) {
             clearTimeout(this.__search_timeout);
             this.__search_timeout = null;
+        }
+        if (this.__recFitObserver) {
+            this.__recFitObserver.disconnect();
+            this.__recFitObserver = null;
         }
     }
 
@@ -425,11 +430,24 @@ class HomePage extends HTMLElement {
     render() {
         const greeting = this._getGreeting();
         this.innerHTML = `
+        <style>
+            home-page { display: block; }
+            .hp-rec-wrapper {
+                overflow: hidden;
+                max-height: 280px;
+                opacity: 1;
+                transition: max-height .3s ease, opacity .25s ease;
+            }
+            .hp-rec-wrapper.hp-rec-hidden {
+                max-height: 0;
+                opacity: 0;
+            }
+        </style>
         <!-- 主内容居中 -->
-        <div class="w-full h-full px-8 flex flex-col items-center justify-center min-h-[80vh]">
+        <div id="hp-container" class="w-full h-full px-8 flex flex-col items-center justify-center">
             <!-- 问候语 -->
             <div class="mb-4 text-center">
-                <h1 class="text-3xl font-medium text-gray-800 mb-3">
+                <h1 class="text-3xl font-medium text-gray-800 mb-1">
                     ${greeting}
                 </h1>
                 <button id="hp-workspace-bar" class="hp-workspace-bar" title="${t('workspace.defaultLabel')}">
@@ -447,12 +465,67 @@ class HomePage extends HTMLElement {
             </div>
 
             <!-- 推荐场景 -->
-            <div class="w-full max-w-4xl">
+            <div class="w-full max-w-4xl hp-rec-wrapper">
                 <recommendation-panel id="home-recommendation"></recommendation-panel>
+            </div>
+
+            <!-- AI 生成提示 -->
+            <div class="w-full max-w-4xl mt-2">
+                <p class="agent-input-footer-text">内容由 AI 生成，请核实重要信息</p>
             </div>
         </div>
         `;
         this._initWorkspaceBar();
+    }
+
+    _setupRecFitObserver() {
+        const container = this.querySelector('#hp-container');
+        const recWrapper = this.querySelector('.hp-rec-wrapper');
+        if (!container || !recWrapper) return;
+
+        this.__recFitObserver = new ResizeObserver(() => this._checkRecFit());
+        this.__recFitObserver.observe(this.parentElement);
+        this.__recFitObserver.observe(container);
+        // 初始检查
+        requestAnimationFrame(() => this._checkRecFit());
+    }
+
+    _checkRecFit() {
+        const container = this.querySelector('#hp-container');
+        const recWrapper = this.querySelector('.hp-rec-wrapper');
+        if (!container || !recWrapper) return;
+
+        const parentEl = this.parentElement;
+        if (!parentEl) return;
+
+        const firstChild = container.firstElementChild;
+        const lastChild = container.lastElementChild;
+        if (!firstChild || !lastChild) return;
+
+        const isHidden = recWrapper.classList.contains('hp-rec-hidden');
+        const availableHeight = parentEl.clientHeight;
+
+        // 实际渲染内容高度：从第一个元素顶部到最后一个元素底部
+        const contentHeight = lastChild.getBoundingClientRect().bottom - firstChild.getBoundingClientRect().top;
+
+        if (isHidden) {
+            // 隐藏时估算加上推荐面板后的总高度
+            if (!this.__recActualHeight) {
+                // 首次：临时显示推荐面板测量实际高度
+                recWrapper.classList.remove('hp-rec-hidden');
+                this.__recActualHeight = recWrapper.offsetHeight;
+                recWrapper.classList.add('hp-rec-hidden');
+            }
+            const totalHeight = contentHeight + this.__recActualHeight;
+            if (totalHeight + 100 <= availableHeight) {
+                recWrapper.classList.remove('hp-rec-hidden');
+            }
+        } else {
+            this.__recActualHeight = recWrapper.offsetHeight;
+            if (contentHeight + 100 > availableHeight) {
+                recWrapper.classList.add('hp-rec-hidden');
+            }
+        }
     }
 
     _getGreeting() {

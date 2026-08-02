@@ -2104,7 +2104,7 @@ class SideBar extends HTMLElement {
         };
 
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 finishRename(true);
             } else if (e.key === 'Escape') {

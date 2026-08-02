@@ -1,0 +1,189 @@
+- id: recommend
+  label: 为你推荐
+  label_en: Recommended
+  icon: '<svg viewBox="0 0 40 40" fill="none"><path d="M20 3c0 6-3 10-8 12 5 2 8 6 8 12 0-6 3-10 8-12-5-2-8-6-8-12z" style="fill: var(--rec-accent,#df4436)"/><path d="M8 22c0 3-1.5 5-4 6 2.5 1 4 3 4 6 0-3 1.5-5 4-6-2.5-1-4-3-4-6z" style="fill: var(--rec-accent,#df4436);opacity:.5"/><path d="M32 8c0 3-1.5 5-4 6 2.5 1 4 3 4 6 0-3 1.5-5 4-6-2.5-1-4-3-4-6z" style="fill: var(--rec-accent,#df4436);opacity:.5"/></svg>'
+  items:
+      - id: technical-survey
+        title: 技术调研
+        title_en: Technical Research
+        description: 根据你指定的技术主题，进行详细的搜索，生成一份调研报告
+        description_en: Research a technical topic in depth and produce a structured report
+        prompt: 请帮我做一份技术调研报告。我会告诉你技术主题和目标，请帮我搜索相关资料，整理成一份结构化的调研报告，包含背景、现状、趋势和参考资料。
+        prompt_en: Please help me prepare a technical research report. I will provide the topic and objective. Search for relevant sources and produce a structured report covering the background, current state, trends, and references.
+        icon: fa-file-lines
+      - id: weekly-summary
+        title: 周报总结
+        title_en: Weekly Summary
+        description: 汇总本周工作成果，整理为周报格式
+        description_en: Summarize this week's accomplishments in a weekly report
+        prompt: 请帮我汇总本周的工作成果，整理成一份周报。需要包含本周完成事项、下周计划和需要协调的问题。
+        prompt_en: Please summarize this week's work in a weekly report, including completed items, plans for next week, and issues that require coordination.
+        icon: fa-calendar-week
+      - id: meeting-notes
+        title: 会议纪要
+        title_en: Meeting Minutes
+        description: 将会议内容整理为结构化的纪要文档
+        description_en: Turn meeting discussions into structured minutes
+        prompt: 请帮我整理一份会议纪要。我会告诉你会议的主要讨论内容，请整理成包含会议议题、讨论要点、决议事项和待办事项的结构化文档。
+        prompt_en: Please prepare meeting minutes from the discussion details I provide. Organize them into topics, key discussion points, decisions, and action items.
+        icon: fa-users
+      - id: email-draft
+        title: 邮件撰写
+        title_en: Email Draft
+        description: 根据要点快速生成一封得体的邮件
+        description_en: Draft a polished email from a few key points
+        prompt: 请帮我撰写一封邮件。我会告诉你邮件的对象、目的和要点，请帮我生成一封语言得体、格式规范的邮件。
+        prompt_en: Please draft an email based on the recipient, purpose, and key points I provide. Use an appropriate tone and professional formatting.
+        icon: fa-envelope
+
+- id: writing
+  label: 文案构思
+  label_en: Writing
+  icon: '<svg viewBox="0 0 40 40" fill="none"><rect x="9" y="5" width="22" height="30" rx="3" stroke="currentColor" stroke-width="2.5"/><line x1="14" y1="12" x2="26" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="17" x2="26" y2="17" style="stroke: var(--rec-accent,#df4436)" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="22" x2="22" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="27" x2="24" y2="27" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+  items:
+      - id: article-outline
+        title: 文章大纲
+        title_en: Article Outline
+        description: 为指定主题生成结构化的文章大纲
+        description_en: Create a structured article outline for a topic
+        prompt: 请帮我为一篇文章生成结构化大纲。我会告诉你主题和目标读者，请给出一级、二级标题和每节的要点。
+        prompt_en: Please create a structured article outline for the topic and target audience I provide, with primary and secondary headings and key points for each section.
+        icon: fa-list-ol
+      - id: social-media
+        title: 社交媒体文案
+        title_en: Social Media Copy
+        description: 为各平台撰写吸引眼球的推广文案
+        description_en: Write engaging promotional copy for social platforms
+        prompt: 请帮我写一段社交媒体推广文案。我会告诉你产品/活动信息和目标平台，请生成吸引人的文案。
+        prompt_en: Please write promotional social media copy based on the product or event details and target platform I provide. Make it engaging and suitable for the platform.
+        icon: fa-share-nodes
+      - id: product-desc
+        title: 产品描述
+        title_en: Product Description
+        description: 为产品撰写专业且有吸引力的描述文案
+        description_en: Write a professional and compelling product description
+        prompt: 请帮我撰写一段产品描述文案。我会提供产品信息和卖点，请生成专业且有吸引力的描述。
+        prompt_en: Please write a professional and compelling product description based on the product details and selling points I provide.
+        icon: fa-tag
+      - id: slogan
+        title: 品牌标语
+        title_en: Brand Slogan
+        description: 创作朗朗上口的品牌口号和标语
+        description_en: Create memorable brand slogans and taglines
+        prompt: 请帮我创作几个品牌标语/口号。我会告诉你品牌定位和核心价值观，请生成朗朗上口、有记忆点的标语。
+        prompt_en: Please create several memorable brand slogans or taglines based on the brand positioning and core values I provide.
+        icon: fa-bullhorn
+
+- id: analysis
+  label: 分析研究
+  label_en: Analysis
+  icon: '<svg viewBox="0 0 40 40" fill="none"><rect x="6" y="18" width="6" height="17" rx="2" fill="currentColor" opacity=".25"/><rect x="14" y="11" width="6" height="24" rx="2" fill="currentColor" opacity=".25"/><rect x="22" y="5" width="6" height="30" rx="2" style="fill: var(--rec-accent,#df4436)"/><rect x="30" y="14" width="6" height="21" rx="2" fill="currentColor" opacity=".25"/></svg>'
+  items:
+      - id: data-analysis
+        title: 数据分析
+        title_en: Data Analysis
+        description: 对数据进行分析并给出可视化建议
+        description_en: Analyze data and recommend effective visualizations
+        prompt: 请帮我分析一组数据。我会提供数据内容，请帮我找出其中的趋势、异常和关键结论，并给出可视化建议。
+        prompt_en: Please analyze the data I provide, identify trends, anomalies, and key findings, and recommend suitable visualizations.
+        icon: fa-chart-bar
+      - id: competitor
+        title: 竞品分析
+        title_en: Competitor Analysis
+        description: 对竞品进行多维度对比分析
+        description_en: Compare competitors across multiple dimensions
+        prompt: 请帮我做一份竞品分析。我会列出我们的产品和竞品，请从功能、定价、用户体验等维度进行对比分析。
+        prompt_en: Please prepare a competitor analysis for our product and the competitors I list, comparing features, pricing, user experience, and other relevant dimensions.
+        icon: fa-scale-balanced
+      - id: market-research
+        title: 行业调研
+        title_en: Industry Research
+        description: 收集整理某个行业的发展现状和趋势
+        description_en: Research an industry's current state and trends
+        prompt: 请帮我做一份行业调研报告。我会告诉你关注的行业，请整理出行业现状、主要玩家、市场规模和发展趋势。
+        prompt_en: Please prepare an industry research report covering the current landscape, major players, market size, and development trends for the industry I provide.
+        icon: fa-magnifying-glass-chart
+      - id: key-points
+        title: 提取要点
+        title_en: Extract Key Points
+        description: 帮我提取文件里的关键数据和核心结论
+        description_en: Extract key data and conclusions from a file
+        prompt: 请帮我提取这份文件里的关键数据和核心结论，以结构化的方式呈现。
+        prompt_en: Please extract the key data and main conclusions from this file and present them in a structured format.
+        icon: fa-highlighter
+
+- id: project
+  label: 项目管理
+  label_en: Project Management
+  icon: '<svg viewBox="0 0 40 40" fill="none"><rect x="4" y="7" width="14" height="12" rx="3" stroke="currentColor" stroke-width="2.5"/><rect x="22" y="7" width="14" height="12" rx="3" style="fill: var(--rec-accent,#df4436)"/><rect x="4" y="23" width="32" height="12" rx="3" stroke="currentColor" stroke-width="2.5"/><line x1="11" y1="19" x2="11" y2="23" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="29" y1="19" x2="29" y2="23" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>'
+  items:
+      - id: project-plan
+        title: 项目排期
+        title_en: Project Schedule
+        description: 做一份项目排期甘特图表格，按阶段标注负责人和截止日
+        description_en: Create a phased project schedule with owners and deadlines
+        prompt: 请帮我做一份项目排期计划。我会描述项目的阶段和人员情况，请按阶段标注负责人和截止日期，输出甘特图式的排期表。
+        prompt_en: Please create a project schedule from the phases and staffing information I provide. Assign owners and deadlines by phase and present it as a Gantt-style table.
+        icon: fa-calendar-days
+      - id: requirement-doc
+        title: 需求文档
+        title_en: Requirements Document
+        description: 写一份产品需求文档模板，含功能描述和验收标准
+        description_en: Draft a product requirements document with acceptance criteria
+        prompt: 请帮我写一份产品需求文档(PRD)。我会描述功能需求，请生成包含功能描述、用户故事、验收标准和优先级的完整文档模板。
+        prompt_en: Please draft a product requirements document from the feature requirements I provide, including feature descriptions, user stories, acceptance criteria, and priorities.
+        icon: fa-file-contract
+      - id: risk-assessment
+        title: 风险评估
+        title_en: Risk Assessment
+        description: 识别项目潜在风险并制定应对策略
+        description_en: Identify project risks and develop mitigation strategies
+        prompt: 请帮我做一份项目风险评估。我会描述项目概况，请识别潜在风险并给出风险等级、影响范围和应对策略。
+        prompt_en: Please assess the project I describe, identify potential risks, and provide a risk level, scope of impact, and mitigation strategy for each one.
+        icon: fa-triangle-exclamation
+      - id: retrospective
+        title: 复盘模板
+        title_en: Retrospective Template
+        description: 生成项目/迭代复盘的结构化模板
+        description_en: Create a structured project or sprint retrospective
+        prompt: 请帮我做一次项目复盘。我会描述项目情况，请从做得好的、需要改进的、行动项三个维度进行分析。
+        prompt_en: Please conduct a retrospective for the project I describe, organized into what went well, what needs improvement, and action items.
+        icon: fa-rotate-left
+
+- id: efficiency
+  label: 效率工具
+  label_en: Productivity
+  icon: '<svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="15" stroke="currentColor" stroke-width="2.5"/><path d="M22 10L12 22h8l-3 10 12-14h-8l3-8z" style="fill: var(--rec-accent,#df4436)"/></svg>'
+  items:
+      - id: translate
+        title: 翻译润色
+        title_en: Translate and Polish
+        description: 多语言翻译并进行本地化润色
+        description_en: Translate content and polish it for the target locale
+        prompt: 请帮我翻译并润色以下内容。我会提供原文和目标语言，请给出既准确又地道的翻译。
+        prompt_en: Please translate and polish the content I provide into the target language, making the result both accurate and natural.
+        icon: fa-language
+      - id: formula
+        title: 公式助手
+        title_en: Formula Assistant
+        description: 帮你编写 Excel / WPS 公式和函数
+        description_en: Write Excel or WPS formulas and functions
+        prompt: 请帮我编写一个 Excel 公式。我会描述我的需求和数据位置，请给出对应的公式并解释其工作原理。
+        prompt_en: Please write an Excel formula for the requirement and data locations I describe, and explain how it works.
+        icon: fa-square-root-variable
+      - id: regex
+        title: 正则表达式
+        title_en: Regular Expression
+        description: 根据需求编写和解释正则表达式
+        description_en: Write and explain a regular expression for a requirement
+        prompt: 请帮我编写一个正则表达式。我会描述我想匹配的文本模式，请给出正则表达式并附上示例和解释。
+        prompt_en: Please write a regular expression for the text pattern I describe, with examples and an explanation.
+        icon: fa-code
+      - id: brainstorm
+        title: 头脑风暴
+        title_en: Brainstorm
+        description: 针对某个主题进行发散性思维和创意碰撞
+        description_en: Explore a topic from multiple creative angles
+        prompt: 请帮我进行一场头脑风暴。我会告诉你主题和背景，请从多个角度给出创意和想法。
+        prompt_en: Please brainstorm the topic and context I provide, generating ideas from multiple perspectives.
+        icon: fa-lightbulb

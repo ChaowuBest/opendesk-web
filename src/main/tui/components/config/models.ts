@@ -26,6 +26,7 @@ interface ModelData {
     model_type?: 'chat' | 'embedding' | '';
     reasoning_effort?: string;
     context_length?: number;
+    max_output_tokens?: number;
     auto_parse_think_tags?: boolean;
     custom_headers?: Record<string, string>;
 }
@@ -137,6 +138,7 @@ export class ModelConfigPage implements Component {
 
         const data = Setting.getInstance().getData() as any;
         const providerNames: string[] = (data.providers ?? []).map((p: any) => p.name);
+        const isEmbedding = model.model_type === 'embedding';
 
         const fields: FieldDef[] = [
             { type: 'text', key: 'alias', label: t('config.model.field.alias'), value: model.alias }
@@ -194,7 +196,16 @@ export class ModelConfigPage implements Component {
             type: 'text',
             key: 'context_length',
             label: t('config.model.field.context_length'),
-            value: model.context_length ? String(model.context_length) : ''
+            value: model.context_length ? String(model.context_length) : '',
+            visible: !isEmbedding
+        });
+
+        fields.push({
+            type: 'text',
+            key: 'max_output_tokens',
+            label: t('config.model.field.max_output_tokens'),
+            value: model.max_output_tokens ? String(model.max_output_tokens) : '',
+            visible: !isEmbedding
         });
 
         fields.push({
@@ -294,6 +305,7 @@ export class ModelConfigPage implements Component {
             model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
             reasoning_effort: values.reasoning_effort ?? '',
             context_length: values.context_length ? parseInt(values.context_length, 10) : undefined,
+            max_output_tokens: values.max_output_tokens ? parseInt(values.max_output_tokens, 10) : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false
         };
         this.savedFormValues = undefined;
@@ -384,6 +396,28 @@ export class ModelConfigPage implements Component {
 
         const parsedContextLength = parseInt(values.context_length, 10);
 
+        // 校验 max_output_tokens 为非负整数（与 GUI 行为一致）
+        const maxOutputRaw = (values.max_output_tokens ?? '').toString().trim();
+        const parsedMaxOutputTokens = maxOutputRaw === '' ? undefined : Number(maxOutputRaw);
+        if (
+            maxOutputRaw !== '' &&
+            (!/^\d+$/.test(maxOutputRaw) || !Number.isSafeInteger(parsedMaxOutputTokens) || parsedMaxOutputTokens < 0)
+        ) {
+            this.form?.deactivate();
+            const info = new InfoOverlay(this.openDeskTUI, {
+                title: t('config.model.validation.max_output_tokens_invalid'),
+                message: chalk.red(maxOutputRaw),
+                type: 'error',
+                allowDuringConfig: true,
+                closeLabel: t('common.close')
+            });
+            info.show(() => {
+                this.form?.activate();
+                this.tui.requestRender();
+            });
+            return;
+        }
+
         // 从 headers 数组构建 custom_headers 对象
         const custom_headers: Record<string, string> = {};
         for (const h of this.headers) {
@@ -401,6 +435,10 @@ export class ModelConfigPage implements Component {
             context_length:
                 values.model_type !== 'embedding' && Number.isFinite(parsedContextLength) && parsedContextLength > 0
                     ? parsedContextLength
+                    : undefined,
+            max_output_tokens:
+                values.model_type !== 'embedding' && parsedMaxOutputTokens !== undefined && parsedMaxOutputTokens > 0
+                    ? parsedMaxOutputTokens
                     : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false,
             custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined

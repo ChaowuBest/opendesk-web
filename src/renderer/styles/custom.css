@@ -43,7 +43,7 @@ body {
         margin-top 0.3s ease;
 }
 .reasoning-block-od.reasoning-expanded .reasoning-full-area {
-    max-height: 280px;
+    max-height: 200px;
     overflow-y: auto;
     opacity: 1;
     margin-top: 2px;
@@ -690,7 +690,6 @@ pre.terminal-tool-output {
     padding: 7px 10px;
     gap: 6px;
     flex-wrap: nowrap;
-    border-top: 1px solid #efeeea;
 }
 .agent-input-toolbar-left {
     display: flex;

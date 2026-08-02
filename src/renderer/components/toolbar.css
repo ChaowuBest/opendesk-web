@@ -239,6 +239,10 @@ elastic-toolbar-widget .toolbar-spread-btn {
     color: var(--od-text-muted, #6b7280);
 }
 
+elastic-toolbar-widget .toolbar-spread-btn:hover {
+    color: var(--od-text, #1f2937);
+}
+
 elastic-toolbar-widget .toolbar-spread-btn::after {
     content: '';
     position: absolute;
@@ -247,10 +251,17 @@ elastic-toolbar-widget .toolbar-spread-btn::after {
     opacity: 0;
     background: var(--od-bg-subtle, rgba(0, 0, 0, 0.04));
     transition: opacity 0.15s;
+    z-index: 0;
 }
 
 elastic-toolbar-widget .toolbar-spread-btn:hover::after {
     opacity: 1;
+}
+
+/* 确保内容在 ::after 背景之上 */
+elastic-toolbar-widget .toolbar-spread-btn > * {
+    position: relative;
+    z-index: 1;
 }
 
 /* SVG 图标包装：继承按钮颜色、居中 */

@@ -281,6 +281,14 @@ export class OverlayHandle {}
 
 // --- Key handling ---
 export const Key = {
+    enter: 'enter',
+    space: 'space',
+    up: 'up',
+    down: 'down',
+    left: 'left',
+    right: 'right',
+    tab: 'tab',
+    escape: 'escape',
     ctrl: (key: string) => `ctrl+${key}`,
     shift: (key: string) => `shift+${key}`,
     alt: (key: string) => `alt+${key}`

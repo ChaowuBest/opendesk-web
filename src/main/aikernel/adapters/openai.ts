@@ -22,6 +22,7 @@ import {
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { fetchModelUrl } from '../../utils/model-network.js';
+import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { StreamIdleTimeoutError, withStreamIdleTimeout } from '../../utils/stream-timeout.js';
@@ -208,11 +209,12 @@ export class OpenAIAdapter {
         return reasonOptions;
     }
 
-    private requestMaxCompletionTokens(
-        requestOptions?: OpenAIAdapterRequestOptions,
-        defaultValue?: number
-    ): number | undefined {
-        return normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? defaultValue;
+    private requestMaxCompletionTokens(requestOptions?: OpenAIAdapterRequestOptions): number {
+        return (
+            normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ??
+            this.modelInstance.max_output_tokens ??
+            (lookupKnownMaxOutputTokens(this.modelInstance.model_name) || 16384)
+        );
     }
 
     private requestHeaders(requestOptions?: OpenAIAdapterRequestOptions): Record<string, string> | undefined {
@@ -382,11 +384,7 @@ export class OpenAIAdapter {
                     {
                         model: this.modelInstance.model_name,
                         messages: messages as OpenAI.ChatCompletionMessageParam[],
-                        ...(maxCompletionTokens !== undefined
-                            ? {
-                                  max_completion_tokens: maxCompletionTokens
-                              }
-                            : {}),
+                        max_completion_tokens: maxCompletionTokens,
                         ...this.requestReasonOptions(requestOptions)
                     },
                     this.requestTransportOptions(requestOptions)
@@ -472,7 +470,7 @@ export class OpenAIAdapter {
     ): Promise<AssistantResponse> {
         const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
-        const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions, 16384);
+        const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         const response = await this.runCompletionRequest(
             () =>
                 this.client.chat.completions.create(
@@ -520,7 +518,7 @@ export class OpenAIAdapter {
                         {
                             model: this.modelInstance.model_name,
                             messages: messages as OpenAI.ChatCompletionMessageParam[],
-                            max_completion_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                            max_completion_tokens: this.requestMaxCompletionTokens(requestOptions),
                             stream: true,
                             stream_options: { include_usage: true },
                             ...toolOptions,

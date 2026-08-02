@@ -30,7 +30,7 @@ interface ModelInfo {
 
 /**
  * 已知模型信息查找表。
- * 数据来源：各厂商官方文档 + llmdb.xyz 交叉验证（2026-07）。
+ * 数据来源：各厂商官方文档 + llmdb.xyz + opencode.ai 交叉验证（2026-08）。
  */
 const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
@@ -40,7 +40,7 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gpt-5-1': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
     'gpt-5': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
     'gpt-5-mini': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-pro': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
+    'gpt-5-pro': { contextSize: 400000, maxOutputTokens: 272000, vision: true },
     'gpt-5-thinking': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
     'gpt-5-5': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
     'gpt-5-5-pro': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
@@ -61,9 +61,9 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gpt-4o': { contextSize: 128000, maxOutputTokens: 16384, vision: true },
     'gpt-4o-mini': { contextSize: 128000, maxOutputTokens: 16384, vision: true },
     'gpt-4-turbo': { contextSize: 128000, maxOutputTokens: 4096, vision: true },
-    'gpt-4': { contextSize: 8192, maxOutputTokens: 4096, vision: false },
+    'gpt-4': { contextSize: 8192, maxOutputTokens: 8192, vision: false },
     'gpt-4-32k': { contextSize: 32768, maxOutputTokens: 4096, vision: false },
-    'gpt-3-5-turbo': { contextSize: 16384, maxOutputTokens: 4096, vision: false },
+    'gpt-3-5-turbo': { contextSize: 16385, maxOutputTokens: 4096, vision: false },
     'gpt-3-5-turbo-16k': { contextSize: 16384, maxOutputTokens: 4096, vision: false },
     o1: { contextSize: 200000, maxOutputTokens: 100000, vision: true },
     'o1-mini': { contextSize: 128000, maxOutputTokens: 65536, vision: false },
@@ -75,16 +75,33 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Claude / Anthropic
     // ═══════════════════════════════════════════════
-    'claude-4-8-opus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
-    'claude-4-7-opus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
+    // 4.x/5.x 同时保留两种命名：`claude-{版本}-{型号}`（既有）与 `claude-{型号}-{版本}`（Anthropic API 实际返回格式）
+    'claude-4-8-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-opus-4-8': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-4-7-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-opus-4-7': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
     // 4.6 系列 1M 上下文需要 anthropic-beta: max-tokens-sampling-2025-06-15 header
-    'claude-4-6-opus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
+    'claude-4-6-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-opus-4-6': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
     'claude-4-6-sonnet': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
+    'claude-sonnet-4-6': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
     'claude-4-5-opus': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-opus-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
     'claude-4-5-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-sonnet-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
     'claude-4-5-haiku': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-haiku-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
     'claude-4-opus': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-opus-4': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
     'claude-4-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-sonnet-4': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    // Claude 5 系列，opencode.ai 数据：1M 上下文 / 128K 输出，支持图像与 PDF 输入
+    'claude-5-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-opus-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-5-sonnet': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-sonnet-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-5-fable': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    'claude-fable-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
     'claude-3-7-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
     'claude-3-5-sonnet': { contextSize: 200000, maxOutputTokens: 8192, vision: true },
     'claude-3-5-haiku': { contextSize: 200000, maxOutputTokens: 8192, vision: true },
@@ -97,7 +114,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     'gemini-3-1-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
     'gemini-3-pro': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
-    'gemini-3-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
+    'gemini-3-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    // Gemini 3.5 / 3.6 系列，opencode.ai 数据：1M 上下文 / 64K 输出，多模态输入
+    'gemini-3-6-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-5-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-5-flash-lite': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-1-pro-preview': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
+    'gemini-3-flash-preview': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
     'gemini-2-5-pro': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
     'gemini-2-5-flash': { contextSize: 1048576, maxOutputTokens: 65536, vision: true },
     'gemini-2-0-flash': { contextSize: 1048576, maxOutputTokens: 8192, vision: true },
@@ -107,22 +130,25 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Gemma / Google
     // ═══════════════════════════════════════════════
-    'gemma-4-31b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'gemma-4-26b-a4b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'gemma-4-31b-it': { contextSize: 262144, maxOutputTokens: 32768, vision: true },
+    'gemma-4-26b-a4b-it': { contextSize: 262144, maxOutputTokens: 32768, vision: true },
     'gemma-4-12b-it': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'gemma-4-e4b-it': { contextSize: 131072, maxOutputTokens: 0, vision: true },
-    'gemma-4-e2b-it': { contextSize: 131072, maxOutputTokens: 0, vision: true },
+    'gemma-4-e4b-it': { contextSize: 131072, maxOutputTokens: 8192, vision: true },
+    'gemma-4-e2b-it': { contextSize: 131072, maxOutputTokens: 8192, vision: true },
 
     // ═══════════════════════════════════════════════
     // DeepSeek
     // ═══════════════════════════════════════════════
-    'deepseek-v4-pro': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
-    'deepseek-v4-flash': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
-    'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
+    'deepseek-v4-pro': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
+    'deepseek-v4-flash': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
+    'deepseek-v4': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
+    // DeepSeek Chat / Reasoner 为官方 API 模型名（底层权重 DeepSeek-V3.2），opencode.ai 数据为 1M/384K
+    'deepseek-chat': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
+    'deepseek-reasoner': { contextSize: 1000000, maxOutputTokens: 384000, vision: false },
     'deepseek-v3-2': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'deepseek-v3-1': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'deepseek-v3': { contextSize: 131072, maxOutputTokens: 0, vision: false },
-    'deepseek-r1': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'deepseek-r1': { contextSize: 128000, maxOutputTokens: 32768, vision: false },
     'deepseek-r1-distill-qwen-7b': { contextSize: 131072, maxOutputTokens: 0 },
     'deepseek-r1-distill-qwen-32b': { contextSize: 131072, maxOutputTokens: 0 },
     'deepseek-r1-distill-llama-8b': { contextSize: 131072, maxOutputTokens: 0 },
@@ -131,69 +157,76 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Qwen / Alibaba
     // ═══════════════════════════════════════════════
-    'qwen3-7-max': { contextSize: 1000000, maxOutputTokens: 0 },
-    'qwen3-7-plus': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
-    'qwen3-6-max': { contextSize: 240000, maxOutputTokens: 0 },
-    'qwen3-6-plus': { contextSize: 991000, maxOutputTokens: 0, vision: true },
-    'qwen3-6-flash': { contextSize: 991000, maxOutputTokens: 0, vision: true },
-    'qwen3-6-27b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'qwen3-6-35b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'qwen3-7-max': { contextSize: 1000000, maxOutputTokens: 65536, vision: false },
+    'qwen3-7-plus': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
+    // Qwen3.8 / Qwen3.5 系列新增，opencode.ai 数据
+    'qwen3-8-max-preview': { contextSize: 1000000, maxOutputTokens: 131072, vision: true },
+    'qwen3-5-9b': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
+    'qwen3-coder-30b-a3b-instruct': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
+    'qwq-plus': { contextSize: 131072, maxOutputTokens: 8192, vision: false },
+    'qwen-omni-turbo': { contextSize: 32768, maxOutputTokens: 2048, vision: true },
+    'qwen-turbo': { contextSize: 1000000, maxOutputTokens: 16384, vision: false },
+    'qwen3-6-max': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
+    'qwen3-6-plus': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
+    'qwen3-6-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
+    'qwen3-6-27b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
+    'qwen3-6-35b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
     'qwen3-5-max': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
-    'qwen3-5-plus': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
+    'qwen3-5-plus': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
     'qwen3-5-flash': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
-    'qwen3-5-397b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'qwen3-5-122b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'qwen3-5-35b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'qwen3-5-27b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'qwen3-max': { contextSize: 258048, maxOutputTokens: 0 },
-    'qwen3-coder-plus': { contextSize: 1000000, maxOutputTokens: 0 },
-    'qwen3-coder-flash': { contextSize: 1000000, maxOutputTokens: 0 },
-    'qwen3-coder-480b': { contextSize: 262144, maxOutputTokens: 0 },
-    'qwen3-235b': { contextSize: 131072, maxOutputTokens: 0 },
-    'qwen3-32b': { contextSize: 131072, maxOutputTokens: 0 },
+    'qwen3-5-397b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
+    'qwen3-5-122b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
+    'qwen3-5-35b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
+    'qwen3-5-27b': { contextSize: 262144, maxOutputTokens: 65536, vision: true },
+    'qwen3-max': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
+    'qwen3-coder-plus': { contextSize: 1048576, maxOutputTokens: 65536, vision: false },
+    'qwen3-coder-flash': { contextSize: 1000000, maxOutputTokens: 65536, vision: false },
+    'qwen3-coder-480b': { contextSize: 262144, maxOutputTokens: 65536, vision: false },
+    'qwen3-235b': { contextSize: 131072, maxOutputTokens: 16384, vision: false },
+    'qwen3-32b': { contextSize: 131072, maxOutputTokens: 16384, vision: false },
     'qwen3-30b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen3-14b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen3-8b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen3-4b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen3-1-7b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen3-0-6b': { contextSize: 32768, maxOutputTokens: 0 },
-    'qwen3-vl-plus': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'qwen3-vl-plus': { contextSize: 262144, maxOutputTokens: 32768, vision: true },
     'qwen3-vl-235b': { contextSize: 131072, maxOutputTokens: 0, vision: true },
     'qwen3-vl-30b': { contextSize: 131072, maxOutputTokens: 0, vision: true },
     'qwen3-omni-flash': { contextSize: 65536, maxOutputTokens: 0, vision: true },
-    'qwen3-next-80b': { contextSize: 131072, maxOutputTokens: 0 },
+    'qwen3-next-80b': { contextSize: 131072, maxOutputTokens: 32768, vision: false },
     'qwen2-5-72b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen2-5-32b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen2-5-14b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen2-5-7b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen2-5-coder-32b': { contextSize: 131072, maxOutputTokens: 0 },
     'qwen2-5-coder-7b': { contextSize: 131072, maxOutputTokens: 0 },
-    'qwen-vl-max': { contextSize: 0, maxOutputTokens: 0, vision: true },
-    'qwen-vl-plus': { contextSize: 0, maxOutputTokens: 0, vision: true },
+    'qwen-vl-max': { contextSize: 131072, maxOutputTokens: 8192, vision: true },
+    'qwen-vl-plus': { contextSize: 131072, maxOutputTokens: 8192, vision: true },
     'qwen2-5-vl-7b': { contextSize: 0, maxOutputTokens: 0, vision: true },
-    'qwen2-5-vl-72b': { contextSize: 0, maxOutputTokens: 0, vision: true },
+    'qwen2-5-vl-72b': { contextSize: 131072, maxOutputTokens: 8192, vision: true },
     'qwq-32b': { contextSize: 131072, maxOutputTokens: 0 },
-    'qwen-plus': { contextSize: 1000000, maxOutputTokens: 0 },
-    'qwen-flash': { contextSize: 1000000, maxOutputTokens: 0 },
-    'qwen-max': { contextSize: 131072, maxOutputTokens: 0 },
+    'qwen-plus': { contextSize: 1000000, maxOutputTokens: 32768, vision: false },
+    'qwen-flash': { contextSize: 1000000, maxOutputTokens: 32768, vision: false },
+    'qwen-max': { contextSize: 32768, maxOutputTokens: 8192, vision: false },
 
     // ═══════════════════════════════════════════════
     // GLM / Zhipu
     // ═══════════════════════════════════════════════
-    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 0, vision: false },
-    'glm-5-1': { contextSize: 202752, maxOutputTokens: 0, vision: false },
-    'glm-5': { contextSize: 204800, maxOutputTokens: 0, vision: false },
-    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 0, vision: false },
-    'glm-5v-turbo': { contextSize: 200000, maxOutputTokens: 0, vision: true },
-    'glm-4-7': { contextSize: 204800, maxOutputTokens: 0 },
-    'glm-4-7-flashx': { contextSize: 200000, maxOutputTokens: 0 },
-    'glm-4-6': { contextSize: 204800, maxOutputTokens: 0 },
-    'glm-4-6v': { contextSize: 128000, maxOutputTokens: 0, vision: true },
-    'glm-4-5': { contextSize: 131072, maxOutputTokens: 0, vision: false },
-    'glm-4-5-air': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'glm-5-2': { contextSize: 1000000, maxOutputTokens: 128000, vision: false },
+    'glm-5-1': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-5': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
+    'glm-5-turbo': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-5v-turbo': { contextSize: 200000, maxOutputTokens: 128000, vision: true },
+    'glm-4-7': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
+    'glm-4-7-flashx': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
+    'glm-4-6': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
+    'glm-4-6v': { contextSize: 128000, maxOutputTokens: 32768, vision: true },
+    'glm-4-5': { contextSize: 131072, maxOutputTokens: 98304, vision: false },
+    'glm-4-5-air': { contextSize: 131072, maxOutputTokens: 98304, vision: false },
     'glm-4-5-airx': { contextSize: 128000, maxOutputTokens: 0 },
     'glm-4-5-x': { contextSize: 128000, maxOutputTokens: 0 },
-    'glm-4-5v': { contextSize: 64000, maxOutputTokens: 0, vision: true },
+    'glm-4-5v': { contextSize: 64000, maxOutputTokens: 16384, vision: true },
     'glm-4': { contextSize: 128000, maxOutputTokens: 0, vision: false },
     'glm-4v': { contextSize: 0, maxOutputTokens: 0, vision: true },
     'glm-4v-plus': { contextSize: 0, maxOutputTokens: 0, vision: true },
@@ -202,26 +235,28 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Grok / xAI
     // ═══════════════════════════════════════════════
-    'grok-4-3': { contextSize: 1000000, maxOutputTokens: 65536, vision: true },
+    'grok-4-3': { contextSize: 1000000, maxOutputTokens: 30000, vision: true },
+    // Grok 4.5，opencode.ai 数据：上下文 500K、输出 500K、支持图像输入
+    'grok-4-5': { contextSize: 500000, maxOutputTokens: 500000, vision: true },
     'grok-4-1': { contextSize: 200000, maxOutputTokens: 65536, vision: true },
     'grok-4': { contextSize: 256000, maxOutputTokens: 65536, vision: true },
     'grok-4-fast-reasoning': { contextSize: 2000000, maxOutputTokens: 65536, vision: true },
     'grok-4-fast-non-reasoning': { contextSize: 2000000, maxOutputTokens: 65536, vision: true },
-    'grok-4-20': { contextSize: 2000000, maxOutputTokens: 65536, vision: true },
+    'grok-4-20': { contextSize: 1000000, maxOutputTokens: 30000, vision: true },
     'grok-code-fast-1': { contextSize: 256000, maxOutputTokens: 65536, vision: true },
-    'grok-build-0-1': { contextSize: 256000, maxOutputTokens: 65536, vision: true },
+    'grok-build-0-1': { contextSize: 256000, maxOutputTokens: 256000, vision: true },
     'grok-3': { contextSize: 131072, maxOutputTokens: 32768 },
     'grok-3-mini': { contextSize: 131072, maxOutputTokens: 32768 },
 
     // ═══════════════════════════════════════════════
     // MiniMax
     // ═══════════════════════════════════════════════
-    'minimax-m3': { contextSize: 1000000, maxOutputTokens: 0, vision: true },
-    'minimax-m2-7': { contextSize: 204800, maxOutputTokens: 0 },
-    'minimax-m2-5': { contextSize: 204800, maxOutputTokens: 0 },
-    'minimax-m2-5-highspeed': { contextSize: 204800, maxOutputTokens: 0 },
-    'minimax-m2-1': { contextSize: 200000, maxOutputTokens: 0 },
-    'minimax-m2': { contextSize: 200000, maxOutputTokens: 0 },
+    'minimax-m3': { contextSize: 512000, maxOutputTokens: 128000, vision: true },
+    'minimax-m2-7': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
+    'minimax-m2-5': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
+    'minimax-m2-5-highspeed': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
+    'minimax-m2-1': { contextSize: 204800, maxOutputTokens: 131072, vision: false },
+    'minimax-m2': { contextSize: 196608, maxOutputTokens: 128000, vision: false },
     'minimax-m1': { contextSize: 1000000, maxOutputTokens: 0 },
     'minimax-01': { contextSize: 4194304, maxOutputTokens: 0 },
 
@@ -234,13 +269,13 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Kimi / Moonshot
     // ═══════════════════════════════════════════════
-    'kimi-k3': { contextSize: 1048576, maxOutputTokens: 0, vision: true },
-    'kimi-k2-7-code': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'kimi-k2-6': { contextSize: 262144, maxOutputTokens: 0, vision: true },
-    'kimi-k2-5': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'kimi-k3': { contextSize: 1048576, maxOutputTokens: 131072, vision: true },
+    'kimi-k2-7-code': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
+    'kimi-k2-6': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
+    'kimi-k2-5': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
     'kimi-k2': { contextSize: 262144, maxOutputTokens: 0 },
     'kimi-k2-turbo': { contextSize: 262144, maxOutputTokens: 0 },
-    'kimi-k2-thinking': { contextSize: 262144, maxOutputTokens: 0 },
+    'kimi-k2-thinking': { contextSize: 262144, maxOutputTokens: 262144, vision: false },
     'moonshot-v1-8k': { contextSize: 8192, maxOutputTokens: 0 },
     'moonshot-v1-32k': { contextSize: 32768, maxOutputTokens: 0 },
     'moonshot-v1-128k': { contextSize: 131072, maxOutputTokens: 0 },
@@ -250,7 +285,7 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     hy3: { contextSize: 262144, maxOutputTokens: 0, vision: false },
     'hy3-fp8': { contextSize: 262144, maxOutputTokens: 0, vision: false },
-    'hy3-preview': { contextSize: 262144, maxOutputTokens: 0, vision: false },
+    'hy3-preview': { contextSize: 256000, maxOutputTokens: 64000, vision: false },
 
     // ═══════════════════════════════════════════════
     // Doubao / ByteDance
@@ -278,9 +313,9 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Llama / Meta
     // ═══════════════════════════════════════════════
-    'llama-4-scout': { contextSize: 10485760, maxOutputTokens: 0, vision: true },
-    'llama-4-maverick': { contextSize: 1048576, maxOutputTokens: 0, vision: true },
-    'llama-3-3-70b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
+    'llama-4-scout': { contextSize: 3500000, maxOutputTokens: 16384, vision: true },
+    'llama-4-maverick': { contextSize: 1000000, maxOutputTokens: 16384, vision: true },
+    'llama-3-3-70b': { contextSize: 128000, maxOutputTokens: 4096, vision: false },
     'llama-3-1-8b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'llama-3-1-70b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
     'llama-3-1-405b': { contextSize: 131072, maxOutputTokens: 0, vision: false },
@@ -288,12 +323,123 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // Mistral
     // ═══════════════════════════════════════════════
-    'mistral-large': { contextSize: 131072, maxOutputTokens: 0, vision: false },
-    'mistral-small': { contextSize: 131072, maxOutputTokens: 0, vision: false },
-    'mistral-medium': { contextSize: 32768, maxOutputTokens: 0, vision: false },
+    'mistral-large': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
+    'mistral-small': { contextSize: 256000, maxOutputTokens: 256000, vision: true },
+    'mistral-medium': { contextSize: 262144, maxOutputTokens: 262144, vision: true },
     'mistral-7b': { contextSize: 32768, maxOutputTokens: 0, vision: false },
     'mixtral-8x7b': { contextSize: 32768, maxOutputTokens: 0, vision: false },
-    'mixtral-8x22b': { contextSize: 65536, maxOutputTokens: 0, vision: false }
+    'mixtral-8x22b': { contextSize: 65536, maxOutputTokens: 0, vision: false },
+    // Mistral 新增模型（opencode.ai 数据）：Devstral / Pixtral / Magistral / Codestral / Nemo
+    'devstral-2512': { contextSize: 262144, maxOutputTokens: 262144, vision: false },
+    'devstral-small-2507': { contextSize: 128000, maxOutputTokens: 128000, vision: false },
+    'devstral-medium-2507': { contextSize: 128000, maxOutputTokens: 128000, vision: false },
+    'magistral-medium': { contextSize: 128000, maxOutputTokens: 16384, vision: false },
+    'pixtral-large': { contextSize: 128000, maxOutputTokens: 128000, vision: true },
+    'pixtral-12b': { contextSize: 128000, maxOutputTokens: 128000, vision: true },
+    'mistral-nemo': { contextSize: 128000, maxOutputTokens: 128000, vision: false },
+    codestral: { contextSize: 256000, maxOutputTokens: 4096, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Cohere
+    // ═══════════════════════════════════════════════
+    'command-a-plus': { contextSize: 128000, maxOutputTokens: 64000, vision: true },
+    'command-a': { contextSize: 256000, maxOutputTokens: 8000, vision: false },
+    'command-a-reasoning': { contextSize: 256000, maxOutputTokens: 32000, vision: false },
+    'command-a-vision': { contextSize: 128000, maxOutputTokens: 8000, vision: true },
+    'north-mini-code': { contextSize: 256000, maxOutputTokens: 64000, vision: false },
+    'command-r': { contextSize: 128000, maxOutputTokens: 4000, vision: false },
+    'command-r-plus': { contextSize: 128000, maxOutputTokens: 4000, vision: false },
+    'command-r7b': { contextSize: 128000, maxOutputTokens: 4000, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Ornith / Deepreinforce
+    // ═══════════════════════════════════════════════
+    'ornith-1-0-9b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+    'ornith-1-0-31b': { contextSize: 262144, maxOutputTokens: 384000, vision: true },
+    'ornith-1-0-35b': { contextSize: 262144, maxOutputTokens: 384000, vision: true },
+    'ornith-1-0-397b': { contextSize: 262144, maxOutputTokens: 0, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // LongCat / Meituan
+    // ═══════════════════════════════════════════════
+    'longcat-2-0': { contextSize: 1000000, maxOutputTokens: 131072, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Muse Spark / Meta
+    // ═══════════════════════════════════════════════
+    'muse-spark-1-1': { contextSize: 1000000, maxOutputTokens: 32000, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // MAI / Microsoft
+    // ═══════════════════════════════════════════════
+    'mai-code-1-flash': { contextSize: 256000, maxOutputTokens: 128000, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Nemotron / NVIDIA
+    // ═══════════════════════════════════════════════
+    'nemotron-3-ultra-550b': { contextSize: 1000000, maxOutputTokens: 128000, vision: false },
+    'nemotron-3-super-120b': { contextSize: 262144, maxOutputTokens: 262144, vision: false },
+    'nemotron-3-nano-30b': { contextSize: 262144, maxOutputTokens: 262144, vision: false },
+    'nemotron-3-nano-omni-30b': { contextSize: 256000, maxOutputTokens: 65536, vision: true },
+    'nemotron-cascade-2-30b': { contextSize: 256000, maxOutputTokens: 32768, vision: false },
+    'nemotron-nano-9b': { contextSize: 131072, maxOutputTokens: 131072, vision: false },
+    'nemotron-nano-12b-vl': { contextSize: 128000, maxOutputTokens: 128000, vision: true },
+    'nemotron-mini-4b': { contextSize: 128000, maxOutputTokens: 8192, vision: false },
+    'llama-3-1-nemotron-70b': { contextSize: 128000, maxOutputTokens: 8192, vision: false },
+    'llama-3-1-nemotron-ultra-253b': { contextSize: 128000, maxOutputTokens: 8192, vision: false },
+    'llama-3-3-nemotron-super-49b': { contextSize: 131072, maxOutputTokens: 131072, vision: false },
+    'mistral-nemotron': { contextSize: 128000, maxOutputTokens: 8192, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Sonar / Perplexity
+    // ═══════════════════════════════════════════════
+    sonar: { contextSize: 128000, maxOutputTokens: 4096, vision: false },
+    'sonar-pro': { contextSize: 200000, maxOutputTokens: 8192, vision: true },
+    'sonar-reasoning-pro': { contextSize: 128000, maxOutputTokens: 4096, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // Laguna / Poolside
+    // ═══════════════════════════════════════════════
+    'laguna-s-2-1': { contextSize: 1048576, maxOutputTokens: 32768, vision: false },
+    'laguna-xs-2-1': { contextSize: 262144, maxOutputTokens: 32768, vision: false },
+    'laguna-xs-2': { contextSize: 262144, maxOutputTokens: 32768, vision: false },
+    'laguna-m-1': { contextSize: 262144, maxOutputTokens: 32768, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Fugu / Sakana
+    // ═══════════════════════════════════════════════
+    fugu: { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // Sarvam
+    // ═══════════════════════════════════════════════
+    'sarvam-30b': { contextSize: 128000, maxOutputTokens: 128000, vision: false },
+    'sarvam-105b': { contextSize: 131072, maxOutputTokens: 131072, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Step / StepFun
+    // ═══════════════════════════════════════════════
+    'step-3-7-flash': { contextSize: 256000, maxOutputTokens: 256000, vision: true },
+    'step-3-5-flash': { contextSize: 256000, maxOutputTokens: 256000, vision: false },
+
+    // ═══════════════════════════════════════════════
+    // Inkling / Thinking Machines
+    // ═══════════════════════════════════════════════
+    inkling: { contextSize: 1048576, maxOutputTokens: 1048576, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // GPT-OSS / OpenAI
+    // ═══════════════════════════════════════════════
+    'gpt-oss-20b': { contextSize: 131072, maxOutputTokens: 32768, vision: false },
+    'gpt-oss-120b': { contextSize: 131072, maxOutputTokens: 32768, vision: false },
+    'o3-pro': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
+
+    // ═══════════════════════════════════════════════
+    // MiMo V2 / Xiaomi
+    // ═══════════════════════════════════════════════
+    'mimo-v2-omni': { contextSize: 262144, maxOutputTokens: 131072, vision: true },
+    'mimo-v2-pro': { contextSize: 1048576, maxOutputTokens: 131072, vision: false },
+    'mimo-v2-flash': { contextSize: 262144, maxOutputTokens: 65536, vision: false }
 };
 
 // ═══════════════════════════════════════════════

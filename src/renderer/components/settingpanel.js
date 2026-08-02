@@ -1604,7 +1604,7 @@ class SettingPanel extends HTMLElement {
             this.updateTelemetryProtocolFields()
         );
         this.querySelector('#telemetry-url-input')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 this.saveTelemetryEndpoint();
             }
@@ -1846,6 +1846,12 @@ class SettingPanel extends HTMLElement {
                     ? `${Math.round(model.context_length / 1000)}k`
                     : String(model.context_length)
                 : '';
+        const maxOutLabel =
+            modelType === 'chat' && model.max_output_tokens && model.max_output_tokens > 0
+                ? model.max_output_tokens >= 1000
+                    ? `${Math.round(model.max_output_tokens / 1000)}k`
+                    : String(model.max_output_tokens)
+                : '';
         return `
         <div class="sp-card" data-model-index="${index}">
             <div style="display:flex;align-items:flex-start;justify-content:space-between">
@@ -1855,6 +1861,7 @@ class SettingPanel extends HTMLElement {
                         ${typeBadge}
                         ${modelType === 'chat' && effortLabel ? `<span class="sp-tag sp-tag-purple">${effortLabel}</span>` : ''}
                         ${ctxLabel ? `<span class="sp-tag sp-tag-blue">${ctxLabel} ctx</span>` : ''}
+                        ${maxOutLabel ? `<span class="sp-tag sp-tag-blue">${maxOutLabel} out</span>` : ''}
                     </div>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
                 </div>
@@ -2810,6 +2817,7 @@ class SettingPanel extends HTMLElement {
                   model_type: 'chat',
                   reasoning_effort: '',
                   context_length: undefined,
+                  max_output_tokens: undefined,
                   custom_headers: undefined
               };
         model.model_type = this.normalizeModelType(model.model_type);
@@ -2898,6 +2906,10 @@ class SettingPanel extends HTMLElement {
 	                    <div class="chat-model-field">
 	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
 	                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+	                    </div>
+	                    <div class="chat-model-field">
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
+	                        <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
 	                    </div>
 	                    <div class="chat-model-field">
 	                        <label class="flex items-center gap-2 cursor-pointer">
@@ -2997,19 +3009,45 @@ class SettingPanel extends HTMLElement {
                     const k = Math.round(size / 1000);
                     contextLengthInput.placeholder = `估计上下文大小 ${k}k`;
                 } else {
-                    contextLengthInput.placeholder = `无匹配模型，自动设置为 128k`;
+                    contextLengthInput.placeholder = `无匹配模型，默认 128k`;
                 }
             } catch {
                 contextLengthInput.placeholder = this._t('config.model.field.context_length.placeholder');
             }
         };
+
+        // 模型名变化时，实时估算最大补全长度并更新 placeholder
+        const maxOutputTokensInput = this.querySelector('#model-max-output-tokens-input');
+        const updateMaxOutputTokensPlaceholder = async (modelName) => {
+            if (!maxOutputTokensInput) return;
+            const trimmed = (modelName || '').trim();
+            if (!trimmed) {
+                maxOutputTokensInput.placeholder = this._t('config.model.field.max_output_tokens.placeholder');
+                return;
+            }
+            try {
+                const tokens = await window.settingAPI.estimateMaxOutputTokens(trimmed);
+                if (tokens > 0) {
+                    const k = Math.round(tokens / 1000);
+                    maxOutputTokensInput.placeholder = `估计最大补全长度 ${k}k`;
+                } else {
+                    maxOutputTokensInput.placeholder = `无匹配模型，默认 16384`;
+                }
+            } catch {
+                maxOutputTokensInput.placeholder = this._t('config.model.field.max_output_tokens.placeholder');
+            }
+        };
         nameInput?.addEventListener('input', () => {
             clearTimeout(_estimateTimer);
-            _estimateTimer = setTimeout(() => updateContextPlaceholder(nameInput.value), 250);
+            _estimateTimer = setTimeout(() => {
+                updateContextPlaceholder(nameInput.value);
+                updateMaxOutputTokensPlaceholder(nameInput.value);
+            }, 250);
         });
         // 初始加载时立即估算
         if (nameInput?.value?.trim()) {
             updateContextPlaceholder(nameInput.value);
+            updateMaxOutputTokensPlaceholder(nameInput.value);
         }
 
         const syncModelTypeFields = () => {
@@ -3226,6 +3264,8 @@ class SettingPanel extends HTMLElement {
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
+        const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
+        const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
@@ -3242,6 +3282,18 @@ class SettingPanel extends HTMLElement {
                 'error',
                 this._t('config.main.title'),
                 this._t('config.model.validation.context_length_invalid')
+            );
+            return;
+        }
+
+        if (
+            maxOutputTokensRaw &&
+            (!/^\d+$/.test(maxOutputTokensRaw) || !Number.isSafeInteger(maxOutputTokensNum) || maxOutputTokensNum < 0)
+        ) {
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.max_output_tokens_invalid')
             );
             return;
         }
@@ -3282,6 +3334,9 @@ class SettingPanel extends HTMLElement {
         };
         if (model_type === 'chat' && contextLengthNum && contextLengthNum > 0) {
             model.context_length = contextLengthNum;
+        }
+        if (model_type === 'chat' && maxOutputTokensNum && maxOutputTokensNum > 0) {
+            model.max_output_tokens = maxOutputTokensNum;
         }
         if (Object.keys(custom_headers).length > 0) {
             model.custom_headers = custom_headers;

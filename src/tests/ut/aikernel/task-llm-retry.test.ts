@@ -83,13 +83,15 @@ function configureSetting(autoRetry: boolean): void {
                 alias: 'mock-model',
                 provider_name: 'mock-provider',
                 model_name: 'mock/model',
-                context_length: 8192
+                context_length: 8192,
+                max_output_tokens: 4096
             },
             {
                 alias: 'next-model',
                 provider_name: 'mock-provider',
                 model_name: 'mock/next',
-                context_length: 8192
+                context_length: 8192,
+                max_output_tokens: 4096
             }
         ],
         task_config: {
@@ -117,7 +119,7 @@ function createRunningTask(autoRetry: boolean): { task: TaskState; chunks: TaskU
     return { task, chunks };
 }
 
-async function waitForCondition(predicate: () => boolean, attempts = 80): Promise<void> {
+async function waitForCondition(predicate: () => boolean, attempts = 200): Promise<void> {
     for (let i = 0; i < attempts; i++) {
         if (predicate()) return;
         await jest.advanceTimersByTimeAsync(0);

@@ -2437,6 +2437,9 @@ export class TaskState {
             if (tool_call.args_string) {
                 const repaired = jsonrepair(tool_call.args_string);
                 args = JSON.parse(repaired);
+                // 同步更新为修复后的合法 JSON，避免下游 sanitizeOutboundMessage
+                // 因 JSON.parse 失败而清空参数
+                tool_call.args_string = repaired;
             }
             const validation = tool.validateArgs(args);
             if (!validation.success) {
