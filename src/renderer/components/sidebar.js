@@ -25,6 +25,7 @@ import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebar
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
+const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 class SideBar extends HTMLElement {
     static get observedAttributes() {
@@ -1586,7 +1587,7 @@ class SideBar extends HTMLElement {
                 ? `
                 <details class="sb-running-subtasks"${children.some((child) => child.task_status === 'running') ? ' open' : ''}>
                     <summary>
-                        <span class="sb-running-chevron" aria-hidden="true">▶</span>
+                        <span class="sb-running-chevron" aria-hidden="true">${CHEVRON_SVG}</span>
                         <span>${this._t('renderer.sidebar.subtaskCount', { count: children.length })}</span>
                         <span class="sb-running-progress-text">${this._t('renderer.sidebar.completedCount', {
                             completed,
@@ -1678,7 +1679,7 @@ class SideBar extends HTMLElement {
                 </span>
             </span>
             <span class="sb-group-count">${group.items.length}</span>
-            <span class="sb-group-caret" aria-hidden="true">▶</span>`;
+            <span class="sb-group-caret" aria-hidden="true">${CHEVRON_SVG}</span>`;
     }
 
     _buildSearchResultList(items) {
@@ -1733,7 +1734,7 @@ class SideBar extends HTMLElement {
             ? this._workspaceGroupSummary(group, index)
             : `${SideBar.escapeHtml(this._taskGroupLabel(group))}
                <span class="sb-group-count">${group.items.length}</span>
-               <span class="sb-group-caret" aria-hidden="true">▶</span>`;
+               <span class="sb-group-caret" aria-hidden="true">${CHEVRON_SVG}</span>`;
         return `
         <details class="sb-task-group${isWorkspace ? ' is-workspace' : ''}" data-group-id="${SideBar.escapeHtml(
             group.id

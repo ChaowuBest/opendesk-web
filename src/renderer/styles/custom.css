@@ -1447,7 +1447,9 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
     background: var(--od-bg-muted);
 }
 .sb-running-chevron {
-    font-size: var(--icon-xs);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition: transform 0.15s;
 }
 .sb-running-subtasks[open] .sb-running-chevron {
@@ -1678,8 +1680,9 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
 .sb-group-caret {
     margin-left: auto;
     color: var(--od-text-disabled);
-    font-size: var(--icon-xs);
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition: transform 0.15s;
 }
 .sb-task-group[open] .sb-group-caret {
