@@ -201,6 +201,7 @@ const GUIConfigSchema = z.object({
         .default('system')
         .describe('界面主题: system=跟随系统, light=浅色, dark=深色'),
     scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
+    scale_factor_auto: z.boolean().optional().default(true).describe('是否根据屏幕 DPI 自动适配缩放系数'),
     font_preset: z
         .enum(['default', 'lxgwwenkai'])
         .optional()

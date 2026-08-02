@@ -1199,39 +1199,13 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
+        const autoScale = this.currentData?.gui_config?.scale_factor_auto !== false;
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
         const customProxyAddr = networkConfig.custom_proxy_addr || '';
         const noProxy = networkConfig.no_proxy || '';
-        const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
-        const scaleLabels = {
-            'zh-CN': [
-                this._t('sp.general.scale.tiny'),
-                this._t('sp.general.scale.small'),
-                this._t('sp.general.scale.standard'),
-                this._t('sp.general.scale.large'),
-                this._t('sp.general.scale.xlarge')
-            ],
-            'en-US': [
-                this._t('sp.general.scale.tiny'),
-                this._t('sp.general.scale.small'),
-                this._t('sp.general.scale.standard'),
-                this._t('sp.general.scale.large'),
-                this._t('sp.general.scale.xlarge')
-            ],
-            auto: [
-                this._t('sp.general.scale.tiny'),
-                this._t('sp.general.scale.small'),
-                this._t('sp.general.scale.standard'),
-                this._t('sp.general.scale.large'),
-                this._t('sp.general.scale.xlarge')
-            ]
-        };
-        const labels = scaleLabels[currentLocale] || scaleLabels['auto'];
-        const currentStepIndex = scaleSteps.indexOf(scaleFactor);
-        const activeStep = currentStepIndex >= 0 ? currentStepIndex : 2;
 
         // Locale-aware string picker: zh side when not explicitly en-US
         const isEn = (this.currentData?.resolved_locale || currentLocale) === 'en-US';
@@ -1297,27 +1271,22 @@ class SettingPanel extends HTMLElement {
             <hr class="sp-section-divider">
             <div class="sp-form-group" style="margin-bottom:0">
                 <label class="sp-form-label">${this._t('sp.general.displaySize')}</label>
-                <div style="display:flex;align-items:center;gap:12px">
-                    <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px">${labels[0]}</span>
-                    <div style="flex:1;position:relative;height:24px;display:flex;align-items:center">
-                        <div style="position:absolute;left:0;right:0;height:4px;background:var(--sp-color-border);border-radius:2px">
-                            <div id="scale-track-fill" style="height:100%;background:var(--sp-color-primary);border-radius:2px;transition:width 0.2s;width:${(activeStep / (scaleSteps.length - 1)) * 100}%"></div>
-                        </div>
-                        <div style="position:absolute;left:0;right:0;display:flex;justify-content:space-between">
-                            ${scaleSteps
-                                .map(
-                                    (step, i) => `
-                                <button class="scale-step-btn" style="width:12px;height:12px;border-radius:50%;border:2px solid ${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-border)'};background:${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-bg)'};cursor:pointer;transition:all 0.15s;padding:0;${i === activeStep ? 'box-shadow:0 0 0 3px rgba(223,68,54,0.15);' : ''}" data-step="${i}" data-value="${step}"></button>
-                            `
-                                )
-                                .join('')}
-                        </div>
+                <div style="display:flex;align-items:center;gap:16px">
+                    <div style="display:flex;align-items:center;gap:4px">
+                        <input type="number" id="scale-factor-input" value="${Math.round(scaleFactor * 100)}" min="50" max="200" step="5" style="width:80px;text-align:right" class="sp-form-input">
+                        <span style="font-size:13px;color:var(--sp-color-text-tertiary);flex-shrink:0">%</span>
                     </div>
-                    <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px;text-align:right">${labels[labels.length - 1]}</span>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span style="font-size:12px;color:var(--sp-color-text-secondary)">${this._t('sp.general.scale.auto')}</span>
+                        <label class="sp-toggle-switch" style="margin-left:0">
+                            <input id="scale-auto-checkbox" type="checkbox" ${autoScale ? 'checked' : ''}>
+                            <span class="sp-toggle-track"></span>
+                        </label>
+                    </div>
+                    <span style="margin-left:auto;font-size:12px;color:var(--sp-color-text-tertiary);display:flex;align-items:center;gap:4px">
+                        ${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
+                    </span>
                 </div>
-                <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:6px;display:flex;align-items:center;gap:4px">
-                    Ctrl + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
-                </p>
             </div>
             </div>
         </section>
@@ -1993,6 +1962,20 @@ class SettingPanel extends HTMLElement {
     }
 
     setUpEventListeners() {
+        // 监听缩放系数变化（快捷键调整时同步更新输入框）
+        if (window.displayAPI?.onScaleFactorChanged) {
+            this._scaleFactorChangeUnsub = window.displayAPI.onScaleFactorChanged(async () => {
+                if (!this.currentData?.gui_config) return;
+                // 回调收到的是 effective zoom（含 DPI 补偿），需要读取用户设定的 scale_factor
+                const userScale = await window.displayAPI?.getScaleFactor();
+                if (typeof userScale === 'number') {
+                    this.currentData.gui_config.scale_factor = userScale;
+                    const input = this.querySelector('#scale-factor-input');
+                    if (input) input.value = Math.round(userScale * 100);
+                }
+            });
+        }
+
         // Tab 切换
         this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -2192,22 +2175,7 @@ class SettingPanel extends HTMLElement {
 
         this._bindConfigManagementEvents();
 
-        // 显示大小（分档点击）
-        const bindScaleStepEvents = () => {
-            this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
-                el.addEventListener('click', async () => {
-                    const value = parseFloat(el.dataset.value);
-                    if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                    this.currentData.gui_config.scale_factor = value;
-                    if (window.displayAPI?.setScaleFactor) {
-                        await window.displayAPI.setScaleFactor(value);
-                    }
-                    this.refreshGeneralSection();
-                    this.saveImmediately();
-                });
-            });
-        };
-        bindScaleStepEvents();
+        this._bindScaleEvents();
 
         // 网络设置
         this._bindNetworkEvents();
@@ -2586,6 +2554,39 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#import-config-quickpass-btn')?.addEventListener('click', () => {
             this.showImportQuickPassModal();
         });
+    }
+
+    _bindScaleEvents() {
+        const scaleInput = this.querySelector('#scale-factor-input');
+        if (scaleInput) {
+            const applyScaleValue = async (val) => {
+                const clamped = Math.max(0.5, Math.min(2.0, Math.round(val * 100) / 100));
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.scale_factor = clamped;
+                if (window.displayAPI?.setScaleFactor) {
+                    await window.displayAPI.setScaleFactor(clamped);
+                }
+                this.refreshGeneralSection();
+                this.saveImmediately();
+            };
+            scaleInput.addEventListener('change', async () => {
+                await applyScaleValue((parseFloat(scaleInput.value) || 100) / 100);
+            });
+        }
+
+        const autoCheckbox = this.querySelector('#scale-auto-checkbox');
+        if (autoCheckbox) {
+            autoCheckbox.addEventListener('change', async () => {
+                const enabled = autoCheckbox.checked;
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.scale_factor_auto = enabled;
+                if (window.displayAPI?.setAutoScaleFactor) {
+                    await window.displayAPI.setAutoScaleFactor(enabled);
+                }
+                this.refreshGeneralSection();
+                this.saveImmediately();
+            });
+        }
     }
 
     // --- 提供方管理 ---
@@ -3534,18 +3535,7 @@ class SettingPanel extends HTMLElement {
 
             this._bindConfigManagementEvents();
 
-            this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
-                el.addEventListener('click', async () => {
-                    const value = parseFloat(el.dataset.value);
-                    if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                    this.currentData.gui_config.scale_factor = value;
-                    if (window.displayAPI?.setScaleFactor) {
-                        await window.displayAPI.setScaleFactor(value);
-                    }
-                    this.refreshGeneralSection();
-                    this.saveImmediately();
-                });
-            });
+            this._bindScaleEvents();
             this._bindGatewayEvents();
             this._bindEnvironEvents();
             this._bindNetworkEvents();

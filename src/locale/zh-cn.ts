@@ -1095,6 +1095,7 @@ export const zhCn: Record<string, string> = {
     'sp.general.reasoningDisplay.inline': '内联式',
     'sp.general.reasoningDisplay.bubble': '气泡式',
     'sp.general.displaySize': '显示大小',
+    'sp.general.scale.auto': '自动补偿屏幕 DPI',
     'sp.general.scale.tiny': '极小',
     'sp.general.scale.small': '小',
     'sp.general.scale.standard': '标准',
