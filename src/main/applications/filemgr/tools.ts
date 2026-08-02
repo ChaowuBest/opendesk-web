@@ -24,11 +24,7 @@ import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
 import { getTempDir, getHomeDir } from '../../utils/temp.js';
 import { cleanPathInput } from '../../../utils/path.js';
-import {
-    EXTRACT_TEXT_SUPPORTED_EXTENSIONS,
-    extractText as extractFileText,
-    isExtractTextSupported
-} from './parser/extract.js';
+import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
 import fs from 'fs';
 import path from 'path';
@@ -741,8 +737,7 @@ function hasBinaryContent(buffer: Buffer): boolean {
     return false;
 }
 
-function addLineNumbers(content: string, startLine: number): string {
-    const lines = content.split(/\r?\n/);
+function addLineNumbers(lines: string[], startLine: number): string {
     return lines
         .map((line, index) => {
             const numStr = String(index + startLine);
@@ -1060,7 +1055,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
             const endIdx = limit != null ? Math.min(startIdx + limit, totalLines) : totalLines;
             const selectedLines = allLines.slice(startIdx, endIdx);
-            const numberedContent = addLineNumbers(selectedLines.join('\n'), startLine);
+            const numberedContent = addLineNumbers(selectedLines, startLine);
 
             const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
             if (contentByteLen > READ_FILE_MAX_BYTES) {
@@ -1448,23 +1443,23 @@ function renderFileToolDetailsCard(opts: {
 
 // ==================== ExtractText 工具 ====================
 
-const EXTRACT_TEXT_MAX_BYTES = 240 * 1024;
 const EXTRACT_TEXT_SUPPORTED_EXTENSIONS_DISPLAY = EXTRACT_TEXT_SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(', ');
 
 const extractTextSchema = z.object({
-    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径'),
-    offset: z.number().int().nonnegative().optional().describe('起始行号（从 1 开始）。仅在文本过大需要分段读取时提供'),
-    limit: z.number().int().positive().optional().describe('读取的行数。仅在文本过大需要分段读取时提供')
+    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径')
 });
 
 export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
-    constructor() {
+    private extractDelegate: (filePath: string) => Promise<string | null>;
+
+    constructor(extractDelegate: (filePath: string) => Promise<string | null>) {
         super(
             'extractText',
             `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如 pdf/doc/docx/pptx/xls/xlsx/odt/odp/ods 等。纯文本文件请使用 readFile 工具读取。`,
             extractTextSchema
         );
 
+        this.extractDelegate = extractDelegate;
         this.setExecutor(this.executeCommand);
     }
 
@@ -1477,14 +1472,8 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const filePath = toolcall.args_object?.['file_path'] as string | undefined;
-        const offset = toolcall.args_object?.['offset'] as number | undefined;
-        const limit = toolcall.args_object?.['limit'] as number | undefined;
 
         let detail = filePath ? escapeHtml(filePath) : '';
-        const rangeStr = formatLineRange(offset, limit);
-        if (rangeStr) {
-            detail += ` · ${escapeHtml(rangeStr)}`;
-        }
 
         let visualStatus = toolcall.status;
         if (toolcall.status === 'success' && toolcall.result) {
@@ -1494,9 +1483,8 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                     visualStatus = 'error';
                 }
                 if (result.type === 'text' && result.file) {
-                    detail += ` · ${t('filemgr.extractText.lineSummaryShort', {
-                        numLines: result.file.numLines,
-                        totalLines: result.file.totalLines
+                    detail += ` · ${t('filemgr.extractText.lineSummary', {
+                        numLines: result.file.numLines
                     })}`;
                     if (result.file.content) {
                         detail += ` · ${t('filemgr.extractText.charCount', { count: result.file.content.length })}`;
@@ -1514,24 +1502,16 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
             className: 'filemgr-extract-text-tool',
             detail,
             detailTitle: filePath || undefined,
-            editorFilePath: filePath || undefined,
-            editorLine: offset != null ? offset : undefined
+            editorFilePath: filePath || undefined
         });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const filePath = toolcall.args_object?.['file_path'];
-        const offset = toolcall.args_object?.['offset'] as number | undefined;
-        const limit = toolcall.args_object?.['limit'] as number | undefined;
         const body: string[] = [];
 
         if (filePath) {
-            let fileInfo = truncText(String(filePath), width - 8);
-            const rangeStr = formatLineRange(offset, limit);
-            if (rangeStr) {
-                fileInfo += chalk.dim(` (${rangeStr})`);
-            }
-            body.push(chalk.yellow(fileInfo));
+            body.push(chalk.yellow(truncText(String(filePath), width - 8)));
         }
 
         if (toolcall.status === 'running') {
@@ -1549,21 +1529,12 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                         body.push(
                             chalk.dim(
                                 `  ${t('filemgr.extractText.lineSummary', {
-                                    numLines: f.numLines,
-                                    startLine: f.startLine,
-                                    endLine: f.startLine + f.numLines - 1,
-                                    totalLines: f.totalLines
+                                    numLines: f.numLines
                                 })}`
                             )
                         );
                     } else {
-                        body.push(
-                            chalk.dim(
-                                `  ${t('filemgr.extractText.empty', {
-                                    totalLines: f.totalLines
-                                })}`
-                            )
-                        );
+                        body.push(chalk.dim(`  ${t('filemgr.extractText.empty')}`));
                     }
                 }
             } catch {
@@ -1582,8 +1553,6 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
     async executeCommand(args: z.output<typeof extractTextSchema>, taskState?: TaskState): Promise<string> {
         const basePath = getWorkingDirectory(taskState);
         const filePath = sanitizePath(args.file_path || '', basePath);
-        const { offset, limit } = args;
-        const startLine = offset != null ? Math.max(1, offset) : 1;
 
         if (!filePath) {
             throw new Error(t('filemgr.extractText.error.pathRequired'));
@@ -1602,38 +1571,20 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                 });
             }
 
-            const extracted = await extractFileText(filePath);
+            const extracted = await this.extractDelegate(filePath);
             if (extracted === null) {
                 throw new Error(t('filemgr.extractText.error.extractFailed', { path: filePath }));
             }
 
-            const allLines = extracted.length === 0 ? [] : extracted.split(/\r?\n/);
-            const totalLines = allLines.length;
-            const startIdx = startLine - 1;
-            const selectedLines =
-                startIdx >= totalLines ? [] : allLines.slice(startIdx, limit ? startIdx + limit : totalLines);
-            const numberedContent = selectedLines.length > 0 ? addLineNumbers(selectedLines.join('\n'), startLine) : '';
-            const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
-
-            if (contentByteLen > EXTRACT_TEXT_MAX_BYTES) {
-                throw new Error(
-                    t('filemgr.extractText.error.rangeTooLarge', {
-                        size: Math.ceil(contentByteLen / 1024),
-                        limit: EXTRACT_TEXT_MAX_BYTES / 1024,
-                        totalLines,
-                        startLine
-                    })
-                );
-            }
+            const lines = extracted.length === 0 ? [] : extracted.split(/\r?\n/);
+            const numberedContent = lines.length > 0 ? addLineNumbers(lines, 1) : '';
 
             return JSON.stringify({
                 type: 'text',
                 file: {
                     filePath,
                     content: numberedContent,
-                    numLines: selectedLines.length,
-                    startLine,
-                    totalLines
+                    numLines: lines.length
                 }
             });
         } catch (err) {
@@ -3450,12 +3401,14 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
 
 // ==================== 工具集工厂函数 ====================
 
-export function createFileManagerToolset(): BaseToolset {
+export function createFileManagerToolset(options: {
+    extractDelegate: (filePath: string) => Promise<string | null>;
+}): BaseToolset {
     const toolset = new BaseToolset('filemgr');
     toolset.addTool(new ReadFileTool());
     toolset.addTool(new ReadImageTool());
     toolset.addTool(new AskImageTool());
-    toolset.addTool(new ExtractTextTool());
+    toolset.addTool(new ExtractTextTool(options?.extractDelegate));
     toolset.addTool(new WriteFileTool());
     toolset.addTool(new EditFileTool());
     toolset.addTool(new SearchReplaceTool());

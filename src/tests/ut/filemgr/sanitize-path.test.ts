@@ -1,4 +1,5 @@
 import { ExtractTextTool, ReadFileTool } from '../../../main/applications/filemgr/tools.js';
+import { extractText } from '../../../main/applications/filemgr/parser/extract.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -31,7 +32,7 @@ describe('sanitizePath - 特殊字符路径处理', () => {
     });
 
     describe('ExtractTextTool 路径处理', () => {
-        const tool = new ExtractTextTool();
+        const tool = new ExtractTextTool(extractText);
 
         test('带前导空格的绝对路径应正确处理', async () => {
             const args = { file_path: ` ${testFile}` };
@@ -127,7 +128,7 @@ describe('sanitizePath - 特殊字符路径处理', () => {
     });
 
     describe('相对路径基于 workspace 解析', () => {
-        const extractTool = new ExtractTextTool();
+        const extractTool = new ExtractTextTool(extractText);
         const readTool = new ReadFileTool();
 
         test('ExtractTextTool 应正确解析相对路径', async () => {

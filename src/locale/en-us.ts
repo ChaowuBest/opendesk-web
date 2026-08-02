@@ -773,15 +773,12 @@ export const enUs: Record<string, string> = {
     'filemgr.extractText.error.unsupported': 'Text extraction is not supported for this file type: ${path}',
     'filemgr.extractText.error.extractFailed':
         'Failed to extract file text; the file may be too large or parsing failed: ${path}',
-    'filemgr.extractText.error.rangeTooLarge':
-        'Read range is too large (${size} KB exceeds the ${limit} KB limit). Extracted text has ${totalLines} lines; use offset and limit to read in chunks. Example: offset=${startLine}, limit=2000',
     'filemgr.extractText.error.notFound': 'File not found: ${path}',
     'filemgr.extractText.error.noAccess': 'Permission denied while reading file: ${path}',
-    'filemgr.extractText.lineSummaryShort': '${numLines} / ${totalLines} lines',
     'filemgr.extractText.charCount': '${count} chars',
-    'filemgr.extractText.lineSummary': '${numLines} lines (${startLine}~${endLine}/${totalLines})',
+    'filemgr.extractText.lineSummary': '${numLines} lines',
     'filemgr.extractText.extracting': 'Extracting...',
-    'filemgr.extractText.empty': 'Empty content (${totalLines} lines total)',
+    'filemgr.extractText.empty': 'Empty content',
     'filemgr.extractText.seeResult': 'See result below',
     'filemgr.semanticSearch.name': 'Semantic Search',
     'filemgr.semanticSearch.query': 'Query',

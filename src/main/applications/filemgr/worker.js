@@ -57,6 +57,7 @@ import {
     rankSearchResults,
     toIndexedFileSearchResult
 } from './search-indexed.js';
+import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
 
 const MAX_RECENT_FAILURES = 20;
@@ -1508,6 +1509,15 @@ class FileManagerWorker extends BaseWorker {
         const { query: q, topK: k } = normalizeSearchArgs(query, topK);
         if (!q.trim()) return { query: q, results: [], totalHits: 0 };
         return await this.storage.searchFileByContent(q, { topK: k });
+    }
+
+    /**
+     * 在 Worker 线程中提取文件文本，避免 CPU 密集型解析阻塞主线程。
+     * @param {string} filePath
+     * @returns {Promise<string | null>}
+     */
+    async extractFileText(filePath) {
+        return await extractFileTextFromParser(filePath);
     }
 
     async resetFileSystemStorage() {

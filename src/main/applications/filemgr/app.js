@@ -17,6 +17,7 @@ import { Setting } from '../../utils/setting.js';
 import { electron } from '../../../utils/electron.js';
 import { z } from 'zod';
 import FileManagerWorker from './worker';
+import { extractText as extractFileTextDirect } from './parser/extract.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
 import { buildFileNavigationSkill } from './skills.js';
@@ -143,7 +144,20 @@ class FileMgrApplication extends BaseApplication {
     }
 
     async getToolsets() {
-        const toolset = createFileManagerToolset();
+        const toolset = createFileManagerToolset({
+            extractDelegate: async (filePath) => {
+                try {
+                    const resp = await this.callWorker('extractFileText', filePath);
+                    if (resp?.status === 'error') {
+                        throw new Error(resp.message ?? '提取失败');
+                    }
+                    return resp?.data ?? null;
+                } catch (err) {
+                    // Worker 不可用时回退到主线程直接提取，避免功能完全不可用
+                    return await extractFileTextDirect(filePath);
+                }
+            }
+        });
 
         toolset.addTool(
             new SemanticSearchTool(async (query, maxResults) => {
