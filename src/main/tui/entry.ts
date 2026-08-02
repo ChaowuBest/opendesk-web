@@ -810,7 +810,7 @@ export class OpenDeskTUI {
                 const commands = app.getCliSlashCommands(this);
                 for (const cmd of commands) {
                     // 设置命令来源为应用名称
-                    cmd.source = app.name;
+                    cmd.source = app.getName();
                     this.commandRegistry.register(cmd);
                 }
             }

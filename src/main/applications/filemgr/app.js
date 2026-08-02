@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t as appT } from './locale/index.js';
 import { FSEntrySchema } from './setting.js';
 import { SemanticSearchTool, createFileManagerToolset } from './tools.js';
 import { Setting } from '../../utils/setting.js';
@@ -70,7 +71,11 @@ function reasonLabel(reason) {
 
 class FileMgrApplication extends BaseApplication {
     constructor() {
-        super('filemgr', '文件');
+        super('filemgr');
+    }
+
+    getName() {
+        return appT('app.name');
     }
 
     async getTUIStatusBlock() {

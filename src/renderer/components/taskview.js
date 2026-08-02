@@ -484,9 +484,9 @@ class TaskView extends HTMLElement {
         const minutes = Math.floor(diff / 60000);
         const hours = Math.floor(diff / 3600000);
 
-        if (minutes < 1) return '刚刚';
-        if (minutes < 60) return `${minutes} 分钟前`;
-        if (hours < 24) return `${hours} 小时前`;
+        if (minutes < 1) return taskViewT('renderer.taskview.time.justNow');
+        if (minutes < 60) return taskViewT('renderer.taskview.time.minutesAgo', { minutes });
+        if (hours < 24) return taskViewT('renderer.taskview.time.hoursAgo', { hours });
 
         const d = new Date(timestamp);
         const pad = (n) => String(n).padStart(2, '0');
@@ -611,18 +611,22 @@ class TaskView extends HTMLElement {
             // 切换到更小上下文窗口的模型，或在设置中手动把上下文长度设得很小。此时仍展示
             // 真实比值并标注已超限，而非把数值截断成 100%，便于用户察觉窗口配置偏小。
             const pct = pctNum.toFixed(1);
-            return `, 上下文占比 ${pct}%（已超限，当前上下文窗口配置偏小，回复 token 数超出窗口大小）`;
+            return taskViewT('renderer.taskview.usage.contextRatioExceeded', { pct });
         }
-        return `, 上下文占比 ${pctNum.toFixed(1)}%`;
+        return taskViewT('renderer.taskview.usage.contextRatio', { pct: pctNum.toFixed(1) });
     }
 
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
         if (!TaskView.hasDisplayableUsage(usage)) return '';
         const { promptTokens, completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
-        const titleParts = `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`;
+        const titleParts = taskViewT('renderer.taskview.usage.title', {
+            input: promptTokens,
+            output: completionTokens,
+            total: totalTokens
+        });
         const ratioText = TaskView.formatContextRatioText(totalTokens, contextSize);
         const spinnerDisplay = isStreaming ? '' : 'display:none;';
-        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
+        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">${taskViewT('renderer.taskview.usage.display', { output: completionTokens, total: totalTokens, ratio: ratioText })}</span></span>`;
     }
 
     /**
@@ -1116,8 +1120,8 @@ class TaskView extends HTMLElement {
         });
         const statusText =
             progress.status === 'retrying'
-                ? `正在发起第 ${progress.attempt} 次重试...`
-                : `已重试 ${progress.attempt} 次，下次重试 ${retryTime}（${seconds}s 后）`;
+                ? taskViewT('renderer.taskview.retry.retrying', { attempt: progress.attempt })
+                : taskViewT('renderer.taskview.retry.scheduled', { attempt: progress.attempt, retryTime, seconds });
         const errorText = progress.error_message ? escapeHtml(progress.error_message) : '';
         const retryNowButton =
             progress.status === 'scheduled'
@@ -1126,8 +1130,8 @@ class TaskView extends HTMLElement {
                     hover:bg-amber-300 active:bg-amber-400
                     transition-colors duration-150"
                     data-action="retry-now"
-                    title="跳过等待，立即重试">
-                    <i class="fa-solid fa-arrow-rotate-right text-[11px]"></i>立即重试
+                    title="${taskViewT('renderer.taskview.retry.skipWait')}">
+                    <i class="fa-solid fa-arrow-rotate-right text-[11px]"></i>${taskViewT('renderer.taskview.retry.now')}
                   </button>`
                 : '';
 
@@ -1135,11 +1139,11 @@ class TaskView extends HTMLElement {
         <div class="od-task-retry-status my-2 mx-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-amber-700 text-xs" data-retry-status="true">
             <div class="flex items-center gap-2 font-medium">
                 <i class="fa-solid fa-circle-notch fa-spin"></i>
-                <span>LLM 请求自动重试</span>
+                <span>${taskViewT('renderer.taskview.retry.title')}</span>
                 ${retryNowButton}
             </div>
             <div class="mt-1">${escapeHtml(statusText)}</div>
-            ${errorText ? `<div class="mt-1 text-amber-700/80 break-words">上次错误: ${errorText}</div>` : ''}
+            ${errorText ? `<div class="mt-1 text-amber-700/80 break-words">${taskViewT('renderer.taskview.retry.lastError', { error: errorText })}</div>` : ''}
         </div>
         `;
     }
@@ -1165,13 +1169,13 @@ class TaskView extends HTMLElement {
                 btn._boundRetryNow = true;
                 btn.addEventListener('click', async () => {
                     btn.disabled = true;
-                    btn.textContent = '重试中...';
+                    btn.textContent = taskViewT('renderer.taskview.retry.inProgress');
                     try {
                         await window.taskManagerAPI.skipRetryDelay(this.task_id);
                     } catch (err) {
                         console.error('skipRetryDelay failed:', err);
                         btn.disabled = false;
-                        btn.textContent = '立即重试';
+                        btn.textContent = taskViewT('renderer.taskview.retry.now');
                     }
                 });
             }
@@ -1337,7 +1341,13 @@ class TaskView extends HTMLElement {
                 this._removeUsageOutside(message_container);
             }
             const titleParts =
-                totalTokens > 0 ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}` : '';
+                totalTokens > 0
+                    ? taskViewT('renderer.taskview.usage.title', {
+                          input: promptTokens,
+                          output: completionTokens,
+                          total: totalTokens
+                      })
+                    : '';
             const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
             usageEl.title = titleParts;
             usageEl.dataset.promptTokens = String(promptTokens);
@@ -1350,7 +1360,11 @@ class TaskView extends HTMLElement {
             }
             const textEl = usageEl.querySelector('.usage-text');
             if (textEl) {
-                textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
+                textEl.textContent = taskViewT('renderer.taskview.usage.display', {
+                    output: completionTokens,
+                    total: totalTokens,
+                    ratio: ratioText
+                });
             }
         } else if (usage) {
             this._removeUsageOutside(message_container);
@@ -1701,7 +1715,11 @@ class TaskView extends HTMLElement {
         const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
         const textEl = lastUsage.querySelector('.usage-text');
         if (textEl) {
-            textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
+            textEl.textContent = taskViewT('renderer.taskview.usage.display', {
+                output: completionTokens,
+                total: totalTokens,
+                ratio: ratioText
+            });
         }
     }
 
@@ -1713,7 +1731,7 @@ class TaskView extends HTMLElement {
                 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M6 9l6 6 6-6"/>
                 </svg>
-                上下文已压缩
+                ${taskViewT('renderer.taskview.usage.contextCompressed')}
             </span>
             <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
         </div>`;
@@ -1968,7 +1986,7 @@ class TaskView extends HTMLElement {
         if (item.attachedImages && item.attachedImages.length > 0) {
             // 注意：attachedImages 是 dataUrl 格式，需要转换为 {dataUrl, name} 格式
             item.attachedImages.forEach((dataUrl, idx) => {
-                inputWidget.addImage(dataUrl, `图片 ${idx + 1}`);
+                inputWidget.addImage(dataUrl, taskViewT('renderer.taskview.imageLabel', { index: idx + 1 }));
             });
         }
         inputWidget.focus();
@@ -2819,7 +2837,7 @@ class TaskView extends HTMLElement {
 
             // 1. 显示保存文件对话框（Electron 会自动处理文件覆盖确认）
             const saveResult = await window.fsAPI.saveFile({
-                title: '导出会话',
+                title: taskViewT('renderer.taskview.export.title'),
                 defaultPath: defaultFileName,
                 filters: [
                     { name: 'HTML Files', extensions: ['html'] },
@@ -2837,7 +2855,7 @@ class TaskView extends HTMLElement {
             await window.taskManagerAPI.exportTask(this.task_id, filePath);
         } catch (error) {
             console.error('Failed to export task:', error);
-            alert('导出失败：' + error.message);
+            alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
         }
     }
 
@@ -2859,7 +2877,7 @@ class TaskView extends HTMLElement {
                     {
                         id: 'taskview-export-btn',
                         iconSvg: EXPORT_DOWNLOAD_SVG,
-                        label: '导出',
+                        label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
                         action: () => {
                             this.exportTask();
@@ -2868,14 +2886,14 @@ class TaskView extends HTMLElement {
                     {
                         id: 'taskview-sidebar-toggle-btn',
                         iconSvg: SIDEBAR_TOGGLE_SVG,
-                        label: '面板',
+                        label: taskViewT('renderer.taskview.toolbar.panel'),
                         expandLabel: true,
                         action: () => {
                             this._toggleRightSidebar();
                         }
                     }
                 ],
-                '智能体对话',
+                taskViewT('renderer.taskview.toolbar.title'),
                 'spread'
             );
             toolbarContainer.appendChild(toolbar);
@@ -3385,12 +3403,14 @@ class TaskView extends HTMLElement {
                     const isQP = await window.quickpassAPI.isQuickPass(message);
                     if (isQP) {
                         const { hasApplications } = await window.quickpassAPI.importQuickPass(message);
-                        const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
+                        const scope = hasApplications
+                            ? taskViewT('renderer.taskview.quickpass.scope.all')
+                            : taskViewT('renderer.taskview.quickpass.scope.base');
                         await window.notificationAPI.sendNotification(
                             'info',
-                            '设置',
-                            `已成功导入口令`,
-                            `导入范围：${scope}`
+                            taskViewT('renderer.taskview.quickpass.settingsTitle'),
+                            taskViewT('renderer.taskview.quickpass.success'),
+                            taskViewT('renderer.taskview.quickpass.successDetail', { scope })
                         );
                         window.globalControlAPI.openHomePage();
                         return;
@@ -3398,8 +3418,8 @@ class TaskView extends HTMLElement {
                 } catch (err) {
                     await window.notificationAPI.sendNotification(
                         'error',
-                        '口令导入失败',
-                        '导入口令时出错',
+                        taskViewT('renderer.taskview.quickpass.failedTitle'),
+                        taskViewT('renderer.taskview.quickpass.failedDetail'),
                         err.message || String(err)
                     );
                     return;

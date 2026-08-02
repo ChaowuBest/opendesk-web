@@ -11,12 +11,17 @@
 
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
 import { findExecutableInPath, hasZsh, findOpenHarmonyBash } from '../../utils/shellExec.js';
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
-        super('terminal', '终端', false);
+        super('terminal', false);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     async getToolsets(): Promise<BaseToolset[]> {

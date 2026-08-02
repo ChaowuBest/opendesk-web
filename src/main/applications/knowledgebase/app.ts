@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill';
 import { z } from 'zod';
@@ -45,8 +46,12 @@ export class KnowledgeBaseApplication extends BaseApplication {
     private providers: Map<string, KnowledgeBaseProvider> = new Map();
 
     constructor() {
-        super('knowledgebase', '知识库', false);
+        super('knowledgebase', false);
         this.initProviders();
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     static getConfigSchema() {

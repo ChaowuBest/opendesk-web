@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { BaseApplication, EventDecl } from '../base.js';
+import { t } from './locale/index.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
@@ -134,7 +135,11 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     constructor() {
-        super('channelmgr', '消息', false);
+        super('channelmgr', false);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     onChannelStateChange(callback: ChannelStateChangeCallback): void {

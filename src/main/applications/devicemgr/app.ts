@@ -17,6 +17,7 @@
 
 import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { Skill } from '../../aikernel/skill.js';
 import { logger } from '../../utils/logger.js';
@@ -46,7 +47,11 @@ export class DeviceMgrApplication extends BaseApplication {
     private startPromise: Promise<void> | null = null;
 
     constructor() {
-        super('devicemgr', '设备', false);
+        super('devicemgr', false);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     static getConfigSchema(): z.ZodObject<any> {

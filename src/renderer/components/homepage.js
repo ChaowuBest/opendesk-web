@@ -12,8 +12,6 @@
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { createRendererTranslator } from '../locale.ts';
 
-const t = createRendererTranslator();
-
 const HOME_SEARCH_DEBOUNCE_MS = 800;
 const HOME_SEARCH_TOP_K = 50;
 const HOME_SEARCH_FAST_ROUTES = ['keyword'];
@@ -98,9 +96,23 @@ class HomePage extends HTMLElement {
         this.__searchRequestId = 0;
         this.__lastSearchResults = [];
         this.unreadCount = 0;
+        this._t = createRendererTranslator();
     }
 
-    connectedCallback() {
+    t(key, params) {
+        return this._t?.(key, params) ?? key;
+    }
+
+    async connectedCallback() {
+        // Load user locale settings before rendering
+        try {
+            const settingObj = await window.settingAPI?.loadSettingObject?.();
+            if (settingObj) {
+                this._t = createRendererTranslator(settingObj);
+            }
+        } catch (e) {
+            // Fall back to auto-detected locale
+        }
         this.render();
         this.setUpEventListeners();
         if (homeSearchState.enabled) {
@@ -450,9 +462,9 @@ class HomePage extends HTMLElement {
                 <h1 class="text-3xl font-medium text-gray-800 mb-1">
                     ${greeting}
                 </h1>
-                <button id="hp-workspace-bar" class="hp-workspace-bar" title="${t('workspace.defaultLabel')}">
+                <button id="hp-workspace-bar" class="hp-workspace-bar" title="${this.t('workspace.defaultLabel')}">
                     <i class="fa-solid fa-folder-open hp-ws-icon"></i>
-                    <span class="hp-ws-label">${t('workspace.shortLabel')}</span>
+                    <span class="hp-ws-label">${this.t('workspace.shortLabel')}</span>
                     <span class="hp-ws-sep">·</span>
                     <span id="hp-workspace-path" class="hp-workspace-path">…</span>
                     <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
@@ -471,7 +483,7 @@ class HomePage extends HTMLElement {
 
             <!-- AI 生成提示 -->
             <div class="w-full max-w-4xl mt-2">
-                <p class="agent-input-footer-text">内容由 AI 生成，请核实重要信息</p>
+                <p class="agent-input-footer-text">${this.t('common.aiDisclaimer')}</p>
             </div>
         </div>
         `;
@@ -530,11 +542,11 @@ class HomePage extends HTMLElement {
 
     _getGreeting() {
         const hour = new Date().getHours();
-        if (hour < 6) return '夜深了';
-        if (hour < 12) return '早上好';
-        if (hour < 14) return '中午好';
-        if (hour < 18) return '下午好';
-        return '晚上好';
+        if (hour < 6) return this.t('homepage.greeting.earlyMorning');
+        if (hour < 12) return this.t('homepage.greeting.morning');
+        if (hour < 14) return this.t('homepage.greeting.noon');
+        if (hour < 18) return this.t('homepage.greeting.afternoon');
+        return this.t('homepage.greeting.evening');
     }
 
     async _initWorkspaceBar() {
@@ -552,7 +564,7 @@ class HomePage extends HTMLElement {
         const wsBar = this.querySelector('#hp-workspace-bar');
         if (wsBar) {
             wsBar.addEventListener('click', async () => {
-                const selected = await showWorkspacePicker({ title: t('workspace.defaultPickerTitle') });
+                const selected = await showWorkspacePicker({ title: this.t('workspace.defaultPickerTitle') });
                 if (selected) {
                     // 先立即更新 UI，持久化和 filemgr 扫描异步进行，不要等
                     const pathLabel = this.querySelector('#hp-workspace-path');

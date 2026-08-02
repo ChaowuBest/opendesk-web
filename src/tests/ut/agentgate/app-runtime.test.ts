@@ -63,14 +63,15 @@ const mockEventsCache = {
 jest.unstable_mockModule('../../../../packages/appsdk/src/index.js', () => ({
     BaseApplication: class {
         bundleName: string;
-        name: string;
         showIcon: boolean;
         eventSubscribers = new Map();
         registry: any;
-        constructor(b: string, n = '', s = true) {
+        constructor(b: string, s = true) {
             this.bundleName = b;
-            this.name = n;
             this.showIcon = s;
+        }
+        getName() {
+            return this.bundleName;
         }
         static getWorkerClass() {
             return undefined;
@@ -84,7 +85,7 @@ jest.unstable_mockModule('../../../../packages/appsdk/src/index.js', () => ({
         toJSON() {
             return {
                 bundleName: this.bundleName,
-                name: this.name,
+                name: this.getName(),
                 showIcon: this.showIcon,
                 isExperimental: false,
                 needAgentBar: false

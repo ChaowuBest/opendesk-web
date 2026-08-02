@@ -24,11 +24,14 @@
 
 import { showConfirmModal } from './confirmModal';
 import { showImageLightbox } from './imageLightbox.js';
+import { createRendererTranslator } from '../locale';
 import { marked } from 'marked';
 import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
+
+const t = createRendererTranslator();
 
 // ============================================================================
 // Types
@@ -1070,14 +1073,14 @@ export class FileExplorer {
             } else {
                 const api = window.workspaceAPI;
                 if (!api || typeof api.getEffectiveWorkspace !== 'function') {
-                    this._workspaceError = '当前环境未提供 workspaceAPI';
+                    this._workspaceError = t('renderer.fileExplorer.error.noWorkspaceApi');
                     this._renderPanel();
                     return;
                 }
                 root = await api.getEffectiveWorkspace();
             }
             if (!root) {
-                this._workspaceError = '未能获取工作空间路径';
+                this._workspaceError = t('renderer.fileExplorer.error.noWorkspacePath');
                 this._renderPanel();
                 return;
             }
@@ -1101,7 +1104,7 @@ export class FileExplorer {
         try {
             const api = window.fsAPI;
             if (!api || typeof api.listDirectory !== 'function') {
-                throw new Error('当前环境未提供 fsAPI.listDirectory');
+                throw new Error(t('renderer.fileExplorer.error.noListDir'));
             }
             const entries = await api.listDirectory(dirPath);
             this._childrenCache.set(dirPath, entries);
@@ -1211,7 +1214,7 @@ export class FileExplorer {
         try {
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
-                throw new Error('当前环境未提供 fsAPI.readTextFile');
+                throw new Error(t('renderer.fileExplorer.error.noReadFile'));
             }
             const data = await api.readTextFile(filePath, PREVIEW_MAX_BYTES);
             if (this._selectedFile !== filePath) return;
@@ -1239,17 +1242,34 @@ export class FileExplorer {
 
         const items: { icon: string; label: string; action: string; danger?: boolean }[] = [];
         if (!isDirectory) {
-            items.push({ icon: 'fa-eye', label: '预览', action: 'preview' });
-            items.push({ icon: 'fa-pen-to-square', label: `打开 ${filePath.split('/').pop() || ''}`, action: 'edit' });
+            items.push({ icon: 'fa-eye', label: t('renderer.fileExplorer.ctx.preview'), action: 'preview' });
+            items.push({
+                icon: 'fa-pen-to-square',
+                label: t('renderer.fileExplorer.ctx.open', { name: filePath.split('/').pop() || '' }),
+                action: 'edit'
+            });
             const ext = filePath.split('.').pop()?.toLowerCase();
             if (ext === 'html' || ext === 'htm') {
-                items.push({ icon: 'fa-globe', label: '在浏览器中打开', action: 'open-in-browser' });
+                items.push({
+                    icon: 'fa-globe',
+                    label: t('renderer.fileExplorer.ctx.openInBrowser'),
+                    action: 'open-in-browser'
+                });
             }
         }
-        items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
-        items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
-        items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
-        items.push({ icon: 'fa-trash-can', label: '删除', action: 'delete', danger: true });
+        items.push({
+            icon: 'fa-arrow-up-right-from-square',
+            label: t('renderer.fileExplorer.ctx.openDefault'),
+            action: 'open-default'
+        });
+        items.push({ icon: 'fa-folder-open', label: t('renderer.fileExplorer.ctx.reveal'), action: 'reveal' });
+        items.push({ icon: 'fa-link', label: t('renderer.fileExplorer.ctx.copyPath'), action: 'copy-path' });
+        items.push({
+            icon: 'fa-trash-can',
+            label: t('renderer.fileExplorer.ctx.delete'),
+            action: 'delete',
+            danger: true
+        });
 
         menu.innerHTML = items
             .map((it) => {
@@ -1332,16 +1352,18 @@ export class FileExplorer {
 
     private async _deleteItem(filePath: string, isDirectory: boolean): Promise<void> {
         const name = filePath.split('/').pop() || filePath;
-        const typeLabel = isDirectory ? '文件夹' : '文件';
+        const typeLabel = isDirectory
+            ? t('renderer.fileExplorer.delete.folder')
+            : t('renderer.fileExplorer.delete.file');
 
         const confirmed = await showConfirmModal({
             icon: 'fa-trash-can',
             iconBg: '#FEF2F2',
             iconColor: '#DC2626',
-            title: `删除${typeLabel}`,
-            message: `确定要将${typeLabel}「<b>${escapeHtml(name)}</b>」移动到回收站吗？此操作可从回收站恢复。`,
-            confirmText: '删除',
-            cancelText: '取消',
+            title: t('renderer.fileExplorer.delete.title', { type: typeLabel }),
+            message: t('renderer.fileExplorer.delete.confirm', { type: typeLabel, name: escapeHtml(name) }),
+            confirmText: t('renderer.fileExplorer.delete.confirmBtn'),
+            cancelText: t('renderer.fileExplorer.delete.cancel'),
             danger: true
         });
         if (!confirmed) return;
@@ -1349,7 +1371,7 @@ export class FileExplorer {
         try {
             const api = (window as any).fsAPI;
             if (!api || typeof api.trashItem !== 'function') {
-                throw new Error('当前环境不支持删除操作');
+                throw new Error(t('renderer.fileExplorer.error.noDelete'));
             }
             await api.trashItem(filePath);
             if (this._selectedFile === filePath) {
@@ -1360,7 +1382,7 @@ export class FileExplorer {
             this.softRefresh();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            window.alert(`删除失败: ${msg}`);
+            window.alert(t('renderer.fileExplorer.delete.failed', { msg }));
         }
     }
 
@@ -1413,7 +1435,7 @@ export class FileExplorer {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-folder-open placeholder-icon"></i>
-                <p>无法加载工作空间</p>
+                <p>${t('renderer.fileExplorer.workspace.loadFailed')}</p>
                 <p class="placeholder-hint">${escapeHtml(this._workspaceError)}</p>
             </div>`;
             return;
@@ -1422,7 +1444,7 @@ export class FileExplorer {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-folder-open placeholder-icon"></i>
-                <p>正在加载工作空间…</p>
+                <p>${t('renderer.fileExplorer.workspace.loading')}</p>
             </div>`;
             return;
         }
@@ -1437,22 +1459,22 @@ export class FileExplorer {
                     <span class="ws-path-text">${escapeHtml(rootName)}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;">
-                    <button class="ws-refresh-btn" title="刷新" data-action="refresh">
+                    <button class="ws-refresh-btn" title="${t('renderer.fileExplorer.refresh')}" data-action="refresh">
                         <i class="fas fa-arrows-rotate"></i>
                     </button>
-                    <button class="ws-fullscreen-btn" title="全屏文件列表" data-action="browser-fullscreen">
+                    <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.fullscreen')}" data-action="browser-fullscreen">
                         <i class="fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
                     </button>
-                    <div class="ws-view-switch" role="tablist" aria-label="视图模式">
+                    <div class="ws-view-switch" role="tablist" aria-label="${t('renderer.fileExplorer.viewMode')}">
                         <button class="ws-view-btn ${this._viewMode === 'tree' ? 'ws-view-active' : ''}"
-                            data-view="tree" title="树状视图">
+                            data-view="tree" title="${t('renderer.fileExplorer.view.tree')}">
                             <i class="fas fa-list"></i>
-                            <span>树状</span>
+                            <span>${t('renderer.fileExplorer.view.treeLabel')}</span>
                         </button>
                         <button class="ws-view-btn ${this._viewMode === 'grid' ? 'ws-view-active' : ''}"
-                            data-view="grid" title="图标视图">
+                            data-view="grid" title="${t('renderer.fileExplorer.view.grid')}">
                             <i class="fas fa-grip"></i>
-                            <span>图标</span>
+                            <span>${t('renderer.fileExplorer.view.gridLabel')}</span>
                         </button>
                     </div>
                 </div>
@@ -1598,7 +1620,7 @@ export class FileExplorer {
         if (cached === 'loading' || cached === undefined) {
             return `<div class="ws-tree-loading" style="padding-left:${depth * 14 + 10}px">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>加载中…</span>
+                <span>${t('renderer.fileExplorer.loading')}</span>
             </div>`;
         }
         if ((cached as { error?: string }).error) {
@@ -1609,7 +1631,7 @@ export class FileExplorer {
         }
         const entries = cached as FSEntry[];
         if (entries.length === 0) {
-            return `<div class="ws-tree-empty" style="padding-left:${depth * 14 + 10}px">（空目录）</div>`;
+            return `<div class="ws-tree-empty" style="padding-left:${depth * 14 + 10}px">${t('renderer.fileExplorer.emptyDir')}</div>`;
         }
         return entries.map((e) => this._renderTreeEntryHtml(e, depth)).join('');
     }
@@ -1696,7 +1718,7 @@ export class FileExplorer {
         if (cached === undefined || cached === 'loading') {
             return `<div class="ws-grid-loading">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>加载中…</span>
+                <span>${t('renderer.fileExplorer.loading')}</span>
             </div>`;
         }
         if ((cached as { error?: string }).error) {
@@ -1711,13 +1733,13 @@ export class FileExplorer {
                 ? `<div class="ws-grid-item ws-grid-up" data-action="grid-up"
                         data-path="${escapeHtml(this._parentOf(this._gridPath))}">
                         <i class="fas fa-arrow-up ws-grid-icon ws-grid-icon-up"></i>
-                        <div class="ws-grid-name">上级目录</div>
+                        <div class="ws-grid-name">${t('renderer.fileExplorer.parentDir')}</div>
                     </div>`
                 : '';
         if (entries.length === 0) {
             return `<div class="ws-grid-items">
                 ${upButton}
-                <div class="ws-grid-empty">（空目录）</div>
+                <div class="ws-grid-empty">${t('renderer.fileExplorer.emptyDir')}</div>
             </div>`;
         }
         const items = entries
@@ -1822,7 +1844,7 @@ export class FileExplorer {
         try {
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
-                throw new Error('当前环境未提供 fsAPI.readTextFile');
+                throw new Error(t('renderer.fileExplorer.error.noReadFile'));
             }
             const resolvedPath = await this._resolveFilePath(filePath);
             const data = await api.readTextFile(resolvedPath, 0);
@@ -2012,7 +2034,9 @@ export class FileExplorer {
         }
 
         if (this._editorSaving) {
-            statusEl.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="font-size: var(--fs-xs);"></i> 保存中…';
+            statusEl.innerHTML =
+                '<i class="fas fa-circle-notch fa-spin" style="font-size: var(--fs-xs);"></i> ' +
+                t('renderer.fileExplorer.editor.saving');
             statusEl.style.color = '#3b82f6';
             saveBtn.style.display = 'inline-flex';
             saveBtn.dataset.disabled = '0';
@@ -2020,7 +2044,8 @@ export class FileExplorer {
         }
 
         if (this._editorDirty) {
-            statusEl.innerHTML = '<i class="fas fa-circle" style="font-size:6px;"></i> 未保存';
+            statusEl.innerHTML =
+                '<i class="fas fa-circle" style="font-size:6px;"></i> ' + t('renderer.fileExplorer.editor.unsaved');
             statusEl.style.color = '#d97706';
             saveBtn.style.display = 'inline-flex';
             saveBtn.dataset.disabled = '0';
@@ -2031,7 +2056,9 @@ export class FileExplorer {
         }
 
         if (this._editorStatus === 'saved') {
-            statusEl.innerHTML = '<i class="fas fa-check" style="font-size: var(--fs-xs);"></i> 已保存';
+            statusEl.innerHTML =
+                '<i class="fas fa-check" style="font-size: var(--fs-xs);"></i> ' +
+                t('renderer.fileExplorer.editor.saved');
             statusEl.style.color = '#16a34a';
             saveBtn.style.display = 'none';
             saveBtn.dataset.disabled = '1';
@@ -2093,7 +2120,7 @@ export class FileExplorer {
             const content = editor.getValue();
             const fs = window.fsAPI;
             if (!fs || typeof fs.writeTextFile !== 'function') {
-                throw new Error('当前环境未提供 fsAPI.writeTextFile');
+                throw new Error(t('renderer.fileExplorer.error.noWriteFile'));
             }
             await fs.writeTextFile(filePath, content);
             if (this._editorFilePath === filePath) {
@@ -2262,7 +2289,7 @@ export class FileExplorer {
             return `
             <div class="ws-preview-empty">
                 <i class="fas fa-eye"></i>
-                <span>点击文件以在此预览</span>
+                <span>${t('renderer.fileExplorer.preview.empty')}</span>
             </div>`;
         }
         const name = this._selectedFile.split('/').pop() || this._selectedFile;
@@ -2272,22 +2299,22 @@ export class FileExplorer {
                 <i class="fas fa-file-code"></i>
                 <span class="ws-editor-filename" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
                 <span class="ws-editor-status"></span>
-                <button class="ws-editor-save-btn" data-action="editor-save" title="保存 (Ctrl+S)" style="display:none;">
-                    <i class="fas fa-floppy-disk" style="font-size: var(--fs-xs);"></i> 保存
+                <button class="ws-editor-save-btn" data-action="editor-save" title="${t('renderer.fileExplorer.preview.saveTitle')}" style="display:none;">
+                    <i class="fas fa-floppy-disk" style="font-size: var(--fs-xs);"></i> ${t('renderer.fileExplorer.preview.save')}
                 </button>
-                <button class="ws-fullscreen-btn" title="全屏预览" data-action="preview-fullscreen">
+                <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.fullscreen')}" data-action="preview-fullscreen">
                     <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
                 </button>
-                <button class="ws-preview-close" title="关闭" data-action="editor-close">
+                <button class="ws-preview-close" title="${t('renderer.fileExplorer.preview.close')}" data-action="editor-close">
                     <i class="fas fa-xmark"></i>
                 </button>
             </div>
             <div class="ws-editor-host">
                 ${
                     this._previewState.status === 'loading'
-                        ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-circle-notch fa-spin"></i><span>正在加载编辑器…</span></div>`
+                        ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-circle-notch fa-spin"></i><span>${t('renderer.fileExplorer.preview.loadingEditor')}</span></div>`
                         : this._previewState.status === 'error'
-                          ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(this._previewState.error || '读取文件失败')}</span></div>`
+                          ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(this._previewState.error || t('renderer.fileExplorer.preview.readFailed'))}</span></div>`
                           : `<div class="ws-editor-container"></div>`
                 }
             </div>`;
@@ -2304,13 +2331,13 @@ export class FileExplorer {
             }
             ${
                 this._previewState.data && !this._previewState.data.binary && !this._previewState.data.tooLarge
-                    ? `<button class="ws-fullscreen-btn" title="编辑文件" data-action="open-editor"><i class="fas fa-pen-to-square"></i></button>`
+                    ? `<button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.editFile')}" data-action="open-editor"><i class="fas fa-pen-to-square"></i></button>`
                     : ''
             }
-            <button class="ws-fullscreen-btn" title="全屏预览" data-action="preview-fullscreen">
+            <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.fullscreen')}" data-action="preview-fullscreen">
                 <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
             </button>
-            <button class="ws-preview-close" title="关闭预览" data-preview-close>
+            <button class="ws-preview-close" title="${t('renderer.fileExplorer.preview.closePreview')}" data-preview-close>
                 <i class="fas fa-xmark"></i>
             </button>
         </div>`;
@@ -2320,13 +2347,13 @@ export class FileExplorer {
             bodyHtml = `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>正在读取文件…</span>
+                <span>${t('renderer.fileExplorer.preview.reading')}</span>
             </div>`;
         } else if (this._previewState.status === 'error') {
             bodyHtml = `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-triangle-exclamation"></i>
-                <span>${escapeHtml(this._previewState.error || '读取失败')}</span>
+                <span>${escapeHtml(this._previewState.error || t('renderer.fileExplorer.preview.readError'))}</span>
             </div>`;
         } else if (this._previewState.data) {
             const d = this._previewState.data;
@@ -2335,9 +2362,9 @@ export class FileExplorer {
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-circle-xmark"></i>
                     <div>
-                        <div>无法预览：文件大小 ${escapeHtml(formatBytes(d.size))}
-                            超过 ${escapeHtml(formatBytes(d.limit))} 限制</div>
-                        <div class="ws-preview-hint">当前预览器仅支持较小的文本文件</div>
+                        <div>${t('renderer.fileExplorer.preview.tooLarge', { size: escapeHtml(formatBytes(d.size)), limit: escapeHtml(formatBytes(d.limit)) })}
+                        </div>
+                        <div class="ws-preview-hint">${t('renderer.fileExplorer.preview.tooLargeHint')}</div>
                     </div>
                 </div>`;
             } else if (this._selectedFile && isImageFile(this._selectedFile)) {
@@ -2347,8 +2374,8 @@ export class FileExplorer {
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-shield"></i>
                     <div>
-                        <div>无法预览：检测到二进制文件</div>
-                        <div class="ws-preview-hint">当前预览器仅支持文本文件</div>
+                        <div>${t('renderer.fileExplorer.preview.binary')}</div>
+                        <div class="ws-preview-hint">${t('renderer.fileExplorer.preview.binaryHint')}</div>
                     </div>
                 </div>`;
             } else if (this._selectedFile && isSvgFile(this._selectedFile)) {

@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { WebFetchTool } from './tools/webfetch';
@@ -85,7 +86,11 @@ interface LegacyConfig {
 
 export class SearchApplication extends BaseApplication {
     constructor() {
-        super('search', '融合搜索', false);
+        super('search', false);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     static getConfigSchema() {

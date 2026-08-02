@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication, BaseWorker } from '../base.js';
+import { t } from './locale/index.js';
 import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
 import { logger, useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -94,7 +95,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     constructor() {
-        super('skillmgr', '技能中心');
+        super('skillmgr');
 
         this.analyzer = new SkillAnalyzer((status) => {
             this.emitEvent('analysisStatusChanged', status).catch(() => {});
@@ -102,6 +103,10 @@ export class SkillMgrApplication extends BaseApplication {
 
         // 将 skill 目录注册为全局可读，确保所有模式下 agent 都能读取 skill 文件
         this.registerReadableSkillDirectories();
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     private registerReadableSkillDirectories(): void {

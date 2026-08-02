@@ -51,9 +51,9 @@ class SettingPanel extends HTMLElement {
         } catch (e) {
             console.warn('Failed to load gateway host options:', e);
             this.gatewayHostOptions = [
-                { value: 'none', label: '无（关闭监听服务）' },
-                { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
-                { value: '0.0.0.0', label: '0.0.0.0（所有 IPv4 地址）' }
+                { value: 'none', label: this._t('sp.gateway.host.none') },
+                { value: '127.0.0.1', label: this._t('sp.gateway.host.localhost') },
+                { value: '0.0.0.0', label: this._t('sp.gateway.host.all') }
             ];
         }
         try {
@@ -64,7 +64,7 @@ class SettingPanel extends HTMLElement {
         try {
             const info = await window.settingAPI.getBuildTime();
             if (info) {
-                const label = info.dev ? '开发中' : '构建时间';
+                const label = info.dev ? this._t('sp.build.dev') : this._t('sp.build.time');
                 const formatted = new Date(info.time).toLocaleString(undefined, {
                     year: 'numeric',
                     month: '2-digit',
@@ -89,33 +89,33 @@ class SettingPanel extends HTMLElement {
         const tabs = [
             {
                 id: 'models',
-                label: '模型设置',
+                label: this._t('sp.tab.models'),
                 iconSvg: svg(
                     '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6"/>'
                 )
             },
             {
                 id: 'tasks',
-                label: '任务设置',
+                label: this._t('sp.tab.tasks'),
                 iconSvg: svg(
                     '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'
                 )
             },
             {
                 id: 'search',
-                label: '搜索设置',
+                label: this._t('sp.tab.search'),
                 iconSvg: svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')
             },
             {
                 id: 'general',
-                label: '通用设置',
+                label: this._t('sp.tab.general'),
                 iconSvg: svg(
                     '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
                 )
             },
             {
                 id: 'wizard',
-                label: '设置向导',
+                label: this._t('sp.tab.wizard'),
                 iconSvg: svg(
                     '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>'
                 )
@@ -796,9 +796,9 @@ class SettingPanel extends HTMLElement {
             <!-- 顶部标题栏 -->
             <div class="sp-header">
                 <div class="px-6 py-4 flex items-center">
-                    <h1 class="sp-header-title">设置</h1>
+                    <h1 class="sp-header-title">${this._t('sp.title')}</h1>
                     <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
-                        <i class="fas fa-check-circle"></i> 已保存
+                        <i class="fas fa-check-circle"></i> ${this._t('sp.saved')}
                     </span>
                 </div>
             </div>
@@ -836,7 +836,7 @@ class SettingPanel extends HTMLElement {
                 <!-- 底部版本信息栏 -->
                 <div class="sp-footer">
                     <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'} · ${this.buildTime || ''}</span>
-                    <a class="sp-footer-link" id="privacy-link">隐私协议</a>
+                    <a class="sp-footer-link" id="privacy-link">${this._t('sp.privacy')}</a>
                 </div>
             </div>
         </div>
@@ -873,14 +873,14 @@ class SettingPanel extends HTMLElement {
     renderWizardSection() {
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">设置向导</h2>
+            <h2 class="sp-section-title">${this._t('sp.wizard.title')}</h2>
             <div class="sp-section-card">
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">重新运行初始化向导</div>
-                    <div class="sp-toggle-desc">重新配置工作空间、模型提供方与搜索渠道，适合首次迁移或重置配置时使用。</div>
+                    <div class="sp-toggle-label">${this._t('sp.wizard.rerun')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.wizard.rerun.desc')}</div>
                 </div>
-                <button class="sp-btn sp-btn-secondary" id="run-wizard-btn">运行向导</button>
+                <button class="sp-btn sp-btn-secondary" id="run-wizard-btn">${this._t('sp.wizard.run')}</button>
             </div>
             </div>
         </section>
@@ -896,12 +896,12 @@ class SettingPanel extends HTMLElement {
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">任务设置</h2>
+            <h2 class="sp-section-title">${this._t('sp.task.title')}</h2>
             <div class="sp-section-card">
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">LLM 请求失败时自动重试</div>
-                    <div class="sp-toggle-desc">任务中的模型请求失败后自动重试，间隔按 10 秒起步指数退避，最长不超过 10 分钟。</div>
+                    <div class="sp-toggle-label">${this._t('sp.task.autoRetry')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.task.autoRetry.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-auto-retry-toggle" type="checkbox" ${autoRetry ? 'checked' : ''}>
@@ -910,8 +910,8 @@ class SettingPanel extends HTMLElement {
             </div>
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">自动生成任务名称</div>
-                    <div class="sp-toggle-desc">创建任务时自动根据用户输入生成简洁的任务名称；关闭后使用用户输入原文作为任务名。</div>
+                    <div class="sp-toggle-label">${this._t('sp.task.autoTaskname')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.task.autoTaskname.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-generate-taskname-toggle" type="checkbox" ${generateTaskname ? 'checked' : ''}>
@@ -920,8 +920,8 @@ class SettingPanel extends HTMLElement {
             </div>
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">自动恢复异常中断任务</div>
-                    <div class="sp-toggle-desc">当检测到对话异常中断时自动提示模型继续；关闭后将直接结束当前对话轮次。</div>
+                    <div class="sp-toggle-label">${this._t('sp.task.terminationCheck')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.task.terminationCheck.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-termination-check-toggle" type="checkbox" ${terminationCheck ? 'checked' : ''}>
@@ -930,8 +930,8 @@ class SettingPanel extends HTMLElement {
             </div>
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">使用 EvidenceCard 节省 Tokens</div>
-                    <div class="sp-toggle-desc">节省约80%输入 Token，同时显著降低工具调用次数，在控制成本的同时任务完成率基本不下降。</div>
+                    <div class="sp-toggle-label">${this._t('sp.task.evidenceCard')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.task.evidenceCard.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-evidence-card-toggle" type="checkbox" ${evidenceCardEnabled ? 'checked' : ''}>
@@ -954,13 +954,28 @@ class SettingPanel extends HTMLElement {
         const bingLang = bingChannels.lang || 'zh';
 
         const webChannels = [
-            { id: 'duckduckgo', name: 'DuckDuckGo', desc: '注重隐私的免费搜索引擎', needsKey: false },
-            { id: 'bing', name: 'Bing', desc: '免费的网页搜索引擎，支持中文版和全球版', needsKey: false },
-            { id: 'baidu', name: '百度', desc: '中文网页搜索引擎，自动过滤广告', needsKey: false },
-            { id: 'tavily', name: 'Tavily', desc: '专为AI设计的搜索引擎', needsKey: true },
-            { id: 'brave', name: 'Brave', desc: '隐私优先的搜索引擎', needsKey: true },
-            { id: 'bocha', name: '博查', desc: '专为AI设计的中文搜索引擎', needsKey: true },
-            { id: 'exa', name: 'Exa', desc: 'AI驱动的搜索引擎', needsKey: true }
+            {
+                id: 'duckduckgo',
+                name: 'DuckDuckGo',
+                desc: this._t('sp.search.channel.duckduckgo.desc'),
+                needsKey: false
+            },
+            { id: 'bing', name: 'Bing', desc: this._t('sp.search.channel.bing.desc'), needsKey: false },
+            {
+                id: 'baidu',
+                name: this._t('sp.search.channel.baidu.name'),
+                desc: this._t('sp.search.channel.baidu.desc'),
+                needsKey: false
+            },
+            { id: 'tavily', name: 'Tavily', desc: this._t('sp.search.channel.tavily.desc'), needsKey: true },
+            { id: 'brave', name: 'Brave', desc: this._t('sp.search.channel.brave.desc'), needsKey: true },
+            {
+                id: 'bocha',
+                name: this._t('sp.search.channel.bocha.name'),
+                desc: this._t('sp.search.channel.bocha.desc'),
+                needsKey: true
+            },
+            { id: 'exa', name: 'Exa', desc: this._t('sp.search.channel.exa.desc'), needsKey: true }
         ];
 
         const webChannelCards = webChannels
@@ -970,7 +985,11 @@ class SettingPanel extends HTMLElement {
                 const isDefault = ch.id === defaultWeb;
                 const canSelect = !ch.needsKey || hasKey;
                 const statusColor = canSelect ? (isDefault ? 'text-emerald-600' : 'text-gray-400') : 'text-orange-400';
-                const statusText = isDefault ? '当前默认' : canSelect ? '可用' : '需要 API Key';
+                const statusText = isDefault
+                    ? this._t('sp.search.status.default')
+                    : canSelect
+                      ? this._t('sp.search.status.available')
+                      : this._t('sp.search.status.needsKey');
                 const borderColor = isDefault ? 'border-emerald-200/60' : '';
                 const bgColor = isDefault ? 'bg-emerald-50/30' : '';
 
@@ -987,7 +1006,7 @@ class SettingPanel extends HTMLElement {
                     ${
                         canSelect && !isDefault
                             ? `
-                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="web">设为默认</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="web">${this._t('sp.search.setDefault')}</button>
                     `
                             : ''
                     }
@@ -997,7 +1016,7 @@ class SettingPanel extends HTMLElement {
                         ? `
                 <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
                     <input type="password" class="search-api-key-input sp-form-input" style="flex:1;padding:6px 10px;font-size:13px" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
-                    <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">保存</button>
+                    <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">${this._t('sp.search.save')}</button>
                 </div>
                 `
                         : ''
@@ -1006,10 +1025,10 @@ class SettingPanel extends HTMLElement {
                     ch.id === 'bing'
                         ? `
                 <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
-                    <label style="font-size:13px;color:var(--sp-color-text-secondary);flex-shrink:0">搜索区域</label>
+                    <label style="font-size:13px;color:var(--sp-color-text-secondary);flex-shrink:0">${this._t('sp.search.region')}</label>
                     <select class="bing-lang-select sp-form-input" style="flex:1;padding:6px 10px;font-size:13px">
-                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>中国版 (cn.bing.com)</option>
-                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>全球版 (www.bing.com)</option>
+                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>${this._t('sp.search.region.cn')}</option>
+                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>${this._t('sp.search.region.global')}</option>
                     </select>
                 </div>
                 `
@@ -1021,8 +1040,8 @@ class SettingPanel extends HTMLElement {
             .join('');
 
         const academicChannels = [
-            { id: 'arxiv', name: 'arXiv', desc: '学术论文预印本搜索引擎' },
-            { id: 'dblp', name: 'DBLP', desc: '计算机科学文献数据库' }
+            { id: 'arxiv', name: 'arXiv', desc: this._t('sp.search.channel.arxiv.desc') },
+            { id: 'dblp', name: 'DBLP', desc: this._t('sp.search.channel.dblp.desc') }
         ];
         const academicChannelCards = academicChannels
             .map((ch) => {
@@ -1033,14 +1052,14 @@ class SettingPanel extends HTMLElement {
                     <div>
                         <div class="flex items-center gap-2">
                             <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${ch.name}</h3>
-                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : 'sp-tag-neutral'}">${isDefault ? '当前默认' : '可用'}</span>
+                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : 'sp-tag-neutral'}">${isDefault ? this._t('sp.search.status.default') : this._t('sp.search.status.available')}</span>
                         </div>
                         <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:2px">${ch.desc}</p>
                     </div>
                     ${
                         !isDefault
                             ? `
-                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="academic">设为默认</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="academic">${this._t('sp.search.setDefault')}</button>
                     `
                             : ''
                     }
@@ -1054,8 +1073,8 @@ class SettingPanel extends HTMLElement {
         <!-- 网页搜索引擎 -->
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-                <h2 class="sp-section-title" style="margin-bottom:0">网页搜索引擎</h2>
-                <span class="sp-section-subtitle">WebSearch 工具使用的渠道</span>
+                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.search.webTitle')}</h2>
+                <span class="sp-section-subtitle">${this._t('sp.search.webSubtitle')}</span>
                 <label class="search-toggle-label sp-toggle-switch" data-type="web" style="margin-left:auto">
                     <input type="checkbox" class="search-toggle-checkbox" ${webSearchEnabled ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
@@ -1067,17 +1086,17 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:12px;display:flex;align-items:center;gap:4px">
                     <i class="fas fa-info-circle"></i>
-                    默认渠道将用于所有 WebSearch 调用。需要 API Key 的渠道必须配置 Key 后才能设为默认。
+                    ${this._t('sp.search.webHint')}
                 </p>
             </div>
-            ${!webSearchEnabled ? '<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>网页搜索已关闭，WebSearch 工具将不可用</p>' : ''}
+            ${!webSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${this._t('sp.search.webDisabled')}</p>` : ''}
         </section>
 
         <!-- 学术搜索引擎 -->
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-                <h2 class="sp-section-title" style="margin-bottom:0">学术搜索引擎</h2>
-                <span class="sp-section-subtitle">AcademicSearch 工具使用的渠道</span>
+                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.search.academicTitle')}</h2>
+                <span class="sp-section-subtitle">${this._t('sp.search.academicSubtitle')}</span>
                 <label class="search-toggle-label sp-toggle-switch" data-type="academic" style="margin-left:auto">
                     <input type="checkbox" class="search-toggle-checkbox" ${academicSearchEnabled ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
@@ -1088,7 +1107,7 @@ class SettingPanel extends HTMLElement {
                     ${academicChannelCards}
                 </div>
             </div>
-            ${!academicSearchEnabled ? '<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>学术搜索已关闭，AcademicSearch 工具将不可用</p>' : ''}
+            ${!academicSearchEnabled ? `<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>${this._t('sp.search.academicDisabled')}</p>` : ''}
         </section>
         `;
     }
@@ -1125,13 +1144,13 @@ class SettingPanel extends HTMLElement {
             Array.isArray(this.gatewayHostOptions) && this.gatewayHostOptions.length > 0
                 ? [...this.gatewayHostOptions]
                 : [
-                      { value: 'none', label: '无（关闭监听服务）' },
-                      { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
-                      { value: '0.0.0.0', label: '0.0.0.0（所有 IPv4 地址）' }
+                      { value: 'none', label: this._t('sp.gateway.host.none') },
+                      { value: '127.0.0.1', label: this._t('sp.gateway.host.localhost') },
+                      { value: '0.0.0.0', label: this._t('sp.gateway.host.all') }
                   ];
 
         if (!options.some((option) => option.value === currentHost)) {
-            options.push({ value: currentHost, label: `自定义：${currentHost}` });
+            options.push({ value: currentHost, label: this._t('sp.gateway.host.custom', { host: currentHost }) });
         }
         return options;
     }
@@ -1139,18 +1158,18 @@ class SettingPanel extends HTMLElement {
     renderGatewaySection() {
         const config = this._getGatewayConfig();
         const hostOptions = this._getGatewayHostOptions(config.host);
-        const statusText = config.enabled ? `${config.host}:${config.port}` : '已关闭';
+        const statusText = config.enabled ? `${config.host}:${config.port}` : this._t('sp.gateway.disabled');
         const statusClass = config.enabled ? 'bg-emerald-100/70 text-emerald-700' : 'bg-gray-100 text-gray-500';
 
         return `
         <section class="sp-section">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
-                <h2 class="sp-section-title" style="margin-bottom:0">设备网关</h2>
+                <h2 class="sp-section-title" style="margin-bottom:0">${this._t('sp.gateway.title')}</h2>
                 <span class="sp-tag ${config.enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${this.escapeHtml(statusText)}</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">监听地址</label>
+                    <label class="sp-form-label">${this._t('sp.gateway.host')}</label>
                     <select id="gateway-host-select" class="sp-form-input">
                         ${hostOptions
                             .map(
@@ -1161,13 +1180,13 @@ class SettingPanel extends HTMLElement {
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">监听端口</label>
+                    <label class="sp-form-label">${this._t('sp.gateway.port')}</label>
                     <input id="gateway-port-input" type="number" min="1" max="65535" step="1" value="${config.port}" ${config.enabled ? '' : 'disabled'} class="sp-form-input" style="${config.enabled ? '' : 'opacity:0.5'}">
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0;display:flex;align-items:flex-end">
                     <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sp-color-text);${config.enabled ? '' : 'opacity:0.5'}">
                         <input id="gateway-auto-approve-input" type="checkbox" ${config.autoApproveLocal ? 'checked' : ''} ${config.enabled ? '' : 'disabled'} style="width:16px;height:16px;accent-color:var(--sp-color-primary)">
-                        自动审批本机配对
+                        ${this._t('sp.gateway.autoApprove')}
                     </label>
                 </div>
             </div>
@@ -1188,9 +1207,27 @@ class SettingPanel extends HTMLElement {
         const noProxy = networkConfig.no_proxy || '';
         const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
         const scaleLabels = {
-            'zh-CN': ['极小', '小', '标准', '大', '极大'],
-            'en-US': ['Tiny', 'Small', 'Standard', 'Large', 'Extra Large'],
-            auto: ['极小', '小', '标准', '大', '极大']
+            'zh-CN': [
+                this._t('sp.general.scale.tiny'),
+                this._t('sp.general.scale.small'),
+                this._t('sp.general.scale.standard'),
+                this._t('sp.general.scale.large'),
+                this._t('sp.general.scale.xlarge')
+            ],
+            'en-US': [
+                this._t('sp.general.scale.tiny'),
+                this._t('sp.general.scale.small'),
+                this._t('sp.general.scale.standard'),
+                this._t('sp.general.scale.large'),
+                this._t('sp.general.scale.xlarge')
+            ],
+            auto: [
+                this._t('sp.general.scale.tiny'),
+                this._t('sp.general.scale.small'),
+                this._t('sp.general.scale.standard'),
+                this._t('sp.general.scale.large'),
+                this._t('sp.general.scale.xlarge')
+            ]
         };
         const labels = scaleLabels[currentLocale] || scaleLabels['auto'];
         const currentStepIndex = scaleSteps.indexOf(scaleFactor);
@@ -1198,7 +1235,6 @@ class SettingPanel extends HTMLElement {
 
         // Locale-aware string picker: zh side when not explicitly en-US
         const isEn = (this.currentData?.resolved_locale || currentLocale) === 'en-US';
-        const L = (zh, en) => (isEn ? en : zh);
 
         // 环境变量
         const environ = this.currentData?.environ || {};
@@ -1209,9 +1245,9 @@ class SettingPanel extends HTMLElement {
                 .map(
                     (entry, i) => `
                 <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                    <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry[0])}" placeholder="变量名">
+                    <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry[0])}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
                     <span class="text-gray-400 text-xs">=</span>
-                    <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry[1])}" placeholder="变量值">
+                    <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry[1])}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
                     <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                         <i class="fas fa-times"></i>
                     </button>
@@ -1219,48 +1255,48 @@ class SettingPanel extends HTMLElement {
             `
                 )
                 .join('');
-            return items || '<p class="text-xs text-gray-400 italic">暂无环境变量</p>';
+            return items || `<p class="text-xs text-gray-400 italic">${this._t('sp.environ.empty')}</p>`;
         };
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">${L('显示设置', 'Display Settings')}</h2>
+            <h2 class="sp-section-title">${this._t('sp.general.display')}</h2>
             <div class="sp-section-card">
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${L('语言', 'Language')}</label>
+                    <label class="sp-form-label">${this._t('sp.general.language')}</label>
                     <select id="locale-select" class="sp-form-input">
-                        <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>${L('跟随系统', 'System')}</option>
+                        <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>${this._t('sp.general.language.system')}</option>
                         <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
                         <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${L('字体', 'Font')}</label>
+                    <label class="sp-form-label">${this._t('sp.general.font')}</label>
                     <select id="font-preset-select" class="sp-form-input">
-                        <option value="default"${fontPreset === 'default' ? ' selected' : ''}>${L('默认', 'Default')}</option>
-                        <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>${L('霞鹜文楷', 'LXGW WenKai')}</option>
+                        <option value="default"${fontPreset === 'default' ? ' selected' : ''}>${this._t('sp.general.font.default')}</option>
+                        <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>${this._t('sp.general.font.lxgw')}</option>
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${L('外观主题', 'Theme')}</label>
+                    <label class="sp-form-label">${this._t('sp.general.theme')}</label>
                     <select id="theme-preference-select" class="sp-form-input">
-                        <option value="system"${themePreference === 'system' ? ' selected' : ''}>${L('跟随系统', 'System')}</option>
-                        <option value="light"${themePreference === 'light' ? ' selected' : ''}>${L('浅色', 'Light')}</option>
-                        <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>${L('深色', 'Dark')}</option>
+                        <option value="system"${themePreference === 'system' ? ' selected' : ''}>${this._t('sp.general.theme.system')}</option>
+                        <option value="light"${themePreference === 'light' ? ' selected' : ''}>${this._t('sp.general.theme.light')}</option>
+                        <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>${this._t('sp.general.theme.dark')}</option>
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">${L('思考内容显示', 'Reasoning Display')}</label>
+                    <label class="sp-form-label">${this._t('sp.general.reasoningDisplay')}</label>
                     <select id="gui-reason-display-select" class="sp-form-input">
-                        <option value="inline"${guiReasonDisplay === 'inline' ? ' selected' : ''}>${L('内联式', 'Inline')}</option>
-                        <option value="bubble"${guiReasonDisplay === 'bubble' ? ' selected' : ''}>${L('气泡式', 'Bubble')}</option>
+                        <option value="inline"${guiReasonDisplay === 'inline' ? ' selected' : ''}>${this._t('sp.general.reasoningDisplay.inline')}</option>
+                        <option value="bubble"${guiReasonDisplay === 'bubble' ? ' selected' : ''}>${this._t('sp.general.reasoningDisplay.bubble')}</option>
                     </select>
                 </div>
             </div>
             <hr class="sp-section-divider">
             <div class="sp-form-group" style="margin-bottom:0">
-                <label class="sp-form-label">${L('显示大小', 'Display Size')}</label>
+                <label class="sp-form-label">${this._t('sp.general.displaySize')}</label>
                 <div style="display:flex;align-items:center;gap:12px">
                     <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px">${labels[0]}</span>
                     <div style="flex:1;position:relative;height:24px;display:flex;align-items:center">
@@ -1287,12 +1323,12 @@ class SettingPanel extends HTMLElement {
         </section>
 
         <section class="sp-section">
-            <h2 class="sp-section-title">网络设置</h2>
+            <h2 class="sp-section-title">${this._t('sp.network.title')}</h2>
             <div class="sp-section-card">
             <div class="sp-toggle-row">
                 <div class="sp-toggle-info">
-                    <div class="sp-toggle-label">跳过 SSL 证书校验</div>
-                    <div class="sp-toggle-desc">全局跳过 SSL 证书校验。启用后所有网络请求均不验证 SSL 证书，优先级高于 Provider 级别的 no_ssl。</div>
+                    <div class="sp-toggle-label">${this._t('sp.network.noSsl')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.network.noSsl.desc')}</div>
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="network-no-ssl-toggle" type="checkbox" ${noSsl ? 'checked' : ''}>
@@ -1300,22 +1336,22 @@ class SettingPanel extends HTMLElement {
                 </label>
             </div>
             <div style="display:grid;grid-template-columns:120px 1fr;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--sp-color-border-light)">
-                <label style="font-size:13px;color:var(--sp-color-text-secondary)">使用代理</label>
+                <label style="font-size:13px;color:var(--sp-color-text-secondary)">${this._t('sp.network.proxy')}</label>
                 <select id="network-use-proxy-select" class="sp-form-input" style="margin:0">
-                    <option value="none"${useProxy === 'none' ? ' selected' : ''}>无代理</option>
-                    <option value="system"${useProxy === 'system' ? ' selected' : ''}>系统代理</option>
-                    <option value="custom"${useProxy === 'custom' ? ' selected' : ''}>自定义代理</option>
+                    <option value="none"${useProxy === 'none' ? ' selected' : ''}>${this._t('sp.network.proxy.none')}</option>
+                    <option value="system"${useProxy === 'system' ? ' selected' : ''}>${this._t('sp.network.proxy.system')}</option>
+                    <option value="custom"${useProxy === 'custom' ? ' selected' : ''}>${this._t('sp.network.proxy.custom')}</option>
                 </select>
             </div>
             <div id="network-custom-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--sp-color-border-light);${useProxy === 'custom' ? '' : 'display:none;'}">
-                <label style="font-size:13px;color:var(--sp-color-text-secondary)">自定义代理地址</label>
+                <label style="font-size:13px;color:var(--sp-color-text-secondary)">${this._t('sp.network.proxyAddr')}</label>
                 <input id="network-custom-proxy-addr-input" type="text" class="sp-form-input" value="${this.escapeHtml(customProxyAddr)}" placeholder="http://proxy.example.com:8080" style="margin:0">
             </div>
             <div id="network-no-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:start;gap:16px;padding:12px 0;${useProxy === 'custom' ? '' : 'display:none;'}">
-                <label style="font-size:13px;color:var(--sp-color-text-secondary);padding-top:8px">不代理的地址</label>
+                <label style="font-size:13px;color:var(--sp-color-text-secondary);padding-top:8px">${this._t('sp.network.noProxy')}</label>
                 <div>
                     <input id="network-no-proxy-input" type="text" class="sp-form-input" value="${this.escapeHtml(noProxy)}" placeholder="localhost,127.0.0.1,.local" style="margin:0">
-                    <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:4px">多个地址用逗号分隔，支持通配符，格式与标准 NO_PROXY 一致</p>
+                    <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:4px">${this._t('sp.network.noProxy.hint')}</p>
                 </div>
             </div>
             </div>
@@ -1324,15 +1360,15 @@ class SettingPanel extends HTMLElement {
         ${this.renderGatewaySection()}
 
         <section class="sp-section">
-            <h2 class="sp-section-title">环境变量<span class="sp-section-subtitle">所有 Shell 命令执行时共享</span></h2>
+            <h2 class="sp-section-title">${this._t('sp.environ.title')}<span class="sp-section-subtitle">${this._t('sp.environ.subtitle')}</span></h2>
             <div class="sp-section-card">
             <div id="environ-list" style="margin-bottom:12px">
                 ${renderEnvironList()}
             </div>
             <button id="add-environ-btn" class="sp-add-btn">
-                <i class="fas fa-plus" style="margin-right:8px"></i>添加环境变量
+                <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('sp.environ.add')}
             </button>
-            <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:8px">配置后，所有终端命令（Bash / Zsh / PowerShell）执行时都会携带这些环境变量</p>
+            <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:8px">${this._t('sp.environ.hint')}</p>
             </div>
         </section>
 
@@ -1348,7 +1384,7 @@ class SettingPanel extends HTMLElement {
         return `
         <section class="sp-section">
             <h2 class="sp-section-title">${this._t('renderer.settings.configManagement')}</h2>
-            <p class="sp-section-desc">导入、导出或通过口令分享你的设置。</p>
+            <p class="sp-section-desc">${this._t('sp.configManagement.desc')}</p>
             <div style="display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto">
                 <button id="export-config-json-btn" class="sp-btn sp-btn-secondary" style="flex:1;min-width:128px;white-space:nowrap">
                     <i class="fa-solid fa-file-export" style="margin-right:6px"></i>${this._t('renderer.settings.exportConfigJson')}
@@ -1776,12 +1812,12 @@ class SettingPanel extends HTMLElement {
         const providers = this.currentData?.providers || [];
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">模型提供方<span class="sp-section-subtitle">${providers.length} 个已配置</span></h2>
+            <h2 class="sp-section-title">${this._t('sp.providers.title')}<span class="sp-section-subtitle">${this._t('sp.providers.configured', { count: providers.length })}</span></h2>
             <div id="provider-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
             </div>
             <button id="add-provider-btn" class="sp-add-btn" style="margin-top:16px">
-                <i class="fas fa-plus" style="margin-right:8px"></i>添加提供方
+                <i class="fas fa-plus" style="margin-right:8px"></i>${this._t('sp.providers.add')}
             </button>
         </section>
         `;
@@ -1801,8 +1837,8 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(provider.base_url)}</p>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary)">${maskedKey}</p>
-                    ${provider.no_proxy ? '<span class="sp-tag sp-tag-amber" style="margin-top:4px">禁用代理</span>' : ''}
-                    ${provider.no_ssl ? '<span class="sp-tag sp-tag-red" style="margin-top:4px">跳过SSL证书校验</span>' : ''}
+                    ${provider.no_proxy ? `<span class="sp-tag sp-tag-amber" style="margin-top:4px">${this._t('sp.providers.tag.noProxy')}</span>` : ''}
+                    ${provider.no_ssl ? `<span class="sp-tag sp-tag-red" style="margin-top:4px">${this._t('sp.providers.tag.noSsl')}</span>` : ''}
                 </div>
                 <div class="sp-card-actions">
                     <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
@@ -1919,8 +1955,8 @@ class SettingPanel extends HTMLElement {
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">默认模型选择</h2>
-            <p class="sp-section-desc">为各场景指定默认使用的模型。</p>
+            <h2 class="sp-section-title">${this._t('sp.defaultModels.title')}</h2>
+            <p class="sp-section-desc">${this._t('sp.defaultModels.desc')}</p>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('config.defaultmodel.field.default_model')}</label>
@@ -2129,11 +2165,10 @@ class SettingPanel extends HTMLElement {
                     icon: 'fa-triangle-exclamation',
                     iconBg: '#FFFBEB',
                     iconColor: '#D97706',
-                    title: '开启试验性功能',
-                    message:
-                        '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
-                    confirmText: '确认开启',
-                    cancelText: '取消'
+                    title: this._t('sp.experimental.title'),
+                    message: this._t('sp.experimental.message'),
+                    confirmText: this._t('sp.experimental.confirm'),
+                    cancelText: this._t('sp.experimental.cancel')
                 });
                 if (!confirmed) {
                     this._suppressExperimentalToggle = true;
@@ -2360,7 +2395,12 @@ class SettingPanel extends HTMLElement {
             }
             this.showSaveIndicator();
         } catch (error) {
-            window.notificationAPI.sendNotification('error', '设置', '自动保存失败', error.message);
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('sp.title'),
+                this._t('sp.save.failed'),
+                error.message
+            );
         } finally {
             this._saving = false;
             if (this._pendingSave) {
@@ -2568,7 +2608,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">选择提供方模板</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.providers.template.title')}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -2578,7 +2618,7 @@ class SettingPanel extends HTMLElement {
                         ${templateCards}
                         <button class="provider-custom-btn sp-template-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300">
                             <i class="fas fa-plus text-gray-400 mb-1"></i>
-                            <span class="text-sm text-gray-500">自定义</span>
+                            <span class="text-sm text-gray-500">${this._t('sp.providers.template.custom')}</span>
                         </button>
                     </div>
                 </div>
@@ -2623,29 +2663,29 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? '编辑提供方' : '添加提供方'}</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? this._t('sp.providers.edit.title.edit') : this._t('sp.providers.edit.title.add')}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">名称</label>
-                        <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: openai">
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.name')}</label>
+                        <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('sp.providers.field.name.placeholder')}">
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">协议类型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.type')}</label>
                         <select id="provider-type-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="openai" ${providerType === 'openai' ? 'selected' : ''}>OpenAI</option>
                             <option value="anthropic" ${providerType === 'anthropic' ? 'selected' : ''}>Anthropic</option>
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">API 地址</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.url')}</label>
                         <input id="provider-url-input" type="text" value="${this.escapeHtml(provider.base_url)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="https://api.example.com/v1">
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">API 密钥</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.key')}</label>
                         <div class="relative">
                             <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="sk-...">
                             <button id="toggle-key-visibility" class="sp-toggle-key absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
@@ -2655,16 +2695,16 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="flex items-center gap-2">
                         <input id="provider-no-proxy-input" type="checkbox" ${provider.no_proxy ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        <label for="provider-no-proxy-input" class="text-sm text-gray-600">禁用代理</label>
+                        <label for="provider-no-proxy-input" class="text-sm text-gray-600">${this._t('sp.providers.field.noProxy')}</label>
                     </div>
                     <div class="flex items-center gap-2">
                         <input id="provider-no-ssl-input" type="checkbox" ${provider.no_ssl ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        <label for="provider-no-ssl-input" class="text-sm text-gray-600">跳过SSL证书校验</label>
+                        <label for="provider-no-ssl-input" class="text-sm text-gray-600">${this._t('sp.providers.field.noSsl')}</label>
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
-                    <button id="save-provider-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">${isEdit ? '保存' : '添加'}</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this._t('sp.providers.cancel')}</button>
+                    <button id="save-provider-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">${isEdit ? this._t('sp.providers.save') : this._t('sp.providers.addBtn')}</button>
                 </div>
             </div>
         `);
@@ -2703,7 +2743,7 @@ class SettingPanel extends HTMLElement {
         const no_ssl = this.querySelector('#provider-no-ssl-input')?.checked || false;
 
         if (!name) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入提供方名称');
+            window.notificationAPI.sendNotification('error', this._t('sp.title'), this._t('sp.providers.nameRequired'));
             return;
         }
 
@@ -2728,13 +2768,13 @@ class SettingPanel extends HTMLElement {
         const modelCount = modelsUsingProvider.length;
         const message =
             modelCount > 0
-                ? `提供方「${provider.name}」下有 ${modelCount} 个关联模型，删除提供方将同时删除这些模型。`
-                : `确定要删除提供方「${provider.name}」吗？`;
+                ? this._t('sp.providers.delete.confirmWithModels', { name: provider.name, count: modelCount })
+                : this._t('sp.providers.delete.confirm', { name: provider.name });
 
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">删除提供方</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.providers.delete.title')}</h3>
                     <button class="modal-close-btn sp-modal-close text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -2756,8 +2796,8 @@ class SettingPanel extends HTMLElement {
                     }
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl">取消</button>
-                    <button id="confirm-delete-provider-btn" class="sp-confirm-delete px-4 py-2 text-sm text-white bg-red-500 rounded-xl">确认删除</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl">${this._t('sp.providers.delete.cancel')}</button>
+                    <button id="confirm-delete-provider-btn" class="sp-confirm-delete px-4 py-2 text-sm text-white bg-red-500 rounded-xl">${this._t('sp.providers.delete.confirmBtn')}</button>
                 </div>
             </div>
         `);
@@ -3007,9 +3047,9 @@ class SettingPanel extends HTMLElement {
                 const size = await window.settingAPI.estimateContextSize(trimmed);
                 if (size > 0) {
                     const k = Math.round(size / 1000);
-                    contextLengthInput.placeholder = `估计上下文大小 ${k}k`;
+                    contextLengthInput.placeholder = this._t('sp.model.contextPlaceholder', { k });
                 } else {
-                    contextLengthInput.placeholder = `无匹配模型，默认 128k`;
+                    contextLengthInput.placeholder = this._t('sp.model.contextFallback');
                 }
             } catch {
                 contextLengthInput.placeholder = this._t('config.model.field.context_length.placeholder');
@@ -3029,9 +3069,9 @@ class SettingPanel extends HTMLElement {
                 const tokens = await window.settingAPI.estimateMaxOutputTokens(trimmed);
                 if (tokens > 0) {
                     const k = Math.round(tokens / 1000);
-                    maxOutputTokensInput.placeholder = `估计最大补全长度 ${k}k`;
+                    maxOutputTokensInput.placeholder = this._t('sp.model.maxOutputPlaceholder', { k });
                 } else {
-                    maxOutputTokensInput.placeholder = `无匹配模型，默认 16384`;
+                    maxOutputTokensInput.placeholder = this._t('sp.model.maxOutputFallback');
                 }
             } catch {
                 maxOutputTokensInput.placeholder = this._t('config.model.field.max_output_tokens.placeholder');
@@ -3463,11 +3503,10 @@ class SettingPanel extends HTMLElement {
                         icon: 'fa-triangle-exclamation',
                         iconBg: '#FFFBEB',
                         iconColor: '#D97706',
-                        title: '开启试验性功能',
-                        message:
-                            '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
-                        confirmText: '确认开启',
-                        cancelText: '取消'
+                        title: this._t('sp.experimental.title'),
+                        message: this._t('sp.experimental.message'),
+                        confirmText: this._t('sp.experimental.confirm'),
+                        cancelText: this._t('sp.experimental.cancel')
                     });
                     if (!confirmed) {
                         this._suppressExperimentalToggle = true;
@@ -3537,7 +3576,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">导出口令</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.quickpass.export.title')}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -3545,15 +3584,15 @@ class SettingPanel extends HTMLElement {
                 <div class="px-6 py-5 space-y-4">
                     <div class="flex gap-3">
                         <button id="export-base-btn" class="sp-export-option-btn sp-export-base flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
-                            <i class="fas fa-cog mr-2 text-blue-500"></i>基础设置口令
+                            <i class="fas fa-cog mr-2 text-blue-500"></i>${this._t('sp.quickpass.export.base')}
                         </button>
                         <button id="export-all-btn" class="sp-export-option-btn sp-export-all flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
-                            <i class="fas fa-box mr-2 text-purple-500"></i>全部设置口令
+                            <i class="fas fa-box mr-2 text-purple-500"></i>${this._t('sp.quickpass.export.all')}
                         </button>
                     </div>
-                    <textarea id="export-result" readonly class="w-full h-32 px-4 py-3 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none" placeholder="点击上方按钮生成口令..."></textarea>
+                    <textarea id="export-result" readonly class="w-full h-32 px-4 py-3 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none" placeholder="${this._t('sp.quickpass.export.placeholder')}"></textarea>
                     <button id="copy-quickpass-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-copy mr-2"></i>复制到剪贴板
+                        <i class="fas fa-copy mr-2"></i>${this._t('sp.quickpass.export.copy')}
                     </button>
                 </div>
             </div>
@@ -3570,7 +3609,12 @@ class SettingPanel extends HTMLElement {
                 this.querySelector('#export-result').value = quickpass;
                 this.querySelector('#copy-quickpass-btn').disabled = false;
             } catch (error) {
-                window.notificationAPI.sendNotification('error', '设置', '导出失败', error.message);
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('sp.title'),
+                    this._t('sp.quickpass.export.failed'),
+                    error.message
+                );
             }
         });
         this.querySelector('#export-all-btn')?.addEventListener('click', async () => {
@@ -3579,14 +3623,24 @@ class SettingPanel extends HTMLElement {
                 this.querySelector('#export-result').value = quickpass;
                 this.querySelector('#copy-quickpass-btn').disabled = false;
             } catch (error) {
-                window.notificationAPI.sendNotification('error', '设置', '导出失败', error.message);
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('sp.title'),
+                    this._t('sp.quickpass.export.failed'),
+                    error.message
+                );
             }
         });
         this.querySelector('#copy-quickpass-btn')?.addEventListener('click', async () => {
             const text = this.querySelector('#export-result')?.value;
             if (text) {
                 await navigator.clipboard.writeText(text);
-                window.notificationAPI.sendNotification('info', '设置', '导出成功', '口令已复制到剪贴板');
+                window.notificationAPI.sendNotification(
+                    'info',
+                    this._t('sp.title'),
+                    this._t('sp.quickpass.export.success'),
+                    this._t('sp.quickpass.export.copied')
+                );
             }
         });
     }
@@ -3595,16 +3649,16 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">导入口令</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.quickpass.import.title')}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
-                    <textarea id="import-input" class="w-full h-32 px-4 py-3 text-xs font-mono bg-white/60 border border-gray-200/60 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="粘贴口令..."></textarea>
+                    <textarea id="import-input" class="w-full h-32 px-4 py-3 text-xs font-mono bg-white/60 border border-gray-200/60 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('sp.quickpass.import.placeholder')}"></textarea>
                     <div id="import-result" class="text-sm"></div>
                     <button id="import-quickpass-confirm-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
-                        <i class="fas fa-check mr-2"></i>导入
+                        <i class="fas fa-check mr-2"></i>${this._t('sp.quickpass.import.btn')}
                     </button>
                 </div>
             </div>
@@ -3618,18 +3672,24 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#import-quickpass-confirm-btn')?.addEventListener('click', async () => {
             const quickpass = this.querySelector('#import-input')?.value?.trim();
             if (!quickpass) {
-                window.notificationAPI.sendNotification('error', '设置', '请输入口令');
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('sp.title'),
+                    this._t('sp.quickpass.import.empty')
+                );
                 return;
             }
 
             const resultDiv = this.querySelector('#import-result');
             resultDiv.innerHTML =
-                '<span class="text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>正在导入...</span>';
+                '<span class="text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>' +
+                this._t('sp.quickpass.import.importing') +
+                '</span>';
 
             try {
                 const result = await window.quickpassAPI.importQuickPass(quickpass);
                 const hasApps = result.hasApplications;
-                resultDiv.innerHTML = `<span class="text-green-500"><i class="fas fa-check-circle mr-2"></i>导入成功：${this.escapeHtml(result.name)}${hasApps ? '（含应用配置）' : '（基础设置）'}</span>`;
+                resultDiv.innerHTML = `<span class="text-green-500"><i class="fas fa-check-circle mr-2"></i>${this._t('sp.quickpass.import.success', { name: this.escapeHtml(result.name) })}${hasApps ? this._t('sp.quickpass.import.success.apps') : this._t('sp.quickpass.import.success.base')}</span>`;
 
                 // 刷新数据
                 await this.loadData();
@@ -3637,7 +3697,7 @@ class SettingPanel extends HTMLElement {
                 this.render();
                 this.setUpEventListeners();
             } catch (error) {
-                resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>导入失败：${this.escapeHtml(error.message)}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: this.escapeHtml(error.message) })}</span>`;
             }
         });
     }
@@ -3671,7 +3731,11 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#gateway-port-input')?.addEventListener('change', (e) => {
             const port = parseInt(e.target.value, 10);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
-                window.notificationAPI.sendNotification('error', '设置', '网关端口必须是 1-65535 之间的整数');
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('sp.title'),
+                    this._t('sp.gateway.portInvalid')
+                );
                 e.target.value = String(this._getGatewayConfig().port);
                 return;
             }
@@ -3722,9 +3786,9 @@ class SettingPanel extends HTMLElement {
                     .map(
                         (entry, i) => `
                     <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                        <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry.key)}" placeholder="变量名">
+                        <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry.key)}" placeholder="${this._t('sp.environ.keyPlaceholder')}">
                         <span class="text-gray-400 text-xs">=</span>
-                        <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry.value)}" placeholder="变量值">
+                        <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry.value)}" placeholder="${this._t('sp.environ.valuePlaceholder')}">
                         <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                             <i class="fas fa-times"></i>
                         </button>
@@ -3732,7 +3796,8 @@ class SettingPanel extends HTMLElement {
                 `
                     )
                     .join('');
-                container.innerHTML = items || '<p class="text-xs text-gray-400 italic">暂无环境变量</p>';
+                container.innerHTML =
+                    items || `<p class="text-xs text-gray-400 italic">${this._t('sp.environ.empty')}</p>`;
                 bindEnvironItemEvents();
             }
         };
@@ -3848,13 +3913,18 @@ class SettingPanel extends HTMLElement {
 
     // --- 工具方法 ---
     maskApiKey(key) {
-        if (!key) return '未设置';
+        if (!key) return this._t('sp.provider.keyNotSet');
         if (key.length <= 8) return '****';
         return key.substring(0, 4) + '****' + key.substring(key.length - 4);
     }
 
     getEffortLabel(effort) {
-        const labels = { none: '无推理', low: '低', medium: '中', high: '高' };
+        const labels = {
+            none: this._t('sp.model.effort.none'),
+            low: this._t('sp.model.effort.low'),
+            medium: this._t('sp.model.effort.medium'),
+            high: this._t('sp.model.effort.high')
+        };
         return labels[effort] || '';
     }
 

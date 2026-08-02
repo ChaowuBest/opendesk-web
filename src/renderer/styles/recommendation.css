@@ -53,7 +53,7 @@ html[data-theme='dark'] .rec-panel {
 
 /* ── Left Nav ── */
 .rec-nav {
-    width: 132px;
+    width: 140px;
     flex: none;
     border-right: 1px solid var(--rec-line-soft);
     padding: 10px 8px;
@@ -186,8 +186,7 @@ html[data-theme='dark'] .rec-panel {
     color: var(--rec-ink2);
     line-height: 1.6;
 }
-.rec-hero-prompt::before {
-    content: '示例 · ';
+.rec-hero-prompt-prefix {
     color: var(--rec-accent);
     font-size: 10px;
     font-weight: 600;

@@ -10,12 +10,17 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { z } from 'zod';
 import A2AWorker from './service/worker';
 
 class A2AApplication extends BaseApplication {
     constructor() {
-        super('a2a', '智能体中心');
+        super('a2a');
+    }
+
+    getName() {
+        return t('app.name');
     }
 
     static getWorkerClass() {

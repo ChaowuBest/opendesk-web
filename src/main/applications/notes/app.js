@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { LLM } from '../../aikernel/llm.js';
@@ -19,7 +20,11 @@ import { NOTES_SKILL } from './skills';
 
 class NotesApplication extends BaseApplication {
     constructor() {
-        super('notes', '笔记');
+        super('notes');
+    }
+
+    getName() {
+        return t('app.name');
     }
 
     static getWorkerClass() {

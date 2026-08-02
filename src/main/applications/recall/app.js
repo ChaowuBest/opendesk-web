@@ -10,13 +10,18 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { z } from 'zod';
 import { fileSystemService } from './service/fileSystemService.js';
 import RecallWorker from './service/worker';
 
 class RecallApplication extends BaseApplication {
     constructor() {
-        super('recall', 'Recall');
+        super('recall');
+    }
+
+    getName() {
+        return t('app.name');
     }
 
     static getWorkerClass() {

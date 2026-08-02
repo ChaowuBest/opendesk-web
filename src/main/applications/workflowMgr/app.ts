@@ -19,7 +19,7 @@ import type { WorkflowJSONValue, WorkflowRun } from '../../aikernel/workflow.js'
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { getArtifactDirectory } from '../../utils/setting.js';
-import { t } from '../../../locale/index.js';
+import { t as appT } from './locale/index.js';
 import { WorkflowAgentRunner } from './agent/runner.js';
 import {
     WorkflowAuthoringService,
@@ -46,7 +46,7 @@ export class WorkflowMgrApplication extends BaseApplication implements WorkflowT
     private readonly delivery: WorkflowRunDelivery;
 
     constructor() {
-        super('workflowMgr', t('workflowMgr.app.name'), false);
+        super('workflowMgr', false);
         this.delivery = new WorkflowRunDelivery(GlobalState.getInstance().taskManagerState);
         this.manager = new WorkflowManager({
             dataDirectory: this.getDataDirectory(),
@@ -65,6 +65,10 @@ export class WorkflowMgrApplication extends BaseApplication implements WorkflowT
             onRunCompleted: (run) => this.delivery.enqueue(run)
         });
         this.authoring = new WorkflowAuthoringService(this.agentRunner, this.manager, [LOAD_WORKFLOW_TOOLS_TOOL_NAME]);
+    }
+
+    getName(): string {
+        return appT('app.name');
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {

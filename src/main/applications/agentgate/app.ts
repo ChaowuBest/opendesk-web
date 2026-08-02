@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { attributeBatchInterceptions, confidenceWeight, sortByConfidenceDesc } from './skillAttribution.js';
@@ -25,7 +26,11 @@ import AgentGateWorker from './worker';
 
 class AgentGateApplication extends BaseApplication {
     constructor() {
-        super('agentgate', '安全网关');
+        super('agentgate');
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     static getWorkerClass() {
