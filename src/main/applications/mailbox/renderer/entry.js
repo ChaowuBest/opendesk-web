@@ -2954,7 +2954,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                 });
                 // 分割线自动补全：输入 --- 后按回车，转换为 <hr>
                 editor.on('keydown', (e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === 'Enter' && !e.isComposing) {
                         self._handleHorizontalRuleShortcut(editor, e);
                     }
                 });

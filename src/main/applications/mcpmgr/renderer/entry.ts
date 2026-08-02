@@ -1038,7 +1038,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.registryState.query = matrixInput.value;
         });
         matrixInput?.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') this.searchRegistry(matrixInput.value.trim(), 1);
+            if (event.key === 'Enter' && !event.isComposing) this.searchRegistry(matrixInput.value.trim(), 1);
         });
         root.querySelector(`[data-search-btn="${CSS.escape(registryId)}"]`)?.addEventListener('click', () =>
             this.searchRegistry(this.registryState.query.trim(), 1)
@@ -1052,7 +1052,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.installedQuery = installedInput.value;
         });
         installedInput?.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') this.render();
+            if (event.key === 'Enter' && !event.isComposing) this.render();
         });
         root.querySelector('[data-search-btn="installed"]')?.addEventListener('click', () => this.render());
         root.querySelector('[data-clear-tab="installed"]')?.addEventListener('click', () => {

@@ -261,7 +261,7 @@ document.getElementById('firstPageBtn').onclick=function(){state.page=1;render()
 document.getElementById('prevPageBtn').onclick=function(){if(state.page>1){state.page--;render()}}
 document.getElementById('nextPageBtn').onclick=function(){if(state.page<tp){state.page++;render()}}
 document.getElementById('lastPageBtn').onclick=function(){state.page=tp;render()}
-var jumpInput=document.getElementById('pageJumpInput');jumpInput.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();var v=parseInt(jumpInput.value,10);if(isNaN(v)||v<1)v=1;if(v>tp)v=tp;jumpInput.value=v;if(v!==state.page){state.page=v;render()}}};jumpInput.onblur=function(){jumpInput.value=state.page}}
+var jumpInput=document.getElementById('pageJumpInput');jumpInput.onkeydown=function(e){if(e.key==='Enter'&&!e.isComposing){e.preventDefault();var v=parseInt(jumpInput.value,10);if(isNaN(v)||v<1)v=1;if(v>tp)v=tp;jumpInput.value=v;if(v!==state.page){state.page=v;render()}}};jumpInput.onblur=function(){jumpInput.value=state.page}}
 }
 
 document.getElementById('analyzeList').addEventListener('click',function(e){var btn=e.target.closest('button');if(btn){var sid;if(btn.hasAttribute('data-view-deps')){sid=btn.getAttribute('data-view-deps');showDepsModal(sid)}else if(btn.hasAttribute('data-view-tests')){sid=btn.getAttribute('data-view-tests');showTestCasesModal(sid)}else if(btn.hasAttribute('data-view-error')){sid=btn.getAttribute('data-view-error');showErrorModal(sid)}e.stopPropagation();return}var row=e.target.closest('.analyze-row');if(!row)return;var id=row.getAttribute('data-analyze-skill');showSkillDetailModal(id)})

@@ -4137,7 +4137,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     this.registryStates[tab.id].query = e.target.value;
                 });
                 si.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') this.searchRegistry(tab.id);
+                    if (e.key === 'Enter' && !e.isComposing) this.searchRegistry(tab.id);
                 });
             }
             $(`[data-search-btn="${tab.id}"]`)?.addEventListener('click', () => this.searchRegistry(tab.id));
@@ -4170,7 +4170,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.installedState.query = e.target.value;
             });
             installedSi.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') this._searchInstalled();
+                if (e.key === 'Enter' && !e.isComposing) this._searchInstalled();
             });
         }
         $(`[data-search-btn="installed"]`)?.addEventListener('click', () => this._searchInstalled());
@@ -4184,7 +4184,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.externalState.query = e.target.value;
             });
             externalSi.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') this._searchExternal();
+                if (e.key === 'Enter' && !e.isComposing) this._searchExternal();
             });
         }
         $(`[data-search-btn="external"]`)?.addEventListener('click', () => this._searchExternal());
@@ -4197,7 +4197,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.builtinState.query = e.target.value;
             });
             builtinSi.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') this._searchBuiltin();
+                if (e.key === 'Enter' && !e.isComposing) this._searchBuiltin();
             });
         }
         $(`[data-search-btn="builtin"]`)?.addEventListener('click', () => this._searchBuiltin());
@@ -4600,7 +4600,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 }
             };
             jumpInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
+                if (e.key === 'Enter' && !e.isComposing) {
                     e.preventDefault();
                     doJump();
                 }

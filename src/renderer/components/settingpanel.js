@@ -1604,7 +1604,7 @@ class SettingPanel extends HTMLElement {
             this.updateTelemetryProtocolFields()
         );
         this.querySelector('#telemetry-url-input')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 this.saveTelemetryEndpoint();
             }
