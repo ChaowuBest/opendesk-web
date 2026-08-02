@@ -532,12 +532,17 @@ class AgentInput extends HTMLElement {
         const isActive = mode.id === this.selectedModeId ? 'active' : '';
         const checkMark =
             mode.id === this.selectedModeId ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
+        // Hide the ID annotation when the display name already matches the ID (e.g. English "Standard" vs id "standard")
+        const idAnnotation =
+            mode.name.toLowerCase() === mode.id.toLowerCase()
+                ? ''
+                : `<span class="ctx-item-id">(${escapeHtml(mode.id)})</span>`;
         return `<button class="ctx-item-block mode-panel-item ${isActive}" data-mode-id="${escapeHtml(mode.id)}">
             <span class="ctx-icon-xl">${getModeIconTile(mode.id)}</span>
             <span class="ctx-block-body">
                 <span class="ctx-block-label">
                     ${escapeHtml(mode.name)}
-                    <span class="ctx-item-id">(${escapeHtml(mode.id)})</span>
+                    ${idAnnotation}
                 </span>
                 <span class="ctx-block-desc">${escapeHtml(mode.description || '')}</span>
             </span>
@@ -581,6 +586,8 @@ class AgentInput extends HTMLElement {
         } else {
             this.selectedModel = modelAlias || this.defaultModelAlias || '';
         }
+        // 同步更新按钮 DOM，避免按钮文字与下拉菜单选中态不一致
+        this._updateModelButton();
         // 如果之前因为模型未选择而禁用，现在启用了输入
         if (this.isModelNotSelected && this.selectedModel) {
             this.isModelNotSelected = false;
@@ -1318,18 +1325,18 @@ class AgentInput extends HTMLElement {
                         <div class="agent-input-toolbar-item" data-toolbar-priority="4">
                             <button id="agent-input-skill-btn" class="agent-input-toolbar-control">
                                 ${SKILL_ICON_SVG}
-                                <span>技能</span>
+                                <span>${this.t('renderer.agentInput.skillLabel')}</span>
                             </button>
                             <div id="agent-input-skill-panel" class="ctx-menu ctx-menu-hidden">
                                 <div class="ctx-search">
                                     <i class="fas fa-search"></i>
-                                    <input id="agent-input-skill-search" type="text" placeholder="搜索技能" />
+                                    <input id="agent-input-skill-search" type="text" placeholder="${this.t('renderer.agentInput.skill.searchPlaceholder')}" />
                                 </div>
                                 <div id="agent-input-skill-list" class="ctx-menu-list"></div>
                                 <div class="ctx-menu-footer">
                                     <button id="agent-input-skill-install-btn" class="ctx-install-btn">
                                         <i class="fas fa-plus"></i>
-                                        <span>安装技能</span>
+                                        <span>${this.t('renderer.agentInput.skill.install')}</span>
                                     </button>
                                 </div>
                             </div>
@@ -1387,9 +1394,9 @@ class AgentInput extends HTMLElement {
         <div class="agent-input-footer">
             <div id="agent-input-recording-hint" class="agent-recording-hint" style="display:none;">
                 <i class="fas fa-microphone-alt"></i>
-                <span>正在录音，点击麦克风按钮可停止录制</span>
+                <span>${this.t('renderer.agentInput.recording.hint')}</span>
             </div>
-            ${this.getAttribute('hide-disclaimer') !== null ? '' : '<p id="agent-input-disclaimer" class="agent-input-footer-text">内容由 AI 生成，请核实重要信息。</p>'}
+            ${this.getAttribute('hide-disclaimer') !== null ? '' : `<p id="agent-input-disclaimer" class="agent-input-footer-text">${this.t('common.aiDisclaimer')}</p>`}
         </div>
         <!-- 内联补全面板 -->
         <div id="agent-input-autocomplete" class="ctx-menu ctx-menu-hidden">
@@ -1477,6 +1484,23 @@ class AgentInput extends HTMLElement {
      */
     getModelButtonLabel() {
         return this.selectedModel || '模型';
+    }
+
+    /**
+     * 仅更新模型按钮的图标和文字，不全量重渲染。
+     * 当外部通过 setModel() 切换任务时调用。
+     */
+    _updateModelButton() {
+        const btn = this.querySelector('#agent-input-model-btn');
+        if (!btn) return;
+        const hasVision = this.visionMap[this.selectedModel] === true;
+        const iconSpan = btn.querySelector(':scope > span:first-child');
+        if (iconSpan) {
+            iconSpan.className = `agent-icon-tile ${hasVision ? 'model-vision' : 'model-chat'}`;
+        }
+        const labelSpan = btn.querySelector(':scope > span:last-child');
+        if (labelSpan) labelSpan.textContent = this.getModelButtonLabel();
+        this._updateEffortIcon();
     }
 
     /**
@@ -1909,7 +1933,7 @@ class AgentInput extends HTMLElement {
             : this.availableSkills;
 
         if (filtered.length === 0) {
-            listEl.innerHTML = `<div class="ctx-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
+            listEl.innerHTML = `<div class="ctx-empty">${filter ? this.t('renderer.agentInput.skill.empty.search') : this.t('renderer.agentInput.skill.empty.none')}</div>`;
         } else {
             listEl.innerHTML = filtered
                 .map((s) => {
@@ -2781,7 +2805,7 @@ class AgentInput extends HTMLElement {
                 this.toggleSpeechInput(textarea, speechBtn, {
                     isBlocked: () => this.isModelNotSelected && !this.searchMode,
                     idlePlaceholder: this.getInputPlaceholder(),
-                    recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
+                    recordingPlaceholder: this.t('renderer.agentInput.recording.listening')
                 });
             });
         }
@@ -3025,7 +3049,7 @@ class AgentInput extends HTMLElement {
         this.toggleSpeechInput(textarea, speechBtn, {
             isBlocked: () => this.isModelNotSelected && !this.searchMode,
             idlePlaceholder: this.getInputPlaceholder(),
-            recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
+            recordingPlaceholder: this.t('renderer.agentInput.recording.listening')
         });
     }
 
@@ -3178,8 +3202,8 @@ class AgentInput extends HTMLElement {
             this.speechRecording = true;
             this._speechBaseText = textarea.value;
             speechBtn?.classList.add('speech-recording');
-            speechBtn.title = '正在录音，点击停止';
-            textarea.placeholder = recordingPlaceholder || '正在聆听，识别文字将显示在输入框…';
+            speechBtn.title = this.t('renderer.agentInput.recording.stopTitle');
+            textarea.placeholder = recordingPlaceholder || this.t('renderer.agentInput.recording.listening');
             textarea.classList.add('speech-interim');
             this.updateInputState();
             this.startSpeechPreviewPolling(textarea, speechBtn, options);
@@ -3548,8 +3572,8 @@ class ApplicationAgentInput extends HTMLElement {
                 await this.speechSession.start();
                 this.speechRecording = true;
                 speechBtn?.classList.add('speech-recording');
-                speechBtn.title = '正在录音，点击结束';
-                textarea.placeholder = '正在聆听，识别文字将显示在输入框…';
+                speechBtn.title = this.t('renderer.agentInput.recording.endTitle');
+                textarea.placeholder = this.t('renderer.agentInput.recording.listening');
                 textarea.classList.add('speech-interim');
                 this.startSpeechPreviewPolling(textarea);
             } catch (err) {
