@@ -398,8 +398,11 @@ export class ModelConfigPage implements Component {
 
         // 校验 max_output_tokens 为非负整数（与 GUI 行为一致）
         const maxOutputRaw = (values.max_output_tokens ?? '').toString().trim();
-        const parsedMaxOutputTokens = parseInt(values.max_output_tokens, 10);
-        if (maxOutputRaw !== '' && (!Number.isFinite(parsedMaxOutputTokens) || parsedMaxOutputTokens < 0)) {
+        const parsedMaxOutputTokens = maxOutputRaw === '' ? undefined : Number(maxOutputRaw);
+        if (
+            maxOutputRaw !== '' &&
+            (!/^\d+$/.test(maxOutputRaw) || !Number.isSafeInteger(parsedMaxOutputTokens) || parsedMaxOutputTokens < 0)
+        ) {
             this.form?.deactivate();
             const info = new InfoOverlay(this.openDeskTUI, {
                 title: t('config.model.validation.max_output_tokens_invalid'),
@@ -434,7 +437,7 @@ export class ModelConfigPage implements Component {
                     ? parsedContextLength
                     : undefined,
             max_output_tokens:
-                values.model_type !== 'embedding' && Number.isFinite(parsedMaxOutputTokens) && parsedMaxOutputTokens > 0
+                values.model_type !== 'embedding' && parsedMaxOutputTokens !== undefined && parsedMaxOutputTokens > 0
                     ? parsedMaxOutputTokens
                     : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false,

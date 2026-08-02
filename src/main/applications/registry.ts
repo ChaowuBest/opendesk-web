@@ -23,6 +23,7 @@ import type { AgentDecl } from '../aikernel/agents/common.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
+import { WorkerRestartController, type WorkerRestartDecision } from './worker-restart.js';
 import path from 'path';
 
 export type ProtocolHandlerEntry = {
@@ -399,8 +400,9 @@ export function initializeRegistry() {
 
 // Worker 重启相关状态
 let cachedRuntimeOptions: WorkerRuntimeOptions = {};
-let workerRestartCount = 0;
 const MAX_WORKER_RESTARTS = 5;
+const WORKER_STABLE_RESET_DELAY_MS = 30000;
+const workerRestartController = new WorkerRestartController(MAX_WORKER_RESTARTS);
 let settingUpdateCallbackRegistered = false;
 
 /**
@@ -409,13 +411,14 @@ let settingUpdateCallbackRegistered = false;
  */
 export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = {}) {
     cachedRuntimeOptions = runtimeOptions;
-    workerRestartCount = 0;
+    workerRestartController.reset();
     spawnGlobalWorker(runtimeOptions);
 }
 
 function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     // 生产环境 worker 已由 electron-vite 编译为 worker.js，不可再传 execArgv: ['tsx']，
     // 否则子 Node 进程参数非法，在 OpenHarmony 等环境下会导致 Worker 创建失败、globalWorker 一直为 null。
+    const spawnAttempt = {};
     let worker: Worker;
     try {
         worker = new Worker(getPlatform().getWorkerPath(), {
@@ -432,13 +435,21 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
         });
     } catch (error) {
         logger.error('spawnGlobalWorker: failed to spawn global worker', error);
-        scheduleWorkerRestart();
+        scheduleWorkerRestart(spawnAttempt);
         return;
     }
 
     ApplicationRegistry.globalWorker = worker;
-    // worker 成功创建后重置重启计数
-    workerRestartCount = 0;
+    let stableTimer: ReturnType<typeof setTimeout> | undefined;
+
+    worker.once('online', () => {
+        stableTimer = setTimeout(() => {
+            stableTimer = undefined;
+            if (ApplicationRegistry.globalWorker === worker) {
+                workerRestartController.markStable();
+            }
+        }, WORKER_STABLE_RESET_DELAY_MS);
+    });
 
     const rejectPendingWorkerRequests = (error: Error) => {
         for (const pending of ApplicationRegistry.pendingRequests.values()) {
@@ -460,24 +471,38 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
         ApplicationRegistry.activeFetchReaders.clear();
     };
 
-    worker.on('error', (error) => {
-        logger.error('global worker error:', error);
+    const handleWorkerFailure = (error: Error) => {
+        const decision = scheduleWorkerRestart(worker);
+        if (!decision.firstFailure) return;
+        if (stableTimer !== undefined) {
+            clearTimeout(stableTimer);
+            stableTimer = undefined;
+        }
         rejectPendingWorkerRequests(error);
         if (ApplicationRegistry.globalWorker === worker) {
             ApplicationRegistry.globalWorker = null;
         }
-        scheduleWorkerRestart();
+    };
+
+    worker.on('error', (error) => {
+        logger.error('global worker error:', error);
+        handleWorkerFailure(error);
     });
 
     worker.on('exit', (code) => {
         if (ApplicationRegistry.globalWorker === worker) {
             ApplicationRegistry.globalWorker = null;
         }
+        if (stableTimer !== undefined) {
+            clearTimeout(stableTimer);
+            stableTimer = undefined;
+        }
         if (code === 0) return;
         const error = new Error(`global worker exited with code ${code}`);
+        const decision = scheduleWorkerRestart(worker);
+        if (!decision.firstFailure) return;
         logger.error(error.message);
         rejectPendingWorkerRequests(error);
-        scheduleWorkerRestart();
     });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
@@ -764,16 +789,17 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
 /**
  * 调度 worker 重启，带指数退避和最大重试次数限制
  */
-function scheduleWorkerRestart(): void {
-    if (workerRestartCount >= MAX_WORKER_RESTARTS) {
-        logger.error(`global worker crashed and max restart attempts (${MAX_WORKER_RESTARTS}) exceeded, giving up`);
-        return;
-    }
-    workerRestartCount++;
-    const delay = Math.min(1000 * Math.pow(2, workerRestartCount - 1), 30000);
-    logger.info(`global worker will restart in ${delay}ms (attempt ${workerRestartCount}/${MAX_WORKER_RESTARTS})`);
-    setTimeout(() => {
+function scheduleWorkerRestart(source: object): WorkerRestartDecision {
+    const decision = workerRestartController.schedule(source, () => {
         // 重新读取当前设置，确保重启后的 worker 拿到最新配置
         spawnGlobalWorker(cachedRuntimeOptions);
-    }, delay);
+    });
+    if (decision.exhausted) {
+        logger.error(`global worker crashed and max restart attempts (${MAX_WORKER_RESTARTS}) exceeded, giving up`);
+    } else if (decision.scheduled) {
+        logger.info(
+            `global worker will restart in ${decision.delayMs}ms (attempt ${decision.attempt}/${MAX_WORKER_RESTARTS})`
+        );
+    }
+    return decision;
 }

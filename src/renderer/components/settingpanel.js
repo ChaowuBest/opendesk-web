@@ -3265,7 +3265,7 @@ class SettingPanel extends HTMLElement {
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
-        const maxOutputTokensNum = maxOutputTokensRaw ? parseInt(maxOutputTokensRaw, 10) : undefined;
+        const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
@@ -3286,7 +3286,10 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
-        if (maxOutputTokensRaw && (!Number.isFinite(maxOutputTokensNum) || maxOutputTokensNum < 0)) {
+        if (
+            maxOutputTokensRaw &&
+            (!/^\d+$/.test(maxOutputTokensRaw) || !Number.isSafeInteger(maxOutputTokensNum) || maxOutputTokensNum < 0)
+        ) {
             window.notificationAPI.sendNotification(
                 'error',
                 this._t('config.main.title'),

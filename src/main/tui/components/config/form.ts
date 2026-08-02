@@ -76,6 +76,7 @@ export class ConfigForm implements Component {
     private removeInputListener?: () => void;
     private onAction: (actionKey: string, values: Record<string, any>) => void;
     private onCancel: () => void;
+    private onFieldChange?: (values: Record<string, any>) => void;
 
     constructor(
         tui: TUI,
@@ -83,12 +84,14 @@ export class ConfigForm implements Component {
         fields: FieldDef[],
         actions: ActionDef[],
         onAction: (actionKey: string, values: Record<string, any>) => void,
-        onCancel: () => void
+        onCancel: () => void,
+        onFieldChange?: (values: Record<string, any>) => void
     ) {
         this.tui = tui;
         this.title = title;
         this.onAction = onAction;
         this.onCancel = onCancel;
+        this.onFieldChange = onFieldChange;
 
         for (const field of fields) {
             if (field.type === 'text') {
@@ -167,6 +170,7 @@ export class ConfigForm implements Component {
         if (item.type === 'boolean') {
             if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
                 item.value = !item.value;
+                this.onFieldChange?.(this.getValues());
                 this.tui.requestRender();
                 return { consume: true };
             }
@@ -177,6 +181,7 @@ export class ConfigForm implements Component {
                 if (item.options.length > 0) {
                     const idx = item.options.indexOf(item.value);
                     item.value = item.options[(idx + 1) % item.options.length];
+                    this.onFieldChange?.(this.getValues());
                     this.tui.requestRender();
                 }
                 return { consume: true };
@@ -185,6 +190,7 @@ export class ConfigForm implements Component {
                 if (item.options.length > 0) {
                     const idx = item.options.indexOf(item.value);
                     item.value = item.options[(idx - 1 + item.options.length) % item.options.length];
+                    this.onFieldChange?.(this.getValues());
                     this.tui.requestRender();
                 }
                 return { consume: true };

@@ -12,6 +12,7 @@
 import { parse as parseYaml } from 'yaml';
 import recommendationYaml from '../../../resources/main/applications/recommendation.yaml?raw';
 import recommendationCss from '../styles/recommendation.css?raw';
+import { resolveRendererLocale } from '../locale.js';
 
 // ============================================================================
 // Data Interfaces
@@ -70,13 +71,37 @@ type SearchTabState = {
 // Data Loading
 // ============================================================================
 
-function loadRecommendationData(raw: string): RecommendationData {
+type LocalizedRecommendationItem = RecommendationItem & {
+    title_en?: string;
+    description_en?: string;
+    prompt_en?: string;
+};
+
+type LocalizedRecommendationCategory = Omit<RecommendationCategory, 'items'> & {
+    label_en?: string;
+    items: LocalizedRecommendationItem[];
+};
+
+function loadRecommendationData(raw: string, locale = resolveRendererLocale()): RecommendationData {
     const parsed = parseYaml(raw);
     const categories: RecommendationCategory[] = [];
     if (Array.isArray(parsed)) {
         for (const cat of parsed) {
             if (cat && cat.id && cat.label && Array.isArray(cat.items)) {
-                categories.push(cat as RecommendationCategory);
+                const localizedCategory = cat as LocalizedRecommendationCategory;
+                const useEnglish = locale === 'en-US';
+                categories.push({
+                    id: localizedCategory.id,
+                    label: useEnglish ? localizedCategory.label_en || localizedCategory.label : localizedCategory.label,
+                    icon: localizedCategory.icon,
+                    items: localizedCategory.items.map((item) => ({
+                        id: item.id,
+                        title: useEnglish ? item.title_en || item.title : item.title,
+                        description: useEnglish ? item.description_en || item.description : item.description,
+                        prompt: useEnglish ? item.prompt_en || item.prompt : item.prompt,
+                        icon: item.icon
+                    }))
+                });
             }
         }
     }
@@ -91,10 +116,12 @@ const DEFAULT_RECOMMENDATION_DATA = loadRecommendationData(recommendationYaml);
 
 class RecommendationPanel extends HTMLElement {
     private _data: RecommendationData = DEFAULT_RECOMMENDATION_DATA;
+    private _usingDefaultData = true;
     private _activeCategoryId: string = '';
     private _temporarySearch: SearchTabState | null = null;
     private _previousActiveCategoryId: string | null = null;
     private _userLeftSearchTabExplicitly = false;
+    private _settingUnsubscribe?: () => void;
 
     constructor() {
         super();
@@ -105,11 +132,22 @@ class RecommendationPanel extends HTMLElement {
             this._activeCategoryId = this._data.categories[0].id;
         }
         this.render();
+        void window.settingAPI
+            ?.loadSettingObject?.()
+            .then((setting) => this._applyDefaultLocale(resolveRendererLocale(setting)))
+            .catch(() => undefined);
+        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+            this._applyDefaultLocale(resolveRendererLocale(setting));
+        });
     }
 
-    disconnectedCallback(): void {}
+    disconnectedCallback(): void {
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = undefined;
+    }
 
     setData(data: RecommendationData): void {
+        this._usingDefaultData = false;
         this._data = data;
         if (this._temporarySearch && this._activeCategoryId === 'search-results') {
             this.render();
@@ -117,6 +155,18 @@ class RecommendationPanel extends HTMLElement {
         }
         if (data.categories.length > 0 && !data.categories.find((c) => c.id === this._activeCategoryId)) {
             this._activeCategoryId = data.categories[0].id;
+        }
+        this.render();
+    }
+
+    private _applyDefaultLocale(locale: string): void {
+        if (!this._usingDefaultData) return;
+        this._data = loadRecommendationData(recommendationYaml, locale);
+        if (
+            this._activeCategoryId !== 'search-results' &&
+            !this._data.categories.some((category) => category.id === this._activeCategoryId)
+        ) {
+            this._activeCategoryId = this._data.categories[0]?.id || '';
         }
         this.render();
     }

@@ -153,6 +153,24 @@ describe('ModelConfigPage', () => {
         expect(data.models).toHaveLength(0);
     });
 
+    test.each(['1.5', '16k', '9007199254740992'])('rejects non-integer max_output_tokens %s', (value) => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'my-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '',
+            max_output_tokens: value,
+            auto_parse_think_tags: false
+        });
+
+        expect(openDeskTUI.inputArea.showPromptWidget).toHaveBeenCalled();
+        expect((Setting.getInstance().getData() as any).models).toHaveLength(0);
+    });
+
     test('leaves context length and max output tokens unset when saved empty', () => {
         const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
 
