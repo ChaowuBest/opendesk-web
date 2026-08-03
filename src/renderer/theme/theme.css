@@ -23,6 +23,30 @@ html:not([data-theme]) {
     --od-accent: #3b82f6;
     --od-titlebar-btn-hover: #e5e7eb;
     --od-titlebar-btn-close-hover: #ef4444;
+
+    /* ===== 聊天界面设计 Token · 浅色模式 ===== */
+    --chat-ink: #1c1917;
+    --chat-ink2: #4a4642;
+    --chat-ink3: #8a8580;
+    --chat-ink4: #b4afa9;
+    --chat-accent: #df4436;
+    --chat-accent-soft: #fdeeec;
+    --chat-green: #1f9d66;
+    --chat-green-soft: #e7f5ee;
+    --chat-amber: #b87503;
+    --chat-amber-soft: #fdf3e3;
+    --chat-blue: #4267b2;
+    --chat-blue-soft: #ebf1fb;
+    --chat-code-bg: #f7f6f4;
+    --chat-line: #e7e5e2;
+    --chat-line-soft: #f0efec;
+    --chat-sb-bg: #fafafa;
+    --chat-hover: #f4f3f1;
+    --chat-bubble-bg: #f4f3f1;
+    --chat-bubble-border: #ffffff;
+    --chat-bubble-hover-bg: #f4f3f1;
+    --chat-bubble-hover-border: #df4436;
+    --chat-bubble-code-bg: rgba(0, 0, 0, 0.06);
 }
 
 html[data-theme='dark'] {
@@ -42,6 +66,30 @@ html[data-theme='dark'] {
     --od-accent: #60a5fa;
     --od-titlebar-btn-hover: #3f3f46;
     --od-titlebar-btn-close-hover: #dc2626;
+
+    /* ===== 聊天界面设计 Token · 深色模式 ===== */
+    --chat-ink: #efedea;
+    --chat-ink2: #d5d1cb;
+    --chat-ink3: #9b968f;
+    --chat-ink4: #6f6a63;
+    --chat-accent: #e8563f;
+    --chat-accent-soft: rgba(232, 86, 63, 0.16);
+    --chat-green: #3dbf82;
+    --chat-green-soft: rgba(61, 191, 130, 0.15);
+    --chat-amber: #e2a23b;
+    --chat-amber-soft: rgba(226, 162, 59, 0.15);
+    --chat-blue: #7aa2e8;
+    --chat-blue-soft: rgba(122, 162, 232, 0.16);
+    --chat-code-bg: #1f1d1b;
+    --chat-line: #3b3835;
+    --chat-line-soft: #33302d;
+    --chat-sb-bg: #22201e;
+    --chat-hover: #33302d;
+    --chat-bubble-bg: rgba(255, 255, 255, 0.05);
+    --chat-bubble-border: #3b3835;
+    --chat-bubble-hover-bg: rgba(255, 255, 255, 0.08);
+    --chat-bubble-hover-border: #4a4642;
+    --chat-bubble-code-bg: rgba(255, 255, 255, 0.1);
 }
 
 /* 子应用 guest（application.html）：禁止 Chromium 随 nativeTheme 强制反色，外观仍由 data-theme 驱动 */
