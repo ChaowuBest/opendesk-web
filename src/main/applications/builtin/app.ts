@@ -11,13 +11,18 @@
 
 import { Skill } from '../../aikernel/skill.js';
 import { BaseApplication } from '../base.js';
+import { t } from './locale/index.js';
 import { loadPoolSkill } from './pool.js';
 import { loadAnalysisResultVisualizerSkill } from './analysis-result-visualizer.js';
 import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
 
 export class BuiltinApplication extends BaseApplication {
     constructor() {
-        super('builtin', '内置功能', false);
+        super('builtin', false);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     async getSkills(): Promise<Skill[]> {

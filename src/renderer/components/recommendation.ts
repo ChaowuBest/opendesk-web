@@ -12,7 +12,9 @@
 import { parse as parseYaml } from 'yaml';
 import recommendationYaml from '../../../resources/main/applications/recommendation.yaml?raw';
 import recommendationCss from '../styles/recommendation.css?raw';
-import { resolveRendererLocale } from '../locale.js';
+import { resolveRendererLocale, createRendererTranslator } from '../locale.js';
+
+let t = createRendererTranslator();
 
 // ============================================================================
 // Data Interfaces
@@ -161,6 +163,7 @@ class RecommendationPanel extends HTMLElement {
 
     private _applyDefaultLocale(locale: string): void {
         if (!this._usingDefaultData) return;
+        t = createRendererTranslator(locale);
         this._data = loadRecommendationData(recommendationYaml, locale);
         if (
             this._activeCategoryId !== 'search-results' &&
@@ -250,11 +253,11 @@ class RecommendationPanel extends HTMLElement {
             html += `
                 <div class="rec-hero" data-item-id="${this._escapeAttr(hero.id)}">
                     <div class="rec-hero-head">
-                        <span class="rec-hero-tag">今日主推</span>
+                        <span class="rec-hero-tag">${t('renderer.recommendation.heroTag')}</span>
                         <span class="rec-hero-title">${this._escapeHtml(hero.title)}</span>
                     </div>
                     <div class="rec-hero-desc">${this._escapeHtml(hero.description)}</div>
-                    <div class="rec-hero-prompt">${this._escapeHtml(hero.prompt)}</div>
+                    <div class="rec-hero-prompt"><span class="rec-hero-prompt-prefix">${t('renderer.recommendation.example')} · </span>${this._escapeHtml(hero.prompt)}</div>
                 </div>
             `;
         }
@@ -269,7 +272,7 @@ class RecommendationPanel extends HTMLElement {
                 <button type="button" class="rec-row" data-item-id="${this._escapeAttr(item.id)}" title="${this._escapeAttr(item.prompt)}">
                     <span class="rec-row-arrow">›</span>
                     <span class="rec-row-text">${this._escapeHtml(item.prompt)}</span>
-                    <span class="rec-row-hint">填入输入框</span>
+                    <span class="rec-row-hint">${t('renderer.recommendation.fillInput')}</span>
                 </button>
             `
                 )
@@ -288,15 +291,15 @@ class RecommendationPanel extends HTMLElement {
             state.warning ? `<div class="search-note">${this._escapeHtml(state.warning)}</div>` : '',
             state.error ? `<div class="search-error">${this._escapeHtml(state.error)}</div>` : '',
             state.loading
-                ? `<div class="search-loading">${this._escapeHtml(state.loadingText ?? '正在搜索...')}</div>`
+                ? `<div class="search-loading">${this._escapeHtml(state.loadingText ?? t('renderer.recommendation.searching'))}</div>`
                 : ''
         ].join('');
 
         let body = '';
         if (!query && rows.length === 0) {
-            body = '<div class="search-empty">输入关键词搜索你的文件</div>';
+            body = `<div class="search-empty">${t('renderer.recommendation.searchPlaceholder')}</div>`;
         } else if (!state.loading && rows.length === 0) {
-            body = '<div class="search-empty">没有找到匹配文件</div>';
+            body = `<div class="search-empty">${t('renderer.recommendation.noResults')}</div>`;
         } else {
             body = rows.map((item) => this._renderSearchResult(item)).join('');
         }
@@ -337,20 +340,21 @@ class RecommendationPanel extends HTMLElement {
     private _renderSearchResult(item: IndexedFileSearchItem): string {
         const badgeLabels = new Set<string>();
         for (const type of item.matchTypes ?? []) {
-            if (type === 'keyword' || type === 'name_semantic') badgeLabels.add('文件名');
-            if (type === 'content_semantic') badgeLabels.add('内容');
+            if (type === 'keyword' || type === 'name_semantic')
+                badgeLabels.add(t('renderer.recommendation.badge.filename'));
+            if (type === 'content_semantic') badgeLabels.add(t('renderer.recommendation.badge.content'));
         }
         const badges = [...badgeLabels].map((label) => `<span class="search-badge">${label}</span>`).join('');
         const attachAction = `
-                    <button type="button" class="search-attach-btn" data-path="${this._escapeAttr(item.path)}" title="添加到对话栏" aria-label="添加到对话栏">
+                    <button type="button" class="search-attach-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.attachToChat')}" aria-label="${t('renderer.recommendation.attachToChat')}">
                         <i class="fas fa-paperclip"></i>
                     </button>
         `;
         const localPathActions = `
-                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="打开文件" aria-label="打开文件">
+                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.openFile')}" aria-label="${t('renderer.recommendation.openFile')}">
                         <i class="fas fa-arrow-up-right-from-square"></i>
                     </button>
-                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="在文件夹中显示" aria-label="在文件夹中显示">
+                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="${t('renderer.recommendation.revealInFolder')}" aria-label="${t('renderer.recommendation.revealInFolder')}">
                         <i class="fas fa-folder-open"></i>
                     </button>
             `;
@@ -437,7 +441,7 @@ class RecommendationPanel extends HTMLElement {
                   ...this._data.categories,
                   {
                       id: 'search-results',
-                      label: '搜索结果',
+                      label: t('renderer.recommendation.searchResults'),
                       icon: '<svg viewBox="0 0 40 40" fill="none"><circle cx="17" cy="17" r="11" stroke="currentColor" stroke-width="2.5"/><line x1="25" y1="25" x2="34" y2="34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>',
                       items: []
                   }

@@ -101,6 +101,14 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () =>
         }
     });
 
+    test('FileMessagePart render includes data-open-file with full path', async () => {
+        const filePath = '/tmp/report.pdf';
+        const part = new FileMessagePart(filePath);
+        const html = await part.render();
+        expect(html).toContain(`data-open-file="${filePath}"`);
+        expect(html).toContain(`data-file-path="${filePath}"`);
+    });
+
     test('step 6 buildMessages replays only the visible assistant tail', () => {
         const chatContext = new ChatContext();
         const bigAssistant = createMultiRoundAssistant(['round-1', 'round-2', 'round-3']);

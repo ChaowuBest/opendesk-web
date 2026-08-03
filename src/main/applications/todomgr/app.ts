@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
@@ -38,7 +39,11 @@ import type { TodoWorkspaceConfig } from './common.js';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
-        super('todomgr', '任务自动化', true);
+        super('todomgr', true);
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     async getTUIStatusBlock(): Promise<string | null> {

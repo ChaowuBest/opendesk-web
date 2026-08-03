@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication, EventDecl } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
@@ -106,7 +107,11 @@ export interface AgentMcpRegistration {
 
 export class McpMgrApplication extends BaseApplication {
     constructor() {
-        super('mcpmgr', 'MCP管理');
+        super('mcpmgr');
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     static getWorkerClass() {

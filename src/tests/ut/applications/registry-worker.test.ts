@@ -12,7 +12,11 @@ let workerBackedConfigChangedCount = 0;
 
 class WorkerlessTestApplication extends BaseApplication {
     constructor() {
-        super('workerless-test', 'Workerless Test', false);
+        super('workerless-test', false);
+    }
+
+    getName(): string {
+        return 'Workerless Test';
     }
 
     static getConfigSchema(): z.ZodObject<any> {
@@ -28,7 +32,11 @@ class WorkerlessTestApplication extends BaseApplication {
 
 class WorkerBackedTestApplication extends BaseApplication {
     constructor() {
-        super('worker-backed-test', 'Worker Backed Test', false);
+        super('worker-backed-test', false);
+    }
+
+    getName(): string {
+        return 'Worker Backed Test';
     }
 
     static getWorkerClass(): typeof BaseWorker {

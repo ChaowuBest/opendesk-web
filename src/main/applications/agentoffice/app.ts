@@ -16,6 +16,7 @@ import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { getLocale, t } from '../../../locale/index.js';
+import { t as appT } from './locale/index.js';
 import { logger } from '../../utils/logger.js';
 import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
 import { getTempDir } from '../../utils/temp.js';
@@ -206,7 +207,11 @@ export class AgentOfficeApplication extends BaseApplication {
     private schedulerStopping = false;
 
     constructor() {
-        super('agentoffice', t('agentoffice.name'));
+        super('agentoffice');
+    }
+
+    getName(): string {
+        return appT('app.name');
     }
 
     isExperimental(): boolean {

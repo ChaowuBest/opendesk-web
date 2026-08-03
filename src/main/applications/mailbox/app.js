@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { MailboxConfigSchema } from './common.js'; // 引入新的 Schema
@@ -36,7 +37,11 @@ import chalk from 'chalk';
 
 class MailboxApplication extends BaseApplication {
     constructor() {
-        super('mailbox', '邮箱');
+        super('mailbox');
+    }
+
+    getName() {
+        return t('app.name');
     }
 
     needAgentBar() {

@@ -718,6 +718,12 @@ html[data-theme='dark'] agent-input .agent-input-file-hint i {
     color: var(--od-text-muted) !important;
 }
 
+/* AgentInput 文件 tag（设计稿深色蓝标签） */
+html[data-theme='dark'] agent-input .agent-input-file-tag {
+    background: rgba(122, 162, 232, 0.16) !important;
+    color: #7aa2e8 !important;
+}
+
 /* Taskview 面板展开激活色（暗色更亮的朱红） */
 html[data-theme='dark'] elastic-toolbar-widget .toolbar-spread-btn.toolbar-spread-btn-on {
     color: #e8563f !important;

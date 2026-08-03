@@ -22,6 +22,10 @@
  * - 截图通过顶部对齐 + 宽度适配方式展示，保证左右内容完整
  */
 
+import { createRendererTranslator } from '../locale';
+
+const t = createRendererTranslator();
+
 const DEFAULT_WIDTH = 308;
 const IMG_ASPECT_RATIO = 1280 / 800; // webview capture aspect ratio
 const STATUS_BAR_HEIGHT = 24;
@@ -161,13 +165,16 @@ export class BrowserPip {
         const btnGroup = document.createElement('div');
         btnGroup.style.cssText = `display: flex; align-items: center; gap: 4px; flex-shrink: 0;`;
 
-        const restoreBtn = this._createButton('fa-up-right-and-down-left-from-center', '恢复浏览器面板');
+        const restoreBtn = this._createButton(
+            'fa-up-right-and-down-left-from-center',
+            t('renderer.browserPip.restore')
+        );
         restoreBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._callbacks.onRestore();
         });
 
-        const closeBtn = this._createButton('fa-xmark', '关闭浮窗');
+        const closeBtn = this._createButton('fa-xmark', t('renderer.browserPip.close'));
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.close();
@@ -487,14 +494,14 @@ export class BrowserPip {
         }
         this._statusEl.innerHTML = `
             <i class="fas fa-layer-group" style="font-size: var(--fs-xs);"></i>
-            <span>${tabCount} 个标签页</span>
+            <span>${t('renderer.browserPip.tabCount', { count: tabCount })}</span>
             ${urlDisplay ? `<span style="margin-left: auto; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${urlDisplay}</span>` : ''}
         `;
 
         const titleLabel = this._el?.querySelector('.pip-title-label') as HTMLElement;
         if (titleLabel) {
             const title = this._callbacks.getActiveTabTitle();
-            titleLabel.textContent = title || '浏览器';
+            titleLabel.textContent = title || t('renderer.browserPip.title');
         }
     }
 

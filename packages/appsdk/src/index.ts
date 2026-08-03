@@ -151,19 +151,19 @@ export class BaseWorker {
 
 export abstract class BaseApplication {
     bundleName: string;
-    name: string;
     showIcon: boolean;
     eventSubscribers: Map<string, Map<any, number>>;
     registry?: any;
     private _declaredEventsCache: Set<string> | null = null;
     private _tuiStatusUpdateCallback?: () => void;
 
-    constructor(bundleName: string, name: string = '未命名应用', showIcon: boolean = true) {
+    constructor(bundleName: string, showIcon: boolean = true) {
         this.bundleName = bundleName;
-        this.name = name;
         this.showIcon = showIcon;
         this.eventSubscribers = new Map();
     }
+
+    abstract getName(): string;
 
     static getWorkerClass(): typeof BaseWorker | undefined {
         return undefined;
@@ -196,7 +196,7 @@ export abstract class BaseApplication {
     } {
         return {
             bundleName: this.bundleName,
-            name: this.name,
+            name: this.getName(),
             showIcon: this.showIcon,
             isExperimental: this.isExperimental(),
             needAgentBar: this.needAgentBar()

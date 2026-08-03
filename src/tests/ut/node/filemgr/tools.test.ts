@@ -14,6 +14,7 @@ import { loadImageSource } from '../../../../main/applications/filemgr/image.js'
 import { setPlatform } from '../../../../platforms/base.js';
 import {
     EXTRACT_TEXT_SUPPORTED_EXTENSIONS,
+    extractText,
     isExtractTextSupported
 } from '../../../../main/applications/filemgr/parser/extract.js';
 import {
@@ -47,25 +48,24 @@ function makeToolCall(
     return call;
 }
 
-test('extractText extracts supported text files with line ranges', async () => {
+test('extractText extracts supported text files', async () => {
     const dir = makeTempDir();
     try {
         const filePath = path.join(dir, 'notes.md');
         fs.writeFileSync(filePath, 'alpha\nbeta\ngamma', 'utf8');
 
-        const tool = new ExtractTextTool();
+        const tool = new ExtractTextTool(extractText);
         const result = JSON.parse(
             await tool.executeCommand({
-                file_path: filePath,
-                offset: 2,
-                limit: 1
+                file_path: filePath
             })
         );
 
         assert.equal(result.type, 'text');
-        assert.equal(result.file.numLines, 1);
-        assert.equal(result.file.totalLines, 3);
-        assert.equal(result.file.content, '     2\tbeta');
+        assert.equal(result.file.numLines, 3);
+        assert.match(result.file.content, /alpha/);
+        assert.match(result.file.content, /beta/);
+        assert.match(result.file.content, /gamma/);
     } finally {
         cleanup(dir);
     }
@@ -83,7 +83,7 @@ test('extractText extracts structured files through the shared extractText suppo
         XLSX.utils.book_append_sheet(workbook, sheet, 'Data');
         XLSX.writeFile(workbook, filePath);
 
-        const tool = new ExtractTextTool();
+        const tool = new ExtractTextTool(extractText);
         const result = JSON.parse(await tool.executeCommand({ file_path: filePath }));
 
         assert.equal(result.type, 'text');
@@ -108,7 +108,7 @@ test('extractText rejects unsupported file types before extraction', async () =>
         const filePath = path.join(dir, 'archive.zip');
         fs.writeFileSync(filePath, 'not a supported text container', 'utf8');
 
-        const tool = new ExtractTextTool();
+        const tool = new ExtractTextTool(extractText);
         const result = JSON.parse(await tool.executeCommand({ file_path: filePath }));
 
         assert.equal(result.type, 'error');
@@ -148,16 +148,14 @@ test('semanticSearch returns at most 30 markdown bullet results with path, title
 });
 
 test('extractText GUI render uses an inline summary without embedding extracted content', async () => {
-    const tool = new ExtractTextTool();
+    const tool = new ExtractTextTool(extractText);
     const filePath = '/workspace/local/report.md';
     const result = JSON.stringify({
         type: 'text',
         file: {
             filePath,
             content: '     1\t<script>alert(1)</script>\n     2\tplain',
-            numLines: 2,
-            startLine: 1,
-            totalLines: 2
+            numLines: 2
         }
     });
     const html = await tool.renderToolCall(makeToolCall(tool.name, { file_path: filePath }, 'success', result));
@@ -165,7 +163,7 @@ test('extractText GUI render uses an inline summary without embedding extracted 
     assert.ok(html);
     assert.match(html, /class="od-inline-toolcall-container filemgr-extract-text-tool"/);
     assert.match(html, /data-open-editor="\/workspace\/local\/report\.md"/);
-    assert.match(html, /2 \/ 2 lines/);
+    assert.match(html, /2 lines/);
     assert.match(html, /45 chars/);
     assert.doesNotMatch(html, /<pre class=/);
     assert.doesNotMatch(html, /alert\(1\)/);
@@ -199,7 +197,7 @@ test('semanticSearch GUI render uses markdown detailed card and does not render 
 });
 
 test('file manager base toolset exposes extractText and no legacy semantic search tools', () => {
-    const toolset = createFileManagerToolset();
+    const toolset = createFileManagerToolset({ extractDelegate: extractText });
     assert.equal(toolset.hasTool('extractText'), true);
     assert.equal(toolset.hasTool('readImage'), true);
     assert.equal(toolset.hasTool('askImage'), true);

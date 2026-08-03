@@ -41,8 +41,12 @@ export class ExternalManifestApplication extends BaseApplication {
     private record: UserAppRecord;
 
     constructor(record: UserAppRecord) {
-        super(record.bundleName, record.displayName, record.active);
+        super(record.bundleName, record.active);
         this.record = record;
+    }
+
+    getName(): string {
+        return this.record.displayName;
     }
 
     toJSON(): Record<string, unknown> {

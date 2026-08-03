@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
@@ -206,7 +207,11 @@ class BrowserApplication extends BaseApplication {
     private _pendingAutomatedDownloadsByTask = new Map<string, DownloadState[]>();
 
     constructor() {
-        super('browser', '浏览器');
+        super('browser');
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     async getTUIStatusBlock() {

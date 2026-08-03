@@ -201,6 +201,7 @@ const GUIConfigSchema = z.object({
         .default('system')
         .describe('界面主题: system=跟随系统, light=浅色, dark=深色'),
     scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
+    scale_factor_auto: z.boolean().optional().default(true).describe('是否根据屏幕 DPI 自动适配缩放系数'),
     font_preset: z
         .enum(['default', 'lxgwwenkai'])
         .optional()
@@ -937,7 +938,7 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
- * - OpenHarmony: /storage/Users/currentUser/Documents/OpenDesk
+ * - OpenHarmony: /storage/Users/currentUser/Documents/OpenDesk（权限不足时回退到家目录下的 OpenDesk）
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
  */
@@ -945,6 +946,13 @@ function getTempWorkspaceDirectory(): string {
     let workspacePath: string;
     if ((process.platform as string) === 'openharmony') {
         workspacePath = '/storage/Users/currentUser/Documents/OpenDesk';
+        try {
+            return ensureDirectoryExists(workspacePath);
+        } catch {
+            // Documents 目录可能因权限不足而不可写（用户未授权），
+            // 回退到家目录下的 OpenDesk 目录
+            workspacePath = '/storage/Users/currentUser/OpenDesk';
+        }
     } else if (process.platform === 'win32') {
         const userProfile = process.env.USERPROFILE || process.env.HOME || '';
         workspacePath = path.join(userProfile, 'opendesk');

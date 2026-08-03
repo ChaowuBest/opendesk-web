@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
@@ -22,7 +23,11 @@ import chalk from 'chalk';
 
 class CalendarApplication extends BaseApplication {
     constructor() {
-        super('calendar', '日历');
+        super('calendar');
+    }
+
+    getName() {
+        return t('app.name');
     }
 
     async getTUIStatusBlock() {

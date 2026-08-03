@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication } from '../base.js';
+import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { Skill } from '../../aikernel/skill.js';
 import type { EventDecl } from '../base.js';
@@ -36,7 +37,11 @@ export class AppMgrApplication extends BaseApplication {
     static bundleName: string = 'appmgr';
 
     constructor() {
-        super('appmgr', '应用工坊');
+        super('appmgr');
+    }
+
+    getName(): string {
+        return t('app.name');
     }
 
     isExperimental(): boolean {

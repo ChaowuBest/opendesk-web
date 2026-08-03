@@ -98,15 +98,17 @@ class SetupWizard extends HTMLElement {
     private _render(): void {
         this.innerHTML = `
         <div class="wizard-root">
-            <div class="wizard-rail">
-                ${this._renderStepper()}
-            </div>
-            <div class="wizard-content">
-                <div class="wizard-body">
-                    ${this._renderStepContent()}
+            <div class="wizard-inner">
+                <div class="wizard-rail">
+                    ${this._renderStepper()}
                 </div>
-                <div class="wizard-footer">
-                    ${this._renderNavButtons()}
+                <div class="wizard-content">
+                    <div class="wizard-body">
+                        ${this._renderStepContent()}
+                    </div>
+                    <div class="wizard-footer">
+                        ${this._renderNavButtons()}
+                    </div>
                 </div>
             </div>
         </div>

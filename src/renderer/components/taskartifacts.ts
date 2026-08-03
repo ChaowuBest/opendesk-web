@@ -85,10 +85,31 @@ const TASK_PLAN_TAB: TabSpec = {
     icon: 'fa-list-check',
     dynamic: true
 };
-const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' };
-const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe' };
-const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
-const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
+const WORKSPACE_TAB: TabSpec = {
+    id: 'workspace',
+    label: '工作空间',
+    labelKey: 'renderer.taskartifacts.tab.workspace',
+    icon: 'fa-folder-open'
+};
+const BROWSER_TAB: TabSpec = {
+    id: 'browser',
+    label: '浏览器',
+    labelKey: 'renderer.taskartifacts.tab.browser',
+    icon: 'fa-globe'
+};
+const CHANGES_TAB: TabSpec = {
+    id: 'changes',
+    label: '变更',
+    labelKey: 'renderer.taskartifacts.tab.changes',
+    icon: 'fa-code-compare'
+};
+const SESSION_MEMORY_TAB: TabSpec = {
+    id: 'session-memory',
+    label: '任务记忆',
+    labelKey: 'renderer.taskartifacts.tab.sessionMemory',
+    icon: 'fa-brain',
+    dynamic: true
+};
 let t = createRendererTranslator();
 
 // ============================================================================
@@ -563,8 +584,8 @@ class TaskArtifacts extends HTMLElement {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-code-compare placeholder-icon"></i>
-                <p>暂无文件变更</p>
-                <p class="placeholder-hint">当任务中的工具调用对工作空间文件进行修改后，变更将在此处显示</p>
+                <p>${t('renderer.taskartifacts.changes.empty')}</p>
+                <p class="placeholder-hint">${t('renderer.taskartifacts.changes.emptyHint')}</p>
             </div>`;
             return;
         }
@@ -641,10 +662,10 @@ class TaskArtifacts extends HTMLElement {
         <div class="changes-panel">
             <div class="changes-summary">
                 <i class="fas fa-code-compare" style="margin-right:6px;color:#6b7280;"></i>
-                <strong>${data.totalFiles}</strong> 个文件，
+                <strong>${data.totalFiles}</strong> ${t('renderer.taskartifacts.changes.fileCount')}
                 <span class="diff-stat-add">+${data.totalAdded}</span>
                 <span class="diff-stat-remove">-${data.totalRemoved}</span>
-                <button class="changes-toggle-all-btn">收起全部</button>
+                <button class="changes-toggle-all-btn">${t('renderer.taskartifacts.changes.collapseAll')}</button>
             </div>
             <div class="changes-file-list">
                 ${filesHtml}
@@ -663,7 +684,10 @@ class TaskArtifacts extends HTMLElement {
         // Helper: update toggle-all button text based on current state
         const updateToggleBtn = (): void => {
             const btn = panel.querySelector<HTMLButtonElement>('.changes-toggle-all-btn');
-            if (btn) btn.textContent = hasCollapsed() ? '展开全部' : '收起全部';
+            if (btn)
+                btn.textContent = hasCollapsed()
+                    ? t('renderer.taskartifacts.changes.expandAll')
+                    : t('renderer.taskartifacts.changes.collapseAll');
         };
 
         // Bind toggle-all button
@@ -712,7 +736,7 @@ class TaskArtifacts extends HTMLElement {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-brain placeholder-icon"></i>
-                <p>暂无任务记忆</p>
+                <p>${t('renderer.taskartifacts.sessionMemory.empty')}</p>
             </div>`;
         }
     }
@@ -1346,7 +1370,7 @@ class TaskArtifacts extends HTMLElement {
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
                 <i class="fas ${tab.icon} placeholder-icon"></i>
-                <p>${placeholderLabel(tab)}内容占位符</p>
+                <p>${placeholderLabel(tab)}${t('renderer.taskartifacts.placeholder')}</p>
             </div>`;
 
         const contentHTML = tabs
@@ -2208,7 +2232,7 @@ class TaskArtifacts extends HTMLElement {
         </style>
 
         <div class="tab-header">
-            <button class="tab-scroll-btn tab-scroll-btn-left" aria-label="向左滚动">
+            <button class="tab-scroll-btn tab-scroll-btn-left" aria-label="${t('renderer.taskartifacts.scrollLeft')}">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="15 18 9 12 15 6"></polyline>
                 </svg>
@@ -2219,7 +2243,7 @@ class TaskArtifacts extends HTMLElement {
                     ${tabsHTML}
                 </div>
             </div>
-            <button class="tab-scroll-btn tab-scroll-btn-right" aria-label="向右滚动">
+            <button class="tab-scroll-btn tab-scroll-btn-right" aria-label="${t('renderer.taskartifacts.scrollRight')}">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="9 18 15 12 9 6"></polyline>
                 </svg>

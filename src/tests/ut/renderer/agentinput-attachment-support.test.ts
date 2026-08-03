@@ -107,30 +107,28 @@ describe('agent-input attachment support', () => {
         expect(showConfirmModal).not.toHaveBeenCalled();
     });
 
-    test('shows a modal and does not attach unsupported legacy powerpoint files', async () => {
+    test('pastes unsupported file paths to textarea without attaching them', async () => {
         const input = document.createElement('agent-input') as HTMLElement & {
             attachedFilePaths: string[];
             render: jest.Mock;
             attachFilePath: (filePath: string) => Promise<boolean>;
         };
         input.render = jest.fn();
+        input.innerHTML = '<textarea id="agent-input-textarea"></textarea>';
 
-        // 启动 attachFilePath，不 await —— 模态框的 Promise 需要手动关闭
-        const promise = input.attachFilePath('/tmp/legacy.PPT');
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        textarea.setSelectionRange = jest.fn();
+        textarea.focus = jest.fn();
 
-        // 等待模态框渲染到 DOM
-        await new Promise((r) => setTimeout(r, 10));
+        const result = await input.attachFilePath('/tmp/legacy.PPT');
 
-        // 点击取消按钮关闭模态框，使 Promise resolve
-        const cancelBtn = document.querySelector('[data-action="cancel"]');
-        if (cancelBtn instanceof HTMLElement) {
-            cancelBtn.click();
-        }
-
-        const result = await promise;
         expect(result).toBe(false);
         expect(input.attachedFilePaths).toEqual([]);
         expect(input.render).not.toHaveBeenCalled();
+
+        // 路径应直接粘贴到 textarea，不弹模态窗
+        expect(textarea.value).toContain('/tmp/legacy.PPT');
+        expect(document.querySelector('.od-confirm-modal-overlay')).toBeNull();
     });
 
     test('hides the goal button when requested by the host surface', () => {

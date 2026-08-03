@@ -3,7 +3,11 @@ import { BaseApplication } from '../../../../packages/appsdk/src/index.js';
 
 class TestApplication extends BaseApplication {
     constructor() {
-        super('test', 'Test');
+        super('test');
+    }
+
+    getName(): string {
+        return 'Test';
     }
 }
 

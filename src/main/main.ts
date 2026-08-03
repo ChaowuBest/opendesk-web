@@ -2427,38 +2427,79 @@ const registerSettingAPIHandlers = () => {
         }));
 };
 
+// === DPI 自动适配 ===
+
+/**
+ * 平台级额外补偿系数，用于在 DPI 补偿之外按 sys.platform 做微调。
+ */
+const PLATFORM_ZOOM_COMPENSATION: Record<string, number> = {
+    openharmony: 0.85 // 鸿蒙设备 UI 渲染密度偏高，额外降低 15%
+};
+
+/**
+ * 根据屏幕 OS 级缩放系数计算 DPI 补偿系数。
+ * 参考基准为 scaleFactor=2.0（macOS Retina），此级别下 OS 已完成充分缩放，无需补偿。
+ * 当 OS 缩放低于 2.0 时，适度放大以保持不同设备上 GUI 物理大小基本一致。
+ */
+const computeDpiCompensation = (scaleFactor: number): number => {
+    if (scaleFactor >= 2.0) return 1.0;
+    // 补偿 = 2.0 / scaleFactor，限制在 [1.0, 1.5] 避免过度放大
+    return Math.max(1.0, Math.min(1.5, 2.0 / scaleFactor));
+};
+
+/** 获取窗口当前所在屏幕的 scaleFactor */
+const getWindowScaleFactor = (): number => {
+    try {
+        if (globalMainWindow) {
+            return screen.getDisplayMatching(globalMainWindow.getBounds()).scaleFactor;
+        }
+    } catch {
+        /* fall through */
+    }
+    return screen.getPrimaryDisplay().scaleFactor;
+};
+
+/** 读取用户配置的 scale_factor_auto 标志（默认 true） */
+const readAutoScaleEnabled = (): boolean => {
+    try {
+        const val = Setting.getInstance().getData().gui_config?.scale_factor_auto;
+        return val !== false;
+    } catch {
+        return true;
+    }
+};
+
+/** 读取用户配置的 scale_factor */
+const readUserScaleFactor = (): number => {
+    try {
+        const val = Setting.getInstance().getData().gui_config?.scale_factor;
+        return typeof val === 'number' && Number.isFinite(val) ? val : 1;
+    } catch {
+        return 1;
+    }
+};
+
+/** 计算实际应该应用的 zoom factor（用户偏好 × DPI 补偿 × 平台补偿） */
+const computeEffectiveZoom = (): number => {
+    const userScale = readUserScaleFactor();
+    if (!readAutoScaleEnabled()) return userScale;
+    const compensation = computeDpiCompensation(getWindowScaleFactor());
+    const platformCompensation = PLATFORM_ZOOM_COMPENSATION[process.platform as string] ?? 1;
+    return Math.max(0.5, Math.min(3.0, userScale * compensation * platformCompensation));
+};
+
+/** 将有效缩放系数应用到窗口并通知渲染进程 */
+const applyEffectiveZoomToWindow = () => {
+    if (!globalMainWindow) return;
+    const effective = computeEffectiveZoom();
+    globalMainWindow.webContents.setZoomFactor(effective);
+    safeSendToWebContents(globalMainWindow.webContents, 'display:scaleFactorChanged', effective);
+};
+
 const registerDisplayZoomHandlers = () => {
-    const readCurrentScale = () => {
-        try {
-            const val = Setting.getInstance().getData().gui_config?.scale_factor;
-            return typeof val === 'number' && Number.isFinite(val) ? val : 1;
-        } catch {
-            return 1;
-        }
-    };
-
-    const applyZoom = (factor: number) => {
-        if (!globalMainWindow) return;
-        if (!Number.isFinite(factor)) factor = 1;
-        const clamped = Math.max(0.5, Math.min(2.0, factor));
-        globalMainWindow.webContents.setZoomFactor(clamped);
-        try {
-            const currentData = Setting.getInstance().getData();
-            const rounded = Math.round(clamped * 10) / 10;
-            Setting.getInstance().setData({
-                ...currentData,
-                gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
-            });
-        } catch (err: any) {
-            logger.warn(`Failed to save zoom setting: ${err.message}`);
-            // 继续执行，不阻塞缩放功能
-        }
-        safeSendToWebContents(globalMainWindow.webContents, 'display:scaleFactorChanged', clamped);
-    };
-
     ipcMain.handle('display:getScaleFactor', () => {
         try {
-            return { status: 'ok', data: readCurrentScale() };
+            return { status: 'ok', data: readUserScaleFactor() };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2466,8 +2507,16 @@ const registerDisplayZoomHandlers = () => {
 
     ipcMain.handle('display:setScaleFactor', (event, factor) => {
         try {
-            applyZoom(factor);
-            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, factor)) };
+            if (!Number.isFinite(factor)) factor = 1;
+            const clamped = Math.max(0.5, Math.min(2.0, factor));
+            const rounded = Math.round(clamped * 10) / 10;
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({
+                ...currentData,
+                gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
+            });
+            applyEffectiveZoomToWindow();
+            return { status: 'ok', data: rounded };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2475,10 +2524,38 @@ const registerDisplayZoomHandlers = () => {
 
     ipcMain.handle('display:adjustScaleFactor', (event, delta) => {
         try {
-            const current = readCurrentScale();
+            const current = readUserScaleFactor();
             const next = Math.round((current + delta) * 10) / 10;
-            applyZoom(next);
-            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, next)) };
+            const clamped = Math.max(0.5, Math.min(2.0, next));
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({
+                ...currentData,
+                gui_config: { ...(currentData.gui_config || {}), scale_factor: clamped }
+            });
+            applyEffectiveZoomToWindow();
+            return { status: 'ok', data: clamped };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:getAutoScaleFactor', () => {
+        try {
+            return { status: 'ok', data: readAutoScaleEnabled() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:setAutoScaleFactor', (event, enabled: boolean) => {
+        try {
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({
+                ...currentData,
+                gui_config: { ...(currentData.gui_config || {}), scale_factor_auto: enabled }
+            });
+            applyEffectiveZoomToWindow();
+            return { status: 'ok', data: enabled };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2798,9 +2875,22 @@ const registerTray = () => {
 const initializeScreenAdaption = () => {
     const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
     logger.info(`屏幕显示参数: ${scaleFactor}`);
+
+    // 启动时应用有效缩放（包含 DPI 补偿）
+    applyEffectiveZoomToWindow();
+
+    // 页面加载完成后再次应用，避免加载期间 setZoomFactor 未生效
+    if (globalMainWindow) {
+        const wc = globalMainWindow.webContents;
+        if (wc.isLoadingMainFrame()) {
+            wc.once('did-finish-load', () => applyEffectiveZoomToWindow());
+        }
+    }
+
     screen.on('display-metrics-changed', (event, display, _changedMetrics) => {
         logger.info(`屏幕显示参数已更改: ${display.scaleFactor}`);
-        // 在此处重新计算并调整窗口布局
+        // DPI 变化时重新计算并应用缩放
+        applyEffectiveZoomToWindow();
     });
 };
 
@@ -3202,15 +3292,6 @@ async function startApplication(): Promise<void> {
 
         migrateFileMgrWorkspaceSettingsOnStartup();
 
-        // Restore saved zoom level
-        try {
-            const savedScale = Setting.getInstance().getData().gui_config?.scale_factor;
-            if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
-                globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
-            }
-        } catch {
-            /* ignore */
-        }
         p6.end();
 
         const p7 = startupTrace.createPhase('startup.ready.finalize');
