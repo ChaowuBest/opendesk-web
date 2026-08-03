@@ -175,6 +175,11 @@ import fsPromises from 'fs/promises';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
 import { initTempDir, closeTempDir } from './utils/temp.js';
+import {
+    getHarmonyBrowseRoots,
+    getHarmonyRuntimeEnvironment,
+    initializeHarmonyRuntimeEnvironment
+} from './utils/harmonyRuntime.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;
@@ -182,6 +187,7 @@ declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+initializeHarmonyRuntimeEnvironment();
 initTempDir();
 
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
@@ -246,18 +252,6 @@ app.commandLine.appendSwitch(
 // 启用 Windows 原生窗口遮挡检测（减少被遮挡时的绘制开销）
 if (process.platform === 'win32') {
     app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
-}
-
-// OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillmgr utils 等模块能找到可写数据目录
-if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
-    try {
-        const electronUserData = app.getPath('userData');
-        if (electronUserData) {
-            process.env.USER_DATA_PATH = electronUserData;
-        }
-    } catch {
-        // app.getPath 可能在 OpenHarmony 上不可用，后续 resolveWritableUserDataRoot 会做回退
-    }
 }
 
 const __dirname = import.meta.dirname;
@@ -2428,20 +2422,16 @@ const registerSettingAPIHandlers = () => {
                 // 支持虚拟根目录路径（用于 OpenHarmony 家目录 + 应用沙箱）
                 if (dirPath === '{OH_ROOT}') {
                     if ((process.platform as string) === 'openharmony') {
+                        const runtime = getHarmonyRuntimeEnvironment();
                         return {
                             status: 'ok',
-                            data: [
-                                {
-                                    name: '家目录',
-                                    path: '/storage/Users/currentUser',
-                                    isDirectory: true
-                                },
-                                {
-                                    name: '应用沙箱',
-                                    path: '/data/storage/el2/base/files',
-                                    isDirectory: true
-                                }
-                            ]
+                            data: runtime
+                                ? getHarmonyBrowseRoots(runtime).map((root) => ({
+                                      name: root.kind === 'userHome' ? '家目录' : '应用沙箱',
+                                      path: root.path,
+                                      isDirectory: true
+                                  }))
+                                : []
                         };
                     } else {
                         dirPath = '/';

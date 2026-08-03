@@ -12,6 +12,11 @@
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
+import {
+    getHarmonyBrowseRoots,
+    getHarmonyHomeDirectory,
+    getHarmonyRuntimeEnvironment
+} from '../main/utils/harmonyRuntime.js';
 
 /**
  * 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效。
@@ -1646,14 +1651,24 @@ if (shouldExposeMainWindowAPIs()) {
         window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
     });
 
-    // 暴露系统平台信息，用于 magic pointer 等功能的平台适配
+    const harmonyRuntime = getHarmonyRuntimeEnvironment();
+
+    // 暴露系统平台信息，用于 magic pointer、路径选择等功能的平台适配
     safeExposeInMainWorld('systemInfo', {
         platform: process.platform,
         isMac: process.platform === 'darwin',
         isWindows: process.platform === 'win32',
         isLinux: process.platform === 'linux',
         isOpenHarmony: process.platform === 'openharmony',
-        homePath: process.env.USERPROFILE || process.env.HOME || process.env.USER_DATA_PATH || ''
+        homePath: harmonyRuntime
+            ? getHarmonyHomeDirectory(harmonyRuntime)
+            : process.env.USERPROFILE || process.env.HOME || process.env.USER_DATA_PATH || '',
+        harmonyRuntime: harmonyRuntime
+            ? {
+                  ...harmonyRuntime,
+                  browseRoots: getHarmonyBrowseRoots(harmonyRuntime)
+              }
+            : null
     });
 
     // 设置加载错误通知 API

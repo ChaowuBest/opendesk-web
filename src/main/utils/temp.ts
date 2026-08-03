@@ -11,65 +11,50 @@
 
 import os from 'os';
 import fs from 'fs';
-import path from 'path';
-
-const OPENHARMONY_TMP_DIR_NAME = '.opendesk-tmp';
-
-function isOpenHarmony(): boolean {
-    return (process.platform as string) === 'openharmony';
-}
-
-function getOpenHarmonyTmpPath(): string {
-    return path.join('/storage/Users/currentUser', OPENHARMONY_TMP_DIR_NAME);
-}
+import { getHarmonyHomeDirectory, getHarmonyRuntimeEnvironment } from './harmonyRuntime.js';
 
 /**
  * 初始化临时目录。
- * 非 OpenHarmony 平台无需操作；OpenHarmony 上在家目录创建 .opendesk-tmp（若已存在则先删除）。
+ * 非 HarmonyOS 平台无需操作；HarmonyOS 使用 ArkTS 提供的应用沙箱临时目录。
  */
 export function initTempDir(): void {
-    if (!isOpenHarmony()) return;
-    const tmpPath = getOpenHarmonyTmpPath();
-    if (fs.existsSync(tmpPath)) {
-        fs.rmSync(tmpPath, { recursive: true, force: true });
-    }
-    fs.mkdirSync(tmpPath, { recursive: true });
+    const runtime = getHarmonyRuntimeEnvironment();
+    if (!runtime) return;
+    fs.mkdirSync(runtime.tempDir, { recursive: true });
 }
 
 /**
  * 清理临时目录。
- * 非 OpenHarmony 平台无需操作；OpenHarmony 上删除 .opendesk-tmp。
+ * HarmonyOS 的 tempDir 由系统管理，应用退出时不得删除该目录本身。
  */
 export function closeTempDir(): void {
-    if (!isOpenHarmony()) return;
-    const tmpPath = getOpenHarmonyTmpPath();
-    if (fs.existsSync(tmpPath)) {
-        fs.rmSync(tmpPath, { recursive: true, force: true });
-    }
+    // Intentionally empty. Callers still use this hook for other platforms.
 }
 
 /**
  * 获取系统临时目录。
- * 非 OpenHarmony 返回 os.tmpdir()；OpenHarmony 返回我们管理的 .opendesk-tmp 目录。
+ * 非 HarmonyOS 返回 os.tmpdir()；HarmonyOS 返回应用沙箱 Context.tempDir。
  */
 export function getTempDir(): string {
-    if (!isOpenHarmony()) {
+    const runtime = getHarmonyRuntimeEnvironment();
+    if (!runtime) {
         return os.tmpdir();
     }
-    const tmpPath = getOpenHarmonyTmpPath();
-    if (!fs.existsSync(tmpPath)) {
-        fs.mkdirSync(tmpPath, { recursive: true });
+    if (!fs.existsSync(runtime.tempDir)) {
+        fs.mkdirSync(runtime.tempDir, { recursive: true });
     }
-    return tmpPath;
+    return runtime.tempDir;
 }
 
 /**
  * 获取用户家目录（跨平台）。
- * OpenHarmony 返回 /storage/Users/currentUser；其它平台使用 os.homedir()。
+ * HarmonyOS PC 返回 userHomeDir；tablet 返回 appDataDir，避免暴露或写入 PC 家目录。
+ * 其它平台使用 os.homedir()。
  */
 export function getHomeDir(): string {
-    if (isOpenHarmony()) {
-        return '/storage/Users/currentUser';
+    const runtime = getHarmonyRuntimeEnvironment();
+    if (runtime) {
+        return getHarmonyHomeDirectory(runtime);
     }
     return os.homedir();
 }
@@ -89,7 +74,7 @@ export function getAllTempDirs(): string[] {
 
     if (process.platform === 'darwin') {
         dirs.push('/tmp', '/private/tmp');
-    } else if (process.platform !== 'win32') {
+    } else if ((process.platform as string) !== 'openharmony' && process.platform !== 'win32') {
         dirs.push('/tmp');
     }
 
