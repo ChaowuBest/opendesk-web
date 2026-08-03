@@ -35,8 +35,6 @@ export const MEMORY_REVIEW_TASK_NAME = '[记忆更新] 长期记忆';
 const MAX_REVIEW_TRANSCRIPT_CHARS = 24_000;
 
 let reviewHookRegistered = false;
-let reviewTaskStarting = false;
-let reviewTaskPromise: Promise<void> | null = null;
 
 export interface RegisterMemoryReviewHookOptions {
     taskManagerState: TaskManagerState;
@@ -76,10 +74,18 @@ function truncateFromTail(content: string, maxChars: number): string {
     return `[前文过长，已仅保留末尾 ${maxChars} 字符]\n${content.slice(-maxChars)}`;
 }
 
-export function formatConversationForMemoryReview(task: TaskState, startMessageIndex: number): string {
+export function formatConversationForMemoryReview(
+    task: TaskState,
+    startMessageIndex: number,
+    endMessageIndex?: number
+): string {
     const start = Math.max(0, Math.min(startMessageIndex, task.chat_context.messages.length));
+    const end = Math.max(
+        start,
+        Math.min(endMessageIndex ?? task.chat_context.messages.length, task.chat_context.messages.length)
+    );
     const lines = task.chat_context.messages
-        .slice(start)
+        .slice(start, end)
         .map(formatChatMessage)
         .filter((line): line is string => line !== null);
 
@@ -169,13 +175,14 @@ ${transcript}
 export async function startMemoryReviewTask(
     sourceTask: TaskState,
     startMessageIndex: number,
-    options: RegisterMemoryReviewHookOptions
+    options: RegisterMemoryReviewHookOptions,
+    endMessageIndex?: number
 ): Promise<TaskState | null> {
     if (sourceTask.parent_id !== null || sourceTask.internal === true || isMemoryReviewTask(sourceTask)) {
         return null;
     }
 
-    const transcript = formatConversationForMemoryReview(sourceTask, startMessageIndex);
+    const transcript = formatConversationForMemoryReview(sourceTask, startMessageIndex, endMessageIndex);
     const currentPortrait = await readUserPortrait();
     const workspace = sourceTask.getWorkspace();
     const registry = FactorialMemoryStore.getInstance(workspace || undefined);
@@ -208,41 +215,90 @@ export async function startMemoryReviewTask(
     return reviewTask;
 }
 
-async function runMemoryReviewTask(
+export interface MemoryReviewRequest {
+    sourceTask: TaskState;
+    startMessageIndex: number;
+    endMessageIndex: number;
+}
+
+export type MemoryReviewTaskStarter = (
     sourceTask: TaskState,
     startMessageIndex: number,
-    options: RegisterMemoryReviewHookOptions
-): Promise<TaskState | null> {
-    if (
-        reviewTaskStarting ||
-        reviewTaskPromise ||
-        sourceTask.parent_id !== null ||
-        sourceTask.internal === true ||
-        isMemoryReviewTask(sourceTask)
-    ) {
-        return null;
-    }
+    options: RegisterMemoryReviewHookOptions,
+    endMessageIndex?: number
+) => Promise<TaskState | null>;
 
-    reviewTaskStarting = true;
-    try {
-        const reviewTask = await startMemoryReviewTask(sourceTask, startMessageIndex, options);
-        if (!reviewTask) {
-            return null;
+export class MemoryReviewQueue {
+    private readonly pendingRequests: MemoryReviewRequest[] = [];
+    private readonly pendingRequestsByTaskId = new Map<string, MemoryReviewRequest>();
+    private processingPromise: Promise<void> | null = null;
+
+    constructor(
+        private readonly options: RegisterMemoryReviewHookOptions,
+        private readonly startReviewTask: MemoryReviewTaskStarter = startMemoryReviewTask
+    ) {}
+
+    enqueue(sourceTask: TaskState, startMessageIndex: number): boolean {
+        if (sourceTask.parent_id !== null || sourceTask.internal === true || isMemoryReviewTask(sourceTask)) {
+            return false;
         }
 
-        reviewTaskPromise = (async () => {
+        const endMessageIndex = sourceTask.chat_context.messages.length;
+        const existingRequest = this.pendingRequestsByTaskId.get(sourceTask.task_id);
+        if (existingRequest) {
+            existingRequest.startMessageIndex = Math.min(existingRequest.startMessageIndex, startMessageIndex);
+            existingRequest.endMessageIndex = Math.max(existingRequest.endMessageIndex, endMessageIndex);
+            return true;
+        }
+
+        const request: MemoryReviewRequest = {
+            sourceTask,
+            startMessageIndex,
+            endMessageIndex
+        };
+        this.pendingRequests.push(request);
+        this.pendingRequestsByTaskId.set(sourceTask.task_id, request);
+        this.ensureProcessing();
+        return true;
+    }
+
+    async waitUntilIdle(): Promise<void> {
+        while (this.processingPromise) {
+            await this.processingPromise;
+        }
+    }
+
+    private ensureProcessing(): void {
+        if (this.processingPromise) {
+            return;
+        }
+        this.processingPromise = this.processPendingRequests().finally(() => {
+            this.processingPromise = null;
+            if (this.pendingRequests.length > 0) {
+                this.ensureProcessing();
+            }
+        });
+    }
+
+    private async processPendingRequests(): Promise<void> {
+        while (this.pendingRequests.length > 0) {
+            const request = this.pendingRequests.shift()!;
+            this.pendingRequestsByTaskId.delete(request.sourceTask.task_id);
+
             try {
-                await reviewTask.waitUntilFinished(undefined, true);
+                const reviewTask = await this.startReviewTask(
+                    request.sourceTask,
+                    request.startMessageIndex,
+                    this.options,
+                    request.endMessageIndex
+                );
+                if (reviewTask) {
+                    await reviewTask.waitUntilFinished(undefined, true);
+                }
             } catch (err) {
                 logger.warn(`memory review task failed: ${err}`);
-            } finally {
-                reviewTaskPromise = null;
             }
-        })();
-
-        return reviewTask;
-    } finally {
-        reviewTaskStarting = false;
+        }
     }
 }
 
@@ -252,7 +308,6 @@ export function registerMemoryReviewHook(options: RegisterMemoryReviewHookOption
     }
     reviewHookRegistered = true;
 
-    HookRegistry.onTaskReview(async (task, startMessageIndex) => {
-        return (await runMemoryReviewTask(task, startMessageIndex, options)) !== null;
-    });
+    const reviewQueue = new MemoryReviewQueue(options);
+    HookRegistry.onTaskReview((task, startMessageIndex) => reviewQueue.enqueue(task, startMessageIndex));
 }

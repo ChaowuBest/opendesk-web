@@ -637,7 +637,9 @@ export class TaskState {
         if (this.parent_id !== null) {
             return;
         }
-        this._taskReviewStartMessageIndex = this.chat_context.messages.length;
+        if (!this._taskReviewActive) {
+            this._taskReviewStartMessageIndex = this.chat_context.messages.length;
+        }
         this._taskReviewActive = true;
         this.recordTaskMessageActivityForReview();
     }

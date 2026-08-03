@@ -219,9 +219,9 @@ export class HookRegistry {
     /**
      * 注册 `onTaskReview` 钩子。
      *
-     * 触发时机：用户手动触发"审查任务"操作时。
+     * 触发时机：任务达到空闲回顾阈值，或用户手动触发"审查任务"操作时。
      * 回调签名：`(task: TaskState, start_message_index: number) => boolean | void | Promise<boolean | void>`
-     * - 返回 `true` 表示该钩子已启动了审查流程（如 review agent）。
+     * - 返回 `true` 表示该钩子已接受审查请求，审查流程可能已启动或正在排队。
      *
      * 典型用途：为任务提供自动审查 / 代码审查能力。
      */
