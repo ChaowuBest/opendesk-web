@@ -338,6 +338,7 @@ async function ensureServerTaskHarness(tms: any, task: any, workspace = getTaskW
     task.workspace = workspace;
     task.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
     task.interactionToolset = createAskUserToolset(ServerQuestionBroker.getInstance());
+    registerServerSubTaskLifecycle(task);
     await ensureMcpWorkspace(workspace);
 
     if (agentChanged || workspaceChanged || !task.chat_context?.system_prompt) {
@@ -390,6 +391,127 @@ class ServerTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     send(chunkUpdate: TaskUpdateChunk) {
         this.onUpdate(chunkUpdate);
     }
+}
+
+const _serverSubTaskLifecycleParents = new WeakSet<object>();
+const _serverSubTaskLifecycleChildren = new WeakSet<object>();
+
+function getLastAssistantError(task: any): string | undefined {
+    const lastMessage = task.chat_context?.lastMessage?.();
+    if (!lastMessage || lastMessage.role !== 'assistant' || !Array.isArray(lastMessage.content)) {
+        return undefined;
+    }
+    const errorPart = lastMessage.content.find((part: any) => part?.type === 'error');
+    if (!errorPart) return undefined;
+    return [errorPart.title, errorPart.message]
+        .filter((value) => typeof value === 'string' && value.length > 0)
+        .join(': ');
+}
+
+function publishCompletedChildMessage(
+    task: any,
+    sessionID: string,
+    workspace: string,
+    parentUserMessageID: string,
+    modelInfo: OpenCodeModelInfo
+): void {
+    const lastMessageIndex = task.chat_context.messages.length - 1;
+    const lastMessage = task.chat_context.messages[lastMessageIndex] as any;
+    if (!lastMessage || lastMessage.role !== 'assistant') return;
+
+    const resolvedParentUserMessageID =
+        parentUserMessageID ||
+        getParentUserMessageIdForIndex(task.chat_context.messages as any[], lastMessageIndex, sessionID);
+    const formatted = messageToApiFormat(
+        lastMessage,
+        lastMessageIndex,
+        sessionID,
+        workspace,
+        resolvedParentUserMessageID,
+        { modelInfo }
+    );
+    (formatted.info as any).time = {
+        ...((formatted.info as any).time ?? {}),
+        completed: task.finished_at?.getTime?.() ?? Date.now()
+    };
+    publishCompletedAssistantMessage(sessionID, workspace, formatted);
+}
+
+function attachServerChildSession(child: any): void {
+    if (_serverSubTaskLifecycleChildren.has(child)) return;
+    _serverSubTaskLifecycleChildren.add(child);
+    registerServerSubTaskLifecycle(child);
+    child.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
+
+    const sessionID = toExternalId(child.task_id);
+    const workspace = getTaskWorkspace(child);
+    const modelInfo = getOpenCodeModelInfo(child);
+    EventBus.publish({
+        type: 'session.created',
+        directory: workspace,
+        properties: {
+            sessionID,
+            info: taskToSessionInfo(child, workspace, child.workspaceID)
+        }
+    });
+    publishSessionStatus(sessionID, workspace, { type: 'busy' }, child);
+
+    let parentUserMessageID = '';
+    let finalized = false;
+    let subscriptionID: string | undefined;
+    const finalize = () => {
+        if (finalized) return;
+        finalized = true;
+        if (subscriptionID) {
+            child.removeSubscriber(subscriptionID);
+        }
+        publishCompletedChildMessage(child, sessionID, workspace, parentUserMessageID, modelInfo);
+        const error = getLastAssistantError(child);
+        if (error) {
+            EventBus.publish({
+                type: 'session.error',
+                directory: workspace,
+                properties: { sessionID, error }
+            });
+        }
+        EventBus.publish({
+            type: 'session.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                info: taskToSessionInfo(child, workspace, child.workspaceID)
+            }
+        });
+        publishSessionStatus(sessionID, workspace, { type: 'idle' }, child);
+    };
+
+    const subscriber = new ServerTaskUpdateSubscriber((chunk) => {
+        const publishedUserMessageID = publishChunkEvents(
+            sessionID,
+            chunk,
+            parentUserMessageID,
+            workspace,
+            modelInfo
+        );
+        if (publishedUserMessageID) {
+            parentUserMessageID = publishedUserMessageID;
+        }
+    });
+    subscriptionID = child.addSubscriber(subscriber);
+    void child.waitUntilFinished(undefined, false).then(finalize, (err: unknown) => {
+        EventBus.publish({
+            type: 'session.error',
+            directory: workspace,
+            properties: { sessionID, error: err instanceof Error ? err.message : String(err) }
+        });
+        finalize();
+    });
+}
+
+export function registerServerSubTaskLifecycle(task: any): void {
+    if (_serverSubTaskLifecycleParents.has(task) || typeof task.onSubTaskCreated !== 'function') return;
+    _serverSubTaskLifecycleParents.add(task);
+    task.onSubTaskCreated((child: any) => attachServerChildSession(child));
 }
 
 async function waitUntilServerTaskFinished(task: any, callback?: (chunk: TaskUpdateChunk) => void): Promise<void> {
@@ -607,6 +729,20 @@ function partToMessagePart(
         const status = tc.status || p.status;
         const outputValue = tc.result ?? p.result ?? tc.result_object ?? p.result_object;
         const resultObject = tc.result_object ?? p.result_object;
+        const decodedOutput = typeof outputValue === 'string' ? tryParseJson(outputValue) : outputValue;
+        const completionAccepted =
+            (isRecord(decodedOutput) && decodedOutput.accepted === true) ||
+            (isRecord(resultObject) && resultObject.accepted === true);
+        if (
+            (status === 'success' || completionAccepted) &&
+            ['planning-attemptcompletion', 'attemptcompletion'].includes(toolName.toLowerCase())
+        ) {
+            return {
+                ...base,
+                type: 'text',
+                text: stringInput(input, ['message', 'result']) ?? ''
+            };
+        }
         const output = stringifyToolOutput(outputValue);
         const mappedTool = mapOpenDeskToolForOpenCode(toolName, input, sessionID, outputValue, resultObject);
         return {
@@ -1432,14 +1568,15 @@ export function SessionRoutes() {
 
         // 初始化 harness 和 system prompt
         await ensureServerTaskHarness(tms, task, workspace);
+        const info = taskToSessionInfo(task, workspace, workspaceID);
 
         EventBus.publish({
             type: 'session.created',
             directory: workspace,
-            properties: { sessionID: toExternalId(task.task_id) }
+            properties: { sessionID: toExternalId(task.task_id), info }
         });
 
-        return c.json(taskToSessionInfo(task, workspace, workspaceID));
+        return c.json(info);
     });
 
     // GET /session/:sessionID - 获取会话详情
@@ -1479,7 +1616,14 @@ export function SessionRoutes() {
         }
 
         tms.save();
-        return c.json(taskToSessionInfo(task, getRequestOrTaskWorkspace(c, task), getRequestWorkspaceID(c)));
+        const workspace = getRequestOrTaskWorkspace(c, task);
+        const info = taskToSessionInfo(task, workspace, getRequestWorkspaceID(c));
+        EventBus.publish({
+            type: 'session.updated',
+            directory: workspace,
+            properties: { sessionID, info }
+        });
+        return c.json(info);
     });
 
     // DELETE /session/:sessionID - 删除会话
@@ -1494,6 +1638,7 @@ export function SessionRoutes() {
         }
 
         const workspace = getTaskWorkspace(task);
+        const info = taskToSessionInfo(task, workspace, task.workspaceID);
         const removedTaskIds = tms.removeTask(taskId);
         if (removedTaskIds.length === 0) {
             return c.json({ error: 'Session not found' }, 404);
@@ -1502,7 +1647,7 @@ export function SessionRoutes() {
         EventBus.publish({
             type: 'session.deleted',
             directory: workspace,
-            properties: { sessionID }
+            properties: { sessionID, info }
         });
 
         return c.json(true);
