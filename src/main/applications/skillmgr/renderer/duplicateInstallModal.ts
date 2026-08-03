@@ -11,76 +11,32 @@
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
-
-const ANIM_DURATION_OUT = 180;
-const CONFIRM_MODAL_STYLES = `
-    .od-confirm-modal-overlay {
-        position: fixed; inset: 0; z-index: 99999;
-        background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
-        display: flex; align-items: center; justify-content: center;
-        animation: od-modal-fade-in 250ms ease-out forwards;
-    }
-    .od-confirm-modal-overlay.od-modal-leaving {
-        animation: od-modal-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
-    }
-    .od-confirm-modal-card {
-        background: #fff; border-radius: 20px;
-        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
-        width: 400px; max-width: 92vw; overflow: hidden;
-        animation: od-modal-scale-in 250ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
-    }
-    .od-confirm-modal-overlay.od-modal-leaving .od-confirm-modal-card {
-        animation: od-modal-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
-    }
-    .od-confirm-modal-body { padding: 28px; }
-    .od-confirm-modal-header {
-        display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
-    }
-    .od-confirm-modal-icon {
-        width: 42px; height: 42px; border-radius: 12px;
-        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .od-confirm-modal-icon i { font-size: 18px; }
-    .od-confirm-modal-title {
-        font-size: var(--fs-xl); font-weight: 700; color: #1d1d1f; line-height: 1.3;
-    }
-    .od-confirm-modal-message {
-        font-size: var(--fs-lg); color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
-    }
-    .od-confirm-modal-footer {
-        display: flex; justify-content: flex-end; gap: 10px;
-        padding-top: 16px; border-top: 1px solid #F0F0F0;
-    }
-    .od-confirm-btn {
-        padding: 10px 24px; border-radius: 12px; border: none;
-        font-size: var(--fs-lg); font-weight: 600; cursor: pointer; transition: all 0.15s;
-    }
-    .od-confirm-btn:active { transform: scale(0.97); }
-    .od-confirm-btn-cancel {
-        background: #fff; color: #1d1d1f; border: 1.5px solid #E5E5EA;
-    }
-    .od-confirm-btn-cancel:hover { background: #F5F5F7; }
-    .od-confirm-btn-danger {
-        background: #DC2626; color: #fff;
-    }
-    .od-confirm-btn-danger:hover { background: #B91C1C; }
-
-    @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
-    @keyframes od-modal-scale-in {
-        from { opacity: 0; transform: scale(0.95) translateY(10px); }
-        to { opacity: 1; transform: scale(1) translateY(0); }
-    }
-    @keyframes od-modal-scale-out {
-        from { opacity: 1; transform: scale(1) translateY(0); }
-        to { opacity: 0; transform: scale(0.95) translateY(10px); }
-    }
-`;
+import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from '../../../../renderer/components/confirmModal.ts';
 
 export interface DuplicateInstallResult {
     action: 'overwrite' | 'install-new' | 'cancel';
     customName?: string;
 }
+
+const DUPLICATE_EXTRA_CSS = `
+.od-duplicate-input-section {
+    max-height: 0; overflow: hidden; opacity: 0;
+    transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
+}
+.od-duplicate-input-section.od-visible { max-height: 80px; opacity: 1; margin-top: 12px; }
+.od-duplicate-input-label { font-size: 11.5px; color: var(--mc-ink2); font-weight: 500; margin-bottom: 5px; }
+.od-duplicate-input {
+    width: 100%; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--mc-line); font-size: 12px; font-family: inherit;
+    outline: none; transition: border-color 0.15s; box-sizing: border-box;
+    background: var(--mc-bg); color: var(--mc-ink2);
+}
+.od-duplicate-input:focus { border-color: var(--mc-accent); }
+.od-duplicate-input::placeholder { color: var(--mc-ink4); }
+`;
+
+const CLOSE_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 /**
  * 重复安装技能时的选择弹窗。
@@ -102,43 +58,30 @@ export function showDuplicateInstallModal(options: {
 
         const overlay = document.createElement('div');
         overlay.className = 'od-confirm-modal-overlay';
+        if (detectDarkMode(mountTarget)) {
+            overlay.classList.add('od-modal-dark');
+        }
         overlay.innerHTML = `
-<style>
-${CONFIRM_MODAL_STYLES}
-    .od-confirm-modal-message { margin-bottom: 16px; }
-    .od-duplicate-input-section {
-        margin-bottom: 22px; max-height: 0; overflow: hidden; opacity: 0;
-        transition: max-height 0.25s ease, opacity 0.2s ease, margin-bottom 0.25s ease;
-    }
-    .od-duplicate-input-section.od-visible { max-height: 80px; opacity: 1; }
-    .od-duplicate-input-label { font-size: var(--fs-base); color: #6B6B6B; margin-bottom: 8px; }
-    .od-duplicate-input {
-        width: 100%; padding: 10px 14px; border-radius: 10px;
-        border: 1.5px solid #E5E5EA; font-size: var(--fs-lg); font-family: inherit;
-        outline: none; transition: border-color 0.15s; box-sizing: border-box;
-    }
-    .od-duplicate-input:focus { border-color: #1d1d1f; }
-    .od-confirm-btn-secondary {
-        background: #F0F5FF; color: #2563EB; border: 1.5px solid #BFDBFE;
-    }
-    .od-confirm-btn-secondary:hover { background: #DBEAFE; }
-</style>
+<style>${MODAL_CSS}${DUPLICATE_EXTRA_CSS}</style>
 <div class="od-confirm-modal-card">
-    <div class="od-confirm-modal-body">
-        <div class="od-confirm-modal-header">
-            <div class="od-confirm-modal-icon" style="background:${pastel.bg};color:${pastel.text};font-size:18px;font-weight:700">${escapeHtml(initial)}</div>
+    <div class="od-confirm-modal-banner warn">
+        <div class="od-confirm-modal-icon" style="background:${pastel.bg};color:${pastel.text};font-size:17px;font-weight:700">${escapeHtml(initial)}</div>
+        <div class="od-confirm-modal-banner-text">
             <div class="od-confirm-modal-title">技能已存在</div>
         </div>
-        <div class="od-confirm-modal-message">技能「<b>${escapeHtml(skillName)}</b>」已安装，请选择处理方式。</div>
+        <button class="od-confirm-modal-close" data-action="cancel" aria-label="关闭">${CLOSE_SVG}</button>
+    </div>
+    <div class="od-confirm-modal-body">
+        技能「<b>${escapeHtml(skillName)}</b>」已安装，请选择处理方式。
         <div class="od-duplicate-input-section" id="od-dup-input-section">
-            <div class="od-duplicate-input-label">新技能名称：</div>
+            <div class="od-duplicate-input-label">新技能名称</div>
             <input type="text" class="od-duplicate-input" id="od-dup-input" value="${escapeHtml(defaultCustomName)}" />
         </div>
-        <div class="od-confirm-modal-footer">
-            <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">取消</button>
-            <button class="od-confirm-btn od-confirm-btn-secondary" data-action="install-new">以新名称安装</button>
-            <button class="od-confirm-btn od-confirm-btn-danger" data-action="overwrite">覆盖安装</button>
-        </div>
+    </div>
+    <div class="od-confirm-modal-footer">
+        <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">取消</button>
+        <button class="od-confirm-btn od-confirm-btn-cancel" data-action="install-new">以新名称安装</button>
+        <button class="od-confirm-btn od-confirm-btn-danger" data-action="overwrite">覆盖安装</button>
     </div>
 </div>`;
 
@@ -150,7 +93,7 @@ ${CONFIRM_MODAL_STYLES}
             setTimeout(() => {
                 overlay.remove();
                 resolve(result);
-            }, ANIM_DURATION_OUT);
+            }, MODAL_ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
         };
 
@@ -199,8 +142,8 @@ ${CONFIRM_MODAL_STYLES}
             close({ action: 'overwrite' });
         });
 
-        overlay.querySelector('[data-action="cancel"]')!.addEventListener('click', () => {
-            close({ action: 'cancel' });
+        overlay.querySelectorAll('[data-action="cancel"]').forEach((btn) => {
+            btn.addEventListener('click', () => close({ action: 'cancel' }));
         });
 
         mountTarget.appendChild(overlay);

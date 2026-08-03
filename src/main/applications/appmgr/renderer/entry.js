@@ -3,6 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { renderIcon } from '../../../../renderer/components/confirmModal';
+
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 
 function getAppMgrAPI() {
@@ -302,9 +304,30 @@ const STYLE = `
 .version-item.current { border-color: #bcd7ff; background: #f4f8ff; }
 .version-name { font-weight: 700; font-size: 12px; }
 .version-meta { color: #999; font-size: 11px; margin-top: 3px; }
-.modal-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.18); align-items: center; justify-content: center; backdrop-filter: blur(6px); }
+.modal-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.3); align-items: center; justify-content: center; backdrop-filter: blur(6px); }
 .modal-overlay.visible { display: flex; }
-.modal { width: 460px; max-width: calc(100vw - 32px); background: #fff; border-radius: 16px; padding: 22px; box-shadow: 0 24px 80px rgba(0,0,0,.2); }
+.modal { width: 460px; max-width: calc(100vw - 32px); background: #fff; border-radius: 16px; padding: 0; box-shadow: 0 24px 80px rgba(0,0,0,.2); overflow: hidden; }
+.modal-banner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #EBF1FB;
+}
+.modal-banner-icon {
+    width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; background: #4267B2;
+}
+.modal-banner-icon i { color: #fff; font-size: 16px; }
+.modal-banner-icon svg { width: 16px; height: 16px; color: #fff; }
+.modal-banner-text { flex: 1; min-width: 0; }
+.modal-banner-title { font-size: 15px; font-weight: 700; color: #1d1d1f; }
+.modal-banner-close {
+    width: 26px; height: 26px; border-radius: 7px;
+    border: none; background: rgba(0,0,0,0.06); color: #555; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: all 0.15s;
+}
+.modal-banner-close svg { width: 14px; height: 14px; }
+.modal-banner-close:hover { background: rgba(0,0,0,0.12); color: #333; }
+.modal-body { padding: 16px 24px; }
 .modal h3 { margin: 0 0 14px; font-size: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .btn { border: 1px solid rgba(0,0,0,.08); border-radius: 9px; background: #fff; padding: 8px 14px; font: inherit; cursor: pointer; }
@@ -385,7 +408,27 @@ const STYLE = `
 }
 :host-context(html[data-theme='dark']) .modal-overlay,
 :host([data-theme='dark']) .modal-overlay {
-    background: rgba(0,0,0,0.48);
+    background: rgba(0,0,0,0.45);
+}
+:host-context(html[data-theme='dark']) .modal-banner,
+:host([data-theme='dark']) .modal-banner {
+    background: rgba(122,162,232,0.16);
+}
+:host-context(html[data-theme='dark']) .modal-banner-icon,
+:host([data-theme='dark']) .modal-banner-icon {
+    background: #7AA2E8;
+}
+:host-context(html[data-theme='dark']) .modal-banner-title,
+:host([data-theme='dark']) .modal-banner-title {
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .modal-banner-close,
+:host([data-theme='dark']) .modal-banner-close {
+    background: rgba(255,255,255,0.08); color: #ccc;
+}
+:host-context(html[data-theme='dark']) .modal-banner-close:hover,
+:host([data-theme='dark']) .modal-banner-close:hover {
+    background: rgba(255,255,255,0.15); color: #fff;
 }
 :host-context(html[data-theme='dark']) .menu-item,
 :host([data-theme='dark']) .menu-item {
@@ -924,7 +967,12 @@ class AppMgrEntryWidget extends HTMLElement {
         return `
             <div class="modal-overlay ${this.createDialogVisible ? 'visible' : ''}">
                 <div class="modal">
-                    <h3>创建应用</h3>
+                    <div class="modal-banner">
+                        <div class="modal-banner-icon">${renderIcon('fa-plus')}</div>
+                        <div class="modal-banner-text"><div class="modal-banner-title">创建应用</div></div>
+                        <button class="modal-banner-close" id="create-dialog-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                    </div>
+                    <div class="modal-body">
                     <div class="field">
                         <label>包名</label>
                         <input id="createBundleInput" placeholder="abc.def" value="${escapeHtml(this.createForm.bundleName)}">
@@ -941,6 +989,7 @@ class AppMgrEntryWidget extends HTMLElement {
                     <div class="modal-actions">
                         <button class="btn" data-action="cancel-create">取消</button>
                         <button class="btn primary" data-action="confirm-create">创建</button>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -970,6 +1019,12 @@ class AppMgrEntryWidget extends HTMLElement {
         });
         this.shadowRoot.querySelector('[data-action="import"]')?.addEventListener('click', () => this.importApp());
         this.shadowRoot.querySelector('[data-action="cancel-create"]')?.addEventListener('click', () => {
+            this.createDialogVisible = false;
+            this.status = '';
+            this.resetCreateForm();
+            this.render();
+        });
+        this.shadowRoot.querySelector('#create-dialog-close')?.addEventListener('click', () => {
             this.createDialogVisible = false;
             this.status = '';
             this.resetCreateForm();

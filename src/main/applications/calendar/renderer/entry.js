@@ -272,16 +272,38 @@ const CALENDAR_CSS = `
     animation: cal-fade-out 0.18s ease-in forwards;
 }
 .cal-modal-card {
-    background: #fff; border-radius: 20px;
+    background: #fff; border-radius: 16px;
     box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 0 1px rgba(0,0,0,0.1);
     width: 460px; max-width: 92vw; max-height: 85vh; overflow-y: auto;
     animation: cal-scale-in 0.25s cubic-bezier(0.23, 1, 0.32, 1);
 }
+.cal-modal-banner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.cal-modal-banner-info { background: #EBF1FB; }
+.cal-modal-banner-icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.cal-modal-banner-info .cal-modal-banner-icon { background: #4267B2; }
+.cal-modal-banner-icon i, .cal-modal-banner-icon svg { color: #fff; font-size: 16px; }
+.cal-modal-banner-text { flex: 1; min-width: 0; }
+.cal-modal-banner-title { font-size: 15px; font-weight: 700; color: #1d1d1f; }
+.cal-modal-banner-subtitle { font-size: 11px; color: #86868B; }
+.cal-modal-banner-close {
+    width: 26px; height: 26px; border-radius: 7px;
+    border: none; background: rgba(0,0,0,0.06); color: #555;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all 0.15s;
+}
+.cal-modal-banner-close:hover { background: rgba(0,0,0,0.12); color: #333; }
+.cal-modal-banner-close svg { width: 14px; height: 14px; }
 .cal-modal-bg.leaving .cal-modal-card {
     animation: cal-scale-out 0.18s ease-in forwards;
 }
 .cal-input {
-    width: 100%; padding: 10px 14px; border-radius: 10px; border: 1.5px solid #E5E5EA;
+    width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid #E5E5EA;
     background: #FAFAFA; font-size: 14px; color: #1d1d1f;
     outline: none; transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -296,14 +318,14 @@ const CALENDAR_CSS = `
 }
 .cal-select:focus { border-color: #007AFF; box-shadow: 0 0 0 3px rgba(0,122,255,0.12); background: #fff; }
 .cal-btn-primary {
-    padding: 10px 24px; border-radius: 12px; border: none; font-size: 14px; font-weight: 600;
-    background: #1d1d1f; color: white; cursor: pointer; transition: all 0.15s;
+    padding: 7px 16px; border-radius: 8px; border: none; font-size: 12.5px; font-weight: 600;
+    background: #DF4436; color: white; cursor: pointer; transition: all 0.15s;
 }
-.cal-btn-primary:hover { background: #333; }
+.cal-btn-primary:hover { background: #C43A2E; }
 .cal-btn-primary:active { transform: scale(0.97); }
 .cal-btn-secondary {
-    padding: 10px 24px; border-radius: 12px; border: 1.5px solid #E5E5EA;
-    font-size: 14px; font-weight: 500; background: #fff; color: #1d1d1f;
+    padding: 7px 16px; border-radius: 8px; border: 1.5px solid #E5E5EA;
+    font-size: 12.5px; font-weight: 500; background: #fff; color: #1d1d1f;
     cursor: pointer; transition: all 0.15s;
 }
 .cal-btn-secondary:hover { background: #F5F5F7; }
@@ -513,14 +535,14 @@ const CALENDAR_CSS = `
 
 /* ---- Drag confirm modal ---- */
 .cal-drag-icon-wrap {
-    width: 40px; height: 40px; border-radius: 12px; background: #EEF2FF;
+    width: 36px; height: 36px; border-radius: 10px; background: #4267B2;
     display: flex; align-items: center; justify-content: center;
 }
 .cal-drag-icon {
-    color: #6366F1; font-size: 16px;
+    color: #fff; font-size: 16px;
 }
 .cal-drag-title {
-    font-size: 16px; font-weight: 700; color: #1d1d1f;
+    font-size: 15px; font-weight: 700; color: #1d1d1f;
 }
 .cal-drag-subject {
     font-size: 14px; font-weight: 600; color: #1d1d1f; margin-bottom: 12px;
@@ -696,11 +718,29 @@ const CALENDAR_CSS = `
     background: rgba(255,255,255,0.08);
 }
 [data-theme="dark"] .cal-modal-bg {
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.45);
 }
 [data-theme="dark"] .cal-modal-card {
-    background: #2C2C2E;
+    background: #2A2826;
     box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1);
+}
+[data-theme="dark"] .cal-modal-banner-info {
+    background: rgba(122,162,232,0.16);
+}
+[data-theme="dark"] .cal-modal-banner-info .cal-modal-banner-icon {
+    background: #7AA2E8;
+}
+[data-theme="dark"] .cal-modal-banner-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-modal-banner-subtitle {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-modal-banner-close {
+    background: rgba(255,255,255,0.08); color: #ccc;
+}
+[data-theme="dark"] .cal-modal-banner-close:hover {
+    background: rgba(255,255,255,0.15); color: #fff;
 }
 [data-theme="dark"] .cal-modal-title {
     color: #EBEBF0;
@@ -749,20 +789,19 @@ const CALENDAR_CSS = `
     background: #48484A;
 }
 [data-theme="dark"] .cal-btn-primary {
-    background: #007AFF;
-    color: #fff;
+    background: #E85A5A; color: #fff;
 }
 [data-theme="dark"] .cal-btn-primary:hover {
-    background: #0066CC;
+    background: #D04A4A;
 }
 [data-theme="dark"] .cal-left-month-badge {
     background: #FF453A;
 }
 [data-theme="dark"] .cal-drag-icon-wrap {
-    background: rgba(99,102,241,0.15);
+    background: rgba(122,162,232,0.16);
 }
 [data-theme="dark"] .cal-drag-icon {
-    color: #818CF8;
+    color: #7AA2E8;
 }
 [data-theme="dark"] .cal-drag-title {
     color: #EBEBF0;
@@ -1925,13 +1964,19 @@ class CalendarEntryWidget extends HTMLElement {
         modal.innerHTML = `
         <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
             <div class="cal-modal-card">
-                <div style="padding:28px;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-                        <h3 class="cal-modal-title">${isEdit ? '修改日程' : '添加日程'}</h3>
-                        <button id="cal-modal-close" class="cal-toolbar-btn" style="width:32px;height:32px;">
-                            <i class="fa-solid fa-xmark" style="font-size:14px;"></i>
-                        </button>
+                <div class="cal-modal-banner cal-modal-banner-info">
+                    <div class="cal-modal-banner-icon">
+                        <i class="fa-solid fa-calendar-plus"></i>
                     </div>
+                    <div class="cal-modal-banner-text">
+                        <div class="cal-modal-banner-title">${isEdit ? '修改日程' : '添加日程'}</div>
+                        <div class="cal-modal-banner-subtitle">填写日程信息</div>
+                    </div>
+                    <button id="cal-modal-close" class="cal-modal-banner-close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div style="padding:16px 24px;">
 
                     <div style="display:flex;flex-direction:column;gap:18px;">
                         <div>
@@ -2364,13 +2409,18 @@ class CalendarEntryWidget extends HTMLElement {
         modal.innerHTML = `
         <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
             <div class="cal-modal-card" style="width:400px;">
-                <div style="padding:28px;">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-                        <div class="cal-drag-icon-wrap">
-                            <i class="fa-solid fa-arrows-up-down-left-right cal-drag-icon"></i>
-                        </div>
-                        <h3 class="cal-drag-title">移动日程</h3>
+                <div class="cal-modal-banner cal-modal-banner-info">
+                    <div class="cal-modal-banner-icon">
+                        <i class="fa-solid fa-arrows-up-down-left-right"></i>
                     </div>
+                    <div class="cal-modal-banner-text">
+                        <div class="cal-modal-banner-title">移动日程</div>
+                    </div>
+                    <button id="cal-drag-close" class="cal-modal-banner-close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div style="padding:16px 24px;">
                     <div style="margin-bottom:20px;">
                         <div class="cal-drag-subject">${ev.subject}</div>
                         <div style="display:flex;flex-direction:column;gap:8px;">
@@ -2416,6 +2466,7 @@ class CalendarEntryWidget extends HTMLElement {
             if (e.target.id === 'cal-modal-bg') close();
         });
         modal.querySelector('#cal-drag-cancel').addEventListener('click', close);
+        modal.querySelector('#cal-drag-close')?.addEventListener('click', close);
         modal.querySelector('#cal-drag-confirm').addEventListener('click', async () => {
             try {
                 await window.applicationAPI.call('updateCalendarItem', ev.uid, {

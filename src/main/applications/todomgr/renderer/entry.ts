@@ -12,6 +12,7 @@
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { showWorkspacePicker } from '../../../../renderer/components/workspacePicker.js';
+import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import type { TodoTemplate } from '../templates.js';
 
 /* ═══════════════════════════════════════════════════
@@ -693,95 +694,6 @@ html[data-theme='dark'] .tm-root {
 .tm-status-pending { background: #C7C7CC; }
 .tm-status-in_progress { background: #007AFF; }
 .tm-status-completed { background: #34C759; }
-
-/* ---- Modal ---- */
-.tm-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(6px);
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: tm-fade-in 250ms ease-out;
-}
-.tm-modal-overlay.tm-modal-closing {
-    animation: tm-fade-out 180ms ease-in forwards;
-}
-.tm-modal-card {
-    background: #fff;
-    border-radius: 20px;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
-    width: 400px;
-    max-width: 92vw;
-    padding: 28px;
-    overflow: hidden;
-    animation: tm-scale-in 250ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.tm-modal-closing .tm-modal-card {
-    animation: tm-scale-out 180ms ease-in forwards;
-}
-.tm-modal-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 14px;
-}
-.tm-modal-icon {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
-}
-.tm-modal-title {
-    font-size: var(--fs-xl);
-    font-weight: 700;
-    color: #1d1d1f;
-}
-.tm-modal-message {
-    font-size: var(--fs-lg);
-    color: #3C3C43;
-    line-height: 1.6;
-    margin-bottom: 22px;
-}
-.tm-modal-footer {
-    border-top: 1px solid #F0F0F0;
-    padding-top: 16px;
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-}
-.tm-modal-btn {
-    padding: 10px 24px;
-    border-radius: 12px;
-    font-size: var(--fs-lg);
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    border: none;
-}
-.tm-modal-btn:active { transform: scale(0.97); }
-.tm-modal-btn-cancel {
-    background: #fff;
-    color: #1d1d1f;
-    border: 1.5px solid #E5E5EA;
-}
-.tm-modal-btn-cancel:hover { background: #F5F5F7; }
-.tm-modal-btn-danger {
-    background: #DC2626;
-    color: #fff;
-}
-.tm-modal-btn-danger:hover { background: #B91C1C; }
-
-@keyframes tm-fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes tm-fade-out { from { opacity: 1; } to { opacity: 0; } }
-@keyframes tm-scale-in { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-@keyframes tm-scale-out { from { opacity: 1; transform: scale(1) translateY(0); } to { opacity: 0; transform: scale(0.95) translateY(10px); } }
 
 /* ---- Custom DateTime Picker ---- */
 .tm-dt-wrapper {
@@ -2965,47 +2877,18 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _confirmDelete(todo: GlobalTodo) {
-        const overlay = document.createElement('div');
-        overlay.className = 'tm-modal-overlay';
-        overlay.innerHTML = `
-        <div class="tm-modal-card">
-            <div class="tm-modal-header">
-                <div class="tm-modal-icon" style="background:#FEF2F2;color:#DC2626;">
-                    <i class="fas fa-trash-can"></i>
-                </div>
-                <div class="tm-modal-title">删除任务</div>
-            </div>
-            <div class="tm-modal-message">
-                确定要删除任务「<b>${escapeHtml(todo.title)}</b>」吗？此操作不可撤销。
-            </div>
-            <div class="tm-modal-footer">
-                <button class="tm-modal-btn tm-modal-btn-cancel" id="tm-modal-cancel">取消</button>
-                <button class="tm-modal-btn tm-modal-btn-danger" id="tm-modal-confirm">删除</button>
-            </div>
-        </div>`;
-
-        document.body.appendChild(overlay);
-
-        const close = (confirmed: boolean) => {
-            overlay.classList.add('tm-modal-closing');
-            setTimeout(() => {
-                overlay.remove();
-                if (confirmed) this._doDelete(todo);
-            }, 180);
-        };
-
-        overlay.querySelector('#tm-modal-cancel')?.addEventListener('click', () => close(false));
-        overlay.querySelector('#tm-modal-confirm')?.addEventListener('click', () => close(true));
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) close(false);
+        const confirmed = await showConfirmModal({
+            variant: 'danger',
+            icon: 'fa-trash-can',
+            title: '删除任务',
+            message: `确定要删除任务「<b>${escapeHtml(todo.title)}</b>」吗？此操作不可撤销。`,
+            confirmText: '删除',
+            cancelText: '取消',
+            mountTarget: this.shadowRoot ?? document.body
         });
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                document.removeEventListener('keydown', onKey);
-                close(false);
-            }
-        };
-        document.addEventListener('keydown', onKey);
+        if (confirmed) {
+            this._doDelete(todo);
+        }
     }
 
     private async _doDelete(todo: GlobalTodo) {

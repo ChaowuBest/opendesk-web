@@ -1,0 +1,2751 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>模态弹窗设计标注稿 · 顶部色带风格 — OpenDesk</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            /* ================ 设计 Token ================ */
+            :root {
+                /* 深色模式（默认） */
+                --bg: #232120;
+                --page: #1b1a18;
+                --card: #2a2826;
+                --card-hover: #33302d;
+                --line: #3b3835;
+                --line-soft: #33302d;
+                --ink: #efedea;
+                --ink2: #d5d1cb;
+                --ink3: #9b968f;
+                --ink4: #6f6a63;
+                --accent: #e8563f;
+                --accent-soft: rgba(232, 86, 63, 0.16);
+                --accent-bg: rgba(232, 86, 63, 0.09);
+                --accent-hover: #ed6b56;
+                --green: #3dbf82;
+                --green-soft: rgba(61, 191, 130, 0.15);
+                --amber: #e2a23b;
+                --amber-soft: rgba(226, 162, 59, 0.15);
+                --blue: #7aa2e8;
+                --blue-soft: rgba(122, 162, 232, 0.16);
+                --purple: #b98ae0;
+                --purple-soft: rgba(185, 138, 224, 0.15);
+                --red: #e85a5a;
+                --red-soft: rgba(232, 90, 90, 0.15);
+                --overlay: rgba(0, 0, 0, 0.45);
+                --overlay-blur: blur(8px);
+                --shadow-card: 0 24px 80px rgba(0, 0, 0, 0.4), 0 0 1px rgba(0, 0, 0, 0.2);
+                --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+                --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+            }
+            body.lm {
+                --bg: #f5f4f2;
+                --page: #fbfaf8;
+                --card: #ffffff;
+                --card-hover: #f5f4f2;
+                --line: #e7e5e2;
+                --line-soft: #efeeea;
+                --ink: #1c1917;
+                --ink2: #4a4642;
+                --ink3: #8a8580;
+                --ink4: #b4afa9;
+                --accent: #df4436;
+                --accent-soft: #fdeeec;
+                --accent-bg: #fef9f8;
+                --accent-hover: #e8563f;
+                --green: #1f9d66;
+                --green-soft: #e7f5ee;
+                --amber: #b87503;
+                --amber-soft: #fdf3e3;
+                --blue: #4267b2;
+                --blue-soft: #ebf1fb;
+                --purple: #7b4baa;
+                --purple-soft: #f3edf9;
+                --red: #dc2626;
+                --red-soft: #fef2f2;
+                --overlay: rgba(0, 0, 0, 0.3);
+                --overlay-blur: blur(6px);
+                --shadow-card: 0 24px 80px rgba(0, 0, 0, 0.18), 0 0 1px rgba(0, 0, 0, 0.1);
+                --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+            }
+
+            html {
+                scroll-behavior: smooth;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue',
+                    'Microsoft YaHei', sans-serif;
+                background: var(--page);
+                color: var(--ink);
+                font-size: 13px;
+                min-width: 1240px;
+                -webkit-font-smoothing: antialiased;
+            }
+            .num {
+                font-variant-numeric: tabular-nums;
+            }
+
+            /* ================ 顶栏 ================ */
+            .topbar {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                height: 56px;
+                background: rgba(27, 26, 24, 0.88);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--line);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 24px;
+            }
+            body.lm .topbar {
+                background: rgba(251, 250, 248, 0.88);
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            .brand .logo {
+                width: 18px;
+                height: 18px;
+                border-radius: 5px;
+                background: linear-gradient(135deg, #e8563f, #d93826);
+            }
+            .brand .sub {
+                font-weight: 400;
+                color: var(--ink3);
+                font-size: 12.5px;
+            }
+            .controls {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .nav-chip {
+                font-size: 12.5px;
+                color: var(--ink2);
+                text-decoration: none;
+                padding: 5px 10px;
+                border-radius: 7px;
+                cursor: pointer;
+                border: 0;
+                background: none;
+                font-family: inherit;
+            }
+            .nav-chip:hover {
+                color: var(--accent);
+                background: var(--accent-soft);
+            }
+            .nav-chip.active {
+                color: var(--accent);
+                background: var(--accent-soft);
+            }
+            .theme-toggle {
+                width: 32px;
+                height: 32px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--card);
+                color: var(--ink2);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-family: inherit;
+            }
+            .theme-toggle:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+            main {
+                max-width: 1220px;
+                margin: 0 auto;
+                padding: 0 24px 60px;
+            }
+
+            .intro {
+                padding: 30px 0 6px;
+            }
+            .intro h1 {
+                font-size: 21px;
+                font-weight: 650;
+                letter-spacing: 0.2px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .v-tag {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--accent);
+                background: var(--accent-soft);
+                border-radius: 5px;
+                padding: 3px 8px;
+            }
+            .intro p {
+                margin-top: 10px;
+                font-size: 13.5px;
+                line-height: 1.8;
+                color: var(--ink3);
+                max-width: 920px;
+            }
+            .intro p b {
+                color: var(--ink2);
+                font-weight: 600;
+            }
+
+            .sec {
+                margin-top: 40px;
+                scroll-margin-top: 80px;
+            }
+            .sec-head {
+                display: flex;
+                align-items: baseline;
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+            .sec-no {
+                font-family: var(--mono);
+                font-size: 12px;
+                color: var(--accent);
+                font-weight: 600;
+            }
+            .sec-head h2 {
+                font-size: 17px;
+                font-weight: 650;
+            }
+            .sec-head .sec-sub {
+                font-size: 12.5px;
+                color: var(--ink3);
+            }
+
+            /* ================ Token 表 ================ */
+            .tok-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 14px;
+            }
+            .tok-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 18px;
+            }
+            .tok-card h3 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .tok-card h3::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 2px;
+                background: var(--accent);
+            }
+            .swatches {
+                display: flex;
+                flex-direction: column;
+                gap: 7px;
+            }
+            .swt {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 12px;
+            }
+            .swc {
+                width: 26px;
+                height: 26px;
+                border-radius: 7px;
+                flex: none;
+                box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.15);
+            }
+            .swt .nm {
+                width: 80px;
+                color: var(--ink2);
+                font-weight: 500;
+            }
+            .swt .hex {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--ink3);
+                width: 72px;
+            }
+            .swt .hex2 {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--ink4);
+                width: 72px;
+            }
+            .swt .use {
+                color: var(--ink4);
+                font-size: 11px;
+            }
+            .tok-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                font-size: 12px;
+            }
+            .tok-list .ti {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .tok-list .tv {
+                font-family: var(--mono);
+                font-size: 11px;
+                color: var(--accent);
+                min-width: 100px;
+            }
+            .tok-list .tu {
+                color: var(--ink3);
+                font-size: 11.5px;
+            }
+            .type-row {
+                display: flex;
+                align-items: baseline;
+                gap: 12px;
+                padding: 5px 0;
+                border-bottom: 1px dashed var(--line-soft);
+            }
+            .type-row:last-child {
+                border-bottom: 0;
+            }
+            .type-row .demo {
+                color: var(--ink);
+            }
+            .type-row .spec {
+                margin-left: auto;
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--ink3);
+                white-space: nowrap;
+            }
+
+            /* ================ 标注画布 ================ */
+            .anno {
+                position: relative;
+            }
+            .bdg {
+                position: absolute;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: var(--accent);
+                color: #fff;
+                font-size: 10.5px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 0 0 3px rgba(232, 86, 63, 0.16);
+                z-index: 60;
+                font-style: normal;
+            }
+            .legend {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px 28px;
+                margin-top: 14px;
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 20px;
+            }
+            .lg {
+                display: flex;
+                gap: 10px;
+                font-size: 12px;
+                line-height: 1.7;
+                color: var(--ink3);
+            }
+            .lg i {
+                flex: none;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: var(--accent);
+                color: #fff;
+                font-size: 10.5px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-style: normal;
+                margin-top: 1px;
+            }
+            .lg b {
+                color: var(--ink2);
+                font-weight: 600;
+            }
+            .lg code {
+                font-family: var(--mono);
+                font-size: 11px;
+                color: var(--accent);
+                background: var(--accent-soft);
+                border-radius: 4px;
+                padding: 0 5px;
+            }
+
+            /* ================ 蒙层 + 弹窗框架 ================ */
+            .overlay-frame {
+                background: var(--bg);
+                border: 1px solid var(--line);
+                border-radius: 16px;
+                overflow: hidden;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+                position: relative;
+                padding: 48px 20px;
+                display: flex;
+                align-items: flex-start;
+                justify-content: center;
+            }
+            .overlay-frame::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background: var(--overlay);
+                backdrop-filter: var(--overlay-blur);
+                -webkit-backdrop-filter: var(--overlay-blur);
+            }
+
+            /* ================ 弹窗卡片 ================ */
+            .mc {
+                position: relative;
+                z-index: 2;
+                width: 100%;
+                max-width: 480px;
+                background: var(--card);
+                border-radius: 16px;
+                overflow: hidden;
+                box-shadow: var(--shadow-card);
+            }
+            .mc-banner {
+                padding: 16px 24px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .mc-banner.danger {
+                background: var(--red-soft);
+            }
+            .mc-banner.info {
+                background: var(--blue-soft);
+            }
+            .mc-banner.warn {
+                background: var(--amber-soft);
+            }
+            .mc-banner.success {
+                background: var(--green-soft);
+            }
+            .mc-ib {
+                width: 36px;
+                height: 36px;
+                border-radius: 10px;
+                flex: none;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+            }
+            .mc-banner.danger .mc-ib {
+                background: var(--red);
+            }
+            .mc-banner.info .mc-ib {
+                background: var(--blue);
+            }
+            .mc-banner.warn .mc-ib {
+                background: var(--amber);
+            }
+            .mc-banner.success .mc-ib {
+                background: var(--green);
+            }
+            .mc-ib svg {
+                width: 17px;
+                height: 17px;
+            }
+            .mc-btitle {
+                font-size: 15px;
+                font-weight: 700;
+                color: var(--ink);
+            }
+            .mc-bsub {
+                font-size: 11px;
+                color: var(--ink3);
+                margin-top: 2px;
+            }
+            .mc-close {
+                width: 26px;
+                height: 26px;
+                border: 0;
+                border-radius: 7px;
+                background: rgba(0, 0, 0, 0.06);
+                color: var(--ink3);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex: none;
+                margin-left: auto;
+                transition:
+                    background 0.15s,
+                    color 0.15s;
+            }
+            body.lm .mc-close {
+                background: rgba(0, 0, 0, 0.05);
+            }
+            .mc-close:hover {
+                background: rgba(0, 0, 0, 0.12);
+                color: var(--ink2);
+            }
+            .mc-body {
+                padding: 16px 24px;
+                font-size: 13px;
+                color: var(--ink3);
+                line-height: 1.6;
+            }
+            .mc-body b {
+                color: var(--ink2);
+                font-weight: 600;
+            }
+            .mc-form {
+                padding: 16px 24px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
+            .mc-footer {
+                padding: 14px 24px 18px;
+                display: flex;
+                justify-content: flex-end;
+                gap: 10px;
+                border-top: 1px solid var(--line-soft);
+            }
+
+            /* ================ 通用控件 ================ */
+            .tag {
+                font-size: 10px;
+                padding: 1px 7px;
+                border-radius: 5px;
+                font-weight: 500;
+                white-space: nowrap;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+            .t-blue {
+                background: var(--blue-soft);
+                color: var(--blue);
+            }
+            .t-green {
+                background: var(--green-soft);
+                color: var(--green);
+            }
+            .t-amber {
+                background: var(--amber-soft);
+                color: var(--amber);
+            }
+            .t-gray {
+                background: var(--card-hover);
+                color: var(--ink3);
+            }
+            .t-red {
+                background: var(--red-soft);
+                color: var(--red);
+            }
+            .t-purple {
+                background: var(--purple-soft);
+                color: var(--purple);
+            }
+
+            .fg {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+            .fl {
+                font-size: 11.5px;
+                font-weight: 500;
+                color: var(--ink2);
+            }
+            .fh {
+                font-size: 10.5px;
+                color: var(--ink4);
+                margin-top: 2px;
+            }
+            .fi,
+            .fs,
+            .fta {
+                appearance: none;
+                -webkit-appearance: none;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--bg);
+                padding: 7px 10px;
+                font-family: inherit;
+                font-size: 12px;
+                color: var(--ink2);
+                transition: border-color 0.15s;
+            }
+            .fs {
+                padding-right: 24px;
+                cursor: pointer;
+                background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239B968F' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+                background-repeat: no-repeat;
+                background-position: right 8px center;
+            }
+            .fi:focus,
+            .fs:focus,
+            .fta:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
+            .fi::placeholder,
+            .fta::placeholder {
+                color: var(--ink4);
+            }
+            .fi.err {
+                border-color: var(--red);
+            }
+            .fi:disabled,
+            .fs:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+            .fta {
+                resize: vertical;
+                min-height: 60px;
+                line-height: 1.5;
+            }
+            .ferr {
+                font-size: 10.5px;
+                color: var(--red);
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                margin-top: 3px;
+            }
+
+            .frow {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .frow.sb {
+                justify-content: space-between;
+            }
+
+            .tg {
+                flex: none;
+                width: 36px;
+                height: 20px;
+                border-radius: 999px;
+                border: 0;
+                cursor: pointer;
+                background: var(--line);
+                position: relative;
+                transition: background 0.15s;
+                padding: 0;
+            }
+            .tg::after {
+                content: '';
+                position: absolute;
+                top: 2px;
+                left: 2px;
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+                transition: left 0.15s;
+            }
+            .tg.on {
+                background: var(--accent);
+            }
+            .tg.on::after {
+                left: 18px;
+            }
+            .tg:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+
+            .ck {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                font-size: 12px;
+                color: var(--ink2);
+                cursor: pointer;
+            }
+            .ck input {
+                accent-color: var(--accent);
+                width: 14px;
+                height: 14px;
+            }
+
+            .rg {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .ro,
+            .mo {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 10px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 12px;
+                color: var(--ink2);
+                transition: all 0.15s;
+            }
+            .ro:hover,
+            .mo:hover {
+                background: var(--card-hover);
+            }
+            .ro.sel,
+            .mo.sel {
+                border-color: var(--accent);
+                background: var(--accent-bg);
+            }
+            .rd {
+                width: 13px;
+                height: 13px;
+                border-radius: 50%;
+                border: 2px solid var(--line);
+                flex: none;
+                transition: border-color 0.15s;
+            }
+            .ro.sel .rd {
+                border-color: var(--accent);
+                background: radial-gradient(circle, var(--accent) 40%, transparent 45%);
+            }
+            .mb {
+                width: 14px;
+                height: 14px;
+                border-radius: 4px;
+                border: 1.5px solid var(--line);
+                flex: none;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s;
+            }
+            .mo.sel .mb {
+                background: var(--accent);
+                border-color: var(--accent);
+            }
+            .mb svg {
+                width: 10px;
+                height: 10px;
+                color: #fff;
+                opacity: 0;
+                transition: opacity 0.1s;
+            }
+            .mo.sel .mb svg {
+                opacity: 1;
+            }
+
+            .cd {
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .cdt {
+                width: 100%;
+                padding: 8px 10px;
+                background: none;
+                border: 0;
+                color: var(--ink3);
+                font-size: 11.5px;
+                font-family: inherit;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                text-align: left;
+            }
+            .cdt:hover {
+                color: var(--ink2);
+            }
+            .cdt .cv {
+                transition: transform 0.2s;
+                display: flex;
+            }
+            .cdt.open .cv {
+                transform: rotate(90deg);
+            }
+            .cdc {
+                display: none;
+                padding: 0 10px 8px;
+                font-size: 11px;
+                color: var(--ink4);
+                line-height: 1.7;
+            }
+            .cdc.show {
+                display: block;
+            }
+            .cdc .di {
+                display: flex;
+                gap: 8px;
+                padding: 3px 0;
+            }
+            .cdc .di span:first-child {
+                color: var(--ink3);
+                min-width: 56px;
+            }
+
+            .ct {
+                font-size: 11px;
+                color: var(--ink4);
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+            }
+            .ct.urgent {
+                padding: 3px 8px;
+                background: var(--amber-soft);
+                color: var(--amber);
+                border-radius: 6px;
+            }
+
+            .callout {
+                padding: 8px 12px;
+                border-radius: 8px;
+                font-size: 11.5px;
+                line-height: 1.6;
+                display: flex;
+                gap: 8px;
+                align-items: flex-start;
+            }
+            .callout.info {
+                background: var(--blue-soft);
+                color: var(--blue);
+            }
+            .callout.warn {
+                background: var(--amber-soft);
+                color: var(--amber);
+            }
+            .callout.success {
+                background: var(--green-soft);
+                color: var(--green);
+            }
+            .callout svg {
+                width: 13px;
+                height: 13px;
+                flex: none;
+                margin-top: 1px;
+            }
+
+            .pgb {
+                width: 100%;
+                height: 6px;
+                border-radius: 999px;
+                background: var(--line);
+                overflow: hidden;
+            }
+            .pgb-fill {
+                height: 100%;
+                border-radius: 999px;
+                background: var(--accent);
+                transition: width 0.3s;
+            }
+
+            .stepper {
+                display: inline-flex;
+                align-items: center;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .stepper button {
+                width: 28px;
+                height: 30px;
+                border: 0;
+                background: var(--bg);
+                color: var(--ink3);
+                cursor: pointer;
+                font-size: 14px;
+                font-family: inherit;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .stepper button:hover {
+                background: var(--card-hover);
+                color: var(--ink2);
+            }
+            .stepper input {
+                width: 44px;
+                height: 30px;
+                border: 0;
+                border-left: 1px solid var(--line);
+                border-right: 1px solid var(--line);
+                background: var(--card);
+                text-align: center;
+                font-family: var(--mono);
+                font-size: 12px;
+                color: var(--ink2);
+                font-weight: 500;
+            }
+            .stepper input:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+
+            .seg {
+                display: inline-flex;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .seg button {
+                padding: 6px 14px;
+                border: 0;
+                background: none;
+                color: var(--ink3);
+                font-size: 12px;
+                font-family: inherit;
+                cursor: pointer;
+                transition: all 0.15s;
+                border-right: 1px solid var(--line);
+            }
+            .seg button:last-child {
+                border-right: 0;
+            }
+            .seg button:hover {
+                background: var(--card-hover);
+                color: var(--ink2);
+            }
+            .seg button.on {
+                background: var(--accent);
+                color: #fff;
+            }
+
+            .lnk {
+                background: none;
+                border: 0;
+                color: var(--accent);
+                font-size: 12px;
+                font-family: inherit;
+                cursor: pointer;
+                padding: 0;
+                text-decoration: none;
+            }
+            .lnk:hover {
+                text-decoration: underline;
+            }
+
+            .iconbtn {
+                width: 30px;
+                height: 30px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--card);
+                color: var(--ink3);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s;
+            }
+            .iconbtn:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+            .rng {
+                flex: 1;
+                accent-color: var(--accent);
+            }
+            .rng-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .rng-ends {
+                font-size: 11px;
+                color: var(--ink4);
+            }
+
+            /* ================ 按钮 ================ */
+            .btn-p {
+                background: var(--accent);
+                color: #fff;
+                border: 0;
+                border-radius: 8px;
+                padding: 7px 16px;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .btn-p:hover {
+                background: var(--accent-hover);
+            }
+            .btn-p:active {
+                transform: scale(0.97);
+            }
+            .btn-p:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+
+            .btn-s {
+                background: var(--card);
+                color: var(--ink2);
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 6px 15px;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+            .btn-s:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+            .btn-s:active {
+                transform: scale(0.97);
+            }
+            .btn-s:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+
+            .btn-d {
+                background: var(--red);
+                color: #fff;
+                border: 0;
+                border-radius: 8px;
+                padding: 7px 16px;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: filter 0.15s;
+            }
+            .btn-d:hover {
+                filter: brightness(0.9);
+            }
+            .btn-d:active {
+                transform: scale(0.97);
+            }
+            .btn-d:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+
+            /* ================ 组件规范卡 ================ */
+            .cp-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 14px;
+            }
+            .cp {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+            .cp-demo {
+                min-height: 72px;
+                padding: 16px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg);
+                border-bottom: 1px solid var(--line-soft);
+                flex-wrap: wrap;
+            }
+            .cp-demo.col {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 6px;
+            }
+            .cp-spec {
+                padding: 11px 15px 13px;
+            }
+            .cp-spec h4 {
+                font-size: 12.5px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .cp-new {
+                font-size: 9px;
+                font-weight: 600;
+                color: var(--green);
+                background: var(--green-soft);
+                border-radius: 4px;
+                padding: 1px 5px;
+            }
+            .cp-spec li {
+                font-size: 11.5px;
+                color: var(--ink3);
+                line-height: 1.8;
+                list-style: none;
+            }
+            .cp-spec li::before {
+                content: '·';
+                color: var(--accent);
+                margin-right: 5px;
+            }
+            .cp-spec code {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--accent);
+            }
+
+            /* ================ 色带变体展示 ================ */
+            .bv-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 14px;
+            }
+            .bv-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+            .bv-demo {
+                padding: 0;
+            }
+            .bv-spec {
+                padding: 11px 15px 13px;
+            }
+            .bv-spec h4 {
+                font-size: 12.5px;
+                font-weight: 600;
+                margin-bottom: 6px;
+            }
+            .bv-spec li {
+                font-size: 11.5px;
+                color: var(--ink3);
+                line-height: 1.8;
+                list-style: none;
+            }
+            .bv-spec li::before {
+                content: '·';
+                color: var(--accent);
+                margin-right: 5px;
+            }
+            .bv-spec code {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--accent);
+            }
+
+            /* ================ 按钮系统 ================ */
+            .btn-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 14px;
+            }
+            .btn-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 18px;
+            }
+            .btn-card h4 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .btn-card h4::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 2px;
+                background: var(--accent);
+            }
+            .btn-states {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .btn-state-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                font-size: 11.5px;
+                color: var(--ink3);
+            }
+            .btn-state-row .sn {
+                width: 56px;
+                flex: none;
+                font-weight: 500;
+                color: var(--ink2);
+            }
+
+            /* ================ 动效规范 ================ */
+            .anim-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 14px;
+            }
+            .anim-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 18px;
+            }
+            .anim-card h4 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .anim-card h4::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 2px;
+                background: var(--accent);
+            }
+            .anim-card li {
+                font-size: 11.5px;
+                color: var(--ink3);
+                line-height: 1.8;
+                list-style: none;
+            }
+            .anim-card li::before {
+                content: '·';
+                color: var(--accent);
+                margin-right: 5px;
+            }
+            .anim-card code {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--accent);
+            }
+            .anim-preview {
+                margin-top: 12px;
+                height: 60px;
+                background: var(--bg);
+                border-radius: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+                overflow: hidden;
+            }
+            .anim-preview .mini-overlay {
+                position: absolute;
+                inset: 0;
+                background: var(--overlay);
+            }
+            .anim-preview .mini-card {
+                position: relative;
+                z-index: 2;
+                background: var(--card);
+                border-radius: 10px;
+                padding: 10px 16px;
+                font-size: 11px;
+                color: var(--ink2);
+                box-shadow: var(--shadow-soft);
+            }
+
+            .note-block {
+                margin-top: 14px;
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 20px;
+                font-size: 12.5px;
+                line-height: 1.9;
+                color: var(--ink3);
+            }
+            .note-block b {
+                color: var(--ink2);
+            }
+
+            .page-foot {
+                margin-top: 36px;
+                padding-top: 16px;
+                border-top: 1px solid var(--line-soft);
+                font-size: 12px;
+                color: var(--ink4);
+                display: flex;
+                justify-content: space-between;
+            }
+            input::placeholder {
+                color: var(--ink4);
+            }
+        </style>
+    </head>
+    <body>
+        <!-- ================= 顶栏 ================= -->
+        <header class="topbar">
+            <div class="brand">
+                <span class="logo"></span>OpenDesk
+                <span class="sub">· 模态弹窗设计标注稿 · 顶部色带风格</span>
+            </div>
+            <div class="controls">
+                <button class="nav-chip active" data-jump="tok">01 Token</button>
+                <button class="nav-chip" data-jump="layout">02 布局标注</button>
+                <button class="nav-chip" data-jump="banner">03 色带变体</button>
+                <button class="nav-chip" data-jump="comp">04 组件规范</button>
+                <button class="nav-chip" data-jump="btn">05 按钮系统</button>
+                <button class="nav-chip" data-jump="anim">06 动效规范</button>
+                <button class="theme-toggle" id="themeToggle" title="切换深浅色">
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <circle cx="12" cy="12" r="5" />
+                        <line x1="12" y1="1" x2="12" y2="3" />
+                        <line x1="12" y1="21" x2="12" y2="23" />
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                        <line x1="1" y1="12" x2="3" y2="12" />
+                        <line x1="21" y1="12" x2="23" y2="12" />
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <section class="intro">
+                <h1>
+                    模态弹窗 · 工程标注稿 <span class="v-tag">顶部色带风格</span
+                    ><span class="v-tag">深色 / 浅色双模式</span>
+                </h1>
+                <p>
+                    本稿为 OpenDesk 模态弹窗<b>顶部色带风格</b>的完整工程标注：§01 设计 Token（浅色 / 深色双值），§02
+                    整体布局尺寸标注（编号图例），§03 四种语义色带变体（危险 / 信息 / 警告 / 成功），§04
+                    全部控件规范（含现有及新增控件），§05 按钮系统状态全表，§06 进入 /
+                    退出动效规范。色彩体系与设置界面标注稿<b>同源</b>--暖灰底色 +
+                    品牌红强调色，深浅色仅做明度翻转、不加蓝。
+                </p>
+            </section>
+
+            <!-- ============ 01 Token ============ -->
+            <section class="sec" id="tok">
+                <div class="sec-head">
+                    <span class="sec-no">01</span>
+                    <h2>设计 Token</h2>
+                    <span class="sec-sub">浅色 / 深色双值 · 与设置界面同源</span>
+                </div>
+                <div class="tok-grid">
+                    <div class="tok-card">
+                        <h3>色板 · 表面与描边</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #fbfaf8"></span><span class="nm">页面底</span
+                                ><span class="hex">#FBFAF8</span><span class="hex2">#1B1A18</span
+                                ><span class="use">页面背景</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #f5f4f2"></span><span class="nm">弹窗底</span
+                                ><span class="hex">#F5F4F2</span><span class="hex2">#232120</span
+                                ><span class="use">弹窗外底色 / 输入框底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #ffffff"></span><span class="nm">卡片白</span
+                                ><span class="hex">#FFFFFF</span><span class="hex2">#2A2826</span
+                                ><span class="use">弹窗卡片 / 控件底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #e7e5e2"></span><span class="nm">描边</span
+                                ><span class="hex">#E7E5E2</span><span class="hex2">#3B3835</span
+                                ><span class="use">卡片与控件描边 1px</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #efeeea"></span><span class="nm">分隔线</span
+                                ><span class="hex">#EFEEEA</span><span class="hex2">#33302D</span
+                                ><span class="use">行内分隔 / 底部分隔线</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #f5f4f2"></span><span class="nm">悬停底</span
+                                ><span class="hex">#F5F4F2</span><span class="hex2">#33302D</span
+                                ><span class="use">选项悬停 / 按钮悬停</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>色板 · 强调与语义</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #df4436"></span><span class="nm">品牌红</span
+                                ><span class="hex">#DF4436</span><span class="hex2">#E8563F</span
+                                ><span class="use">主按钮 / 开关 / 选中态</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #fdeeec"></span><span class="nm">红浅底</span
+                                ><span class="hex">#FDEEEC</span><span class="hex2">rgba(232,86,63,.16)</span
+                                ><span class="use">选中底 / 强调底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #dc2626"></span><span class="nm">危险红</span
+                                ><span class="hex">#DC2626</span><span class="hex2">#E85A5A</span
+                                ><span class="use">危险按钮 / 错误提示</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #fef2f2"></span><span class="nm">危险底</span
+                                ><span class="hex">#FEF2F2</span><span class="hex2">rgba(232,90,90,.15)</span
+                                ><span class="use">危险色带底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #4267b2"></span><span class="nm">信息蓝</span
+                                ><span class="hex">#4267B2</span><span class="hex2">#7AA2E8</span
+                                ><span class="use">信息色带 / 信息提示</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #b87503"></span><span class="nm">琥珀</span
+                                ><span class="hex">#B87503</span><span class="hex2">#E2A23B</span
+                                ><span class="use">警告色带 / 倒计时</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #1f9d66"></span><span class="nm">成功绿</span
+                                ><span class="hex">#1F9D66</span><span class="hex2">#3DBF82</span
+                                ><span class="use">成功色带 / 可用标签</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #7b4baa"></span><span class="nm">紫</span
+                                ><span class="hex">#7B4BAA</span><span class="hex2">#B98AE0</span
+                                ><span class="use">来源标签（权限弹窗）</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>文字层级</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #1c1917"></span><span class="nm">标题</span
+                                ><span class="hex">#1C1917</span><span class="hex2">#EFEDEA</span
+                                ><span class="use">色带标题 / 正文高亮</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #4a4642"></span><span class="nm">正文</span
+                                ><span class="hex">#4A4642</span><span class="hex2">#D5D1CB</span
+                                ><span class="use">控件文字 / 正文</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #8a8580"></span><span class="nm">次要</span
+                                ><span class="hex">#8A8580</span><span class="hex2">#9B968F</span
+                                ><span class="use">描述 / 次级 / 色带副标题</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #b4afa9"></span><span class="nm">占位</span
+                                ><span class="hex">#B4AFA9</span><span class="hex2">#6F6A63</span
+                                ><span class="use">占位符 / 禁用</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>字号 / 圆角 / 间距 / 阴影</h3>
+                        <div class="tok-list">
+                            <div class="ti"><span class="tv">15 / 700</span><span class="tu">色带标题</span></div>
+                            <div class="ti">
+                                <span class="tv">13 / 400</span><span class="tu">正文（行高 1.6）</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">12 / 400</span><span class="tu">控件文字（输入 / 下拉 / 选项）</span>
+                            </div>
+                            <div class="ti"><span class="tv">11.5 / 500</span><span class="tu">表单标签</span></div>
+                            <div class="ti">
+                                <span class="tv">11 / 400</span><span class="tu">副标题 / 描述 / 倒计时</span>
+                            </div>
+                            <div class="ti"><span class="tv">10 / 500</span><span class="tu">标签 TAG</span></div>
+                            <div class="ti">
+                                <span class="tv">r=8</span><span class="tu">控件（输入 / 下拉 / 选项 / 按钮）</span>
+                            </div>
+                            <div class="ti"><span class="tv">r=10</span><span class="tu">色带图标容器</span></div>
+                            <div class="ti"><span class="tv">r=16</span><span class="tu">弹窗卡片</span></div>
+                            <div class="ti">
+                                <span class="tv">16/24</span><span class="tu">色带 / 正文 / 表单 / 底部内边距</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">12 / 10</span><span class="tu">表单组间距 / 组内间距</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">阴影</span><span class="tu">0 24px 80px · 18%(浅) / 40%(深)</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">蒙层</span
+                                ><span class="tu">rgba(0,0,0,.3) + blur(6px)（浅）/ .45 + blur(8px)（深）</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 02 布局标注 ============ -->
+            <section class="sec" id="layout">
+                <div class="sec-head">
+                    <span class="sec-no">02</span>
+                    <h2>整体布局标注</h2>
+                    <span class="sec-sub">完整表单弹窗 · 编号见下方图例</span>
+                </div>
+                <div class="anno">
+                    <div class="overlay-frame">
+                        <div class="mc" style="max-width: 460px">
+                            <!-- ① 色带 -->
+                            <div class="mc-banner danger">
+                                <div class="mc-ib">
+                                    <!-- ② -->
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                                        <path d="M10 11v6M14 11v6" />
+                                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <!-- ③ -->
+                                    <div class="mc-btitle">删除文件</div>
+                                    <div class="mc-bsub">此操作可从回收站恢复</div>
+                                </div>
+                                <button class="mc-close">
+                                    <!-- ④ -->
+                                    <svg
+                                        width="13"
+                                        height="13"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2.5"
+                                        stroke-linecap="round"
+                                    >
+                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="mc-body">
+                                <!-- ⑤ -->
+                                确定要将文件「<b>readme.md</b>」移动到回收站吗？
+                                <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px">
+                                    <!-- ⑥ -->
+                                    <span class="tag t-amber">不可逆</span>
+                                    <span class="tag t-gray">2.4 KB</span>
+                                </div>
+                            </div>
+                            <div class="mc-form">
+                                <div class="fg">
+                                    <!-- ⑦ -->
+                                    <label class="fl">备注（可选）</label>
+                                    <input class="fi" placeholder="输入删除原因..." />
+                                </div>
+                                <div class="fg">
+                                    <!-- ⑧ -->
+                                    <label class="fl">清理策略</label>
+                                    <select class="fs">
+                                        <option>仅删除此文件</option>
+                                        <option>删除整个目录</option>
+                                    </select>
+                                </div>
+                                <div class="frow sb">
+                                    <!-- ⑨ -->
+                                    <span style="font-size: 12px; color: var(--ink2)">同时清理关联缓存</span>
+                                    <button class="tg on"></button>
+                                </div>
+                                <div class="fg">
+                                    <!-- ⑩ -->
+                                    <label class="fl">删除范围</label>
+                                    <div class="rg">
+                                        <div class="ro sel"><span class="rd"></span>仅当前文件</div>
+                                        <div class="ro"><span class="rd"></span>当前目录</div>
+                                    </div>
+                                </div>
+                                <div class="fg">
+                                    <!-- ⑪ -->
+                                    <label class="fl">附加选项</label>
+                                    <div class="rg">
+                                        <div class="mo sel">
+                                            <span class="mb"
+                                                ><svg
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="3"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                >
+                                                    <polyline points="20 6 9 17 4 12" /></svg></span
+                                            >跳过回收站直接删除
+                                        </div>
+                                        <div class="mo">
+                                            <span class="mb"
+                                                ><svg
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="3"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                >
+                                                    <polyline points="20 6 9 17 4 12" /></svg></span
+                                            >删除后清空剪贴板
+                                        </div>
+                                    </div>
+                                </div>
+                                <label class="ck"
+                                    ><!-- ⑫ -->
+                                    <input type="checkbox" checked />我已了解此操作的影响
+                                </label>
+                                <div class="cd">
+                                    <!-- ⑬ -->
+                                    <button
+                                        class="cdt"
+                                        onclick="
+                                            this.classList.toggle('open');
+                                            this.nextElementSibling.classList.toggle('show');
+                                        "
+                                    >
+                                        <span class="cv"
+                                            ><svg
+                                                width="10"
+                                                height="10"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2.5"
+                                                stroke-linecap="round"
+                                            >
+                                                <polyline points="9 18 15 12 9 6" /></svg
+                                        ></span>
+                                        查看文件信息
+                                    </button>
+                                    <div class="cdc">
+                                        <div class="di">
+                                            <span>路径</span
+                                            ><span style="font-family: var(--mono); color: var(--ink3)"
+                                                >/workspace/readme.md</span
+                                            >
+                                        </div>
+                                        <div class="di"><span>修改时间</span><span>2026-08-03 10:42</span></div>
+                                    </div>
+                                </div>
+                                <div class="ct urgent">
+                                    <!-- ⑭ -->
+                                    <svg
+                                        width="11"
+                                        height="11"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                    >
+                                        <circle cx="12" cy="12" r="10" />
+                                        <polyline points="12 6 12 12 16 14" />
+                                    </svg>
+                                    300s 后自动取消
+                                </div>
+                                <div class="callout info">
+                                    <!-- ⑮ -->
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                    >
+                                        <circle cx="12" cy="12" r="10" />
+                                        <line x1="12" y1="16" x2="12" y2="12" />
+                                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                                    </svg>
+                                    <span>文件从回收站恢复后，关联的任务引用将自动重新链接。</span>
+                                </div>
+                            </div>
+                            <div class="mc-footer">
+                                <!-- ⑯ ⑰ ⑱ -->
+                                <button class="btn-s">取消</button>
+                                <button class="btn-d">删除</button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 编号徽章 -->
+                    <i class="bdg" style="left: 50%; top: 8px; transform: translateX(-200px)">1</i>
+                    <i class="bdg" style="left: 50%; top: 30px; transform: translateX(-190px)">2</i>
+                    <i class="bdg" style="left: 50%; top: 30px; transform: translateX(-130px)">3</i>
+                    <i class="bdg" style="right: 20px; top: 18px">4</i>
+                    <i class="bdg" style="left: 30px; top: 92px">5</i>
+                    <i class="bdg" style="left: 30px; top: 126px">6</i>
+                    <i class="bdg" style="left: 30px; top: 160px">7</i>
+                    <i class="bdg" style="left: 30px; top: 210px">8</i>
+                    <i class="bdg" style="right: 20px; top: 250px">9</i>
+                    <i class="bdg" style="left: 30px; top: 280px">10</i>
+                    <i class="bdg" style="left: 30px; top: 350px">11</i>
+                    <i class="bdg" style="right: 20px; top: 400px">12</i>
+                    <i class="bdg" style="left: 30px; top: 420px">13</i>
+                    <i class="bdg" style="right: 20px; top: 460px">14</i>
+                    <i class="bdg" style="left: 30px; top: 490px">15</i>
+                    <i class="bdg" style="right: 20px; bottom: 20px">16</i>
+                    <i class="bdg" style="left: 50%; bottom: 20px; transform: translateX(-70px)">17</i>
+                    <i class="bdg" style="right: 50px; bottom: 20px">18</i>
+                </div>
+                <div class="legend">
+                    <div class="lg">
+                        <i>1</i
+                        ><span
+                            ><b>顶部色带</b>：内边距 <code>16/24</code>，语义色浅底，圆角随卡片
+                            <code>16px</code>（仅顶部）</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>2</i
+                        ><span
+                            ><b>色带图标</b>：<code>36×36</code>，圆角 <code>10</code>，实心语义色底 + 白色图标
+                            <code>17px</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>3</i
+                        ><span
+                            ><b>色带标题 + 副标题</b>：标题 <code>15/700</code>，副标题 <code>11/400</code> 色
+                            <code>ink3</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>4</i
+                        ><span
+                            ><b>关闭按钮</b>：<code>26×26</code>，圆角 <code>7</code>，底
+                            <code>rgba(0,0,0,.06)</code>，hover 加深</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>5</i
+                        ><span
+                            ><b>正文区</b>：内边距 <code>16/24</code>，字号 <code>13</code>，行高 <code>1.6</code>，色
+                            <code>ink3</code>，<code>&lt;b&gt;</code> 高亮 <code>ink2</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>6</i><span><b>标签 TAG</b>：<code>10/500</code>，圆角 <code>5</code>，语义四色 + 灰色</span>
+                    </div>
+                    <div class="lg">
+                        <i>7</i
+                        ><span
+                            ><b>文本输入框</b>：高 <code>32</code>，圆角 <code>8</code>，描边
+                            <code>1px line</code>，focus 描边 <code>accent</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>8</i
+                        ><span><b>下拉选择</b>：同输入框尺寸，chevron <code>10px</code> 右 <code>8px</code></span>
+                    </div>
+                    <div class="lg">
+                        <i>9</i
+                        ><span
+                            ><b>开关 Toggle</b>：<code>36×20</code>，圆点 <code>16</code>，开 <code>accent</code>，关
+                            <code>line</code>，过渡 <code>.15s</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>10</i
+                        ><span
+                            ><b>单选选项</b>：描边 <code>1px line</code>，圆角 <code>8</code>，选中描边
+                            <code>accent</code> + 底 <code>accent-bg</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>11</i
+                        ><span
+                            ><b>多选选项</b>：同单选布局，复选框 <code>14×14</code> 圆角 <code>4</code>，选中
+                            <code>accent</code> 底</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>12</i
+                        ><span
+                            ><b>复选框</b>：<code>14×14</code>，<code>accent-color</code> 染色，文字
+                            <code>12px ink2</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>13</i
+                        ><span
+                            ><b>可折叠详情</b>：描边 <code>1px line</code> 圆角 <code>8</code>，chevron
+                            <code>.2s</code> 旋转</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>14</i
+                        ><span
+                            ><b>倒计时</b>：琥珀色胶囊 <code>11px</code>，含时钟图标，紧急态底
+                            <code>amber-soft</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>15</i
+                        ><span
+                            ><b>信息提示框</b>：圆角 <code>8</code>，语义色浅底 + 图标 + 文字 <code>11.5px</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>16</i><span><b>底部分隔线</b>：<code>1px solid line-soft</code>，上方无额外间距</span>
+                    </div>
+                    <div class="lg">
+                        <i>17</i
+                        ><span
+                            ><b>次按钮</b>：圆角 <code>8</code>，白底 <code>1px line</code> 描边，hover 描边/文字
+                            <code>accent</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>18</i
+                        ><span
+                            ><b>危险按钮</b>：圆角 <code>8</code>，底 <code>red</code> 白字，hover
+                            <code>brightness(.9)</code></span
+                        >
+                    </div>
+                </div>
+                <div class="note-block">
+                    <b>蒙层规范：</b>浅色 <code>rgba(0,0,0,.3)</code> + <code>blur(6px)</code>；深色
+                    <code>rgba(0,0,0,.45)</code> +
+                    <code>blur(8px)</code>。<code>z-index:99999</code>。<b>弹窗卡片</b>：宽 <code>400px</code>（推荐）/
+                    <code>480px</code>（表单），<code>max-width:92vw</code>，圆角
+                    <code>16px</code>，<code>overflow:hidden</code>。点击蒙层或按 <code>Esc</code> 等同取消。
+                </div>
+            </section>
+
+            <!-- ============ 03 色带语义变体 ============ -->
+            <section class="sec" id="banner">
+                <div class="sec-head">
+                    <span class="sec-no">03</span>
+                    <h2>顶部色带 · 语义变体</h2>
+                    <span class="sec-sub">四种语义色 · 图标 / 标题 / 副标题组合</span>
+                </div>
+                <div class="bv-grid">
+                    <div class="bv-card">
+                        <div class="bv-demo">
+                            <div class="mc-banner danger" style="border-radius: 0">
+                                <div class="mc-ib">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                                        <path d="M10 11v6M14 11v6" />
+                                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="mc-btitle">删除文件</div>
+                                    <div class="mc-bsub">此操作不可逆</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bv-spec">
+                            <h4>危险 (Danger)</h4>
+                            <li>
+                                色带底：<code>red-soft</code>（浅 <code>#FEF2F2</code> / 深
+                                <code>rgba(232,90,90,.15)</code>）
+                            </li>
+                            <li>图标容器：底 <code>red</code>（<code>#DC2626</code> / <code>#E85A5A</code>）白字</li>
+                            <li>适用：删除、清空、卸载、重置</li>
+                        </div>
+                    </div>
+                    <div class="bv-card">
+                        <div class="bv-demo">
+                            <div class="mc-banner info" style="border-radius: 0">
+                                <div class="mc-ib">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <circle cx="12" cy="12" r="10" />
+                                        <line x1="12" y1="16" x2="12" y2="12" />
+                                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="mc-btitle">配置搜索渠道</div>
+                                    <div class="mc-bsub">设置参数和默认引擎</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bv-spec">
+                            <h4>信息 (Info)</h4>
+                            <li>
+                                色带底：<code>blue-soft</code>（浅 <code>#EBF1FB</code> / 深
+                                <code>rgba(122,162,232,.16)</code>）
+                            </li>
+                            <li>图标容器：底 <code>blue</code>（<code>#4267B2</code> / <code>#7AA2E8</code>）白字</li>
+                            <li>适用：配置表单、信息确认、选择器</li>
+                        </div>
+                    </div>
+                    <div class="bv-card">
+                        <div class="bv-demo">
+                            <div class="mc-banner warn" style="border-radius: 0">
+                                <div class="mc-ib">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                                        />
+                                        <line x1="12" y1="9" x2="12" y2="13" />
+                                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="mc-btitle">权限审批</div>
+                                    <div class="mc-bsub">Agent 请求读取文件</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bv-spec">
+                            <h4>警告 (Warning)</h4>
+                            <li>
+                                色带底：<code>amber-soft</code>（浅 <code>#FDF3E3</code> / 深
+                                <code>rgba(226,162,59,.15)</code>）
+                            </li>
+                            <li>图标容器：底 <code>amber</code>（<code>#B87503</code> / <code>#E2A23B</code>）白字</li>
+                            <li>适用：权限审批、计划审批、风险提示</li>
+                        </div>
+                    </div>
+                    <div class="bv-card">
+                        <div class="bv-demo">
+                            <div class="mc-banner success" style="border-radius: 0">
+                                <div class="mc-ib">
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                        <polyline points="22 4 12 14.01 9 11.01" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="mc-btitle">操作完成</div>
+                                    <div class="mc-bsub">3 个文件已成功删除</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bv-spec">
+                            <h4>成功 (Success)</h4>
+                            <li>
+                                色带底：<code>green-soft</code>（浅 <code>#E7F5EE</code> / 深
+                                <code>rgba(61,191,130,.15)</code>）
+                            </li>
+                            <li>图标容器：底 <code>green</code>（<code>#1F9D66</code> / <code>#3DBF82</code>）白字</li>
+                            <li>适用：操作结果确认、批量处理完成</li>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 04 组件规范 ============ -->
+            <section class="sec" id="comp">
+                <div class="sec-head">
+                    <span class="sec-no">04</span>
+                    <h2>组件规范</h2>
+                    <span class="sec-sub">现有控件 + 新增控件 · 状态齐全</span>
+                </div>
+                <div class="cp-grid">
+                    <!-- 现有控件 -->
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <div class="mc-banner danger" style="border-radius: 10px; padding: 10px 14px; flex: 1">
+                                <div class="mc-ib" style="width: 28px; height: 28px; border-radius: 8px">
+                                    <svg
+                                        style="width: 14px; height: 14px"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div style="font-size: 13px; font-weight: 700; color: var(--ink)">标题</div>
+                                    <div style="font-size: 10px; color: var(--ink3)">副标题</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>色带头部</h4>
+                            <li>内边距 <code>16/24</code> · 语义色浅底</li>
+                            <li>图标 <code>36×36</code> 圆角 <code>10</code> 实心底</li>
+                            <li>标题 <code>15/700</code> · 副标题 <code>11/400 ink3</code></li>
+                            <li>关闭按钮 <code>26×26</code> 圆角 <code>7</code> 右置</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <button class="mc-close">
+                                <svg
+                                    width="13"
+                                    height="13"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                >
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>关闭按钮</h4>
+                            <li><code>26×26</code> · 圆角 <code>7</code></li>
+                            <li>底 <code>rgba(0,0,0,.06)</code> · 图标 <code>13px ink3</code></li>
+                            <li>hover：底加深 <code>rgba(0,0,0,.12)</code> · 色 <code>ink2</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="justify-content: flex-start; text-align: left">
+                            <span style="font-size: 13px; color: var(--ink3); line-height: 1.6"
+                                >确定要将文件「<b style="color: var(--ink2); font-weight: 600">readme.md</b
+                                >」删除吗？</span
+                            >
+                        </div>
+                        <div class="cp-spec">
+                            <h4>正文（HTML 高亮）</h4>
+                            <li>字号 <code>13</code> · 行高 <code>1.6</code> · 色 <code>ink3</code></li>
+                            <li><code>&lt;b&gt;</code> 高亮：<code>ink2 / 600</code></li>
+                            <li>内边距 <code>16/24</code> · 支持 HTML 内联标签</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 6px">
+                            <span class="tag t-blue">对话模型</span><span class="tag t-green">可用</span
+                            ><span class="tag t-amber">需配置</span><span class="tag t-red">危险</span
+                            ><span class="tag t-gray">无推理</span><span class="tag t-purple">来源</span>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>标签 Tag</h4>
+                            <li><code>10/500</code> · 圆角 <code>5</code> · 内边距 <code>1×7</code></li>
+                            <li>蓝=类型 · 绿=可用 · 琥珀=待配置 · 红=危险</li>
+                            <li>灰=特性 · 紫=来源 · 同一对象 ≤ 2 个</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <input class="fi" style="width: 180px" placeholder="输入关键词..." value="Tavily" />
+                        </div>
+                        <div class="cp-spec">
+                            <h4>文本输入框</h4>
+                            <li>高 <code>32</code> · 圆角 <code>8</code> · 内边距 <code>7×10</code></li>
+                            <li>描边 <code>1px line</code> · 底 <code>bg</code></li>
+                            <li>focus：描边 <code>accent</code> · 占位 <code>ink4</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <input class="fi err" style="width: 180px" value="invalid!" />
+                            <div class="ferr">
+                                <svg
+                                    width="11"
+                                    height="11"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="8" x2="12" y2="12" />
+                                    <line x1="12" y1="16" x2="12.01" y2="16" /></svg
+                                >名称包含非法字符
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>输入框 · 错误态</h4>
+                            <li>描边 <code>1px red</code> · 底不变</li>
+                            <li>错误提示 <code>10.5px red</code> · 图标 <code>11px</code></li>
+                            <li>提示文字与输入框间距 <code>3px</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <input class="fi" style="width: 180px" placeholder="禁用状态" disabled />
+                        </div>
+                        <div class="cp-spec">
+                            <h4>输入框 · 禁用态</h4>
+                            <li><code>opacity:.45</code> · <code>cursor:not-allowed</code></li>
+                            <li>描边与底色不变，仅降低透明度</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 4px; width: 180px"
+                        >
+                            <textarea class="fta" placeholder="输入备注..." rows="2">这是一个备注内容</textarea>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>文本区域 Textarea <span class="cp-new">新增</span></h4>
+                            <li>圆角 <code>8</code> · 最小高 <code>60</code> · <code>resize:vertical</code></li>
+                            <li>行高 <code>1.5</code> · 其余同输入框</li>
+                            <li>适用：备注、描述、原因输入</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <select class="fs" style="width: 180px">
+                                <option>网页搜索</option>
+                                <option>学术搜索</option>
+                            </select>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>下拉选择 Select <span class="cp-new">新增</span></h4>
+                            <li>同输入框尺寸 · chevron <code>10px</code> 右 <code>8px</code></li>
+                            <li>focus：描边 <code>accent</code></li>
+                            <li>禁用态同输入框</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo"><button class="tg on"></button><button class="tg"></button></div>
+                        <div class="cp-spec">
+                            <h4>开关 Toggle <span class="cp-new">新增</span></h4>
+                            <li><code>36×20</code> · 圆点 <code>16</code> · 全圆角</li>
+                            <li>开：<code>accent</code> · 关：<code>line</code></li>
+                            <li>圆点位移 <code>.15s ease</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 14px">
+                            <label class="ck"><input type="checkbox" checked />已了解</label
+                            ><label class="ck"><input type="checkbox" />同意义务</label>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>复选框 Checkbox</h4>
+                            <li><code>14×14</code> · <code>accent-color:accent</code></li>
+                            <li>文字 <code>12px ink2</code> · 间距 <code>7px</code></li>
+                            <li>原生控件染色，无需自定义 SVG</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 4px; width: 180px"
+                        >
+                            <div class="ro sel" style="padding: 5px 8px; font-size: 11.5px">
+                                <span class="rd"></span>选项 A
+                            </div>
+                            <div class="ro" style="padding: 5px 8px; font-size: 11.5px">
+                                <span class="rd"></span>选项 B
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>单选选项 Radio</h4>
+                            <li>描边 <code>1px line</code> · 圆角 <code>8</code> · 内边距 <code>7×10</code></li>
+                            <li>选中：描边 <code>accent</code> + 底 <code>accent-bg</code></li>
+                            <li>圆点 <code>13×13</code> · 选中实心 <code>accent</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 4px; width: 180px"
+                        >
+                            <div class="mo sel" style="padding: 5px 8px; font-size: 11.5px">
+                                <span class="mb"
+                                    ><svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="20 6 9 17 4 12" /></svg></span
+                                >选项 A
+                            </div>
+                            <div class="mo" style="padding: 5px 8px; font-size: 11.5px">
+                                <span class="mb"
+                                    ><svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="20 6 9 17 4 12" /></svg></span
+                                >选项 B
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>多选选项 Multi-select</h4>
+                            <li>同单选布局 · 复选框 <code>14×14</code> 圆角 <code>4</code></li>
+                            <li>选中：底 <code>accent</code> + 白色对勾 SVG</li>
+                            <li>支持同时选中多个选项</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="flex-direction: column; align-items: stretch; gap: 0; width: 200px">
+                            <div class="cd">
+                                <button class="cdt open" style="padding: 6px 8px">
+                                    <span class="cv"
+                                        ><svg
+                                            width="10"
+                                            height="10"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2.5"
+                                            stroke-linecap="round"
+                                        >
+                                            <polyline points="9 18 15 12 9 6" /></svg></span
+                                    >查看详情
+                                </button>
+                                <div class="cdc show" style="padding: 0 8px 6px">
+                                    <div class="di"><span>大小</span><span>2.4 KB</span></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>可折叠详情</h4>
+                            <li>描边 <code>1px line</code> · 圆角 <code>8</code></li>
+                            <li>chevron <code>.2s</code> 旋转 · 展开内容 <code>11px ink4</code></li>
+                            <li>每项 <code>di</code>：标签 <code>56px</code> + 值</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 10px; flex-direction: column">
+                            <span class="ct"
+                                ><svg
+                                    width="11"
+                                    height="11"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12 6 12 12 16 14" /></svg
+                                >300s 后自动取消</span
+                            >
+                            <span class="ct urgent"
+                                ><svg
+                                    width="11"
+                                    height="11"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12 6 12 12 16 14" /></svg
+                                >10s 后自动拒绝</span
+                            >
+                        </div>
+                        <div class="cp-spec">
+                            <h4>倒计时</h4>
+                            <li>普通态：<code>11px ink4</code> + 时钟图标</li>
+                            <li>紧急态（≤30s）：琥珀色胶囊底 <code>amber-soft</code></li>
+                            <li>每秒由 <code>setInterval</code> 更新</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 6px; width: 200px"
+                        >
+                            <div class="callout info">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="16" x2="12" y2="12" />
+                                    <line x1="12" y1="8" x2="12.01" y2="8" /></svg
+                                ><span>文件恢复后自动重新链接</span>
+                            </div>
+                            <div class="callout warn">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                >
+                                    <path
+                                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                                    />
+                                    <line x1="12" y1="9" x2="12" y2="13" />
+                                    <line x1="12" y1="17" x2="12.01" y2="17" /></svg
+                                ><span>此操作将影响 3 个任务</span>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>信息提示框 Callout <span class="cp-new">新增</span></h4>
+                            <li>圆角 <code>8</code> · 内边距 <code>8×12</code></li>
+                            <li>三色：info(蓝) / warn(琥珀) / success(绿)</li>
+                            <li>图标 <code>13px</code> + 文字 <code>11.5px</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 6px; width: 180px"
+                        >
+                            <div class="pgb"><div class="pgb-fill" style="width: 65%"></div></div>
+                            <div style="font-size: 11px; color: var(--ink4); text-align: right">65%</div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>进度条 Progress <span class="cp-new">新增</span></h4>
+                            <li>高 <code>6px</code> · 全圆角 · 底 <code>line</code></li>
+                            <li>填充 <code>accent</code> · <code>transition:width .3s</code></li>
+                            <li>适用：批量删除、上传、安装</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <div class="stepper"><button>−</button><input value="3" /><button>+</button></div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>步进器 Stepper <span class="cp-new">新增</span></h4>
+                            <li>按钮 <code>28×30</code> · 输入 <code>44×30</code> 等宽</li>
+                            <li>圆角 <code>8</code> · 描边 <code>1px line</code></li>
+                            <li>适用：数量选择、重试次数</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <div class="seg">
+                                <button class="on">全部</button><button>仅文件</button><button>仅目录</button>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>分段控件 Segment <span class="cp-new">新增</span></h4>
+                            <li>内联排列 · 描边 <code>1px line</code> · 圆角 <code>8</code></li>
+                            <li>选中：底 <code>accent</code> 白字</li>
+                            <li>适用：范围筛选、模式切换</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 4px; width: 180px"
+                        >
+                            <div class="rng-row">
+                                <span class="rng-ends">极小</span
+                                ><input type="range" class="rng" min="0" max="4" value="2" /><span class="rng-ends"
+                                    >极大</span
+                                >
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>滑杆 Slider <span class="cp-new">新增</span></h4>
+                            <li><code>accent-color:accent</code> 染色</li>
+                            <li>两端标注 <code>11px ink4</code></li>
+                            <li>适用：缩放、阈值调节</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo"><button class="lnk">查看文档 →</button></div>
+                        <div class="cp-spec">
+                            <h4>链接按钮 Link <span class="cp-new">新增</span></h4>
+                            <li>无底无边框 · 色 <code>accent</code></li>
+                            <li>hover：<code>text-decoration:underline</code></li>
+                            <li>字号 <code>12px</code> · 适用于辅助操作</li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 8px">
+                            <button class="iconbtn">
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
+                                </svg>
+                            </button>
+                            <button class="iconbtn">
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>纯图标按钮 <span class="cp-new">新增</span></h4>
+                            <li><code>30×30</code> · 圆角 <code>8</code> · 描边 <code>1px line</code></li>
+                            <li>图标 <code>14px ink3</code></li>
+                            <li>hover：描边/色 <code>accent</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="justify-content: flex-start; width: 100%">
+                            <div
+                                style="
+                                    display: flex;
+                                    justify-content: space-between;
+                                    width: 100%;
+                                    padding: 0 2px;
+                                    font-size: 11.5px;
+                                    color: var(--ink3);
+                                    font-weight: 500;
+                                "
+                            >
+                                <span>表单标签</span><span style="color: var(--ink4); font-weight: 400">辅助说明</span>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>表单标签 + 辅助说明</h4>
+                            <li>标签 <code>11.5/500 ink2</code> · 辅助 <code>10.5 ink4</code></li>
+                            <li>标签与控件间距 <code>5px</code></li>
+                            <li>辅助说明右置同行 <code>margin-left:auto</code></li>
+                        </div>
+                    </div>
+
+                    <div class="cp">
+                        <div class="cp-demo" style="justify-content: flex-start; width: 100%">
+                            <div style="width: 100%; height: 1px; background: var(--line-soft); margin: 4px 0"></div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>分隔线</h4>
+                            <li><code>1px solid line-soft</code></li>
+                            <li>用于表单分组、底部按钮区上方</li>
+                            <li>底部按钮区内边距 <code>14/24/18</code></li>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 05 按钮系统 ============ -->
+            <section class="sec" id="btn">
+                <div class="sec-head">
+                    <span class="sec-no">05</span>
+                    <h2>按钮系统</h2>
+                    <span class="sec-sub">三种类型 × 四种状态 + 链接 / 图标按钮</span>
+                </div>
+                <div class="btn-grid">
+                    <div class="btn-card">
+                        <h4>主按钮 Primary</h4>
+                        <div class="btn-states">
+                            <div class="btn-state-row">
+                                <span class="sn">默认</span><button class="btn-p">保存</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">悬停</span
+                                ><button class="btn-p" style="background: var(--accent-hover)">保存</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">按下</span
+                                ><button class="btn-p" style="transform: scale(0.97)">保存</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">禁用</span><button class="btn-p" disabled>保存</button>
+                            </div>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 11px; color: var(--ink3); line-height: 1.7">
+                            底 <code style="font-family: var(--mono); color: var(--accent)">accent</code> 白字 · 圆角
+                            <code style="font-family: var(--mono); color: var(--accent)">8</code> · 内边距
+                            <code style="font-family: var(--mono); color: var(--accent)">7×16</code> · 字号
+                            <code style="font-family: var(--mono); color: var(--accent)">12.5/600</code>
+                        </div>
+                    </div>
+                    <div class="btn-card">
+                        <h4>次按钮 Secondary</h4>
+                        <div class="btn-states">
+                            <div class="btn-state-row">
+                                <span class="sn">默认</span><button class="btn-s">取消</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">悬停</span
+                                ><button class="btn-s" style="border-color: var(--accent); color: var(--accent)">
+                                    取消
+                                </button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">按下</span
+                                ><button class="btn-s" style="transform: scale(0.97)">取消</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">禁用</span><button class="btn-s" disabled>取消</button>
+                            </div>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 11px; color: var(--ink3); line-height: 1.7">
+                            白底 <code style="font-family: var(--mono); color: var(--accent)">1px line</code> 描边 ·
+                            hover 描边/文字 <code style="font-family: var(--mono); color: var(--accent)">accent</code> ·
+                            内边距 <code style="font-family: var(--mono); color: var(--accent)">6×15</code>
+                        </div>
+                    </div>
+                    <div class="btn-card">
+                        <h4>危险按钮 Danger</h4>
+                        <div class="btn-states">
+                            <div class="btn-state-row">
+                                <span class="sn">默认</span><button class="btn-d">删除</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">悬停</span
+                                ><button class="btn-d" style="filter: brightness(0.9)">删除</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">按下</span
+                                ><button class="btn-d" style="transform: scale(0.97)">删除</button>
+                            </div>
+                            <div class="btn-state-row">
+                                <span class="sn">禁用</span><button class="btn-d" disabled>删除</button>
+                            </div>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 11px; color: var(--ink3); line-height: 1.7">
+                            底 <code style="font-family: var(--mono); color: var(--accent)">red</code> 白字 · hover
+                            <code style="font-family: var(--mono); color: var(--accent)">brightness(.9)</code> ·
+                            仅用于危险操作确认
+                        </div>
+                    </div>
+                </div>
+                <div class="note-block" style="margin-top: 14px">
+                    <b>按钮排列规则：</b>① 底部按钮区 <code>display:flex;justify-content:flex-end;gap:10px</code>；②
+                    取消（次按钮）在左，确认（主/危险）在右；③ 当操作不可逆时必须使用危险按钮；④ 弹窗内最多 3
+                    个底部按钮，超出应改为选项列表；⑤
+                    <b>链接按钮</b>（<code>.lnk</code>）用于辅助操作，放在正文区或按钮区最左；⑥
+                    <b>纯图标按钮</b>（<code>.iconbtn</code>）用于紧凑场景，需 <code>aria-label</code>。
+                </div>
+            </section>
+
+            <!-- ============ 06 动效规范 ============ -->
+            <section class="sec" id="anim">
+                <div class="sec-head">
+                    <span class="sec-no">06</span>
+                    <h2>动效规范</h2>
+                    <span class="sec-sub">进入 / 退出 · 缓动曲线与时长</span>
+                </div>
+                <div class="anim-grid">
+                    <div class="anim-card">
+                        <h4>进入动画</h4>
+                        <li>蒙层：<code>opacity 0→1</code> · <code>250ms ease-out</code></li>
+                        <li>
+                            卡片：<code>scale(.95)→1</code> + <code>translateY(10px)→0</code> + <code>opacity 0→1</code>
+                        </li>
+                        <li>缓动：<code>cubic-bezier(0.23,1,0.32,1)</code> · <code>250ms</code></li>
+                        <li>蒙层与卡片同时启动、同时结束</li>
+                        <div class="anim-preview">
+                            <div class="mini-overlay"></div>
+                            <div class="mini-card" style="animation: demo-in 2s ease-out infinite">弹窗卡片</div>
+                        </div>
+                    </div>
+                    <div class="anim-card">
+                        <h4>退出动画</h4>
+                        <li>蒙层：<code>opacity 1→0</code> · <code>180ms ease-in</code></li>
+                        <li>
+                            卡片：<code>scale(1)→.95</code> + <code>translateY(0)→10px</code> + <code>opacity 1→0</code>
+                        </li>
+                        <li>缓动：<code>ease-in</code> · <code>180ms</code></li>
+                        <li>动画完成后 <code>setTimeout</code> 移除 DOM</li>
+                        <div class="anim-preview">
+                            <div class="mini-overlay" style="animation: demo-out 2s ease-in infinite"></div>
+                            <div class="mini-card" style="animation: demo-out-card 2s ease-in infinite">弹窗卡片</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="note-block">
+                    <b>交互规则：</b>① 点击蒙层或按 <code>Esc</code> 等同取消，触发退出动画；②
+                    确认按钮点击后先执行操作再关闭弹窗；③ 动画期间 <code>pointer-events:none</code> 防止重复触发；④
+                    <code>prefers-reduced-motion</code> 时跳过动画直接显示/隐藏。
+                </div>
+                <style>
+                    @keyframes demo-in {
+                        0%,
+                        40% {
+                            opacity: 0;
+                            transform: scale(0.95) translateY(10px);
+                        }
+                        60%,
+                        100% {
+                            opacity: 1;
+                            transform: scale(1) translateY(0);
+                        }
+                    }
+                    @keyframes demo-out {
+                        0%,
+                        60% {
+                            opacity: 1;
+                        }
+                        80%,
+                        100% {
+                            opacity: 0;
+                        }
+                    }
+                    @keyframes demo-out-card {
+                        0%,
+                        60% {
+                            opacity: 1;
+                            transform: scale(1) translateY(0);
+                        }
+                        80%,
+                        100% {
+                            opacity: 0;
+                            transform: scale(0.95) translateY(10px);
+                        }
+                    }
+                </style>
+            </section>
+
+            <div class="page-foot">
+                <span>OpenDesk · 模态弹窗工程标注稿 · 顶部色带风格（深色 / 浅色双模式）</span>
+                <span>设计探索稿 · 2026-08-03</span>
+            </div>
+        </main>
+
+        <script>
+            // 深浅色切换
+            const themeBtn = document.getElementById('themeToggle');
+            themeBtn.addEventListener('click', () => {
+                document.body.classList.toggle('lm');
+            });
+
+            // 导航高亮 + 滚动
+            const chips = document.querySelectorAll('.nav-chip');
+            const sections = ['tok', 'layout', 'banner', 'comp', 'btn', 'anim'];
+            chips.forEach((chip) => {
+                chip.addEventListener('click', () => {
+                    const target = chip.dataset.jump;
+                    if (target) document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+                });
+            });
+            window.addEventListener('scroll', () => {
+                let active = '';
+                sections.forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el && el.getBoundingClientRect().top < 120) active = id;
+                });
+                chips.forEach((chip) => chip.classList.toggle('active', chip.dataset.jump === active));
+            });
+
+            // 控件交互
+            document.addEventListener('click', (e) => {
+                const tog = e.target.closest('.tg');
+                if (tog && !tog.disabled) tog.classList.toggle('on');
+
+                const radio = e.target.closest('.ro');
+                if (radio) {
+                    radio.parentElement.querySelectorAll('.ro').forEach((s) => s.classList.remove('sel'));
+                    radio.classList.add('sel');
+                }
+
+                const multi = e.target.closest('.mo');
+                if (multi) multi.classList.toggle('sel');
+
+                const segBtn = e.target.closest('.seg button');
+                if (segBtn) {
+                    segBtn.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('on'));
+                    segBtn.classList.add('on');
+                }
+
+                const cdt = e.target.closest('.cdt');
+                if (cdt) {
+                    cdt.classList.toggle('open');
+                    cdt.nextElementSibling.classList.toggle('show');
+                }
+            });
+        </script>
+    </body>
+</html>

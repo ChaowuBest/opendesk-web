@@ -301,14 +301,14 @@ button, input, textarea { font: inherit; }
 .scroll-sentinel { height: 1px; }
 
 .detail-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.18);
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3);
     z-index: 10000; align-items: center; justify-content: center;
-    backdrop-filter: blur(8px); animation: fade-in 0.15s ease;
+    backdrop-filter: blur(6px); animation: fade-in 0.15s ease;
 }
 .detail-overlay.visible { display: flex; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 .detail-dialog {
-    background: #fff; border-radius: 18px; padding: 0;
+    background: #fff; border-radius: 16px; padding: 0;
     width: 720px; max-width: 94%; max-height: 84vh; overflow: hidden;
     box-shadow: 0 24px 80px -16px rgba(0,0,0,0.22);
     animation: dialog-in 0.2s ease-out;
@@ -319,17 +319,24 @@ button, input, textarea { font: inherit; }
     to { opacity: 1; transform: scale(1) translateY(0); }
 }
 .detail-header {
-    display: flex; align-items: center; gap: 14px;
-    padding: 20px 24px 16px; border-bottom: 1px solid #F0F0F0;
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.detail-header.info { background: #EBF1FB; }
+.detail-header.info .card-icon {
+    width: 36px !important; height: 36px !important; border-radius: 10px !important;
+    background: #4267B2 !important; color: #fff !important; font-size: 15px;
 }
 .detail-header-info { flex: 1; min-width: 0; }
-.detail-name { font-size: 17px; font-weight: 700; color: #1d1d1f; margin-bottom: 2px; }
-.detail-id { font-size: var(--fs-md); color: #999; word-break: break-all; }
+.detail-name { font-size: 15px; font-weight: 700; color: #1d1d1f; margin-bottom: 2px; }
+.detail-id { font-size: 11px; color: #86868B; word-break: break-all; }
 .detail-close {
-    width: 28px; height: 28px; border-radius: 50%; border: none;
-    background: #F5F5F5; color: #999; font-size: var(--fs-xl); cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 7px; border: none;
+    background: rgba(0,0,0,0.06); color: #555; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
+.detail-close svg { width: 14px; height: 14px; }
+.detail-close:hover { background: rgba(0,0,0,0.12); color: #333; }
 .detail-body { flex: 1; overflow-y: auto; padding: 20px 24px 24px; }
 .detail-section { margin-bottom: 16px; }
 .detail-section:last-child { margin-bottom: 0; }
@@ -453,9 +460,13 @@ button, input, textarea { font: inherit; }
     border-color: #3b82f6;
     color: #fff;
 }
-:host([data-theme="dark"]) .mcp-card,
-:host([data-theme="dark"]) .detail-dialog {
+:host([data-theme="dark"]) .mcp-card {
     background: #252526;
+    border-color: rgba(255,255,255,0.16);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .detail-dialog {
+    background: #2A2826;
     border-color: rgba(255,255,255,0.16);
     color: #cccccc;
 }
@@ -500,7 +511,19 @@ button, input, textarea { font: inherit; }
     color: #93c5fd;
 }
 :host([data-theme="dark"]) .detail-overlay {
-    background: rgba(0,0,0,0.55);
+    background: rgba(0,0,0,0.45);
+}
+:host([data-theme="dark"]) .detail-header.info {
+    background: rgba(122,162,232,0.16);
+}
+:host([data-theme="dark"]) .detail-header.info .card-icon {
+    background: #7AA2E8 !important; color: #fff !important;
+}
+:host([data-theme="dark"]) .detail-close {
+    background: rgba(255,255,255,0.08); color: #ccc;
+}
+:host([data-theme="dark"]) .detail-close:hover {
+    background: rgba(255,255,255,0.15); color: #fff;
 }
 :host([data-theme="dark"]) .tag-blue { background: rgba(96,165,250,0.15); color: #93c5fd; }
 :host([data-theme="dark"]) .tag-green { background: rgba(74,222,128,0.15); color: #86efac; }
@@ -1249,13 +1272,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         overlay.id = 'detail-overlay';
         overlay.innerHTML = `
         <div class="detail-dialog">
-            <div class="detail-header">
+            <div class="detail-header info">
                 ${this.renderIcon(options.iconName, options.logo)}
                 <div class="detail-header-info">
                     <div class="detail-name">${escapeHtml(options.title)}</div>
                     ${options.subtitle ? `<div class="detail-id">${escapeHtml(options.subtitle)}</div>` : ''}
                 </div>
-                <button type="button" class="detail-close" id="detail-close">×</button>
+                <button type="button" class="detail-close" id="detail-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="detail-body">${options.body}</div>
             <div class="detail-footer">${options.footer}</div>

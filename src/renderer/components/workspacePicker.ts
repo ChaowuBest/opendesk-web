@@ -10,7 +10,7 @@
  */
 
 import { FileSelector } from './fileSelector.ts';
-import { showConfirmModal } from './confirmModal.ts';
+import { showConfirmModal, renderIcon, detectDarkMode } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 
 declare const window: Window & {
@@ -53,6 +53,9 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 
         const overlay = document.createElement('div');
         overlay.className = 'od-ws-picker-overlay';
+        if (detectDarkMode()) {
+            overlay.classList.add('od-ws-dark');
+        }
 
         const close = (result: string | null) => {
             if (resolved) return;
@@ -108,16 +111,19 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 <style>
     .od-ws-picker-overlay {
         position: fixed; inset: 0; z-index: 99999;
-        background: rgba(0,0,0,0.35);
+        background: rgba(0,0,0,0.3);
         display: flex; align-items: center; justify-content: center;
         animation: od-ws-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
+    }
+    .od-ws-picker-overlay.od-ws-dark {
+        background: rgba(0,0,0,0.45);
     }
     .od-ws-picker-overlay.od-ws-leaving {
         animation: od-ws-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
     }
     .od-ws-picker-panel {
         background: var(--od-bg-elevated, #fff); border-radius: 16px;
-        box-shadow: 0 24px 80px rgba(0,0,0,0.22), 0 0 1px rgba(0,0,0,0.1);
+        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
         width: 720px; max-width: 92vw; height: 72vh; max-height: 680px;
         display: flex; flex-direction: column; overflow: hidden;
 	        contain: layout style;
@@ -127,20 +133,32 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         animation: od-ws-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
     }
     .od-ws-header {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 18px 22px 14px; border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
+        display: flex; align-items: center; gap: 12px;
+        padding: 16px 24px; background: #EBF1FB;
+        border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
     }
+    .od-ws-dark .od-ws-header { background: rgba(122,162,232,0.16); }
+    .od-ws-header-icon {
+        width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+        background: #4267B2; display: flex; align-items: center; justify-content: center;
+    }
+    .od-ws-dark .od-ws-header-icon { background: #7AA2E8; }
+    .od-ws-header-icon svg { width: 17px; height: 17px; color: #fff; }
     .od-ws-header-title {
-        font-size: var(--fs-xl); font-weight: 700; color: var(--od-text, #1d1d1f);
-        display: flex; align-items: center; gap: 8px;
+        flex: 1; min-width: 0;
+        font-size: 15px; font-weight: 700; color: var(--od-text, #1d1d1f);
+        line-height: 1.3;
     }
     .od-ws-close-btn {
-        width: 28px; height: 28px; border-radius: 8px; border: none;
-        background: transparent; color: var(--od-text-muted, #8e8e93); font-size: var(--fs-lg);
+        width: 26px; height: 26px; border-radius: 7px; border: none;
+        background: rgba(0,0,0,0.06); color: var(--od-text-muted, #8e8e93);
         cursor: pointer; display: flex; align-items: center; justify-content: center;
-        transition: all 0.15s;
+        flex-shrink: 0; transition: background 0.15s, color 0.15s;
     }
-    .od-ws-close-btn:hover { background: var(--od-bg-subtle, #f5f5f7); color: var(--od-text, #1d1d1f); }
+    .od-ws-dark .od-ws-close-btn { background: rgba(255,255,255,0.08); }
+    .od-ws-close-btn:hover { background: rgba(0,0,0,0.12); color: var(--od-text, #1d1d1f); }
+    .od-ws-dark .od-ws-close-btn:hover { background: rgba(255,255,255,0.15); }
+    .od-ws-close-btn svg { width: 13px; height: 13px; }
     .od-ws-current {
         padding: 10px 22px; background: var(--od-bg-muted, #f9fafb); border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
         font-size: var(--fs-md); color: var(--od-text-muted, #6b7280); display: flex; align-items: center; gap: 6px;
@@ -211,23 +229,24 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     /* 底部 */
     .od-ws-footer {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 22px 16px; border-top: 1px solid var(--od-border, rgba(0,0,0,0.08)); gap: 12px;
+        padding: 14px 24px 18px; border-top: 1px solid var(--od-border, rgba(0,0,0,0.08)); gap: 12px;
     }
     .od-ws-selected-path {
-        flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--od-text-muted, #6b7280);
+        flex: 1; min-width: 0; font-size: 12px; color: var(--od-text-muted, #6b7280);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .od-ws-footer-btns { display: flex; gap: 8px; flex-shrink: 0; }
+    .od-ws-footer-btns { display: flex; gap: 10px; flex-shrink: 0; }
     .od-ws-btn {
-        padding: 8px 20px; border-radius: 10px; border: none;
-        font-size: var(--fs-base); font-weight: 600; cursor: pointer; transition: all 0.15s;
+        padding: 7px 16px; border-radius: 8px; border: none;
+        font-size: 12.5px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        font-family: inherit;
     }
     .od-ws-btn:active { transform: scale(0.97); }
-    .od-ws-btn-cancel { background: var(--od-bg-elevated, #fff); color: var(--od-text, #1d1d1f); border: 1.5px solid var(--od-border-strong, #e5e5ea); }
-    .od-ws-btn-cancel:hover { background: var(--od-bg-subtle, #f5f5f7); }
-    .od-ws-btn-confirm { background: var(--od-accent, #3b82f6); color: #fff; }
-    .od-ws-btn-confirm:hover { filter: brightness(0.92); }
-    .od-ws-btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+    .od-ws-btn-cancel { background: var(--od-bg-elevated, #fff); color: var(--od-text, #1d1d1f); border: 1px solid var(--od-border-strong, #e5e5ea); }
+    .od-ws-btn-cancel:hover { border-color: #DF4436; color: #DF4436; }
+    .od-ws-btn-confirm { background: #DF4436; color: #fff; }
+    .od-ws-btn-confirm:hover { background: #E8563F; }
+    .od-ws-btn-confirm:disabled { opacity: 0.4; cursor: not-allowed; }
 
     @keyframes od-ws-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes od-ws-fade-out { from { opacity: 1; } to { opacity: 0; } }
@@ -242,13 +261,9 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 </style>
 <div class="od-ws-picker-panel">
     <div class="od-ws-header">
-        <div class="od-ws-header-title">
-            <i class="fa-solid fa-briefcase" style="opacity:0.6"></i>
-            ${escapeHtml(options.title || '选择工作空间')}
-        </div>
-        <button class="od-ws-close-btn" data-action="close" title="关闭">
-            <i class="fa-solid fa-times"></i>
-        </button>
+        <div class="od-ws-header-icon">${renderIcon('fa-folder-open')}</div>
+        <div class="od-ws-header-title">${escapeHtml(options.title || '选择工作空间')}</div>
+        <button class="od-ws-close-btn" data-action="close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="od-ws-current">
         <i class="fa-solid fa-folder-open" style="font-size: var(--fs-sm);flex-shrink:0"></i>
