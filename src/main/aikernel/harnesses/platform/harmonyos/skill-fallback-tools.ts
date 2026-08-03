@@ -23,7 +23,13 @@ const RecordHarmonyosFallbackSchema = z
         category: DependencyCategorySchema.describe(
             '依赖分类，只能是 envVars、pythonPackages、npmPackages、binaries 之一'
         ),
-        dependencyName: z.string().min(1).describe('依赖名称'),
+        dependencyName: z
+            .string()
+            .min(1)
+            .refine((val) => !val.includes(','), {
+                message: 'dependencyName 只能包含单个依赖名称，不能包含逗号分隔的多个名称'
+            })
+            .describe('单个依赖名称；每次调用只能记录一个依赖，不要传入逗号分隔的多个名称'),
         note: z.string().min(1).describe('确认该 fallback 的简短证据或说明')
     })
     .strict();
@@ -47,6 +53,10 @@ export function upsertHarmonyosFallback(
     note: string,
     recordedAt: string
 ): boolean {
+    if (dependencyName.includes(',')) {
+        throw new Error('dependencyName 只能包含单个依赖名称，不能包含逗号分隔的多个名称');
+    }
+
     let dependencies: Record<string, unknown>;
     if (meta['dependencies'] === undefined) {
         dependencies = {};

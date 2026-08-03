@@ -161,6 +161,21 @@ describe('recordHarmonyosFallback tool', () => {
         expect(meta.dependencies.binaries).toEqual([existing]);
     });
 
+    test('rejects comma-separated dependencyName in schema validation', () => {
+        const tool = new RecordHarmonyosFallbackTool('openharmony');
+        expect(tool.validateArgs({ ...validArgs, dependencyName: 'a, b' }).success).toBe(false);
+        expect(tool.validateArgs({ ...validArgs, dependencyName: 'curl,wget' }).success).toBe(false);
+    });
+
+    test('rejects comma-separated dependencyName in upsertHarmonyosFallback', () => {
+        expect(() => upsertHarmonyosFallback({}, 'binaries', 'a, b', 'note', '2026-07-24T00:00:00.000Z')).toThrow(
+            '逗号'
+        );
+        expect(() =>
+            upsertHarmonyosFallback({}, 'npmPackages', 'curl,wget', 'note', '2026-07-24T00:00:00.000Z')
+        ).toThrow('逗号');
+    });
+
     test('fails closed for duplicate names and damaged dependency structures', () => {
         const duplicate = {
             dependencies: { binaries: [{ name: 'ffmpeg' }, { name: 'ffmpeg' }] },

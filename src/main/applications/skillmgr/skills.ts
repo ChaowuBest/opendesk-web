@@ -82,5 +82,9 @@ export const MANAGE_SKILLS_SKILL_HARMONYOS = `
 
 ## HarmonyOS fallback 记录
 
-在 OpenHarmony 上确认某个已加载 Skill 的依赖只能通过 Linux VM 执行时，使用本 Skill 内置的recordHarmonyosFallback工具更新该 Skill 的opendesk_meta.json。目标 Skill 必须已通过LoadSkill加载；不要使用通用文件写工具修改 fallback 字段。
+在 OpenHarmony 上确认某个已加载 Skill 的依赖只能通过 Linux VM 执行时，使用本 Skill 内置的
+recordHarmonyosFallback工具更新该 Skill 的opendesk_meta.json。
+目标 Skill 必须已通过LoadSkill加载；不要使用通用文件写工具修改 fallback 字段。
+每次调用只能记录一个依赖，如果 Skill 有多个依赖需要记录，请分别多次调用recordHarmonyosFallback，
+不要将多个依赖名用逗号拼接传入。
 `;

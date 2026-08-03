@@ -273,6 +273,7 @@ function buildFallbackPrompt(skills: Array<{ bundleName: string; skillName: stri
         '调用参数固定使用 bundleName="skillmgr"、skillName="manage-skills"、toolName="recordHarmonyosFallback"。',
         '注意区分两层 bundleName：CallSkillTool 的 bundleName 固定为 "skillmgr"；toolArgs.bundleName 必须从下方“已加载 Skill 全历史”中复制目标 Skill 的真实 bundleName，禁止猜测。toolArgs.skillName 同样必须复制对应的真实 skillName。',
         'toolArgs.category 只能是 envVars、pythonPackages、npmPackages、binaries：环境变量使用 envVars，Python 包使用 pythonPackages，npm 包使用 npmPackages，命令或二进制依赖使用 binaries。禁止使用其他值。',
+        'toolArgs.dependencyName 每次只能传入单个依赖名称；如果 Skill 有多个依赖需要记录，请分别多次调用 recordHarmonyosFallback，不要用逗号拼接多个名称。',
         '若 meta 文件中已有该依赖的 fallback advisory，说明经验已经存在，不要重复记录。',
         '严禁使用 writeFile、editFile、searchReplace 或其他通用文件写工具记录 fallback；严禁自行提供路径、fallback、recordedAt。',
         '',
