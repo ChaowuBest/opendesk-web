@@ -1193,8 +1193,8 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',
-    'renderer.agentInput.placeholder.enter': '在这里输入消息，按 Enter 发送',
-    'renderer.agentInput.placeholder.ctrlEnter': '在这里输入消息，按 Ctrl+Enter 发送',
+    'renderer.agentInput.placeholder.enter': '在这里输入消息，或者将文件拖拽到此处，按回车发送',
+    'renderer.agentInput.placeholder.ctrlEnter': '在这里输入消息，或者将文件拖拽到此处，按 Ctrl+Enter 发送',
     'renderer.agentInput.modelRequired': '请先选择模型才能开始对话',
     'renderer.agentInput.model.visionTag': '视觉',
     'renderer.agentInput.submit.sendLabel': '发送',
@@ -1202,7 +1202,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.submit.ctrlEnterTitle': '发送 (Ctrl+Enter)',
     'renderer.agentInput.searchToggle.title': '切换文件搜索模式',
     'renderer.agentInput.searchToggle.label': '搜索文件',
-    'renderer.agentInput.fileDrop.hint': '拖拽文件到此处',
+    'renderer.agentInput.fileDrop.hint': '添加文件',
     'renderer.agentInput.image.dropped': '拖放的图片',
     'renderer.agentInput.unsupportedFile.title': '无法解析该文件格式',
     'renderer.agentInput.unsupportedFile.noExtension': '无扩展名',

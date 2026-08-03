@@ -647,12 +647,9 @@ class AgentInput extends HTMLElement {
             return true;
         }
         const unsupported = await this.getUnsupportedFilePaths(uniquePaths);
-        if (unsupported.length > 0) {
-            await this.showUnsupportedFileModal(unsupported);
-            return false;
-        }
+        const supportedPaths = uniquePaths.filter((p) => !unsupported.includes(p));
         let changed = false;
-        for (const filePath of uniquePaths) {
+        for (const filePath of supportedPaths) {
             if (!this.attachedFilePaths.includes(filePath)) {
                 this.attachedFilePaths.push(filePath);
                 changed = true;
@@ -661,7 +658,10 @@ class AgentInput extends HTMLElement {
         if (changed) {
             this.render();
         }
-        return true;
+        if (unsupported.length > 0) {
+            await this.showUnsupportedFileModal(unsupported);
+        }
+        return supportedPaths.length > 0;
     }
 
     async getUnsupportedFilePaths(filePaths) {
@@ -1140,29 +1140,22 @@ class AgentInput extends HTMLElement {
         const savedSelStart = prevTextarea ? prevTextarea.selectionStart : 0;
         const savedSelEnd = prevTextarea ? prevTextarea.selectionEnd : 0;
 
-        let fileItems = this.attachedFilePaths
-            .map((filePath) => {
-                const fileName = getFileName(filePath);
-                return `
-            <div class="px-2 py-0.5 bg-blue-50 text-blue-700 hover:text-gray-600 rounded-full border border-blue-100 transition-all text-xs cursor-pointer flex items-center">
-                <i class="fas fa-paperclip mr-1 text-[10px]"></i>
-                <span class="max-w-[100px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${escapeHtml(fileName)}</span>
-                <button data-file_path="${escapeHtml(filePath)}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
-                    <i class="fas fa-times ml-1 text-[10px]"></i>
-                </button>
-            </div>
-            `;
-            })
-            .join('');
-
-        if (this.attachedFilePaths.length === 0) {
-            fileItems = `
-            <div class="agent-input-file-hint">
-                <i class="fas fa-paperclip"></i>
-                <span>${this.t('renderer.agentInput.fileDrop.hint')}</span>
-            </div>
-            `;
-        }
+        const fileTags =
+            this.attachedFilePaths.length > 0
+                ? this.attachedFilePaths
+                      .map((filePath) => {
+                          const fileName = getFileName(filePath);
+                          return `
+                <div class="agent-input-file-tag">
+                    <i class="fas fa-paperclip"></i>
+                    <span class="agent-input-file-tag-name">${escapeHtml(fileName)}</span>
+                    <button data-file_path="${escapeHtml(filePath)}" class="agent-input-remove-file-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>`;
+                      })
+                      .join('')
+                : '';
 
         const modelItems = this.availableModels
             .map((m) => {
@@ -1258,6 +1251,7 @@ class AgentInput extends HTMLElement {
                 </div>
                 <!-- 主要输入区域 -->
                 <div class="px-3.5 pt-2.5 pb-1">
+                    ${this.attachedFilePaths.length > 0 ? `<div class="agent-input-file-tags">${fileTags}</div>` : ''}
                     <textarea
                         id="agent-input-textarea"
                         placeholder="${inputPlaceholder}"
@@ -1355,9 +1349,11 @@ class AgentInput extends HTMLElement {
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
                             data-toolbar-priority="5"
-                            style="display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden;"
                         >
-                            ${fileItems}
+                            <button id="agent-input-file-add-btn" class="agent-input-toolbar-control" title="${this.t('renderer.agentInput.fileDrop.hint')}">
+                                <i class="fas fa-paperclip"></i>
+                                <span>${this.t('renderer.agentInput.fileDrop.hint')}</span>
+                            </button>
                         </div>
                     </div>
 
@@ -2553,6 +2549,7 @@ class AgentInput extends HTMLElement {
         const submitBtn = this.querySelector('#agent-input-submit-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
         const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
+        const fileAddBtn = this.querySelector('#agent-input-file-add-btn');
 
         // 模型选择面板
         const modelBtn = this.querySelector('#agent-input-model-btn');
@@ -2839,6 +2836,15 @@ class AgentInput extends HTMLElement {
             });
         });
 
+        if (fileAddBtn) {
+            fileAddBtn.addEventListener('click', async () => {
+                const paths = await window.fsAPI?.selectFile?.();
+                if (paths && paths.length > 0) {
+                    await this.attachFilePaths(paths);
+                }
+            });
+        }
+
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2877,12 +2883,6 @@ class AgentInput extends HTMLElement {
                     attachableFiles.push(filePath);
                 }
                 // 如果pathType为null（路径不存在），则不执行任何操作
-            }
-
-            const unsupported = await this.getUnsupportedFilePaths(attachableFiles);
-            if (unsupported.length > 0) {
-                await this.showUnsupportedFileModal(unsupported);
-                return;
             }
 
             for (const image of images) {

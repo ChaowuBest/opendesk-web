@@ -1222,8 +1222,8 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',
-    'renderer.agentInput.placeholder.enter': 'Type a message, press Enter to send',
-    'renderer.agentInput.placeholder.ctrlEnter': 'Type a message, press Ctrl+Enter to send',
+    'renderer.agentInput.placeholder.enter': 'Type a message, or drag files here, press Enter to send',
+    'renderer.agentInput.placeholder.ctrlEnter': 'Type a message, or drag files here, press Ctrl+Enter to send',
     'renderer.agentInput.modelRequired': 'Please choose a model before chatting',
     'renderer.agentInput.model.visionTag': 'vision',
     'renderer.agentInput.submit.sendLabel': 'Send',
@@ -1231,7 +1231,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.submit.ctrlEnterTitle': 'Send (Ctrl+Enter)',
     'renderer.agentInput.searchToggle.title': 'Toggle file search mode',
     'renderer.agentInput.searchToggle.label': 'Search Files',
-    'renderer.agentInput.fileDrop.hint': 'Drop files here',
+    'renderer.agentInput.fileDrop.hint': 'Add files',
     'renderer.agentInput.image.dropped': 'Dropped image',
     'renderer.agentInput.unsupportedFile.title': 'This file format cannot be parsed',
     'renderer.agentInput.unsupportedFile.noExtension': 'no extension',
