@@ -20,6 +20,28 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { buildChildProcessEnv } from '../../utils/shellExec.js';
+import { t } from '../../../locale/index.js';
+import {
+    getHarmonyLocalRuntimeState,
+    getHarmonyStdioCommandAvailability,
+    type HarmonyLocalRuntimeFeatureAvailability,
+    type HarmonyLocalRuntimeState
+} from '../../utils/harmonyLocalRuntime.js';
+
+export function getMcpServerLocalRuntimeAvailability(
+    server: McpServerConfig,
+    state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
+): HarmonyLocalRuntimeFeatureAvailability {
+    return server.transport === 'stdio'
+        ? getHarmonyStdioCommandAvailability(server.command, state)
+        : { available: true, reason: null, missing: [] };
+}
+
+function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
+    return availability.reason === 'tablet-local-runtime-disabled'
+        ? t('harmony.localRuntime.tabletUnavailable')
+        : t('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
+}
 
 interface McpConnection {
     client: Client;
@@ -32,12 +54,22 @@ interface McpConnection {
 }
 
 export default class McpMgrWorker extends BaseWorker {
+    private readonly localRuntimeState: HarmonyLocalRuntimeState | null;
     private servers: McpServerConfig[] = [];
     private configuredServers: McpServerConfig[] = [];
     private agentServers: McpServerConfig[] = [];
     private pendingAgentConnections = new Map<string, Promise<void>>();
     private connections: Map<string, McpConnection> = new Map();
     private currentWorkspace?: string;
+
+    constructor(
+        bundleName: string,
+        appDataDirectory: string,
+        localRuntimeState: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
+    ) {
+        super(bundleName, appDataDirectory);
+        this.localRuntimeState = localRuntimeState;
+    }
 
     private parseServersFromConfig(): McpServerConfig[] {
         return (this.config as any)?.servers || [];
@@ -51,9 +83,28 @@ export default class McpMgrWorker extends BaseWorker {
         // 启动时自动连接已启用的 server，失败后延迟重试
         for (const server of this.servers) {
             if (server.enabled) {
+                const availability = getMcpServerLocalRuntimeAvailability(server, this.localRuntimeState);
+                if (!availability.available) {
+                    this.setLocalRuntimeUnavailable(server, availability);
+                    continue;
+                }
                 this.autoConnectWithRetry(server.id, server.name);
             }
         }
+    }
+
+    private setLocalRuntimeUnavailable(
+        server: McpServerConfig,
+        availability: HarmonyLocalRuntimeFeatureAvailability
+    ): void {
+        const error = getLocalRuntimeUnavailableMessage(availability);
+        this.connections.set(server.id, {
+            client: null as any,
+            tools: [],
+            status: 'error',
+            error
+        });
+        logger.warn(`[mcpmgr] Local runtime unavailable for "${server.name}": ${availability.reason}`);
     }
 
     /**
@@ -190,6 +241,13 @@ export default class McpMgrWorker extends BaseWorker {
 
         if (this.connections.has(id)) {
             await this.disconnectServer(id);
+        }
+
+        const availability = getMcpServerLocalRuntimeAvailability(server, this.localRuntimeState);
+        if (!availability.available) {
+            this.setLocalRuntimeUnavailable(server, availability);
+            await this.emitEvent('serversUpdated');
+            return;
         }
 
         const conn: McpConnection = {

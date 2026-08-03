@@ -9,6 +9,8 @@ const bridgeState = {
     updateConfigCalls: 0
 };
 
+let agentGateRuntimeAvailable = true;
+
 const settingData: any = {
     applications: {
         agentgate: {
@@ -33,6 +35,9 @@ const mockBridge = {
         bridgeState.stopCalls++;
     }),
     isRunning: jest.fn(() => bridgeState.running),
+    setLocalRuntimeUnavailable: jest.fn(() => {
+        bridgeState.running = false;
+    }),
     updateConfig: jest.fn(() => {
         if (!settingData.applications?.agentgate?.enabled) return;
         bridgeState.updateConfigCalls++;
@@ -131,6 +136,14 @@ jest.unstable_mockModule('../../../main/applications/agentgate/events-cache.js',
     AgentGateEventsCache: mockEventsCache
 }));
 
+jest.unstable_mockModule('../../../main/utils/harmonyLocalRuntime.js', () => ({
+    getHarmonyLocalRuntimeFeatureAvailability: jest.fn(() => ({
+        available: agentGateRuntimeAvailable,
+        reason: agentGateRuntimeAvailable ? null : 'tablet-local-runtime-disabled',
+        missing: agentGateRuntimeAvailable ? [] : ['node']
+    }))
+}));
+
 jest.unstable_mockModule('../../../main/applications/agentgate/worker.js', () => ({
     default: class {
         static getWorkerClass() {
@@ -221,6 +234,7 @@ describe('AgentGateApplication 启停逻辑', () => {
     let app: InstanceType<typeof AgentGateApplication>;
 
     beforeEach(() => {
+        agentGateRuntimeAvailable = true;
         bridgeState.running = false;
         bridgeState.startCalls = 0;
         bridgeState.stopCalls = 0;
@@ -245,6 +259,16 @@ describe('AgentGateApplication 启停逻辑', () => {
         app.syncRuntimeState();
         expect(bridgeState.running).toBe(true);
         expect(bridgeState.startCalls).toBe(1);
+    });
+
+    test('tablet 本地运行时不可用时不启动 bridge', () => {
+        agentGateRuntimeAvailable = false;
+        setSettingData(true);
+
+        app.syncRuntimeState();
+
+        expect(bridgeState.running).toBe(false);
+        expect(bridgeState.startCalls).toBe(0);
     });
 
     test('enabled=false 时 _syncBridgeState 停止 bridge', () => {

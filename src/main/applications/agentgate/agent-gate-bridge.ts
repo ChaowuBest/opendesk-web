@@ -29,6 +29,12 @@ import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../../
 import { getOpenDeskAppHost } from '../../../../packages/app-sdk/src/index.js';
 import { logger } from '../../utils/logger.js';
 import { electron } from '../../../utils/electron.js';
+import { t } from '../../../locale/index.js';
+import {
+    getHarmonyLocalRuntimeFeatureAvailability,
+    getHarmonyLocalRuntimeState,
+    type HarmonyLocalRuntimeFeatureAvailability
+} from '../../utils/harmonyLocalRuntime.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -53,6 +59,9 @@ interface ServiceState {
 }
 
 interface BridgeStatus {
+    available: boolean;
+    unavailableReason: HarmonyLocalRuntimeFeatureAvailability['reason'];
+    missingRuntimes: HarmonyLocalRuntimeFeatureAvailability['missing'];
     running: boolean;
     lastError: string | null;
     mossPort: number;
@@ -60,6 +69,12 @@ interface BridgeStatus {
     mossRunning: boolean;
     gateRunning: boolean;
     llmAvailable: boolean;
+}
+
+function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
+    return availability.reason === 'tablet-local-runtime-disabled'
+        ? t('harmony.localRuntime.tabletUnavailable')
+        : t('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
 }
 
 class AgentGateBridge {
@@ -101,6 +116,7 @@ class AgentGateBridge {
 
     /** 供 renderer 查询 Bridge 运行状态与最近错误 */
     getStatus(): BridgeStatus {
+        const availability = getHarmonyLocalRuntimeFeatureAvailability('agentgate');
         const mossRunning = !!this.mossState.process && !this.mossState.process.killed;
         const gateRunning = !!this.gateState.process && !this.gateState.process.killed;
         // 实时探测 agent-moss HTTP 健康状态（缓存 10 秒）
@@ -112,14 +128,23 @@ class AgentGateBridge {
         // 🟢 绿 = agent-gate 运行正常；🟡 黄 = gate 运行但 agent-moss 不健康；🔴 红 = gate 挂了
         const llmAvailable = !gateRunning ? false : mossRunning ? this._mossHealthy !== false : true;
         return {
+            available: availability.available,
+            unavailableReason: availability.reason,
+            missingRuntimes: availability.missing,
             running: this._running,
-            lastError: this._lastError,
+            lastError: availability.available ? this._lastError : getLocalRuntimeUnavailableMessage(availability),
             mossPort: this.mossState.port,
             gatePort: this.gateState.port,
             mossRunning,
             gateRunning,
             llmAvailable
         };
+    }
+
+    setLocalRuntimeUnavailable(availability: HarmonyLocalRuntimeFeatureAvailability): void {
+        if (availability.available) return;
+        this._running = false;
+        this._lastError = getLocalRuntimeUnavailableMessage(availability);
     }
 
     /** 异步探测 agent-moss HTTP 健康端点，更新缓存 */
@@ -383,6 +408,12 @@ class AgentGateBridge {
 
     async start(settingInstance?: Setting): Promise<void> {
         if (this._running) return;
+        const availability = getHarmonyLocalRuntimeFeatureAvailability('agentgate');
+        if (!availability.available) {
+            this.setLocalRuntimeUnavailable(availability);
+            logger.warn(`[AgentGateBridge] ${this._lastError}`);
+            return;
+        }
         this._running = true;
         this._lastError = null;
         // 保存当前配置，供崩溃/退出后的自动重启（exit/spawn error 回调）读取 enabled 状态
@@ -460,8 +491,8 @@ class AgentGateBridge {
      *
      * AgentGate/AgentMoss 是纯 Node.js 服务，不应使用 Electron 二进制启动。
      * 在 Electron 运行时下 process.execPath 指向 electron 可执行文件，
-     * 在鸿蒙等平台上该路径可能不存在或无法作为 node 使用，因此优先查找
-     * 系统中真正的 node 二进制。
+     * OpenHarmony 只使用启动时已经验证并传给 Worker 的 HNP node 快照；
+     * 其他平台继续按显式配置、PATH、Electron-as-node 的顺序查找。
      *
      * 查找顺序：
      *   1. NODE_BINARY 环境变量（允许用户显式指定）
@@ -471,14 +502,10 @@ class AgentGateBridge {
      * 返回 node 可执行文件路径与需要额外注入的环境变量。
      */
     private resolveNodeCommand(): { nodePath: string; env: Record<string, string> } | null {
-        // 鸿蒙平台上 PATH 可能不包含 HNP 路径，显式追加确保能找到 node
-        const ohosHnpBin = '/data/service/hnp/bin';
-        if (
-            (process.platform as string) === 'openharmony' &&
-            process.env.PATH &&
-            !process.env.PATH.includes(ohosHnpBin)
-        ) {
-            process.env.PATH = `${process.env.PATH}:${ohosHnpBin}`;
+        if ((process.platform as string) === 'openharmony') {
+            const state = getHarmonyLocalRuntimeState();
+            const nodePath = state?.commands.node;
+            return nodePath ? { nodePath, env: {} } : null;
         }
 
         const candidates = [process.env.NODE_BINARY, findExecutableInPath('node')].filter(Boolean) as string[];

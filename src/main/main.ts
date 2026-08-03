@@ -180,6 +180,7 @@ import {
     getHarmonyRuntimeEnvironment,
     initializeHarmonyRuntimeEnvironment
 } from './utils/harmonyRuntime.js';
+import { initializeHarmonyLocalRuntimeState } from './utils/harmonyLocalRuntime.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;
@@ -188,6 +189,7 @@ declare const recallApplication: any;
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
 initializeHarmonyRuntimeEnvironment();
+initializeHarmonyLocalRuntimeState();
 initTempDir();
 
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException

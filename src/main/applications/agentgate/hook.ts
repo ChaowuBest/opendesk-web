@@ -36,6 +36,7 @@ import {
 import { attributeInterception } from './skillAttribution.js';
 import { AgentGateBridge } from './agent-gate-bridge.js';
 import { logger } from '../../utils/logger.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../utils/harmonyLocalRuntime.js';
 import path from 'path';
 
 const AGENT_TYPE = 'opendesk';
@@ -863,6 +864,8 @@ let initialized = false;
 export function initAgentGateHook(): void {
     if (initialized) return;
     initialized = true;
+
+    if (!getHarmonyLocalRuntimeFeatureAvailability('agentgate').available) return;
 
     // Hook 始终注册，运行时由 onBeforeToolCall 内的 isSecurityGatewayEnabled() 决定是否执行
     // 未启用时静默跳过：不记录、不触发 AgentMoss、不推送通知

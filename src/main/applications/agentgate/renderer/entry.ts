@@ -1771,9 +1771,11 @@ class AgentGateEntryWidget extends HTMLElement {
         // 查询主进程 Bridge 状态，显示具体错误原因
         let bridgeError: string | null = null;
         let bridgeRunning = false;
+        let bridgeAvailable = true;
         try {
             const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
             if (status) {
+                bridgeAvailable = status.available !== false;
                 bridgeRunning = !!status.running;
                 bridgeError = status.lastError || null;
             }
@@ -1788,6 +1790,15 @@ class AgentGateEntryWidget extends HTMLElement {
                 errBox.style.display = '';
                 errBox.textContent = bridgeError;
             }
+        }
+
+        if (!bridgeAvailable && bridgeError) {
+            panel.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
+  <div style="font-size:48px;margin-bottom:16px;line-height:1;">⚠️</div>
+  <h2 style="font-size: var(--fs-xl);font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('statusStartFailed')}</h2>
+  <div style="max-width:400px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size: var(--fs-md);color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;">${bridgeError}</div>
+</div>`;
+            return;
         }
 
         // 若 Bridge 已停止且存在不可恢复的错误，重试耗尽后显示启动失败
