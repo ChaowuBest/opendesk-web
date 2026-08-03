@@ -2379,6 +2379,8 @@ class TaskView extends HTMLElement {
      * 使用系统默认应用打开文件。
      */
     _handleOpenFileClick(e) {
+        // 排除文件卡片菜单按钮的点击
+        if (e.target.closest('.od-file-card-menu')) return;
         const target = e.target.closest('[data-open-file]');
         if (!target) return;
         e.preventDefault();
@@ -3239,7 +3241,7 @@ class TaskView extends HTMLElement {
 
             <div class="px-3 pb-3 pt-1 shrink-0">
                 <message-queue-panel id="message-queue-panel"></message-queue-panel>
-                <agent-input id="task-${this.task_id}-input" />
+                <agent-input id="task-${this.task_id}-input" hide-search />
             </div>
         </div>
         `;
@@ -3290,7 +3292,7 @@ class TaskView extends HTMLElement {
                     <div class="px-3 pb-3 pt-1">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
-                        <agent-input id="task-${this.task_id}-input" />
+                        <agent-input id="task-${this.task_id}-input" hide-search />
                     </div>
                 </div>
 

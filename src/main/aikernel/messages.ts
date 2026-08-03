@@ -942,7 +942,7 @@ export class FileMessagePart {
         const metaInfo = metaParts.join(', ');
 
         return `
-        <div class="od-file-card" data-file-path="${path.basename(this.path).replace(/"/g, '&quot;')}">
+        <div class="od-file-card" data-file-path="${escapeHtml(this.path)}" data-open-file="${escapeHtml(this.path)}">
             <div class="od-file-card-icon">${fileIcon}</div>
             <div class="od-file-card-info">
                 <span class="od-file-card-name">${fileName}</span>
