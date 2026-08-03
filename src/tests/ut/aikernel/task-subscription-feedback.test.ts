@@ -260,6 +260,44 @@ describe('task subscription feedback', () => {
         await task.sendSubscriptionFeedback(0);
     });
 
+    test('attachFiles pushes subscription feedback for file message parts', async () => {
+        // Bug: attachFiles() creates a UserMessage with FileMessagePart(s) and
+        // appends it to chat_context, but never calls sendSubscriptionFeedback().
+        // The subsequent submitUserMessage() creates another UserMessage (text)
+        // which becomes lastMessage(), so sendSubscriptionFeedback() in
+        // submitUserMessage only pushes the text message, skipping the file message.
+        // The file message is persisted (visible after restart) but not pushed
+        // to the live frontend (invisible during the session).
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.attachFiles(['/tmp/test.xlsx']);
+
+        // attachFiles should push a user chunk for the file message
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0].type).toBe('user');
+        const fileChunk = chunks[0];
+        if (fileChunk.type !== 'user') return;
+        expect(fileChunk.last_part.type).toBe('file');
+        const fileMessageId = fileChunk.message_id;
+
+        // Simulate submitUserMessage appending a text message afterwards
+        task.chat_context.appendMessage(new UserMessage('analyze this file'));
+        await task.sendSubscriptionFeedback(0);
+
+        expect(chunks).toHaveLength(2);
+        expect(chunks[1].type).toBe('user');
+        const textChunk = chunks[1];
+        if (textChunk.type !== 'user') return;
+        expect(textChunk.last_part.type).toBe('text');
+        // File and text messages must have different message_ids
+        expect(textChunk.message_id).not.toBe(fileMessageId);
+    });
+
     test('settled subscriber from stop() does not receive new message chunks', async () => {
         const manager = new TaskManagerState();
         manager.save = jest.fn();
