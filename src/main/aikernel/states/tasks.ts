@@ -1393,6 +1393,9 @@ export class TaskState {
         }
 
         this.chat_context.appendMessage(user_message);
+        for (let i = 0; i < user_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
     }
 
     /** 当 TUI 层已经执行过压缩时置 true，防止 submitUserMessage 重复压缩 */
