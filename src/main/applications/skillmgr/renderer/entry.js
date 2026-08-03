@@ -3,7 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+import { showConfirmModal, renderIcon } from '../../../../renderer/components/confirmModal';
 import { showDuplicateInstallModal } from './duplicateInstallModal.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
@@ -1135,7 +1135,7 @@ const STYLE = `
     /* ── Analyze modal ── */
     .analyze-modal-overlay {
         display: none; position: fixed; inset: 0;
-        background: rgba(0,0,0,0.18); z-index: 10001;
+        background: rgba(0,0,0,0.3); z-index: 10001;
         align-items: center; justify-content: center;
         backdrop-filter: blur(6px); animation: fade-in 0.15s ease;
     }
@@ -1148,21 +1148,31 @@ const STYLE = `
         display: flex; flex-direction: column; overflow: hidden;
     }
     .analyze-modal-header {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 18px 20px; border-bottom: 1px solid rgba(0,0,0,0.06);
+        display: flex; align-items: center; gap: 12px;
+        padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06);
         flex-shrink: 0;
     }
-    .analyze-modal-header h3 {
-        margin: 0; font-size: 15px; font-weight: 600; color: #1d1d1f;
+    .analyze-modal-header.info { background: #EBF1FB; }
+    .analyze-modal-banner-icon {
+        width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: #4267B2;
+    }
+    .analyze-modal-banner-icon i { color: #fff; font-size: 16px; }
+    .analyze-modal-banner-icon svg { width: 16px; height: 16px; color: #fff; }
+    .analyze-modal-banner-text { flex: 1; min-width: 0; }
+    .analyze-modal-header.info h3 {
+        margin: 0; font-size: 15px; font-weight: 700; color: #1d1d1f;
     }
     .analyze-modal-close {
-        width: 28px; height: 28px; border-radius: 50%;
-        border: none; background: rgba(0,0,0,0.04);
-        font-size: 16px; color: #999; cursor: pointer;
-        display: flex; align-items: center; justify-content: center;
+        width: 26px; height: 26px; border-radius: 7px;
+        border: none; background: rgba(0,0,0,0.06);
+        color: #555; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
         transition: all 0.15s;
     }
-    .analyze-modal-close:hover { background: rgba(0,0,0,0.08); color: #555; }
+    .analyze-modal-close svg { width: 14px; height: 14px; }
+    .analyze-modal-close:hover { background: rgba(0,0,0,0.12); color: #333; }
     .analyze-modal-body {
         padding: 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
     }
@@ -1171,8 +1181,8 @@ const STYLE = `
         display: flex; justify-content: flex-end; gap: 10px;
     }
     .analyze-modal-footer-btn {
-        padding: 8px 20px; border-radius: 8px; border: none;
-        font-size: 13px; font-weight: 500; cursor: pointer;
+        padding: 7px 16px; border-radius: 8px; border: none;
+        font-size: 12.5px; font-weight: 600; cursor: pointer;
         font-family: inherit; transition: all 0.15s;
     }
     .analyze-modal-footer-btn.btn-cancel {
@@ -1209,6 +1219,27 @@ const STYLE = `
     .analyze-modal-empty {
         text-align: center; padding: 24px; color: #999; font-size: 13px;
     }
+
+    /* ── Analyze modal dark mode ── */
+    :host([data-theme="dark"]) .analyze-modal-overlay { background: rgba(0,0,0,0.45); }
+    :host([data-theme="dark"]) .analyze-modal-dialog { background: #2A2826; }
+    :host([data-theme="dark"]) .analyze-modal-header.info { background: rgba(122,162,232,0.16); }
+    :host([data-theme="dark"]) .analyze-modal-banner-icon { background: #7AA2E8; }
+    :host([data-theme="dark"]) .analyze-modal-header.info h3 { color: #e4e4e4; }
+    :host([data-theme="dark"]) .analyze-modal-close { background: rgba(255,255,255,0.08); color: #ccc; }
+    :host([data-theme="dark"]) .analyze-modal-close:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    :host([data-theme="dark"]) .analyze-modal-body { color: #ccc; }
+    :host([data-theme="dark"]) .analyze-modal-section-title { color: #e4e4e4; }
+    :host([data-theme="dark"]) .analyze-modal-subsection-title { color: #9d9d9d; }
+    :host([data-theme="dark"]) .analyze-modal-table th { color: #9d9d9d; border-bottom-color: rgba(255,255,255,0.08); }
+    :host([data-theme="dark"]) .analyze-modal-table td { color: #ccc; border-bottom-color: rgba(255,255,255,0.06); }
+    :host([data-theme="dark"]) .analyze-modal-table code { background: #3f3f46; }
+    :host([data-theme="dark"]) .analyze-modal-footer { border-top-color: rgba(255,255,255,0.12); }
+    :host([data-theme="dark"]) .analyze-modal-footer-btn.btn-cancel { background: rgba(255,255,255,0.06); color: #ccc; }
+    :host([data-theme="dark"]) .analyze-modal-footer-btn.btn-cancel:hover { background: rgba(255,255,255,0.12); }
+    :host([data-theme="dark"]) .analyze-modal-footer-btn.btn-danger { background: #E85A5A; color: #fff; }
+    :host([data-theme="dark"]) .analyze-modal-footer-btn.btn-danger:hover { background: #D04A4A; }
+    :host([data-theme="dark"]) .analyze-modal-empty { color: #777; }
 
 ${TEST_RESULTS_REPORT_STYLE}
 
@@ -2600,14 +2631,23 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (!ds.active) return '';
         const pct = ds.total > 0 ? Math.round((ds.deleted / ds.total) * 100) : 0;
         return `
-            <div style="background:#fff;border-radius:20px;padding:28px;width:420px;max-width:92vw;
+            <div style="background:#fff;border-radius:16px;width:420px;max-width:92vw;
                 box-shadow:0 24px 80px rgba(0,0,0,0.18),0 0 1px rgba(0,0,0,0.1);
-                animation:od-modal-scale-in 0.25s cubic-bezier(0.23,1,0.32,1);">
-                <h3 style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1d1d1f;">删除技能中…</h3>
-                <div style="width:100%;height:6px;background:#F0F0F0;border-radius:3px;overflow:hidden;margin-bottom:10px;">
-                    <div style="height:100%;background:linear-gradient(90deg,#E06060,#F09090);border-radius:3px;transition:width 0.3s ease;width:${pct}%;"></div>
+                animation:od-modal-scale-in 0.25s cubic-bezier(0.23,1,0.32,1);overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:12px;padding:16px 24px;background:#EBF1FB;border-bottom:1px solid rgba(0,0,0,0.06);">
+                    <div style="width:36px;height:36px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#4267B2;">
+                        <i class="fa-solid fa-trash-can" style="color:#fff;font-size:16px;"></i>
+                    </div>
+                    <div style="flex:1;">
+                        <div style="font-size:15px;font-weight:700;color:#1d1d1f;">删除技能中…</div>
+                    </div>
                 </div>
-                <div style="font-size:13px;color:#555;text-align:center;">${ds.deleted} / ${ds.total}${ds.failed > 0 ? `（${ds.failed} 个失败）` : ''}</div>
+                <div style="padding:16px 24px;">
+                    <div style="width:100%;height:6px;background:#F0F0F0;border-radius:3px;overflow:hidden;margin-bottom:10px;">
+                        <div style="height:100%;background:linear-gradient(90deg,#DF4436,#F09090);border-radius:3px;transition:width 0.3s ease;width:${pct}%;"></div>
+                    </div>
+                    <div style="font-size:13px;color:#555;text-align:center;">${ds.deleted} / ${ds.total}${ds.failed > 0 ? `（${ds.failed} 个失败）` : ''}</div>
+                </div>
             </div>`;
     }
 
@@ -3953,9 +3993,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         </div>
         <div class="analyze-modal-overlay ${this.analyzeState.modalVisible ? 'visible' : ''}" id="analyze-modal-overlay">
             <div class="analyze-modal-dialog ${this.analyzeState._modalType === 'testReport' ? TEST_RESULTS_REPORT_MODAL_CLASS : ''}">
-                <div class="analyze-modal-header">
-                    <h3>${escapeHtml(this.analyzeState.modalTitle)}</h3>
-                    <button type="button" class="analyze-modal-close" id="analyze-modal-close">×</button>
+                <div class="analyze-modal-header info">
+                    <div class="analyze-modal-banner-icon">${renderIcon('fa-flask')}</div>
+                    <div class="analyze-modal-banner-text"><h3>${escapeHtml(this.analyzeState.modalTitle)}</h3></div>
+                    <button type="button" class="analyze-modal-close" id="analyze-modal-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
                 <div class="analyze-modal-body">${this.analyzeState.modalContent}</div>
                 ${this.analyzeState.modalFooter ? `<div class="analyze-modal-footer">${this.analyzeState.modalFooter}</div>` : ''}

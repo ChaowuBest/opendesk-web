@@ -10,7 +10,80 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
-import { showConfirmModal } from './confirmModal.ts';
+import { showConfirmModal, MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from './confirmModal.ts';
+
+const CLOSE_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+const SP_MODAL_EXTRA_CSS = `
+.od-confirm-modal-card.od-sp-wide { width: 480px; max-width: 92vw; }
+.od-confirm-modal-card.od-sp-wider { width: 560px; max-width: 92vw; }
+.od-confirm-modal-body.od-sp-scroll { max-height: 60vh; overflow-y: auto; }
+.od-sp-fg { margin-bottom: 14px; }
+.od-sp-fg:last-child { margin-bottom: 0; }
+.od-sp-fl { display: block; font-size: 11.5px; font-weight: 600; color: var(--mc-ink2); margin-bottom: 5px; }
+.od-sp-fi {
+    width: 100%; padding: 7px 12px; font-size: 13px;
+    border: 1px solid var(--mc-line); border-radius: 8px;
+    background: var(--mc-card-bg); color: var(--mc-ink);
+    outline: none; font-family: inherit; transition: border-color 0.15s; box-sizing: border-box;
+}
+.od-sp-fi::placeholder { color: var(--mc-ink4); }
+.od-sp-fi:focus { border-color: var(--mc-accent); }
+.od-sp-fi[readonly] { background: var(--mc-bg); color: var(--mc-ink3); }
+select.od-sp-fi {
+    appearance: none; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238A8580' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+}
+.od-modal-dark select.od-sp-fi {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%239B968F' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
+}
+textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 12px; }
+.od-sp-fc { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.od-sp-fc input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--mc-accent); cursor: pointer; }
+.od-sp-fc label { font-size: 13px; color: var(--mc-ink2); cursor: pointer; }
+.od-sp-fr { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.od-sp-key-wrap { position: relative; }
+.od-sp-key-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: none; background: transparent; cursor: pointer; color: var(--mc-ink3); padding: 2px; transition: color 0.15s; }
+.od-sp-key-toggle:hover { color: var(--mc-ink2); }
+.od-sp-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; max-height: 360px; overflow-y: auto; }
+.od-sp-template-card { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; border-radius: 10px; border: 1px solid var(--mc-line); background: var(--mc-card-bg); cursor: pointer; text-align: center; transition: border-color 0.15s, background 0.15s; }
+.od-sp-template-card:hover { border-color: var(--mc-accent); background: var(--mc-hover); }
+.od-sp-template-card .name { font-size: 13px; font-weight: 600; color: var(--mc-ink); }
+.od-sp-template-card .url { font-size: 11px; color: var(--mc-ink3); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.od-sp-template-card .badge { font-size: 10px; color: #14B8A6; margin-top: 4px; }
+.od-sp-template-custom { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; border-radius: 10px; border: 1px dashed var(--mc-line); background: transparent; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.od-sp-template-custom:hover { border-color: var(--mc-accent); background: var(--mc-hover); }
+.od-sp-template-custom i { color: var(--mc-ink3); margin-bottom: 4px; }
+.od-sp-template-custom span { font-size: 12px; color: var(--mc-ink3); }
+.od-sp-combo { position: relative; }
+.od-sp-model-dropdown { position: absolute; z-index: 10; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--mc-card-bg); border: 1px solid var(--mc-line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); max-height: 180px; overflow-y: auto; }
+.od-sp-model-option { padding: 7px 12px; font-size: 12px; cursor: pointer; color: var(--mc-ink); transition: background 0.1s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.od-sp-model-option:hover { background: var(--mc-hover); }
+.od-sp-header-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.od-sp-header-item input { flex: 1; }
+.od-sp-header-remove { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--mc-ink3); cursor: pointer; border-radius: 6px; transition: color 0.15s, background 0.15s; flex-shrink: 0; }
+.od-sp-header-remove:hover { color: var(--mc-red); background: var(--mc-hover); }
+.od-sp-add-header { width: 100%; padding: 7px; font-size: 12px; color: var(--mc-ink3); background: var(--mc-bg); border: 1px dashed var(--mc-line); border-radius: 8px; cursor: pointer; transition: background 0.15s; margin-top: 6px; font-family: inherit; }
+.od-sp-add-header:hover { background: var(--mc-hover); }
+.od-sp-hint { font-size: 11px; color: var(--mc-ink4); margin-top: 6px; }
+.od-sp-empty-hint { font-size: 11px; color: var(--mc-ink4); font-style: italic; }
+.od-sp-verify-result { margin: 0 24px 4px; padding: 10px 12px; font-size: 12px; border-radius: 8px; max-height: 180px; overflow-y: auto; line-height: 1.5; }
+.od-sp-verify-info { color: var(--mc-accent); background: var(--mc-hover); border: 1px solid var(--mc-line); }
+.od-sp-verify-success { color: #1F9D66; background: #E7F5EE; border: 1px solid rgba(31,157,102,0.3); }
+.od-modal-dark .od-sp-verify-success { color: #3DBF82; background: rgba(61,191,130,0.12); border-color: rgba(61,191,130,0.3); }
+.od-sp-verify-error { color: var(--mc-red); background: rgba(220,38,38,0.08); border: 1px solid var(--mc-red); }
+.od-sp-export-btns { display: flex; gap: 10px; margin-bottom: 14px; }
+.od-sp-export-opt { flex: 1; padding: 10px; font-size: 13px; font-weight: 500; color: var(--mc-ink2); background: var(--mc-card-bg); border: 1px solid var(--mc-line); border-radius: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s; font-family: inherit; }
+.od-sp-export-opt:hover { background: var(--mc-hover); }
+.od-sp-export-opt i { margin-right: 6px; }
+.od-sp-import-result { font-size: 13px; margin-bottom: 14px; min-height: 20px; }
+.od-sp-success-text { color: #1F9D66; }
+.od-modal-dark .od-sp-success-text { color: #3DBF82; }
+.od-sp-error-text { color: var(--mc-red); }
+.od-sp-loading-text { color: var(--mc-ink3); }
+`;
 
 class SettingPanel extends HTMLElement {
     constructor() {
@@ -688,48 +761,6 @@ class SettingPanel extends HTMLElement {
                 background: rgba(255, 255, 255, 0.28);
             }
 
-            /* ── Modal ── */
-            .sp-modal-overlay {
-                position: fixed; inset: 0; z-index: 50;
-                background: rgba(0,0,0,0.3);
-                backdrop-filter: blur(4px);
-            }
-            .sp-modal-container {
-                position: fixed; inset: 0; z-index: 50;
-                display: flex; align-items: center; justify-content: center;
-                pointer-events: none;
-            }
-            .sp-modal-content {
-                background: var(--sp-color-bg);
-                border-radius: var(--sp-radius-xl);
-                border: 1px solid var(--sp-color-border);
-                box-shadow: var(--sp-shadow-md);
-                pointer-events: auto;
-                max-height: 85vh;
-                overflow: hidden;
-            }
-            .sp-modal-header {
-                padding: 16px 24px;
-                border-bottom: 1px solid var(--sp-color-border);
-                display: flex; align-items: center; justify-content: space-between;
-            }
-            .sp-modal-title { font-size: 16px; font-weight: 700; color: var(--sp-color-text); }
-            .sp-modal-close {
-                width: 32px; height: 32px;
-                display: flex; align-items: center; justify-content: center;
-                border-radius: var(--sp-radius-sm);
-                border: none; background: transparent;
-                color: var(--sp-color-text-tertiary);
-                cursor: pointer; transition: all 0.15s;
-            }
-            .sp-modal-close:hover { color: var(--sp-color-text); background: var(--sp-color-border-light); }
-            .sp-modal-body { padding: 24px; }
-            .sp-modal-footer {
-                padding: 16px 24px;
-                border-top: 1px solid var(--sp-color-border);
-                display: flex; justify-content: flex-end; gap: 12px;
-            }
-
             /* ── Header ── */
             .sp-header {
                 position: sticky; top: 0; z-index: 10;
@@ -841,11 +872,6 @@ class SettingPanel extends HTMLElement {
             </div>
         </div>
 
-        <!-- 模态框容器 -->
-        <div id="modal-overlay" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"></div>
-        <div id="modal-container" class="hidden fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-            <div id="modal-content" class="pointer-events-auto"></div>
-        </div>
         `;
 
         this._createSettingPanelToolbar();
@@ -1229,7 +1255,7 @@ class SettingPanel extends HTMLElement {
             `
                 )
                 .join('');
-            return items || `<p class="text-xs text-gray-400 italic">${this._t('sp.environ.empty')}</p>`;
+            return items || `<p class="od-sp-empty-hint">${this._t('sp.environ.empty')}</p>`;
         };
 
         return `
@@ -1527,76 +1553,77 @@ class SettingPanel extends HTMLElement {
         this._editingTelemetryProtocol = protocol;
 
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? this._t('config.telemetry.edit') : this._t('config.telemetry.add_title')}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="px-6 py-5 space-y-4">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.field.name')}</label>
-                        <input id="telemetry-name-input" type="text" value="${this.escapeHtml(endpoint.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('config.telemetry.field.name')}">
+            <div class="od-confirm-modal-card od-sp-wide">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-satellite-dish"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${isEdit ? this._t('config.telemetry.edit') : this._t('config.telemetry.add_title')}</div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.protocol')}</label>
-                        <select id="telemetry-protocol-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('config.telemetry.field.name')}</label>
+                        <input id="telemetry-name-input" type="text" value="${this.escapeHtml(endpoint.name)}" class="od-sp-fi" placeholder="${this._t('config.telemetry.field.name')}">
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('config.telemetry.protocol')}</label>
+                        <select id="telemetry-protocol-input" class="od-sp-fi">
                             <option value="opentelemetry" ${protocol === 'opentelemetry' ? 'selected' : ''}>OpenTelemetry (OTLP)</option>
                             <option value="langfuse" ${protocol === 'langfuse' ? 'selected' : ''}>Langfuse</option>
                         </select>
                     </div>
-                    <div id="telemetry-opentelemetry-fields">
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.endpoint')}</label>
-                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all font-mono" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
+                    <div id="telemetry-opentelemetry-fields" class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('config.telemetry.endpoint')}</label>
+                        <input id="telemetry-url-input" type="text" value="${this.escapeHtml(endpoint.url || '')}" class="od-sp-fi" placeholder="${this._t('renderer.settings.telemetryEndpointPlaceholder')}">
                     </div>
-                    <div id="telemetry-langfuse-fields" class="space-y-4">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.base_url')}</label>
-                            <input id="telemetry-langfuse-base-url-input" type="text" value="${this.escapeHtml(endpoint.base_url || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="https://cloud.langfuse.com">
+                    <div id="telemetry-langfuse-fields">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.base_url')}</label>
+                            <input id="telemetry-langfuse-base-url-input" type="text" value="${this.escapeHtml(endpoint.base_url || '')}" class="od-sp-fi" placeholder="https://cloud.langfuse.com">
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.public_key')}</label>
-                            <input id="telemetry-langfuse-public-key-input" type="text" value="${this.escapeHtml(endpoint.public_key || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="pk-lf-...">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.public_key')}</label>
+                            <input id="telemetry-langfuse-public-key-input" type="text" value="${this.escapeHtml(endpoint.public_key || '')}" class="od-sp-fi" placeholder="pk-lf-...">
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.secret_key')}</label>
-                            <input id="telemetry-langfuse-secret-key-input" type="password" value="${this.escapeHtml(endpoint.secret_key || '')}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl font-mono" placeholder="sk-lf-...">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.secret_key')}</label>
+                            <input id="telemetry-langfuse-secret-key-input" type="password" value="${this.escapeHtml(endpoint.secret_key || '')}" class="od-sp-fi" placeholder="sk-lf-...">
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.environment')}</label>
-                            <input id="telemetry-langfuse-environment-input" type="text" value="${this.escapeHtml(langfuseConfig.environment)}" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl" placeholder="development">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.environment')}</label>
+                            <input id="telemetry-langfuse-environment-input" type="text" value="${this.escapeHtml(langfuseConfig.environment)}" class="od-sp-fi" placeholder="development">
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.export_mode')}</label>
-                            <select id="telemetry-langfuse-export-mode-input" class="w-full px-4 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.export_mode')}</label>
+                            <select id="telemetry-langfuse-export-mode-input" class="od-sp-fi">
                                 <option value="batched" ${endpoint.export_mode !== 'immediate' ? 'selected' : ''}>${this._t('config.telemetry.langfuse.option.export_mode.batched')}</option>
                                 <option value="immediate" ${endpoint.export_mode === 'immediate' ? 'selected' : ''}>${this._t('config.telemetry.langfuse.option.export_mode.immediate')}</option>
                             </select>
                         </div>
-                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.max_payload_chars')}</label>
-                                <input id="telemetry-langfuse-max-payload-chars-input" type="number" min="1" step="1" value="${this.escapeHtml(langfuseConfig.max_payload_chars)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                        <div class="od-sp-fr">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.max_payload_chars')}</label>
+                                <input id="telemetry-langfuse-max-payload-chars-input" type="number" min="1" step="1" value="${this.escapeHtml(langfuseConfig.max_payload_chars)}" class="od-sp-fi">
                             </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.flush_at')}</label>
-                                <input id="telemetry-langfuse-flush-at-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_at || 50)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.flush_at')}</label>
+                                <input id="telemetry-langfuse-flush-at-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_at || 50)}" class="od-sp-fi">
                             </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.telemetry.langfuse.field.flush_interval_seconds')}</label>
-                                <input id="telemetry-langfuse-flush-interval-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_interval_seconds || 5)}" class="w-full px-3 py-2.5 text-sm bg-white/60 border border-gray-200/60 rounded-xl">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('config.telemetry.langfuse.field.flush_interval_seconds')}</label>
+                                <input id="telemetry-langfuse-flush-interval-input" type="number" min="1" step="1" value="${this.escapeHtml(endpoint.flush_interval_seconds || 5)}" class="od-sp-fi">
                             </div>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <input id="telemetry-enabled-input" type="checkbox" ${endpoint.enabled ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        <label for="telemetry-enabled-input" class="text-sm text-gray-600">${this._t('config.telemetry.field.enabled')}</label>
+                    <div class="od-sp-fc">
+                        <input id="telemetry-enabled-input" type="checkbox" ${endpoint.enabled ? 'checked' : ''}>
+                        <label for="telemetry-enabled-input">${this._t('config.telemetry.field.enabled')}</label>
                     </div>
                 </div>
-                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button id="telemetry-modal-cancel" class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors">${this._t('renderer.settings.telemetryCancelAdd')}</button>
-                    <button id="telemetry-modal-save" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all">${this._t('renderer.settings.telemetryConfirmAdd')}</button>
+                <div class="od-confirm-modal-footer">
+                    <button id="telemetry-modal-cancel" class="od-confirm-btn od-confirm-btn-cancel">${this._t('renderer.settings.telemetryCancelAdd')}</button>
+                    <button id="telemetry-modal-save" class="od-confirm-btn od-confirm-btn-primary">${this._t('renderer.settings.telemetryConfirmAdd')}</button>
                 </div>
             </div>
         `);
@@ -2218,11 +2245,6 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 模态框关闭
-        this.querySelector('#modal-overlay')?.addEventListener('click', () => {
-            this.closeModal();
-        });
-
         // 环境变量管理
         this._bindGatewayEvents();
         this._bindEnvironEvents();
@@ -2591,35 +2613,38 @@ class SettingPanel extends HTMLElement {
 
     // --- 提供方管理 ---
     showProviderTemplateModal() {
-        const templates = this.providerTemplates;
         const templateCards = templates
             .map(
                 (t, i) => `
-            <button class="provider-template-btn sp-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200" data-index="${i}">
-                <span class="font-medium text-gray-800">${this.escapeHtml(t.displayName)}</span>
-                <span class="text-xs text-gray-400 mt-1 truncate max-w-full">${this.escapeHtml(t.base_url)}</span>
-                ${t.provider_type === 'anthropic' ? '<span class="text-[11px] text-teal-500 mt-1">Anthropic</span>' : ''}
+            <button class="provider-template-btn od-sp-template-card" data-index="${i}">
+                <span class="name">${this.escapeHtml(t.displayName)}</span>
+                <span class="url">${this.escapeHtml(t.base_url)}</span>
+                ${t.provider_type === 'anthropic' ? '<span class="badge">Anthropic</span>' : ''}
             </button>
         `
             )
             .join('');
 
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.providers.template.title')}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
+            <div class="od-confirm-modal-card od-sp-wider">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-layer-group"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this._t('sp.providers.template.title')}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
-                <div class="px-6 py-5">
-                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto">
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <div class="od-sp-template-grid">
                         ${templateCards}
-                        <button class="provider-custom-btn sp-template-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300">
-                            <i class="fas fa-plus text-gray-400 mb-1"></i>
-                            <span class="text-sm text-gray-500">${this._t('sp.providers.template.custom')}</span>
+                        <button class="provider-custom-btn od-sp-template-custom">
+                            <i class="fas fa-plus"></i>
+                            <span>${this._t('sp.providers.template.custom')}</span>
                         </button>
                     </div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('common.close')}</button>
                 </div>
             </div>
         `);
@@ -2660,50 +2685,51 @@ class SettingPanel extends HTMLElement {
         this._editingProviderIndex = index;
 
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? this._t('sp.providers.edit.title.edit') : this._t('sp.providers.edit.title.add')}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="px-6 py-5 space-y-4">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.name')}</label>
-                        <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('sp.providers.field.name.placeholder')}">
+            <div class="od-confirm-modal-card od-sp-wide">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-server"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${isEdit ? this._t('sp.providers.edit.title.edit') : this._t('sp.providers.edit.title.add')}</div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.type')}</label>
-                        <select id="provider-type-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.providers.field.name')}</label>
+                        <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="od-sp-fi" placeholder="${this._t('sp.providers.field.name.placeholder')}">
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.providers.field.type')}</label>
+                        <select id="provider-type-input" class="od-sp-fi">
                             <option value="openai" ${providerType === 'openai' ? 'selected' : ''}>OpenAI</option>
                             <option value="anthropic" ${providerType === 'anthropic' ? 'selected' : ''}>Anthropic</option>
                         </select>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.url')}</label>
-                        <input id="provider-url-input" type="text" value="${this.escapeHtml(provider.base_url)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="https://api.example.com/v1">
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.providers.field.url')}</label>
+                        <input id="provider-url-input" type="text" value="${this.escapeHtml(provider.base_url)}" class="od-sp-fi" placeholder="https://api.example.com/v1">
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('sp.providers.field.key')}</label>
-                        <div class="relative">
-                            <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="sk-...">
-                            <button id="toggle-key-visibility" class="sp-toggle-key absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-                                <i class="fas fa-eye text-xs"></i>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.providers.field.key')}</label>
+                        <div class="od-sp-key-wrap">
+                            <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="od-sp-fi" placeholder="sk-...">
+                            <button id="toggle-key-visibility" class="od-sp-key-toggle">
+                                <i class="fas fa-eye" style="font-size:12px"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <input id="provider-no-proxy-input" type="checkbox" ${provider.no_proxy ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        <label for="provider-no-proxy-input" class="text-sm text-gray-600">${this._t('sp.providers.field.noProxy')}</label>
+                    <div class="od-sp-fc">
+                        <input id="provider-no-proxy-input" type="checkbox" ${provider.no_proxy ? 'checked' : ''}>
+                        <label for="provider-no-proxy-input">${this._t('sp.providers.field.noProxy')}</label>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <input id="provider-no-ssl-input" type="checkbox" ${provider.no_ssl ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        <label for="provider-no-ssl-input" class="text-sm text-gray-600">${this._t('sp.providers.field.noSsl')}</label>
+                    <div class="od-sp-fc">
+                        <input id="provider-no-ssl-input" type="checkbox" ${provider.no_ssl ? 'checked' : ''}>
+                        <label for="provider-no-ssl-input">${this._t('sp.providers.field.noSsl')}</label>
                     </div>
                 </div>
-                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this._t('sp.providers.cancel')}</button>
-                    <button id="save-provider-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">${isEdit ? this._t('sp.providers.save') : this._t('sp.providers.addBtn')}</button>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('sp.providers.cancel')}</button>
+                    <button id="save-provider-btn" class="od-confirm-btn od-confirm-btn-primary">${isEdit ? this._t('sp.providers.save') : this._t('sp.providers.addBtn')}</button>
                 </div>
             </div>
         `);
@@ -2771,32 +2797,28 @@ class SettingPanel extends HTMLElement {
                 : this._t('sp.providers.delete.confirm', { name: provider.name });
 
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.providers.delete.title')}</h3>
-                    <button class="modal-close-btn sp-modal-close text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="px-6 py-5">
-                    <div class="flex items-start gap-3">
-                        <div class="shrink-0 w-10 h-10 rounded-full ${modelCount > 0 ? 'bg-amber-50 text-amber-500' : 'bg-red-50 text-red-500'} flex items-center justify-center">
-                            <i class="fas ${modelCount > 0 ? 'fa-exclamation-triangle' : 'fa-trash-alt'}"></i>
-                        </div>
-                        <div class="text-sm text-gray-600 leading-relaxed">${message}</div>
+            <div class="od-confirm-modal-card">
+                <div class="od-confirm-modal-banner ${modelCount > 0 ? 'warn' : 'danger'}">
+                    <div class="od-confirm-modal-icon"><i class="fas ${modelCount > 0 ? 'fa-triangle-exclamation' : 'fa-trash-can'}"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this._t('sp.providers.delete.title')}</div>
                     </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body">
+                    <div>${message}</div>
                     ${
                         modelCount > 0
                             ? `
-                    <div class="mt-3 ml-[52px] text-xs text-gray-400 bg-gray-50 rounded-lg p-2.5 space-y-0.5">
-                        ${modelsUsingProvider.map((m) => `<div class="truncate">· ${m.alias || m.model_name}</div>`).join('')}
+                    <div style="margin-top:10px;font-size:11px;color:var(--mc-ink4);background:var(--mc-bg);border-radius:8px;padding:8px 10px;">
+                        ${modelsUsingProvider.map((m) => `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">· ${this.escapeHtml(m.alias || m.model_name)}</div>`).join('')}
                     </div>`
                             : ''
                     }
                 </div>
-                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl">${this._t('sp.providers.delete.cancel')}</button>
-                    <button id="confirm-delete-provider-btn" class="sp-confirm-delete px-4 py-2 text-sm text-white bg-red-500 rounded-xl">${this._t('sp.providers.delete.confirmBtn')}</button>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('sp.providers.delete.cancel')}</button>
+                    <button id="confirm-delete-provider-btn" class="od-confirm-btn od-confirm-btn-danger">${this._t('sp.providers.delete.confirmBtn')}</button>
                 </div>
             </div>
         `);
@@ -2882,10 +2904,10 @@ class SettingPanel extends HTMLElement {
             const items = this._customHeaders
                 .map(
                     (h, i) => `
-	                <div class="header-item flex items-center gap-2 mb-2" data-index="${i}">
-	                    <input type="text" class="header-key sp-form-input" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
-	                    <input type="text" class="header-value sp-form-input" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
-	                    <button class="remove-header-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+	                <div class="header-item od-sp-header-item" data-index="${i}">
+	                    <input type="text" class="header-key od-sp-fi" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
+	                    <input type="text" class="header-value od-sp-fi" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
+	                    <button class="remove-header-btn od-sp-header-remove" data-index="${i}">
 	                        <i class="fas fa-times"></i>
 	                    </button>
 	                </div>
@@ -2893,86 +2915,84 @@ class SettingPanel extends HTMLElement {
                 )
                 .join('');
             return (
-                items ||
-                `<p class="text-xs text-gray-400 italic">${this.escapeHtml(this._t('config.model.header.empty_list'))}</p>`
+                items || `<p class="od-sp-empty-hint">${this.escapeHtml(this._t('config.model.header.empty_list'))}</p>`
             );
         };
 
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-	                    <h3 class="text-base font-semibold text-gray-800">${this.escapeHtml(this._t(isEdit ? 'config.model.edit.title.edit' : 'config.model.edit.title.add'))}</h3>
-	                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-	                        <i class="fas fa-times"></i>
-	                    </button>
-	                </div>
-	                <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
-	                    <div>
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.alias'))}</label>
-	                        <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.alias.placeholder'))}">
-	                    </div>
-	                    <div>
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.provider'))}</label>
-	                        <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-	                            <option value="">${this.escapeHtml(this._t('config.model.field.provider.placeholder'))}</option>
-	                            ${providerOptions}
-	                        </select>
-	                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.model.field.model_type')}</label>
-                        <select id="model-type-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+            <div class="od-confirm-modal-card od-sp-wide">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-microchip"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this.escapeHtml(this._t(isEdit ? 'config.model.edit.title.edit' : 'config.model.edit.title.add'))}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.alias'))}</label>
+                        <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.alias.placeholder'))}">
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.provider'))}</label>
+                        <select id="model-provider-input" class="od-sp-fi">
+                            <option value="">${this.escapeHtml(this._t('config.model.field.provider.placeholder'))}</option>
+                            ${providerOptions}
+                        </select>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('config.model.field.model_type')}</label>
+                        <select id="model-type-input" class="od-sp-fi">
                             <option value="chat" ${model.model_type === 'chat' ? 'selected' : ''}>${this._t('config.model.type.chat')}</option>
                             <option value="embedding" ${model.model_type === 'embedding' ? 'selected' : ''}>${this._t('config.model.type.embedding')}</option>
                         </select>
-	                    </div>
-	                    <div>
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
-	                        <div class="relative" id="model-name-combo">
-	                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.model_name.placeholder'))}">
-	                            <div id="model-name-dropdown" class="hidden absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"></div>
-	                        </div>
-	                    </div>
-	                    <div class="chat-model-field">
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
-	                        <select id="model-effort-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-	                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.option.default'))}</option>
-	                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
-	                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
-	                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
-	                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
-	                        </select>
-	                    </div>
-	                    <div class="chat-model-field">
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
-	                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
-	                    </div>
-	                    <div class="chat-model-field">
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
-	                        <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
-	                    </div>
-	                    <div class="chat-model-field">
-	                        <label class="flex items-center gap-2 cursor-pointer">
-	                            <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''} class="w-4 h-4 text-indigo-600 bg-white/60 border-gray-200/60 rounded focus:ring-2 focus:ring-blue-400/30 transition-all">
-	                            <span class="text-xs font-medium text-gray-600">${this.escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</span>
-	                        </label>
-	                    </div>
-	                    <div>
-	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.custom_headers'))}</label>
-	                        <div id="headers-list" class="space-y-1">
-	                            ${renderHeadersList()}
-	                        </div>
-	                        <button id="add-header-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
-	                            <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.header.add_title'))}
-	                        </button>
-	                        <p class="text-xs text-gray-400 mt-2">${this.escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
-	                    </div>
-	                </div>
-	                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden max-h-48 overflow-y-auto"></div>
-	                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-	                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this.escapeHtml(this._t('common.cancel'))}</button>
-	                    <button id="save-model-without-verify-btn" class="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"><i class="fas fa-save mr-2"></i>${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
-	                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-md hover:shadow-indigo-200 transition-all duration-200"><i class="fas fa-check-double mr-2"></i>${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
-	                </div>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
+                        <div class="od-sp-combo" id="model-name-combo">
+                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.model_name.placeholder'))}">
+                            <div id="model-name-dropdown" class="hidden od-sp-model-dropdown"></div>
+                        </div>
+                    </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
+                        <select id="model-effort-input" class="od-sp-fi">
+                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.option.default'))}</option>
+                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
+                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
+                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
+                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
+                        </select>
+                    </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
+                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+                    </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
+                        <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                    </div>
+                    <div class="chat-model-field od-sp-fc">
+                        <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''}>
+                        <label for="model-auto-parse-think-input">${this.escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</label>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.custom_headers'))}</label>
+                        <div id="headers-list">
+                            ${renderHeadersList()}
+                        </div>
+                        <button id="add-header-btn" class="od-sp-add-header">
+                            <i class="fas fa-plus" style="margin-right:6px"></i>${this.escapeHtml(this._t('config.model.header.add_title'))}
+                        </button>
+                        <p class="od-sp-hint">${this.escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
+                    </div>
+                </div>
+                <div id="model-verify-result" class="hidden"></div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this.escapeHtml(this._t('common.cancel'))}</button>
+                    <button id="save-model-without-verify-btn" class="od-confirm-btn od-confirm-btn-cancel"><i class="fas fa-save" style="margin-right:6px"></i>${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
+                    <button id="save-model-btn" class="od-confirm-btn od-confirm-btn-primary"><i class="fas fa-check-double" style="margin-right:6px"></i>${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
+                </div>
             </div>
         `);
 
@@ -3116,7 +3136,7 @@ class SettingPanel extends HTMLElement {
             dropdown.innerHTML = filtered
                 .map(
                     (n) =>
-                        `<div class="model-name-option px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 transition-colors truncate" data-value="${this.escapeHtml(n)}">${this.escapeHtml(n)}</div>`
+                        `<div class="model-name-option od-sp-model-option" data-value="${this.escapeHtml(n)}">${this.escapeHtml(n)}</div>`
                 )
                 .join('');
             dropdown.classList.remove('hidden');
@@ -3256,8 +3276,7 @@ class SettingPanel extends HTMLElement {
         )}`;
         if (resultDiv) {
             resultDiv.classList.remove('hidden');
-            resultDiv.className =
-                'mx-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200 max-h-48 overflow-y-auto';
+            resultDiv.className = 'od-sp-verify-result od-sp-verify-info';
             resultDiv.innerHTML =
                 model_type === 'embedding'
                     ? `<i class="fas fa-info-circle mr-2"></i>${this._t('config.model.verify.status.embedding')}`
@@ -3276,15 +3295,13 @@ class SettingPanel extends HTMLElement {
                 no_ssl: !!provider.no_ssl
             });
             if (resultDiv) {
-                resultDiv.className =
-                    'mx-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200 max-h-48 overflow-y-auto';
+                resultDiv.className = 'od-sp-verify-result od-sp-verify-success';
                 resultDiv.innerHTML = `<i class="fas fa-check-circle mr-2"></i>${this.escapeHtml(this._t('config.model.verify.status.saving'))}`;
             }
             await this.saveModel();
         } catch (error) {
             if (resultDiv) {
-                resultDiv.className =
-                    'mx-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200 max-h-48 overflow-y-auto';
+                resultDiv.className = 'od-sp-verify-result od-sp-verify-error';
                 resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>${this.escapeHtml(
                     this._t('config.model.verify.failed', { message: error.message || '' })
                 )}`;
@@ -3568,26 +3585,32 @@ class SettingPanel extends HTMLElement {
     // --- QuickPass 模态框 ---
     showExportQuickPassModal() {
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.quickpass.export.title')}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
+            <div class="od-confirm-modal-card od-sp-wide">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-file-export"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this._t('sp.quickpass.export.title')}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
-                <div class="px-6 py-5 space-y-4">
-                    <div class="flex gap-3">
-                        <button id="export-base-btn" class="sp-export-option-btn sp-export-base flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
-                            <i class="fas fa-cog mr-2 text-blue-500"></i>${this._t('sp.quickpass.export.base')}
+                <div class="od-confirm-modal-body">
+                    <div class="od-sp-export-btns">
+                        <button id="export-base-btn" class="od-sp-export-opt">
+                            <i class="fas fa-cog" style="color:#4267B2"></i>${this._t('sp.quickpass.export.base')}
                         </button>
-                        <button id="export-all-btn" class="sp-export-option-btn sp-export-all flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
-                            <i class="fas fa-box mr-2 text-purple-500"></i>${this._t('sp.quickpass.export.all')}
+                        <button id="export-all-btn" class="od-sp-export-opt">
+                            <i class="fas fa-box" style="color:#7C3AED"></i>${this._t('sp.quickpass.export.all')}
                         </button>
                     </div>
-                    <textarea id="export-result" readonly class="w-full h-32 px-4 py-3 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none" placeholder="${this._t('sp.quickpass.export.placeholder')}"></textarea>
-                    <button id="copy-quickpass-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-copy mr-2"></i>${this._t('sp.quickpass.export.copy')}
-                    </button>
+                    <textarea id="export-result" readonly class="od-sp-fi" style="height:120px" placeholder="${this._t('sp.quickpass.export.placeholder')}"></textarea>
+                    <div style="margin-top:14px">
+                        <button id="copy-quickpass-btn" class="od-confirm-btn od-confirm-btn-primary" style="width:100%" disabled>
+                            <i class="fas fa-copy" style="margin-right:6px"></i>${this._t('sp.quickpass.export.copy')}
+                        </button>
+                    </div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('common.close')}</button>
                 </div>
             </div>
         `);
@@ -3641,18 +3664,22 @@ class SettingPanel extends HTMLElement {
 
     showImportQuickPassModal() {
         this.showModal(`
-            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${this._t('sp.quickpass.import.title')}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
+            <div class="od-confirm-modal-card od-sp-wide">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-file-import"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this._t('sp.quickpass.import.title')}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
-                <div class="px-6 py-5 space-y-4">
-                    <textarea id="import-input" class="w-full h-32 px-4 py-3 text-xs font-mono bg-white/60 border border-gray-200/60 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this._t('sp.quickpass.import.placeholder')}"></textarea>
-                    <div id="import-result" class="text-sm"></div>
-                    <button id="import-quickpass-confirm-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
-                        <i class="fas fa-check mr-2"></i>${this._t('sp.quickpass.import.btn')}
+                <div class="od-confirm-modal-body">
+                    <textarea id="import-input" class="od-sp-fi" style="height:120px" placeholder="${this._t('sp.quickpass.import.placeholder')}"></textarea>
+                    <div id="import-result" class="od-sp-import-result"></div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('common.cancel')}</button>
+                    <button id="import-quickpass-confirm-btn" class="od-confirm-btn od-confirm-btn-primary">
+                        <i class="fas fa-check" style="margin-right:6px"></i>${this._t('sp.quickpass.import.btn')}
                     </button>
                 </div>
             </div>
@@ -3676,20 +3703,20 @@ class SettingPanel extends HTMLElement {
 
             const resultDiv = this.querySelector('#import-result');
             resultDiv.innerHTML =
-                '<span class="text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>' +
+                '<span class="od-sp-loading-text"><i class="fas fa-spinner fa-spin mr-2"></i>' +
                 this._t('sp.quickpass.import.importing') +
                 '</span>';
 
             try {
                 const result = await window.quickpassAPI.importQuickPass(quickpass);
                 const hasApps = result.hasApplications;
-                resultDiv.innerHTML = `<span class="text-green-500"><i class="fas fa-check-circle mr-2"></i>${this._t('sp.quickpass.import.success', { name: this.escapeHtml(result.name) })}${hasApps ? this._t('sp.quickpass.import.success.apps') : this._t('sp.quickpass.import.success.base')}</span>`;
+                resultDiv.innerHTML = `<span class="od-sp-success-text"><i class="fas fa-check-circle mr-2"></i>${this._t('sp.quickpass.import.success', { name: this.escapeHtml(result.name) })}${hasApps ? this._t('sp.quickpass.import.success.apps') : this._t('sp.quickpass.import.success.base')}</span>`;
 
                 // 刷新数据
                 await this.loadData();
                 this.refreshAll();
             } catch (error) {
-                resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: this.escapeHtml(error.message) })}</span>`;
+                resultDiv.innerHTML = `<span class="od-sp-error-text"><i class="fas fa-times-circle mr-2"></i>${this._t('sp.quickpass.import.failed', { message: this.escapeHtml(error.message) })}</span>`;
             }
         });
     }
@@ -3788,8 +3815,7 @@ class SettingPanel extends HTMLElement {
                 `
                     )
                     .join('');
-                container.innerHTML =
-                    items || `<p class="text-xs text-gray-400 italic">${this._t('sp.environ.empty')}</p>`;
+                container.innerHTML = items || `<p class="od-sp-empty-hint">${this._t('sp.environ.empty')}</p>`;
                 bindEnvironItemEvents();
             }
         };
@@ -3864,17 +3890,27 @@ class SettingPanel extends HTMLElement {
 
     // --- 模态框工具方法 ---
     showModal(content) {
-        const overlay = this.querySelector('#modal-overlay');
-        const container = this.querySelector('#modal-container');
-        const contentEl = this.querySelector('#modal-content');
-
-        if (overlay && container && contentEl) {
-            contentEl.innerHTML = content;
-            overlay.classList.remove('hidden');
-            container.classList.remove('hidden');
+        if (this._modalOverlay) {
+            this._modalOverlay.remove();
+            this._modalOverlay = null;
         }
 
-        // ESC 关闭模态框（capture 阶段，优先于 guiShortcutManager）
+        const overlay = document.createElement('div');
+        overlay.className = 'od-confirm-modal-overlay';
+        if (detectDarkMode(this)) {
+            overlay.classList.add('od-modal-dark');
+        }
+        overlay.innerHTML = `<style>${MODAL_CSS}${SP_MODAL_EXTRA_CSS}</style>${content}`;
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                this.closeModal();
+            }
+        });
+
+        this.appendChild(overlay);
+        this._modalOverlay = overlay;
+
         if (this._modalEscHandler) {
             document.removeEventListener('keydown', this._modalEscHandler, true);
         }
@@ -3889,13 +3925,14 @@ class SettingPanel extends HTMLElement {
     }
 
     closeModal() {
-        const overlay = this.querySelector('#modal-overlay');
-        const container = this.querySelector('#modal-container');
+        if (!this._modalOverlay) return;
+        const overlay = this._modalOverlay;
+        this._modalOverlay = null;
 
-        if (overlay && container) {
-            overlay.classList.add('hidden');
-            container.classList.add('hidden');
-        }
+        overlay.classList.add('od-modal-leaving');
+        setTimeout(() => {
+            overlay.remove();
+        }, MODAL_ANIM_DURATION_OUT);
 
         if (this._modalEscHandler) {
             document.removeEventListener('keydown', this._modalEscHandler, true);

@@ -8,6 +8,8 @@
  * 在会话结束时自动弹出，展示疑似恶意技能列表，让用户选择是否加入黑名单。
  */
 
+import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from './confirmModal.ts';
+
 interface BlacklistSkillItem {
     bundleName: string;
     skillName: string;
@@ -39,6 +41,53 @@ const confidenceColors: Record<string, string> = {
     contextual: '#9CA3AF'
 };
 
+const BLACKLIST_EXTRA_CSS = `
+.od-confirm-modal-card { width: 480px; }
+.od-bl-skill-item {
+    border-radius: 8px; padding: 12px; margin-bottom: 8px;
+    border: 1px solid var(--mc-line); background: var(--mc-bg);
+}
+.od-bl-skill-label {
+    display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+}
+.od-bl-skill-label input[type="checkbox"] {
+    margin-top: 3px; width: 14px; height: 14px; accent-color: var(--mc-red);
+}
+.od-bl-skill-info { flex: 1; min-width: 0; }
+.od-bl-skill-name {
+    font-weight: 600; font-size: 13px; color: var(--mc-ink); margin-bottom: 4px;
+}
+.od-bl-confidence-badge {
+    display: inline-block; font-size: 10px; font-weight: 500;
+    color: #fff; border-radius: 5px; padding: 1px 7px; margin-left: 6px;
+}
+.od-bl-evidence {
+    font-size: 12px; color: var(--mc-ink3); line-height: 1.4;
+}
+.od-bl-detail-toggle {
+    cursor: pointer; font-size: 12px; color: var(--mc-red);
+    user-select: none; margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--mc-line-soft);
+}
+.od-bl-detail-content { margin-top: 6px; display: none; }
+.od-bl-detail-content.show { display: block; }
+.od-bl-intercept-item {
+    font-size: 11px; color: var(--mc-ink3); padding: 4px 0;
+    border-bottom: 1px solid var(--mc-line-soft); overflow-wrap: break-word; word-break: break-all;
+}
+.od-bl-intercept-item:last-child { border-bottom: none; }
+.od-bl-intercept-item .tool { font-weight: 500; color: var(--mc-ink2); }
+.od-bl-intercept-item .sep { color: var(--mc-ink4); margin: 0 4px; }
+.od-bl-risk-badge {
+    display: inline-block; font-size: 10px; color: #fff;
+    background: var(--mc-red); border-radius: 4px; padding: 0 4px; margin-left: 4px;
+}
+.od-bl-list { margin-bottom: 16px; max-height: 50vh; overflow-y: auto; overflow-x: hidden; }
+`;
+
+const CLOSE_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
 export function showBlacklistPrompt(data: BlacklistPromptData): void {
     const { taskId, skills } = data;
     if (!skills || skills.length === 0) return;
@@ -46,14 +95,9 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
     const body = document.body;
     const overlay = document.createElement('div');
     overlay.className = 'od-confirm-modal-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.inset = '0';
-    overlay.style.zIndex = '99999';
-    overlay.style.background = 'rgba(0,0,0,0.3)';
-    overlay.style.backdropFilter = 'blur(6px)';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
+    if (detectDarkMode()) {
+        overlay.classList.add('od-modal-dark');
+    }
 
     const listHtml = skills
         .map((skill, index) => {
@@ -65,39 +109,35 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
             const detailsHtml =
                 intercepts.length > 0
                     ? `
-            <div style="margin-top:8px;border-top:1px solid #FEE2E2;padding-top:8px;">
-                <div onclick="(function(){var d=document.getElementById('${detailId}'),a=document.getElementById('${arrowId}');if(d.style.display==='none'){d.style.display='block';a.textContent='▾'}else{d.style.display='none';a.textContent='▸'}})()" style="cursor:pointer;font-size: var(--fs-md);color:#DC2626;user-select:none;">
-                    <span id="${arrowId}">▸</span> 查看 ${intercepts.length} 条拦截详情
-                </div>
-                <div id="${detailId}" style="display:none;margin-top:6px;">
-                    ${intercepts
-                        .map(
-                            (ic, i) => `
-                        <div style="font-size: var(--fs-sm);color:#6B7280;padding:4px 0;border-bottom:${i < intercepts.length - 1 ? '1px solid #F3F4F6' : 'none'};overflow-wrap:break-word;word-break:break-all;">
-                            <span style="font-weight:500;">${escapeHtml(ic.toolName)}</span>
-                            <span style="color:#9CA3AF;margin:0 4px;">-</span>
-                            <span>${escapeHtml(ic.reason)}</span>
-                            ${ic.riskLevel ? `<span style="display:inline-block;font-size: var(--fs-xs);color:#fff;background:#DC2626;border-radius:4px;padding:0 4px;margin-left:4px;">${escapeHtml(ic.riskLevel)}</span>` : ''}
-                        </div>
-                    `
-                        )
-                        .join('')}
-                </div>
+            <div class="od-bl-detail-toggle" data-detail="${detailId}" data-arrow="${arrowId}">
+                <span id="${arrowId}">▸</span> 查看 ${intercepts.length} 条拦截详情
+            </div>
+            <div class="od-bl-detail-content" id="${detailId}">
+                ${intercepts
+                    .map(
+                        (ic, i) => `
+                    <div class="od-bl-intercept-item">
+                        <span class="tool">${escapeHtml(ic.toolName)}</span>
+                        <span class="sep">-</span>
+                        <span>${escapeHtml(ic.reason)}</span>
+                        ${ic.riskLevel ? `<span class="od-bl-risk-badge">${escapeHtml(ic.riskLevel)}</span>` : ''}
+                    </div>
+                `
+                    )
+                    .join('')}
             </div>
         `
                     : '';
             return `
-            <div style="background:#FEF2F2;border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid #FEE2E2;">
-                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
-                    <input type="checkbox" data-index="${index}" checked style="margin-top:3px;width:16px;height:16px;accent-color:#DC2626;">
-                    <div style="flex:1;">
-                        <div style="font-weight:600;font-size: var(--fs-lg);color:#1d1d1f;margin-bottom:4px;">
+            <div class="od-bl-skill-item">
+                <label class="od-bl-skill-label">
+                    <input type="checkbox" data-index="${index}" checked>
+                    <div class="od-bl-skill-info">
+                        <div class="od-bl-skill-name">
                             ${escapeHtml(skill.bundleName)}/${escapeHtml(skill.skillName)}
-                            <span style="display:inline-block;font-size: var(--fs-sm);font-weight:500;color:#fff;background:${color};border-radius:6px;padding:1px 6px;margin-left:6px;">${escapeHtml(confidenceLabel)}</span>
+                            <span class="od-bl-confidence-badge" style="background:${color}">${escapeHtml(confidenceLabel)}</span>
                         </div>
-                        <div style="font-size: var(--fs-base);color:#6B7280;line-height:1.4;">
-                            ${escapeHtml(skill.evidence)}
-                        </div>
+                        <div class="od-bl-evidence">${escapeHtml(skill.evidence)}</div>
                     </div>
                 </label>
                 ${detailsHtml}
@@ -106,40 +146,35 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
         })
         .join('\n');
 
-    const card = document.createElement('div');
-    card.style.cssText = `
-        background:#fff;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,0.18),0 0 1px rgba(0,0,0,0.1);
-        width:480px;max-width:92vw;overflow:hidden;
-    `;
-    card.innerHTML = `
-        <div style="padding:28px;">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
-                <div style="width:42px;height:42px;border-radius:12px;background:#FEF2F2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                    <i class="fas fa-shield-halved" style="color:#DC2626;font-size:18px;"></i>
-                </div>
-                <div style="font-size: var(--fs-xl);font-weight:700;color:#1d1d1f;line-height:1.3;">检测到疑似恶意技能</div>
-            </div>
-            <div style="font-size: var(--fs-lg);color:#3C3C43;line-height:1.6;margin-bottom:16px;">
-                本次会话中安全网关拦截了危险操作。经分析，以下技能疑似驱动了这些操作。
-                请选择要加入黑名单的技能（加入后将无法再加载）：
-            </div>
-            <div style="margin-bottom:20px;max-height:50vh;overflow-y:auto;overflow-x:hidden;">${listHtml}</div>
-            <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #F0F0F0;">
-                <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel" style="padding:10px 24px;border-radius:12px;border:1.5px solid #E5E5EA;background:#fff;color:#1d1d1f;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">忽略</button>
-                <button class="od-confirm-btn od-confirm-btn-danger" data-action="confirm" style="padding:10px 24px;border-radius:12px;border:none;background:#DC2626;color:#fff;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">加入黑名单</button>
-            </div>
+    overlay.innerHTML = `
+<style>${MODAL_CSS}${BLACKLIST_EXTRA_CSS}</style>
+<div class="od-confirm-modal-card">
+    <div class="od-confirm-modal-banner danger">
+        <div class="od-confirm-modal-icon"><i class="fas fa-shield-halved" style="color:#fff"></i></div>
+        <div class="od-confirm-modal-banner-text">
+            <div class="od-confirm-modal-title">检测到疑似恶意技能</div>
         </div>
-    `;
+        <button class="od-confirm-modal-close" data-action="cancel" aria-label="关闭">${CLOSE_SVG}</button>
+    </div>
+    <div class="od-confirm-modal-body">
+        本次会话中安全网关拦截了危险操作。经分析，以下技能疑似驱动了这些操作。
+        请选择要加入黑名单的技能（加入后将无法再加载）：
+        <div class="od-bl-list">${listHtml}</div>
+    </div>
+    <div class="od-confirm-modal-footer">
+        <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">忽略</button>
+        <button class="od-confirm-btn od-confirm-btn-danger" data-action="confirm">加入黑名单</button>
+    </div>
+</div>`;
 
     let resolved = false;
     const close = () => {
         if (resolved) return;
         resolved = true;
-        overlay.style.opacity = '0';
-        overlay.style.transition = 'opacity 180ms ease-in';
+        overlay.classList.add('od-modal-leaving');
         setTimeout(() => {
             overlay.remove();
-        }, 180);
+        }, MODAL_ANIM_DURATION_OUT);
         document.removeEventListener('keydown', escHandler);
     };
 
@@ -157,9 +192,26 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
         }
     });
 
-    card.querySelector('[data-action="confirm"]')?.addEventListener('click', () => {
-        // 收集所有勾选的技能
-        const checkboxes = card.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    // 折叠详情切换
+    overlay.querySelectorAll('.od-bl-detail-toggle').forEach((toggle) => {
+        toggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            const detailId = (toggle as HTMLElement).dataset.detail!;
+            const arrowId = (toggle as HTMLElement).dataset.arrow!;
+            const detail = overlay.querySelector(`#${detailId}`);
+            const arrow = overlay.querySelector(`#${arrowId}`);
+            if (detail?.classList.contains('show')) {
+                detail.classList.remove('show');
+                if (arrow) arrow.textContent = '▸';
+            } else {
+                detail?.classList.add('show');
+                if (arrow) arrow.textContent = '▾';
+            }
+        });
+    });
+
+    overlay.querySelector('[data-action="confirm"]')!.addEventListener('click', () => {
+        const checkboxes = overlay.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
         const itemsToBlock: Array<{ bundleName: string; skillName: string; reason: string; evidence: string }> = [];
         checkboxes.forEach((cb, index) => {
             if (cb.checked && skills[index]) {
@@ -179,12 +231,11 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
         close();
     });
 
-    card.querySelector('[data-action="cancel"]')?.addEventListener('click', () => {
+    overlay.querySelector('[data-action="cancel"]')!.addEventListener('click', () => {
         (window as any).skillBlacklistAPI?.dismissBlacklist(taskId);
         close();
     });
 
-    overlay.appendChild(card);
     body.appendChild(overlay);
 }
 
