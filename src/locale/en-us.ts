@@ -1122,7 +1122,6 @@ export const enUs: Record<string, string> = {
     'sp.general.reasoningDisplay.inline': 'Inline',
     'sp.general.reasoningDisplay.bubble': 'Bubble',
     'sp.general.displaySize': 'Display Size',
-    'sp.general.scale.auto': 'Compensate for screen DPI',
     'sp.general.scale.tiny': 'Tiny',
     'sp.general.scale.small': 'Small',
     'sp.general.scale.standard': 'Standard',

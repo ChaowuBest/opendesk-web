@@ -1293,16 +1293,6 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
-        getAutoScaleFactor: async () => {
-            const result = await ipcRenderer.invoke('display:getAutoScaleFactor');
-            if (result.status !== 'ok') throw new Error(result.message);
-            return result.data;
-        },
-        setAutoScaleFactor: async (enabled) => {
-            const result = await ipcRenderer.invoke('display:setAutoScaleFactor', enabled);
-            if (result.status !== 'ok') throw new Error(result.message);
-            return result.data;
-        },
         onScaleFactorChanged: (callback) => {
             const handler = (_event, factor) => callback(factor);
             ipcRenderer.on('display:scaleFactorChanged', handler);

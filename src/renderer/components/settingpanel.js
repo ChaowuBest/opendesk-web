@@ -1225,7 +1225,6 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
-        const autoScale = this.currentData?.gui_config?.scale_factor_auto !== false;
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
@@ -1301,13 +1300,6 @@ class SettingPanel extends HTMLElement {
                     <div style="display:flex;align-items:center;gap:4px">
                         <input type="number" id="scale-factor-input" value="${Math.round(scaleFactor * 100)}" min="50" max="200" step="5" style="width:80px;text-align:right" class="sp-form-input">
                         <span style="font-size:13px;color:var(--sp-color-text-tertiary);flex-shrink:0">%</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <span style="font-size:12px;color:var(--sp-color-text-secondary)">${this._t('sp.general.scale.auto')}</span>
-                        <label class="sp-toggle-switch" style="margin-left:0">
-                            <input id="scale-auto-checkbox" type="checkbox" ${autoScale ? 'checked' : ''}>
-                            <span class="sp-toggle-track"></span>
-                        </label>
                     </div>
                     <span style="margin-left:auto;font-size:12px;color:var(--sp-color-text-tertiary);display:flex;align-items:center;gap:4px">
                         ${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
@@ -1993,7 +1985,7 @@ class SettingPanel extends HTMLElement {
         if (window.displayAPI?.onScaleFactorChanged) {
             this._scaleFactorChangeUnsub = window.displayAPI.onScaleFactorChanged(async () => {
                 if (!this.currentData?.gui_config) return;
-                // 回调收到的是 effective zoom（含 DPI 补偿），需要读取用户设定的 scale_factor
+                // 回调收到的是 effective zoom（含平台补偿），需要读取用户设定的 scale_factor
                 const userScale = await window.displayAPI?.getScaleFactor();
                 if (typeof userScale === 'number') {
                     this.currentData.gui_config.scale_factor = userScale;
@@ -2593,20 +2585,6 @@ class SettingPanel extends HTMLElement {
             };
             scaleInput.addEventListener('change', async () => {
                 await applyScaleValue((parseFloat(scaleInput.value) || 100) / 100);
-            });
-        }
-
-        const autoCheckbox = this.querySelector('#scale-auto-checkbox');
-        if (autoCheckbox) {
-            autoCheckbox.addEventListener('change', async () => {
-                const enabled = autoCheckbox.checked;
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.scale_factor_auto = enabled;
-                if (window.displayAPI?.setAutoScaleFactor) {
-                    await window.displayAPI.setAutoScaleFactor(enabled);
-                }
-                this.refreshGeneralSection();
-                this.saveImmediately();
             });
         }
     }
