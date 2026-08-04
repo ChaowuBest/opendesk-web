@@ -140,6 +140,11 @@ export function buildSidebarSearchResults(tasks: SidebarTask[]): SidebarTaskTree
     return sortTreeItems(results);
 }
 
+export function buildSidebarFavoritesResults(tasks: SidebarTask[]): SidebarTaskTreeItem[] {
+    const rootItems = buildRootItems(tasks);
+    return sortTreeItems(rootItems);
+}
+
 export function buildSidebarTaskGroups(
     tasks: SidebarTask[],
     view: SidebarTaskView,

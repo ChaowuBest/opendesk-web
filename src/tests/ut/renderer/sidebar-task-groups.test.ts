@@ -1,4 +1,5 @@
 import {
+    buildSidebarFavoritesResults,
     buildSidebarSearchResults,
     buildSidebarTaskGroups,
     getSidebarRunningTasks,
@@ -271,5 +272,40 @@ describe('sidebar search results', () => {
         const results = buildSidebarSearchResults(tasks);
 
         expect(results).toEqual([]);
+    });
+});
+
+describe('sidebar favorites results', () => {
+    test('includes running tasks unlike search results', () => {
+        const tasks = [
+            task('stopped', '2026-07-29T09:00:00'),
+            task('running', '2026-07-29T11:00:00', { task_status: 'running' })
+        ];
+
+        const results = buildSidebarFavoritesResults(tasks);
+
+        expect(results.map((item) => item.task.task_id)).toEqual(['running', 'stopped']);
+    });
+
+    test('returns results sorted by activity timestamp', () => {
+        const tasks = [
+            task('old-updated', '2026-07-19T09:00:00', { updated_at: '2026-07-29T11:00:00' }),
+            task('recent', '2026-07-29T09:00:00')
+        ];
+
+        const results = buildSidebarFavoritesResults(tasks);
+
+        expect(results.map((item) => item.task.task_id)).toEqual(['old-updated', 'recent']);
+    });
+
+    test('includes running tasks even when all are running', () => {
+        const tasks = [
+            task('running-1', '2026-07-29T10:00:00', { task_status: 'running' }),
+            task('running-2', '2026-07-29T11:00:00', { task_status: 'running' })
+        ];
+
+        const results = buildSidebarFavoritesResults(tasks);
+
+        expect(results.map((item) => item.task.task_id)).toEqual(['running-2', 'running-1']);
     });
 });

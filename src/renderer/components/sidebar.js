@@ -15,6 +15,7 @@ import { showConfirmModal } from './confirmModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import {
+    buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
     buildSidebarSearchResults,
     getSidebarRunningTasks,
@@ -2056,7 +2057,7 @@ class SideBar extends HTMLElement {
         } else if (this._favoritesView) {
             this._groupDisplayLimits.delete('search-results');
             const favoritedTasks = filteredTasks.filter((t) => this._favoritedTaskIds.has(t.task_id));
-            favoritesResults = buildSidebarSearchResults(favoritedTasks);
+            favoritesResults = buildSidebarFavoritesResults(favoritedTasks);
             historyCount = favoritesResults.length;
         } else {
             this._groupDisplayLimits.delete('search-results');
