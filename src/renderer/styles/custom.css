@@ -3376,9 +3376,15 @@ agent-input[hide-disclaimer] .agent-input-footer {
     background: rgba(220, 100, 100, 0.88) !important;
 }
 
-/* Scroll-to-bottom button: muted style with hover */
-#taskview-scroll-to-bottom-button:hover {
-    background: rgba(100, 120, 150, 0.82) !important;
+/* Scroll control button group: pill container with sub-buttons */
+#taskview-scroll-controls button.od-scroll-ctrl-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+#taskview-scroll-controls button.od-scroll-ctrl-btn:first-child {
+    border-radius: 9999px 0 0 9999px;
+}
+#taskview-scroll-controls button.od-scroll-ctrl-btn:last-child {
+    border-radius: 0 9999px 9999px 0;
 }
 
 /* Context menu appear animation (shared by sidebar / file explorer) */

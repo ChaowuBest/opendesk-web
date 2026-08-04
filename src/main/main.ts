@@ -2459,7 +2459,7 @@ const registerSettingAPIHandlers = () => {
  * 平台级额外补偿系数，用于按 process.platform 做缩放微调。
  */
 const PLATFORM_ZOOM_COMPENSATION: Record<string, number> = {
-    openharmony: 0.85 // 鸿蒙设备 UI 渲染密度偏高，额外降低 15%
+    openharmony: 1.2
 };
 
 /** 读取用户配置的 scale_factor */

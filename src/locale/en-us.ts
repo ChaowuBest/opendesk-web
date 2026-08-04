@@ -1467,6 +1467,8 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.menu.operationFailed': 'Operation Failed',
     'renderer.taskview.thinking': 'Waiting for model response...',
     'renderer.taskview.scrollToBottom': 'Scroll to bottom',
+    'renderer.taskview.prevUserMessage': 'Previous message',
+    'renderer.taskview.nextUserMessage': 'Next message',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': 'Open agent chat',
     'renderer.applicationAgent.close': 'Collapse agent chat',

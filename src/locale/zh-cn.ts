@@ -1433,6 +1433,8 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.menu.operationFailed': '操作失败',
     'renderer.taskview.thinking': '正在等待模型响应',
     'renderer.taskview.scrollToBottom': '滚动到底部',
+    'renderer.taskview.prevUserMessage': '上一条消息',
+    'renderer.taskview.nextUserMessage': '下一条消息',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': '打开智能体对话',
     'renderer.applicationAgent.close': '收起智能体对话',

@@ -344,11 +344,11 @@ class TaskView extends HTMLElement {
 
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
-        const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
+        const scrollControls = this.querySelector('#taskview-scroll-controls');
         if (auto_scrolling_to_bottom) {
-            scrollButton.classList.add('hidden');
+            scrollControls?.classList.add('hidden');
         } else {
-            scrollButton.classList.remove('hidden');
+            scrollControls?.classList.remove('hidden');
         }
     }
 
@@ -1475,6 +1475,68 @@ class TaskView extends HTMLElement {
             highlightTarget.style.boxShadow = originalBoxShadow;
         }, 1400);
         return true;
+    }
+
+    _scrollToUserMessage(direction) {
+        const container = this.getHistoryContainer();
+        if (!container) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const userMessages = Array.from(container.querySelectorAll('.od-user-msg-container'));
+        if (userMessages.length === 0) return;
+
+        const isVisible = (el) => {
+            const r = el.getBoundingClientRect();
+            return r.bottom > containerRect.top && r.top < containerRect.bottom;
+        };
+
+        let target = null;
+
+        if (direction === 'prev') {
+            // 找到可见区域中最顶部的用户消息
+            const topmostVisibleIdx = userMessages.findIndex(isVisible);
+            if (topmostVisibleIdx > 0) {
+                target = userMessages[topmostVisibleIdx - 1];
+            } else if (topmostVisibleIdx === -1) {
+                // 无可见用户消息：往上找最近的一条
+                for (let i = userMessages.length - 1; i >= 0; i--) {
+                    if (userMessages[i].getBoundingClientRect().bottom <= containerRect.top) {
+                        target = userMessages[i];
+                        break;
+                    }
+                }
+            }
+        } else {
+            // 找到可见区域中最底部的用户消息
+            let bottommostVisibleIdx = -1;
+            for (let i = userMessages.length - 1; i >= 0; i--) {
+                if (isVisible(userMessages[i])) {
+                    bottommostVisibleIdx = i;
+                    break;
+                }
+            }
+            if (bottommostVisibleIdx >= 0 && bottommostVisibleIdx < userMessages.length - 1) {
+                target = userMessages[bottommostVisibleIdx + 1];
+            } else if (bottommostVisibleIdx === -1) {
+                // 无可见用户消息：往下找最近的一条
+                for (let i = 0; i < userMessages.length; i++) {
+                    if (userMessages[i].getBoundingClientRect().top >= containerRect.bottom) {
+                        target = userMessages[i];
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!target) return;
+
+        const targetRect = target.getBoundingClientRect();
+        const scrollDelta = targetRect.top - containerRect.top - 20;
+        this.setAutoScrollingToBottom(false);
+        container.scrollTo({
+            top: container.scrollTop + scrollDelta,
+            behavior: 'smooth'
+        });
     }
 
     _ensureHistoryLoadedThroughMessage(messageId) {
@@ -3250,15 +3312,36 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <div class="relative flex-1 overflow-hidden min-h-0">
                 <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-3"></div>
-                <button
-                    id="taskview-scroll-to-bottom-button"
-                    class="absolute bottom-3 right-5 flex items-center justify-center px-3 py-1 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
-                    style="min-width: unset; height: 2rem; background: rgba(120,140,170,0.72); backdrop-filter: blur(4px);"
-                    title="${taskViewT('renderer.taskview.scrollToBottom')}"
-                >
-                    <i class="fas fa-arrow-down text-sm"></i>
-                    <span class="ml-1">${taskViewT('renderer.taskview.scrollToBottom')}</span>
-                </button>
+                <!-- 滚动控制按钮组 -->
+                <div id="taskview-scroll-controls" class="absolute bottom-3 right-5 flex items-center rounded-full shadow hidden"
+                     style="background: rgba(120,140,170,0.72); backdrop-filter: blur(4px); height: 2rem;">
+                    <button
+                        id="taskview-prev-user-msg-button"
+                        class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                        title="${taskViewT('renderer.taskview.prevUserMessage')}"
+                    >
+                        <i class="fas fa-chevron-up text-xs"></i>
+                        <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.prevUserMessage')}</span>
+                    </button>
+                    <div class="w-px h-3.5 bg-white/25"></div>
+                    <button
+                        id="taskview-next-user-msg-button"
+                        class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                        title="${taskViewT('renderer.taskview.nextUserMessage')}"
+                    >
+                        <i class="fas fa-chevron-down text-xs"></i>
+                        <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.nextUserMessage')}</span>
+                    </button>
+                    <div class="w-px h-3.5 bg-white/25"></div>
+                    <button
+                        id="taskview-scroll-to-bottom-button"
+                        class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                        title="${taskViewT('renderer.taskview.scrollToBottom')}"
+                    >
+                        <i class="fas fa-arrow-down text-xs"></i>
+                        <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.scrollToBottom')}</span>
+                    </button>
+                </div>
             </div>
 
             <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-3"></permission-prompt>
@@ -3293,16 +3376,36 @@ class TaskView extends HTMLElement {
                         <!-- 对话历史区域 - 可滚动 -->
                         <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
                         </div>
-                        <!-- 滚动到底部按钮, 按需显示 -->
-                        <button
-                            id="taskview-scroll-to-bottom-button"
-                            class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
-                            style="min-width: unset; height: 2rem; background: rgba(120,140,170,0.72); backdrop-filter: blur(4px);"
-                            title="${taskViewT('renderer.taskview.scrollToBottom')}"
-                        >
-                            <i class="fas fa-arrow-down text-sm"></i>
-                            <span class="ml-1">${taskViewT('renderer.taskview.scrollToBottom')}</span>
-                        </button>
+                        <!-- 滚动控制按钮组 -->
+                        <div id="taskview-scroll-controls" class="absolute bottom-3 right-8 flex items-center rounded-full shadow hidden"
+                             style="background: rgba(120,140,170,0.72); backdrop-filter: blur(4px); height: 2rem;">
+                            <button
+                                id="taskview-prev-user-msg-button"
+                                class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                                title="${taskViewT('renderer.taskview.prevUserMessage')}"
+                            >
+                                <i class="fas fa-chevron-up text-xs"></i>
+                                <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.prevUserMessage')}</span>
+                            </button>
+                            <div class="w-px h-3.5 bg-white/25"></div>
+                            <button
+                                id="taskview-next-user-msg-button"
+                                class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                                title="${taskViewT('renderer.taskview.nextUserMessage')}"
+                            >
+                                <i class="fas fa-chevron-down text-xs"></i>
+                                <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.nextUserMessage')}</span>
+                            </button>
+                            <div class="w-px h-3.5 bg-white/25"></div>
+                            <button
+                                id="taskview-scroll-to-bottom-button"
+                                class="flex items-center justify-center px-2.5 h-full text-white transition-all focus:outline-none active:scale-95 od-scroll-ctrl-btn"
+                                title="${taskViewT('renderer.taskview.scrollToBottom')}"
+                            >
+                                <i class="fas fa-arrow-down text-xs"></i>
+                                <span class="ml-1 text-[11px]">${taskViewT('renderer.taskview.scrollToBottom')}</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 权限确认浮窗 -->
@@ -3624,6 +3727,16 @@ class TaskView extends HTMLElement {
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
+        });
+
+        const prevUserMsgButton = this.querySelector('#taskview-prev-user-msg-button');
+        prevUserMsgButton.addEventListener('click', () => {
+            this._scrollToUserMessage('prev');
+        });
+
+        const nextUserMsgButton = this.querySelector('#taskview-next-user-msg-button');
+        nextUserMsgButton.addEventListener('click', () => {
+            this._scrollToUserMessage('next');
         });
     }
 
