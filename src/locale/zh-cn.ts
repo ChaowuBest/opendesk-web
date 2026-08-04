@@ -241,6 +241,26 @@ export const zhCn: Record<string, string> = {
     'tools.execution.result': '结果:',
     'tools.execution.result.object': '结果对象:',
     'tools.param.parse.fail': '参数解析失败，请传入合法的 JSON 字符串',
+    'mcpmgr.gateway.search.description':
+        '按能力检索延迟加载的 MCP 工具。仅返回精简摘要；调用前应使用 mcpGetTool 加载目标工具的完整说明和参数结构。',
+    'mcpmgr.gateway.search.query': '能力、主题或工具名关键词；留空可分页浏览',
+    'mcpmgr.gateway.search.server': '可选的 MCP Server 名称或 serverId 过滤条件',
+    'mcpmgr.gateway.search.offset': '分页起始偏移量',
+    'mcpmgr.gateway.search.limit': '本次最多返回的工具数，建议 1-10；超过 10 会被自动截断',
+    'mcpmgr.gateway.search.hint': '选定工具后，先调用 mcpGetTool 获取完整定义，再调用 mcpCallTool。',
+    'mcpmgr.gateway.search.clampedHint': '（本次 limit 已自动截断为 ${n}，如需更多结果请使用 nextOffset 分页）',
+    'mcpmgr.gateway.get.description':
+        '按 serverId 和工具名加载一个延迟 MCP 工具的完整说明与输入参数结构。随后使用 mcpCallTool 调用。',
+    'mcpmgr.gateway.get.serverId': 'mcpSearchTools 返回的 MCP Server ID',
+    'mcpmgr.gateway.get.toolName': 'mcpSearchTools 返回的原始 MCP 工具名',
+    'mcpmgr.gateway.call.description':
+        '调用一个延迟加载的 MCP 工具。应先通过 mcpSearchTools 查找，再通过 mcpGetTool 获取准确的输入参数结构。',
+    'mcpmgr.gateway.call.serverId': 'mcpSearchTools 返回的 MCP Server ID',
+    'mcpmgr.gateway.call.toolName': '要调用的原始 MCP 工具名',
+    'mcpmgr.gateway.call.arguments':
+        '直接传递给 MCP 工具的参数对象，键值对必须与 mcpGetTool 返回的 inputSchema.properties 完全匹配，不要额外包装在 query/params 等键下。例如工具需要 {query: string, top_k?: number}，这里就直接传 {query: "...", top_k: 10}',
+    'mcpmgr.gateway.toolNotFound': '未找到延迟 MCP 工具：${serverId}/${toolName}',
+    'mcpmgr.toolCallFailed': 'MCP 工具调用失败',
 
     // Commands - Rename
     'rename.no.task': '没有活跃的任务',
