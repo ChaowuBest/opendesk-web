@@ -1337,10 +1337,11 @@ mailbox-entry-widget #email-body-content {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
+    width: auto;
+    min-width: 30px;
     height: 30px;
     margin-top: 10px;
-    padding: 0;
+    padding: 0 6px;
     color: color-mix(in srgb, var(--od-text-muted) 58%, transparent);
     background: transparent;
     border: 1px solid transparent;
@@ -1370,9 +1371,32 @@ mailbox-entry-widget #email-body-content {
 
 /* icon 内的 <i>/<svg> 不拦截鼠标事件，确保 title 提示正常 */
 .sidebar-collapse-btn i,
+.sidebar-collapse-btn svg,
+.sidebar-collapse-btn .sb-hover-label,
 .sb-nav-btn i,
 .sb-nav-btn svg {
     pointer-events: none;
+}
+
+/* 悬停右侧展开 label（对齐 taskview toolbar 效果） */
+.sidebar-collapse-btn .sb-hover-label {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1;
+    transition:
+        max-width 0.18s ease,
+        opacity 0.12s ease 0.05s,
+        margin-left 0.18s ease,
+        margin-right 0.18s ease;
+}
+.sidebar-collapse-btn:hover .sb-hover-label {
+    max-width: 120px;
+    opacity: 1;
+    margin-left: 4px;
 }
 
 /* ---- Collapsed sidebar narrow strip ---- */

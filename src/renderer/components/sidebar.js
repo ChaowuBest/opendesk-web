@@ -31,6 +31,11 @@ const THEME_MOON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="no
 const THEME_CONTRAST_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18V3z" fill="currentColor" stroke="none"/></svg>`;
 const THEME_ICON_MAP = { light: THEME_SUN_SVG, dark: THEME_MOON_SVG, system: THEME_CONTRAST_SVG };
 const THEME_CYCLE = ['light', 'dark', 'system'];
+const THEME_LABEL_KEY = {
+    light: 'renderer.sidebar.themeLight',
+    dark: 'renderer.sidebar.themeDark',
+    system: 'renderer.sidebar.themeSystem'
+};
 
 class SideBar extends HTMLElement {
     static get observedAttributes() {
@@ -271,7 +276,8 @@ class SideBar extends HTMLElement {
         const btn = this.querySelector('#theme-toggle-btn');
         if (!btn) return;
         const svg = THEME_ICON_MAP[this._themePreference] || THEME_CONTRAST_SVG;
-        btn.innerHTML = svg;
+        const currentLabel = this._t(THEME_LABEL_KEY[this._themePreference] || THEME_LABEL_KEY.system);
+        btn.innerHTML = `${svg}<span class="sb-hover-label">${currentLabel}</span>`;
         // tooltip 提示下一次点击将切换到的模式
         const nextIdx = (THEME_CYCLE.indexOf(this._themePreference) + 1) % THEME_CYCLE.length;
         const next = THEME_CYCLE[nextIdx];
@@ -470,6 +476,7 @@ class SideBar extends HTMLElement {
                     aria-label="${this._t('renderer.sidebar.themeSystem')}"
                 >
                     ${THEME_CONTRAST_SVG}
+                    <span class="sb-hover-label">${this._t(THEME_LABEL_KEY[this._themePreference] || THEME_LABEL_KEY.system)}</span>
                 </button>
                 <button
                     id="collapse-sidebar-btn"
@@ -481,6 +488,7 @@ class SideBar extends HTMLElement {
                     aria-expanded="true"
                 >
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>
+                    <span class="sb-hover-label">${this._t('renderer.sidebar.collapse')}</span>
                 </button>
                 </div>
             </header>
