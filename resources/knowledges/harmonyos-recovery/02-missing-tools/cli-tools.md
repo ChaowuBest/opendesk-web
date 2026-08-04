@@ -61,10 +61,10 @@ readelf -d "$(command -v <command>)" \
 出现 `Permission denied`、`Operation not permitted`、`Error loading shared library` 或 `Error relocating` 时，不属于“命令缺失”，请按[执行权限受限](../03-permission-denied/exec-permission.md)诊断。
 不要只执行 `chmod +x` 或反复设置 `LD_LIBRARY_PATH`。
 
-在 OpenDesk 中，原生包优先部署到应用数据目录：
+在 OpenDesk 中，原生包优先部署到应用数据目录（`$CMD_PKGS_DIR`）：
 
 ```bash
-PREFIX=/data/storage/el2/base/files/interpreters/<工具名>
+PREFIX=$CMD_PKGS_DIR/<工具名>
 mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/lib/external"
 ```
 
@@ -75,7 +75,7 @@ mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/lib/external"
 cmd-pkgs 的 curl 包含 `libcurl.so.4`、`libssl.so.3` 和 `libcrypto.so.3` 等私有依赖，已按以下方式验证成功：
 
 ```
-1. 安装到 `/data/storage/el2/base/files/interpreters/curl-cmdpkg`；
+1. 安装到 `$CMD_PKGS_DIR/curl-cmdpkg`；
 2. 将可执行文件和各级 `.so` 的 RUNPATH 改为该目录下的绝对路径；
 3. 对修改后的每个 ELF 使用 `SHA256withECDSA` 自签名；
 4. 使用系统 CA `/etc/ssl/certs/cacert.pem`；

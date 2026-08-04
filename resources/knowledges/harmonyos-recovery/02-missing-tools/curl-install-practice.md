@@ -43,7 +43,7 @@ cp "$SRC/lib/external/libcrypto.so.3" \
   "$DST/lib/external/libcrypto.source.so.3"
 ```
 
-`<private-executable-prefix>` 必须替换为当前应用允许执行和加载原生代码的私有目录（如`/data/storage/el2/base/files/interpreters/curl-cmdpkg`），不能仅因为某个目录可读写就假定它可执行 ELF。
+`<private-executable-prefix>` 必须替换为当前应用允许执行和加载原生代码的私有目录（如 `$CMD_PKGS_DIR/curl-cmdpkg`），不能仅因为某个目录可读写就假定它可执行 ELF。
 
 ## 3. 修改各级 RUNPATH
 
