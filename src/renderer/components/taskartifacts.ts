@@ -1591,7 +1591,7 @@ class TaskArtifacts extends HTMLElement {
             .goal-section:first-child,
             .goal-creation-section:first-child,
             .goal-suggestion-section:first-child {
-                padding-top: 0;
+                padding-top: 10px;
                 margin-bottom: 10px;
             }
 
