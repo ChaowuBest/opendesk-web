@@ -252,9 +252,10 @@ export const enUs: Record<string, string> = {
     'mcpmgr.gateway.search.query': 'Capability, topic, or tool-name keywords; leave empty to browse',
     'mcpmgr.gateway.search.server': 'Optional MCP server name or serverId filter',
     'mcpmgr.gateway.search.offset': 'Pagination offset',
-    'mcpmgr.gateway.search.limit': 'Maximum tools to return (1-10)',
+    'mcpmgr.gateway.search.limit': 'Maximum tools to return; recommended 1-10, values above 10 will be clamped',
     'mcpmgr.gateway.search.hint':
         'After selecting a tool, call mcpGetTool for its full definition, then call mcpCallTool.',
+    'mcpmgr.gateway.search.clampedHint': '(limit was clamped to ${n}; use nextOffset to paginate for more results)',
     'mcpmgr.gateway.get.description':
         'Load the full description and input schema for one deferred MCP tool by serverId and tool name. Then invoke it with mcpCallTool.',
     'mcpmgr.gateway.get.serverId': 'MCP server ID returned by mcpSearchTools',

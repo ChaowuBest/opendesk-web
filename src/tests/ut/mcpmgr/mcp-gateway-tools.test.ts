@@ -133,6 +133,23 @@ describe('MCP layered tool loading', () => {
         expect(callTool).toHaveBeenCalledWith(tools[0], { query: { wrong_key: 'value' } });
     });
 
+    test('clamps oversized limit instead of rejecting it (AI may pass 20/30 when eager to find tools)', async () => {
+        const tools = Array.from({ length: 20 }, (_, i) =>
+            tool({ name: `tool_${i}`, description: `tool number ${i}` })
+        );
+        const searchTool = new McpSearchToolsTool(tools);
+
+        const result = await searchTool.execute({ query: '', offset: 0, limit: 20 });
+        const payload = JSON.parse(result.result);
+
+        expect(payload.tools).toHaveLength(10);
+        expect(payload.clamped).toBe(true);
+        expect(payload.effectiveLimit).toBe(10);
+        expect(payload.nextOffset).toBe(10);
+        expect(typeof payload.hint).toBe('string');
+        expect(payload.hint.length).toBeGreaterThan(0);
+    });
+
     test('application exposes gateway tools instead of a large server definition set', async () => {
         const discoveredTools = [
             tool({

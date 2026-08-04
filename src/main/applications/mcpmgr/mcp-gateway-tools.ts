@@ -100,11 +100,14 @@ function scoreTool(tool: McpToolInfo, query: string): number {
     return score;
 }
 
+const MCP_SEARCH_LIMIT_HARD_MAX = 50;
+const MCP_SEARCH_LIMIT_SOFT_MAX = 10;
+
 const McpSearchToolsSchema = z.object({
     query: z.string().default('').describe(t('mcpmgr.gateway.search.query')),
     server: z.string().optional().describe(t('mcpmgr.gateway.search.server')),
     offset: z.number().int().min(0).default(0).describe(t('mcpmgr.gateway.search.offset')),
-    limit: z.number().int().min(1).max(10).default(5).describe(t('mcpmgr.gateway.search.limit'))
+    limit: z.number().int().min(1).max(MCP_SEARCH_LIMIT_HARD_MAX).default(5).describe(t('mcpmgr.gateway.search.limit'))
 });
 
 export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
@@ -115,6 +118,9 @@ export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
 
     private async handleExecute(args: z.output<typeof McpSearchToolsSchema>): Promise<string> {
         const serverFilter = args.server ? normalizeSearchText(args.server) : '';
+        const offset = Math.max(0, Math.floor(args.offset));
+        const requestedLimit = Math.max(1, Math.floor(args.limit));
+        const effectiveLimit = Math.min(requestedLimit, MCP_SEARCH_LIMIT_SOFT_MAX);
         const matches = this.tools
             .map((tool, index) => ({ tool, index, score: scoreTool(tool, args.query) }))
             .filter(({ tool, score }) => {
@@ -126,8 +132,9 @@ export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
                 );
             })
             .sort((left, right) => right.score - left.score || left.index - right.index);
-        const page = matches.slice(args.offset, args.offset + args.limit);
-        const nextOffset = args.offset + page.length < matches.length ? args.offset + page.length : null;
+        const page = matches.slice(offset, offset + effectiveLimit);
+        const nextOffset = offset + page.length < matches.length ? offset + page.length : null;
+        const clamped = requestedLimit > effectiveLimit;
 
         return JSON.stringify({
             tools: page.map(({ tool }) => ({
@@ -138,7 +145,11 @@ export class McpSearchToolsTool extends BaseTool<typeof McpSearchToolsSchema> {
             })),
             total: matches.length,
             nextOffset,
-            hint: t('mcpmgr.gateway.search.hint')
+            clamped,
+            effectiveLimit,
+            hint: clamped
+                ? `${t('mcpmgr.gateway.search.hint')} ${t('mcpmgr.gateway.search.clampedHint', { n: String(effectiveLimit) })}`
+                : t('mcpmgr.gateway.search.hint')
         });
     }
 }

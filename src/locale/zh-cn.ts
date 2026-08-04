@@ -246,8 +246,9 @@ export const zhCn: Record<string, string> = {
     'mcpmgr.gateway.search.query': '能力、主题或工具名关键词；留空可分页浏览',
     'mcpmgr.gateway.search.server': '可选的 MCP Server 名称或 serverId 过滤条件',
     'mcpmgr.gateway.search.offset': '分页起始偏移量',
-    'mcpmgr.gateway.search.limit': '本次最多返回的工具数（1-10）',
+    'mcpmgr.gateway.search.limit': '本次最多返回的工具数，建议 1-10；超过 10 会被自动截断',
     'mcpmgr.gateway.search.hint': '选定工具后，先调用 mcpGetTool 获取完整定义，再调用 mcpCallTool。',
+    'mcpmgr.gateway.search.clampedHint': '（本次 limit 已自动截断为 ${n}，如需更多结果请使用 nextOffset 分页）',
     'mcpmgr.gateway.get.description':
         '按 serverId 和工具名加载一个延迟 MCP 工具的完整说明与输入参数结构。随后使用 mcpCallTool 调用。',
     'mcpmgr.gateway.get.serverId': 'mcpSearchTools 返回的 MCP Server ID',
