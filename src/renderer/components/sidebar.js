@@ -139,10 +139,12 @@ class SideBar extends HTMLElement {
             });
         }
 
+        // 先建立订阅再获取列表，避免 getTaskList 返回与订阅建立之间的竞态窗口
+        // 导致期间创建的任务更新被永久丢弃
+        this.setUpEventListeners();
         window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
-            this.setUpEventListeners();
             this.subscribeToUnreadCounts();
         });
 

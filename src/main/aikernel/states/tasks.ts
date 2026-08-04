@@ -2931,7 +2931,13 @@ export class TaskState {
                         this.task_status = 'stopped';
                     }
                     if (!skipInterruptedTurnHooks) {
-                        await this.hooks.noticeAfterFinishTurn(this);
+                        try {
+                            await this.hooks.noticeAfterFinishTurn(this);
+                        } catch (err) {
+                            logger.error(
+                                `task ${this.task_id}: noticeAfterFinishTurn failed: ${(err as Error)?.message || String(err)}`
+                            );
+                        }
                     } else {
                         shouldScheduleSessionMemoryUpdate = false;
                     }
