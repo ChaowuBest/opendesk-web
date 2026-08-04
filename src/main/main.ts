@@ -473,6 +473,12 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         // 在 webview 获得焦点时仍能正常工作。
         webContents.on('before-input-event', (_evt, input) => {
             if (hostWindow.isDestroyed()) return;
+            // 全屏状态下 ESC 退出全屏
+            if (input.key === 'Escape' && input.type === 'keyDown' && hostWindow.isFullScreen()) {
+                hostWindow.setFullScreen(false);
+                _evt.preventDefault();
+                return;
+            }
             const modifiers = input.modifiers ?? [];
             const isBrowserWebview = webContents.session === BrowserManager.browserSession;
             const isPlainTab =
@@ -616,6 +622,18 @@ const createWindow = () => {
     mainWindow.on('hide', forceExitMagicPointer);
     mainWindow.on('minimize', forceExitMagicPointer);
 
+    // 全屏状态变化时更新 tray 菜单文案
+    mainWindow.on('enter-full-screen', () => {
+        if (globalTray) {
+            globalTray.setContextMenu(buildTrayMenu());
+        }
+    });
+    mainWindow.on('leave-full-screen', () => {
+        if (globalTray) {
+            globalTray.setContextMenu(buildTrayMenu());
+        }
+    });
+
     mainWindow.on('close', (event) => {
         if (!isAppQuitting) {
             // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
@@ -721,6 +739,14 @@ const createWindow = () => {
                 modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
             });
         });
+    });
+
+    // 全屏状态下按 ESC 退出全屏（主窗口直接获焦时）
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'Escape' && input.type === 'keyDown' && mainWindow.isFullScreen()) {
+            mainWindow.setFullScreen(false);
+            event.preventDefault();
+        }
     });
 
     mainWindow.webContents.on('will-navigate', (event) => {
@@ -2427,46 +2453,13 @@ const registerSettingAPIHandlers = () => {
         }));
 };
 
-// === DPI 自动适配 ===
+// === 屏幕缩放适配 ===
 
 /**
- * 平台级额外补偿系数，用于在 DPI 补偿之外按 sys.platform 做微调。
+ * 平台级额外补偿系数，用于按 process.platform 做缩放微调。
  */
 const PLATFORM_ZOOM_COMPENSATION: Record<string, number> = {
-    openharmony: 0.85 // 鸿蒙设备 UI 渲染密度偏高，额外降低 15%
-};
-
-/**
- * 根据屏幕 OS 级缩放系数计算 DPI 补偿系数。
- * 参考基准为 scaleFactor=2.0（macOS Retina），此级别下 OS 已完成充分缩放，无需补偿。
- * 当 OS 缩放低于 2.0 时，适度放大以保持不同设备上 GUI 物理大小基本一致。
- */
-const computeDpiCompensation = (scaleFactor: number): number => {
-    if (scaleFactor >= 2.0) return 1.0;
-    // 补偿 = 2.0 / scaleFactor，限制在 [1.0, 1.5] 避免过度放大
-    return Math.max(1.0, Math.min(1.5, 2.0 / scaleFactor));
-};
-
-/** 获取窗口当前所在屏幕的 scaleFactor */
-const getWindowScaleFactor = (): number => {
-    try {
-        if (globalMainWindow) {
-            return screen.getDisplayMatching(globalMainWindow.getBounds()).scaleFactor;
-        }
-    } catch {
-        /* fall through */
-    }
-    return screen.getPrimaryDisplay().scaleFactor;
-};
-
-/** 读取用户配置的 scale_factor_auto 标志（默认 true） */
-const readAutoScaleEnabled = (): boolean => {
-    try {
-        const val = Setting.getInstance().getData().gui_config?.scale_factor_auto;
-        return val !== false;
-    } catch {
-        return true;
-    }
+    openharmony: 1.2
 };
 
 /** 读取用户配置的 scale_factor */
@@ -2479,13 +2472,11 @@ const readUserScaleFactor = (): number => {
     }
 };
 
-/** 计算实际应该应用的 zoom factor（用户偏好 × DPI 补偿 × 平台补偿） */
+/** 计算实际应该应用的 zoom factor（用户偏好 × 平台补偿） */
 const computeEffectiveZoom = (): number => {
     const userScale = readUserScaleFactor();
-    if (!readAutoScaleEnabled()) return userScale;
-    const compensation = computeDpiCompensation(getWindowScaleFactor());
     const platformCompensation = PLATFORM_ZOOM_COMPENSATION[process.platform as string] ?? 1;
-    return Math.max(0.5, Math.min(3.0, userScale * compensation * platformCompensation));
+    return Math.max(0.5, Math.min(3.0, userScale * platformCompensation));
 };
 
 /** 将有效缩放系数应用到窗口并通知渲染进程 */
@@ -2534,28 +2525,6 @@ const registerDisplayZoomHandlers = () => {
             });
             applyEffectiveZoomToWindow();
             return { status: 'ok', data: clamped };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
-    });
-
-    ipcMain.handle('display:getAutoScaleFactor', () => {
-        try {
-            return { status: 'ok', data: readAutoScaleEnabled() };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
-    });
-
-    ipcMain.handle('display:setAutoScaleFactor', (event, enabled: boolean) => {
-        try {
-            const currentData = Setting.getInstance().getData();
-            Setting.getInstance().setData({
-                ...currentData,
-                gui_config: { ...(currentData.gui_config || {}), scale_factor_auto: enabled }
-            });
-            applyEffectiveZoomToWindow();
-            return { status: 'ok', data: enabled };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2830,14 +2799,21 @@ function openLogViewFromTray(): void {
     }
 }
 
-const registerTray = () => {
-    let icon = nativeImage.createFromPath(appIcon);
-    icon = icon.resize({ width: 22, height: 22 });
-    const menuitems = [
+const buildTrayMenu = () => {
+    const isFullscreen = globalMainWindow?.isFullScreen() ?? false;
+    const menuitems: Electron.MenuItemConstructorOptions[] = [
         {
             label: t('main.tray.openMainWindow'),
             click: () => {
-                globalMainWindow.show();
+                globalMainWindow?.show();
+            }
+        },
+        {
+            label: isFullscreen ? t('main.tray.exitFullscreen') : t('main.tray.enterFullscreen'),
+            click: () => {
+                if (globalMainWindow) {
+                    globalMainWindow.setFullScreen(!globalMainWindow.isFullScreen());
+                }
             }
         },
         {
@@ -2849,7 +2825,7 @@ const registerTray = () => {
         {
             label: t('main.tray.openDevTools'),
             click: () => {
-                globalMainWindow.webContents.openDevTools();
+                globalMainWindow?.webContents.openDevTools();
             }
         }
     ];
@@ -2862,13 +2838,18 @@ const registerTray = () => {
             }
         });
     }
-    const menu = Menu.buildFromTemplate(menuitems);
+    return Menu.buildFromTemplate(menuitems);
+};
+
+const registerTray = () => {
+    let icon = nativeImage.createFromPath(appIcon);
+    icon = icon.resize({ width: 22, height: 22 });
 
     globalTray = new Tray(icon);
     globalTray.setToolTip('OpenDesk');
-    globalTray.setContextMenu(menu);
+    globalTray.setContextMenu(buildTrayMenu());
     globalTray.on('click', () => {
-        globalMainWindow.show();
+        globalMainWindow?.show();
     });
 };
 
@@ -2876,7 +2857,7 @@ const initializeScreenAdaption = () => {
     const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
     logger.info(`屏幕显示参数: ${scaleFactor}`);
 
-    // 启动时应用有效缩放（包含 DPI 补偿）
+    // 启动时应用有效缩放（含平台补偿）
     applyEffectiveZoomToWindow();
 
     // 页面加载完成后再次应用，避免加载期间 setZoomFactor 未生效
@@ -2886,12 +2867,6 @@ const initializeScreenAdaption = () => {
             wc.once('did-finish-load', () => applyEffectiveZoomToWindow());
         }
     }
-
-    screen.on('display-metrics-changed', (event, display, _changedMetrics) => {
-        logger.info(`屏幕显示参数已更改: ${display.scaleFactor}`);
-        // DPI 变化时重新计算并应用缩放
-        applyEffectiveZoomToWindow();
-    });
 };
 
 const ARKDATA_PROBE_TIMEOUT_MS = 5000;

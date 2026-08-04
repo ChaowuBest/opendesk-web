@@ -15,6 +15,7 @@ import { showConfirmModal } from './confirmModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import {
+    buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
     buildSidebarSearchResults,
     getSidebarRunningTasks,
@@ -26,6 +27,16 @@ import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebar
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+const THEME_SUN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
+const THEME_MOON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+const THEME_CONTRAST_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18V3z" fill="currentColor" stroke="none"/></svg>`;
+const THEME_ICON_MAP = { light: THEME_SUN_SVG, dark: THEME_MOON_SVG, system: THEME_CONTRAST_SVG };
+const THEME_CYCLE = ['light', 'dark', 'system'];
+const THEME_LABEL_KEY = {
+    light: 'renderer.sidebar.themeLight',
+    dark: 'renderer.sidebar.themeDark',
+    system: 'renderer.sidebar.themeSystem'
+};
 
 class SideBar extends HTMLElement {
     static get observedAttributes() {
@@ -62,6 +73,8 @@ class SideBar extends HTMLElement {
         this._groupScrollObservers = [];
         this._loadingTaskGroups = new Set();
         this._runningZoneClearTimer = null;
+        this._themePreference = 'system';
+        this._themeUnsubscribe = null;
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -85,6 +98,47 @@ class SideBar extends HTMLElement {
                 })
             );
         });
+
+        // 主题切换按钮：点击循环 light -> dark -> system -> light
+        this.querySelector('#theme-toggle-btn')?.addEventListener('click', async () => {
+            if (!window.themeAPI?.setPreference) return;
+            const nextIdx = (THEME_CYCLE.indexOf(this._themePreference) + 1) % THEME_CYCLE.length;
+            const next = THEME_CYCLE[nextIdx];
+            try {
+                const result = await window.themeAPI.setPreference(next);
+                if (result.status === 'ok' && result.data) {
+                    this._themePreference = result.data.preference;
+                    this._updateThemeToggleIcon();
+                    // 同步设置面板中的主题下拉框
+                    const themeSelect = document.querySelector('#theme-preference-select');
+                    if (themeSelect) themeSelect.value = next;
+                }
+            } catch (err) {
+                console.warn('[sidebar] theme setPreference failed', err);
+            }
+        });
+
+        // 初始化主题偏好，并监听变化（来自设置面板或系统切换）
+        if (window.themeAPI?.getResolvedTheme) {
+            window.themeAPI
+                .getResolvedTheme()
+                .then((result) => {
+                    if (result.status === 'ok' && result.data) {
+                        this._themePreference = result.data.preference;
+                        this._updateThemeToggleIcon();
+                    }
+                })
+                .catch(() => {});
+        }
+        if (window.themeAPI?.onThemeChanged) {
+            this._themeUnsubscribe = window.themeAPI.onThemeChanged((resolved) => {
+                if (resolved.preference !== this._themePreference) {
+                    this._themePreference = resolved.preference;
+                    this._updateThemeToggleIcon();
+                }
+            });
+        }
+
         window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
@@ -181,6 +235,10 @@ class SideBar extends HTMLElement {
             this._themeObserver.disconnect();
             this._themeObserver = null;
         }
+        if (this._themeUnsubscribe) {
+            this._themeUnsubscribe();
+            this._themeUnsubscribe = null;
+        }
         if (this._viewChangedHandler) {
             window.removeEventListener('od-view-changed', this._viewChangedHandler);
             this._viewChangedHandler = null;
@@ -213,6 +271,26 @@ class SideBar extends HTMLElement {
         if (collapsedIconEl) {
             collapsedIconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
         }
+    }
+
+    _updateThemeToggleIcon() {
+        const btn = this.querySelector('#theme-toggle-btn');
+        if (!btn) return;
+        const svg = THEME_ICON_MAP[this._themePreference] || THEME_CONTRAST_SVG;
+        const currentLabel = this._t(THEME_LABEL_KEY[this._themePreference] || THEME_LABEL_KEY.system);
+        btn.innerHTML = `${svg}<span class="sb-hover-label">${currentLabel}</span>`;
+        // tooltip 提示下一次点击将切换到的模式
+        const nextIdx = (THEME_CYCLE.indexOf(this._themePreference) + 1) % THEME_CYCLE.length;
+        const next = THEME_CYCLE[nextIdx];
+        const labelKey =
+            next === 'light'
+                ? 'renderer.sidebar.themeToggleToLight'
+                : next === 'dark'
+                  ? 'renderer.sidebar.themeToggleToDark'
+                  : 'renderer.sidebar.themeToggleToSystem';
+        const label = this._t(labelKey);
+        btn.setAttribute('title', label);
+        btn.setAttribute('aria-label', label);
     }
 
     setUpEventListeners() {
@@ -386,13 +464,24 @@ class SideBar extends HTMLElement {
         <div class="sb-full-wrapper h-full flex flex-col">
             <header class="sb-header flex flex-row items-center flex-shrink-0">
                 <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="sb-header-logo"/>
-                <div class="sb-header-title flex flex-col items-start flex-1 min-w-0">
+                <div class="sb-header-title flex flex-col items-start justify-center flex-1 min-w-0">
                     <span id="sidebar-banner" class="font-bold" style="color: var(--od-text);">OpenDesk</span>
                     <p data-sidebar-subtitle class="whitespace-nowrap">${this._t('renderer.sidebar.tagline')}</p>
                 </div>
+                <div class="sb-header-actions flex flex-row flex-shrink-0">
+                <button
+                    id="theme-toggle-btn"
+                    class="sidebar-collapse-btn"
+                    type="button"
+                    title="${this._t('renderer.sidebar.themeSystem')}"
+                    aria-label="${this._t('renderer.sidebar.themeSystem')}"
+                >
+                    ${THEME_CONTRAST_SVG}
+                    <span class="sb-hover-label">${this._t(THEME_LABEL_KEY[this._themePreference] || THEME_LABEL_KEY.system)}</span>
+                </button>
                 <button
                     id="collapse-sidebar-btn"
-                    class="sidebar-collapse-btn flex-shrink-0"
+                    class="sidebar-collapse-btn"
                     type="button"
                     title="${this._t('renderer.sidebar.collapse')}"
                     aria-label="${this._t('renderer.sidebar.collapse')}"
@@ -400,7 +489,9 @@ class SideBar extends HTMLElement {
                     aria-expanded="true"
                 >
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>
+                    <span class="sb-hover-label">${this._t('renderer.sidebar.collapse')}</span>
                 </button>
+                </div>
             </header>
 
             <!-- Search -->
@@ -631,6 +722,7 @@ class SideBar extends HTMLElement {
             collapseButton.setAttribute('title', label);
             collapseButton.setAttribute('aria-label', label);
         }
+        this._updateThemeToggleIcon();
         const subtitle = this.querySelector('[data-sidebar-subtitle]');
         if (subtitle) {
             subtitle.textContent = this._t('renderer.sidebar.tagline');
@@ -1965,7 +2057,7 @@ class SideBar extends HTMLElement {
         } else if (this._favoritesView) {
             this._groupDisplayLimits.delete('search-results');
             const favoritedTasks = filteredTasks.filter((t) => this._favoritedTaskIds.has(t.task_id));
-            favoritesResults = buildSidebarSearchResults(favoritedTasks);
+            favoritesResults = buildSidebarFavoritesResults(favoritedTasks);
             historyCount = favoritesResults.length;
         } else {
             this._groupDisplayLimits.delete('search-results');

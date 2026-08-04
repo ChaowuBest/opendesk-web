@@ -112,6 +112,15 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 function parseCommandLineArgs() {
+    try {
+        process.cwd();
+    } catch {
+        console.error(
+            '[error] Current working directory no longer exists. Please restart opendesk from a valid directory.'
+        );
+        process.exit(1);
+    }
+
     setPlatform(new CliPlatform());
 
     prog.name('opendesk');
