@@ -13,10 +13,23 @@ import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 import { PermissionPendingStore } from './permissionPendingStore';
 import {
+    createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
-    getHarmonyHomeDirectory,
-    getHarmonyRuntimeEnvironment
-} from '../main/utils/harmonyRuntime.js';
+    getHarmonyHomeDirectory
+} from '../common/harmonyRuntime.js';
+
+function resolveRendererHarmonyRuntime() {
+    try {
+        return createHarmonyRuntimeEnvironment({
+            platform: process.platform,
+            argv: process.argv,
+            environment: process.env
+        });
+    } catch (error) {
+        console.warn('[HarmonyRuntime] Renderer metadata unavailable:', error);
+        return null;
+    }
+}
 
 /**
  * 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效。
@@ -1651,7 +1664,7 @@ if (shouldExposeMainWindowAPIs()) {
         window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
     });
 
-    const harmonyRuntime = getHarmonyRuntimeEnvironment();
+    const harmonyRuntime = resolveRendererHarmonyRuntime();
 
     // 暴露系统平台信息，用于 magic pointer、路径选择等功能的平台适配
     safeExposeInMainWorld('systemInfo', {
