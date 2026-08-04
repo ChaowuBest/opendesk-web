@@ -39,7 +39,7 @@ import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
 import { jsonrepair } from 'jsonrepair';
-import { t } from '../../../locale/index.js';
+import { t as globalT } from '../../../locale/index.js';
 import {
     getRegistriesInfo,
     getRegistry,
@@ -467,7 +467,7 @@ export class McpMgrApplication extends BaseApplication {
                 const toolName = tool.name;
                 mcpTool.setExecutor(async (args) => {
                     const result = await this.callWorker('callMcpTool', serverId, toolName, args);
-                    if (result.status !== 'ok') throw new Error(result.message || t('mcpmgr.toolCallFailed'));
+                    if (result.status !== 'ok') throw new Error(result.message || globalT('mcpmgr.toolCallFailed'));
                     return result.data as string;
                 });
 
@@ -480,7 +480,7 @@ export class McpMgrApplication extends BaseApplication {
                 toolset.addTool(
                     new McpCallToolTool(deferred, async (tool, args) => {
                         const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
-                        if (result.status !== 'ok') throw new Error(result.message || t('mcpmgr.toolCallFailed'));
+                        if (result.status !== 'ok') throw new Error(result.message || globalT('mcpmgr.toolCallFailed'));
                         return result.data as string;
                     })
                 );
