@@ -1,10 +1,16 @@
 import { defineConfig, loadEnv } from 'electron-vite';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import {
+    createGenOfficeSlidesViteAliases,
+    genOfficeSlidesEntries,
+    genOfficeSlidesMainBuildPlugin
+} from '@opendesk/genoffice-slides/vite';
 
 export default defineConfig(({ mode }) => {
     const isProd = mode === 'production';
     const buildTime = new Date().toISOString();
+    const genOfficeAliases = createGenOfficeSlidesViteAliases();
 
     return {
         main: {
@@ -12,8 +18,13 @@ export default defineConfig(({ mode }) => {
                 __BUILD_TIME__: JSON.stringify(buildTime),
                 __IS_DEV__: JSON.stringify(!isProd)
             },
+            resolve: {
+                alias: {
+                    ...genOfficeAliases
+                }
+            },
             publicDir: path.join(__dirname, 'resources', 'main'),
-            plugins: [tailwindcss()],
+            plugins: [genOfficeSlidesMainBuildPlugin, tailwindcss()],
             build: {
                 outDir: 'dist/main',
                 // 生产环境关闭 sourcemap 以减小体积和内存占用
@@ -21,6 +32,13 @@ export default defineConfig(({ mode }) => {
                 // 生产环境启用压缩
                 minify: isProd,
                 rollupOptions: {
+                    output: {
+                        manualChunks(id) {
+                            if (id.replaceAll('\\', '/').endsWith('/vendor/genoffice/dist/main.js')) {
+                                return 'genoffice-slides-main';
+                            }
+                        }
+                    },
                     input: {
                         main: path.join(__dirname, 'src', 'main', 'main.ts'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts'),
@@ -38,6 +56,13 @@ export default defineConfig(({ mode }) => {
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告
                         if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
+                        if (
+                            warning.code === 'UNUSED_EXTERNAL_IMPORT' &&
+                            warning.message?.includes('vendor/genoffice/dist/main.js')
+                        ) {
+                            warn(warning);
                             return;
                         }
                         const safeWarnings = ['CIRCULAR_DEPENDENCY'];
@@ -60,7 +85,8 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
-                        webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js')
+                        webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
+                        slidesPreload: genOfficeSlidesEntries.preload
                     },
                     output: {
                         format: 'cjs',
@@ -82,7 +108,8 @@ export default defineConfig(({ mode }) => {
             plugins: [tailwindcss()],
             resolve: {
                 alias: {
-                    '@': path.resolve(__dirname, 'src')
+                    '@': path.resolve(__dirname, 'src'),
+                    ...genOfficeAliases
                 }
             },
             build: {
@@ -99,7 +126,8 @@ export default defineConfig(({ mode }) => {
                         application: path.join(__dirname, 'src', 'renderer', 'application.html'),
                         application_window: path.join(__dirname, 'src', 'renderer', 'application_window.html'),
                         logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
-                        floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html')
+                        floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html'),
+                        slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html')
                     },
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告

@@ -161,6 +161,10 @@ function pickFileIcon(entry: FSEntry): string {
     }
 }
 
+function isPptxFile(filePath: string): boolean {
+    return filePath.toLowerCase().endsWith('.pptx');
+}
+
 // ============================================================================
 // CSS (returned as string, injected by host)
 // ============================================================================
@@ -404,6 +408,10 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: var(--fs-lg); color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: var(--fs-sm); color: #94a3b8; margin-top: 2px; }
+        .ws-pptx-host { flex: 1; min-height: 0; overflow: hidden; background: #e9edf3; }
+        .ws-pptx-loading { display: flex; align-items: center; justify-content: center; background: #ffffff; }
+        .ws-pptx-loading content-loading-view { width: 100%; }
+        .ws-pptx-frame { display: flex; width: 100%; height: 100%; border: 0; background: #ffffff; }
         .ws-editor-host {
             flex: 1;
             display: flex;
@@ -967,6 +975,8 @@ export class FileExplorer {
     };
     private _browserFullscreen = false;
     private _previewFullscreen = false;
+    private _pptxClosePending = false;
+    private _pptxCloseApproved = false;
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
@@ -1003,6 +1013,7 @@ export class FileExplorer {
      * @param workspace 可选的任务级工作空间路径，传入后优先使用而非全局 default_workspace
      */
     refresh(workspace?: string): void {
+        if (this._deferUntilPptxCanClose(() => this.refresh(workspace))) return;
         // 切换任务/工作空间时先关闭预览
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
@@ -1032,6 +1043,7 @@ export class FileExplorer {
      * 关闭预览（供外部调用，如侧边栏收起时）。
      */
     closeEditor(): void {
+        if (this._deferUntilPptxCanClose(() => this.closeEditor())) return;
         void this._saveEditorIfNeeded();
         this._destroyEditorInstance();
         this._selectedFile = null;
@@ -1185,6 +1197,8 @@ export class FileExplorer {
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
     selectFile(filePath: string): void {
+        if (this._selectedFile === filePath && isPptxFile(filePath)) return;
+        if (this._deferUntilPptxCanClose(() => this.selectFile(filePath))) return;
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
@@ -1210,8 +1224,53 @@ export class FileExplorer {
         void this._loadPreview(filePath);
     }
 
+    private _deferUntilPptxCanClose(onApproved: () => void): boolean {
+        if (this._pptxCloseApproved) {
+            this._pptxCloseApproved = false;
+            return false;
+        }
+        if (!this._selectedFile || !isPptxFile(this._selectedFile)) return false;
+        if (this._pptxClosePending) return true;
+
+        const webview = this._rootNode?.querySelector<HTMLElement>('.ws-pptx-frame') as
+            (HTMLElement & { getWebContentsId?: () => number }) | null;
+        const webContentsId = webview?.getWebContentsId?.();
+        if (!webContentsId || !window.slidesHostAPI?.requestClose) return false;
+
+        this._pptxClosePending = true;
+        void window.slidesHostAPI
+            .requestClose(webContentsId)
+            .then((canClose) => {
+                if (!canClose) return;
+                this._pptxCloseApproved = true;
+                onApproved();
+            })
+            .catch(() => {})
+            .finally(() => {
+                this._pptxClosePending = false;
+            });
+        return true;
+    }
+
     private async _loadPreview(filePath: string): Promise<void> {
         try {
+            if (isPptxFile(filePath)) {
+                const slidesHostAPI = window.slidesHostAPI;
+                if (!slidesHostAPI?.prepare) {
+                    throw new Error(t('renderer.fileExplorer.pptx.unavailable'));
+                }
+                // 先让局部 loading 完成一次绘制，再启动首次 GenOffice 冷初始化。
+                await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+                if (this._selectedFile !== filePath) return;
+                await slidesHostAPI.prepare();
+                if (this._selectedFile !== filePath) return;
+                this._previewState = {
+                    status: 'idle',
+                    data: { tooLarge: false, size: 0, limit: 0, content: '', binary: false }
+                };
+                this._mountPptxEditor(filePath);
+                return;
+            }
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
                 throw new Error(t('renderer.fileExplorer.error.noReadFile'));
@@ -1308,7 +1367,11 @@ export class FileExplorer {
                         this.selectFile(filePath);
                         break;
                     case 'edit':
-                        this.openEditor(filePath);
+                        if (isPptxFile(filePath)) {
+                            this.selectFile(filePath);
+                        } else {
+                            this.openEditor(filePath);
+                        }
                         break;
                     case 'open-in-browser':
                         this.onOpenInBrowser?.(filePath);
@@ -1402,7 +1465,7 @@ export class FileExplorer {
                 this._toggleTreeNode(p);
                 break;
             case 'tree-file':
-                if (this._editorMode) {
+                if (this._editorMode && !isPptxFile(p)) {
                     this.openEditor(p);
                 } else {
                     this.selectFile(p);
@@ -1412,7 +1475,7 @@ export class FileExplorer {
                 this._enterGridDir(p);
                 break;
             case 'grid-file':
-                if (this._editorMode) {
+                if (this._editorMode && !isPptxFile(p)) {
                     this.openEditor(p);
                 } else {
                     this.selectFile(p);
@@ -1426,6 +1489,28 @@ export class FileExplorer {
     }
 
     // ----- full panel render -----
+
+    private _applyFullscreenLayout(): void {
+        const panel = this._container;
+        if (!panel) return;
+
+        const browser = panel.querySelector<HTMLElement>('.ws-browser');
+        browser?.classList.toggle('ws-browser--fullscreen', this._browserFullscreen);
+        browser?.classList.toggle('ws-browser--hidden', this._previewFullscreen);
+
+        const preview = panel.querySelector<HTMLElement>('[data-preview-root]');
+        preview?.classList.toggle('ws-preview--fullscreen', this._previewFullscreen);
+
+        const browserIcon = panel.querySelector<HTMLElement>('[data-action="browser-fullscreen"] i');
+        if (browserIcon) {
+            browserIcon.className = `fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}`;
+        }
+
+        const previewIcon = panel.querySelector<HTMLElement>('[data-action="preview-fullscreen"] i');
+        if (previewIcon) {
+            previewIcon.className = `fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}`;
+        }
+    }
 
     private _renderPanel(): void {
         const panel = this._container;
@@ -1515,7 +1600,7 @@ export class FileExplorer {
             btn.addEventListener('click', () => {
                 this._browserFullscreen = !this._browserFullscreen;
                 this._previewFullscreen = false;
-                this._renderPanel();
+                this._applyFullscreenLayout();
             });
         });
 
@@ -1548,10 +1633,7 @@ export class FileExplorer {
                 if (target.closest('[data-action="preview-fullscreen"]')) {
                     this._previewFullscreen = !this._previewFullscreen;
                     this._browserFullscreen = false;
-                    this._renderPanel();
-                    if (this._editorMode && this._editorFilePath) {
-                        void this._loadFileForEditor(this._editorFilePath);
-                    }
+                    this._applyFullscreenLayout();
                     return;
                 }
                 if (target.closest('[data-action="editor-save"]')) {
@@ -1779,6 +1861,11 @@ export class FileExplorer {
      * 打开文件编辑器。
      */
     openEditor(filePath: string, line?: number): void {
+        if (isPptxFile(filePath)) {
+            this.selectFile(filePath);
+            return;
+        }
+        if (this._deferUntilPptxCanClose(() => this.openEditor(filePath, line))) return;
         if (this._editorMode && this._editorFilePath === filePath && this._editorInstance) {
             if (line != null && line > 0) {
                 this._gotoEditorLine(line);
@@ -2191,12 +2278,29 @@ export class FileExplorer {
         }
     }
 
+    private _mountPptxEditor(filePath: string): void {
+        const host = this._rootNode?.querySelector<HTMLElement>('.ws-pptx-host');
+        if (!host) {
+            this._renderPreview();
+            return;
+        }
+
+        const editorUrl = `./slides_editor.html?mode=tab&file=${encodeURIComponent(filePath)}`;
+        const webview = document.createElement('webview');
+        webview.className = 'ws-pptx-frame';
+        webview.setAttribute('src', editorUrl);
+        webview.setAttribute('title', t('renderer.fileExplorer.pptx.editor'));
+        host.classList.remove('ws-pptx-loading');
+        host.replaceChildren(webview);
+    }
+
     private _isPreviewUnsupported(): boolean {
         if (this._editorMode) return false;
         if (this._previewState.status !== 'idle' || !this._previewState.data) return false;
         const d = this._previewState.data;
         // 图片文件有自己的预览方式，不算"不支持"
         if (this._selectedFile && isImageFile(this._selectedFile)) return false;
+        if (this._selectedFile && isPptxFile(this._selectedFile)) return false;
         return d.tooLarge || d.binary;
     }
 
@@ -2322,7 +2426,7 @@ export class FileExplorer {
 
         const header = `
         <div class="ws-preview-header">
-            <i class="fas fa-file-lines"></i>
+            <i class="fas ${isPptxFile(this._selectedFile) ? 'fa-file-powerpoint' : 'fa-file-lines'}"></i>
             <span class="ws-preview-name" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
             ${
                 this._previewState.data
@@ -2330,7 +2434,10 @@ export class FileExplorer {
                     : ''
             }
             ${
-                this._previewState.data && !this._previewState.data.binary && !this._previewState.data.tooLarge
+                this._previewState.data &&
+                !isPptxFile(this._selectedFile) &&
+                !this._previewState.data.binary &&
+                !this._previewState.data.tooLarge
                     ? `<button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.editFile')}" data-action="open-editor"><i class="fas fa-pen-to-square"></i></button>`
                     : ''
             }
@@ -2344,7 +2451,10 @@ export class FileExplorer {
 
         let bodyHtml = '';
         if (this._previewState.status === 'loading') {
-            bodyHtml = `
+            bodyHtml =
+                this._selectedFile && isPptxFile(this._selectedFile)
+                    ? `<div class="ws-pptx-host ws-pptx-loading"><content-loading-view data-type="tb" data-message="${escapeHtml(t('renderer.fileExplorer.preview.loadingEditor'))}"></content-loading-view></div>`
+                    : `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>
                 <span>${t('renderer.fileExplorer.preview.reading')}</span>
@@ -2357,7 +2467,10 @@ export class FileExplorer {
             </div>`;
         } else if (this._previewState.data) {
             const d = this._previewState.data;
-            if (d.tooLarge) {
+            if (isPptxFile(this._selectedFile)) {
+                const editorUrl = `./slides_editor.html?mode=tab&file=${encodeURIComponent(this._selectedFile)}`;
+                bodyHtml = `<div class="ws-pptx-host"><webview class="ws-pptx-frame" src="${escapeHtml(editorUrl)}" title="${escapeHtml(t('renderer.fileExplorer.pptx.editor'))}"></webview></div>`;
+            } else if (d.tooLarge) {
                 bodyHtml = `
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-circle-xmark"></i>

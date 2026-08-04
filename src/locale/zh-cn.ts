@@ -1539,6 +1539,8 @@ export const zhCn: Record<string, string> = {
     'renderer.fileExplorer.preview.tooLargeHint': '当前预览器仅支持较小的文本文件',
     'renderer.fileExplorer.preview.binary': '无法预览：检测到二进制文件',
     'renderer.fileExplorer.preview.binaryHint': '当前预览器仅支持文本文件',
+    'renderer.fileExplorer.pptx.editor': 'PowerPoint 编辑器',
+    'renderer.fileExplorer.pptx.unavailable': 'PowerPoint 编辑器当前不可用',
 
     // Renderer - TaskView (toolbar, usage, retry, quickpass)
     'renderer.taskview.time.justNow': '刚刚',

@@ -1575,6 +1575,8 @@ export const enUs: Record<string, string> = {
     'renderer.fileExplorer.preview.tooLargeHint': 'The previewer only supports smaller text files',
     'renderer.fileExplorer.preview.binary': 'Cannot preview: binary file detected',
     'renderer.fileExplorer.preview.binaryHint': 'The previewer only supports text files',
+    'renderer.fileExplorer.pptx.editor': 'PowerPoint editor',
+    'renderer.fileExplorer.pptx.unavailable': 'The PowerPoint editor is unavailable',
 
     // Renderer - TaskView (toolbar, usage, retry, quickpass)
     'renderer.taskview.time.justNow': 'Just now',

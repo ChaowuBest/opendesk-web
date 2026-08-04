@@ -7,6 +7,10 @@
     "type": "module",
     "main": "./dist/main/main.js",
     "private": true,
+    "workspaces": [
+        "vendor/genoffice",
+        "vendor/genoffice/packages/*"
+    ],
     "engines": {
         "node": ">=22.19.0"
     },
@@ -20,6 +24,7 @@
         "preview:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-vite preview",
         "preview:linux": "npm run build && electron-vite preview -- --no-sandbox",
         "build": "electron-vite build",
+        "stage:ohos-slides": "node scripts/stage-genoffice-slides-ohos.cjs",
         "package": "run-script-os",
         "package:win32": "npm run build && electron-forge package --platform=win32",
         "package:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge package --platform=darwin",
@@ -57,6 +62,7 @@
         ]
     },
     "devDependencies": {
+        "@opendesk/genoffice-slides": "file:vendor/genoffice",
         "@electron-forge/cli": "^7.10.2",
         "@electron-forge/maker-deb": "^7.10.2",
         "@electron-forge/maker-dmg": "^7.10.2",

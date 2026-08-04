@@ -658,6 +658,13 @@ function exposeFSAPI() {
     });
 }
 
+function exposeSlidesHostAPI() {
+    safeExposeInMainWorld('slidesHostAPI', {
+        prepare: () => ipcRenderer.invoke('slides-host:prepare'),
+        requestClose: (webContentsId) => ipcRenderer.invoke('slides-host:request-close', webContentsId)
+    });
+}
+
 function exposeNativeBridgeAPI() {
     safeExposeInMainWorld('native', {
         call: async (method, ...args) => {
@@ -814,6 +821,7 @@ function exposeApplicationAPI() {
 exposeApplicationAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
+exposeSlidesHostAPI();
 exposeThemeAPI();
 exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();

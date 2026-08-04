@@ -1,0 +1,63 @@
+{
+  "name": "@opendesk/genoffice-slides",
+  "version": "0.1.0",
+  "description": "Embeddable GenOffice Slides editor integration for Electron-compatible hosts",
+  "license": "(MulanPSL-2.0 AND Apache-2.0)",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./main": "./dist/main.js",
+    "./preload": "./src/preload.ts",
+    "./renderer": "./src/renderer.ts",
+    "./vite": "./src/vite.ts",
+    "./hap": "./src/hap.cjs",
+    "./engine": "./packages/pptx-engine/src/index.ts",
+    "./hap-manifest": "./hap-manifest.json"
+  },
+  "files": [
+    "apps/slides/src",
+    "packages/*/src",
+    "src",
+    "dist",
+    "hap-manifest.json",
+    "LICENSE",
+    "NOTICE",
+    "README.opendesk.md"
+  ],
+  "dependencies": {
+    "@genoffice/agent-core": "*",
+    "@genoffice/ai-provider": "*",
+    "@genoffice/ai-search": "*",
+    "@genoffice/electron-utils": "*",
+    "@genoffice/file-parse": "*",
+    "@genoffice/i18n": "*",
+    "@genoffice/pptx-engine": "*",
+    "@genoffice/pptx-render": "*",
+    "@genoffice/project-store": "*",
+    "@genoffice/ui": "*",
+    "@genspark/cli": "^1.5.0",
+    "acorn": "8.16.0",
+    "bidi-js": "^1.0.3",
+    "fast-xml-parser": "^5.10.1",
+    "harfbuzzjs": "^1.5.0",
+    "jszip": "^3.10.1",
+    "konva": "^9.3.22",
+    "opentype.js": "^2.0.0",
+    "pdfjs-dist": "^5.7.284",
+    "pngjs": "^7.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-konva": "^19.2.5",
+    "utif2": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/opentype.js": "^1.3.10",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4"
+  },
+  "peerDependencies": {
+    "electron": ">=39"
+  }
+}
