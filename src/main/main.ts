@@ -2236,6 +2236,21 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('workspace:pickDirectoryDialog', async () => {
+        try {
+            const result = await dialog.showOpenDialog(globalMainWindow!, {
+                title: '选择工作空间目录',
+                properties: ['openDirectory']
+            });
+            if (result.canceled || result.filePaths.length === 0) {
+                return { status: 'ok', data: null };
+            }
+            const selectedPath = result.filePaths[0].replace(/\\/g, '/');
+            return { status: 'ok', data: selectedPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
     ipcMain.handle('workspace:setWorkspaceDirectory', async (_event, selectedPath: string) => {
         try {
             await _applyWorkspaceSelection(selectedPath);

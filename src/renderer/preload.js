@@ -1167,6 +1167,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        pickDirectoryDialog: async () => {
+            const result = await ipcRenderer.invoke('workspace:pickDirectoryDialog');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         copyWorkspacePath: async () => {
             const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
             if (result.status !== 'ok') {

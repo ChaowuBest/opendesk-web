@@ -2591,6 +2591,7 @@ class SettingPanel extends HTMLElement {
 
     // --- 提供方管理 ---
     showProviderTemplateModal() {
+        const templates = this.providerTemplates;
         const templateCards = templates
             .map(
                 (t, i) => `
