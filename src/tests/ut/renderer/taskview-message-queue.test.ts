@@ -215,6 +215,39 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('task-artifacts')).toBeNull();
     });
 
+    test('animates the task and pptx workspace columns to a one-to-three ratio', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _rightSidebarExpanded: boolean;
+            render: () => void;
+            _handlePptxFocusModeChange: (event: CustomEvent<{ active: boolean; fullscreen: boolean }>) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView._rightSidebarExpanded = true;
+        taskView.render();
+        const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')!;
+        const collapseRequests: Array<{ collapsed?: boolean; persist?: boolean }> = [];
+        const onCollapseRequest = (event: Event) => {
+            collapseRequests.push((event as CustomEvent<{ collapsed?: boolean; persist?: boolean }>).detail);
+        };
+        document.addEventListener('sidebar-collapse-request', onCollapseRequest);
+
+        taskView._handlePptxFocusModeChange(
+            new CustomEvent('pptx-focus-mode-change', { detail: { active: true, fullscreen: true } })
+        );
+
+        expect(artifacts.style.width).toBe('75%');
+        expect(artifacts.style.transition).toContain('width');
+        expect(collapseRequests).toEqual([{ collapsed: true, persist: false }]);
+
+        taskView._handlePptxFocusModeChange(
+            new CustomEvent('pptx-focus-mode-change', { detail: { active: false, fullscreen: false } })
+        );
+
+        expect(artifacts.style.width).toBe('380px');
+        document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
+    });
+
     test('emits task status changes for embedded hosts', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

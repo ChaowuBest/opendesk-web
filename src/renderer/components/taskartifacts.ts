@@ -24,7 +24,7 @@
  *   - pending：不展示耗时。
  */
 
-import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
+import { FileExplorer, getFileExplorerCSS, type PptxLayoutState } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
@@ -198,6 +198,8 @@ class TaskArtifacts extends HTMLElement {
     private _isBrowserFullscreen = false;
     private _settingUnsubscribe: (() => void) | null = null;
     private _savedWidthBeforeFullscreen: string = '';
+    private _pptxLayoutState: PptxLayoutState = { active: false, fullscreen: false };
+    private _reportedPptxFocusState: PptxLayoutState = { active: false, fullscreen: false };
 
     private _taskPlanVisible = false;
     private _taskRunning = false;
@@ -229,6 +231,10 @@ class TaskArtifacts extends HTMLElement {
             const normalized = filePath.replace(/\\/g, '/');
             const fileUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`;
             this.browserAddTab(fileUrl);
+        };
+        this._fileExplorer.onPptxLayoutChange = (state) => {
+            this._pptxLayoutState = state;
+            this._syncPptxFocusMode();
         };
     }
 
@@ -827,6 +833,25 @@ class TaskArtifacts extends HTMLElement {
         } else if (tabId === 'changes') {
             this.refreshChanges();
         }
+        this._syncPptxFocusMode();
+    }
+
+    private _syncPptxFocusMode(): void {
+        const active = this._activeTab === 'workspace' && this._pptxLayoutState.active;
+        const fullscreen = active && this._pptxLayoutState.fullscreen;
+        this.toggleAttribute('data-pptx-preview-fullscreen', fullscreen);
+
+        if (this._reportedPptxFocusState.active === active && this._reportedPptxFocusState.fullscreen === fullscreen) {
+            return;
+        }
+        this._reportedPptxFocusState = { active, fullscreen };
+        this.dispatchEvent(
+            new CustomEvent<PptxLayoutState>('pptx-focus-mode-change', {
+                detail: this._reportedPptxFocusState,
+                bubbles: true,
+                composed: true
+            })
+        );
     }
 
     private _updateSlider(): void {
@@ -1433,6 +1458,29 @@ class TaskArtifacts extends HTMLElement {
                 padding: 4px;
                 background: #F5F4F1;
                 border-radius: 999px;
+                max-height: 36px;
+                overflow: hidden;
+                transition:
+                    opacity 160ms ease,
+                    max-height 240ms cubic-bezier(0.4, 0, 0.2, 1),
+                    margin 240ms cubic-bezier(0.4, 0, 0.2, 1),
+                    padding 240ms cubic-bezier(0.4, 0, 0.2, 1);
+            }
+
+            :host([data-pptx-preview-fullscreen]) .tab-header {
+                max-height: 0;
+                margin-top: 0;
+                margin-bottom: 0;
+                padding-top: 0;
+                padding-bottom: 0;
+                opacity: 0;
+                pointer-events: none;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .tab-header {
+                    transition: none;
+                }
             }
 
             .tab-bar {

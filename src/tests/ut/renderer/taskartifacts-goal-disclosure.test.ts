@@ -41,11 +41,16 @@ describe('task artifacts goal disclosure state', () => {
         await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
             FileExplorer: class {
                 onOpenInBrowser: ((filePath: string) => void) | null = null;
+                onPptxLayoutChange: ((state: { active: boolean; fullscreen: boolean }) => void) | null = null;
                 mount() {}
                 refresh() {}
                 softRefresh() {}
-                selectFile() {}
-                closeEditor() {}
+                selectFile(filePath: string) {
+                    this.onPptxLayoutChange?.({ active: filePath.endsWith('.pptx'), fullscreen: true });
+                }
+                closeEditor() {
+                    this.onPptxLayoutChange?.({ active: false, fullscreen: false });
+                }
                 openEditor() {}
                 isEditorOpen() {
                     return false;
@@ -137,6 +142,24 @@ describe('task artifacts goal disclosure state', () => {
         expect(jest.getTimerCount()).toBeGreaterThan(baselineTimers);
         artifacts.remove();
         expect(jest.getTimerCount()).toBe(baselineTimers);
+    });
+
+    test('extends pptx preview fullscreen across the workspace tab header', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            openFilePreview: (filePath: string) => void;
+        };
+        const focusStates: Array<{ active: boolean; fullscreen: boolean }> = [];
+        artifacts.addEventListener('pptx-focus-mode-change', (event) => {
+            focusStates.push((event as CustomEvent<{ active: boolean; fullscreen: boolean }>).detail);
+        });
+
+        artifacts.openFilePreview('/workspace/deck.pptx');
+
+        expect(artifacts.hasAttribute('data-pptx-preview-fullscreen')).toBe(true);
+        expect(artifacts.shadowRoot?.querySelector('style')?.textContent).toContain(
+            ':host([data-pptx-preview-fullscreen]) .tab-header'
+        );
+        expect(focusStates).toEqual([{ active: true, fullscreen: true }]);
     });
 
     function terminalGoal(id: string) {

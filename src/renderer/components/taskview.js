@@ -51,6 +51,8 @@ import {
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_RIGHT_SIDEBAR_WIDTH = 380;
+const PPTX_FOCUS_RIGHT_SIDEBAR_WIDTH = '75%';
+const PPTX_FOCUS_LAYOUT_TRANSITION = 'width 320ms cubic-bezier(0.4, 0, 0.2, 1)';
 export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
@@ -219,6 +221,9 @@ class TaskView extends HTMLElement {
         // 每个任务独立的侧边栏状态
         this._rightSidebarExpanded = false;
         this._rightSidebarWidth = DEFAULT_RIGHT_SIDEBAR_WIDTH;
+        this._pptxFocusActive = false;
+        this._pptxPreviousRightSidebarWidth = null;
+        this._pptxLayoutTransitionTimer = null;
 
         this.task_id = null;
         this._goalController = new GoalController(this, { getTranslator: () => taskViewT });
@@ -2199,6 +2204,55 @@ class TaskView extends HTMLElement {
         this._updateSidebarToggleIcon(!isExpanded);
     }
 
+    _animatePptxSidebarWidth(rightSidebar, width) {
+        if (this._pptxLayoutTransitionTimer !== null) {
+            window.clearTimeout(this._pptxLayoutTransitionTimer);
+            this._pptxLayoutTransitionTimer = null;
+        }
+        const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+        if (this._shouldSuppressIncrementalRender() || reduceMotion) {
+            rightSidebar.style.width = width;
+            rightSidebar.style.transition = '';
+            return;
+        }
+
+        rightSidebar.style.transition = PPTX_FOCUS_LAYOUT_TRANSITION;
+        requestAnimationFrame(() => {
+            rightSidebar.style.width = width;
+        });
+        this._pptxLayoutTransitionTimer = window.setTimeout(() => {
+            rightSidebar.style.transition = '';
+            this._pptxLayoutTransitionTimer = null;
+        }, 360);
+    }
+
+    _handlePptxFocusModeChange(event) {
+        const active = event.detail?.active === true;
+        if (active === this._pptxFocusActive) return;
+
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
+        if (!rightSidebar) return;
+
+        if (active) {
+            this._pptxFocusActive = true;
+            this._pptxPreviousRightSidebarWidth =
+                rightSidebar.style.width || `${rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH}px`;
+            document.dispatchEvent(
+                new CustomEvent('sidebar-collapse-request', {
+                    detail: { collapsed: true, persist: false },
+                    bubbles: true
+                })
+            );
+            this._animatePptxSidebarWidth(rightSidebar, PPTX_FOCUS_RIGHT_SIDEBAR_WIDTH);
+            return;
+        }
+
+        this._pptxFocusActive = false;
+        const restoreWidth = this._pptxPreviousRightSidebarWidth || `${this._rightSidebarWidth}px`;
+        this._pptxPreviousRightSidebarWidth = null;
+        this._animatePptxSidebarWidth(rightSidebar, restoreWidth);
+    }
+
     _expandRightSidebar(rightSidebar, resizer) {
         const targetWidth = this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
         this._restoreRightSidebarFromOffscreen(rightSidebar);
@@ -2997,6 +3051,9 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
+        this._handlePptxFocusModeChange = this._handlePptxFocusModeChange.bind(this);
+        this.addEventListener('pptx-focus-mode-change', this._handlePptxFocusModeChange);
+
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
         this.addEventListener('click', this._handleEditorOpenClick);
@@ -3241,6 +3298,7 @@ class TaskView extends HTMLElement {
             artifacts.setTaskTodos([]);
         }
         this.removeEventListener('click', this._handleEditorOpenClick);
+        this.removeEventListener('pptx-focus-mode-change', this._handlePptxFocusModeChange);
         this.removeEventListener('click', this._handleOpenFileClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
@@ -3250,6 +3308,10 @@ class TaskView extends HTMLElement {
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
         this._goalController.disconnect();
+        if (this._pptxLayoutTransitionTimer !== null) {
+            window.clearTimeout(this._pptxLayoutTransitionTimer);
+            this._pptxLayoutTransitionTimer = null;
+        }
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();

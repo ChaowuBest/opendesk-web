@@ -77,6 +77,8 @@ describe('file explorer', () => {
         explorer._container = container;
         explorer._rootNode = container;
         explorer._workspaceRoot = '/workspace';
+        const onPptxLayoutChange = jest.fn();
+        (explorer as any).onPptxLayoutChange = onPptxLayoutChange;
         explorer._renderPanel();
 
         explorer.selectFile('/workspace/deck.pptx');
@@ -88,6 +90,9 @@ describe('file explorer', () => {
         expect(editor?.getAttribute('src')).toBe('./slides_editor.html?mode=tab&file=%2Fworkspace%2Fdeck.pptx');
         expect(editor?.getAttribute('title')).toBe('PowerPoint editor');
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
+        expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
+        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
+        expect(onPptxLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
         explorer.closeEditor();
     });
 
@@ -162,14 +167,18 @@ describe('file explorer', () => {
         const previewRoot = container.querySelector('[data-preview-root]');
         const editor = container.querySelector('.ws-pptx-frame');
         expect(editor).not.toBeNull();
+        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(true);
 
         container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
 
         expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
         expect(container.querySelector('.ws-pptx-frame')).toBe(editor);
-        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(true);
-        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
+        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(false);
+        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(false);
         expect(prepare).toHaveBeenCalledTimes(1);
+
+        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
+        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(true);
 
         container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
         container.querySelector<HTMLButtonElement>('[data-action="browser-fullscreen"]')?.click();

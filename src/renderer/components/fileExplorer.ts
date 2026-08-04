@@ -55,6 +55,11 @@ export interface PreviewPayload {
     dataUri?: string;
 }
 
+export interface PptxLayoutState {
+    active: boolean;
+    fullscreen: boolean;
+}
+
 type ChildrenCache = FSEntry[] | 'loading' | { error: string };
 type ViewMode = 'tree' | 'grid';
 
@@ -980,6 +985,8 @@ export class FileExplorer {
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
+    /** PPT 编辑工作区布局变化回调（由 task-artifacts 协调外层布局） */
+    onPptxLayoutChange: ((state: PptxLayoutState) => void) | null = null;
 
     /**
      * 将文件浏览器渲染到指定容器中。
@@ -1034,6 +1041,7 @@ export class FileExplorer {
         this._gridPath = null;
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
+        this._notifyPptxLayoutChange();
         if (this._container) {
             void this._ensureWorkspaceLoaded();
         }
@@ -1056,6 +1064,8 @@ export class FileExplorer {
         this._editorPendingSave = false;
         this._previewState = { status: 'idle' };
         this._previewFullscreen = false;
+        this._browserFullscreen = false;
+        this._notifyPptxLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1199,6 +1209,8 @@ export class FileExplorer {
     selectFile(filePath: string): void {
         if (this._selectedFile === filePath && isPptxFile(filePath)) return;
         if (this._deferUntilPptxCanClose(() => this.selectFile(filePath))) return;
+        const wasPptx = !!this._selectedFile && isPptxFile(this._selectedFile);
+        const openingPptx = isPptxFile(filePath);
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
@@ -1210,8 +1222,16 @@ export class FileExplorer {
         // 检查当前是否为空状态（展开动画）
         const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
+        if (openingPptx) {
+            this._previewFullscreen = true;
+            this._browserFullscreen = false;
+        } else if (wasPptx) {
+            this._previewFullscreen = false;
+            this._browserFullscreen = false;
+        }
         this._previewState = { status: 'loading' };
         this._renderPreview(wasEmpty);
+        this._notifyPptxLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1490,6 +1510,14 @@ export class FileExplorer {
 
     // ----- full panel render -----
 
+    private _notifyPptxLayoutChange(): void {
+        const active = !!this._selectedFile && isPptxFile(this._selectedFile);
+        this.onPptxLayoutChange?.({
+            active,
+            fullscreen: active && this._previewFullscreen
+        });
+    }
+
     private _applyFullscreenLayout(): void {
         const panel = this._container;
         if (!panel) return;
@@ -1601,6 +1629,7 @@ export class FileExplorer {
                 this._browserFullscreen = !this._browserFullscreen;
                 this._previewFullscreen = false;
                 this._applyFullscreenLayout();
+                this._notifyPptxLayoutChange();
             });
         });
 
@@ -1634,6 +1663,7 @@ export class FileExplorer {
                     this._previewFullscreen = !this._previewFullscreen;
                     this._browserFullscreen = false;
                     this._applyFullscreenLayout();
+                    this._notifyPptxLayoutChange();
                     return;
                 }
                 if (target.closest('[data-action="editor-save"]')) {
@@ -1897,8 +1927,14 @@ export class FileExplorer {
         this._editorSaveError = null;
         this._editorOpenLine = line != null && line > 0 ? line : null;
         const selected = filePath;
+        const wasPptx = !!this._selectedFile && isPptxFile(this._selectedFile);
         this._selectedFile = selected;
+        if (wasPptx) {
+            this._previewFullscreen = false;
+            this._browserFullscreen = false;
+        }
         this._previewState = { status: 'loading' };
+        this._notifyPptxLayoutChange();
 
         // 更新树中文件高亮
         const rn = this._rootNode;
@@ -2256,6 +2292,7 @@ export class FileExplorer {
         el.innerHTML = this._renderPreviewHtml();
         el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
         el.classList.toggle('ws-preview--unsupported', this._isPreviewUnsupported());
+        this._applyFullscreenLayout();
 
         // 首次展开时触发动画
         if (animate && this._selectedFile) {
