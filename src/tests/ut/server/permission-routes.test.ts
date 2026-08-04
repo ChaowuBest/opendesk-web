@@ -44,6 +44,36 @@ describe('opencode permission routes', () => {
         expect(body[0].metadata.input).toEqual({ file_path: 'D:/repo/README.md' });
     });
 
+    test('attributes a child task permission request to the child session and message', async () => {
+        broker.setActiveAssistantMessage('task_child', 'msg_child_assistant');
+
+        void broker.prompt(
+            [{ resourceType: 'file', action: 'execute', resourcePath: 'D:/parent' }],
+            'executeBash',
+            [{ label: 'D:/parent/', pattern: 'D:/parent/**' }],
+            {
+                taskId: 'task_parent',
+                taskName: 'parent',
+                sourceTaskId: 'task_child',
+                sourceTaskName: 'child',
+                parentTaskId: 'task_parent'
+            },
+            {
+                toolCallId: 'call_child_bash',
+                messageId: 'internal_child_message',
+                input: { command: 'find D:/parent -type f' }
+            }
+        );
+
+        expect(broker.list()[0]).toMatchObject({
+            sessionID: 'ses_child',
+            tool: {
+                messageID: 'msg_child_assistant',
+                callID: 'call_child_bash'
+            }
+        });
+    });
+
     test('resolves once reply as one-shot allow', async () => {
         const prompt = broker.prompt(
             [{ resourceType: 'file', action: 'write', resourcePath: 'D:/repo/a.txt' }],

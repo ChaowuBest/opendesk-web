@@ -1,5 +1,9 @@
 import { jest } from '@jest/globals';
-import { SessionRoutes, publishChunkEvents } from '../../../main/server/opencode/routes/session.js';
+import {
+    registerServerSubTaskLifecycle,
+    SessionRoutes,
+    publishChunkEvents
+} from '../../../main/server/opencode/routes/session.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
@@ -10,10 +14,12 @@ import { EventBus } from '../../../main/server/opencode/event-bus.js';
 import {
     AssistantMessage,
     CompactSeparatorMessage,
+    TextMessagePart,
     ToolCall,
     ToolCallMessagePart,
     UserMessage
 } from '../../../main/aikernel/messages.js';
+import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -159,6 +165,7 @@ describe('opencode session routes', () => {
         mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
         const task = makeTask(workspace);
         const taskManagerState = mockGlobalTaskManager(task);
 
@@ -171,6 +178,15 @@ describe('opencode session routes', () => {
         expect(response.status).toBe(200);
         expect(taskManagerState.createTask).toHaveBeenCalledTimes(1);
         expect(task.model).toBe('gpt4o');
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.created',
+                properties: expect.objectContaining({
+                    sessionID: 'ses_model',
+                    info: expect.objectContaining({ id: 'ses_model' })
+                })
+            })
+        );
     });
 
     test('GET /session exposes stable task lifecycle timestamps for historical tasks', async () => {
@@ -198,6 +214,7 @@ describe('opencode session routes', () => {
         mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
         const task = makeTask(workspace);
         mockGlobalTaskManager(task);
 
@@ -214,6 +231,15 @@ describe('opencode session routes', () => {
         expect(task.task_name).toBe('Renamed session');
         expect(task.model).toBe('gpt4o');
         expect(task.persistLater).toHaveBeenCalledTimes(1);
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.updated',
+                properties: expect.objectContaining({
+                    sessionID: 'ses_model',
+                    info: expect.objectContaining({ id: 'ses_model', title: 'Renamed session' })
+                })
+            })
+        );
     });
 
     test('POST /session/:id/summarize compacts with the requested model without changing the task model', async () => {
@@ -519,7 +545,7 @@ describe('opencode session routes', () => {
         });
     });
 
-    test('POST /session/:id/message does not pass model headers when cookie or trace is missing', async () => {
+    test('POST /session/:id/message passes each available model header independently', async () => {
         mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
@@ -541,13 +567,14 @@ describe('opencode session routes', () => {
         );
 
         expect(response.status).toBe(200);
-        expect(task.submitUserMessage).toHaveBeenCalledWith(
-            'hello without complete headers',
-            expect.objectContaining({
-                modelRequestOptions: undefined,
-                instrumentationContext: expect.any(Object)
-            })
-        );
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers', {
+            modelRequestOptions: {
+                extraHeaders: {
+                    cookie: 'sid=abc'
+                }
+            },
+            instrumentationContext: expect.any(Object)
+        });
     });
 
     test('POST /session/:id/message publishes busy and idle session events', async () => {
@@ -831,6 +858,337 @@ describe('opencode session routes', () => {
         );
         expect(messages[0].parts[0].output).toBeUndefined();
         expect(messages[0].parts[0].input).toBeUndefined();
+    });
+
+    test('GET /session/:id/message maps OpenDesk subtasks to opencode task parts', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-subtask';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_subtask',
+            'planning-createSubTask',
+            JSON.stringify({
+                title: 'Inspect logs',
+                objective: 'Find the failure',
+                criteria: 'Return the root cause',
+                isAsync: false,
+                agentName: 'explore'
+            })
+        );
+        toolCall.status = 'success';
+        toolCall.result = JSON.stringify({
+            success: true,
+            result: 'Found the root cause',
+            subtask_id: 'task_child'
+        });
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                callID: 'call_subtask',
+                tool: 'task',
+                state: expect.objectContaining({
+                    status: 'completed',
+                    input: {
+                        description: 'Inspect logs',
+                        prompt: 'Find the failure\n\nReturn the root cause',
+                        subagent_type: 'explore',
+                        background: false,
+                        task_id: 'ses_child'
+                    },
+                    metadata: expect.objectContaining({
+                        parentSessionId: 'ses_model',
+                        sessionId: 'ses_child',
+                        background: false,
+                        originalTool: 'planning-createSubTask'
+                    })
+                })
+            })
+        );
+    });
+
+    test('renders internal subtask completion calls as final text instead of tool acknowledgements', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        task.task_id = 'task_child';
+        task.parent_id = 'task_parent';
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-completion';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_completion',
+            'planning-attemptCompletion',
+            JSON.stringify({ type: 'success', message: 'The child finished successfully' })
+        );
+        toolCall.status = 'success';
+        toolCall.result = JSON.stringify({ accepted: true, type: 'success' });
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_child/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'text',
+                text: 'The child finished successfully'
+            })
+        );
+        expect(messages[0].parts[0].tool).toBeUndefined();
+        expect(JSON.stringify(messages[0].parts[0])).not.toContain('"accepted":true');
+    });
+
+    test('keeps an unfinished subtask completion call as a tool part', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        task.task_id = 'task_child';
+        task.parent_id = 'task_parent';
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-completion-running';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_completion_running',
+            'planning-attemptCompletion',
+            JSON.stringify({ type: 'success', message: 'Not final yet' })
+        );
+        toolCall.status = 'running';
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_child/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                tool: 'planning-attemptCompletion',
+                state: expect.objectContaining({ status: 'running' })
+            })
+        );
+    });
+
+    test('renders an accepted subtask completion update as text before its status callback settles', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        task.task_id = 'task_child';
+        task.parent_id = 'task_parent';
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-completion-accepted';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_completion_accepted',
+            'planning-attemptCompletion',
+            JSON.stringify({ type: 'success', message: 'Accepted child result' })
+        );
+        toolCall.status = 'running';
+        toolCall.result = JSON.stringify({ accepted: true, type: 'success' });
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_child/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'text',
+                text: 'Accepted child result'
+            })
+        );
+        expect(JSON.stringify(messages[0].parts[0])).not.toContain('"accepted":true');
+    });
+
+    test('publishes a complete opencode session lifecycle for child tasks', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task_parent';
+        parent.task_name = 'parent';
+        parent.workspace = workspace;
+        parent.harnessContext.workspace = workspace;
+        manager.tasks.push(parent);
+        registerServerSubTaskLifecycle(parent);
+
+        const child = manager.createSubTask(parent.task_id);
+        child.task_id = 'task_child';
+        child.task_name = 'child';
+        child.workspace = workspace;
+        child.harnessContext.workspace = workspace;
+        parent.notifySubTaskCreated(child);
+
+        expect(child.harnessContext.permissionPrompt).toBe(ServerPermissionBroker.getInstance());
+
+        child.task_status = 'running';
+        const user = new UserMessage('child prompt');
+        user.message_id = 'child-user';
+        child.chat_context.appendMessage(user);
+        child.publishTaskUpdate(
+            {
+                type: 'user',
+                task_id: child.task_id,
+                task_status: 'running',
+                message_id: user.message_id,
+                last_part_index: 0,
+                last_part: user.content[0],
+                timestamp: user.timestamp
+            } as any,
+            'test child user'
+        );
+
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'child-assistant';
+        assistant.content.push(new TextMessagePart('child result'));
+        child.chat_context.appendMessage(assistant);
+        child.publishTaskUpdate(
+            {
+                type: 'assistant',
+                task_id: child.task_id,
+                task_status: 'running',
+                message_id: assistant.message_id,
+                last_part_index: 0,
+                last_part: assistant.content[0]
+            } as any,
+            'test child assistant'
+        );
+        child.task_status = 'stopped';
+        child.finished_at = new Date();
+        child.publishTaskUpdate(
+            {
+                type: 'assistant',
+                task_id: child.task_id,
+                task_status: 'stopped',
+                message_id: assistant.message_id,
+                last_part_index: 0,
+                last_part: assistant.content[0]
+            } as any,
+            'test child finished'
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const events = publishSpy.mock.calls.map(([event]) => event as any);
+        expect(events).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    type: 'session.created',
+                    properties: expect.objectContaining({
+                        sessionID: 'ses_child',
+                        info: expect.objectContaining({ id: 'ses_child', parentID: 'ses_parent' })
+                    })
+                }),
+                expect.objectContaining({
+                    type: 'session.status',
+                    properties: expect.objectContaining({ sessionID: 'ses_child', status: { type: 'busy' } })
+                }),
+                expect.objectContaining({
+                    type: 'session.updated',
+                    properties: expect.objectContaining({
+                        sessionID: 'ses_child',
+                        info: expect.objectContaining({ id: 'ses_child', parentID: 'ses_parent' })
+                    })
+                }),
+                expect.objectContaining({
+                    type: 'session.idle',
+                    properties: expect.objectContaining({ sessionID: 'ses_child', parentID: 'ses_parent' })
+                })
+            ])
+        );
+        const childMessages = events.filter(
+            (event) => event.type === 'message.updated' && event.properties.info.sessionID === 'ses_child'
+        );
+        expect(childMessages.some((event) => event.properties.info.role === 'user')).toBe(true);
+        expect(childMessages.some((event) => event.properties.info.role === 'assistant')).toBe(true);
+        expect(
+            events.some(
+                (event) =>
+                    event.type === 'message.part.updated' && event.properties.part.sessionID === 'ses_child'
+            )
+        ).toBe(true);
+    });
+
+    test('queries and aborts child sessions by their public session id', async () => {
+        const parent = makeTask(workspace);
+        parent.task_id = 'task_parent';
+        const child = makeTask(workspace);
+        child.task_id = 'task_child';
+        child.parent_id = parent.task_id;
+        child.task_name = 'child';
+        child.task_status = 'running';
+        child.stop = jest.fn(() => {
+            child.task_status = 'stopped';
+        });
+        const taskManagerState = {
+            tasks: [parent, child],
+            getTask: jest.fn((taskId: string) =>
+                [parent, child].find((candidate) => candidate.task_id === taskId)
+            )
+        };
+        jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState } as any);
+
+        const childrenResponse = await SessionRoutes().request(
+            `/ses_parent/children?directory=${encodeURIComponent(workspace)}`
+        );
+        const childResponse = await SessionRoutes().request(
+            `/ses_child?directory=${encodeURIComponent(workspace)}`
+        );
+        const abortResponse = await SessionRoutes().request(
+            `/ses_child/abort?directory=${encodeURIComponent(workspace)}`,
+            { method: 'POST' }
+        );
+
+        expect(await childrenResponse.json()).toEqual([
+            expect.objectContaining({ id: 'ses_child', parentID: 'ses_parent' })
+        ]);
+        expect(await childResponse.json()).toEqual(
+            expect.objectContaining({ id: 'ses_child', parentID: 'ses_parent' })
+        );
+        expect(abortResponse.status).toBe(200);
+        expect(child.stop).toHaveBeenCalledWith('user');
     });
 
     test('GET /session/:id/message expands every tool call in a shared OpenDesk part', async () => {

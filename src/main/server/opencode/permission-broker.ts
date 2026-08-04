@@ -201,9 +201,10 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
         const id = ascendingPermissionId();
         const permission = inferPermissionName(toolName, requests);
         const input = normalizeInput(context?.input);
+        const sourceTaskId = taskInfo?.sourceTaskId || taskInfo?.taskId;
         const info: OpenCodePermissionRequest = {
             id,
-            sessionID: toExternalSessionId(taskInfo?.taskId),
+            sessionID: toExternalSessionId(sourceTaskId),
             permission,
             patterns: requests.map((request) => request.resourcePath),
             metadata: buildMetadata(permission, toolName, requests, prefixOptions, { ...context, input }),
@@ -213,7 +214,7 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
             info.metadata.workspace = taskInfo.workspace;
         }
 
-        const messageID = taskInfo?.taskId ? this.activeAssistantMessages.get(taskInfo.taskId) : undefined;
+        const messageID = sourceTaskId ? this.activeAssistantMessages.get(sourceTaskId) : undefined;
         if ((messageID || context?.messageId) && context?.toolCallId) {
             info.tool = {
                 messageID: messageID || context.messageId!,
