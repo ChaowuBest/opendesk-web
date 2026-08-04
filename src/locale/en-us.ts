@@ -1449,6 +1449,8 @@ export const enUs: Record<string, string> = {
     'main.tray.openMainWindow': 'Open Main Window',
     'main.tray.openLogs': 'Open Logs',
     'main.tray.openDevTools': 'Open Developer Tools',
+    'main.tray.enterFullscreen': 'Enter Fullscreen',
+    'main.tray.exitFullscreen': 'Exit Fullscreen',
     'main.tray.quit': 'Quit',
 
     // Renderer - Task List

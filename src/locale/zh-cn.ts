@@ -1415,6 +1415,8 @@ export const zhCn: Record<string, string> = {
     'main.tray.openMainWindow': '打开主窗口',
     'main.tray.openLogs': '打开日志',
     'main.tray.openDevTools': '打开开发者工具',
+    'main.tray.enterFullscreen': '进入全屏',
+    'main.tray.exitFullscreen': '退出全屏',
     'main.tray.quit': '退出',
 
     // Renderer - Task List

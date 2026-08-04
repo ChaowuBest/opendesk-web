@@ -473,6 +473,12 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         // 在 webview 获得焦点时仍能正常工作。
         webContents.on('before-input-event', (_evt, input) => {
             if (hostWindow.isDestroyed()) return;
+            // 全屏状态下 ESC 退出全屏
+            if (input.key === 'Escape' && input.type === 'keyDown' && hostWindow.isFullScreen()) {
+                hostWindow.setFullScreen(false);
+                _evt.preventDefault();
+                return;
+            }
             const modifiers = input.modifiers ?? [];
             const isBrowserWebview = webContents.session === BrowserManager.browserSession;
             const isPlainTab =
@@ -616,6 +622,18 @@ const createWindow = () => {
     mainWindow.on('hide', forceExitMagicPointer);
     mainWindow.on('minimize', forceExitMagicPointer);
 
+    // 全屏状态变化时更新 tray 菜单文案
+    mainWindow.on('enter-full-screen', () => {
+        if (globalTray) {
+            globalTray.setContextMenu(buildTrayMenu());
+        }
+    });
+    mainWindow.on('leave-full-screen', () => {
+        if (globalTray) {
+            globalTray.setContextMenu(buildTrayMenu());
+        }
+    });
+
     mainWindow.on('close', (event) => {
         if (!isAppQuitting) {
             // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
@@ -721,6 +739,14 @@ const createWindow = () => {
                 modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
             });
         });
+    });
+
+    // 全屏状态下按 ESC 退出全屏（主窗口直接获焦时）
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'Escape' && input.type === 'keyDown' && mainWindow.isFullScreen()) {
+            mainWindow.setFullScreen(false);
+            event.preventDefault();
+        }
     });
 
     mainWindow.webContents.on('will-navigate', (event) => {
@@ -2830,14 +2856,21 @@ function openLogViewFromTray(): void {
     }
 }
 
-const registerTray = () => {
-    let icon = nativeImage.createFromPath(appIcon);
-    icon = icon.resize({ width: 22, height: 22 });
-    const menuitems = [
+const buildTrayMenu = () => {
+    const isFullscreen = globalMainWindow?.isFullScreen() ?? false;
+    const menuitems: Electron.MenuItemConstructorOptions[] = [
         {
             label: t('main.tray.openMainWindow'),
             click: () => {
-                globalMainWindow.show();
+                globalMainWindow?.show();
+            }
+        },
+        {
+            label: isFullscreen ? t('main.tray.exitFullscreen') : t('main.tray.enterFullscreen'),
+            click: () => {
+                if (globalMainWindow) {
+                    globalMainWindow.setFullScreen(!globalMainWindow.isFullScreen());
+                }
             }
         },
         {
@@ -2849,7 +2882,7 @@ const registerTray = () => {
         {
             label: t('main.tray.openDevTools'),
             click: () => {
-                globalMainWindow.webContents.openDevTools();
+                globalMainWindow?.webContents.openDevTools();
             }
         }
     ];
@@ -2862,13 +2895,18 @@ const registerTray = () => {
             }
         });
     }
-    const menu = Menu.buildFromTemplate(menuitems);
+    return Menu.buildFromTemplate(menuitems);
+};
+
+const registerTray = () => {
+    let icon = nativeImage.createFromPath(appIcon);
+    icon = icon.resize({ width: 22, height: 22 });
 
     globalTray = new Tray(icon);
     globalTray.setToolTip('OpenDesk');
-    globalTray.setContextMenu(menu);
+    globalTray.setContextMenu(buildTrayMenu());
     globalTray.on('click', () => {
-        globalMainWindow.show();
+        globalMainWindow?.show();
     });
 };
 
