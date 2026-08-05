@@ -1,7 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { SkillRegistry, installSkillFromDirectory } from '../../../main/applications/skillmgr/utils';
+import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry';
+import { skillInstallManager } from '../../../main/applications/skillmgr/utils/skill-installer';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 describe('skillmgr metadata-only installation', () => {
@@ -16,7 +17,7 @@ describe('skillmgr metadata-only installation', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    test('installs directories that only contain registry metadata', () => {
+    test('installs directories that only contain registry metadata', async () => {
         const sourceDir = path.join(tempDir, 'browserautomation-skill');
         fs.mkdirSync(sourceDir, { recursive: true });
         fs.writeFileSync(
@@ -39,7 +40,7 @@ describe('skillmgr metadata-only installation', () => {
             'utf8'
         );
 
-        const result = installSkillFromDirectory(sourceDir, true);
+        const result = await skillInstallManager.installFromDirectory(sourceDir, { force: true });
 
         expect(result.success).toBe(true);
         expect(result.name).toBe('browserautomation-skill');
@@ -52,16 +53,16 @@ describe('skillmgr metadata-only installation', () => {
             'SKILL.md'
         );
         expect(fs.existsSync(installedSkillMd)).toBe(true);
-        const skill = SkillRegistry.listSkills().find((item: any) => item.id === 'browserautomation-skill');
+        const skill = skillRegistry.listSkills().find((item: any) => item.id === 'browserautomation-skill');
         expect(skill?.description).toContain('Advanced headless browser automation skill');
         expect(fs.existsSync(path.join(sourceDir, 'SKILL.md'))).toBe(false);
     });
 
-    test('still rejects empty directories without metadata', () => {
+    test('still rejects empty directories without metadata', async () => {
         const sourceDir = path.join(tempDir, 'skill-test-generate');
         fs.mkdirSync(sourceDir, { recursive: true });
 
-        const result = installSkillFromDirectory(sourceDir, true);
+        const result = await skillInstallManager.installFromDirectory(sourceDir, { force: true });
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('缺少 SKILL.md');

@@ -22,7 +22,7 @@ import { getOpendeskDirectory, getTaskArtifactDirectory, Setting } from '../../u
 import { getTempDir } from '../../utils/temp.js';
 import { createAgentOfficeTaskToolset } from './tools.js';
 import { createStaffPermissionEnforcer } from './permission.js';
-import { SkillRegistry } from '../skillmgr/utils.js';
+import { skillRegistry } from '../skillmgr/utils/skill-registry.js';
 import AgentOfficeWorker from './worker.js';
 import { unwrapAgentOfficeCallResult } from './common.js';
 import { CustomAgent } from './custom-agent.js';
@@ -705,8 +705,8 @@ export class AgentOfficeApplication extends BaseApplication {
     async listInstalledSkills(staffId: string): Promise<InstalledSkillSummary[]> {
         const staffSkills = await this.callAgentOfficeWorker<Array<{ directory_name: string }>>('listSkills', staffId);
         const added = new Set(staffSkills.map((skill) => skill.directory_name));
-        return SkillRegistry.listSkills().flatMap((skill) => {
-            const installed = SkillRegistry.getSkillBody(skill.id);
+        return skillRegistry.listSkills().flatMap((skill) => {
+            const installed = skillRegistry.getSkillBody(skill.id);
             if (!installed?.skillDir) return [];
             const directoryName = path.basename(installed.skillDir);
             return [
@@ -725,7 +725,7 @@ export class AgentOfficeApplication extends BaseApplication {
         const sourcePaths: string[] = [];
         const unavailable: StaffSkillBatchImportResult['errors'] = [];
         for (const skillId of [...new Set(skillIds)]) {
-            const installed = SkillRegistry.getSkillBody(skillId);
+            const installed = skillRegistry.getSkillBody(skillId);
             if (!installed?.skillDir) {
                 unavailable.push({ path: skillId, message: t('agentoffice.error.installedSkillUnavailable') });
             } else {

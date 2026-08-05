@@ -12,7 +12,7 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { getFileCompletions } from '../components/file-completions.js';
-import { SkillRegistry } from '../../applications/skillmgr/utils.js';
+import { skillRegistry } from '../../applications/skillmgr/utils/skill-registry.js';
 import AdmZip from 'adm-zip';
 import { cleanPathInput } from '../../../utils/path.js';
 import path from 'path';
@@ -54,7 +54,7 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 if (skillSpaceIdx === -1) {
                     // 补全技能名称
                     const namePrefix = afterSkill.toLowerCase();
-                    const skills = SkillRegistry.listSkills();
+                    const skills = skillRegistry.listSkills();
                     const items = skills
                         .filter(
                             (s: any) =>
@@ -203,7 +203,7 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
         return;
     }
 
-    const skills = SkillRegistry.listSkills();
+    const skills = skillRegistry.listSkills();
     const skill = skills.find((s: any) => s.name === skillName);
     if (!skill) {
         const info = new InfoOverlay(tui, {
@@ -215,7 +215,7 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
         return;
     }
 
-    const skillsDir = SkillRegistry.getSkillsDirectory();
+    const skillsDir = skillRegistry.getSkillsDirectory();
     const skillDir = path.join(skillsDir, skill.name);
     if (!fs.existsSync(skillDir)) {
         const info = new InfoOverlay(tui, {

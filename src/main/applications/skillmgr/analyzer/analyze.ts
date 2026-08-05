@@ -15,7 +15,7 @@
  * 从 SkillMgrApplication 中抽离，保持分析逻辑的独立性和可测试性。
  */
 
-import { SkillRegistry } from '../utils.js';
+import { skillRegistry } from '../utils/skill-registry.js';
 import { setSkillStatus } from '../status.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { AgentRegistry } from '../../../aikernel/agents/registry.js';
@@ -153,9 +153,9 @@ export class SkillAnalyzer {
 
     getExistingSkillMetadatas(): Record<string, { dependencies?: Record<string, unknown>; testCases?: unknown[] }> {
         const results: Record<string, { dependencies?: Record<string, unknown>; testCases?: unknown[] }> = {};
-        for (const skill of SkillRegistry.listSkills()) {
+        for (const skill of skillRegistry.listSkills()) {
             try {
-                const detail = SkillRegistry.getSkillDetail(skill.id);
+                const detail = skillRegistry.getSkillDetail(skill.id);
                 if (!detail?.skillDir) continue;
                 const meta = loadAndValidateOpendeskMeta(detail.skillDir);
                 if (meta) {
@@ -238,7 +238,7 @@ export class SkillAnalyzer {
         const testPlan: TestCasePlan[] = [];
         const skillMetaMap = new Map<string, OpendeskMeta>();
         for (const skillId of [...new Set(skillIds)]) {
-            const detail = SkillRegistry.getSkillDetail(skillId);
+            const detail = skillRegistry.getSkillDetail(skillId);
             if (!detail?.skillDir) continue;
             const loadResult = tryLoadOpendeskMeta(detail.skillDir);
             if (!loadResult.success || !loadResult.data.testCases?.length) continue;
@@ -289,7 +289,7 @@ export class SkillAnalyzer {
     async runSingleTest(skillId: string, testCaseIndex: number, options: RunTestOptions = {}): Promise<AnalyzeStatus> {
         if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
 
-        const detail = SkillRegistry.getSkillDetail(skillId);
+        const detail = skillRegistry.getSkillDetail(skillId);
         if (!detail?.skillDir) throw new Error(`技能 ${skillId} 不存在`);
 
         const skillName = detail.name || skillId;
@@ -374,7 +374,7 @@ export class SkillAnalyzer {
 
         for (const skillId of skillIds) {
             try {
-                const detail = SkillRegistry.getSkillDetail(skillId);
+                const detail = skillRegistry.getSkillDetail(skillId);
                 if (!detail?.skillDir) {
                     errors.push(`${skillId}: 技能目录不存在`);
                     continue;
@@ -462,7 +462,7 @@ export class SkillAnalyzer {
 
         for (const skillId of skillIds) {
             try {
-                const detail = SkillRegistry.getSkillDetail(skillId);
+                const detail = skillRegistry.getSkillDetail(skillId);
                 if (!detail?.skillDir) {
                     notFound++;
                     continue;
@@ -523,14 +523,14 @@ export class SkillAnalyzer {
                 const skillName = entry.entryName.replace(/_(meta|metadata)\.json$/i, '');
 
                 try {
-                    const skillExists = SkillRegistry.skillExists(skillName);
+                    const skillExists = skillRegistry.skillExists(skillName);
                     if (!skillExists) {
                         skippedCount++;
                         details.push({ skillName, status: 'skipped', message: '技能不存在，已跳过' });
                         continue;
                     }
 
-                    const detail = SkillRegistry.getSkillDetail(skillName);
+                    const detail = skillRegistry.getSkillDetail(skillName);
                     if (!detail?.skillDir) {
                         skippedCount++;
                         details.push({ skillName, status: 'skipped', message: '技能目录不存在，已跳过' });
@@ -771,7 +771,7 @@ export class SkillAnalyzer {
         let task: any = null;
 
         try {
-            const detail = SkillRegistry.getSkillDetail(skillId);
+            const detail = skillRegistry.getSkillDetail(skillId);
             if (!detail?.skillDir) {
                 this.state.results[skillId] = { error: '无法获取技能目录', analyzedAt: Date.now() };
                 return;
@@ -1509,11 +1509,11 @@ ${retryNote}
     private _collectAnalyzeSkillExports(skillIds?: string[]): AnalyzeSkillExport[] {
         const exportedSkills: AnalyzeSkillExport[] = [];
         const selectedIds = new Set((skillIds ?? []).map(String));
-        for (const skill of SkillRegistry.listSkills()) {
+        for (const skill of skillRegistry.listSkills()) {
             const skillId = String(skill.id);
             if (selectedIds.size > 0 && !selectedIds.has(skillId)) continue;
             try {
-                const detail = SkillRegistry.getSkillDetail(skillId);
+                const detail = skillRegistry.getSkillDetail(skillId);
                 if (!detail) {
                     exportedSkills.push({
                         skill: {

@@ -45,7 +45,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
-import { SkillRegistry } from './applications/skillmgr/utils.js';
+import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import {
     initializeRegistry,
@@ -275,7 +275,7 @@ async function notifyWorkerCurrentSettingUpdate(): Promise<void> {
  * 解析内置 skills 目录：优先用 SkillRegistry，再尝试 main 进程侧路径（开发/打包均可用）
  */
 function resolveBundledSkillsDir() {
-    const fromRegistry = SkillRegistry.getBundledSkillsDirectory();
+    const fromRegistry = skillRegistry.getBundledSkillsDirectory();
     if (fs.existsSync(fromRegistry)) return fromRegistry;
     const appPath = app.getAppPath();
     const candidates = [
@@ -308,7 +308,7 @@ async function installBundledSkillsIfNeeded() {
             return;
         }
 
-        const userSkillsDir = SkillRegistry.getSkillsDirectory();
+        const userSkillsDir = skillRegistry.getSkillsDirectory();
 
         const copyRecursive = (src: string, dest: string) => {
             const stat = fs.statSync(src);

@@ -11,7 +11,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry as SkillMgrUtils } from './utils.js';
+import { skillRegistry } from './utils/skill-registry.js';
 
 export interface BlacklistEntry {
     /** 拉黑原因（从拦截记录中提取的恶意行为描述） */
@@ -27,7 +27,7 @@ type Blacklist = Record<string, BlacklistEntry>;
 const BLACKLIST_FILENAME = 'blacklist.json';
 
 function getBlacklistFilePath(): string {
-    const skillsDir = SkillMgrUtils.getSkillsDirectory();
+    const skillsDir = skillRegistry.getSkillsDirectory();
     return path.join(path.dirname(skillsDir), BLACKLIST_FILENAME);
 }
 
@@ -87,7 +87,7 @@ export function isSkillNameBlacklisted(skillName: string): boolean {
 export function isUserInstalledSkill(skillName: string): boolean {
     if (!skillName) return false;
     try {
-        const userDir = path.join(SkillMgrUtils.getSkillsDirectory(), skillName);
+        const userDir = path.join(skillRegistry.getSkillsDirectory(), skillName);
         return fs.existsSync(userDir);
     } catch {
         return false;
@@ -143,7 +143,7 @@ export function getAllBlacklisted(): Blacklist {
  */
 export function getBlacklistedSkillDirectories(): string[] {
     const blacklist = readBlacklist();
-    const skillsDir = SkillMgrUtils.getSkillsDirectory();
+    const skillsDir = skillRegistry.getSkillsDirectory();
     const dirs: string[] = [];
     for (const key of Object.keys(blacklist)) {
         // key 形如 `bundleName/skillName`；skillmgr 安装的 skill name 不含 `/`，取最后一段
@@ -159,7 +159,7 @@ export function getBlacklistedSkillDirectories(): string[] {
  * 获取拦截记录目录路径
  */
 export function getInterceptionsDirectory(): string {
-    const skillsDir = SkillMgrUtils.getSkillsDirectory();
+    const skillsDir = skillRegistry.getSkillsDirectory();
     const interceptionsDir = path.join(path.dirname(skillsDir), 'interceptions');
     return interceptionsDir;
 }

@@ -16,12 +16,12 @@
 
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry } from './utils.js';
+import { skillRegistry } from './utils/skill-registry.js';
 
 const STATUS_FILENAME = 'status.json';
 
 function getStatusFilePath(): string {
-    const skillsDir = SkillRegistry.getSkillsDirectory();
+    const skillsDir = skillRegistry.getSkillsDirectory();
     return path.join(path.dirname(skillsDir), STATUS_FILENAME);
 }
 

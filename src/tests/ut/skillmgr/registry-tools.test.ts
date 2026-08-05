@@ -2,12 +2,9 @@ import { jest } from '@jest/globals';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-    allRegistries,
-    installSkillFromRegistryByName,
-    searchSkillsFromAllRegistries,
-    SkillRegistry
-} from '../../../main/applications/skillmgr/utils';
+import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry';
+import { skillInstallManager } from '../../../main/applications/skillmgr/utils/skill-installer';
+import { allRegistries } from '../../../main/applications/skillmgr/registry';
 import type {
     RegistrySkill,
     SearchOptions,
@@ -52,8 +49,8 @@ describe('skillmgr registry tools helpers', () => {
     let tempDirs: string[] = [];
 
     afterEach(() => {
-        SkillRegistry.clearRuntimeConfig();
-        SkillRegistry.clearMountedDirs();
+        skillRegistry.clearRuntimeConfig();
+        skillRegistry.clearMountedDirs();
         allRegistries.splice(0, allRegistries.length, ...originalRegistries);
         for (const tempDir of tempDirs) {
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -73,7 +70,7 @@ describe('skillmgr registry tools helpers', () => {
             }))
         } as unknown as Setting);
 
-        expect(SkillRegistry.getConfiguredSkillDirectories()).toEqual([path.resolve('extra-skills')]);
+        expect(skillRegistry.getConfiguredSkillDirectories()).toEqual([path.resolve('extra-skills')]);
     });
 
     test('recursively loads root and nested skills from configured external paths', () => {
@@ -103,9 +100,9 @@ describe('skillmgr registry tools helpers', () => {
             }))
         } as unknown as Setting);
 
-        SkillRegistry.refresh();
+        skillRegistry.refresh();
 
-        expect(SkillRegistry.listSkills()).toEqual(
+        expect(skillRegistry.listSkills()).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     id: rootName,
@@ -123,8 +120,8 @@ describe('skillmgr registry tools helpers', () => {
                 })
             ])
         );
-        expect(SkillRegistry.getSkillBody(rootName)?.skillDir).toBe(tempDir);
-        expect(SkillRegistry.getSkillBody(deepName)?.skillDir).toBe(skillDir);
+        expect(skillRegistry.getSkillBody(rootName)?.skillDir).toBe(tempDir);
+        expect(skillRegistry.getSkillBody(deepName)?.skillDir).toBe(skillDir);
     });
 
     test('loads external skills from runtime config override used by the worker', () => {
@@ -152,12 +149,12 @@ describe('skillmgr registry tools helpers', () => {
             }))
         } as unknown as Setting);
 
-        SkillRegistry.setRuntimeConfig({
+        skillRegistry.setRuntimeConfig({
             external_paths: [tempDir]
         });
-        SkillRegistry.refresh();
+        skillRegistry.refresh();
 
-        expect(SkillRegistry.listSkills()).toEqual(
+        expect(skillRegistry.listSkills()).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     id: skillName,
@@ -190,8 +187,8 @@ describe('skillmgr registry tools helpers', () => {
             }))
         } as unknown as Setting);
 
-        const { errors } = SkillRegistry.refresh();
-        const matches = SkillRegistry.listSkills().filter((skill) => skill.id === skillName);
+        const { errors } = skillRegistry.refresh();
+        const matches = skillRegistry.listSkills().filter((skill) => skill.id === skillName);
 
         expect(errors.filter((error) => error.id === skillDir)).toHaveLength(0);
         expect(matches).toHaveLength(1);
@@ -215,11 +212,11 @@ describe('skillmgr registry tools helpers', () => {
             'utf8'
         );
 
-        SkillRegistry.addMountedDir(tempDir);
-        SkillRegistry.refresh();
+        skillRegistry.addMountedDir(tempDir);
+        skillRegistry.refresh();
 
-        expect(SkillRegistry.isMountedSkill(skillName)).toBe(true);
-        expect(SkillRegistry.isMountedSkill('missing-skill')).toBe(false);
+        expect(skillRegistry.isMountedSkill(skillName)).toBe(true);
+        expect(skillRegistry.isMountedSkill('missing-skill')).toBe(false);
     });
 
     test('searches all registries and returns GUI card install metadata', async () => {
@@ -250,7 +247,7 @@ describe('skillmgr registry tools helpers', () => {
         const broken = createRegistry('broken', [], { throws: true });
         allRegistries.splice(0, allRegistries.length, matrix, skillsmp, broken);
 
-        const result = await searchSkillsFromAllRegistries('skill', {
+        const result = await skillInstallManager.searchSkillsFromAllRegistries('skill', {
             limit: 5,
             skillsmpApiKey: 'secret'
         });
@@ -297,7 +294,7 @@ describe('skillmgr registry tools helpers', () => {
         allRegistries.splice(0, allRegistries.length, matrix);
         const install = jest.fn(async () => ({ success: true, name: 'demo-skill' }));
 
-        const result = await installSkillFromRegistryByName('matrix', 'matrix/Demo Skill', {
+        const result = await skillInstallManager.installSkillFromRegistryByName('matrix', 'matrix/Demo Skill', {
             install,
             skillExists: () => false
         });
@@ -328,7 +325,7 @@ describe('skillmgr registry tools helpers', () => {
         allRegistries.splice(0, allRegistries.length, matrix);
         const install = jest.fn(async () => ({ success: true, name: 'demo-skill' }));
 
-        const blocked = await installSkillFromRegistryByName('matrix', 'Demo Skill', {
+        const blocked = await skillInstallManager.installSkillFromRegistryByName('matrix', 'Demo Skill', {
             install,
             skillExists: () => true
         });
@@ -342,7 +339,7 @@ describe('skillmgr registry tools helpers', () => {
         expect(blocked.error).toContain('force=true');
         expect(install).not.toHaveBeenCalled();
 
-        const overwritten = await installSkillFromRegistryByName('matrix', 'Demo Skill', {
+        const overwritten = await skillInstallManager.installSkillFromRegistryByName('matrix', 'Demo Skill', {
             force: true,
             install,
             skillExists: () => true
@@ -375,7 +372,7 @@ describe('skillmgr registry tools helpers', () => {
         allRegistries.splice(0, allRegistries.length, matrix);
         const install = jest.fn(async () => ({ success: true, name: 'alpha-tool' }));
 
-        const result = await installSkillFromRegistryByName('matrix', 'alpha', {
+        const result = await skillInstallManager.installSkillFromRegistryByName('matrix', 'alpha', {
             install,
             skillExists: () => false
         });

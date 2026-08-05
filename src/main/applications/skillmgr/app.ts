@@ -46,15 +46,8 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
-import {
-    SkillRegistry,
-    installSkillFromDirectory,
-    installSkillFromLocalZip,
-    installSkillFromUrl,
-    installFromRegistryInstallUrl,
-    searchSkillsFromAllRegistries,
-    installSkillFromRegistryByName
-} from './utils.js';
+import { skillRegistry } from './utils/skill-registry.js';
+import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
 
 const HARMONYOS_FALLBACK_SKILL_NAME = 'harmonyos-fallback-skill';
@@ -111,8 +104,8 @@ export class SkillMgrApplication extends BaseApplication {
 
     private registerReadableSkillDirectories(): void {
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
-        readableRegistry.register(SkillRegistry.getBundledSkillsDirectory());
-        for (const dir of SkillRegistry.getSkillSearchDirectories()) {
+        readableRegistry.register(skillRegistry.getBundledSkillsDirectory());
+        for (const dir of skillRegistry.getSkillSearchDirectories()) {
             readableRegistry.register(dir);
         }
 
@@ -162,10 +155,10 @@ export class SkillMgrApplication extends BaseApplication {
                     const stat = fs.statSync(resolved);
                     if (stat.isDirectory()) {
                         console.log(`正在从本地目录安装技能: ${resolved}`);
-                        result = installSkillFromDirectory(resolved, force);
+                        result = await skillInstallManager.installFromDirectory(resolved, { force });
                     } else if (stat.isFile() && resolved.toLowerCase().endsWith('.zip')) {
                         console.log(`正在从本地 zip 文件安装技能: ${resolved}`);
-                        result = installSkillFromLocalZip(resolved, undefined, force);
+                        result = await skillInstallManager.installFromLocalZip(resolved, undefined, { force });
                     } else {
                         console.error('✗ 本地文件必须是目录或 .zip 格式');
                         process.exit(1);
@@ -173,7 +166,7 @@ export class SkillMgrApplication extends BaseApplication {
                     }
                 } else if (source.startsWith('http://') || source.startsWith('https://')) {
                     console.log(`正在从 URL 下载并安装技能: ${source}`);
-                    result = await installSkillFromUrl(source, force);
+                    result = await skillInstallManager.installFromUrl(source, { force });
                 } else {
                     console.error(`✗ 无法识别来源: ${source}`);
                     console.error('  支持: 本地目录、本地 .zip 文件、http(s):// URL');
@@ -197,7 +190,7 @@ export class SkillMgrApplication extends BaseApplication {
                 useCliTransport();
                 useConsoleTransport();
                 console.log(`正在卸载技能: ${skillName}`);
-                const result = SkillRegistry.deleteSkill(skillName);
+                const result = skillInstallManager.deleteSkill(skillName);
                 if (result.success) {
                     console.log(`✓ 技能已卸载: ${skillName}`);
                 } else {
@@ -218,14 +211,14 @@ export class SkillMgrApplication extends BaseApplication {
                 const mounted = globalOpts.skillmgrMountSkill;
                 const mountedDirs = Array.isArray(mounted) ? mounted : mounted ? [mounted] : [];
                 for (const dir of mountedDirs) {
-                    if (typeof dir === 'string') SkillRegistry.addMountedDir(dir);
+                    if (typeof dir === 'string') skillRegistry.addMountedDir(dir);
                 }
-                if (mountedDirs.length > 0) SkillRegistry.refresh();
-                const skills = SkillRegistry.listSkills();
-                const skillsDir = SkillRegistry.getSkillsDirectory();
+                if (mountedDirs.length > 0) skillRegistry.refresh();
+                const skills = skillRegistry.listSkills();
+                const skillsDir = skillRegistry.getSkillsDirectory();
 
                 const enriched = skills.map((s: any) => {
-                    const skillBody = SkillRegistry.getSkillBody(String(s.id ?? s.name));
+                    const skillBody = skillRegistry.getSkillBody(String(s.id ?? s.name));
                     const dirPath = skillBody?.skillDir ?? path.join(skillsDir, String(s.name ?? s.id));
                     let fileCount = 0;
                     let totalSize = 0;
@@ -411,10 +404,11 @@ export class SkillMgrApplication extends BaseApplication {
         // 传递完整 frontmatter 以保留 user-invocable / disable-model-invocation 等扩展字段
         // 过滤掉已禁用的技能
         skills.push(
-            ...SkillRegistry.listSkills()
+            ...skillRegistry
+                .listSkills()
                 .filter((skill) => getSkillStatus(skill.id))
                 .map((skill) => {
-                    const skillBody = SkillRegistry.getSkillBody(skill.id);
+                    const skillBody = skillRegistry.getSkillBody(skill.id);
                     const fullFrontmatter = skillBody?.frontmatter ?? {};
                     const skillDir = skillBody?.skillDir ?? path.join(this.getSkillsDirectory(), String(skill.name));
                     return new Skill(
@@ -458,20 +452,20 @@ export class SkillMgrApplication extends BaseApplication {
         super.onConfigChanged();
         logger.info('[skillmgr] config changed, refreshing skills...');
         this.registerReadableSkillDirectories();
-        SkillRegistry.refresh();
+        skillRegistry.refresh();
         SkillMgrApplication.notifySkillsChanged(this.bundleName);
     }
 
     getSkillsDirectory(): string {
-        return SkillRegistry.getSkillsDirectory();
+        return skillRegistry.getSkillsDirectory();
     }
 
     getBundledSkillsDirectory(): string {
-        return SkillRegistry.getBundledSkillsDirectory();
+        return skillRegistry.getBundledSkillsDirectory();
     }
 
     listSkills() {
-        return SkillRegistry.listSkills();
+        return skillRegistry.listSkills();
     }
 
     /**
@@ -584,17 +578,17 @@ export class SkillMgrApplication extends BaseApplication {
     /**
      * 从 zip 文件路径安装技能，供渲染进程调用
      */
-    installSkillFromZip(zipPath: string) {
-        const result = installSkillFromLocalZip(zipPath);
+    async installSkillFromZip(zipPath: string) {
+        const result = await skillInstallManager.installFromLocalZip(zipPath);
         if (result.success) {
-            SkillRegistry.refresh();
+            skillRegistry.refresh();
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
         return result;
     }
 
-    addSkillFromDirectory(sourceDirectory: string) {
-        const result = installSkillFromDirectory(sourceDirectory);
+    async addSkillFromDirectory(sourceDirectory: string) {
+        const result = await skillInstallManager.installFromDirectory(sourceDirectory);
         if (result.success) {
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
@@ -602,7 +596,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     addSkillFromUrl(url: string) {
-        return installSkillFromUrl(url).then((result) => {
+        return skillInstallManager.installFromUrl(url).then((result) => {
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged(this.bundleName);
             }
@@ -612,7 +606,7 @@ export class SkillMgrApplication extends BaseApplication {
 
     async searchSkillFromRegistry(keyword: string) {
         const config = this.getConfig() as { skillsmp_api_key?: string } | undefined;
-        return searchSkillsFromAllRegistries(keyword, {
+        return skillInstallManager.searchSkillsFromAllRegistries(keyword, {
             limit: 20,
             skillsmpApiKey: config?.skillsmp_api_key
         });
@@ -620,7 +614,7 @@ export class SkillMgrApplication extends BaseApplication {
 
     async addSkillFromRegistry(skillName: string, registryName: string, force: boolean = false) {
         const config = this.getConfig() as { skillsmp_api_key?: string } | undefined;
-        const result = await installSkillFromRegistryByName(registryName, skillName, {
+        const result = await skillInstallManager.installSkillFromRegistryByName(registryName, skillName, {
             force,
             skillsmpApiKey: config?.skillsmp_api_key
         });
@@ -631,7 +625,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async installFromRegistry(installUrl: string, force: boolean = false, customName?: string) {
-        const result = await installFromRegistryInstallUrl(installUrl, force, customName);
+        const result = await skillInstallManager.installFromRegistryInstallUrl(installUrl, { force, customName });
         if (!result.success) {
             throw new Error(result.error);
         }
@@ -640,7 +634,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     deleteSkill(skillId: string) {
-        const result = SkillRegistry.deleteSkill(skillId);
+        const result = skillInstallManager.deleteSkill(skillId);
         if (result.success) {
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
@@ -650,7 +644,7 @@ export class SkillMgrApplication extends BaseApplication {
     clearSkills() {}
 
     refresh() {
-        const { toolsets, errors } = SkillRegistry.refresh();
+        const { toolsets, errors } = skillRegistry.refresh();
         SkillMgrApplication.notifySkillsChanged(this.bundleName);
         return { count: toolsets.length, errors };
     }
