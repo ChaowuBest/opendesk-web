@@ -45,6 +45,10 @@ export interface ConfirmModalOptions {
     cancelText?: string | null;
     /** 确认按钮是否为危险样式（红色）。已废弃，请使用 variant: 'danger' */
     danger?: boolean;
+    /** 如果设置，则要求用户输入该验证码才能确认 */
+    challenge?: string;
+    /** challenge 模式下的提示文本，${code} 会被替换为验证码 */
+    challengeHint?: string;
     /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
     mountTarget?: HTMLElement;
 }
@@ -363,6 +367,28 @@ export const MODAL_CSS = `
     font-size: 13px; color: var(--mc-ink3); line-height: 1.6;
 }
 .od-confirm-modal-body b { color: var(--mc-ink2); font-weight: 600; }
+.od-confirm-modal-challenge {
+    padding: 0 24px 4px;
+}
+.od-confirm-modal-challenge-hint {
+    font-size: 12px; color: var(--mc-ink2); margin-bottom: 8px;
+}
+.od-confirm-modal-challenge-hint code {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+    font-size: 13px; font-weight: 700;
+    background: var(--mc-hover); padding: 1px 6px; border-radius: 4px;
+    color: var(--mc-accent);
+}
+.od-confirm-modal-challenge-input {
+    width: 100%; box-sizing: border-box;
+    padding: 8px 12px; border-radius: 8px;
+    border: 1.5px solid var(--mc-line);
+    background: var(--mc-card-bg); color: var(--mc-ink);
+    font-size: 14px; font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+    outline: none; transition: border-color 0.15s;
+}
+.od-confirm-modal-challenge-input:focus { border-color: var(--mc-accent); }
+.od-confirm-modal-challenge-input::placeholder { color: var(--mc-ink4); }
 .od-confirm-modal-footer {
     padding: 14px 24px 18px;
     display: flex; justify-content: flex-end; gap: 10px;
@@ -416,6 +442,8 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             confirmText = '确认',
             cancelText = '取消',
             danger = false,
+            challenge,
+            challengeHint,
             mountTarget = document.body
         } = options;
 
@@ -423,11 +451,20 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         const vc = VARIANT_CONFIG[variant];
         const iconName = explicitIcon ?? vc.icon;
         const isDanger = variant === 'danger';
+        const hasChallenge = !!challenge;
 
         const cancelButtonHtml = cancelText
             ? `<button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${cancelText}</button>`
             : '';
-        const footerHtml = `<div class="od-confirm-modal-footer">${cancelButtonHtml}<button class="od-confirm-btn ${isDanger ? 'od-confirm-btn-danger' : 'od-confirm-btn-primary'}" data-action="confirm">${confirmText}</button></div>`;
+        const confirmDisabled = hasChallenge ? ' disabled' : '';
+        const footerHtml = `<div class="od-confirm-modal-footer">${cancelButtonHtml}<button class="od-confirm-btn ${isDanger ? 'od-confirm-btn-danger' : 'od-confirm-btn-primary'}" data-action="confirm"${confirmDisabled}>${confirmText}</button></div>`;
+
+        const challengeHtml = hasChallenge
+            ? `<div class="od-confirm-modal-challenge">
+                   <div class="od-confirm-modal-challenge-hint">${(challengeHint ?? '').replace(challenge!, `<code>${challenge}</code>`)}</div>
+                   <input class="od-confirm-modal-challenge-input" type="text" placeholder="${challenge ?? ''}" autocomplete="off" spellcheck="false" data-action="challenge-input" />
+               </div>`
+            : '';
 
         const overlay = document.createElement('div');
         overlay.className = 'od-confirm-modal-overlay';
@@ -446,6 +483,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         <button class="od-confirm-modal-close" data-action="close" aria-label="关闭">${CLOSE_SVG}</button>
     </div>
     <div class="od-confirm-modal-body">${message}</div>
+    ${challengeHtml}
     ${footerHtml}
 </div>`;
 
@@ -480,7 +518,27 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => close(false));
         }
-        overlay.querySelector('[data-action="confirm"]')!.addEventListener('click', () => close(true));
+
+        const confirmBtn = overlay.querySelector('[data-action="confirm"]')! as HTMLButtonElement;
+        confirmBtn.addEventListener('click', () => {
+            if (hasChallenge && confirmBtn.disabled) return;
+            close(true);
+        });
+
+        if (hasChallenge && challenge) {
+            const challengeInput = overlay.querySelector('[data-action="challenge-input"]')! as HTMLInputElement;
+            challengeInput.addEventListener('input', () => {
+                const matched = challengeInput.value === challenge;
+                confirmBtn.disabled = !matched;
+            });
+            challengeInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !confirmBtn.disabled) {
+                    e.preventDefault();
+                    close(true);
+                }
+            });
+            setTimeout(() => challengeInput.focus(), ANIM_DURATION_IN);
+        }
 
         mountTarget.appendChild(overlay);
     });

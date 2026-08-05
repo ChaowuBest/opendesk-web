@@ -27,6 +27,7 @@ declare const window: Window & {
         renameEntry(oldPath: string, newName: string): Promise<string>;
         createDirectory(parentPath: string, dirName: string): Promise<string>;
         deleteEntry(entryPath: string): Promise<void>;
+        pickDirectoryDialog(): Promise<string | null>;
     };
 };
 
@@ -48,7 +49,6 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         let resolved = false;
         let recentWorkspaces: string[] = [];
         let currentWorkspace = '';
-        let selectedBrowserPath: string | null = null;
         let dirSelector: FileSelector | null = null;
 
         const overlay = document.createElement('div');
@@ -167,7 +167,24 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     .od-ws-current-path {
         color: var(--od-text, #374151); font-weight: 500;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+        cursor: text; border-radius: 4px; padding: 1px 4px; margin-left: -4px;
+        transition: background 0.12s;
     }
+    .od-ws-current-path:hover { background: var(--od-bg-subtle, #f3f4f6); }
+    .od-ws-current-edit {
+        flex: 1; min-width: 0; font-size: var(--fs-md); font-family: inherit; font-weight: 500;
+        border: 1px solid var(--od-accent, #3b82f6); border-radius: 4px; outline: none;
+        padding: 1px 4px; color: var(--od-text, #1f2937); background: var(--od-bg-elevated, #fff);
+    }
+    .od-ws-pick-btn {
+        flex-shrink: 0; margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 10px; border-radius: 6px; border: 1px solid var(--od-border-strong, #e5e5ea);
+        background: var(--od-bg-elevated, #fff); color: var(--od-text-muted, #6b7280);
+        font-size: var(--fs-sm); font-family: inherit; cursor: pointer;
+        transition: all 0.15s; white-space: nowrap;
+    }
+    .od-ws-pick-btn:hover { border-color: var(--od-accent, #3b82f6); color: var(--od-accent, #3b82f6); }
+    .od-ws-pick-btn i { font-size: var(--fs-sm); }
     .od-ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding-bottom: 10px; }
 
     /* 最近使用 - 紧凑单行布局 */
@@ -228,12 +245,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 
     /* 底部 */
     .od-ws-footer {
-        display: flex; align-items: center; justify-content: space-between;
+        display: flex; align-items: center; justify-content: flex-end;
         padding: 14px 24px 18px; border-top: 1px solid var(--od-border, rgba(0,0,0,0.08)); gap: 12px;
-    }
-    .od-ws-selected-path {
-        flex: 1; min-width: 0; font-size: 12px; color: var(--od-text-muted, #6b7280);
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .od-ws-footer-btns { display: flex; gap: 10px; flex-shrink: 0; }
     .od-ws-btn {
@@ -268,7 +281,10 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     <div class="od-ws-current">
         <i class="fa-solid fa-folder-open" style="font-size: var(--fs-sm);flex-shrink:0"></i>
         <span style="flex-shrink:0">当前：</span>
-        <span class="od-ws-current-path">${currentWorkspace || '未设置'}</span>
+        <span class="od-ws-current-path" data-action="edit-current" title="点击编辑路径">${currentWorkspace || '未设置'}</span>
+        <button class="od-ws-pick-btn" data-action="pick-directory" title="在系统文件管理器中选择">
+            <i class="fa-solid fa-folder-tree"></i>在系统窗口中选择
+        </button>
     </div>
     <div class="od-ws-body">
         <div class="od-ws-recent">
@@ -288,7 +304,6 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         </div>
     </div>
     <div class="od-ws-footer">
-        <div class="od-ws-selected-path" id="od-ws-selected-display">未选择目录</div>
         <div class="od-ws-footer-btns">
             <button class="od-ws-btn od-ws-btn-cancel" data-action="cancel">取消</button>
             <button class="od-ws-btn od-ws-btn-confirm" data-action="confirm" disabled>选择</button>
@@ -297,15 +312,81 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 </div>`;
         }
 
-        function updateSelectedDisplay() {
-            const display = overlay.querySelector('#od-ws-selected-display') as HTMLElement;
+        function updateConfirmBtn() {
             const confirmBtn = overlay.querySelector('[data-action="confirm"]') as HTMLButtonElement;
-            if (display) {
-                display.textContent = selectedBrowserPath || '未选择目录';
-            }
             if (confirmBtn) {
-                confirmBtn.disabled = !selectedBrowserPath;
+                confirmBtn.disabled = !currentWorkspace;
             }
+        }
+
+        /** 更新当前工作空间显示并让文件浏览器导航到该路径 */
+        function syncBrowserToPath(path: string) {
+            currentWorkspace = path;
+            const pathEl = overlay.querySelector('.od-ws-current-path');
+            if (pathEl) pathEl.textContent = path || '未设置';
+            updateConfirmBtn();
+            const homeDir = _getHomeDirFromWorkspace(path);
+            dirSelector?.navigateToPath(path, homeDir);
+        }
+
+        /** 仅更新当前工作空间显示（不导航浏览器） */
+        function updateCurrentPath(path: string) {
+            currentWorkspace = path;
+            const pathEl = overlay.querySelector('.od-ws-current-path');
+            if (pathEl) pathEl.textContent = path || '未设置';
+            updateConfirmBtn();
+        }
+
+        /** 当前工作空间路径就地编辑 */
+        function startInlineEditCurrent() {
+            const pathEl = overlay.querySelector('.od-ws-current-path') as HTMLElement;
+            if (!pathEl) return;
+            const originalPath = currentWorkspace || '';
+
+            const input = document.createElement('input');
+            input.className = 'od-ws-current-edit';
+            input.type = 'text';
+            input.value = originalPath;
+            input.placeholder = '输入工作空间路径…';
+            pathEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const restoreSpan = (text: string) => {
+                const span = document.createElement('span');
+                span.className = 'od-ws-current-path';
+                span.dataset.action = 'edit-current';
+                span.title = '点击编辑路径';
+                span.textContent = text || '未设置';
+                input.replaceWith(span);
+                span.addEventListener('click', () => startInlineEditCurrent());
+            };
+
+            let finished = false;
+            const finish = (save: boolean) => {
+                if (finished) return;
+                finished = true;
+                const newPath = input.value.trim().replace(/\\/g, '/');
+                if (save && newPath && newPath !== originalPath) {
+                    restoreSpan(newPath);
+                    syncBrowserToPath(newPath);
+                } else {
+                    restoreSpan(originalPath);
+                }
+            };
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.isComposing) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    finish(true);
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    finish(false);
+                }
+            });
+            input.addEventListener('blur', () => finish(true));
         }
 
         function bindEvents() {
@@ -317,7 +398,22 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
             overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="cancel"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="confirm"]')?.addEventListener('click', () => {
-                if (selectedBrowserPath) close(selectedBrowserPath);
+                if (currentWorkspace) close(currentWorkspace);
+            });
+
+            // 当前工作空间路径：点击进入编辑
+            overlay.querySelector('[data-action="edit-current"]')?.addEventListener('click', () => {
+                startInlineEditCurrent();
+            });
+
+            // 系统文件选择按钮
+            overlay.querySelector('[data-action="pick-directory"]')?.addEventListener('click', async () => {
+                try {
+                    const picked = await window.workspaceAPI.pickDirectoryDialog();
+                    if (picked) syncBrowserToPath(picked);
+                } catch {
+                    // 静默处理
+                }
             });
 
             overlay.querySelectorAll('.od-ws-recent-item').forEach((item) => {
@@ -327,7 +423,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                     if (target.closest('[data-action="remove-recent"]')) return;
 
                     const dirPath = (item as HTMLElement).dataset.path || '';
-                    if (dirPath) close(dirPath);
+                    if (dirPath) syncBrowserToPath(dirPath);
                 });
             });
 
@@ -401,8 +497,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                     return window.workspaceAPI.listDirectory(p, opts);
                 },
                 onSelect: (p) => {
-                    selectedBrowserPath = p;
-                    updateSelectedDisplay();
+                    if (p) updateCurrentPath(p);
                 },
                 height: '100%',
                 directoryOnly: true,
@@ -436,7 +531,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
             }
 
             const homeDir = _getHomeDirFromWorkspace(currentWorkspace);
-            await dirSelector.setRoot(homeDir);
+            await dirSelector.navigateToPath(currentWorkspace, homeDir);
         }
 
         init();

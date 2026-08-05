@@ -18,6 +18,7 @@ import { t } from '../../../../locale/index.js';
 
 const DEFAULT_MODEL_FIELDS = [
     { key: 'default_model', labelKey: 'config.defaultmodel.field.default_model', modelType: 'chat' },
+    { key: 'default_quick_model', labelKey: 'config.defaultmodel.field.quick_model', modelType: 'chat' },
     { key: 'default_embedding_model', labelKey: 'config.defaultmodel.field.embedding_model', modelType: 'embedding' },
     { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model', modelType: 'chat' },
     {

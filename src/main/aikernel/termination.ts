@@ -81,7 +81,8 @@ export async function checkTerminationFromMessages(
     let userMessage = TERMINATION_SYSTEM_PROMPT + '\n\n';
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
-    const modelParam = model || Setting.getInstance().getDefaultModelInstance();
+    const quickModelInstance = Setting.getInstance().getDefaultQuickModelInstance();
+    const modelParam = quickModelInstance || model || Setting.getInstance().getDefaultModelInstance();
     if (!modelParam) {
         logger.warn('model not configured, skipping termination check');
         return 'finished';

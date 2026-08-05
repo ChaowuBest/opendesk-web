@@ -2184,7 +2184,8 @@ export class TaskState {
             'task.id': this.task_id
         });
         await TelemetryOperationRegistry.aroundOperation(operation, async () => {
-            const model = this.ensureValidModelOrFallback();
+            const quickModel = Setting.getInstance().getData().default_quick_model;
+            const model = quickModel || this.ensureValidModelOrFallback();
             const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
                 请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
                 `;
@@ -2931,7 +2932,13 @@ export class TaskState {
                         this.task_status = 'stopped';
                     }
                     if (!skipInterruptedTurnHooks) {
-                        await this.hooks.noticeAfterFinishTurn(this);
+                        try {
+                            await this.hooks.noticeAfterFinishTurn(this);
+                        } catch (err) {
+                            logger.error(
+                                `task ${this.task_id}: noticeAfterFinishTurn failed: ${(err as Error)?.message || String(err)}`
+                            );
+                        }
                     } else {
                         shouldScheduleSessionMemoryUpdate = false;
                     }

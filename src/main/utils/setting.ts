@@ -382,6 +382,10 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             .default('auto')
             .describe('语言设置: auto=跟随系统, zh-CN=中文, en-US=英文'),
         default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
+        default_quick_model: z
+            .string()
+            .describe('在探索子任务、终止性判断、对话命名等轻量场景中使用的快速模型')
+            .default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
@@ -746,6 +750,17 @@ export class Setting {
         return this.getModelInstance(this.data.default_model, 'chat');
     }
 
+    /**
+     * Get the default quick model instance (for lightweight tasks like explore, termination check, task naming).
+     * Returns null if not configured or not found.
+     */
+    getDefaultQuickModelInstance(): ModelInstance | null {
+        if (!this.data.default_quick_model) {
+            return null;
+        }
+        return this.getModelInstance(this.data.default_quick_model, 'chat');
+    }
+
     getDefaultEmbeddingModelInstance(): ModelInstance | null {
         if (!this.data.default_embedding_model) {
             return null;
@@ -789,6 +804,7 @@ export class Setting {
         const modelTypes = new Map(this.data.models.map((m) => [m.alias, m.model_type] as const));
         const defaultModelFields = [
             { field: 'default_model', expectedType: 'chat' },
+            { field: 'default_quick_model', expectedType: 'chat' },
             { field: 'default_embedding_model', expectedType: 'embedding' },
             { field: 'default_reranker_model', expectedType: undefined },
             { field: 'default_intent_parsing_model', expectedType: 'chat' },

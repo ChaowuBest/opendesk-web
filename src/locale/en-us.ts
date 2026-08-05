@@ -131,7 +131,8 @@ export const enUs: Record<string, string> = {
     'confirm.exit.title': 'Confirm Exit',
     'confirm.exit.message': 'Are you sure you want to exit OpenDesk?',
     'confirm.delete.title': 'Confirm Delete',
-    'confirm.delete.message': 'Are you sure you want to delete all task history? This cannot be undone.',
+    'confirm.delete.message': 'Are you sure you want to delete all historical tasks? This cannot be undone.',
+    'confirm.delete.challenge_hint': 'Please enter ${code} to confirm deletion',
 
     // Commands - Bookmark
     'bookmark.add.fail': 'Add Bookmark Failed',
@@ -664,6 +665,7 @@ export const enUs: Record<string, string> = {
     'config.defaultmodel.title': 'Default Model Config',
     'config.defaultmodel.title.hint': 'Select default models for each scenario',
     'config.defaultmodel.field.default_model': 'Default Chat Model',
+    'config.defaultmodel.field.quick_model': 'Quick Chat Model',
     'config.defaultmodel.field.embedding_model': 'Embedding Model',
     'config.defaultmodel.field.reranker_model': 'Reranker Model',
     'config.defaultmodel.field.vision_model': 'Default Vision Model',

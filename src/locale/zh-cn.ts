@@ -130,7 +130,8 @@ export const zhCn: Record<string, string> = {
     'confirm.exit.title': '确认退出',
     'confirm.exit.message': '确定要退出 OpenDesk 吗？',
     'confirm.delete.title': '确认删除',
-    'confirm.delete.message': '确定要删除所有任务历史吗？此操作不可恢复。',
+    'confirm.delete.message': '确定要删除所有历史任务吗？此操作不可恢复。',
+    'confirm.delete.challenge_hint': '请输入 ${code} 以确认删除',
 
     // Commands - Bookmark
     'bookmark.add.fail': '添加书签失败',
@@ -650,6 +651,7 @@ export const zhCn: Record<string, string> = {
     'config.defaultmodel.title': '默认模型配置',
     'config.defaultmodel.title.hint': '选择各场景默认模型',
     'config.defaultmodel.field.default_model': '默认对话模型',
+    'config.defaultmodel.field.quick_model': '快速对话模型',
     'config.defaultmodel.field.embedding_model': '向量嵌入模型',
     'config.defaultmodel.field.reranker_model': '重排序模型',
     'config.defaultmodel.field.vision_model': '默认视觉模型',

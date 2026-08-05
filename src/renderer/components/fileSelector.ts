@@ -141,6 +141,117 @@ export class FileSelector {
         }
     }
 
+    /**
+     * 导航到指定路径，展开沿途所有列并选中目标。
+     * 支持虚拟根目录（{DRIVE_ROOT} / {OH_ROOT}）下的路径匹配。
+     */
+    async navigateToPath(targetPath: string, rootPath?: string): Promise<void> {
+        const root = rootPath ?? this._rootPath;
+        const normTarget = targetPath.replace(/\\/g, '/').replace(/\/+$/, '');
+        const isVirtualRoot = root === '{DRIVE_ROOT}' || root === '{OH_ROOT}';
+
+        // 重置到根目录
+        this._rootPath = root;
+        this._columns = [];
+        this._selectedPath = null;
+        try {
+            const entries = await this._list(root);
+            this._columns = [{ parentPath: root, entries, selectedPath: null }];
+        } catch {
+            this._columns = [{ parentPath: root, entries: [], selectedPath: null }];
+            this._render();
+            return;
+        }
+
+        if (!normTarget || normTarget === root) {
+            this._render();
+            return;
+        }
+
+        // 计算从根到目标的路径段
+        let segments: string[] = [];
+        if (!isVirtualRoot) {
+            const normRoot = root.replace(/\\/g, '/').replace(/\/+$/, '');
+            if (normTarget.startsWith(normRoot + '/')) {
+                segments = normTarget
+                    .substring(normRoot.length + 1)
+                    .split('/')
+                    .filter(Boolean);
+            } else if (normTarget !== normRoot) {
+                // 目标不在根目录下，尝试以 / 为根重新加载
+                this._rootPath = '/';
+                try {
+                    const rootEntries = await this._list('/');
+                    this._columns = [{ parentPath: '/', entries: rootEntries, selectedPath: null }];
+                } catch {
+                    this._render();
+                    return;
+                }
+                segments = normTarget.split('/').filter(Boolean);
+            }
+        }
+
+        // 逐层展开
+        let colIdx = 0;
+        while (colIdx < this._columns.length) {
+            const col = this._columns[colIdx];
+            let entry: FSEntry | undefined;
+
+            if (segments.length > 0) {
+                entry = col.entries.find((e) => e.name === segments[0] && e.isDirectory);
+                if (entry) segments.shift();
+            } else if (isVirtualRoot && colIdx === 0) {
+                // 虚拟根目录：按路径前缀匹配
+                entry = col.entries.find((e) => {
+                    const ePath = e.path.replace(/\\/g, '/').replace(/\/+$/, '');
+                    return normTarget === ePath || normTarget.startsWith(ePath + '/');
+                });
+                if (entry) {
+                    const ePath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
+                    if (normTarget.startsWith(ePath + '/')) {
+                        segments = normTarget
+                            .substring(ePath.length + 1)
+                            .split('/')
+                            .filter(Boolean);
+                    }
+                }
+            }
+
+            if (!entry) break;
+
+            col.selectedPath = entry.path;
+            this._selectedPath = entry.path;
+
+            try {
+                const children = await this._list(entry.path);
+                if (children.length > 0) {
+                    this._columns.push({ parentPath: entry.path, entries: children, selectedPath: null });
+                }
+            } catch {
+                break;
+            }
+            colIdx++;
+        }
+
+        this._notifySelect();
+        this._render();
+
+        // 将各列的选中项竖直滚动到可见区域
+        requestAnimationFrame(() => {
+            this.element.querySelectorAll('.od-fscol').forEach((colEl) => {
+                const selected = colEl.querySelector('.od-fsitem.selected') as HTMLElement | null;
+                if (!selected) return;
+                const colRect = (colEl as HTMLElement).getBoundingClientRect();
+                const itemRect = selected.getBoundingClientRect();
+                if (itemRect.top < colRect.top) {
+                    (colEl as HTMLElement).scrollTop -= colRect.top - itemRect.top;
+                } else if (itemRect.bottom > colRect.bottom) {
+                    (colEl as HTMLElement).scrollTop += itemRect.bottom - colRect.bottom;
+                }
+            });
+        });
+    }
+
     /* ───────── helpers ───────── */
 
     private _notifySelect(): void {
@@ -379,6 +490,9 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
     /* ───────── item click ───────── */
 
     private async _onItemClick(colIdx: number, dirPath: string): Promise<void> {
+        // 已选中同一目录时无需重复展开
+        if (this._columns[colIdx].selectedPath === dirPath) return;
+
         const columnsToRemove = this._columns.length - colIdx - 1;
 
         if (columnsToRemove > 0) {

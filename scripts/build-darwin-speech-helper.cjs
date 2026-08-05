@@ -54,8 +54,12 @@ if (!fs.existsSync('/usr/bin/swiftc')) {
 
 fs.mkdirSync(helperDir, { recursive: true });
 
+// Minimum macOS version supported by the helper
+const MACOS_DEPLOYMENT_TARGET = '10.15';
+const targetTriple = `${process.arch}-apple-macosx${MACOS_DEPLOYMENT_TARGET}`;
+
 // 1. Compile the C launcher
-execFileSync('/usr/bin/clang', ['-O', launcherSourcePath, '-o', launcherBinary], {
+execFileSync('/usr/bin/clang', ['-O', '-target', targetTriple, launcherSourcePath, '-o', launcherBinary], {
     cwd: projectRoot,
     stdio: 'inherit'
 });
@@ -66,6 +70,8 @@ execFileSync(
     '/usr/bin/swiftc',
     [
         '-O',
+        '-target',
+        targetTriple,
         swiftSourcePath,
         '-o',
         daemonBinary,
