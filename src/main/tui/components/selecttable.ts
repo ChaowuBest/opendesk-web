@@ -70,6 +70,8 @@ export class SelectTable implements Component {
     onSelect?: (value: string) => void;
     /** 取消回调 */
     onCancel?: () => void;
+    /** 列间分隔符，默认为单个空格 */
+    columnSeparator: string = ' ';
 
     constructor(rows: SelectRow[], maxVisible: number, theme: SelectListTheme) {
         // 初始化 innerRows，label 先设为空字符串，render 时会更新。
@@ -107,6 +109,7 @@ export class SelectTable implements Component {
 
     reloadInnerList(width: number) {
         const numCols = this.stretchFactors.length;
+
         // 1. 计算每列的最大宽度
         const colMaxWidths: number[] = [];
         for (let col = 0; col < numCols; col++) {
@@ -120,10 +123,28 @@ export class SelectTable implements Component {
             colMaxWidths.push(maxWidth);
         }
 
-        // 2. 计算固定列（stretchFactor为0）的总宽度
+        // 2. 从右到左逐列隐藏，直到剩余列能放下
+        // 列优先级从左到右递减：左边列更重要，宽度不足时优先隐藏右边列
+        const totalAvailable = width - 5; // 预留箭头位置
+
+        let visibleCols: number[] = Array.from({ length: numCols }, (_, i) => i);
+        for (let col = numCols - 1; col >= 1; col--) {
+            const sep = this.columnSeparator.length * Math.max(0, visibleCols.length - 1);
+            const totalWidth = visibleCols.reduce((sum, c) => sum + colMaxWidths[c], 0) + sep;
+            if (totalWidth <= totalAvailable) break;
+            // 放不下，移除最右边的可见列
+            visibleCols.pop();
+        }
+
+        // 至少保留第一列
+        if (visibleCols.length === 0) {
+            visibleCols = [0];
+        }
+
+        // 3. 计算可见列中固定列和可拉伸列的宽度分配
         let fixedWidth = 0;
         let totalStretchFactor = 0;
-        for (let col = 0; col < numCols; col++) {
+        for (const col of visibleCols) {
             if (this.stretchFactors[col] === 0) {
                 fixedWidth += colMaxWidths[col];
             } else {
@@ -131,26 +152,33 @@ export class SelectTable implements Component {
             }
         }
 
-        // 列之间的分隔符空间（每列之间一个空格）
-        const separatorWidth = Math.max(0, numCols - 1);
-        // 除了分隔符之外还要预留前面的箭头位置
-        const totalAvailable = width - separatorWidth - 5;
+        const sepForVisible = this.columnSeparator.length * Math.max(0, visibleCols.length - 1);
+        const availableAfterSep = totalAvailable - sepForVisible;
 
-        // 如果固定列宽度超过可用宽度，需要按比例缩减固定列
-        if (fixedWidth > totalAvailable) {
-            return ['...'];
+        if (fixedWidth > availableAfterSep) {
+            // 固定列超出可用宽度，按比例缩减
+            const ratio = availableAfterSep / fixedWidth;
+            for (let i = 0; i < visibleCols.length; i++) {
+                const col = visibleCols[i];
+                if (this.stretchFactors[col] === 0) {
+                    colMaxWidths[col] = Math.max(1, Math.floor(colMaxWidths[col] * ratio));
+                }
+            }
+            fixedWidth = availableAfterSep;
         }
 
-        const availableForStretch = totalAvailable - fixedWidth;
+        const availableForStretch = availableAfterSep - fixedWidth;
 
-        // 3. 计算每列的最终宽度
+        // 4. 计算每列的最终宽度
         const colWidths: number[] = [];
         for (let col = 0; col < numCols; col++) {
+            if (!visibleCols.includes(col)) {
+                colWidths.push(0);
+                continue;
+            }
             if (this.stretchFactors[col] === 0) {
-                // 固定列：使用（可能已缩减的）最大宽度
                 colWidths.push(colMaxWidths[col]);
             } else {
-                // 可拉伸列：按比例分配
                 if (totalStretchFactor > 0 && availableForStretch > 0) {
                     const stretchWidth = Math.floor(
                         (availableForStretch * this.stretchFactors[col]) / totalStretchFactor
@@ -162,10 +190,12 @@ export class SelectTable implements Component {
             }
         }
 
-        // 4. 格式化每行数据并更新innerRows
+        // 5. 格式化每行数据并更新innerRows
         for (const row of this.innerRows) {
             const formattedValues: string[] = [];
             for (let col = 0; col < numCols; col++) {
+                if (!visibleCols.includes(col)) continue;
+
                 const value = sanitizeText(row.labels[col] ?? '');
                 const colWidth = colWidths[col];
                 const valueWidth = visibleWidth(value);
@@ -196,7 +226,7 @@ export class SelectTable implements Component {
                 }
                 formattedValues.push(formatted);
             }
-            row.label = formattedValues.join(' ');
+            row.label = formattedValues.join(this.columnSeparator);
         }
     }
 

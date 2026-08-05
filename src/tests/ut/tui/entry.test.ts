@@ -289,3 +289,38 @@ describe('OpenDeskTUI active task view state', () => {
         expect(requestRender).toHaveBeenCalled();
     });
 });
+
+describe('OpenDeskTUI focusInputAreaIfAvailable', () => {
+    test('restores focus in modelNotConfiguredMode so /model overlay does not freeze', () => {
+        const setFocus = jest.fn();
+        const input = { type: 'input' };
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            isConfigMode: jest.fn(() => false),
+            isModelNotConfiguredMode: jest.fn(() => true),
+            isInputAreaMounted: jest.fn(() => true),
+            inputArea: { input },
+            tui: { setFocus }
+        }) as any;
+
+        tui.focusInputAreaIfAvailable();
+
+        // Before the fix, setFocus was NOT called when modelNotConfiguredMode=true,
+        // causing the focus to be lost after InfoOverlay closes (the "freeze" bug).
+        expect(setFocus).toHaveBeenCalledWith(input);
+    });
+
+    test('still skips focus in configMode', () => {
+        const setFocus = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            isConfigMode: jest.fn(() => true),
+            isModelNotConfiguredMode: jest.fn(() => false),
+            isInputAreaMounted: jest.fn(() => true),
+            inputArea: { input: {} },
+            tui: { setFocus }
+        }) as any;
+
+        tui.focusInputAreaIfAvailable();
+
+        expect(setFocus).not.toHaveBeenCalled();
+    });
+});

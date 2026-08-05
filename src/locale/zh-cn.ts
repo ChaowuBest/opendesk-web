@@ -317,6 +317,13 @@ export const zhCn: Record<string, string> = {
     'model.not.found': '模型不存在: ',
     'model.switched': '已切换到模型: ',
     'model.no.models': '没有配置任何模型',
+    'model.alias': '模型别名',
+    'model.provider_model': '模型',
+    'model.effort': '推理模式',
+    'model.default_effort': '默认',
+    'model.context': '上下文长度',
+    'model.max_output': '最大输出长度',
+    'model.info': '模型信息',
     'model.usage': '用法: /model <别名>',
     'model.global.changed.title': '默认模型已变更',
     'model.global.changed.message':
