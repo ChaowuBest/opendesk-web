@@ -12,11 +12,13 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
+import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
 
 interface OpenDeskOfficeSlidesHost {
     register(): void;
     attachWindow(window: BrowserWindow): void;
     activateContents(contents: WebContents): void;
+    requestCloseAll(): Promise<boolean>;
 }
 
 const rendererPageName = 'slides_editor.html';
@@ -31,6 +33,11 @@ function getOpenDeskOfficeSlidesDevUrl(): string | undefined {
     if (!rendererUrl) return undefined;
     return new URL('slides_editor.html', rendererUrl.endsWith('/') ? rendererUrl : `${rendererUrl}/`).toString();
 }
+
+const isTrustedSlidesUrl = createTrustedRendererUrlMatcher({
+    rendererFilePath,
+    rendererDevUrl: getOpenDeskOfficeSlidesDevUrl()
+});
 
 function loadOpenDeskOfficeSlidesHost(): Promise<OpenDeskOfficeSlidesHost> {
     if (slidesHostPromise) return slidesHostPromise;
@@ -60,11 +67,7 @@ export function getOpenDeskOfficeSlidesPreloadPath(): string {
 }
 
 export function isOpenDeskOfficeSlidesUrl(url: string): boolean {
-    try {
-        return new URL(url).pathname.endsWith(`/${rendererPageName}`);
-    } catch {
-        return url.includes(rendererPageName);
-    }
+    return isTrustedSlidesUrl(url);
 }
 
 export function configureOpenDeskOfficeSlidesWebPreferences(webPreferences: WebPreferences): void {
@@ -95,4 +98,10 @@ export function activateOpenDeskOfficeSlidesContents(contents: WebContents): voi
     if (slidesHostPromise) {
         void slidesHostPromise.then((host) => host.activateContents(contents));
     }
+}
+
+export async function requestCloseOpenDeskOfficeSlidesContents(): Promise<boolean> {
+    if (!slidesHostPromise) return true;
+    const host = await slidesHostPromise;
+    return host.requestCloseAll();
 }

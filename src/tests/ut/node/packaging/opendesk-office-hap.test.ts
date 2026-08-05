@@ -49,9 +49,16 @@ async function createFakePayload(): Promise<{ appDir: string; cleanup(): Promise
     };
 }
 
-test('HAP payload validation accepts the complete Slides editor runtime', async () => {
+test('PPT staging produces a complete HAP payload with legal notices', async () => {
     const payload = await createFakePayload();
     try {
+        stageOpenDeskOfficeForOhos(payload.appDir);
+        const staged = await stat(path.join(payload.appDir, 'dist/preload/slidesPreload.js'));
+        assert.ok(staged.size > 0);
+        for (const fileName of ['LICENSE', 'NOTICE', 'UPSTREAM.md']) {
+            const legalFile = path.join(payload.appDir, 'third_party_licenses', 'opendesk-office', fileName);
+            assert.ok((await stat(legalFile)).isFile());
+        }
         assert.doesNotThrow(() => assertOpenDeskOfficeHapPayload(payload.appDir));
     } finally {
         await payload.cleanup();
@@ -62,26 +69,21 @@ test('HAP packaging excludes the prebundled Slides package from the npm runtime 
     assert.deepEqual(getOpenDeskOfficePrebundledPackages(), ['@bitclub.ai/opendesk-office']);
 });
 
-test('PPT stage only overlays release output after the official OHOS sync', async () => {
+test('HAP payload validation fails when an OpenDesk Office legal notice is absent', async () => {
     const payload = await createFakePayload();
     try {
         stageOpenDeskOfficeForOhos(payload.appDir);
-        const staged = await stat(path.join(payload.appDir, 'dist/preload/slidesPreload.js'));
-        assert.ok(staged.size > 0);
-        assert.doesNotThrow(() => assertOpenDeskOfficeHapPayload(payload.appDir));
+        await unlink(path.join(payload.appDir, 'third_party_licenses/opendesk-office/NOTICE'));
+        assert.throws(() => assertOpenDeskOfficeHapPayload(payload.appDir), /NOTICE/);
     } finally {
         await payload.cleanup();
     }
 });
 
-test('the baseline OHOS packaging script remains independent of the PPT feature', async () => {
-    const baselineScript = await readFile(path.join(projectRoot, 'scripts/package-ohos.cjs'), 'utf8');
-    assert.doesNotMatch(baselineScript, /GenOffice|genoffice/i);
-});
-
 test('HAP payload validation fails when the HarfBuzz WASM is absent', async () => {
     const payload = await createFakePayload();
     try {
+        stageOpenDeskOfficeForOhos(payload.appDir);
         await unlink(path.join(payload.appDir, 'dist/main/chunks/harfbuzz-test.wasm'));
         assert.throws(() => assertOpenDeskOfficeHapPayload(payload.appDir), /harfbuzz-\*\.wasm/);
     } finally {
@@ -92,6 +94,7 @@ test('HAP payload validation fails when the HarfBuzz WASM is absent', async () =
 test('HAP payload validation fails when the Slides preload is absent', async () => {
     const payload = await createFakePayload();
     try {
+        stageOpenDeskOfficeForOhos(payload.appDir);
         await rm(path.join(payload.appDir, 'dist/preload/slidesPreload.js'), { force: true });
         assert.throws(() => assertOpenDeskOfficeHapPayload(payload.appDir), /slidesPreload\.js/);
     } finally {

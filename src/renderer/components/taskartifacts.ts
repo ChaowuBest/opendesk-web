@@ -24,7 +24,8 @@
  *   - pending：不展示耗时。
  */
 
-import { FileExplorer, getFileExplorerCSS, type PptxLayoutState } from './fileExplorer';
+import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
+import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, type WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
@@ -198,8 +199,8 @@ class TaskArtifacts extends HTMLElement {
     private _isBrowserFullscreen = false;
     private _settingUnsubscribe: (() => void) | null = null;
     private _savedWidthBeforeFullscreen: string = '';
-    private _pptxLayoutState: PptxLayoutState = { active: false, fullscreen: false };
-    private _reportedPptxFocusState: PptxLayoutState = { active: false, fullscreen: false };
+    private _workspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
+    private _reportedWorkspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
 
     private _taskPlanVisible = false;
     private _taskRunning = false;
@@ -232,9 +233,9 @@ class TaskArtifacts extends HTMLElement {
             const fileUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`;
             this.browserAddTab(fileUrl);
         };
-        this._fileExplorer.onPptxLayoutChange = (state) => {
-            this._pptxLayoutState = state;
-            this._syncPptxFocusMode();
+        this._fileExplorer.onWorkspaceFocusLayoutChange = (state) => {
+            this._workspaceFocusLayoutState = state;
+            this._syncWorkspaceFocusLayout();
         };
     }
 
@@ -833,21 +834,24 @@ class TaskArtifacts extends HTMLElement {
         } else if (tabId === 'changes') {
             this.refreshChanges();
         }
-        this._syncPptxFocusMode();
+        this._syncWorkspaceFocusLayout();
     }
 
-    private _syncPptxFocusMode(): void {
-        const active = this._activeTab === 'workspace' && this._pptxLayoutState.active;
-        const fullscreen = active && this._pptxLayoutState.fullscreen;
-        this.toggleAttribute('data-pptx-preview-fullscreen', fullscreen);
+    private _syncWorkspaceFocusLayout(): void {
+        const active = this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
+        const fullscreen = active && this._workspaceFocusLayoutState.fullscreen;
+        this.toggleAttribute('data-workspace-focus-fullscreen', fullscreen);
 
-        if (this._reportedPptxFocusState.active === active && this._reportedPptxFocusState.fullscreen === fullscreen) {
+        if (
+            this._reportedWorkspaceFocusLayoutState.active === active &&
+            this._reportedWorkspaceFocusLayoutState.fullscreen === fullscreen
+        ) {
             return;
         }
-        this._reportedPptxFocusState = { active, fullscreen };
+        this._reportedWorkspaceFocusLayoutState = { active, fullscreen };
         this.dispatchEvent(
-            new CustomEvent<PptxLayoutState>('pptx-focus-mode-change', {
-                detail: this._reportedPptxFocusState,
+            new CustomEvent<WorkspaceFocusLayoutState>(WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, {
+                detail: this._reportedWorkspaceFocusLayoutState,
                 bubbles: true,
                 composed: true
             })
@@ -1467,7 +1471,7 @@ class TaskArtifacts extends HTMLElement {
                     padding 240ms cubic-bezier(0.4, 0, 0.2, 1);
             }
 
-            :host([data-pptx-preview-fullscreen]) .tab-header {
+            :host([data-workspace-focus-fullscreen]) .tab-header {
                 max-height: 0;
                 margin-top: 0;
                 margin-bottom: 0;

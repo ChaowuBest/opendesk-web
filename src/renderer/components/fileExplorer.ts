@@ -34,6 +34,7 @@ import {
     OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL,
     OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
 } from '@bitclub.ai/opendesk-office/host-events';
+import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 
 const t = createRendererTranslator();
 
@@ -57,11 +58,6 @@ export interface PreviewPayload {
     content: string;
     binary: boolean;
     dataUri?: string;
-}
-
-export interface PptxLayoutState {
-    active: boolean;
-    fullscreen: boolean;
 }
 
 type ChildrenCache = FSEntry[] | 'loading' | { error: string };
@@ -172,6 +168,10 @@ function pickFileIcon(entry: FSEntry): string {
 
 function isPptxFile(filePath: string): boolean {
     return filePath.toLowerCase().endsWith('.pptx');
+}
+
+function usesWorkspaceFocusLayout(filePath: string): boolean {
+    return isPptxFile(filePath);
 }
 
 function renderPptxLoadingIndicator(): string {
@@ -1021,8 +1021,8 @@ export class FileExplorer {
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
-    /** PPT 编辑工作区布局变化回调（由 task-artifacts 协调外层布局） */
-    onPptxLayoutChange: ((state: PptxLayoutState) => void) | null = null;
+    /** 聚焦内容的工作区布局变化回调（由 task-artifacts 协调外层布局） */
+    onWorkspaceFocusLayoutChange: ((state: WorkspaceFocusLayoutState) => void) | null = null;
 
     /**
      * 将文件浏览器渲染到指定容器中。
@@ -1077,7 +1077,7 @@ export class FileExplorer {
         this._gridPath = null;
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
-        this._notifyPptxLayoutChange();
+        this._notifyWorkspaceFocusLayoutChange();
         if (this._container) {
             void this._ensureWorkspaceLoaded();
         }
@@ -1101,7 +1101,7 @@ export class FileExplorer {
         this._previewState = { status: 'idle' };
         this._previewFullscreen = false;
         this._browserFullscreen = false;
-        this._notifyPptxLayoutChange();
+        this._notifyWorkspaceFocusLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1213,7 +1213,7 @@ export class FileExplorer {
     private _setViewMode(mode: ViewMode): void {
         if (this._viewMode === mode) return;
         this._viewMode = mode;
-        this._renderPanel();
+        this._renderBrowserSection();
         if (mode === 'grid' && this._gridPath) {
             void this._loadChildren(this._gridPath);
         }
@@ -1234,7 +1234,7 @@ export class FileExplorer {
 
     private _enterGridDir(dirPath: string): void {
         this._gridPath = dirPath;
-        this._renderPanel();
+        this._renderBrowserSection();
         void this._loadChildren(dirPath);
     }
 
@@ -1245,8 +1245,8 @@ export class FileExplorer {
     selectFile(filePath: string): void {
         if (this._selectedFile === filePath && isPptxFile(filePath)) return;
         if (this._deferUntilPptxCanClose(() => this.selectFile(filePath))) return;
-        const wasPptx = !!this._selectedFile && isPptxFile(this._selectedFile);
-        const openingPptx = isPptxFile(filePath);
+        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
+        const openingFocusedPreview = usesWorkspaceFocusLayout(filePath);
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
@@ -1258,16 +1258,16 @@ export class FileExplorer {
         // 检查当前是否为空状态（展开动画）
         const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
-        if (openingPptx) {
+        if (openingFocusedPreview) {
             this._previewFullscreen = true;
             this._browserFullscreen = false;
-        } else if (wasPptx) {
+        } else if (wasFocusedPreview) {
             this._previewFullscreen = false;
             this._browserFullscreen = false;
         }
         this._previewState = { status: 'loading' };
         this._renderPreview(wasEmpty);
-        this._notifyPptxLayoutChange();
+        this._notifyWorkspaceFocusLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1315,7 +1315,7 @@ export class FileExplorer {
                 if (!slidesHostAPI?.prepare) {
                     throw new Error(t('renderer.fileExplorer.pptx.unavailable'));
                 }
-                // 先让局部 loading 完成一次绘制，再启动首次 GenOffice 冷初始化。
+                // 先让局部 loading 完成一次绘制，再启动 OpenDesk Office 冷初始化。
                 await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
                 if (this._selectedFile !== filePath) return;
                 await slidesHostAPI.prepare();
@@ -1546,9 +1546,9 @@ export class FileExplorer {
 
     // ----- full panel render -----
 
-    private _notifyPptxLayoutChange(): void {
-        const active = !!this._selectedFile && isPptxFile(this._selectedFile);
-        this.onPptxLayoutChange?.({
+    private _notifyWorkspaceFocusLayoutChange(): void {
+        const active = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
+        this.onWorkspaceFocusLayoutChange?.({
             active,
             fullscreen: active && this._previewFullscreen
         });
@@ -1574,6 +1574,17 @@ export class FileExplorer {
         if (previewIcon) {
             previewIcon.className = `fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}`;
         }
+    }
+
+    private _renderBrowserSection(): void {
+        const panel = this._container;
+        const browserBody = panel?.querySelector<HTMLElement>('.ws-browser-body');
+        if (!panel || !browserBody) return;
+        panel.querySelectorAll<HTMLButtonElement>('.ws-view-btn').forEach((button) => {
+            button.classList.toggle('ws-view-active', button.dataset.view === this._viewMode);
+        });
+        browserBody.innerHTML =
+            this._viewMode === 'tree' ? this._renderTreeContainerHtml() : this._renderGridContainerHtml();
     }
 
     private _renderPanel(): void {
@@ -1665,7 +1676,7 @@ export class FileExplorer {
                 this._browserFullscreen = !this._browserFullscreen;
                 this._previewFullscreen = false;
                 this._applyFullscreenLayout();
-                this._notifyPptxLayoutChange();
+                this._notifyWorkspaceFocusLayoutChange();
             });
         });
 
@@ -1699,7 +1710,7 @@ export class FileExplorer {
                     this._previewFullscreen = !this._previewFullscreen;
                     this._browserFullscreen = false;
                     this._applyFullscreenLayout();
-                    this._notifyPptxLayoutChange();
+                    this._notifyWorkspaceFocusLayoutChange();
                     return;
                 }
                 if (target.closest('[data-action="editor-save"]')) {
@@ -1963,14 +1974,14 @@ export class FileExplorer {
         this._editorSaveError = null;
         this._editorOpenLine = line != null && line > 0 ? line : null;
         const selected = filePath;
-        const wasPptx = !!this._selectedFile && isPptxFile(this._selectedFile);
+        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
         this._selectedFile = selected;
-        if (wasPptx) {
+        if (wasFocusedPreview) {
             this._previewFullscreen = false;
             this._browserFullscreen = false;
         }
         this._previewState = { status: 'loading' };
-        this._notifyPptxLayoutChange();
+        this._notifyWorkspaceFocusLayoutChange();
 
         // 更新树中文件高亮
         const rn = this._rootNode;

@@ -215,12 +215,11 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('task-artifacts')).toBeNull();
     });
 
-    test('animates the task and pptx workspace columns to a one-to-three ratio', () => {
+    test('animates the task and focused workspace columns to a one-to-three ratio', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _rightSidebarExpanded: boolean;
             render: () => void;
-            _handlePptxFocusModeChange: (event: CustomEvent<{ active: boolean; fullscreen: boolean }>) => void;
         };
         taskView.task_id = 'task-1';
         taskView._rightSidebarExpanded = true;
@@ -232,29 +231,28 @@ describe('task-view message queue', () => {
         };
         document.addEventListener('sidebar-collapse-request', onCollapseRequest);
 
-        taskView._handlePptxFocusModeChange(
-            new CustomEvent('pptx-focus-mode-change', { detail: { active: true, fullscreen: true } })
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
 
         expect(artifacts.style.width).toBe('75%');
         expect(artifacts.style.transition).toContain('width');
         expect(collapseRequests).toEqual([{ collapsed: true, persist: false }]);
 
-        taskView._handlePptxFocusModeChange(
-            new CustomEvent('pptx-focus-mode-change', { detail: { active: false, fullscreen: false } })
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: false, fullscreen: false } })
         );
 
         expect(artifacts.style.width).toBe('380px');
         document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
     });
 
-    test('keeps the pptx editor and focus width when the right sidebar is collapsed and reopened', () => {
+    test('keeps focused content and focus width when the right sidebar is collapsed and reopened', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _rightSidebarExpanded: boolean;
             _rightSidebarWidth: number;
             render: () => void;
-            _handlePptxFocusModeChange: (event: CustomEvent<{ active: boolean; fullscreen: boolean }>) => void;
             _collapseRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
             _expandRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
         };
@@ -267,8 +265,8 @@ describe('task-view message queue', () => {
         const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
         artifacts.closeEditor = jest.fn();
 
-        taskView._handlePptxFocusModeChange(
-            new CustomEvent('pptx-focus-mode-change', { detail: { active: true, fullscreen: true } })
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
         taskView._collapseRightSidebar(artifacts, resizer);
 

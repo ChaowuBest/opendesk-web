@@ -79,8 +79,8 @@ describe('file explorer', () => {
         explorer._container = container;
         explorer._rootNode = container;
         explorer._workspaceRoot = '/workspace';
-        const onPptxLayoutChange = jest.fn();
-        (explorer as any).onPptxLayoutChange = onPptxLayoutChange;
+        const onWorkspaceFocusLayoutChange = jest.fn();
+        (explorer as any).onWorkspaceFocusLayoutChange = onWorkspaceFocusLayoutChange;
         explorer._renderPanel();
 
         explorer.selectFile('/workspace/deck.pptx');
@@ -94,7 +94,7 @@ describe('file explorer', () => {
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
         expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
-        expect(onPptxLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
+        expect(onWorkspaceFocusLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
         explorer.closeEditor();
     });
 
@@ -205,6 +205,41 @@ describe('file explorer', () => {
         expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
         expect(container.querySelector('.ws-pptx-frame')).toBe(editor);
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--fullscreen')).toBe(false);
+        expect(prepare).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps the same pptx editor session when switching the file browser view', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
+        (window as any).slidesHostAPI = {
+            prepare,
+            requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
+        };
+
+        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
+            _container: HTMLElement;
+            _rootNode: ParentNode;
+            _workspaceRoot: string;
+            _renderPanel(): void;
+        };
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._renderPanel();
+        explorer.selectFile('/workspace/deck.pptx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const previewRoot = container.querySelector('[data-preview-root]');
+        const editor = container.querySelector('.ws-pptx-frame');
+        expect(editor).not.toBeNull();
+
+        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
+        container.querySelector<HTMLButtonElement>('[data-view="grid"]')?.click();
+
+        expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
+        expect(container.querySelector('.ws-pptx-frame')).toBe(editor);
+        expect(container.querySelector('[data-view="grid"]')?.classList.contains('ws-view-active')).toBe(true);
         expect(prepare).toHaveBeenCalledTimes(1);
     });
 

@@ -78,7 +78,8 @@ import {
     attachOpenDeskOfficeSlidesWindow,
     configureOpenDeskOfficeSlidesWebPreferences,
     isOpenDeskOfficeSlidesUrl,
-    registerEmbeddedOpenDeskOfficeSlides
+    registerEmbeddedOpenDeskOfficeSlides,
+    requestCloseOpenDeskOfficeSlidesContents
 } from './office/openDeskOfficeSlidesHost.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
@@ -262,6 +263,8 @@ const converter = new Convert();
 let globalMainWindow: BrowserWindow | null = null;
 let globalTray: Tray | null = null;
 let isAppQuitting = false;
+let officeQuitCheckPending = false;
+let officeQuitApproved = false;
 
 function getPreferredSystemLanguagesForLocale(): string[] {
     try {
@@ -2959,8 +2962,28 @@ async function startApplication(): Promise<void> {
     initializeRegistryProtocols();
     t.end();
 
-    app.on('before-quit', () => {
-        isAppQuitting = true;
+    app.on('before-quit', (event) => {
+        if (officeQuitApproved) {
+            isAppQuitting = true;
+            return;
+        }
+
+        event.preventDefault();
+        if (officeQuitCheckPending) return;
+        officeQuitCheckPending = true;
+        void requestCloseOpenDeskOfficeSlidesContents()
+            .then((canQuit) => {
+                if (!canQuit) return;
+                officeQuitApproved = true;
+                isAppQuitting = true;
+                app.quit();
+            })
+            .catch((error: unknown) => {
+                logger.error(`Failed to confirm OpenDesk Office shutdown: ${String(error)}`);
+            })
+            .finally(() => {
+                officeQuitCheckPending = false;
+            });
     });
 
     // macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
