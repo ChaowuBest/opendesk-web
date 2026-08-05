@@ -31,9 +31,9 @@ import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
 import {
-    OPEN_GENOFFICE_DOCUMENT_READY_CHANNEL,
-    OPEN_GENOFFICE_EDITOR_VISIBLE_CHANNEL
-} from '@bitclub.ai/open-genoffice/host-events';
+    OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL,
+    OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
+} from '@bitclub.ai/opendesk-office/host-events';
 
 const t = createRendererTranslator();
 
@@ -2366,8 +2366,8 @@ export class FileExplorer {
         const handleEditorMessage = (event: Event): void => {
             const ipcEvent = event as Event & { channel?: string };
             if (
-                ipcEvent.channel !== OPEN_GENOFFICE_EDITOR_VISIBLE_CHANNEL &&
-                ipcEvent.channel !== OPEN_GENOFFICE_DOCUMENT_READY_CHANNEL
+                ipcEvent.channel !== OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL &&
+                ipcEvent.channel !== OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL
             ) {
                 return;
             }

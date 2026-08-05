@@ -61,7 +61,7 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-preview')?.classList.contains('ws-preview--collapsed')).toBe(true);
     });
 
-    test('opens pptx files in the embedded Open GenOffice editor', async () => {
+    test('opens pptx files in the embedded OpenDesk Office editor', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
@@ -146,7 +146,7 @@ describe('file explorer', () => {
         expect(editor?.classList.contains('ws-pptx-frame--loading')).toBe(true);
 
         const visibleEvent = new window.Event('ipc-message') as Event & { channel: string };
-        visibleEvent.channel = 'open-genoffice:editor-visible';
+        visibleEvent.channel = 'opendesk-office:editor-visible';
         editor?.dispatchEvent(visibleEvent);
 
         expect(container.querySelector('.ws-pptx-loading-indicator')).toBeNull();

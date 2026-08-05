@@ -2,17 +2,17 @@ import { defineConfig, loadEnv } from 'electron-vite';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import {
-    createOpenGenOfficeSlidesRendererViteConfig,
-    createOpenGenOfficeSlidesViteAliases,
-    openGenOfficeSlidesEntries,
-    openGenOfficeSlidesMainBuildPlugin
-} from '@bitclub.ai/open-genoffice/vite';
+    createOpenDeskOfficeSlidesRendererViteConfig,
+    createOpenDeskOfficeSlidesViteAliases,
+    openDeskOfficeSlidesEntries,
+    openDeskOfficeSlidesMainBuildPlugin
+} from '@bitclub.ai/opendesk-office/vite';
 
 export default defineConfig(({ mode }) => {
     const isProd = mode === 'production';
     const buildTime = new Date().toISOString();
-    const openGenOfficeAliases = createOpenGenOfficeSlidesViteAliases();
-    const openGenOfficeRendererConfig = createOpenGenOfficeSlidesRendererViteConfig();
+    const openDeskOfficeAliases = createOpenDeskOfficeSlidesViteAliases();
+    const openDeskOfficeRendererConfig = createOpenDeskOfficeSlidesRendererViteConfig();
 
     return {
         main: {
@@ -22,11 +22,11 @@ export default defineConfig(({ mode }) => {
             },
             resolve: {
                 alias: {
-                    ...openGenOfficeAliases
+                    ...openDeskOfficeAliases
                 }
             },
             publicDir: path.join(__dirname, 'resources', 'main'),
-            plugins: [openGenOfficeSlidesMainBuildPlugin, tailwindcss()],
+            plugins: [openDeskOfficeSlidesMainBuildPlugin, tailwindcss()],
             build: {
                 outDir: 'dist/main',
                 // 生产环境关闭 sourcemap 以减小体积和内存占用
@@ -36,8 +36,8 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     output: {
                         manualChunks(id) {
-                            if (id.replaceAll('\\', '/').endsWith('/@bitclub.ai/open-genoffice/dist/main.js')) {
-                                return 'open-genoffice-main';
+                            if (id.replaceAll('\\', '/').endsWith('/@bitclub.ai/opendesk-office/dist/main.js')) {
+                                return 'opendesk-office-main';
                             }
                         }
                     },
@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => {
                         }
                         if (
                             warning.code === 'UNUSED_EXTERNAL_IMPORT' &&
-                            warning.message?.includes('@bitclub.ai/open-genoffice/dist/main.js')
+                            warning.message?.includes('@bitclub.ai/opendesk-office/dist/main.js')
                         ) {
                             warn(warning);
                             return;
@@ -88,7 +88,7 @@ export default defineConfig(({ mode }) => {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
                         webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
-                        slidesPreload: openGenOfficeSlidesEntries.preload
+                        slidesPreload: openDeskOfficeSlidesEntries.preload
                     },
                     output: {
                         format: 'cjs',
@@ -105,14 +105,14 @@ export default defineConfig(({ mode }) => {
             }
         },
         renderer: {
-            ...openGenOfficeRendererConfig,
+            ...openDeskOfficeRendererConfig,
             base: './',
             publicDir: path.join(__dirname, 'resources', 'renderer'),
             plugins: [tailwindcss()],
             resolve: {
                 alias: {
                     '@': path.resolve(__dirname, 'src'),
-                    ...openGenOfficeAliases
+                    ...openDeskOfficeAliases
                 }
             },
             build: {

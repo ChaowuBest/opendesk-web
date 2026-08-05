@@ -20,7 +20,7 @@
         "preview:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-vite preview",
         "preview:linux": "npm run build && electron-vite preview -- --no-sandbox",
         "build": "electron-vite build",
-        "stage:ohos-slides": "node scripts/stage-open-genoffice-ohos.cjs",
+        "stage:ohos-slides": "node scripts/stage-opendesk-office-ohos.cjs",
         "package": "run-script-os",
         "package:win32": "npm run build && electron-forge package --platform=win32",
         "package:darwin": "npm run build && node scripts/build-darwin-speech-helper.cjs && electron-forge package --platform=darwin",
@@ -58,7 +58,7 @@
         ]
     },
     "devDependencies": {
-        "@bitclub.ai/open-genoffice": "git+https://gitcode.com/IntelliOS/GenOffice.git#2179b6e398cc1e90874af32c6f67d396908c2bff",
+        "@bitclub.ai/opendesk-office": "0.1.0",
         "@electron-forge/cli": "^7.10.2",
         "@electron-forge/maker-deb": "^7.10.2",
         "@electron-forge/maker-dmg": "^7.10.2",

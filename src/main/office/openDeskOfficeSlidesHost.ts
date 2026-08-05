@@ -13,7 +13,7 @@ import { ipcMain } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
 
-interface OpenGenOfficeSlidesHost {
+interface OpenDeskOfficeSlidesHost {
     register(): void;
     attachWindow(window: BrowserWindow): void;
     activateContents(contents: WebContents): void;
@@ -23,23 +23,23 @@ const rendererPageName = 'slides_editor.html';
 const preloadPath = path.join(__dirname, '..', 'preload', 'slidesPreload.js');
 const rendererFilePath = path.join(__dirname, '..', 'renderer', rendererPageName);
 let attachedWindow: BrowserWindow | undefined;
-let slidesHostPromise: Promise<OpenGenOfficeSlidesHost> | undefined;
+let slidesHostPromise: Promise<OpenDeskOfficeSlidesHost> | undefined;
 let prepareHandlerRegistered = false;
 
-function getOpenGenOfficeSlidesDevUrl(): string | undefined {
+function getOpenDeskOfficeSlidesDevUrl(): string | undefined {
     const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
     if (!rendererUrl) return undefined;
     return new URL('slides_editor.html', rendererUrl.endsWith('/') ? rendererUrl : `${rendererUrl}/`).toString();
 }
 
-function loadOpenGenOfficeSlidesHost(): Promise<OpenGenOfficeSlidesHost> {
+function loadOpenDeskOfficeSlidesHost(): Promise<OpenDeskOfficeSlidesHost> {
     if (slidesHostPromise) return slidesHostPromise;
 
-    slidesHostPromise = import('@bitclub.ai/open-genoffice/main')
-        .then(({ createOpenGenOfficeSlidesHost }) => {
-            const host = createOpenGenOfficeSlidesHost({
+    slidesHostPromise = import('@bitclub.ai/opendesk-office/main')
+        .then(({ createOpenDeskOfficeSlidesHost }) => {
+            const host = createOpenDeskOfficeSlidesHost({
                 preloadPath,
-                rendererDevUrl: getOpenGenOfficeSlidesDevUrl(),
+                rendererDevUrl: getOpenDeskOfficeSlidesDevUrl(),
                 rendererFilePath
             });
             host.register();
@@ -55,11 +55,11 @@ function loadOpenGenOfficeSlidesHost(): Promise<OpenGenOfficeSlidesHost> {
     return slidesHostPromise;
 }
 
-export function getOpenGenOfficeSlidesPreloadPath(): string {
+export function getOpenDeskOfficeSlidesPreloadPath(): string {
     return preloadPath;
 }
 
-export function isOpenGenOfficeSlidesUrl(url: string): boolean {
+export function isOpenDeskOfficeSlidesUrl(url: string): boolean {
     try {
         return new URL(url).pathname.endsWith(`/${rendererPageName}`);
     } catch {
@@ -67,7 +67,7 @@ export function isOpenGenOfficeSlidesUrl(url: string): boolean {
     }
 }
 
-export function configureOpenGenOfficeSlidesWebPreferences(webPreferences: WebPreferences): void {
+export function configureOpenDeskOfficeSlidesWebPreferences(webPreferences: WebPreferences): void {
     webPreferences.preload = preloadPath;
     webPreferences.contextIsolation = true;
     webPreferences.nodeIntegration = false;
@@ -75,23 +75,23 @@ export function configureOpenGenOfficeSlidesWebPreferences(webPreferences: WebPr
     webPreferences.backgroundThrottling = false;
 }
 
-export function registerEmbeddedOpenGenOfficeSlides(): void {
+export function registerEmbeddedOpenDeskOfficeSlides(): void {
     if (prepareHandlerRegistered) return;
     prepareHandlerRegistered = true;
     ipcMain.handle('slides-host:prepare', async () => {
-        await loadOpenGenOfficeSlidesHost();
+        await loadOpenDeskOfficeSlidesHost();
         return true;
     });
 }
 
-export function attachOpenGenOfficeSlidesWindow(window: BrowserWindow): void {
+export function attachOpenDeskOfficeSlidesWindow(window: BrowserWindow): void {
     attachedWindow = window;
     if (slidesHostPromise) {
         void slidesHostPromise.then((host) => host.attachWindow(window));
     }
 }
 
-export function activateOpenGenOfficeSlidesContents(contents: WebContents): void {
+export function activateOpenDeskOfficeSlidesContents(contents: WebContents): void {
     if (slidesHostPromise) {
         void slidesHostPromise.then((host) => host.activateContents(contents));
     }

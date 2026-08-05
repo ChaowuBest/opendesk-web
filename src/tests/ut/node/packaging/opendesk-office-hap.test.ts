@@ -8,19 +8,19 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const require = createRequire(import.meta.url);
-const { assertOpenGenOfficeHapPayload, getOpenGenOfficePrebundledPackages } =
-    require('@bitclub.ai/open-genoffice/hap') as {
-        assertOpenGenOfficeHapPayload(appDir: string): void;
-        getOpenGenOfficePrebundledPackages(): string[];
+const { assertOpenDeskOfficeHapPayload, getOpenDeskOfficePrebundledPackages } =
+    require('@bitclub.ai/opendesk-office/hap') as {
+        assertOpenDeskOfficeHapPayload(appDir: string): void;
+        getOpenDeskOfficePrebundledPackages(): string[];
     };
-const manifestPath = require.resolve('@bitclub.ai/open-genoffice/hap-manifest');
+const manifestPath = require.resolve('@bitclub.ai/opendesk-office/hap-manifest');
 
-const { stageOpenGenOfficeForOhos } = require(path.join(projectRoot, 'scripts/stage-open-genoffice-ohos.cjs')) as {
-    stageOpenGenOfficeForOhos(appDir: string): void;
+const { stageOpenDeskOfficeForOhos } = require(path.join(projectRoot, 'scripts/stage-opendesk-office-ohos.cjs')) as {
+    stageOpenDeskOfficeForOhos(appDir: string): void;
 };
 
 async function createFakePayload(): Promise<{ appDir: string; cleanup(): Promise<void> }> {
-    const appDir = await mkdtemp(path.join(os.tmpdir(), 'opendesk-open-genoffice-hap-'));
+    const appDir = await mkdtemp(path.join(os.tmpdir(), 'opendesk-opendesk-office-hap-'));
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { runtimePackages: string[] };
 
     await mkdir(path.join(appDir, 'dist/preload'), { recursive: true });
@@ -52,23 +52,23 @@ async function createFakePayload(): Promise<{ appDir: string; cleanup(): Promise
 test('HAP payload validation accepts the complete Slides editor runtime', async () => {
     const payload = await createFakePayload();
     try {
-        assert.doesNotThrow(() => assertOpenGenOfficeHapPayload(payload.appDir));
+        assert.doesNotThrow(() => assertOpenDeskOfficeHapPayload(payload.appDir));
     } finally {
         await payload.cleanup();
     }
 });
 
 test('HAP packaging excludes the prebundled Slides package from the npm runtime closure', () => {
-    assert.deepEqual(getOpenGenOfficePrebundledPackages(), ['@bitclub.ai/open-genoffice']);
+    assert.deepEqual(getOpenDeskOfficePrebundledPackages(), ['@bitclub.ai/opendesk-office']);
 });
 
 test('PPT stage only overlays release output after the official OHOS sync', async () => {
     const payload = await createFakePayload();
     try {
-        stageOpenGenOfficeForOhos(payload.appDir);
+        stageOpenDeskOfficeForOhos(payload.appDir);
         const staged = await stat(path.join(payload.appDir, 'dist/preload/slidesPreload.js'));
         assert.ok(staged.size > 0);
-        assert.doesNotThrow(() => assertOpenGenOfficeHapPayload(payload.appDir));
+        assert.doesNotThrow(() => assertOpenDeskOfficeHapPayload(payload.appDir));
     } finally {
         await payload.cleanup();
     }
@@ -83,7 +83,7 @@ test('HAP payload validation fails when the HarfBuzz WASM is absent', async () =
     const payload = await createFakePayload();
     try {
         await unlink(path.join(payload.appDir, 'dist/main/chunks/harfbuzz-test.wasm'));
-        assert.throws(() => assertOpenGenOfficeHapPayload(payload.appDir), /harfbuzz-\*\.wasm/);
+        assert.throws(() => assertOpenDeskOfficeHapPayload(payload.appDir), /harfbuzz-\*\.wasm/);
     } finally {
         await payload.cleanup();
     }
@@ -93,7 +93,7 @@ test('HAP payload validation fails when the Slides preload is absent', async () 
     const payload = await createFakePayload();
     try {
         await rm(path.join(payload.appDir, 'dist/preload/slidesPreload.js'), { force: true });
-        assert.throws(() => assertOpenGenOfficeHapPayload(payload.appDir), /slidesPreload\.js/);
+        assert.throws(() => assertOpenDeskOfficeHapPayload(payload.appDir), /slidesPreload\.js/);
     } finally {
         await payload.cleanup();
     }

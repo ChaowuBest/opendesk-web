@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addElement, createBlankPptx, openPptx, savePptx } from '@bitclub.ai/open-genoffice/engine';
+import { addElement, createBlankPptx, openPptx, savePptx } from '@bitclub.ai/opendesk-office/engine';
 
 test('packaged Open Slides engine opens and saves a generated pptx offline', async () => {
     const opened = await openPptx(await createBlankPptx());

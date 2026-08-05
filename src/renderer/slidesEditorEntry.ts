@@ -9,6 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { bootstrapOpenGenOfficeSlidesEditor } from '@bitclub.ai/open-genoffice/renderer';
+import { bootstrapOpenDeskOfficeSlidesEditor } from '@bitclub.ai/opendesk-office/renderer';
 
-void bootstrapOpenGenOfficeSlidesEditor();
+void bootstrapOpenDeskOfficeSlidesEditor();

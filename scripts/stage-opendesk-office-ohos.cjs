@@ -14,9 +14,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { assertOpenGenOfficeHapPayload, stageOpenGenOfficeHapPayload } = require('@bitclub.ai/open-genoffice/hap');
+const { assertOpenDeskOfficeHapPayload, stageOpenDeskOfficeHapPayload } = require('@bitclub.ai/opendesk-office/hap');
 
-function stageOpenGenOfficeForOhos(appDir) {
+function stageOpenDeskOfficeForOhos(appDir) {
     const resolvedAppDir = path.resolve(appDir);
     if (!fs.statSync(resolvedAppDir).isDirectory()) {
         throw new Error(`OHOS app 目录不存在: ${resolvedAppDir}`);
@@ -27,17 +27,17 @@ function stageOpenGenOfficeForOhos(appDir) {
         throw new Error('请先通过 OpenDesk-ohos 的 sync-minimal-only 或 sync-dist-only 流程同步基线产物');
     }
 
-    stageOpenGenOfficeHapPayload(resolvedAppDir);
-    assertOpenGenOfficeHapPayload(resolvedAppDir);
+    stageOpenDeskOfficeHapPayload(resolvedAppDir);
+    assertOpenDeskOfficeHapPayload(resolvedAppDir);
 }
 
 function main() {
     const [appDir, ...unexpectedArgs] = process.argv.slice(2);
     if (!appDir || unexpectedArgs.length > 0) {
-        throw new Error('用法: node scripts/stage-open-genoffice-ohos.cjs <ohos-app-dir>');
+        throw new Error('用法: node scripts/stage-opendesk-office-ohos.cjs <ohos-app-dir>');
     }
 
-    stageOpenGenOfficeForOhos(appDir);
+    stageOpenDeskOfficeForOhos(appDir);
     console.log('[ohos-slides] 已叠加并校验 Open Slides 发布产物');
 }
 
@@ -51,5 +51,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-    stageOpenGenOfficeForOhos
+    stageOpenDeskOfficeForOhos
 };
