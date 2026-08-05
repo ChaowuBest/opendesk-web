@@ -130,7 +130,8 @@ export const zhCn: Record<string, string> = {
     'confirm.exit.title': '确认退出',
     'confirm.exit.message': '确定要退出 OpenDesk 吗？',
     'confirm.delete.title': '确认删除',
-    'confirm.delete.message': '确定要删除所有任务历史吗？此操作不可恢复。',
+    'confirm.delete.message': '确定要删除所有历史任务吗？此操作不可恢复。',
+    'confirm.delete.challenge_hint': '请输入 ${code} 以确认删除',
 
     // Commands - Bookmark
     'bookmark.add.fail': '添加书签失败',

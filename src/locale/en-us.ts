@@ -131,7 +131,8 @@ export const enUs: Record<string, string> = {
     'confirm.exit.title': 'Confirm Exit',
     'confirm.exit.message': 'Are you sure you want to exit OpenDesk?',
     'confirm.delete.title': 'Confirm Delete',
-    'confirm.delete.message': 'Are you sure you want to delete all task history? This cannot be undone.',
+    'confirm.delete.message': 'Are you sure you want to delete all historical tasks? This cannot be undone.',
+    'confirm.delete.challenge_hint': 'Please enter ${code} to confirm deletion',
 
     // Commands - Bookmark
     'bookmark.add.fail': 'Add Bookmark Failed',

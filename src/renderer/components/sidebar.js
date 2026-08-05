@@ -26,6 +26,15 @@ import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebar
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
+
+function generateChallengeCode() {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
+}
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 const THEME_SUN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
 const THEME_MOON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
@@ -1360,6 +1369,7 @@ class SideBar extends HTMLElement {
 
         menu.querySelector('[data-action="delete-all"]').addEventListener('click', async () => {
             this._dismissContextMenu();
+            const code = generateChallengeCode();
             const confirmed = await showConfirmModal({
                 icon: 'fa-trash',
                 iconBg: '#FEF2F2',
@@ -1368,7 +1378,9 @@ class SideBar extends HTMLElement {
                 message: this._t('renderer.sidebar.deleteAllTasksConfirm'),
                 confirmText: this._t('renderer.sidebar.confirmDeleteAll'),
                 cancelText: this._t('common.cancel'),
-                danger: true
+                danger: true,
+                challenge: code,
+                challengeHint: this._t('confirm.delete.challenge_hint', { code })
             });
             if (!confirmed) return;
             window.globalControlAPI.clearAllTaskViewCache();
@@ -1527,6 +1539,7 @@ class SideBar extends HTMLElement {
             return normalizeWorkspace(task.workspace) === targetWs;
         });
         if (tasksToDelete.length === 0) return;
+        const code = generateChallengeCode();
         const confirmed = await showConfirmModal({
             icon: 'fa-trash',
             iconBg: '#FEF2F2',
@@ -1535,7 +1548,9 @@ class SideBar extends HTMLElement {
             message: this._t('renderer.sidebar.deleteWorkspaceTasksConfirm', { count: tasksToDelete.length }),
             confirmText: this._t('common.delete'),
             cancelText: this._t('common.cancel'),
-            danger: true
+            danger: true,
+            challenge: code,
+            challengeHint: this._t('confirm.delete.challenge_hint', { code })
         });
         if (!confirmed) return;
         let needOpenHome = false;
