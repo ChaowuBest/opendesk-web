@@ -67,7 +67,10 @@ describe('task-view message queue', () => {
         customElements.define(
             'agent-input',
             class extends HTMLElement {
+                availableModels: unknown[] = [];
                 setDisabled() {}
+                setModel() {}
+                setReasoningEffort() {}
                 setStopMode() {}
                 setSlashCommandContext() {}
             }
