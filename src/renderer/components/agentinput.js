@@ -120,7 +120,7 @@ async function updateSettingForModelChange(modelAlias, reasoningEffort, options 
             settingObj.default_model = modelAlias;
             changed = true;
         }
-        if (modelAlias && reasoningEffort !== undefined) {
+        if (options.updateReasoningEffort !== false && modelAlias && reasoningEffort !== undefined) {
             const model = (settingObj.models || []).find((m) => m.alias === modelAlias);
             if (model && model.reasoning_effort !== reasoningEffort) {
                 model.reasoning_effort = reasoningEffort;
@@ -1686,7 +1686,8 @@ class AgentInput extends HTMLElement {
                 this.selectedModel = alias;
                 this.selectedReasoningEffort = effortValue;
                 await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort, {
-                    updateDefaultModel: !this.taskId
+                    updateDefaultModel: !this.taskId,
+                    updateReasoningEffort: !this.taskId
                 });
                 this.closeModelPanel();
                 this.hideEffortSubmenu();

@@ -664,6 +664,7 @@ export const enUs: Record<string, string> = {
     'config.defaultmodel.title': 'Default Model Config',
     'config.defaultmodel.title.hint': 'Select default models for each scenario',
     'config.defaultmodel.field.default_model': 'Default Chat Model',
+    'config.defaultmodel.field.quick_model': 'Quick Chat Model',
     'config.defaultmodel.field.embedding_model': 'Embedding Model',
     'config.defaultmodel.field.reranker_model': 'Reranker Model',
     'config.defaultmodel.field.vision_model': 'Default Vision Model',

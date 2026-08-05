@@ -650,6 +650,7 @@ export const zhCn: Record<string, string> = {
     'config.defaultmodel.title': '默认模型配置',
     'config.defaultmodel.title.hint': '选择各场景默认模型',
     'config.defaultmodel.field.default_model': '默认对话模型',
+    'config.defaultmodel.field.quick_model': '快速对话模型',
     'config.defaultmodel.field.embedding_model': '向量嵌入模型',
     'config.defaultmodel.field.reranker_model': '重排序模型',
     'config.defaultmodel.field.vision_model': '默认视觉模型',

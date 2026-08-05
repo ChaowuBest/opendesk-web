@@ -1954,6 +1954,13 @@ class SettingPanel extends HTMLElement {
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.quick_model')}</label>
+                    <select id="default-quick-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${chatModelOptions}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
                     <label class="sp-form-label">${this._t('config.defaultmodel.field.embedding_model')}</label>
                     <select id="default-embedding-model-select" class="sp-form-input">
                         <option value="">${this._t('common.none')}</option>
@@ -2094,6 +2101,7 @@ class SettingPanel extends HTMLElement {
         // 默认模型选择框变化时立即保存
         const selects = [
             'default-model-select',
+            'default-quick-model-select',
             'default-embedding-model-select',
             'default-reranker-model-select',
             'default-vision-model-select'
@@ -2345,6 +2353,7 @@ class SettingPanel extends HTMLElement {
     getDefaultModelFieldMap() {
         return {
             'default-model-select': 'default_model',
+            'default-quick-model-select': 'default_quick_model',
             'default-embedding-model-select': 'default_embedding_model',
             'default-reranker-model-select': 'default_reranker_model',
             'default-vision-model-select': 'default_vision_model'
@@ -3547,6 +3556,7 @@ class SettingPanel extends HTMLElement {
             this.updateDefaultModelSelects();
             const selects = [
                 'default-model-select',
+                'default-quick-model-select',
                 'default-embedding-model-select',
                 'default-reranker-model-select',
                 'default-vision-model-select'

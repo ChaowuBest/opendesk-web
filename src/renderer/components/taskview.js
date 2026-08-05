@@ -1621,6 +1621,12 @@ class TaskView extends HTMLElement {
                 }
                 if (task_state.reasoningEffort !== undefined) {
                     input_widget.setReasoningEffort(task_state.reasoningEffort);
+                } else {
+                    // 任务没有显式设置推理模式时，重置为模型默认值，防止跨任务泄漏
+                    const modelAlias = task_state.model || input_widget.selectedModel;
+                    const model = input_widget.availableModels.find((m) => m.alias === modelAlias);
+                    input_widget.setReasoningEffort(model?.reasoning_effort || '');
+                    input_widget._updateEffortIcon?.();
                 }
                 input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
                 input_widget.selectedExecutionNodeLabel = task_state.executionNodeLabel || '';

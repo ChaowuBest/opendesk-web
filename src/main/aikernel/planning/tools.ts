@@ -14,12 +14,7 @@ import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Markdown } from '@earendil-works/pi-tui';
-import type {
-    TaskModelRequestOptions,
-    TaskState,
-    TaskUpdateAssistantChunk,
-    TaskUpdateChunk
-} from '../states/tasks.js';
+import type { TaskModelRequestOptions, TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
@@ -31,7 +26,7 @@ import {
 } from './harness.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
-import { getTaskArtifactDirectory } from '../../utils/setting.js';
+import { Setting, getTaskArtifactDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
@@ -122,6 +117,14 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     subTask.model = parentTask.model;
     subTask.task_name = config.title || '未命名子任务';
     subTask.interactionToolset = parentTask.interactionToolset;
+
+    // explore agent 优先使用快速对话模型，未配置则回退到默认对话模型
+    if (config.agentName === 'explore') {
+        const quickModel = Setting.getInstance().getData().default_quick_model;
+        if (quickModel) {
+            subTask.model = quickModel;
+        }
+    }
 
     // 如果指定了 agentName，使用对应 Agent 的系统提示词、权限和工具过滤
     const agentDecl = config.agentName ? AgentRegistry.resolveDispatchableAgent(config.agentName) : undefined;
@@ -581,16 +584,21 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const args = toolcall.args_object as z.output<typeof CreateSubTaskArgsSchema> | undefined;
         const body: string[] = [];
 
+        // explore 子任务使用了快速模型且与默认模型不同时，在标题栏标注
+        const defaultModel = Setting.getInstance().getData().default_model;
+        const quickModel = args?.agentName === 'explore' ? Setting.getInstance().getData().default_quick_model : '';
+        const modelTag = quickModel && quickModel !== defaultModel ? chalk.cyan(` [${truncText(quickModel, 20)}]`) : '';
+
         // 卡片标题：含 agentName 时 "创建子任务 (agentName: 标题)"，否则 "创建子任务 (标题)"
         const titleSuffix = args?.title || '未命名';
         let cardTitle: string;
         if (args?.agentName) {
-            const maxAgent = Math.max(6, Math.floor((width - 24) / 2));
+            const maxAgent = Math.max(6, Math.floor((width - 24 - modelTag.length) / 2));
             const agentLabel = truncText(args.agentName, maxAgent);
-            const maxTitle = Math.max(12, width - 24 - agentLabel.length);
-            cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})`;
+            const maxTitle = Math.max(12, width - 24 - agentLabel.length - modelTag.length);
+            cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})${modelTag}`;
         } else {
-            cardTitle = `创建子任务 (${truncText(titleSuffix, Math.max(12, width - 24))})`;
+            cardTitle = `创建子任务 (${truncText(titleSuffix, Math.max(12, width - 24 - modelTag.length))})${modelTag}`;
         }
 
         if (args?.objective) {
@@ -680,6 +688,14 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(args.agentName)}</span>`
             : '';
 
+        // explore 子任务使用了快速模型且与默认模型不同时，在标题栏标注模型名称
+        const defaultModel = Setting.getInstance().getData().default_model;
+        const quickModel = args?.agentName === 'explore' ? Setting.getInstance().getData().default_quick_model : '';
+        const modelTag =
+            quickModel && quickModel !== defaultModel
+                ? `<span class="subtask-badge--info text-[10px] font-medium px-1.5 py-0.5 rounded" title="${escapeHtml(quickModel)}"><i class="fa-solid fa-bolt text-[8px] mr-0.5"></i>${escapeHtml(quickModel)}</span>`
+                : '';
+
         let bodyContent = '';
         if (isRunning) {
             const progress = CreateSubTaskTool.getProgress(toolcall);
@@ -719,6 +735,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                 <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(toolName)}</span>
                 <span class="text-[12px] text-gray-600 truncate flex-1">${escapeHtml(title)}</span>
                 ${agentTag}
+                ${modelTag}
                 ${asyncTag}
                 ${statusBadge}
                 <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
