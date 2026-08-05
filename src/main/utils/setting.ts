@@ -17,7 +17,10 @@ import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import type { ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount } from '../../utils/model.js';
-import { getHarmonyRuntimeEnvironment, getHarmonyWorkspaceDirectory } from './harmonyRuntime.js';
+import {
+    getHarmonyRuntimeEnvironment,
+    getHarmonyWorkspaceDirectory
+} from '../../platforms/bridges/harmonyos/runtime.js';
 
 /**
  * 解析可写的应用数据根目录（与主进程、Worker 通过 workerData 传入的路径一致）

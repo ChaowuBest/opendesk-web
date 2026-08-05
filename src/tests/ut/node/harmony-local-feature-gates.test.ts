@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getOpenHarmonyTerminalBashPath } from '../../../main/applications/terminal/app.js';
 import { getMcpServerLocalRuntimeAvailability } from '../../../main/applications/mcpmgr/worker.js';
-import type { HarmonyLocalRuntimeState } from '../../../main/utils/harmonyLocalRuntime.js';
+import type { HarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const TABLET_STATE: HarmonyLocalRuntimeState = {
     variant: 'tablet',

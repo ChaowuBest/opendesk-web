@@ -2,7 +2,10 @@ import { describe, expect, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 
 const preloadSource = readFileSync(new URL('../../../renderer/preload.js', import.meta.url), 'utf8');
-const harmonyRuntimeSource = readFileSync(new URL('../../../common/harmonyRuntime.ts', import.meta.url), 'utf8');
+const runtimeEnvironmentSource = readFileSync(
+    new URL('../../../platforms/bridges/harmonyos/runtime-environment.ts', import.meta.url),
+    'utf8'
+);
 
 describe('renderer preload task toolset callback ownership', () => {
     test('only the preload instance that exposed taskManagerAPI listens for tool calls', () => {
@@ -19,11 +22,11 @@ describe('renderer preload task toolset callback ownership', () => {
 });
 
 describe('renderer preload Harmony runtime sandbox compatibility', () => {
-    test('uses the Node-free common runtime parser', () => {
-        expect(preloadSource).toContain("from '../common/harmonyRuntime.js'");
-        expect(preloadSource).not.toContain("from '../main/utils/harmonyRuntime.js'");
-        expect(harmonyRuntimeSource).not.toMatch(/from\s+['"]node:/);
-        expect(harmonyRuntimeSource).not.toMatch(/require\(['"]node:/);
+    test('uses the Node-free HarmonyOS runtime environment parser', () => {
+        expect(preloadSource).toContain("from '../platforms/bridges/harmonyos/runtime-environment.js'");
+        expect(preloadSource).not.toContain("from '../platforms/bridges/harmonyos/runtime.js'");
+        expect(runtimeEnvironmentSource).not.toMatch(/from\s+['"]node:/);
+        expect(runtimeEnvironmentSource).not.toMatch(/require\(['"]node:/);
     });
 
     test('keeps exposing renderer APIs when Harmony metadata is unavailable', () => {

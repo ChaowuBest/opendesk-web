@@ -14,20 +14,20 @@ import {
     createHarmonyRuntimeEnvironment,
     serializeHarmonyRuntimeEnvironment,
     type HarmonyRuntimeEnvironment
-} from '../../common/harmonyRuntime.js';
+} from './runtime-environment.js';
 
 export {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
     getHarmonyHomeDirectory,
     serializeHarmonyRuntimeEnvironment
-} from '../../common/harmonyRuntime.js';
+} from './runtime-environment.js';
 export type {
     HarmonyBrowseRoot,
     HarmonyBuildVariant,
     HarmonyRuntimeEnvironment,
     RuntimeEnvironmentSource
-} from '../../common/harmonyRuntime.js';
+} from './runtime-environment.js';
 
 let currentHarmonyRuntime: HarmonyRuntimeEnvironment | null | undefined;
 

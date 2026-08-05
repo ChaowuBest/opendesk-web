@@ -26,7 +26,7 @@ import {
     getHarmonyStdioCommandAvailability,
     type HarmonyLocalRuntimeFeatureAvailability,
     type HarmonyLocalRuntimeState
-} from '../../utils/harmonyLocalRuntime.js';
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 export function getMcpServerLocalRuntimeAvailability(
     server: McpServerConfig,

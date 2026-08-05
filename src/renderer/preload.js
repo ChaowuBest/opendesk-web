@@ -16,7 +16,7 @@ import {
     createHarmonyRuntimeEnvironment,
     getHarmonyBrowseRoots,
     getHarmonyHomeDirectory
-} from '../common/harmonyRuntime.js';
+} from '../platforms/bridges/harmonyos/runtime-environment.js';
 
 function resolveRendererHarmonyRuntime() {
     try {

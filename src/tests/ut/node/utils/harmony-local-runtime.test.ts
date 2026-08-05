@@ -5,8 +5,8 @@ import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyStdioCommandRequirement,
     serializeHarmonyLocalRuntimeState
-} from '../../../../main/utils/harmonyLocalRuntime.js';
-import { createHarmonyRuntimeEnvironment } from '../../../../main/utils/harmonyRuntime.js';
+} from '../../../../platforms/bridges/harmonyos/local-runtime.js';
+import { createHarmonyRuntimeEnvironment } from '../../../../platforms/bridges/harmonyos/runtime.js';
 
 const PC_RUNTIME = createHarmonyRuntimeEnvironment({
     platform: 'openharmony',

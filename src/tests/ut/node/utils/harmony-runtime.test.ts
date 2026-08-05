@@ -6,7 +6,7 @@ import {
     getHarmonyHomeDirectory,
     getHarmonyWorkspaceDirectory,
     serializeHarmonyRuntimeEnvironment
-} from '../../../../main/utils/harmonyRuntime.js';
+} from '../../../../platforms/bridges/harmonyos/runtime.js';
 
 const PC_ARGS = [
     'electron',

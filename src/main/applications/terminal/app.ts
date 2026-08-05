@@ -18,7 +18,7 @@ import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
     type HarmonyLocalRuntimeState
-} from '../../utils/harmonyLocalRuntime.js';
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 export function getOpenHarmonyTerminalBashPath(
     state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()

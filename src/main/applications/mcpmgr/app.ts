@@ -54,7 +54,7 @@ import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyStdioCommandAvailability,
     type HarmonyLocalRuntimeFeatureAvailability
-} from '../../utils/harmonyLocalRuntime.js';
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
     return availability.reason === 'tablet-local-runtime-disabled'

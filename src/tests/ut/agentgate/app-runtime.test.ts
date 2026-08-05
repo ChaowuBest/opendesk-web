@@ -136,7 +136,7 @@ jest.unstable_mockModule('../../../main/applications/agentgate/events-cache.js',
     AgentGateEventsCache: mockEventsCache
 }));
 
-jest.unstable_mockModule('../../../main/utils/harmonyLocalRuntime.js', () => ({
+jest.unstable_mockModule('../../../platforms/bridges/harmonyos/local-runtime.js', () => ({
     getHarmonyLocalRuntimeFeatureAvailability: jest.fn(() => ({
         available: agentGateRuntimeAvailable,
         reason: agentGateRuntimeAvailable ? null : 'tablet-local-runtime-disabled',

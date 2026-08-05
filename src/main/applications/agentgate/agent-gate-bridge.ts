@@ -34,7 +34,7 @@ import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
     type HarmonyLocalRuntimeFeatureAvailability
-} from '../../utils/harmonyLocalRuntime.js';
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;

@@ -13,13 +13,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMainThread } from 'node:worker_threads';
-import { logger } from './logger.js';
-import { findExecutableInPath, findOpenHarmonyBash } from './shellExec.js';
-import {
-    getHarmonyRuntimeEnvironment,
-    type HarmonyBuildVariant,
-    type HarmonyRuntimeEnvironment
-} from './harmonyRuntime.js';
+import { logger } from '../../../main/utils/logger.js';
+import { findExecutableInPath, findOpenHarmonyBash } from '../../../main/utils/shellExec.js';
+import { getHarmonyRuntimeEnvironment, type HarmonyBuildVariant, type HarmonyRuntimeEnvironment } from './runtime.js';
 
 export type LocalRuntimeCapability = 'bash' | 'node' | 'python' | 'uv';
 export type HarmonyLocalRuntimeFeature = 'terminal' | 'agentgate' | 'stdio-mcp' | 'python' | 'uv';

@@ -36,7 +36,7 @@ import {
 import { attributeInterception } from './skillAttribution.js';
 import { AgentGateBridge } from './agent-gate-bridge.js';
 import { logger } from '../../utils/logger.js';
-import { getHarmonyLocalRuntimeFeatureAvailability } from '../../utils/harmonyLocalRuntime.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import path from 'path';
 
 const AGENT_TYPE = 'opendesk';

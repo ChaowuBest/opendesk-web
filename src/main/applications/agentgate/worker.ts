@@ -28,7 +28,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import { findExecutableInPath } from '../../utils/shellExec.js';
-import { getHarmonyLocalRuntimeFeatureAvailability } from '../../utils/harmonyLocalRuntime.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 // 依赖 agent-gate@0.5.4 的存储格式：tool_calls 表 / tool_calls/<session>.json 文件布局。
 

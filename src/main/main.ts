@@ -179,8 +179,8 @@ import {
     getHarmonyBrowseRoots,
     getHarmonyRuntimeEnvironment,
     initializeHarmonyRuntimeEnvironment
-} from './utils/harmonyRuntime.js';
-import { initializeHarmonyLocalRuntimeState } from './utils/harmonyLocalRuntime.js';
+} from '../platforms/bridges/harmonyos/runtime.js';
+import { initializeHarmonyLocalRuntimeState } from '../platforms/bridges/harmonyos/local-runtime.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+/** Shared HarmonyOS runtime metadata helpers. Keep this module safe for sandboxed preload bundles. */
 export type HarmonyBuildVariant = 'pc' | 'tablet';
 
 export interface HarmonyRuntimeEnvironment {

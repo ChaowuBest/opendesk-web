@@ -11,7 +11,7 @@
 
 import os from 'os';
 import fs from 'fs';
-import { getHarmonyHomeDirectory, getHarmonyRuntimeEnvironment } from './harmonyRuntime.js';
+import { getHarmonyHomeDirectory, getHarmonyRuntimeEnvironment } from '../../platforms/bridges/harmonyos/runtime.js';
 
 /**
  * 初始化临时目录。

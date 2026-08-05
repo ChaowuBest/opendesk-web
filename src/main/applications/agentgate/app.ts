@@ -20,7 +20,7 @@ import { GlobalHooks } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
 import { logger } from '../../utils/logger.js';
-import { getHarmonyLocalRuntimeFeatureAvailability } from '../../utils/harmonyLocalRuntime.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import AgentGateWorker from './worker';
 
 // 依赖 agent-gate@0.5.4 的存储格式：tool_calls 表 / tool_calls/<session>.json 文件布局。
