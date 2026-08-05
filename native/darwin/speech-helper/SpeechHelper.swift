@@ -41,10 +41,16 @@ func normalizedLocaleIdentifier(_ identifier: String) -> String {
 }
 
 func localeLanguageCode(_ locale: Locale) -> String? {
+    if #available(macOS 13, *) {
+        return locale.language.languageCode?.identifier
+    }
     return Locale.components(fromIdentifier: locale.identifier)[NSLocale.Key.languageCode.rawValue]
 }
 
 func localeRegionCode(_ locale: Locale) -> String? {
+    if #available(macOS 13, *) {
+        return locale.region?.identifier
+    }
     return Locale.components(fromIdentifier: locale.identifier)[NSLocale.Key.countryCode.rawValue]
 }
 
