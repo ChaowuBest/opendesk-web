@@ -30,6 +30,10 @@ import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
+import {
+    OPEN_GENOFFICE_DOCUMENT_READY_CHANNEL,
+    OPEN_GENOFFICE_EDITOR_VISIBLE_CHANNEL
+} from '@bitclub.ai/open-genoffice/host-events';
 
 const t = createRendererTranslator();
 
@@ -168,6 +172,14 @@ function pickFileIcon(entry: FSEntry): string {
 
 function isPptxFile(filePath: string): boolean {
     return filePath.toLowerCase().endsWith('.pptx');
+}
+
+function renderPptxLoadingIndicator(): string {
+    return `
+        <div class="ws-pptx-loading-indicator" role="status" aria-live="polite">
+            <span class="ws-pptx-loading-spinner" aria-hidden="true"></span>
+            <span class="ws-pptx-loading-text">${escapeHtml(t('renderer.fileExplorer.preview.loadingEditor'))}</span>
+        </div>`;
 }
 
 // ============================================================================
@@ -413,10 +425,34 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: var(--fs-lg); color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: var(--fs-sm); color: #94a3b8; margin-top: 2px; }
-        .ws-pptx-host { flex: 1; min-height: 0; overflow: hidden; background: #e9edf3; }
-        .ws-pptx-loading { display: flex; align-items: center; justify-content: center; background: #ffffff; }
-        .ws-pptx-loading content-loading-view { width: 100%; }
-        .ws-pptx-frame { display: flex; width: 100%; height: 100%; border: 0; background: #ffffff; }
+        .ws-pptx-host { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #e9edf3; }
+        .ws-pptx-loading { background: #ffffff; }
+        .ws-pptx-loading-indicator {
+            position: absolute; inset: 0; z-index: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+            box-sizing: border-box;
+            background: #ffffff;
+            color: #6b7280;
+        }
+        .ws-pptx-loading-spinner {
+            width: 28px; height: 28px; box-sizing: border-box;
+            border: 2px solid rgba(222, 68, 51, 0.18);
+            border-top-color: var(--brand-red, #DE4433);
+            border-radius: 50%;
+            animation: ws-pptx-loading-spin 0.8s linear infinite;
+        }
+        .ws-pptx-loading-text {
+            font-size: var(--fs-sm, 13px); line-height: 1.4; font-weight: 400;
+            letter-spacing: 0.02em;
+        }
+        @keyframes ws-pptx-loading-spin {
+            to { transform: rotate(360deg); }
+        }
+        .ws-pptx-frame {
+            position: absolute; inset: 0; display: flex;
+            width: 100%; height: 100%; border: 0; background: #ffffff;
+        }
+        .ws-pptx-frame--loading { visibility: hidden; }
         .ws-editor-host {
             flex: 1;
             display: flex;
@@ -2324,11 +2360,26 @@ export class FileExplorer {
 
         const editorUrl = `./slides_editor.html?mode=tab&file=${encodeURIComponent(filePath)}`;
         const webview = document.createElement('webview');
-        webview.className = 'ws-pptx-frame';
+        webview.className = 'ws-pptx-frame ws-pptx-frame--loading';
         webview.setAttribute('src', editorUrl);
         webview.setAttribute('title', t('renderer.fileExplorer.pptx.editor'));
-        host.classList.remove('ws-pptx-loading');
-        host.replaceChildren(webview);
+        const handleEditorMessage = (event: Event): void => {
+            const ipcEvent = event as Event & { channel?: string };
+            if (
+                ipcEvent.channel !== OPEN_GENOFFICE_EDITOR_VISIBLE_CHANNEL &&
+                ipcEvent.channel !== OPEN_GENOFFICE_DOCUMENT_READY_CHANNEL
+            ) {
+                return;
+            }
+            webview.removeEventListener('ipc-message', handleEditorMessage);
+            host.classList.remove('ws-pptx-loading');
+            host.querySelector('.ws-pptx-loading-indicator')?.remove();
+            webview.classList.remove('ws-pptx-frame--loading');
+        };
+        webview.addEventListener('ipc-message', handleEditorMessage);
+        host.classList.add('ws-pptx-loading');
+        host.innerHTML = renderPptxLoadingIndicator();
+        host.prepend(webview);
     }
 
     private _isPreviewUnsupported(): boolean {
@@ -2490,7 +2541,7 @@ export class FileExplorer {
         if (this._previewState.status === 'loading') {
             bodyHtml =
                 this._selectedFile && isPptxFile(this._selectedFile)
-                    ? `<div class="ws-pptx-host ws-pptx-loading"><content-loading-view data-type="tb" data-message="${escapeHtml(t('renderer.fileExplorer.preview.loadingEditor'))}"></content-loading-view></div>`
+                    ? `<div class="ws-pptx-host ws-pptx-loading">${renderPptxLoadingIndicator()}</div>`
                     : `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>

@@ -5,6 +5,7 @@ type FileExplorerModule = typeof import('../../../renderer/components/fileExplor
 
 describe('file explorer', () => {
     let FileExplorer: FileExplorerModule['FileExplorer'];
+    let getFileExplorerCSS: FileExplorerModule['getFileExplorerCSS'];
 
     beforeAll(async () => {
         jest.unstable_mockModule('ace-builds/css/ace.css', () => ({ default: '' }));
@@ -14,10 +15,11 @@ describe('file explorer', () => {
         Object.assign(globalThis, {
             window,
             document: window.document,
-            HTMLElement: window.HTMLElement
+            HTMLElement: window.HTMLElement,
+            customElements: window.customElements
         });
 
-        ({ FileExplorer } = await import('../../../renderer/components/fileExplorer.js'));
+        ({ FileExplorer, getFileExplorerCSS } = await import('../../../renderer/components/fileExplorer.js'));
     });
 
     beforeEach(() => {
@@ -59,7 +61,7 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-preview')?.classList.contains('ws-preview--collapsed')).toBe(true);
     });
 
-    test('opens pptx files in the embedded GenOffice Slides editor', async () => {
+    test('opens pptx files in the embedded Open GenOffice editor', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
@@ -96,7 +98,7 @@ describe('file explorer', () => {
         explorer.closeEditor();
     });
 
-    test('waits for the GenOffice Slides runtime before creating the pptx webview', async () => {
+    test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         let finishPrepare: ((ready: boolean) => void) | undefined;
@@ -125,10 +127,11 @@ describe('file explorer', () => {
         explorer.selectFile('/workspace/deck.pptx');
         const previewRoot = container.querySelector('[data-preview-root]');
         const loadingHost = container.querySelector('.ws-pptx-host');
-        expect(loadingHost?.querySelector('content-loading-view')).not.toBeNull();
-        expect(loadingHost?.querySelector('content-loading-view')?.getAttribute('data-message')).toContain(
-            'Loading editor'
-        );
+        expect(loadingHost?.querySelector('.ws-pptx-loading-indicator')).not.toBeNull();
+        expect(loadingHost?.querySelector('.ws-pptx-loading-spinner')).not.toBeNull();
+        expect(loadingHost?.querySelector('.ws-pptx-loading-text')?.textContent).toContain('Loading editor');
+        expect(getFileExplorerCSS()).toContain('@keyframes ws-pptx-loading-spin');
+        expect(getFileExplorerCSS()).toContain('.ws-pptx-loading-spinner');
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(prepare).toHaveBeenCalledTimes(1);
@@ -136,9 +139,18 @@ describe('file explorer', () => {
 
         finishPrepare?.(true);
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(container.querySelector('.ws-pptx-frame')).not.toBeNull();
+        const editor = container.querySelector<HTMLElement>('.ws-pptx-frame');
+        expect(editor).not.toBeNull();
         expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
-        expect(container.querySelector('content-loading-view')).toBeNull();
+        expect(container.querySelector('.ws-pptx-loading-indicator')).not.toBeNull();
+        expect(editor?.classList.contains('ws-pptx-frame--loading')).toBe(true);
+
+        const visibleEvent = new window.Event('ipc-message') as Event & { channel: string };
+        visibleEvent.channel = 'open-genoffice:editor-visible';
+        editor?.dispatchEvent(visibleEvent);
+
+        expect(container.querySelector('.ws-pptx-loading-indicator')).toBeNull();
+        expect(editor?.classList.contains('ws-pptx-frame--loading')).toBe(false);
     });
 
     test('keeps the same pptx editor session across fullscreen layout changes', async () => {

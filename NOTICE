@@ -2,8 +2,10 @@ OpenDesk
 Copyright (c) 2026 The OpenDesk Team
 
 This product includes portions of GenOffice, Copyright 2026 Mainfunc, Inc.,
-licensed under the Apache License, Version 2.0. The corresponding source,
-license, and upstream NOTICE are included under vendor/genoffice/.
+licensed under the Apache License, Version 2.0, through the
+@bitclub.ai/open-genoffice integration package. The corresponding source,
+license, upstream provenance, and modification notices are maintained by that
+package.
 
 GenOffice and Genspark are trademarks of Mainfunc, Inc. OpenDesk is not
 affiliated with or endorsed by Mainfunc, Inc.

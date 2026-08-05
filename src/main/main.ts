@@ -74,12 +74,12 @@ import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.
 import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
-    activateGenOfficeSlidesContents,
-    attachGenOfficeSlidesWindow,
-    configureGenOfficeSlidesWebPreferences,
-    isGenOfficeSlidesUrl,
-    registerEmbeddedGenOfficeSlides
-} from './office/genofficeSlidesHost.js';
+    activateOpenGenOfficeSlidesContents,
+    attachOpenGenOfficeSlidesWindow,
+    configureOpenGenOfficeSlidesWebPreferences,
+    isOpenGenOfficeSlidesUrl,
+    registerEmbeddedOpenGenOfficeSlides
+} from './office/openGenOfficeSlidesHost.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import {
@@ -696,8 +696,8 @@ const createWindow = () => {
         // 非活跃 webview 开启后台节流，降低 CPU 和电量消耗
         webPreferences.backgroundThrottling = true;
         const src = params.src ?? '';
-        if (isGenOfficeSlidesUrl(src)) {
-            configureGenOfficeSlidesWebPreferences(webPreferences);
+        if (isOpenGenOfficeSlidesUrl(src)) {
+            configureOpenGenOfficeSlidesWebPreferences(webPreferences);
             return;
         }
         const isApplicationGuest = src.includes('application.html');
@@ -725,8 +725,8 @@ const createWindow = () => {
     // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
     // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
-        if (isGenOfficeSlidesUrl(webContents.getURL())) {
-            activateGenOfficeSlidesContents(webContents);
+        if (isOpenGenOfficeSlidesUrl(webContents.getURL())) {
+            activateOpenGenOfficeSlidesContents(webContents);
         }
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
@@ -799,7 +799,7 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
-    attachGenOfficeSlidesWindow(mainWindow);
+    attachOpenGenOfficeSlidesWindow(mainWindow);
     BrowserManager.setMainWindow(mainWindow);
 };
 
@@ -3116,8 +3116,8 @@ async function startApplication(): Promise<void> {
         // renderer 调用 theme:getResolvedTheme 时 createWindow() 已完成，安全。
         registerThemeHandlers();
 
-        // 仅注册轻量准备入口；完整的 GenOffice Slides 运行时在用户打开 PPTX 后加载。
-        registerEmbeddedGenOfficeSlides();
+        // 仅注册轻量准备入口；完整的 Open GenOffice Slides 运行时在用户打开 PPTX 后加载。
+        registerEmbeddedOpenGenOfficeSlides();
 
         // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
         // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
