@@ -248,6 +248,38 @@ describe('task-view message queue', () => {
         document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
     });
 
+    test('keeps the pptx editor and focus width when the right sidebar is collapsed and reopened', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _rightSidebarExpanded: boolean;
+            _rightSidebarWidth: number;
+            render: () => void;
+            _handlePptxFocusModeChange: (event: CustomEvent<{ active: boolean; fullscreen: boolean }>) => void;
+            _collapseRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
+            _expandRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView._rightSidebarExpanded = true;
+        taskView.render();
+        const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')! as HTMLElement & {
+            closeEditor: jest.Mock;
+        };
+        const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
+        artifacts.closeEditor = jest.fn();
+
+        taskView._handlePptxFocusModeChange(
+            new CustomEvent('pptx-focus-mode-change', { detail: { active: true, fullscreen: true } })
+        );
+        taskView._collapseRightSidebar(artifacts, resizer);
+
+        expect(artifacts.closeEditor).not.toHaveBeenCalled();
+        expect(taskView._rightSidebarWidth).toBe(380);
+
+        taskView._expandRightSidebar(artifacts, resizer);
+
+        expect(artifacts.style.width).toBe('75%');
+    });
+
     test('emits task status changes for embedded hosts', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

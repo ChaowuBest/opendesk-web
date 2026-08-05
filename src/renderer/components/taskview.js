@@ -2253,15 +2253,20 @@ class TaskView extends HTMLElement {
         this._animatePptxSidebarWidth(rightSidebar, restoreWidth);
     }
 
+    _getRightSidebarTargetWidth() {
+        if (this._pptxFocusActive) return PPTX_FOCUS_RIGHT_SIDEBAR_WIDTH;
+        return `${this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH}px`;
+    }
+
     _expandRightSidebar(rightSidebar, resizer) {
-        const targetWidth = this._rightSidebarWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+        const targetWidth = this._getRightSidebarTargetWidth();
         this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
         // 后台/隐藏任务跳过 width 0→targetWidth 的过渡动画，直接落到终态。
         // 动画会触发布局回流并通过共享合成影响其他可见任务窗口（界面向左平移）。
         const suppressAnimation = this._shouldSuppressIncrementalRender();
         if (suppressAnimation) {
-            rightSidebar.style.width = targetWidth + 'px';
+            rightSidebar.style.width = targetWidth;
             rightSidebar.style.opacity = '1';
             rightSidebar.style.overflow = '';
             if (resizer) {
@@ -2291,7 +2296,7 @@ class TaskView extends HTMLElement {
         if (resizer) {
             resizer.style.transition = 'opacity 280ms ease';
         }
-        rightSidebar.style.width = targetWidth + 'px';
+        rightSidebar.style.width = targetWidth;
         rightSidebar.style.opacity = '1';
         if (resizer) resizer.style.opacity = '1';
 
@@ -2314,13 +2319,17 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
-        // 侧边栏收起时关闭编辑器覆盖层
-        if (typeof rightSidebar.closeEditor === 'function') {
+        // PPT 聚焦模式下收起侧边栏只隐藏编辑器，保留当前会话和未保存内容。
+        if (!this._pptxFocusActive && typeof rightSidebar.closeEditor === 'function') {
             rightSidebar.closeEditor();
         }
 
-        this._rightSidebarWidth =
-            parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+        // 75% 是 PPT 聚焦模式的临时宽度，不能被当成 75px 写回用户的固定侧边栏宽度。
+        if (!this._pptxFocusActive) {
+            const inlineWidth = rightSidebar.style.width.trim();
+            const inlinePixelWidth = inlineWidth.endsWith('px') ? Number.parseFloat(inlineWidth) : 0;
+            this._rightSidebarWidth = inlinePixelWidth || rightSidebar.offsetWidth || DEFAULT_RIGHT_SIDEBAR_WIDTH;
+        }
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
             'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
@@ -2901,7 +2910,7 @@ class TaskView extends HTMLElement {
         if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
-            rightSidebar.style.width = this._rightSidebarWidth + 'px';
+            rightSidebar.style.width = this._getRightSidebarTargetWidth();
             rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);
