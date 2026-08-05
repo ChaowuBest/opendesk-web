@@ -6,7 +6,7 @@ import { SkillAnalyzer } from '../../../main/applications/skillmgr/analyzer/anal
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { logger } from '../../../main/utils/logger.js';
 import AdmZip from 'adm-zip';
-import { SkillRegistry } from '../../../main/applications/skillmgr/utils.js';
+import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry';
 import { mutateOpendeskMeta } from '../../../main/applications/skillmgr/analyzer/metadata.js';
 
 function makeAnalyzerWithTaskManager(taskManagerState: { getTask: jest.Mock }): SkillAnalyzer {
@@ -93,8 +93,8 @@ describe('SkillAnalyzer robustness boundaries', () => {
         const zip = new AdmZip();
         zip.addFile('demo_meta.json', Buffer.from(JSON.stringify({ imported: true, testCases: [{ index: 9 }] })));
         zip.writeZip(zipPath);
-        jest.spyOn(SkillRegistry, 'skillExists').mockReturnValue(true);
-        jest.spyOn(SkillRegistry, 'getSkillDetail').mockReturnValue({ skillDir } as any);
+        jest.spyOn(skillRegistry, 'skillExists').mockReturnValue(true);
+        jest.spyOn(skillRegistry, 'getSkillDetail').mockReturnValue({ skillDir } as any);
 
         let releaseMutation!: () => void;
         let mutationStarted!: () => void;
