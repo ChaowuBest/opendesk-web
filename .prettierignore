@@ -2,7 +2,6 @@ dist/
 out/
 node_modules/
 native/
-vendor/
 *.node
 package-lock.json
 src/renderer/scripts/libs/

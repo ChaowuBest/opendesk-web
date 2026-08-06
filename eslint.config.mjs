@@ -84,6 +84,6 @@ export default tseslint.config(
         }
     },
     {
-        ignores: ['dist/', 'out/', 'node_modules/', 'native/', 'vendor/', '**/*.d.ts']
+        ignores: ['dist/', 'out/', 'node_modules/', 'native/', '**/*.d.ts']
     }
 );
