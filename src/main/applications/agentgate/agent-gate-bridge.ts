@@ -531,6 +531,13 @@ class AgentGateBridge {
 
         // Build env: LLM + custom rules for AgentMoss
         const extraEnv: Record<string, string> = { NODE_ENV: 'production' };
+        // 归属实例标识：health 端点返回 instance 字段。同机多套 agentmoss 并存时，
+        // 第三方探测（如 xiaoO install.sh / bridge.py 扫 9090-9095）按 instance 过滤，
+        // 避免把 OpenDesk 的 agent-moss 当成自己的服务误停/误连。xiaoO 期望 xiaoo，
+        // 这里注入 opendesk 使两者区分。
+        if (state.name === 'agent-moss') {
+            extraEnv['AGENT_MOSS_INSTANCE'] = 'opendesk';
+        }
         const gateArgs: string[] = ['server', '--port', String(state.port), '--host', '127.0.0.1'];
         if (settingInstance) {
             extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
