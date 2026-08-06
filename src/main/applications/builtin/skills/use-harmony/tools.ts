@@ -33,13 +33,13 @@ import { BaseTool, BaseToolset } from '../../../../aikernel/tool.js';
 
 const execFileAsync = promisify(execFile);
 
-type Sharp = (typeof import('sharp'))['default'];
+type JimpClass = (typeof import('jimp'))['Jimp'];
 
-let sharpPromise: Promise<Sharp | null> | undefined;
+let jimpPromise: Promise<JimpClass | null> | undefined;
 
-function loadSharp(): Promise<Sharp | null> {
-    sharpPromise ??= import('sharp').then((module) => module.default).catch(() => null);
-    return sharpPromise;
+function loadJimp(): Promise<JimpClass | null> {
+    jimpPromise ??= import('jimp').then((module) => module.Jimp ?? null).catch(() => null);
+    return jimpPromise;
 }
 
 async function runHdc(args: readonly string[], timeout = 15000): Promise<string> {
@@ -1061,16 +1061,18 @@ async function chooseOptionWithOcr(trigger: ElementMatch, option: string, match:
     const screenshotPath = await captureScreenshot();
     const screenshotDir = dirname(screenshotPath);
     try {
-        const sharp = await loadSharp();
-        if (!sharp) return null;
-        const metadata = await sharp(screenshotPath).metadata();
-        if (!metadata.width || !metadata.height) return null;
+        const Jimp = await loadJimp();
+        if (!Jimp) return null;
+        const img = await Jimp.read(screenshotPath);
+        const width = img.bitmap.width;
+        const height = img.bitmap.height;
+        if (!width || !height) return null;
         const triggerWidth = trigger.bounds.x2 - trigger.bounds.x1;
         const region = {
             x1: Math.max(0, trigger.bounds.x1 - Math.max(120, triggerWidth)),
             y1: 0,
-            x2: Math.min(metadata.width, trigger.bounds.x2 + Math.max(240, triggerWidth)),
-            y2: metadata.height
+            x2: Math.min(width, trigger.bounds.x2 + Math.max(240, triggerWidth)),
+            y2: height
         };
         return chooseOcrOptionMatch(await performOcr(screenshotPath, region), option, match);
     } finally {
@@ -3073,20 +3075,18 @@ async function loadImageRaw(
     filePath: string,
     region?: { x1: number; y1: number; x2: number; y2: number }
 ): Promise<{ data: Buffer; width: number; height: number }> {
-    const sharp = await loadSharp();
-    if (!sharp) throw new Error('sharp is required for visualAssert. Install it with npm install sharp.');
-
-    let pipeline = sharp(filePath).ensureAlpha();
+    const Jimp = await loadJimp();
+    if (!Jimp) throw new Error('jimp is required for visualAssert. Install it with npm install jimp.');
+    const img = await Jimp.read(filePath);
     if (region) {
-        pipeline = pipeline.extract({
-            left: region.x1,
-            top: region.y1,
-            width: region.x2 - region.x1,
-            height: region.y2 - region.y1
+        img.crop({
+            x: region.x1,
+            y: region.y1,
+            w: region.x2 - region.x1,
+            h: region.y2 - region.y1
         });
     }
-    const { data, info } = await pipeline.raw().toBuffer({ resolveWithObject: true });
-    return { data, width: info.width, height: info.height };
+    return { data: img.bitmap.data, width: img.bitmap.width, height: img.bitmap.height };
 }
 
 async function performDiff(
@@ -3105,16 +3105,12 @@ async function performDiff(
     // Resize baseline to match screenshot dimensions if needed
     let baselineData = baseline.data;
     if (baseline.width !== screenshot.width || baseline.height !== screenshot.height) {
-        const sharp = await loadSharp();
-        if (!sharp) throw new Error('sharp is required for image resizing.');
+        const Jimp = await loadJimp();
+        if (!Jimp) throw new Error('jimp is required for image resizing.');
 
-        const resized = await sharp(baselineData, {
-            raw: { width: baseline.width, height: baseline.height, channels: 4 }
-        })
-            .resize(screenshot.width, screenshot.height, { fit: 'fill' })
-            .raw()
-            .toBuffer({ resolveWithObject: true });
-        baselineData = resized.data;
+        const resized = await Jimp.fromBitmap({ data: baselineData, width: baseline.width, height: baseline.height });
+        resized.resize({ w: screenshot.width, h: screenshot.height });
+        baselineData = resized.bitmap.data;
     }
 
     const totalPixels = screenshot.width * screenshot.height;
@@ -3132,13 +3128,14 @@ async function performDiff(
     if (args.outputDiff && diffOutput) {
         const tmpDir = mkdtempSync(join(tmpdir(), 'opendesk-visualdiff-'));
         diffImagePath = join(tmpDir, 'diff.png');
-        const sharp = await loadSharp();
-        if (sharp) {
-            await sharp(diffOutput, {
-                raw: { width: screenshot.width, height: screenshot.height, channels: 4 }
-            })
-                .png()
-                .toFile(diffImagePath);
+        const Jimp = await loadJimp();
+        if (Jimp) {
+            const diffImg = await Jimp.fromBitmap({
+                data: diffOutput,
+                width: screenshot.width,
+                height: screenshot.height
+            });
+            await diffImg.write(diffImagePath);
         }
     }
 
@@ -3158,13 +3155,14 @@ async function performColorSample(
     screenshotPath: string,
     samples: { x: number; y: number; expected?: string; tolerance: number }[]
 ): Promise<ColorSample[]> {
-    const sharp = await loadSharp();
-    if (!sharp) throw new Error('sharp is required for color sampling.');
+    const Jimp = await loadJimp();
+    if (!Jimp) throw new Error('jimp is required for color sampling.');
 
-    const { data, info } = await sharp(screenshotPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const img = await Jimp.read(screenshotPath);
+    const { data, width } = img.bitmap;
 
     return samples.map((sample) => {
-        const idx = (sample.y * info.width + sample.x) * 4;
+        const idx = (sample.y * width + sample.x) * 4;
         const r = data[idx] ?? 0;
         const g = data[idx + 1] ?? 0;
         const b = data[idx + 2] ?? 0;
@@ -3193,21 +3191,23 @@ async function detectTheme(imgPath: string): Promise<{
     overallBrightness: number;
     regionBrightnesses: number[];
 }> {
-    const sharp = await loadSharp();
-    if (!sharp) throw new Error('sharp is required for theme detection.');
+    const Jimp = await loadJimp();
+    if (!Jimp) throw new Error('jimp is required for theme detection.');
 
-    const metadata = await sharp(imgPath).metadata();
-    if (!metadata.width || !metadata.height) {
+    const img = await Jimp.read(imgPath);
+    const width = img.bitmap.width;
+    const height = img.bitmap.height;
+    if (!width || !height) {
         throw new Error('Unable to determine screenshot dimensions');
     }
 
-    const { data } = await sharp(imgPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const { data } = img.bitmap;
 
     // Sample a 3x3 grid of regions
     const cols = 3;
     const rows = 3;
-    const regionW = Math.floor(metadata.width / cols);
-    const regionH = Math.floor(metadata.height / rows);
+    const regionW = Math.floor(width / cols);
+    const regionH = Math.floor(height / rows);
     const regionBrightnesses: number[] = [];
 
     for (let gy = 0; gy < rows; gy++) {
@@ -3218,9 +3218,9 @@ async function detectTheme(imgPath: string): Promise<{
             let count = 0;
 
             // Sample every 4th pixel within the region for performance
-            for (let y = startY; y < startY + regionH && y < metadata.height; y += 4) {
-                for (let x = startX; x < startX + regionW && x < metadata.width; x += 4) {
-                    const idx = (y * metadata.width + x) * 4;
+            for (let y = startY; y < startY + regionH && y < height; y += 4) {
+                for (let x = startX; x < startX + regionW && x < width; x += 4) {
+                    const idx = (y * width + x) * 4;
                     total += data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
                     count++;
                 }
@@ -3488,58 +3488,46 @@ async function performOcr(
     imgPath: string,
     region?: { x1: number; y1: number; x2: number; y2: number }
 ): Promise<OcrResult[]> {
-    const sharp = await loadSharp();
-    if (!sharp) {
-        return [{ text: '(sharp not available)', x: 0, y: 0, width: 0, height: 0, confidence: 0 }];
+    const Jimp = await loadJimp();
+    if (!Jimp) {
+        return [{ text: '(jimp not available)', x: 0, y: 0, width: 0, height: 0, confidence: 0 }];
     }
 
-    const metadata = await sharp(imgPath).metadata();
-    if (!metadata.width || !metadata.height) {
+    const img = await Jimp.read(imgPath);
+    const width = img.bitmap.width;
+    const height = img.bitmap.height;
+    if (!width || !height) {
         throw new Error('Unable to determine screenshot dimensions');
     }
 
-    const crop = region ?? { x1: 0, y1: 0, x2: metadata.width, y2: metadata.height };
-    if (
-        crop.x1 < 0 ||
-        crop.y1 < 0 ||
-        crop.x2 <= crop.x1 ||
-        crop.y2 <= crop.y1 ||
-        crop.x2 > metadata.width ||
-        crop.y2 > metadata.height
-    ) {
+    const crop = region ?? { x1: 0, y1: 0, x2: width, y2: height };
+    if (crop.x1 < 0 || crop.y1 < 0 || crop.x2 <= crop.x1 || crop.y2 <= crop.y1 || crop.x2 > width || crop.y2 > height) {
         throw new Error(
             `Invalid OCR region: [${crop.x1},${crop.y1}][${crop.x2},${crop.y2}], ` +
-                `screenshot size is ${metadata.width}x${metadata.height}`
+                `screenshot size is ${width}x${height}`
         );
     }
 
     const cropWidth = crop.x2 - crop.x1;
     const cropHeight = crop.y2 - crop.y1;
     const requestedScale = 2;
-    let pipeline = sharp(imgPath);
+    let prepared = img;
     if (region) {
-        pipeline = pipeline.extract({
-            left: crop.x1,
-            top: crop.y1,
-            width: cropWidth,
-            height: cropHeight
-        });
+        prepared = img.crop({ x: crop.x1, y: crop.y1, w: cropWidth, h: cropHeight });
     }
 
     // Derive coordinate scaling from the actual OCR image dimensions.
-    const prepared = await pipeline
-        .resize(cropWidth * requestedScale, cropHeight * requestedScale, { fit: 'fill' })
-        .grayscale()
-        .png()
-        .toBuffer({ resolveWithObject: true });
-    const scaleX = prepared.info.width / cropWidth;
-    const scaleY = prepared.info.height / cropHeight;
+    prepared.resize({ w: cropWidth * requestedScale, h: cropHeight * requestedScale });
+    prepared.greyscale();
+    const scaleX = prepared.bitmap.width / cropWidth;
+    const scaleY = prepared.bitmap.height / cropHeight;
 
-    // Write buffer to temp file for Tesseract.
+    // Write to temp file for Tesseract.
     const tmpDir = mkdtempSync(join(tmpdir(), 'opendesk-ocr-'));
     const tmpImg = join(tmpDir, 'ocr_input.png');
     const tmpOut = join(tmpDir, 'ocr_output');
-    writeFileSync(tmpImg, prepared.data);
+    const preparedBuf = await prepared.getBuffer('image/png');
+    writeFileSync(tmpImg, preparedBuf);
 
     try {
         // Try chi_sim+eng first, fall back to eng
@@ -3609,30 +3597,29 @@ async function analyzeRegionBrightness(
     x2: number,
     y2: number
 ): Promise<RegionAnalysis[]> {
-    const sharp = await loadSharp();
-    if (!sharp) return [];
+    const Jimp = await loadJimp();
+    if (!Jimp) return [];
 
-    const { data, info } = await sharp(imgPath)
-        .extract({ left: x1, top: y1, width: x2 - x1, height: y2 - y1 })
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-
-    const channels = info.channels;
-    const rowHeight = info.height;
+    const img = await Jimp.read(imgPath);
+    const cropped = img.crop({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+    const { data } = cropped.bitmap;
+    const width = cropped.bitmap.width;
+    const height = cropped.bitmap.height;
+    const channels = 4;
 
     // Calculate average brightness per row
     const rowBrightness: number[] = [];
-    for (let y = 0; y < rowHeight; y++) {
+    for (let y = 0; y < height; y++) {
         let total = 0;
-        for (let x = 0; x < info.width; x++) {
-            const idx = (y * info.width + x) * channels;
+        for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * channels;
             if (channels >= 3) {
                 total += (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
             } else {
                 total += data[idx];
             }
         }
-        rowBrightness.push(total / info.width);
+        rowBrightness.push(total / width);
     }
 
     // Find brightness transitions to segment the region

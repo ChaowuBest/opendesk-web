@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import sharp from 'sharp';
+import { Jimp } from 'jimp';
 import { loadUseHarmonySkill } from '../../../../main/applications/builtin/skills/use-harmony/skill.js';
 import {
     AppLifecycleTool,
@@ -1016,11 +1016,9 @@ test('regional screenshot maps OCR boxes back to absolute device coordinates', {
             ].join('\n'),
             { mode: 0o755 }
         );
-        await sharp({
-            create: { width: 100, height: 80, channels: 3, background: { r: 255, g: 255, b: 255 } }
-        })
-            .png()
-            .toFile(screenshotPath);
+        const img = new Jimp({ width: 100, height: 80, color: 0xffffffff });
+        const pngBuf = await img.getBuffer('image/png');
+        fs.writeFileSync(screenshotPath, pngBuf);
         process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
         process.env.HDC_SCREENSHOT_PATH = screenshotPath;
         process.env.TESSERACT_INPUT_COPY = preparedImagePath;
@@ -1033,8 +1031,11 @@ test('regional screenshot maps OCR boxes back to absolute device coordinates', {
         const parsed = JSON.parse(result.result);
         assert.equal(parsed.success, true);
         assert.deepEqual(parsed.ocr, [{ text: 'Option', x: 20, y: 25, width: 20, height: 10, confidence: 95 }]);
-        const preparedMetadata = await sharp(preparedImagePath).metadata();
-        assert.deepEqual({ width: preparedMetadata.width, height: preparedMetadata.height }, { width: 80, height: 60 });
+        const preparedImg = await Jimp.read(preparedImagePath);
+        assert.deepEqual(
+            { width: preparedImg.bitmap.width, height: preparedImg.bitmap.height },
+            { width: 80, height: 60 }
+        );
     } finally {
         process.env.PATH = originalPath;
         if (originalScreenshotPath === undefined) delete process.env.HDC_SCREENSHOT_PATH;
