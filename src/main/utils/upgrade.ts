@@ -177,7 +177,7 @@ function fetchNpmRegistry(url: string, timeout: number = 15000): Promise<Record<
  * 从 npm registry 获取指定包的最新版本
  * 使用 HTTP 请求直接访问 registry，比 npm view 命令更快
  * @param packageName 包名
- * @param tag npm tag (如 'latest' 或 'nightly')
+ * @param tag npm tag
  * @returns 版本号或 null（如果获取失败）
  */
 export async function getNpmVersion(packageName: string, tag: string = 'latest'): Promise<string | null> {
@@ -216,34 +216,24 @@ export async function getNpmVersion(packageName: string, tag: string = 'latest')
 
 // 缓存版本信息，避免重复查询
 let cachedVersionInfo: VersionInfo | null = null;
-let cachedVersionInfoTag: 'latest' | 'nightly' | null = null;
 let cachedVersionInfoTime: number = 0;
 const VERSION_CACHE_TTL = 5 * 60 * 1000; // 5 分钟缓存
 
 /**
- * 从 npm registry 获取指定 tag 的版本（通过 dist-tags）
- * @param tag npm tag ('latest' 或 'nightly')
+ * 从 npm registry 获取最新版本（通过 dist-tags）
  * @param forceRefresh 是否强制刷新缓存
  * @returns 版本信息
  */
-export async function getVersionInfo(
-    tag: 'latest' | 'nightly' = 'latest',
-    forceRefresh: boolean = false
-): Promise<VersionInfo> {
+export async function getVersionInfo(forceRefresh: boolean = false): Promise<VersionInfo> {
     const now = Date.now();
 
     // 检查缓存是否有效
-    if (
-        !forceRefresh &&
-        cachedVersionInfo &&
-        cachedVersionInfoTag === tag &&
-        now - cachedVersionInfoTime < VERSION_CACHE_TTL
-    ) {
+    if (!forceRefresh && cachedVersionInfo && now - cachedVersionInfoTime < VERSION_CACHE_TTL) {
         return cachedVersionInfo;
     }
 
     // 并行执行所有查询，提升性能
-    const [installInfo, latest] = await Promise.all([getNpmInstallInfo(), getNpmVersion(PACKAGE_NAME, tag)]);
+    const [installInfo, latest] = await Promise.all([getNpmInstallInfo(), getNpmVersion(PACKAGE_NAME)]);
 
     cachedVersionInfo = {
         current: installInfo.version,
@@ -251,7 +241,6 @@ export async function getVersionInfo(
         needsUpdate: latest !== null && installInfo.version !== null && installInfo.version !== latest,
         isNpmInstalled: installInfo.isInstalled
     };
-    cachedVersionInfoTag = tag;
     cachedVersionInfoTime = now;
 
     return cachedVersionInfo;
@@ -263,7 +252,6 @@ export async function getVersionInfo(
  */
 export function compareVersions(a: string, b: string): number {
     const parseVersion = (v: string): number[] => {
-        // 移除 nightly 后缀等
         const cleanV = v.split('-')[0];
         return cleanV.split('.').map((n) => parseInt(n, 10) || 0);
     };
@@ -279,21 +267,6 @@ export function compareVersions(a: string, b: string): number {
         if (numA < numB) return -1;
     }
 
-    // 如果基础版本相同，nightly 版本比 stable 版本新
-    const aIsNightly = a.includes('-nightly-');
-    const bIsNightly = b.includes('-nightly-');
-
-    if (aIsNightly && !bIsNightly) return 1;
-    if (!aIsNightly && bIsNightly) return -1;
-
-    // 如果都是 nightly，比较日期后缀
-    if (aIsNightly && bIsNightly) {
-        const dateA = a.split('-nightly-')[1] || '';
-        const dateB = b.split('-nightly-')[1] || '';
-        if (dateA > dateB) return 1;
-        if (dateA < dateB) return -1;
-    }
-
     return 0;
 }
 
@@ -301,13 +274,9 @@ export function compareVersions(a: string, b: string): number {
  * 执行 npm install -g 安装指定版本。
  * 前置检查（isNpmInstalled、latest 可用性、needsUpdate）应由调用方完成。
  * @param versionInfo 调用方已验证的版本信息
- * @param tag npm tag ('latest' 或 'nightly')
  * @returns 是否安装成功
  */
-export async function installVersion(
-    versionInfo: VersionInfo,
-    tag: 'latest' | 'nightly' = 'latest'
-): Promise<{ success: boolean; message: string }> {
+export async function installVersion(versionInfo: VersionInfo): Promise<{ success: boolean; message: string }> {
     // 防御性检查（安全网，调用方 performUpgrade 已做完整前置检查）
     if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
         return {
@@ -318,11 +287,11 @@ export async function installVersion(
     }
 
     if (!versionInfo.latest) {
-        return { success: false, message: `无法从 npm 获取 ${tag} 版本信息，请检查网络连接` };
+        return { success: false, message: '无法从 npm 获取最新版本信息，请检查网络连接' };
     }
 
     // 执行全局安装
-    const installCmd = `npm install -g '${PACKAGE_NAME}@${tag}'`;
+    const installCmd = `npm install -g '${PACKAGE_NAME}@latest'`;
     await asyncShellExec(installCmd, {
         timeout: 120000,
         stripNpmPrefix: true
@@ -360,10 +329,9 @@ export interface UpgradeResult {
 
 /**
  * 检查并执行升级
- * @param tag npm tag ('latest' 或 'nightly')
  */
-export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<UpgradeResult> {
-    const versionInfo = await getVersionInfo(tag);
+export async function performUpgrade(): Promise<UpgradeResult> {
+    const versionInfo = await getVersionInfo();
 
     if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
         return {
@@ -379,7 +347,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
     if (!versionInfo.latest) {
         return {
             success: false,
-            message: `无法从 npm 获取 ${tag} 版本信息，请检查网络连接`,
+            message: '无法从 npm 获取最新版本信息，请检查网络连接',
             currentVersion: versionInfo.current,
             latestVersion: versionInfo.latest
         };
@@ -388,7 +356,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
     if (!versionInfo.needsUpdate) {
         return {
             success: true,
-            message: `当前已是最新 ${tag} 版本`,
+            message: '当前已是最新版本',
             currentVersion: versionInfo.current,
             latestVersion: versionInfo.latest,
             needsUpdate: false
@@ -397,7 +365,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
 
     // 执行升级
     try {
-        const result = await installVersion(versionInfo, tag);
+        const result = await installVersion(versionInfo);
 
         // 安装成功后重新获取当前版本，确保返回最新版本号
         let currentVersion = versionInfo.current;
@@ -430,8 +398,8 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
 /**
  * 仅检查版本更新（不执行升级）
  */
-export async function checkForUpdate(tag: 'latest' | 'nightly'): Promise<UpgradeResult> {
-    const versionInfo = await getVersionInfo(tag);
+export async function checkForUpdate(): Promise<UpgradeResult> {
+    const versionInfo = await getVersionInfo();
 
     return {
         success: true,
