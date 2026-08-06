@@ -92,15 +92,5 @@ describe('upgrade utils', () => {
             expect(compareVersions('2.0.0', '1.9.9')).toBe(1);
             expect(compareVersions('1.9.9', '2.0.0')).toBe(-1);
         });
-
-        test('nightly versions are newer than stable of same base', () => {
-            expect(compareVersions('1.0.0-nightly-20260729', '1.0.0')).toBe(1);
-            expect(compareVersions('1.0.0', '1.0.0-nightly-20260729')).toBe(-1);
-        });
-
-        test('compares nightly dates correctly', () => {
-            expect(compareVersions('1.0.0-nightly-20260730', '1.0.0-nightly-20260729')).toBe(1);
-            expect(compareVersions('1.0.0-nightly-20260729', '1.0.0-nightly-20260730')).toBe(-1);
-        });
     });
 });

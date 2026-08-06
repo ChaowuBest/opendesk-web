@@ -28,13 +28,12 @@ class Splitter implements Component {
     }
 }
 
-type UpgradeState = 'init' | 'select' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
-type UpgradeAction = 'stable' | 'nightly' | 'cancel' | 'upgrade' | 'close';
+type UpgradeState = 'init' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
+type UpgradeAction = 'cancel' | 'upgrade' | 'close';
 type UpgradeItem = { value: UpgradeAction; label: string };
 
 export class UpgradeOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
-    private tag: 'latest' | 'nightly' | null = null;
     private box: Box;
     private list?: SelectList;
 
@@ -63,9 +62,6 @@ export class UpgradeOverlay implements Component {
         let title = '';
         switch (this.state) {
             case 'init':
-                title = t('upgrade.title');
-                break;
-            case 'select':
                 title = t('upgrade.title');
                 break;
             case 'checking':
@@ -104,35 +100,8 @@ export class UpgradeOverlay implements Component {
                 this.addList([{ value: 'cancel', label: chalk.red(t('common.cancel')) }]);
                 break;
 
-            case 'select':
-                this.box.addChild(
-                    new Text(
-                        t('upgrade.current.version', {
-                            version:
-                                this.currentVersion === 'unknown' ? t('upgrade.current.not_npm') : this.currentVersion
-                        })
-                    )
-                );
-                this.box.addChild(new Text(''));
-                this.box.addChild(new Text(t('upgrade.select.prompt')));
-                this.box.addChild(new Text(''));
-
-                this.addList([
-                    { value: 'stable', label: chalk.green('Stable') + chalk.gray(` - ${t('upgrade.option.stable')}`) },
-                    {
-                        value: 'nightly',
-                        label: chalk.cyan('Nightly') + chalk.gray(` - ${t('upgrade.option.nightly')}`)
-                    },
-                    { value: 'cancel', label: chalk.red(t('common.cancel')) }
-                ]);
-                break;
-
             case 'checking':
-                this.box.addChild(
-                    new Text(
-                        chalk.cyan(t('upgrade.checking.tag', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' }))
-                    )
-                );
+                this.box.addChild(new Text(chalk.cyan(t('upgrade.checking'))));
                 this.box.addChild(new Text(''));
                 this.addList([{ value: 'cancel', label: chalk.red(t('common.cancel')) }]);
                 break;
@@ -145,9 +114,7 @@ export class UpgradeOverlay implements Component {
                     )
                 );
                 this.box.addChild(new Text(''));
-                this.box.addChild(
-                    new Text(t('upgrade.confirm.prompt', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' }))
-                );
+                this.box.addChild(new Text(t('upgrade.confirm.prompt')));
                 this.box.addChild(new Text(''));
 
                 this.addList([
@@ -157,13 +124,7 @@ export class UpgradeOverlay implements Component {
                 break;
 
             case 'upgrading':
-                this.box.addChild(
-                    new Text(
-                        chalk.cyan(
-                            t('upgrade.upgrading.message', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' })
-                        )
-                    )
-                );
+                this.box.addChild(new Text(chalk.cyan(t('upgrade.upgrading.message'))));
                 this.box.addChild(new Text(''));
                 this.box.addChild(new Text(chalk.gray(t('upgrade.upgrading.detail'))));
                 break;
@@ -190,7 +151,7 @@ export class UpgradeOverlay implements Component {
                 this.box.addChild(
                     new Text(
                         `${t('upgrade.version.current', { version: chalk.green(this.currentVersion) })}\n` +
-                            t('upgrade.uptodate.message', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' })
+                            t('upgrade.uptodate.message')
                     )
                 );
                 this.box.addChild(new Text(''));
@@ -246,17 +207,11 @@ export class UpgradeOverlay implements Component {
         }
         this.currentVersion = version || 'unknown';
 
-        this.setState('select');
+        void this.checkVersion();
     }
 
     private handleSelection(action: UpgradeAction): void {
-        if (action === 'stable') {
-            this.tag = 'latest';
-            void this.checkVersion();
-        } else if (action === 'nightly') {
-            this.tag = 'nightly';
-            void this.checkVersion();
-        } else if (action === 'cancel' || action === 'close') {
+        if (action === 'cancel' || action === 'close') {
             this.close();
         } else if (action === 'upgrade') {
             void this.doUpgrade();
@@ -264,13 +219,11 @@ export class UpgradeOverlay implements Component {
     }
 
     private async checkVersion(): Promise<void> {
-        if (!this.tag) return;
-
         const token = this.token;
         this.setState('checking');
 
         try {
-            const versionInfo = await getVersionInfo(this.tag);
+            const versionInfo = await getVersionInfo();
             if (this.closed || token !== this.token) {
                 return;
             }
@@ -300,13 +253,11 @@ export class UpgradeOverlay implements Component {
     }
 
     private async doUpgrade(): Promise<void> {
-        if (!this.tag) return;
-
         const token = this.token;
         this.setState('upgrading');
 
         try {
-            const result = await performUpgrade(this.tag);
+            const result = await performUpgrade();
             if (this.closed || token !== this.token) {
                 return;
             }
