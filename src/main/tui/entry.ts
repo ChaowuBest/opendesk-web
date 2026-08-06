@@ -1774,7 +1774,7 @@ export class OpenDeskTUI {
     }
 
     public focusInputAreaIfAvailable(): void {
-        if (!this.isConfigMode() && !this.isModelNotConfiguredMode() && this.isInputAreaMounted()) {
+        if (!this.isConfigMode() && this.isInputAreaMounted()) {
             this.tui.setFocus(this.inputArea.input);
         }
     }

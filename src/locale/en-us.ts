@@ -326,6 +326,13 @@ export const enUs: Record<string, string> = {
     'model.not.found': 'Model not found: ',
     'model.switched': 'Switched to model: ',
     'model.no.models': 'No models configured',
+    'model.alias': 'Model Alias',
+    'model.provider_model': 'Model',
+    'model.effort': 'Reasoning',
+    'model.default_effort': 'Default',
+    'model.context': 'Context Length',
+    'model.max_output': 'Max Output',
+    'model.info': 'Model Info',
     'model.usage': 'Usage: /model <alias>',
     'model.global.changed.title': 'Default Model Changed',
     'model.global.changed.message':
