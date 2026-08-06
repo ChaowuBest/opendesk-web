@@ -21,6 +21,8 @@ export interface MemoryChunk {
     title: string;
     content: string;
     heat: number;
+    createdAt: string;
+    updatedAt: string;
 }
 
 export interface ScopedMemoryChunk {
@@ -51,7 +53,14 @@ export function getWorkspaceMemoryFilePath(options: MemoryPathOptions = {}): str
     return path.join(getWorkspaceMemoryDir(options), 'memory', MEMORY_FILE_NAME);
 }
 
-export function normalizeMemoryChunk(raw: unknown): MemoryChunk | null {
+function normalizeMemoryTimestamp(value: unknown, fallback: string): string {
+    if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+        return fallback;
+    }
+    return new Date(value).toISOString();
+}
+
+export function normalizeMemoryChunk(raw: unknown, fallbackTimestamp = new Date(0).toISOString()): MemoryChunk | null {
     if (!raw || typeof raw !== 'object') {
         return null;
     }
@@ -61,6 +70,8 @@ export function normalizeMemoryChunk(raw: unknown): MemoryChunk | null {
     const title = record.title ?? record.Title;
     const content = record.content ?? record.Content;
     const heat = record.heat ?? record.hotness ?? record.access_count ?? record.accessCount ?? 0;
+    const updatedAt = normalizeMemoryTimestamp(record.updatedAt ?? record.updated_at, fallbackTimestamp);
+    const createdAt = normalizeMemoryTimestamp(record.createdAt ?? record.created_at, updatedAt);
 
     if (typeof uid !== 'string' || !uid.trim()) {
         return null;
@@ -76,6 +87,8 @@ export function normalizeMemoryChunk(raw: unknown): MemoryChunk | null {
         uid: uid.trim(),
         title: title.trim(),
         content,
-        heat: typeof heat === 'number' && Number.isFinite(heat) && heat > 0 ? Math.floor(heat) : 0
+        heat: typeof heat === 'number' && Number.isFinite(heat) && heat > 0 ? Math.floor(heat) : 0,
+        createdAt,
+        updatedAt
     };
 }
