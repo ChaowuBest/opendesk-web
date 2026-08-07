@@ -2043,63 +2043,7 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
     }
 }
 
-// ========== test fixtures and native file picker ==========
-
-const DeviceDirectorySchema = z
-    .string()
-    .min(2)
-    .max(2048)
-    .refine(
-        (value) =>
-            value.startsWith('/') &&
-            !value.includes('\0') &&
-            !/[\r\n]/.test(value) &&
-            !/[;&|`$<>(){}[\]*?!'"\\#~]/.test(value),
-        {
-            message: '设备目录必须是绝对路径且不能包含 shell 元字符、换行或 NUL 字符'
-        }
-    )
-    .refine((value) => posix.normalize(value) !== '/', {
-        message: '不能把设备根目录作为 fixture 目标目录'
-    });
-
-const StageFixtureArgsSchema = z.object({
-    localPath: z.string().min(1).describe('宿主机上的测试文件或目录路径'),
-    deviceDirectory: DeviceDirectorySchema.describe('设备上的目标目录；应选择系统文件选择器可浏览的位置')
-});
-
-export class StageFixtureTool extends BaseTool<typeof StageFixtureArgsSchema> {
-    constructor() {
-        super(
-            'stageFixture',
-            '通过 hdc file send 将宿主机测试文件或目录下发到设备。只创建目标目录，不会清理或删除设备文件。',
-            StageFixtureArgsSchema
-        );
-        this.serialExecution = true;
-        this.setExecutor(this.handleExecute.bind(this));
-    }
-
-    private async handleExecute(args: z.output<typeof StageFixtureArgsSchema>): Promise<string> {
-        try {
-            const localPath = resolve(args.localPath);
-            const stats = statSync(localPath);
-            const deviceDirectory = posix.normalize(args.deviceDirectory);
-            const devicePath = posix.join(deviceDirectory, basename(localPath));
-
-            await runHdc(['shell', 'mkdir', '-p', deviceDirectory], 10000);
-            await runHdc(['file', 'send', localPath, devicePath], 120000);
-
-            return ok({
-                localPath,
-                devicePath,
-                kind: stats.isDirectory() ? 'directory' : 'file',
-                ...(!stats.isDirectory() ? { bytes: stats.size } : {})
-            });
-        } catch (err) {
-            return fail(`下发测试 fixture 失败：${err}`);
-        }
-    }
-}
+// ========== native file picker ==========
 
 interface PickerTarget {
     node: LayoutNode;
@@ -2279,7 +2223,7 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
                     const capture = convertLayout(layout);
                     return fail(
                         `系统文件选择器中未找到 ${args.mode === 'saveFile' ? '文件名输入框' : `目标“${targetName}”`}。` +
-                            `请确认 Picker 已打开、路径可浏览且目标已通过 stageFixture 下发。最后快照：${capture.snapshot}`
+                            `请确认 Picker 已打开、路径可浏览且目标已下发到设备。最后快照：${capture.snapshot}`
                     );
                 }
                 await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', '2'], 10000);
@@ -3662,7 +3606,7 @@ export function createUseHarmonyToolset(): BaseToolset {
     toolset.addTool(new ListAppsTool());
     toolset.addTool(new OpenAppTool());
     toolset.addTool(new AppLifecycleTool());
-    toolset.addTool(new StageFixtureTool());
+
     toolset.addTool(new ListWindowsTool());
     toolset.addTool(new SnapshotTool());
     toolset.addTool(new ScreenshotTool());

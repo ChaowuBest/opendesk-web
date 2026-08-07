@@ -145,41 +145,13 @@ selectOption({
 input({ x: 540, y: 1820, text: "新消息", mode: "replace", maxClearChars: 512 })
 \`\`\`
 
-### 测试文件、系统文件选择器与拖放
-
-使用 **stageFixture** 将宿主机测试文件或目录下发到设备，再通过 **chooseFile** 完成系统文件选择器中的文件、目录或保存路径选择。目标目录必须是系统 Picker 可浏览的位置。
-
-\`\`\`
-// 下发应用包，然后在已经打开的系统 Picker 中选择它
-stageFixture({
-    localPath: "/absolute/fixtures/gui-gap-demo.zip",
-    deviceDirectory: "/data/local/tmp/opendesk-fixtures"
-})
-chooseFile({
-    path: "/data/local/tmp/opendesk-fixtures/gui-gap-demo.zip",
-    mode: "openFile",
-    snapshot: true
-})
-
-// 选择技能目录
-chooseFile({
-    path: "/data/local/tmp/opendesk-fixtures/gui-gap-skill",
-    mode: "openDirectory"
-})
-
-// 在保存 Picker 中填写文件名并确认
-chooseFile({
-    path: "/data/local/tmp/opendesk-fixtures/setting.json",
-    mode: "saveFile"
-})
-\`\`\`
+### 系统文件选择器与拖放
 
 **chooseFile 使用边界**：
 
 - 必须先通过 GUI 点击打开系统 Picker；工具不会替用户触发“导入”或“上传”按钮
 - 工具依赖系统 Picker 的无障碍树，按路径末尾名称和“打开 / 选择 / 保存”等按钮语义操作
 - 如果 Picker 没有暴露目标条目或确认按钮，工具会停止并返回最后快照，不会盲点坐标
-- \`/data/local/tmp\` 在部分设备上可能不会被系统 Picker 展示；遇到此情况应把 fixture 下发到已验证可浏览的公共测试目录
 
 **系统文件选择器无障碍树结构**（com.huawei.hmos.filemanager）：
 
