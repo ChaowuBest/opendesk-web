@@ -548,7 +548,7 @@ class IMAPEmailClient extends EmailContentHelper {
     static buildImapIdInfo(host) {
         return {
             name: 'OpenDesk',
-            version: '0.3.2',
+            version: '0.3.3',
             vendor: 'OpenDesk',
             'support-email': 'support@opendesk.local'
         };
