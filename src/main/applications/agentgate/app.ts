@@ -64,7 +64,10 @@ class AgentGateApplication extends BaseApplication {
                 .describe('自定义安全规则'),
             storageType: z
                 .enum(['sqlite', 'json'])
-                .default('sqlite')
+                // 默认值按平台延迟求值：鸿蒙不支持 native binding 强回退 json，其余平台默认 sqlite。
+                // 用函数形式而非字面量，确保 setData 的 schema.parse() 注入默认值时读到当前平台，
+                // 避免鸿蒙上把 'sqlite' 固化进 setting.json 导致 agent-gate 启动即崩。
+                .default(() => ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite'))
                 .describe('存储类型：sqlite 或 json（鸿蒙默认 json）'),
             dbPath: z.string().default('').describe('SQLite 数据库路径（空则使用默认值）'),
             jsonDataDir: z.string().default('').describe('JSON 文件存储目录（空则使用默认值）'),
