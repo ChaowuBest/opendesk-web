@@ -230,18 +230,18 @@
         "sqlite-vec": "^0.1.7-alpha.2"
     },
     "allowScripts": {
-        "@bitdisaster/exe-icon-extractor@1.0.10": true,
-        "better-sqlite3@12.10.0": true,
-        "classic-level@2.0.0": true,
-        "electron@39.8.10": true,
-        "esbuild@0.25.12": true,
-        "esbuild@0.27.7": true,
-        "esbuild@0.28.0": true,
-        "fs-xattr@0.3.1": true,
-        "fsevents@2.3.3": true,
-        "koffi@2.16.2": true,
-        "macos-alias@0.2.12": true,
-        "sharp@0.34.5": true,
-        "unrs-resolver@1.12.2": true
+        "@bitdisaster/exe-icon-extractor": true,
+        "better-sqlite3": true,
+        "canvas": true,
+        "classic-level": true,
+        "electron": true,
+        "esbuild": true,
+        "fs-xattr": true,
+        "fsevents": true,
+        "koffi": true,
+        "macos-alias": true,
+        "node-pty": true,
+        "sharp": true,
+        "unrs-resolver": true
     }
 }
