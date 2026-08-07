@@ -2,12 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import AdmZip from 'adm-zip';
-import {
-    SkillRegistry,
-    installFromRegistryInstallUrl,
-    installSkillFromLocalZip,
-    installSkillFromUrl
-} from '../../../main/applications/skillmgr/utils';
+import { skillRegistry } from '../../../main/applications/skillmgr/utils/skill-registry';
+import { skillInstallManager, LocalZipInstaller } from '../../../main/applications/skillmgr/utils/skill-installer';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import { setPlatform } from '../../../platforms/base';
 
@@ -23,7 +19,7 @@ describe('skillmgr skill package installation', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    test('installs packages whose entry file is lowercase skill.md', () => {
+    test('installs packages whose entry file is lowercase skill.md', async () => {
         const zipPath = path.join(tempDir, 'lowercase-skill.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -42,7 +38,7 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        const result = installSkillFromLocalZip(zipPath, undefined, true);
+        const result = await skillInstallManager.installFromLocalZip(zipPath, undefined, { force: true });
 
         if (!result.success) {
             console.error('installSkillFromLocalZip failed:', JSON.stringify(result));
@@ -54,7 +50,7 @@ describe('skillmgr skill package installation', () => {
         );
     });
 
-    test('uses the zip package name when frontmatter omits name', () => {
+    test('uses the zip package name when frontmatter omits name', async () => {
         const zipPath = path.join(tempDir, 'desktop-control-1.0.0.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -72,13 +68,13 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        const result = installSkillFromLocalZip(zipPath, undefined, true);
+        const result = await skillInstallManager.installFromLocalZip(zipPath, undefined, { force: true });
 
         expect(result.success).toBe(true);
         expect(result.name).toBe('desktop-control');
     });
 
-    test('uses slug when frontmatter has registry display fields but no name', () => {
+    test('uses slug when frontmatter has registry display fields but no name', async () => {
         const zipPath = path.join(tempDir, 'meta-ads-1.0.0.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -102,13 +98,13 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        const result = installSkillFromLocalZip(zipPath, undefined, true);
+        const result = await skillInstallManager.installFromLocalZip(zipPath, undefined, { force: true });
 
         expect(result.success).toBe(true);
         expect(result.name).toBe('meta-ads');
     });
 
-    test('truncates overly long descriptions for registration', () => {
+    test('truncates overly long descriptions for registration', async () => {
         const zipPath = path.join(tempDir, 'agent-reach-1.1.0.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -127,16 +123,16 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        const result = installSkillFromLocalZip(zipPath, undefined, true);
+        const result = await skillInstallManager.installFromLocalZip(zipPath, undefined, { force: true });
 
         expect(result.success).toBe(true);
         expect(result.name).toBe('agent-reach');
-        const skill = SkillRegistry.listSkills().find((item: any) => item.id === 'agent-reach');
+        const skill = skillRegistry.listSkills().find((item: any) => item.id === 'agent-reach');
         expect(skill?.description).toHaveLength(1024);
         expect(skill?.description.endsWith('...')).toBe(true);
     });
 
-    test('uses summary when frontmatter omits description', () => {
+    test('uses summary when frontmatter omits description', async () => {
         const zipPath = path.join(tempDir, 'fast-browser-use-1.0.5.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -157,17 +153,17 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        const result = installSkillFromLocalZip(zipPath, undefined, true);
+        const result = await skillInstallManager.installFromLocalZip(zipPath, undefined, { force: true });
 
         expect(result.success).toBe(true);
         expect(result.name).toBe('fast-browser-use');
-        const skill = SkillRegistry.listSkills().find((item: any) => item.id === 'fast-browser-use');
+        const skill = skillRegistry.listSkills().find((item: any) => item.id === 'fast-browser-use');
         expect(skill?.description).toBe(
             'Rust-powered browser automation that rips through DOMs 10x faster than Puppeteer.'
         );
     });
 
-    test('keeps local zip auto-renaming but supports explicit registry conflict policies', () => {
+    test('keeps local zip auto-renaming but supports explicit registry conflict policies', async () => {
         const zipPath = path.join(tempDir, 'conflict-skill.zip');
         const zip = new AdmZip();
         zip.addFile(
@@ -186,18 +182,26 @@ describe('skillmgr skill package installation', () => {
         );
         zip.writeZip(zipPath);
 
-        expect(installSkillFromLocalZip(zipPath).name).toBe('conflict-skill');
-        expect(installSkillFromLocalZip(zipPath).name).toBe('conflict-skill-1');
+        expect((await skillInstallManager.installFromLocalZip(zipPath)).name).toBe('conflict-skill');
+        expect((await skillInstallManager.installFromLocalZip(zipPath)).name).toBe('conflict-skill-1');
 
-        const rejected = installSkillFromLocalZip(zipPath, undefined, false, true, { action: 'reject' });
+        const rejected = await new LocalZipInstaller({
+            registry: skillRegistry,
+            zipPath,
+            conflictPolicy: { action: 'reject' }
+        }).install();
         expect(rejected.success).toBe(false);
         expect(rejected.error).toContain('已存在');
         expect(fs.existsSync(path.join(tempDir, 'apps', 'skills', 'resources', 'conflict-skill-2'))).toBe(false);
 
-        const renamed = installSkillFromLocalZip(zipPath, undefined, false, true, {
-            action: 'rename',
-            name: 'renamed-conflict-skill'
-        });
+        const renamed = await new LocalZipInstaller({
+            registry: skillRegistry,
+            zipPath,
+            conflictPolicy: {
+                action: 'rename',
+                name: 'renamed-conflict-skill'
+            }
+        }).install();
         expect(renamed).toEqual({ success: true, name: 'renamed-conflict-skill' });
         expect(
             fs.readFileSync(
@@ -230,8 +234,8 @@ describe('skillmgr skill package installation', () => {
             initPlatformHarness: async () => {}
         } as any);
 
-        const first = await installSkillFromUrl('https://example.com/remote-conflict-skill.zip');
-        const duplicate = await installSkillFromUrl('https://example.com/remote-conflict-skill.zip');
+        const first = await skillInstallManager.installFromUrl('https://example.com/remote-conflict-skill.zip');
+        const duplicate = await skillInstallManager.installFromUrl('https://example.com/remote-conflict-skill.zip');
 
         expect(first).toEqual({ success: true, name: 'remote-conflict-skill' });
         expect(duplicate.success).toBe(false);
@@ -270,22 +274,22 @@ describe('skillmgr skill package installation', () => {
             initPlatformHarness: async () => {}
         } as any);
 
-        expect(installSkillFromLocalZip(zipPath)).toEqual({ success: true, name: skillName });
+        expect(await skillInstallManager.installFromLocalZip(zipPath)).toEqual({ success: true, name: skillName });
 
-        const rejected = await installFromRegistryInstallUrl(installUrl);
+        const rejected = await skillInstallManager.installFromRegistryInstallUrl(installUrl);
         expect(rejected).toEqual({ success: false, error: `技能「${skillName}」已存在` });
 
-        const overwritten = await installFromRegistryInstallUrl(installUrl, true);
+        const overwritten = await skillInstallManager.installFromRegistryInstallUrl(installUrl, { force: true });
         expect(overwritten).toEqual({ success: true, name: skillName });
 
         const customName = `${skillName}-custom`;
-        const renamed = await installFromRegistryInstallUrl(installUrl, false, customName);
+        const renamed = await skillInstallManager.installFromRegistryInstallUrl(installUrl, { customName });
         expect(renamed).toEqual({ success: true, name: customName });
     });
 
     test.each(['../escaped-skill', 'nested/skill', 'nested\\skill', '.', '..'])(
         'rejects unsafe custom skill name %s',
-        (customName) => {
+        async (customName) => {
             const zipPath = path.join(tempDir, 'unsafe-name-skill.zip');
             const zip = new AdmZip();
             zip.addFile(
@@ -304,10 +308,14 @@ describe('skillmgr skill package installation', () => {
             );
             zip.writeZip(zipPath);
 
-            const result = installSkillFromLocalZip(zipPath, undefined, false, true, {
-                action: 'rename',
-                name: customName
-            });
+            const result = await new LocalZipInstaller({
+                registry: skillRegistry,
+                zipPath,
+                conflictPolicy: {
+                    action: 'rename',
+                    name: customName
+                }
+            }).install();
 
             expect(result.success).toBe(false);
         }

@@ -32,7 +32,7 @@ export class AddSkillFromDirectoryTool extends BaseTool<typeof AddSkillFromDirec
     }
 
     private async add(args: z.output<typeof AddSkillFromDirectoryArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromDirectory(args.sourceDirectory);
+        const result = await this.skillApp.addSkillFromDirectory(args.sourceDirectory);
         return JSON.stringify(result);
     }
 }

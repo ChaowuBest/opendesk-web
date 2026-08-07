@@ -21,15 +21,8 @@ import path from 'path';
 import AdmZip from 'adm-zip';
 import { BaseWorker } from '../../base.js';
 import { NotificationManager } from '../../../utils/notificationmgr.js';
-import {
-    SkillRegistry,
-    installSkillFromDirectory,
-    installSkillFromLocalZip,
-    installSkillFromUrl,
-    installFromRegistryInstallUrl,
-    getRegistriesInfo,
-    searchRegistry
-} from '../utils.js';
+import { skillRegistry } from '../utils/skill-registry.js';
+import { skillInstallManager } from '../utils/skill-installer.js';
 import { isSkillEntryFilename, findSkillEntryFile } from '../skill-entry.js';
 import {
     getSkillStatus,
@@ -56,12 +49,12 @@ class SkillsWorker extends BaseWorker {
 
     async applicationConfigChanged(config) {
         await super.applicationConfigChanged(config || {});
-        SkillRegistry.setRuntimeConfig(config);
-        SkillRegistry.refresh();
+        skillRegistry.setRuntimeConfig(config);
+        skillRegistry.refresh();
     }
 
     list() {
-        const skills = SkillRegistry.listSkills();
+        const skills = skillRegistry.listSkills();
         const statuses = getAllStatuses();
         const allBlacklisted = getAllBlacklisted();
         return skills.map((s) => {
@@ -84,24 +77,24 @@ class SkillsWorker extends BaseWorker {
     }
 
     refresh() {
-        const { toolsets, errors } = SkillRegistry.refresh();
+        const { toolsets, errors } = skillRegistry.refresh();
         return { count: toolsets.length, errors };
     }
 
     getSkillsDirectory() {
-        return SkillRegistry.getSkillsDirectory();
+        return skillRegistry.getSkillsDirectory();
     }
 
-    addFromDirectory(sourceDirectory) {
-        const result = installSkillFromDirectory(sourceDirectory);
+    async addFromDirectory(sourceDirectory) {
+        const result = await skillInstallManager.installFromDirectory(sourceDirectory);
         if (!result.success) throw new Error(result.error);
         setDefaultStatus(result.name, true);
         notifyMainSync();
         return { name: result.name };
     }
 
-    addFromZip(zipPath, skillRelPath) {
-        const result = installSkillFromLocalZip(zipPath, skillRelPath);
+    async addFromZip(zipPath, skillRelPath) {
+        const result = await skillInstallManager.installFromLocalZip(zipPath, skillRelPath);
         if (!result.success) throw new Error(result.error);
         setDefaultStatus(result.name, true);
         notifyMainSync();
@@ -109,7 +102,7 @@ class SkillsWorker extends BaseWorker {
     }
 
     async addFromUrl(url) {
-        const result = await installSkillFromUrl(url);
+        const result = await skillInstallManager.installFromUrl(url);
         if (!result.success) throw new Error(result.error);
         setDefaultStatus(result.name, true);
         notifyMainSync();
@@ -117,7 +110,7 @@ class SkillsWorker extends BaseWorker {
     }
 
     delete(skillId) {
-        const result = SkillRegistry.deleteSkill(skillId);
+        const result = skillInstallManager.deleteSkill(skillId);
         // 技能目录已不存在视为删除成功（可能已被批量删除或来自外部挂载）
         if (!result.success && !(result.error && result.error.includes('不存在'))) {
             throw new Error(result.error);
@@ -137,7 +130,7 @@ class SkillsWorker extends BaseWorker {
         const errors = [];
         let deleted = 0;
         for (let i = 0; i < skillIds.length; i++) {
-            const result = SkillRegistry.deleteSkill(skillIds[i], false);
+            const result = skillInstallManager.deleteSkill(skillIds[i], false);
             if (result.success) {
                 deleted++;
                 removeSkillStatus(skillIds[i]);
@@ -153,7 +146,7 @@ class SkillsWorker extends BaseWorker {
             await new Promise((resolve) => setTimeout(resolve, 0));
         }
         // 防御性刷新：确保缓存与文件系统一致（处理部分 deleteSkill 失败但未触发 loadAll 的情况）
-        SkillRegistry.refresh();
+        skillRegistry.refresh();
         notifyMainSync();
         yield { type: 'complete', total: skillIds.length, deleted, errors };
     }
@@ -175,9 +168,9 @@ class SkillsWorker extends BaseWorker {
             let result;
             try {
                 if (skill.type === 'directory') {
-                    result = installSkillFromDirectory(skill.path, false, false);
+                    result = await skillInstallManager.installFromDirectory(skill.path, { refresh: false });
                 } else {
-                    result = installSkillFromLocalZip(skill.path, undefined, false, false);
+                    result = await skillInstallManager.installFromLocalZip(skill.path, undefined, { refresh: false });
                 }
                 if (result.success) {
                     success++;
@@ -199,13 +192,13 @@ class SkillsWorker extends BaseWorker {
             setBatchDefaultDisabled(importedNames);
         }
         // 全部导入完成后一次性刷新 worker 侧缓存并通知主进程
-        SkillRegistry.refresh();
+        skillRegistry.refresh();
         notifyMainSync();
         yield { type: 'complete', total: skills.length, success, failed, errors };
     }
 
     getRegistries() {
-        return getRegistriesInfo();
+        return skillInstallManager.getRegistriesInfo();
     }
 
     async searchRegistry(registryId, query = '', page = 1, limit = 20, cursor, categoryFilter) {
@@ -219,11 +212,11 @@ class SkillsWorker extends BaseWorker {
         if (registryId === 'skillsmp') {
             opts.apiKey = (this.config?.skillsmp_api_key || '').trim();
         }
-        return searchRegistry(registryId, opts);
+        return skillInstallManager.searchRegistry(registryId, opts);
     }
 
     skillExists(skillName) {
-        return SkillRegistry.skillExists(skillName);
+        return skillRegistry.skillExists(skillName);
     }
 
     /** 从 Registry 安装技能（installUrl 为 registry slug、zip URL 或 registry 返回的仓库地址） */
@@ -231,7 +224,7 @@ class SkillsWorker extends BaseWorker {
         if (!installUrl || typeof installUrl !== 'string') {
             throw new Error('无效的安装 URL');
         }
-        const result = await installFromRegistryInstallUrl(installUrl, force, customName);
+        const result = await skillInstallManager.installFromRegistryInstallUrl(installUrl, { force, customName });
         if (!result.success) throw new Error(result.error);
         if (result.name) setDefaultStatus(result.name, true);
         notifyMainSync();
@@ -363,7 +356,7 @@ class SkillsWorker extends BaseWorker {
     }
 
     getSkillDetail(skillId) {
-        return SkillRegistry.getSkillDetail(skillId);
+        return skillRegistry.getSkillDetail(skillId);
     }
 
     sendNotification(type, title, message) {

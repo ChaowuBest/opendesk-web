@@ -11,7 +11,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { SkillRegistry } from '../utils.js';
+import { skillRegistry } from '../utils/skill-registry.js';
 
 export interface AnalysisPrompts {
     dependencyAnalysis: string;
@@ -50,7 +50,7 @@ function normalizePrompts(value: unknown): AnalysisPrompts {
 }
 
 export function getAnalysisPromptsFilePath(): string {
-    return path.join(path.dirname(SkillRegistry.getSkillsDirectory()), PROMPTS_FILENAME);
+    return path.join(path.dirname(skillRegistry.getSkillsDirectory()), PROMPTS_FILENAME);
 }
 
 export function readAnalysisPrompts(filePath: string = getAnalysisPromptsFilePath()): AnalysisPrompts {

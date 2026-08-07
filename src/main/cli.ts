@@ -422,10 +422,10 @@ async function main(args: CommandLineArgs) {
             // 如果是 skillmgr 的 mount-skill，在 registry 初始化前直接添加到 SkillRegistry
             if (bundleName === 'skillmgr' && options['mount-skill']) {
                 const dirs = Array.isArray(options['mount-skill']) ? options['mount-skill'] : [options['mount-skill']];
-                const { SkillRegistry } = await import('./applications/skillmgr/utils.js');
+                const { skillRegistry } = await import('./applications/skillmgr/utils/skill-registry.js');
                 for (const dir of dirs) {
                     if (typeof dir === 'string') {
-                        SkillRegistry.addMountedDir(dir);
+                        skillRegistry.addMountedDir(dir);
                     }
                 }
             }

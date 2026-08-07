@@ -31,7 +31,7 @@ import {
     TEST_RESULTS_REPORT_STYLE,
     buildSelectedSkillTestReportPage
 } from './renderer/testResultsReportPage.js';
-import { SkillRegistry } from './utils.js';
+import { skillRegistry } from './utils/skill-registry.js';
 import {
     buildSkillRunSummary,
     formatTestCaseStats,
@@ -102,9 +102,9 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .action(async (names: string | undefined, opts: SkillTestGenOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = skillRegistry.listSkills() as SkillTestCliSkill[];
                 const skills = opts.mountOnly
-                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    ? allSkills.filter((skill) => skillRegistry.isMountedSkill(skill.id))
                     : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'gen');
                 const concurrency = parseConcurrency(opts.concurrency);
@@ -158,9 +158,9 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .action(async (names: string | undefined, opts: SkillTestRunOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
-                const allSkills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+                const allSkills = skillRegistry.listSkills() as SkillTestCliSkill[];
                 const skills = opts.mountOnly
-                    ? allSkills.filter((skill) => SkillRegistry.isMountedSkill(skill.id))
+                    ? allSkills.filter((skill) => skillRegistry.isMountedSkill(skill.id))
                     : allSkills;
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'run');
                 const concurrency = parseConcurrency(opts.concurrency);
@@ -262,7 +262,7 @@ async function initializeSkillTestRuntime(command: Command, silent: boolean): Pr
     const mountedDirs = Array.isArray(mounted) ? mounted : mounted ? [mounted] : [];
     for (const dir of mountedDirs) {
         if (typeof dir === 'string') {
-            SkillRegistry.addMountedDir(dir);
+            skillRegistry.addMountedDir(dir);
         }
     }
 
@@ -412,7 +412,7 @@ async function exportSkillTestArtifacts(
 
     let hasTestReport = false;
     if (includeRunReport) {
-        const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+        const skills = skillRegistry.listSkills() as SkillTestCliSkill[];
         const report = buildSelectedSkillTestReportPage({
             skillIds,
             skills,
@@ -444,7 +444,7 @@ async function exportSkillTestCheckpointArtifacts(
     }
 
     if (!includeRunReport) return;
-    const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+    const skills = skillRegistry.listSkills() as SkillTestCliSkill[];
     const report = buildSelectedSkillTestReportPage({
         skillIds,
         skills,
@@ -684,7 +684,7 @@ function buildSelectionItems(skills: SkillTestCliSkill[], mode: SkillTestMode): 
 }
 
 function loadSkillTestCases(skillId: string): unknown[] {
-    const detail = SkillRegistry.getSkillDetail(skillId);
+    const detail = skillRegistry.getSkillDetail(skillId);
     if (!detail?.skillDir) return [];
     const meta = tryLoadOpendeskMeta(detail.skillDir);
     if (!meta.success) return [];

@@ -29,14 +29,8 @@ import { OpenDeskTUI } from '../../tui/entry';
 import { Setting } from '../../utils/setting.js';
 import { SkillMgrApplication } from './app.js';
 import { getSkillStatus, setSkillStatus } from './status.js';
-import {
-    SkillRegistry,
-    installSkillFromDirectory,
-    installSkillFromLocalZip,
-    installSkillFromUrl,
-    installFromRegistryInstallUrl,
-    searchRegistry
-} from './utils.js';
+import { skillRegistry } from './utils/skill-registry.js';
+import { skillInstallManager } from './utils/skill-installer.js';
 
 interface RegistrySkill {
     id: string;
@@ -119,7 +113,7 @@ export class SkillsOverlay implements Component {
 
     private async loadInstalledSkills() {
         try {
-            this.installedSkills = SkillRegistry.listSkills().map((skill: any) => ({
+            this.installedSkills = skillRegistry.listSkills().map((skill: any) => ({
                 ...skill,
                 enabled: getSkillStatus(skill.id)
             }));
@@ -233,7 +227,7 @@ export class SkillsOverlay implements Component {
             const config = Setting.getInstance().getData() as any;
             const apiKey = config.applications?.skillmgr?.skillsmp_api_key || '';
 
-            const result = await searchRegistry(this.selectedRegistry, {
+            const result = await skillInstallManager.searchRegistry(this.selectedRegistry, {
                 query,
                 page: 1,
                 limit: 20,
@@ -340,7 +334,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = installSkillFromDirectory(path);
+            const result = await skillInstallManager.installFromDirectory(path);
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
@@ -385,7 +379,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = installSkillFromLocalZip(path);
+            const result = await skillInstallManager.installFromLocalZip(path);
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
@@ -430,7 +424,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await installSkillFromUrl(url);
+            const result = await skillInstallManager.installFromUrl(url);
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name ?? ''}`, false, 'main');
@@ -483,7 +477,7 @@ export class SkillsOverlay implements Component {
     private showSkillDetail(skillId: string) {
         this.setLoading(true);
         try {
-            const detail = SkillRegistry.getSkillDetail(skillId);
+            const detail = skillRegistry.getSkillDetail(skillId);
             if (!detail) {
                 this.showMessage('无法获取技能详情', true);
                 this.showViewInstalled();
@@ -514,7 +508,7 @@ export class SkillsOverlay implements Component {
             if (data === 'd' || data === 'D') {
                 const skillId = this.getSelectedListValue();
                 if (skillId && skillId !== 'back') {
-                    const detail = SkillRegistry.getSkillDetail(skillId);
+                    const detail = skillRegistry.getSkillDetail(skillId);
                     if (detail) {
                         this.currentSkillDetail = detail;
                         this.currentDetailTab = 'info';
@@ -536,7 +530,7 @@ export class SkillsOverlay implements Component {
         await this.loadInstalledSkills();
 
         if (this.currentSkillDetail?.id === skillId) {
-            const detail = SkillRegistry.getSkillDetail(skillId);
+            const detail = skillRegistry.getSkillDetail(skillId);
             if (detail) {
                 this.currentSkillDetail = detail;
             }
@@ -691,7 +685,12 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await installFromRegistryInstallUrl(this.pendingInstallSkill.installUrl, false, name);
+            const result = await skillInstallManager.installFromRegistryInstallUrl(
+                this.pendingInstallSkill.installUrl,
+                {
+                    customName: name
+                }
+            );
 
             if (result && result.success) {
                 SkillMgrApplication.notifySkillsChanged();
@@ -826,7 +825,7 @@ export class SkillsOverlay implements Component {
     private async deleteSkill(skillId: string) {
         this.setLoading(true);
         try {
-            const result = SkillRegistry.deleteSkill(skillId);
+            const result = skillInstallManager.deleteSkill(skillId);
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功删除技能: ${skillId}`, false, 'view-installed');
@@ -913,7 +912,12 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await installFromRegistryInstallUrl(this.pendingInstallSkill.installUrl, true);
+            const result = await skillInstallManager.installFromRegistryInstallUrl(
+                this.pendingInstallSkill.installUrl,
+                {
+                    force: true
+                }
+            );
 
             if (result && result.success) {
                 SkillMgrApplication.notifySkillsChanged();
@@ -968,7 +972,7 @@ export class SkillsOverlay implements Component {
 
         // 检测到已安装的同名技能，提示用户选择处理方式
         const skillNameToCheck = skill.name;
-        if (skillNameToCheck && SkillRegistry.skillExists(skillNameToCheck)) {
+        if (skillNameToCheck && skillRegistry.skillExists(skillNameToCheck)) {
             this.pendingInstallSkill = skill;
             this.duplicateDefaultName = `${skillNameToCheck}-1`;
             this.showConfirmDuplicate();
@@ -977,7 +981,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await installFromRegistryInstallUrl(skill.installUrl);
+            const result = await skillInstallManager.installFromRegistryInstallUrl(skill.installUrl);
 
             if (result && result.success) {
                 SkillMgrApplication.notifySkillsChanged();
