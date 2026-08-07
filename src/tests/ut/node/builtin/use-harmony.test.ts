@@ -1189,7 +1189,7 @@ test('snapshot exposes a ref and coordinates for a non-clickable textbox', { con
         const snapshot = JSON.parse(snapshotResult.result);
 
         assert.equal(snapshotResult.status, 'success');
-        assert.match(snapshot.snapshot, /textbox .*\[ref=e0 x=200 y=230 200x60\]/);
+        assert.match(snapshot.snapshot, /textbox .*\[ref=e0 x=200 y=230\]/);
     } finally {
         process.env.PATH = originalPath;
         if (originalLayoutPath === undefined) delete process.env.HDC_LAYOUT_PATH;
@@ -1255,7 +1255,7 @@ test('snapshot keeps refs for clickable controls', { concurrency: false }, async
         const snapshot = JSON.parse(snapshotResult.result);
 
         assert.equal(snapshotResult.status, 'success');
-        assert.match(snapshot.snapshot, /button "发送" \[ref=e0 x=200 y=230 200x60\]/);
+        assert.match(snapshot.snapshot, /button "发送" \[ref=e0 x=200 y=230\]/);
     } finally {
         process.env.PATH = originalPath;
         if (originalLayoutPath === undefined) delete process.env.HDC_LAYOUT_PATH;

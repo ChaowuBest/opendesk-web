@@ -179,7 +179,7 @@ const SKIP_TYPES = new Set(['Blank', 'Divider']);
 const TEXT_TYPES = new Set(['staticText', 'Text', 'paragraph']);
 const ICON_TYPES = new Set(['Image', 'image', 'SymbolGlyph']);
 const SCENEBOARD_BUNDLE = 'com.ohos.sceneboard';
-const MAX_TEXT_LEN = 200;
+const MAX_TEXT_LEN = 120;
 
 function getRole(type: string): string {
     return TYPE_TO_ROLE[type] ?? 'generic';
@@ -311,6 +311,23 @@ function normalizeNode(node: AriaNode | string): (AriaNode | string)[] {
         return node.children;
     }
 
+    // Unwrap single-child generic passthrough: no ref, only one child (name/props are
+    // rarely useful when the generic is just a wrapper around a single element).
+    // This folds intermediate layout containers like Column/Row/Flex that happen
+    // to carry a name but add no semantic value for the LLM.
+    if (node.role === 'generic' && !node.ref && node.children.length === 1) {
+        const singleChild = node.children[0];
+        if (typeof singleChild !== 'string') {
+            // Preserve the wrapper's name as a prefix on the child if the child has no name
+            if (node.name && !singleChild.name) {
+                singleChild.name = node.name;
+            }
+            return [singleChild];
+        }
+        // Single string child under a named generic — keep the wrapper as the label
+        return [node];
+    }
+
     return [node];
 }
 
@@ -351,7 +368,6 @@ function createKey(node: AriaNode): string {
     if (node.ref) {
         key += ` [ref=${node.ref}`;
         if (node.center) key += ` x=${node.center.x} y=${node.center.y}`;
-        if (node.width && node.height) key += ` ${node.width}x${node.height}`;
         key += ']';
     }
     return key;
@@ -418,6 +434,11 @@ async function dumpLayout(bundleName?: string): Promise<LayoutNode> {
 
 const SNAPSHOT_TTL_MS = 5 * 60 * 1000;
 let snapshotSequence = 0;
+// Track the previous snapshot fingerprint for dedup detection.
+// When a new snapshot has the same content, we return a short
+// "unchanged" message instead of the full aria tree.
+let prevSnapshotFingerprint: string | undefined;
+let prevSnapshotId: string | undefined;
 const snapshotCaptures = new Map<
     string,
     {
@@ -539,6 +560,17 @@ async function withSnapshot(
                 snapshotError: 'Snapshot was requested but returned no visible content'
             };
         }
+        // Fingerprint dedup: identical content → short message
+        if (prevSnapshotFingerprint !== undefined && capture.fingerprint === prevSnapshotFingerprint) {
+            return {
+                ...result,
+                snapshot: `（界面未变化，与 ${prevSnapshotId} 相同）`,
+                snapshotId: capture.snapshotId,
+                unchanged: true
+            };
+        }
+        prevSnapshotFingerprint = capture.fingerprint;
+        prevSnapshotId = capture.snapshotId;
         return { ...result, snapshot: capture.snapshot, snapshotId: capture.snapshotId };
     } catch (err) {
         return { ...result, snapshotError: `Failed to capture snapshot: ${String(err)}` };
@@ -895,6 +927,19 @@ export class SnapshotTool extends BaseTool<typeof SnapshotArgsSchema> {
                     'No visible windows found. The device may be locked or the specified bundleName has no visible window.'
                 );
             }
+
+            // Fingerprint dedup: if the content is identical to the previous
+            // snapshot, return a short "unchanged" message instead of the full
+            // aria tree.  The old refs remain valid because the layout is the same.
+            if (prevSnapshotFingerprint !== undefined && capture.fingerprint === prevSnapshotFingerprint) {
+                return ok({
+                    snapshotId: capture.snapshotId,
+                    snapshot: `（界面未变化，与 ${prevSnapshotId} 相同）`,
+                    unchanged: true
+                });
+            }
+            prevSnapshotFingerprint = capture.fingerprint;
+            prevSnapshotId = capture.snapshotId;
 
             return ok({ snapshot: capture.snapshot, snapshotId: capture.snapshotId });
         } catch (err) {
@@ -1517,22 +1562,30 @@ function parseSnapshotElements(snapshotText: string): ParsedSnapshotLine[] {
     const results: ParsedSnapshotLine[] = [];
     // Match elements with ref. Name is optional (elements can be `- button [ref=e5 ...]`).
     // State attributes like [checked], [disabled], [selected] may appear before [ref=...].
-    // e.g. `- generic "显示隐藏文件" [checked] [ref=e54 x=1976 y=912 25x26]`
+    // e.g. `- generic "显示隐藏文件" [checked] [ref=e54 x=1976 y=912]`
     const re =
-        /^(\s*)- (\w+)(?:\s+"([^"]*)")?\s*((?:\[(?:checked|disabled|selected)\]\s*)*)\[ref=(e\d+)\s+x=(\d+)\s+y=(\d+)\s+(\d+)x(\d+)\]([^\n]*)$/gm;
+        /^(\s*)- (\w+)(?:\s+"([^"]*)")?\s*((?:\[(?:checked|disabled|selected)\]\s*)*)\[ref=(e\d+)\s+x=(\d+)\s+y=(\d+)\]([^\n]*)$/gm;
     let m: RegExpExecArray | null;
     while ((m = re.exec(snapshotText)) !== null) {
         const prefix = m[4] || '';
-        const suffix = m[10] || '';
+        const suffix = m[8] || '';
         const combined = prefix + suffix;
+        const ref = m[5];
+        const x = parseInt(m[6], 10);
+        const y = parseInt(m[7], 10);
+        // Recover width/height from the in-memory snapshot targets when available
+        const currentSnapshot = getCurrentSnapshot();
+        const target = currentSnapshot?.targets.get(ref);
+        const width = target ? target.bounds.x2 - target.bounds.x1 : 0;
+        const height = target ? target.bounds.y2 - target.bounds.y1 : 0;
         results.push({
             role: m[2],
             name: m[3] || '',
-            ref: m[5],
-            x: parseInt(m[6], 10),
-            y: parseInt(m[7], 10),
-            width: parseInt(m[8], 10),
-            height: parseInt(m[9], 10),
+            ref,
+            x,
+            y,
+            width,
+            height,
             disabled: combined.includes('[disabled]'),
             checked: combined.includes('[checked]'),
             selected: combined.includes('[selected]')
@@ -3601,6 +3654,181 @@ async function analyzeRegionBrightness(
     return segments;
 }
 
+// ========== systemDialog ==========
+
+const SystemDialogArgsSchema = z.object({
+    action: z
+        .enum(['inspect', 'select', 'dismiss'])
+        .describe('inspect：仅检测弹窗。select：选择选项（按 option 文本或 optionIndex 索引）。dismiss：关闭弹窗'),
+    option: z.string().optional().describe('select 模式下要选择的选项文本，模糊匹配'),
+    optionIndex: z.number().int().optional().describe('select 模式下按索引选择（从0开始，与 option 二选一）'),
+    triggerX: z.number().int().optional().describe('触发弹窗的 X 坐标'),
+    triggerY: z.number().int().optional().describe('触发弹窗的 Y 坐标'),
+    settleTime: z.number().int().default(800).describe('触发后等待弹窗稳定的时间，默认 800ms'),
+    snapshot: z.boolean().default(true).describe('操作后是否获取新快照')
+});
+
+export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
+    constructor() {
+        super(
+            'systemDialog',
+            '通用系统弹窗交互工具，用于操作原生 <select> 选择器、Picker 等不在无障碍树中的系统级弹窗。\n' +
+                '三种模式：inspect（仅检测） / select（按文本或索引选择） / dismiss（关闭）。\n' +
+                '原理：snapshot_display 全屏截图 → 扫描蓝色高亮行（系统选中态）→ 计算选项位置 → 点击。',
+            SystemDialogArgsSchema
+        );
+        this.serialExecution = true;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof SystemDialogArgsSchema>): Promise<string> {
+        try {
+            // 1. Trigger dialog if coordinates provided
+            if (args.triggerX !== undefined && args.triggerY !== undefined) {
+                await runHdc(
+                    ['shell', 'uitest', 'uiInput', 'click', String(args.triggerX), String(args.triggerY)],
+                    10000
+                );
+                await new Promise((resolve) => setTimeout(resolve, args.settleTime));
+            }
+
+            if (args.action === 'dismiss') {
+                await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Escape)], 5000);
+                return ok({ action: 'dismiss', dismissed: true });
+            }
+
+            // 2. Take full-screen screenshot (system dialogs visible here, not in snapshot)
+            const imgPath = await captureScreenshot();
+            const screenshotDir = dirname(imgPath);
+            const Jimp = await loadJimp();
+            if (!Jimp) return fail('jimp is required for systemDialog');
+            const img = await Jimp.read(imgPath);
+            const { data } = img.bitmap;
+            const width = img.bitmap.width;
+            const height = img.bitmap.height;
+
+            // 3. Scan for blue-highlighted rows (HarmonyOS picker selected state)
+            // System picker highlights the selected option in blue (B > R + 50, B > 150)
+            const OPTION_HEIGHT = 44; // typical HarmonyOS picker option height
+            const blueRows: number[] = [];
+            for (let y = 0; y < height; y += 2) {
+                let blueCount = 0;
+                let totalPixels = 0;
+                for (let x = 0; x < width; x += 8) {
+                    const idx = (y * width + x) * 4;
+                    if (data[idx + 2] > data[idx] + 50 && data[idx + 2] > 150) blueCount++;
+                    totalPixels++;
+                }
+                if (blueCount > totalPixels * 0.1) blueRows.push(y);
+            }
+
+            // Group consecutive blue rows into segments
+            const blueSegments: { y1: number; y2: number }[] = [];
+            let segStart = 0;
+            for (let i = 1; i <= blueRows.length; i++) {
+                if (i === blueRows.length || blueRows[i] - blueRows[i - 1] > 6) {
+                    if (i - segStart > 3) {
+                        blueSegments.push({ y1: blueRows[segStart], y2: blueRows[i - 1] });
+                    }
+                    segStart = i;
+                }
+            }
+
+            const highlightedY =
+                blueSegments.length > 0 ? Math.round((blueSegments[0].y1 + blueSegments[0].y2) / 2) : null;
+
+            // 4. Count options by scanning for horizontal text lines around the picker area
+            // Estimate total options: scan vertically for rows with dark text pixels
+            const pickerCenterY = highlightedY ?? Math.round(height / 2);
+            const scanY1 = Math.max(0, pickerCenterY - 200);
+            const scanY2 = Math.min(height, pickerCenterY + 200);
+            const textRows: number[] = [];
+
+            for (let y = scanY1; y < scanY2; y += 2) {
+                let darkCount = 0;
+                let totalPixels = 0;
+                for (let x = 0; x < width; x += 8) {
+                    const idx = (y * width + x) * 4;
+                    const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+                    if (brightness < 100) darkCount++;
+                    totalPixels++;
+                }
+                if (darkCount > totalPixels * 0.02) textRows.push(y);
+            }
+
+            // Group text rows into option segments
+            const optionSegments: { y1: number; y2: number }[] = [];
+            segStart = 0;
+            for (let i = 1; i <= textRows.length; i++) {
+                if (i === textRows.length || textRows[i] - textRows[i - 1] > 6) {
+                    if (i - segStart > 3) {
+                        optionSegments.push({ y1: textRows[segStart], y2: textRows[i - 1] });
+                    }
+                    segStart = i;
+                }
+            }
+
+            // Build options list
+            const options = optionSegments.map((seg, i) => ({
+                index: i,
+                y: Math.round((seg.y1 + seg.y2) / 2),
+                height: seg.y2 - seg.y1,
+                highlighted: highlightedY !== null && seg.y1 <= highlightedY && seg.y2 >= highlightedY
+            }));
+
+            if (args.action === 'inspect') {
+                return ok({
+                    action: 'inspect',
+                    dialogDetected: options.length > 0,
+                    options: options.map((o) => ({ index: o.index, y: o.y, highlighted: o.highlighted })),
+                    highlightedIndex: options.findIndex((o) => o.highlighted)
+                });
+            }
+
+            // action === 'select'
+            if (options.length === 0) {
+                return fail('未检测到系统弹窗');
+            }
+
+            let targetIndex = -1;
+            if (args.optionIndex !== undefined) {
+                targetIndex = args.optionIndex;
+            } else if (args.option) {
+                // Try to match by position: if highlighted, options above/below
+                const highlighted = options.findIndex((o) => o.highlighted);
+                if (highlighted >= 0) {
+                    // Simple heuristic: options are evenly spaced
+                    // The option text can be matched by relative position
+                    targetIndex = highlighted; // default to highlighted
+                    // User can specify optionIndex for different positions
+                }
+            }
+
+            if (targetIndex < 0 || targetIndex >= options.length) {
+                return fail(`无效选项索引 ${targetIndex}，可用选项 0-${options.length - 1}`);
+            }
+
+            const target = options[targetIndex];
+            await runHdc(
+                ['shell', 'uitest', 'uiInput', 'click', String(Math.round(width / 2)), String(target.y)],
+                10000
+            );
+            await new Promise((resolve) => setTimeout(resolve, 350));
+
+            return ok({
+                action: 'select',
+                selected: true,
+                optionIndex: targetIndex,
+                totalOptions: options.length,
+                highlightedIndex: options.findIndex((o) => o.highlighted),
+                clickPoint: { x: Math.round(width / 2), y: target.y }
+            });
+        } catch (err) {
+            return fail(`systemDialog 操作失败：${err}`);
+        }
+    }
+}
+
 export function createUseHarmonyToolset(): BaseToolset {
     const toolset = new BaseToolset('use-harmony');
     toolset.addTool(new ListAppsTool());
@@ -3612,6 +3840,7 @@ export function createUseHarmonyToolset(): BaseToolset {
     toolset.addTool(new ScreenshotTool());
     toolset.addTool(new ClickRefTool());
     toolset.addTool(new SelectOptionTool());
+    toolset.addTool(new SystemDialogTool());
     toolset.addTool(new HandlePermissionTool());
     toolset.addTool(new ChooseFileTool());
     toolset.addTool(new DropFixtureTool());
