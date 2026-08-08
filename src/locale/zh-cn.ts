@@ -2569,5 +2569,8 @@ export const zhCn: Record<string, string> = {
     'acpmgr.error.reconcileUnsupported': '此 ACP Agent 无法核对异常中断会话的状态',
     'acpmgr.error.resumeUnsupported': '此 ACP Agent 不支持恢复已保存的会话',
     'acpmgr.error.connectionNotInitialized': 'ACP 连接尚未初始化',
-    'acpmgr.error.sessionNotInitialized': 'ACP 会话尚未初始化'
+    'acpmgr.error.sessionNotInitialized': 'ACP 会话尚未初始化',
+    'acpmgr.error.missingEnvironment': '缺少环境变量 ${name}',
+    'acpmgr.error.mcpCommandMissing': 'MCP Server“${name}”未配置命令',
+    'acpmgr.error.mcpUrlMissing': 'MCP Server“${name}”未配置 URL'
 };

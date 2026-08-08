@@ -11,7 +11,12 @@
 
 import { z } from 'zod';
 
-export { createSafeAcpProfileSnapshot, resolveAcpTemplate, resolveAcpTemplateRecord } from '../../../common/acp.js';
+export {
+    AcpEnvironmentVariableError,
+    createSafeAcpProfileSnapshot,
+    resolveAcpTemplate,
+    resolveAcpTemplateRecord
+} from '../../../common/acp.js';
 export type { SafeAcpProfileSnapshot } from '../../../common/acp.js';
 
 const EnvironmentRecordSchema = z.record(z.string(), z.string()).default({});

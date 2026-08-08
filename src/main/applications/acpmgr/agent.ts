@@ -18,6 +18,7 @@ import {
     type TaskContext
 } from '../../aikernel/agents/common.js';
 import { AcpTaskRuntime } from '../../aikernel/agents/acp/runtime.js';
+import { AcpEnvironmentVariableError } from '../../../common/acp.js';
 import { t } from '../../../locale/index.js';
 import type { McpServerConfig } from '../mcpmgr/common.js';
 import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from './common.js';
@@ -81,28 +82,37 @@ export function resolveAcpMcpServers(
     environ: NodeJS.ProcessEnv = process.env
 ): McpServer[] {
     const selectedIds = new Set(profile.session.mcpServerIds);
-    return configuredServers
-        .filter((server) => server.enabled && selectedIds.has(server.id))
-        .map((server): McpServer => {
-            if (server.transport === 'stdio') {
-                if (!server.command) throw new Error(`MCP server ${server.name} is missing command`);
-                const resolvedEnvironment = resolveAcpTemplateRecord(server.env ?? {}, environ);
+    try {
+        return configuredServers
+            .filter((server) => server.enabled && selectedIds.has(server.id))
+            .map((server): McpServer => {
+                if (server.transport === 'stdio') {
+                    if (!server.command) {
+                        throw new Error(t('acpmgr.error.mcpCommandMissing', { name: server.name }));
+                    }
+                    const resolvedEnvironment = resolveAcpTemplateRecord(server.env ?? {}, environ);
+                    return {
+                        name: server.name,
+                        command: resolveAcpTemplate(server.command, environ),
+                        args: (server.args ?? []).map((argument) => resolveAcpTemplate(argument, environ)),
+                        env: Object.entries(resolvedEnvironment).map(([name, value]) => ({ name, value }))
+                    };
+                }
+                if (!server.url) throw new Error(t('acpmgr.error.mcpUrlMissing', { name: server.name }));
+                const headers = Object.entries(resolveAcpTemplateRecord(server.headers ?? {}, environ)).map(
+                    ([name, value]) => ({ name, value })
+                );
                 return {
+                    type: server.transport === 'sse' ? 'sse' : 'http',
                     name: server.name,
-                    command: resolveAcpTemplate(server.command, environ),
-                    args: (server.args ?? []).map((argument) => resolveAcpTemplate(argument, environ)),
-                    env: Object.entries(resolvedEnvironment).map(([name, value]) => ({ name, value }))
+                    url: resolveAcpTemplate(server.url, environ),
+                    headers
                 };
-            }
-            if (!server.url) throw new Error(`MCP server ${server.name} is missing URL`);
-            const headers = Object.entries(resolveAcpTemplateRecord(server.headers ?? {}, environ)).map(
-                ([name, value]) => ({ name, value })
-            );
-            return {
-                type: server.transport === 'sse' ? 'sse' : 'http',
-                name: server.name,
-                url: resolveAcpTemplate(server.url, environ),
-                headers
-            };
-        });
+            });
+    } catch (error) {
+        if (error instanceof AcpEnvironmentVariableError) {
+            throw new Error(t('acpmgr.error.missingEnvironment', { name: error.variableName }));
+        }
+        throw error;
+    }
 }

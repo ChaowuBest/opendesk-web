@@ -68,11 +68,18 @@ export type SafeAcpProfileSnapshot = {
 
 const ENVIRONMENT_TEMPLATE_PATTERN = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
+export class AcpEnvironmentVariableError extends Error {
+    constructor(readonly variableName: string) {
+        super(variableName);
+        this.name = 'AcpEnvironmentVariableError';
+    }
+}
+
 export function resolveAcpTemplate(value: string, environ: NodeJS.ProcessEnv): string {
     return value.replace(ENVIRONMENT_TEMPLATE_PATTERN, (_match, name: string) => {
         const replacement = environ[name];
         if (replacement === undefined) {
-            throw new Error(`Missing environment variable ${name}`);
+            throw new AcpEnvironmentVariableError(name);
         }
         return replacement;
     });

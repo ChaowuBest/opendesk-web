@@ -26,7 +26,13 @@ import {
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import path from 'node:path';
-import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from '../../../../common/acp.js';
+import {
+    AcpEnvironmentVariableError,
+    resolveAcpTemplate,
+    resolveAcpTemplateRecord,
+    type AcpAgentProfile
+} from '../../../../common/acp.js';
+import { t } from '../../../../locale/index.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -166,8 +172,15 @@ function createHttpHandle(
 export function createDefaultAcpConnectionFactory(): AcpConnectionFactory {
     const cookieStore = new MemoryAcpCookieStore();
     return async (profile, handlers, workspace) => {
-        return profile.transport.type === 'stdio'
-            ? createStdioHandle(profile, handlers, workspace)
-            : createHttpHandle(profile, handlers, cookieStore);
+        try {
+            return profile.transport.type === 'stdio'
+                ? createStdioHandle(profile, handlers, workspace)
+                : createHttpHandle(profile, handlers, cookieStore);
+        } catch (error) {
+            if (error instanceof AcpEnvironmentVariableError) {
+                throw new Error(t('acpmgr.error.missingEnvironment', { name: error.variableName }));
+            }
+            throw error;
+        }
     };
 }

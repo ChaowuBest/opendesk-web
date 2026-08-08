@@ -2643,5 +2643,8 @@ export const enUs: Record<string, string> = {
     'acpmgr.error.reconcileUnsupported': 'This ACP agent cannot reconcile an interrupted session',
     'acpmgr.error.resumeUnsupported': 'This ACP agent cannot resume the saved session',
     'acpmgr.error.connectionNotInitialized': 'The ACP connection is not initialized',
-    'acpmgr.error.sessionNotInitialized': 'The ACP session is not initialized'
+    'acpmgr.error.sessionNotInitialized': 'The ACP session is not initialized',
+    'acpmgr.error.missingEnvironment': 'Environment variable ${name} is missing',
+    'acpmgr.error.mcpCommandMissing': 'MCP server “${name}” has no command configured',
+    'acpmgr.error.mcpUrlMissing': 'MCP server “${name}” has no URL configured'
 };
