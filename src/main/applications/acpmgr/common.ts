@@ -55,7 +55,7 @@ const StreamableHttpTransportSchema = z.object({
 
 export const AcpTransportSchema = z.union([StdioTransportSchema, StreamableHttpTransportSchema]);
 
-const SessionValueSchema = z.union([z.string(), z.number(), z.boolean()]);
+const SessionValueSchema = z.union([z.string(), z.boolean()]);
 
 export const AcpAgentProfileSchema = z.object({
     id: z.string().uuid(),
@@ -67,7 +67,6 @@ export const AcpAgentProfileSchema = z.object({
     session: z
         .object({
             modeId: z.string().trim().min(1).optional(),
-            modelId: z.string().trim().min(1).optional(),
             configOptions: z.record(z.string(), SessionValueSchema).default({}),
             mcpServerIds: z.array(z.string()).default([])
         })
