@@ -11,6 +11,7 @@
 
 import { createRendererTranslator } from '../locale.ts';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
+import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
     MODAL_CSS,
@@ -32,6 +33,7 @@ const CLOSE_SVG =
 const SP_MODAL_EXTRA_CSS = `
 .od-confirm-modal-card.od-sp-wide { width: 480px; max-width: 92vw; }
 .od-confirm-modal-card.od-sp-wider { width: 560px; max-width: 92vw; }
+.od-confirm-modal-card.od-sp-largest { width: 720px; max-width: 94vw; }
 .od-confirm-modal-body.od-sp-scroll { max-height: 60vh; overflow-y: auto; }
 .od-sp-fg { margin-bottom: 14px; }
 .od-sp-fg:last-child { margin-bottom: 0; }
@@ -99,6 +101,9 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-modal-dark .od-sp-success-text { color: #3DBF82; }
 .od-sp-error-text { color: var(--mc-red); }
 .od-sp-loading-text { color: var(--mc-ink3); }
+.od-sp-fs { margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--mc-line); font-size: 12px; font-weight: 650; color: var(--mc-ink2); }
+.od-sp-two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 620px) { .od-sp-two-col { grid-template-columns: 1fr; } }
 `;
 
 class SettingPanel extends HTMLElement {
@@ -188,6 +193,13 @@ class SettingPanel extends HTMLElement {
                 label: this._t('sp.tab.tasks'),
                 iconSvg: svg(
                     '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'
+                )
+            },
+            {
+                id: 'agents',
+                label: this._t('sp.tab.agents'),
+                iconSvg: svg(
+                    '<circle cx="12" cy="8" r="3"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M4 9H2v6h2M20 9h2v6h-2"/>'
                 )
             },
             {
@@ -870,6 +882,9 @@ class SettingPanel extends HTMLElement {
                         <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-5">
                             ${this.renderTaskSection()}
                         </div>
+                        <div id="tab-agents" class="${this._activeTab === 'agents' ? '' : 'hidden'} space-y-5">
+                            ${this.renderAcpAgentsSection()}
+                        </div>
                         <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-5">
                             ${this.renderSearchSection()}
                         </div>
@@ -907,7 +922,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'search', 'general', 'wizard'];
+        const tabIds = ['models', 'tasks', 'agents', 'search', 'general', 'wizard'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
@@ -929,6 +944,361 @@ class SettingPanel extends HTMLElement {
             </div>
         </section>
         `;
+    }
+
+    _getAcpAgents() {
+        const agents = this.currentData?.applications?.acpmgr?.agents;
+        return Array.isArray(agents) ? agents : [];
+    }
+
+    renderAcpAgentsSection() {
+        const agents = this._getAcpAgents();
+        const cards = agents
+            .map((agent, index) => {
+                const isHttp = agent.transport?.type === 'streamableHttp';
+                const endpoint = isHttp
+                    ? agent.transport.url
+                    : [agent.transport?.command, ...(agent.transport?.args || [])].filter(Boolean).join(' ');
+                return `
+                <div class="sp-card">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px">
+                        <div style="min-width:0;flex:1">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(agent.name)}</h3>
+                                <span class="sp-tag sp-tag-neutral">${isHttp ? 'Streamable HTTP' : 'stdio'}</span>
+                                <span class="sp-tag ${agent.enabled === false ? 'sp-tag-neutral' : 'sp-tag-success'}">
+                                    ${agent.enabled === false ? this._t('sp.agents.disabled') : this._t('sp.agents.enabled')}
+                                </span>
+                                ${agent.dispatchable ? `<span class="sp-tag sp-tag-neutral">${this._t('sp.agents.dispatchable')}</span>` : ''}
+                            </div>
+                            <div style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.escapeHtml(endpoint)}">${this.escapeHtml(endpoint)}</div>
+                            ${agent.whenToUse ? `<p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:5px">${this.escapeHtml(agent.whenToUse)}</p>` : ''}
+                        </div>
+                        <div style="display:flex;gap:6px;flex-shrink:0">
+                            <button class="edit-acp-agent-btn sp-btn sp-btn-sm sp-btn-secondary" data-index="${index}">${this._t('sp.agents.edit')}</button>
+                            <button class="delete-acp-agent-btn sp-btn sp-btn-sm sp-btn-danger" data-index="${index}">${this._t('sp.agents.delete')}</button>
+                        </div>
+                    </div>
+                </div>`;
+            })
+            .join('');
+
+        return `
+        <section class="sp-section">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px">
+                <div>
+                    <h2 class="sp-section-title">${this._t('sp.agents.title')}</h2>
+                    <p class="sp-section-desc" style="margin-bottom:0">${this._t('sp.agents.desc')}</p>
+                </div>
+                <button id="add-acp-agent-btn" class="sp-btn sp-btn-primary" style="flex-shrink:0">
+                    <i class="fas fa-plus"></i> ${this._t('sp.agents.add')}
+                </button>
+            </div>
+            <div style="display:grid;gap:12px">
+                ${cards || `<div class="sp-section-card" style="text-align:center;color:var(--sp-color-text-tertiary);font-size:13px;padding:28px">${this._t('sp.agents.empty')}</div>`}
+            </div>
+            <p class="sp-form-hint" style="margin-top:12px"><i class="fas fa-shield-halved" style="margin-right:5px"></i>${this._t('sp.agents.secretHint')}</p>
+        </section>`;
+    }
+
+    _bindAcpAgentEvents() {
+        this.querySelector('#add-acp-agent-btn')?.addEventListener('click', () => {
+            this.showAcpAgentEditModal(-1);
+        });
+        this.querySelectorAll('.edit-acp-agent-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.showAcpAgentEditModal(Number(button.dataset.index));
+            });
+        });
+        this.querySelectorAll('.delete-acp-agent-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                void this.deleteAcpAgent(Number(button.dataset.index));
+            });
+        });
+    }
+
+    _readAcpAgentForm(profileId = '') {
+        return buildAcpAgentProfile({
+            id: profileId,
+            name: this.querySelector('#acp-agent-name')?.value || '',
+            enabled: this.querySelector('#acp-agent-enabled')?.checked === true,
+            dispatchable: this.querySelector('#acp-agent-dispatchable')?.checked === true,
+            whenToUse: this.querySelector('#acp-agent-when-to-use')?.value || '',
+            transportType: this.querySelector('#acp-agent-transport')?.value || 'stdio',
+            command: this.querySelector('#acp-agent-command')?.value || '',
+            argsJson: this.querySelector('#acp-agent-args')?.value || '[]',
+            cwd: this.querySelector('#acp-agent-cwd')?.value || 'workspace',
+            fixedCwd: this.querySelector('#acp-agent-fixed-cwd')?.value || '',
+            envJson: this.querySelector('#acp-agent-env')?.value || '{}',
+            inheritEnv: this.querySelector('#acp-agent-inherit-env')?.checked === true,
+            url: this.querySelector('#acp-agent-url')?.value || '',
+            headersJson: this.querySelector('#acp-agent-headers')?.value || '{}',
+            cookies: this.querySelector('#acp-agent-cookies')?.value || 'include',
+            modeId: this.querySelector('#acp-agent-mode')?.value || '',
+            configOptionsJson: this.querySelector('#acp-agent-config-options')?.value || '{}',
+            mcpServerIds: this.querySelector('#acp-agent-mcp-servers')?.value || '',
+            reconnectEnabled: this.querySelector('#acp-agent-reconnect')?.checked === true,
+            maxAttempts: this.querySelector('#acp-agent-max-attempts')?.value || '',
+            initialDelayMs: this.querySelector('#acp-agent-initial-delay')?.value || '',
+            maxDelayMs: this.querySelector('#acp-agent-max-delay')?.value || ''
+        });
+    }
+
+    _showAcpAgentFormError(error) {
+        const code = error instanceof AcpAgentFormError ? error.code : 'unknown';
+        const key = `sp.agents.error.${code}`;
+        window.notificationAPI.sendNotification(
+            'error',
+            this._t('sp.agents.validationFailed'),
+            error instanceof AcpAgentFormError ? this._t(key) : error.message
+        );
+    }
+
+    showAcpAgentEditModal(index) {
+        const existing = index >= 0 ? this._getAcpAgents()[index] : null;
+        const transport = existing?.transport || {
+            type: 'stdio',
+            command: '',
+            args: [],
+            cwd: 'workspace',
+            env: {},
+            inheritEnv: true
+        };
+        const reconnect = existing?.reconnect || {
+            enabled: true,
+            maxAttempts: 3,
+            initialDelayMs: 500,
+            maxDelayMs: 5000
+        };
+        const session = existing?.session || { configOptions: {}, mcpServerIds: [] };
+        const isHttp = transport.type === 'streamableHttp';
+        const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
+
+        this.showModal(`
+            <div class="od-confirm-modal-card od-sp-largest">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-robot"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${existing ? this._t('sp.agents.modal.edit') : this._t('sp.agents.modal.add')}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <div class="od-sp-two-col">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.name')}</label>
+                            <input id="acp-agent-name" class="od-sp-fi" value="${this.escapeHtml(existing?.name || '')}" placeholder="Codex">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.transport')}</label>
+                            <select id="acp-agent-transport" class="od-sp-fi">
+                                <option value="stdio" ${isHttp ? '' : 'selected'}>stdio JSON-RPC</option>
+                                <option value="streamableHttp" ${isHttp ? 'selected' : ''}>Streamable HTTP</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="od-sp-fc">
+                        <input id="acp-agent-enabled" type="checkbox" ${existing?.enabled === false ? '' : 'checked'}>
+                        <label for="acp-agent-enabled">${this._t('sp.agents.field.enabled')}</label>
+                    </div>
+                    <div class="od-sp-fc">
+                        <input id="acp-agent-dispatchable" type="checkbox" ${existing?.dispatchable ? 'checked' : ''}>
+                        <label for="acp-agent-dispatchable">${this._t('sp.agents.field.dispatchable')}</label>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.agents.field.whenToUse')}</label>
+                        <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${this.escapeHtml(existing?.whenToUse || '')}</textarea>
+                    </div>
+
+                    <div id="acp-agent-stdio-fields" ${isHttp ? 'hidden' : ''}>
+                        <div class="od-sp-fs">${this._t('sp.agents.section.stdio')}</div>
+                        <div class="od-sp-two-col">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.command')}</label>
+                                <input id="acp-agent-command" class="od-sp-fi" value="${this.escapeHtml(isHttp ? '' : transport.command)}" placeholder="codex">
+                            </div>
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.cwd')}</label>
+                                <select id="acp-agent-cwd" class="od-sp-fi">
+                                    <option value="workspace" ${!isHttp && transport.cwd === 'fixed' ? '' : 'selected'}>${this._t('sp.agents.cwd.workspace')}</option>
+                                    <option value="fixed" ${!isHttp && transport.cwd === 'fixed' ? 'selected' : ''}>${this._t('sp.agents.cwd.fixed')}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="acp-agent-fixed-cwd-field" class="od-sp-fg" ${!isHttp && transport.cwd === 'fixed' ? '' : 'hidden'}>
+                            <label class="od-sp-fl">${this._t('sp.agents.field.fixedCwd')}</label>
+                            <input id="acp-agent-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(isHttp ? '' : transport.fixedCwd || '')}">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.args')}</label>
+                            <textarea id="acp-agent-args" class="od-sp-fi" spellcheck="false">${json(isHttp ? [] : transport.args)}</textarea>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.args.hint')}</div>
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.env')}</label>
+                            <textarea id="acp-agent-env" class="od-sp-fi" spellcheck="false">${json(isHttp ? {} : transport.env)}</textarea>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.template.hint')}</div>
+                        </div>
+                        <div class="od-sp-fc">
+                            <input id="acp-agent-inherit-env" type="checkbox" ${isHttp || transport.inheritEnv !== false ? 'checked' : ''}>
+                            <label for="acp-agent-inherit-env">${this._t('sp.agents.field.inheritEnv')}</label>
+                        </div>
+                    </div>
+
+                    <div id="acp-agent-http-fields" ${isHttp ? '' : 'hidden'}>
+                        <div class="od-sp-fs">${this._t('sp.agents.section.http')}</div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.url')}</label>
+                            <input id="acp-agent-url" class="od-sp-fi" value="${this.escapeHtml(isHttp ? transport.url : '')}" placeholder="https://agent.example.com/acp">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.headers')}</label>
+                            <textarea id="acp-agent-headers" class="od-sp-fi" spellcheck="false">${json(isHttp ? transport.headers : {})}</textarea>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.template.hint')}</div>
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.cookies')}</label>
+                            <select id="acp-agent-cookies" class="od-sp-fi">
+                                <option value="include" ${isHttp && transport.cookies === 'omit' ? '' : 'selected'}>${this._t('sp.agents.cookies.include')}</option>
+                                <option value="omit" ${isHttp && transport.cookies === 'omit' ? 'selected' : ''}>${this._t('sp.agents.cookies.omit')}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="od-sp-fs">${this._t('sp.agents.section.session')}</div>
+                    <div class="od-sp-two-col">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.mode')}</label>
+                            <input id="acp-agent-mode" class="od-sp-fi" value="${this.escapeHtml(session.modeId || '')}" placeholder="code">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.mcpServers')}</label>
+                            <input id="acp-agent-mcp-servers" class="od-sp-fi" value="${this.escapeHtml((session.mcpServerIds || []).join(', '))}">
+                        </div>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.agents.field.configOptions')}</label>
+                        <textarea id="acp-agent-config-options" class="od-sp-fi" spellcheck="false">${json(session.configOptions)}</textarea>
+                        <div class="od-sp-hint">${this._t('sp.agents.field.configOptions.hint')}</div>
+                    </div>
+
+                    <div class="od-sp-fs">${this._t('sp.agents.section.reconnect')}</div>
+                    <div class="od-sp-fc">
+                        <input id="acp-agent-reconnect" type="checkbox" ${reconnect.enabled === false ? '' : 'checked'}>
+                        <label for="acp-agent-reconnect">${this._t('sp.agents.field.reconnect')}</label>
+                    </div>
+                    <div class="od-sp-fr">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.maxAttempts')}</label>
+                            <input id="acp-agent-max-attempts" type="number" min="0" max="20" class="od-sp-fi" value="${reconnect.maxAttempts ?? 3}">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.initialDelay')}</label>
+                            <input id="acp-agent-initial-delay" type="number" min="0" max="60000" class="od-sp-fi" value="${reconnect.initialDelayMs ?? 500}">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.maxDelay')}</label>
+                            <input id="acp-agent-max-delay" type="number" min="0" max="300000" class="od-sp-fi" value="${reconnect.maxDelayMs ?? 5000}">
+                        </div>
+                    </div>
+                    <div id="acp-agent-test-result" class="od-sp-verify-result od-sp-verify-info" hidden></div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('common.cancel')}</button>
+                    <button id="test-acp-agent-btn" class="od-confirm-btn od-confirm-btn-cancel">${this._t('sp.agents.test')}</button>
+                    <button id="save-acp-agent-btn" class="od-confirm-btn od-confirm-btn-primary">${this._t('sp.agents.save')}</button>
+                </div>
+            </div>
+        `);
+
+        const updateTransportFields = () => {
+            const http = this.querySelector('#acp-agent-transport')?.value === 'streamableHttp';
+            this.querySelector('#acp-agent-stdio-fields').hidden = http;
+            this.querySelector('#acp-agent-http-fields').hidden = !http;
+        };
+        const updateCwdField = () => {
+            this.querySelector('#acp-agent-fixed-cwd-field').hidden =
+                this.querySelector('#acp-agent-cwd')?.value !== 'fixed';
+        };
+        this.querySelector('#acp-agent-transport')?.addEventListener('change', updateTransportFields);
+        this.querySelector('#acp-agent-cwd')?.addEventListener('change', updateCwdField);
+        this.querySelectorAll('.modal-close-btn').forEach((button) => {
+            button.addEventListener('click', () => this.closeModal());
+        });
+        this.querySelector('#save-acp-agent-btn')?.addEventListener('click', () => {
+            try {
+                const profile = this._readAcpAgentForm(existing?.id || '');
+                this._saveAcpAgent(index, profile);
+            } catch (error) {
+                this._showAcpAgentFormError(error);
+            }
+        });
+        this.querySelector('#test-acp-agent-btn')?.addEventListener('click', () => {
+            void this._testAcpAgent(existing?.id || '');
+        });
+    }
+
+    _saveAcpAgent(index, profile) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.acpmgr) this.currentData.applications.acpmgr = { agents: [] };
+        if (!Array.isArray(this.currentData.applications.acpmgr.agents)) {
+            this.currentData.applications.acpmgr.agents = [];
+        }
+        if (index >= 0) {
+            this.currentData.applications.acpmgr.agents[index] = profile;
+        } else {
+            this.currentData.applications.acpmgr.agents.push(profile);
+        }
+        this.closeModal();
+        this.refreshAcpAgentsSection();
+        void this.saveImmediately();
+    }
+
+    async _testAcpAgent(profileId) {
+        const result = this.querySelector('#acp-agent-test-result');
+        try {
+            const profile = this._readAcpAgentForm(profileId);
+            result.hidden = false;
+            result.className = 'od-sp-verify-result od-sp-verify-info';
+            result.textContent = this._t('sp.agents.test.running');
+            const response = await window.applicationRegistryAPI.call('acpmgr', 'testAgent', profile);
+            const agentName = response?.agentInfo?.name || profile.name;
+            result.className = 'od-sp-verify-result od-sp-verify-success';
+            result.textContent = this._t('sp.agents.test.success', { name: agentName });
+        } catch (error) {
+            if (error instanceof AcpAgentFormError) {
+                this._showAcpAgentFormError(error);
+                return;
+            }
+            result.hidden = false;
+            result.className = 'od-sp-verify-result od-sp-verify-error';
+            result.textContent = this._t('sp.agents.test.failed', { message: error.message });
+        }
+    }
+
+    async deleteAcpAgent(index) {
+        const agent = this._getAcpAgents()[index];
+        if (!agent) return;
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FDEEEC',
+            iconColor: '#DF4436',
+            title: this._t('sp.agents.delete.title'),
+            message: this._t('sp.agents.delete.message', { name: agent.name }),
+            confirmText: this._t('sp.agents.delete'),
+            cancelText: this._t('common.cancel')
+        });
+        if (!confirmed) return;
+        this._getAcpAgents().splice(index, 1);
+        this.refreshAcpAgentsSection();
+        void this.saveImmediately();
+    }
+
+    refreshAcpAgentsSection() {
+        const tab = this.querySelector('#tab-agents');
+        if (!tab) return;
+        tab.innerHTML = this.renderAcpAgentsSection();
+        this._bindAcpAgentEvents();
     }
 
     renderTaskSection() {
@@ -2123,6 +2493,8 @@ class SettingPanel extends HTMLElement {
             this.currentData.task_config.evidence_card = e.target.checked;
             this.saveImmediately();
         });
+
+        this._bindAcpAgentEvents();
 
         // 搜索设置 - API Key 保存按钮
         this.querySelectorAll('.search-set-key-btn').forEach((btn) => {
