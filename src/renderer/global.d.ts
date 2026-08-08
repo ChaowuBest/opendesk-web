@@ -29,9 +29,9 @@ declare module '*.jsonl?raw' {
 
 declare global {
     interface Window {
-        slidesHostAPI: {
-            prepare: () => Promise<boolean>;
-            requestClose: (webContentsId: number) => Promise<boolean>;
+        officeHostAPI: {
+            prepare: (kind: 'slides' | 'word') => Promise<boolean>;
+            requestClose: (kind: 'slides' | 'word', webContentsId: number) => Promise<boolean>;
         };
         settingErrorAPI: {
             onSettingLoadError: (callback: (message: string) => void) => void;

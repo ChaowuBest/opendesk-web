@@ -5,16 +5,29 @@ import path from 'node:path';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
-const slidesPackageRoot = path.resolve(path.dirname(require.resolve('@bitclub.ai/opendesk-office/hap')), '..');
+const officePackageRoot = path.resolve(path.dirname(require.resolve('@bitclub.ai/opendesk-office/hap')), '..');
 
 test('OpenDesk Office exposes an npm-like host package boundary', () => {
-    for (const subpath of ['main', 'host-security', 'preload', 'renderer', 'vite', 'hap', 'hap-manifest', 'engine']) {
+    for (const subpath of [
+        'main',
+        'word-main',
+        'host-security',
+        'preload',
+        'word-preload',
+        'renderer',
+        'word-renderer',
+        'vite',
+        'hap',
+        'hap-manifest',
+        'engine',
+        'word-engine'
+    ]) {
         assert.ok(require.resolve(`@bitclub.ai/opendesk-office/${subpath}`));
     }
 });
 
 test('OpenDesk Office declares every HAP runtime dependency and asset', async () => {
-    const manifest = JSON.parse(await readFile(path.join(slidesPackageRoot, 'hap-manifest.json'), 'utf8')) as {
+    const manifest = JSON.parse(await readFile(path.join(officePackageRoot, 'hap-manifest.json'), 'utf8')) as {
         artifacts: string[];
         legalArtifacts: string[];
         prebundledPackages: string[];
@@ -22,7 +35,12 @@ test('OpenDesk Office declares every HAP runtime dependency and asset', async ()
         wasmAssets: string[];
     };
 
-    assert.deepEqual(manifest.artifacts.sort(), ['dist/preload/slidesPreload.js', 'dist/renderer/slides_editor.html']);
+    assert.deepEqual(manifest.artifacts.sort(), [
+        'dist/preload/slidesPreload.js',
+        'dist/preload/wordPreload.js',
+        'dist/renderer/slides_editor.html',
+        'dist/renderer/word_editor.html'
+    ]);
     assert.deepEqual(manifest.wasmAssets, ['dist/main/chunks/harfbuzz-*.wasm']);
     assert.deepEqual(manifest.legalArtifacts, [
         'third_party_licenses/opendesk-office/LICENSE',

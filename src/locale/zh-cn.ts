@@ -1606,6 +1606,8 @@ export const zhCn: Record<string, string> = {
     'renderer.fileExplorer.preview.binaryHint': '当前预览器仅支持文本文件',
     'renderer.fileExplorer.pptx.editor': 'PowerPoint 编辑器',
     'renderer.fileExplorer.pptx.unavailable': 'PowerPoint 编辑器当前不可用',
+    'renderer.fileExplorer.word.editor': 'Word 编辑器',
+    'renderer.fileExplorer.word.unavailable': 'Word 编辑器当前不可用',
 
     // Renderer - TaskView (toolbar, usage, retry, quickpass)
     'renderer.taskview.time.justNow': '刚刚',

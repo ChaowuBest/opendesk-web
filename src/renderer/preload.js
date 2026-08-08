@@ -665,10 +665,21 @@ function exposeFSAPI() {
     });
 }
 
-function exposeSlidesHostAPI() {
-    safeExposeInMainWorld('slidesHostAPI', {
-        prepare: () => ipcRenderer.invoke('slides-host:prepare'),
-        requestClose: (webContentsId) => ipcRenderer.invoke('slides-host:request-close', webContentsId)
+function exposeOfficeHostAPI() {
+    const requestCloseChannels = Object.freeze({
+        slides: 'office-host:slides:request-close',
+        word: 'office-host:word:request-close'
+    });
+    const isOfficeEditorKind = (kind) => Object.prototype.hasOwnProperty.call(requestCloseChannels, kind);
+    safeExposeInMainWorld('officeHostAPI', {
+        prepare: (kind) => {
+            if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
+            return ipcRenderer.invoke('office-host:prepare', kind);
+        },
+        requestClose: (kind, webContentsId) => {
+            if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
+            return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);
+        }
     });
 }
 
@@ -828,7 +839,7 @@ function exposeApplicationAPI() {
 exposeApplicationAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
-exposeSlidesHostAPI();
+exposeOfficeHostAPI();
 exposeThemeAPI();
 exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
