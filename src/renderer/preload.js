@@ -856,6 +856,38 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        updateUserPortrait: async (content) => {
+            const result = await ipcRenderer.invoke('memory:updateUserPortrait', content);
+            if (result.status !== 'ok') {
+                console.error('updating user portrait failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        updateMemory: async (uid, title, content) => {
+            const result = await ipcRenderer.invoke('memory:updateMemory', uid, title, content);
+            if (result.status !== 'ok') {
+                console.error('updating memory failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        removeMemory: async (uid) => {
+            const result = await ipcRenderer.invoke('memory:removeMemory', uid);
+            if (result.status !== 'ok') {
+                console.error('removing memory failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        cleanupMemories: async () => {
+            const result = await ipcRenderer.invoke('memory:cleanup');
+            if (result.status !== 'ok') {
+                console.error('cleaning up memories failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 

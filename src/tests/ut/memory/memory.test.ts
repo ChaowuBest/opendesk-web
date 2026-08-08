@@ -80,6 +80,94 @@ describe('关键事实记忆', () => {
             content: '项目使用 npm run build 构建 Electron 应用。',
             heat: 0
         });
+        expect(Date.parse(raw[0].createdAt)).not.toBeNaN();
+        expect(raw[0].updatedAt).toBe(raw[0].createdAt);
+    });
+
+    test('updateMemory 修改标题和内容并刷新更新时间', async () => {
+        const { registry } = setup();
+        const created = await registry.addMemory('workspace', '旧标题', '旧内容');
+        const before = await registry.getMemory(created.uid);
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await expect(registry.updateMemory(created.uid, '新标题', '新内容')).resolves.toMatchObject({
+            success: true,
+            updated: true,
+            uid: created.uid,
+            scope: 'workspace'
+        });
+
+        const after = await registry.getMemory(created.uid);
+        expect(after?.chunk).toMatchObject({
+            title: '新标题',
+            content: '新内容',
+            createdAt: before?.chunk.createdAt
+        });
+        expect(Date.parse(after!.chunk.updatedAt)).toBeGreaterThan(Date.parse(before!.chunk.updatedAt));
+    });
+
+    test('cleanupStaleMemories 同时清理全局和工作区中超过一周且热度为 0 的记忆', async () => {
+        const { registry, workspaceDir, globalDir } = setup();
+        const now = new Date('2026-08-05T12:00:00.000Z');
+        const stale = '2026-07-20T12:00:00.000Z';
+        const recent = '2026-08-01T12:00:00.000Z';
+        const exactlyOneWeek = '2026-07-29T12:00:00.000Z';
+        const workspaceFile = getWorkspaceMemoryFilePath({ workspaceDir });
+        const globalFile = getGlobalMemoryFilePath({ baseDir: globalDir });
+        fs.mkdirSync(path.dirname(workspaceFile), { recursive: true });
+        fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+        fs.writeFileSync(
+            workspaceFile,
+            JSON.stringify([
+                { uid: 'workspace-stale', title: '过期', content: '删除', heat: 0, createdAt: stale, updatedAt: stale },
+                { uid: 'workspace-hot', title: '有热度', content: '保留', heat: 2, createdAt: stale, updatedAt: stale },
+                {
+                    uid: 'workspace-boundary',
+                    title: '恰好一周',
+                    content: '保留',
+                    heat: 0,
+                    createdAt: exactlyOneWeek,
+                    updatedAt: exactlyOneWeek
+                }
+            ])
+        );
+        fs.writeFileSync(
+            globalFile,
+            JSON.stringify([
+                {
+                    uid: 'global-stale',
+                    title: '全局过期',
+                    content: '删除',
+                    heat: 0,
+                    createdAt: stale,
+                    updatedAt: stale
+                },
+                { uid: 'global-recent', title: '近期', content: '保留', heat: 0, createdAt: recent, updatedAt: recent }
+            ])
+        );
+
+        await expect(registry.cleanupStaleMemories({ now })).resolves.toEqual({
+            removed: 2,
+            byScope: { workspace: 1, global: 1 }
+        });
+        expect((await registry.listMemories('workspace')).map((memory) => memory.uid).sort()).toEqual([
+            'workspace-boundary',
+            'workspace-hot'
+        ]);
+        expect((await registry.listMemories('global')).map((memory) => memory.uid)).toEqual(['global-recent']);
+    });
+
+    test('旧格式记忆使用 memory.json 修改时间补齐时间戳', async () => {
+        const { registry, workspaceDir } = setup();
+        const filePath = getWorkspaceMemoryFilePath({ workspaceDir });
+        const legacyUpdatedAt = new Date('2026-07-15T08:30:00.000Z');
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, JSON.stringify([{ uid: 'legacy', title: '旧记忆', content: '旧内容', heat: 0 }]));
+        fs.utimesSync(filePath, legacyUpdatedAt, legacyUpdatedAt);
+
+        const [memory] = await registry.listMemories('workspace');
+        expect(memory.createdAt).toBe(legacyUpdatedAt.toISOString());
+        expect(memory.updatedAt).toBe(legacyUpdatedAt.toISOString());
     });
 
     test('searchMemory 只返回 uid 和 title', async () => {
@@ -346,7 +434,9 @@ describe('关键事实记忆', () => {
                     uid: 'abc123',
                     title: '项目构建命令',
                     content: '项目使用 npm run build 构建。',
-                    heat: 2
+                    heat: 2,
+                    createdAt: '2026-08-01T00:00:00.000Z',
+                    updatedAt: '2026-08-01T00:00:00.000Z'
                 }
             }
         ]);

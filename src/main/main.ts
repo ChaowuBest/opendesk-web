@@ -81,9 +81,10 @@ import {
 } from './applications/filemgr/workspace.js';
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
-import { readUserPortrait } from './aikernel/memory/user_portrait.js';
+import { readUserPortrait, writeUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
+import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
 import {
     getUsageDashboardSummary,
     getUsageRankings,
@@ -904,6 +905,42 @@ const registerMemoryAPIHandlers = () => {
                     ...chunk
                 }))
             };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('memory:updateUserPortrait', async (_event, content: string) => {
+        try {
+            await writeUserPortrait(content);
+            return { status: 'ok', data: { raw: await readUserPortrait() } };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('memory:updateMemory', async (_event, uid: string, title: string, content: string) => {
+        try {
+            const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
+            return { status: 'ok', data: await registry.updateMemory(uid, title, content) };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('memory:removeMemory', async (_event, uid: string) => {
+        try {
+            const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
+            return { status: 'ok', data: await registry.removeMemory(uid) };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('memory:cleanup', async () => {
+        try {
+            const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
+            return { status: 'ok', data: await registry.cleanupStaleMemories() };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }
@@ -2963,6 +3000,9 @@ async function startApplication(): Promise<void> {
         const p1a = startupTrace.createPhase('startup.ready.global_state.init');
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
+        startMemoryCleanupScheduler(() =>
+            FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
+        );
         p1a.end();
 
         const p1b = startupTrace.createPhase('startup.ready.global_state.toolset_provider');

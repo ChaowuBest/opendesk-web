@@ -38,6 +38,25 @@ export interface RemoveMemoryResult {
     scope?: MemoryScope;
 }
 
+export interface UpdateMemoryResult {
+    success: boolean;
+    updated: boolean;
+    uid: string;
+    scope?: MemoryScope;
+}
+
+export interface CleanupStaleMemoriesOptions {
+    now?: Date;
+    maxAgeMs?: number;
+}
+
+export interface CleanupStaleMemoriesResult {
+    removed: number;
+    byScope: Record<MemoryScope, number>;
+}
+
+export const STALE_MEMORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface SearchMemoryResult {
     uid: string;
     title: string;
@@ -122,13 +141,16 @@ export class FactorialMemoryStore {
         }
 
         try {
+            const fallbackTimestamp = (await fs.promises.stat(filePath)).mtime.toISOString();
             const parsed = JSON.parse(raw);
             const items = Array.isArray(parsed)
                 ? parsed
                 : parsed && typeof parsed === 'object' && Array.isArray(parsed.memories)
                   ? parsed.memories
                   : [];
-            return items.map((item) => normalizeMemoryChunk(item)).filter((item): item is MemoryChunk => item !== null);
+            return items
+                .map((item) => normalizeMemoryChunk(item, fallbackTimestamp))
+                .filter((item): item is MemoryChunk => item !== null);
         } catch (err) {
             logger.warn(`Failed to parse memory file ${filePath}: ${err}`);
             return [];
@@ -195,11 +217,14 @@ export class FactorialMemoryStore {
             await this.ensureMemoryFile(scope);
             const chunks = await this.readMemoryFile(scope);
             const uid = await this.generateUid();
+            const now = new Date().toISOString();
             const chunk: MemoryChunk = {
                 uid,
                 title: normalizedTitle,
                 content: normalizedContent,
-                heat: 0
+                heat: 0,
+                createdAt: now,
+                updatedAt: now
             };
             chunks.push(chunk);
             await this.saveMemories(scope, chunks);
@@ -232,6 +257,55 @@ export class FactorialMemoryStore {
                 removed: false,
                 uid
             };
+        });
+    }
+
+    async updateMemory(uid: string, title: string, content: string): Promise<UpdateMemoryResult> {
+        return await FactorialMemoryStore.runMutation(async () => {
+            const normalizedTitle = normalizeNonBlankMemoryText(title, t('tools.memory.invalidTitle'));
+            const normalizedContent = normalizeNonBlankMemoryText(content, t('tools.memory.invalidContent'));
+            for (const scope of ['workspace', 'global'] as MemoryScope[]) {
+                const chunks = await this.readMemoryFile(scope);
+                const index = chunks.findIndex((chunk) => chunk.uid === uid);
+                if (index >= 0) {
+                    chunks[index] = {
+                        ...chunks[index],
+                        title: normalizedTitle,
+                        content: normalizedContent,
+                        updatedAt: new Date().toISOString()
+                    };
+                    await this.saveMemories(scope, chunks);
+                    return { success: true, updated: true, uid, scope };
+                }
+            }
+            return { success: true, updated: false, uid };
+        });
+    }
+
+    async cleanupStaleMemories(options: CleanupStaleMemoriesOptions = {}): Promise<CleanupStaleMemoriesResult> {
+        return await FactorialMemoryStore.runMutation(async () => {
+            const nowMs = (options.now ?? new Date()).getTime();
+            const maxAgeMs = options.maxAgeMs ?? STALE_MEMORY_MAX_AGE_MS;
+            const result: CleanupStaleMemoriesResult = {
+                removed: 0,
+                byScope: { workspace: 0, global: 0 }
+            };
+
+            for (const scope of ['workspace', 'global'] as MemoryScope[]) {
+                const chunks = await this.readMemoryFile(scope);
+                const next = chunks.filter((chunk) => {
+                    const updatedAtMs = Date.parse(chunk.updatedAt);
+                    return chunk.heat !== 0 || !Number.isFinite(updatedAtMs) || nowMs - updatedAtMs <= maxAgeMs;
+                });
+                const removed = chunks.length - next.length;
+                if (removed > 0) {
+                    await this.saveMemories(scope, next);
+                    result.removed += removed;
+                    result.byScope[scope] = removed;
+                }
+            }
+
+            return result;
         });
     }
 
@@ -291,6 +365,7 @@ export class FactorialMemoryStore {
                 const chunk = { ...chunks[index] };
                 if (options.incrementHeat) {
                     chunk.heat += 1;
+                    chunk.updatedAt = new Date().toISOString();
                     chunks[index] = chunk;
                     await this.saveMemories(scope, chunks);
                 }

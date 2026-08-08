@@ -1,0 +1,2129 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>用户画像与记忆界面 · 工程标注稿 - OpenDesk</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            /* ================ 设计 Token ================ */
+            :root {
+                /* 深色模式（默认） */
+                --bg: #232120;
+                --page: #1b1a18;
+                --card: #2a2826;
+                --card-hover: #33302d;
+                --line: #3b3835;
+                --line-soft: #33302d;
+                --ink: #efedea;
+                --ink2: #d5d1cb;
+                --ink3: #9b968f;
+                --ink4: #6f6a63;
+                --accent: #e8563f;
+                --accent-soft: rgba(232, 86, 63, 0.16);
+                --accent-bg: rgba(232, 86, 63, 0.09);
+                --accent-hover: #ed6b56;
+                --green: #3dbf82;
+                --green-soft: rgba(61, 191, 130, 0.15);
+                --amber: #e2a23b;
+                --amber-soft: rgba(226, 162, 59, 0.15);
+                --blue: #7aa2e8;
+                --blue-soft: rgba(122, 162, 232, 0.16);
+                --red: #e85a5a;
+                --red-soft: rgba(232, 90, 90, 0.15);
+                --overlay: rgba(0, 0, 0, 0.45);
+                --shadow-card: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.2);
+                --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+                --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+            }
+            body.lm {
+                --bg: #f5f4f2;
+                --page: #fbfaf8;
+                --card: #ffffff;
+                --card-hover: #f5f4f2;
+                --line: #e7e5e2;
+                --line-soft: #efeeea;
+                --ink: #1c1917;
+                --ink2: #4a4642;
+                --ink3: #8a8580;
+                --ink4: #b4afa9;
+                --accent: #df4436;
+                --accent-soft: #fdeeec;
+                --accent-bg: #fef9f8;
+                --accent-hover: #e8563f;
+                --green: #1f9d66;
+                --green-soft: #e7f5ee;
+                --amber: #b87503;
+                --amber-soft: #fdf3e3;
+                --blue: #4267b2;
+                --blue-soft: #ebf1fb;
+                --red: #dc2626;
+                --red-soft: #fef2f2;
+                --shadow-card: 0 12px 40px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.06);
+                --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+            }
+
+            html {
+                scroll-behavior: smooth;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue',
+                    'Microsoft YaHei', sans-serif;
+                background: var(--page);
+                color: var(--ink);
+                font-size: 13px;
+                min-width: 1240px;
+                -webkit-font-smoothing: antialiased;
+            }
+            .num {
+                font-variant-numeric: tabular-nums;
+            }
+
+            /* ================ 顶栏 ================ */
+            .topbar {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                height: 56px;
+                background: rgba(27, 26, 24, 0.88);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--line);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 24px;
+            }
+            body.lm .topbar {
+                background: rgba(251, 250, 248, 0.88);
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            .brand .logo {
+                width: 18px;
+                height: 18px;
+                border-radius: 5px;
+                background: linear-gradient(135deg, #e8563f, #d93826);
+            }
+            .brand .sub {
+                font-weight: 400;
+                color: var(--ink3);
+                font-size: 12.5px;
+            }
+            .controls {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .nav-chip {
+                font-size: 12.5px;
+                color: var(--ink2);
+                padding: 5px 10px;
+                border-radius: 7px;
+                cursor: pointer;
+                border: 0;
+                background: none;
+                font-family: inherit;
+            }
+            .nav-chip:hover {
+                color: var(--accent);
+                background: var(--accent-soft);
+            }
+            .nav-chip.active {
+                color: var(--accent);
+                background: var(--accent-soft);
+            }
+            .theme-toggle {
+                width: 32px;
+                height: 32px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--card);
+                color: var(--ink2);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-family: inherit;
+            }
+            .theme-toggle:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+            main {
+                max-width: 1280px;
+                margin: 0 auto;
+                padding: 0 24px 60px;
+            }
+            .intro {
+                padding: 30px 0 6px;
+            }
+            .intro h1 {
+                font-size: 21px;
+                font-weight: 650;
+                letter-spacing: 0.2px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .v-tag {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--accent);
+                background: var(--accent-soft);
+                border-radius: 5px;
+                padding: 3px 8px;
+            }
+            .intro p {
+                margin-top: 10px;
+                font-size: 13.5px;
+                line-height: 1.8;
+                color: var(--ink3);
+                max-width: 920px;
+            }
+            .intro p b {
+                color: var(--ink2);
+                font-weight: 600;
+            }
+
+            .sec {
+                margin-top: 40px;
+                scroll-margin-top: 80px;
+            }
+            .sec-head {
+                display: flex;
+                align-items: baseline;
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+            .sec-no {
+                font-family: var(--mono);
+                font-size: 12px;
+                color: var(--accent);
+                font-weight: 600;
+            }
+            .sec-head h2 {
+                font-size: 17px;
+                font-weight: 650;
+            }
+            .sec-head .sec-sub {
+                font-size: 12.5px;
+                color: var(--ink3);
+            }
+
+            /* ================ Token 表 ================ */
+            .tok-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 14px;
+            }
+            .tok-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 18px;
+            }
+            .tok-card h3 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .tok-card h3::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 2px;
+                background: var(--accent);
+            }
+            .swatches {
+                display: flex;
+                flex-direction: column;
+                gap: 7px;
+            }
+            .swt {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 12px;
+            }
+            .swc {
+                width: 26px;
+                height: 26px;
+                border-radius: 7px;
+                flex: none;
+                box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.15);
+            }
+            .swt .nm {
+                width: 80px;
+                color: var(--ink2);
+                font-weight: 500;
+            }
+            .swt .hex {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--ink3);
+                width: 72px;
+            }
+            .swt .hex2 {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--ink4);
+                width: 90px;
+            }
+            .swt .use {
+                color: var(--ink4);
+                font-size: 11px;
+            }
+            .tok-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                font-size: 12px;
+            }
+            .tok-list .ti {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .tok-list .tv {
+                font-family: var(--mono);
+                font-size: 11px;
+                color: var(--accent);
+                min-width: 100px;
+            }
+            .tok-list .tu {
+                color: var(--ink3);
+                font-size: 11.5px;
+            }
+
+            /* ================ 标注画布 ================ */
+            .anno {
+                position: relative;
+            }
+            .bdg {
+                position: absolute;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: var(--accent);
+                color: #fff;
+                font-size: 10.5px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 0 0 3px rgba(232, 86, 63, 0.16);
+                z-index: 60;
+                font-style: normal;
+            }
+
+            /* ================ 面板画布 ================ */
+            .panel-frame {
+                background: var(--bg);
+                border: 1px solid var(--line);
+                border-radius: 16px;
+                overflow: hidden;
+                box-shadow: var(--shadow-soft);
+                display: flex;
+                flex-direction: column;
+            }
+            .legend {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px 28px;
+                margin-top: 14px;
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 20px;
+            }
+            .lg {
+                display: flex;
+                gap: 10px;
+                font-size: 12px;
+                line-height: 1.7;
+                color: var(--ink3);
+            }
+            .lg i {
+                flex: none;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: var(--accent);
+                color: #fff;
+                font-size: 10.5px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-style: normal;
+                margin-top: 1px;
+            }
+            .lg b {
+                color: var(--ink2);
+                font-weight: 600;
+            }
+            .lg code {
+                font-family: var(--mono);
+                font-size: 11px;
+                color: var(--accent);
+                background: var(--accent-soft);
+                border-radius: 4px;
+                padding: 0 5px;
+            }
+
+            /* ================ 通用控件 ================ */
+            .tag {
+                font-size: 10px;
+                padding: 1px 7px;
+                border-radius: 5px;
+                font-weight: 500;
+                white-space: nowrap;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+            .t-blue {
+                background: var(--blue-soft);
+                color: var(--blue);
+            }
+            .t-green {
+                background: var(--green-soft);
+                color: var(--green);
+            }
+            .t-gray {
+                background: var(--card-hover);
+                color: var(--ink3);
+            }
+            .btn-p {
+                background: var(--accent);
+                color: #fff;
+                border: 0;
+                border-radius: 8px;
+                padding: 7px 16px;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.15s;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .btn-p:hover {
+                background: var(--accent-hover);
+            }
+            .btn-s {
+                background: var(--card);
+                color: var(--ink2);
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 6px 15px;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.15s;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .btn-s:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+            .iconbtn {
+                width: 30px;
+                height: 30px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: var(--card);
+                color: var(--ink3);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s;
+            }
+            .iconbtn:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+            svg {
+                display: block;
+            }
+            .ic {
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.8;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+            .count-pill {
+                padding: 4px 10px;
+                border-radius: 999px;
+                color: var(--ink3);
+                background: var(--card-hover);
+                font-size: 11px;
+                font-weight: 600;
+                flex: none;
+            }
+            .notice {
+                padding: 9px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .notice.success {
+                color: var(--green);
+                background: var(--green-soft);
+            }
+            .notice svg {
+                width: 14px;
+                height: 14px;
+                flex: none;
+            }
+
+            /* ================ 组件规范卡 ================ */
+            .cp-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 14px;
+            }
+            .cp {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+            .cp-demo {
+                min-height: 72px;
+                padding: 16px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg);
+                border-bottom: 1px solid var(--line-soft);
+                flex-wrap: wrap;
+            }
+            .cp-demo.col {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 6px;
+            }
+            .cp-spec {
+                padding: 11px 15px 13px;
+            }
+            .cp-spec h4 {
+                font-size: 12.5px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .cp-new {
+                font-size: 9px;
+                font-weight: 600;
+                color: var(--green);
+                background: var(--green-soft);
+                border-radius: 4px;
+                padding: 1px 5px;
+            }
+            .cp-spec li {
+                font-size: 11.5px;
+                color: var(--ink3);
+                line-height: 1.8;
+                list-style: none;
+            }
+            .cp-spec li::before {
+                content: '·';
+                color: var(--accent);
+                margin-right: 5px;
+            }
+            .cp-spec code {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--accent);
+            }
+
+            /* ================ 动效规范 ================ */
+            .anim-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 14px;
+            }
+            .anim-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 18px;
+            }
+            .anim-card h4 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .anim-card h4::before {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 2px;
+                background: var(--accent);
+            }
+            .anim-card li {
+                font-size: 11.5px;
+                color: var(--ink3);
+                line-height: 1.8;
+                list-style: none;
+            }
+            .anim-card li::before {
+                content: '·';
+                color: var(--accent);
+                margin-right: 5px;
+            }
+            .anim-card code {
+                font-family: var(--mono);
+                font-size: 10.5px;
+                color: var(--accent);
+            }
+            .anim-preview {
+                margin-top: 12px;
+                height: 64px;
+                background: var(--bg);
+                border-radius: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .note-block {
+                margin-top: 14px;
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 16px 20px;
+                font-size: 12.5px;
+                line-height: 1.9;
+                color: var(--ink3);
+            }
+            .note-block b {
+                color: var(--ink2);
+            }
+            .note-block code {
+                font-family: var(--mono);
+                font-size: 11px;
+                color: var(--accent);
+            }
+            .page-foot {
+                margin-top: 36px;
+                padding-top: 16px;
+                border-top: 1px solid var(--line-soft);
+                font-size: 12px;
+                color: var(--ink4);
+                display: flex;
+                justify-content: space-between;
+            }
+
+            /* ================ 实际面板组件 ================ */
+            .tabs-bar {
+                flex: none;
+                padding: 0 24px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                border-bottom: 1px solid var(--line);
+                height: 48px;
+            }
+            .tabs {
+                display: flex;
+                gap: 24px;
+                height: 100%;
+                align-items: center;
+            }
+            .tab {
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--ink3);
+                cursor: pointer;
+                border: 0;
+                background: none;
+                font-family: inherit;
+                padding: 0;
+                position: relative;
+                transition: color 0.15s;
+                height: 100%;
+                display: flex;
+                align-items: center;
+            }
+            .tab:hover {
+                color: var(--ink2);
+            }
+            .tab.active {
+                color: var(--ink);
+                font-weight: 650;
+            }
+            .tab.active::after {
+                content: '';
+                position: absolute;
+                left: 0;
+                right: 0;
+                bottom: -1px;
+                height: 2px;
+                background: var(--accent);
+                border-radius: 1px;
+            }
+            .tab-actions {
+                display: flex;
+                gap: 8px;
+            }
+
+            .md-body {
+                line-height: 1.75;
+                color: var(--ink2);
+            }
+            .md-body h3 {
+                font-size: 14px;
+                font-weight: 650;
+                color: var(--ink);
+                margin-top: 16px;
+                margin-bottom: 6px;
+            }
+            .md-body h3:first-child {
+                margin-top: 0;
+            }
+            .md-body p {
+                margin-bottom: 8px;
+            }
+            .md-body ul {
+                padding-left: 18px;
+                margin-bottom: 8px;
+            }
+            .md-body li {
+                margin-bottom: 3px;
+            }
+            .md-body code {
+                font-family: var(--mono);
+                font-size: 11.5px;
+                background: var(--card-hover);
+                border-radius: 4px;
+                padding: 1px 5px;
+                color: var(--accent);
+            }
+            .md-body b {
+                color: var(--ink);
+                font-weight: 600;
+            }
+
+            .ed-label {
+                display: block;
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--ink3);
+                margin-bottom: 5px;
+            }
+            .ed-label:not(:first-child) {
+                margin-top: 14px;
+            }
+            .ed-title {
+                width: 100%;
+                height: 36px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 0 11px;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--ink);
+                background: var(--bg);
+                font-family: inherit;
+            }
+            .ed-title:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
+            .ed-area {
+                width: 100%;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 12px;
+                font-size: 12.5px;
+                line-height: 1.65;
+                color: var(--ink2);
+                background: var(--bg);
+                resize: none;
+                font-family: inherit;
+            }
+            .ed-area:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
+            .ed-portrait {
+                min-height: 280px;
+                font-family: var(--mono);
+                font-size: 12.5px;
+            }
+            .ed-mem {
+                min-height: 160px;
+            }
+            .ed-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-top: 14px;
+            }
+
+            /* Portrait 布局 */
+            .pt-body {
+                flex: 1;
+                min-height: 0;
+                overflow: auto;
+            }
+            .pt-body::-webkit-scrollbar {
+                width: 5px;
+            }
+            .pt-body::-webkit-scrollbar-thumb {
+                border-radius: 4px;
+                background: rgba(128, 128, 128, 0.3);
+            }
+            .pt-layout {
+                display: flex;
+                min-height: 100%;
+            }
+            .pt-meta {
+                flex: none;
+                width: 240px;
+                padding: 28px 24px;
+                border-right: 1px solid var(--line-soft);
+                background: linear-gradient(180deg, var(--card), var(--bg));
+            }
+            .pt-meta .eyebrow {
+                font-size: 10px;
+                font-weight: 700;
+                color: var(--accent);
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+            .pt-meta h2 {
+                font-size: 17px;
+                font-weight: 650;
+                margin-top: 6px;
+            }
+            .pt-meta p {
+                font-size: 12px;
+                color: var(--ink3);
+                margin-top: 8px;
+                line-height: 1.6;
+            }
+            .pt-meta .edit-btn {
+                margin-top: 16px;
+            }
+            .pt-content {
+                flex: 1;
+                padding: 28px 32px;
+                min-width: 0;
+            }
+            .pt-edit-card {
+                max-width: 920px;
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                background: var(--card);
+                padding: 24px 28px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            }
+
+            /* Facts 时间线 + 展开 */
+            .facts-body {
+                flex: 1;
+                min-height: 0;
+                overflow: auto;
+                padding: 20px 24px 32px;
+            }
+            .facts-body::-webkit-scrollbar {
+                width: 5px;
+            }
+            .facts-body::-webkit-scrollbar-thumb {
+                border-radius: 4px;
+                background: rgba(128, 128, 128, 0.3);
+            }
+            .facts-top {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 18px;
+                padding: 0 2px;
+            }
+            .facts-top h2 {
+                font-size: 16px;
+                font-weight: 650;
+            }
+            .facts-top p {
+                font-size: 12px;
+                color: var(--ink3);
+                margin-top: 3px;
+            }
+
+            .timeline {
+                position: relative;
+                padding-left: 22px;
+            }
+            .timeline::before {
+                content: '';
+                position: absolute;
+                left: 5px;
+                top: 6px;
+                bottom: 6px;
+                width: 1.5px;
+                background: var(--line);
+            }
+            .tl-group {
+                margin-bottom: 22px;
+            }
+            .tl-group-label {
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--ink3);
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                margin-bottom: 10px;
+                position: relative;
+                padding-left: 2px;
+            }
+            .tl-group-label .cnt {
+                font-size: 10.5px;
+                color: var(--ink4);
+                font-weight: 600;
+                margin-left: 6px;
+            }
+            .tl-group-label::before {
+                content: '';
+                position: absolute;
+                left: -21px;
+                top: 4px;
+                width: 9px;
+                height: 9px;
+                border-radius: 50%;
+                background: var(--card);
+                border: 2px solid var(--accent);
+            }
+
+            .mem-row {
+                position: relative;
+                margin-bottom: 10px;
+                display: flex;
+                gap: 16px;
+                align-items: flex-start;
+            }
+            .mem-row::before {
+                content: '';
+                position: absolute;
+                left: -21px;
+                top: 20px;
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: var(--card);
+                border: 2px solid var(--blue);
+                z-index: 2;
+            }
+            .mem-row[data-scope='global']::before {
+                border-color: var(--green);
+            }
+
+            .tl-card {
+                width: 44%;
+                flex: none;
+                padding: 13px 16px;
+                border-radius: 10px;
+                background: var(--card);
+                border: 1px solid var(--line-soft);
+                cursor: pointer;
+                transition: all 0.18s;
+            }
+            .tl-card:hover {
+                border-color: var(--line);
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            }
+            .tl-card.sel {
+                opacity: 0.5;
+            }
+            .tl-card-head {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                margin-bottom: 5px;
+            }
+            .tl-card h4 {
+                font-size: 12.5px;
+                font-weight: 600;
+                color: var(--ink);
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .tl-card .preview {
+                font-size: 11.5px;
+                color: var(--ink4);
+                line-height: 1.5;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+            .tl-card .meta {
+                font-size: 10.5px;
+                color: var(--ink4);
+                margin-top: 6px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .meta-dot {
+                width: 3px;
+                height: 3px;
+                border-radius: 50%;
+                background: currentColor;
+                opacity: 0.5;
+            }
+
+            .expand-col {
+                flex: 1;
+                min-width: 0;
+            }
+            .expand-card {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 12px;
+                box-shadow: var(--shadow-card);
+                overflow: hidden;
+                animation: expand-in 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+            }
+            @keyframes expand-in {
+                from {
+                    opacity: 0;
+                    transform: translateY(-6px) scale(0.98);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+            .expand-head {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 14px 18px;
+                border-bottom: 1px solid var(--line-soft);
+            }
+            .expand-head .spacer {
+                flex: 1;
+            }
+            .expand-title {
+                font-size: 15px;
+                font-weight: 650;
+                color: var(--ink);
+                padding: 16px 18px 4px;
+                line-height: 1.4;
+            }
+            .expand-body {
+                font-size: 13px;
+                line-height: 1.72;
+                color: var(--ink2);
+                padding: 8px 18px 16px;
+            }
+            .expand-body code {
+                font-family: var(--mono);
+                font-size: 11.5px;
+                background: var(--card-hover);
+                border-radius: 4px;
+                padding: 1px 5px;
+                color: var(--accent);
+            }
+            .expand-foot {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 12px 18px;
+                border-top: 1px solid var(--line-soft);
+                font-size: 11px;
+                color: var(--ink4);
+            }
+            .heat-tag {
+                font-size: 10px;
+                font-weight: 700;
+                color: var(--accent);
+                background: var(--accent-soft);
+                padding: 2px 8px;
+                border-radius: 5px;
+            }
+            .expand-edit {
+                padding: 18px;
+            }
+
+            .empty-state {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                text-align: center;
+                color: var(--ink3);
+            }
+            .empty-icon {
+                width: 40px;
+                height: 40px;
+                border-radius: 12px;
+                display: grid;
+                place-items: center;
+                color: var(--accent);
+                background: var(--accent-soft);
+                font-size: 18px;
+                margin-bottom: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <!-- ================= 顶栏 ================= -->
+        <header class="topbar">
+            <div class="brand">
+                <span class="logo"></span>OpenDesk
+                <span class="sub">· 用户画像与记忆界面 · 工程标注稿</span>
+            </div>
+            <div class="controls">
+                <button class="nav-chip active" data-jump="tok">01 Token</button>
+                <button class="nav-chip" data-jump="portrait">02 画像布局</button>
+                <button class="nav-chip" data-jump="facts">03 时间线布局</button>
+                <button class="nav-chip" data-jump="comp">04 组件规范</button>
+                <button class="nav-chip" data-jump="anim">05 动效规范</button>
+                <button class="theme-toggle" id="themeToggle" title="切换深浅色">
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <circle cx="12" cy="12" r="5" />
+                        <line x1="12" y1="1" x2="12" y2="3" />
+                        <line x1="12" y1="21" x2="12" y2="23" />
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                        <line x1="1" y1="12" x2="3" y2="12" />
+                        <line x1="21" y1="12" x2="23" y2="12" />
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <section class="intro">
+                <h1>
+                    用户画像与记忆界面 · 工程标注稿
+                    <span class="v-tag">深底浮层风格</span>
+                    <span class="v-tag">深色 / 浅色双模式</span>
+                </h1>
+                <p>
+                    本稿为 OpenDesk 左下角"记忆"按钮打开的<b>用户画像与关键事实记忆界面</b>的完整工程标注： §01 设计
+                    Token（浅色 / 深色双值），§02 用户画像布局标注（左元数据栏 + 右 Markdown 内容）， §03
+                    关键事实时间线布局标注（竖向时间线 + 点击展开浮层卡片），§04 全部组件规范，§05 动效规范。
+                    色彩体系与模态弹窗标注稿<b>同源</b>--暖灰底色 + 品牌红强调色，深浅色仅做明度翻转。
+                </p>
+            </section>
+
+            <!-- ============ 01 Token ============ -->
+            <section class="sec" id="tok">
+                <div class="sec-head">
+                    <span class="sec-no">01</span>
+                    <h2>设计 Token</h2>
+                    <span class="sec-sub">浅色 / 深色双值 · 与模态弹窗同源</span>
+                </div>
+                <div class="tok-grid">
+                    <div class="tok-card">
+                        <h3>色板 · 表面与描边</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #fbfaf8"></span><span class="nm">页面底</span
+                                ><span class="hex">#FBFAF8</span><span class="hex2">#1B1A18</span
+                                ><span class="use">面板外背景</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #f5f4f2"></span><span class="nm">面板底</span
+                                ><span class="hex">#F5F4F2</span><span class="hex2">#232120</span
+                                ><span class="use">面板内部底色 / 输入框底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #ffffff"></span><span class="nm">卡片白</span
+                                ><span class="hex">#FFFFFF</span><span class="hex2">#2A2826</span
+                                ><span class="use">卡片 / 控件底 / 展开卡</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #e7e5e2"></span><span class="nm">描边</span
+                                ><span class="hex">#E7E5E2</span><span class="hex2">#3B3835</span
+                                ><span class="use">卡片与控件描边 1px</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #efeeea"></span><span class="nm">分隔线</span
+                                ><span class="hex">#EFEEEA</span><span class="hex2">#33302D</span
+                                ><span class="use">行内分隔 / 展开卡分区</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #f5f4f2"></span><span class="nm">悬停底</span
+                                ><span class="hex">#F5F4F2</span><span class="hex2">#33302D</span
+                                ><span class="use">时间线卡片悬停</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>色板 · 强调与语义</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #df4436"></span><span class="nm">品牌红</span
+                                ><span class="hex">#DF4436</span><span class="hex2">#E8563F</span
+                                ><span class="use">Tab 下划线 / 选中态 / 按钮</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #fdeeec"></span><span class="nm">红浅底</span
+                                ><span class="hex">#FDEEEC</span><span class="hex2">rgba(232,86,63,.16)</span
+                                ><span class="use">热度标签底 / 空态图标</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #4267b2"></span><span class="nm">信息蓝</span
+                                ><span class="hex">#4267B2</span><span class="hex2">#7AA2E8</span
+                                ><span class="use">workspace scope 节点</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #ebf1fb"></span><span class="nm">蓝浅底</span
+                                ><span class="hex">#EBF1FB</span><span class="hex2">rgba(122,162,232,.16)</span
+                                ><span class="use">工作区标签底</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #1f9d66"></span><span class="nm">成功绿</span
+                                ><span class="hex">#1F9D66</span><span class="hex2">#3DBF82</span
+                                ><span class="use">global scope 节点 / 通知</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #e7f5ee"></span><span class="nm">绿浅底</span
+                                ><span class="hex">#E7F5EE</span><span class="hex2">rgba(61,191,130,.15)</span
+                                ><span class="use">全局标签底 / 成功通知</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>文字层级</h3>
+                        <div class="swatches">
+                            <div class="swt">
+                                <span class="swc" style="background: #1c1917"></span><span class="nm">标题</span
+                                ><span class="hex">#1C1917</span><span class="hex2">#EFEDEA</span
+                                ><span class="use">展开卡标题 / h2 / h3</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #4a4642"></span><span class="nm">正文</span
+                                ><span class="hex">#4A4642</span><span class="hex2">#D5D1CB</span
+                                ><span class="use">控件文字 / 正文</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #8a8580"></span><span class="nm">次要</span
+                                ><span class="hex">#8A8580</span><span class="hex2">#9B968F</span
+                                ><span class="use">描述 / meta / 副标题</span>
+                            </div>
+                            <div class="swt">
+                                <span class="swc" style="background: #b4afa9"></span><span class="nm">占位</span
+                                ><span class="hex">#B4AFA9</span><span class="hex2">#6F6A63</span
+                                ><span class="use">预览文字 / 时间线 meta</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tok-card">
+                        <h3>字号 / 圆角 / 间距 / 阴影</h3>
+                        <div class="tok-list">
+                            <div class="ti">
+                                <span class="tv">17 / 650</span><span class="tu">画像标题 h2 / Facts 标题</span>
+                            </div>
+                            <div class="ti"><span class="tv">15 / 650</span><span class="tu">展开卡标题</span></div>
+                            <div class="ti">
+                                <span class="tv">14 / 650</span><span class="tu">Markdown h3 / 分组标题</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">13 / 400</span><span class="tu">正文（行高 1.72）</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">12.5 / 600</span><span class="tu">时间线卡片标题</span>
+                            </div>
+                            <div class="ti"><span class="tv">12.5 / 500</span><span class="tu">按钮文字</span></div>
+                            <div class="ti">
+                                <span class="tv">11.5 / 400</span><span class="tu">预览文字 / meta</span>
+                            </div>
+                            <div class="ti">
+                                <span class="tv">11 / 700</span><span class="tu">分组标签（大写）</span>
+                            </div>
+                            <div class="ti"><span class="tv">10 / 500</span><span class="tu">scope 标签 TAG</span></div>
+                            <div class="ti">
+                                <span class="tv">r=8</span><span class="tu">输入框 / 按钮 / 标签输入</span>
+                            </div>
+                            <div class="ti"><span class="tv">r=10</span><span class="tu">时间线卡片</span></div>
+                            <div class="ti"><span class="tv">r=12</span><span class="tu">展开卡</span></div>
+                            <div class="ti"><span class="tv">r=14</span><span class="tu">画像编辑卡 / 通知</span></div>
+                            <div class="ti"><span class="tv">r=16</span><span class="tu">面板外框</span></div>
+                            <div class="ti">
+                                <span class="tv">阴影</span
+                                ><span class="tu">展开卡 0 12px 40px · 10%(浅) / 50%(深)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 02 画像布局 ============ -->
+            <section class="sec" id="portrait">
+                <div class="sec-head">
+                    <span class="sec-no">02</span>
+                    <h2>用户画像布局标注</h2>
+                    <span class="sec-sub">左元数据栏 + 右 Markdown 内容 · 编号见图例</span>
+                </div>
+                <div class="anno">
+                    <div class="panel-frame" style="height: 440px">
+                        <div class="tabs-bar">
+                            <div class="tabs">
+                                <button class="tab active">用户画像</button>
+                                <button class="tab">关键事实</button>
+                            </div>
+                            <div class="tab-actions">
+                                <button class="iconbtn" title="刷新">
+                                    <svg viewBox="0 0 24 24" class="ic" style="width: 14px; height: 14px">
+                                        <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                                        <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pt-body">
+                            <div class="pt-layout">
+                                <div class="pt-meta">
+                                    <span class="eyebrow">用户画像</span>
+                                    <h2>关于我</h2>
+                                    <p>AI 助手通过这份画像理解你的背景、偏好和协作方式。</p>
+                                    <button class="btn-s edit-btn">
+                                        <svg viewBox="0 0 24 24" class="ic" style="width: 13px; height: 13px">
+                                            <path d="M12 20h9" />
+                                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                        </svg>
+                                        编辑
+                                    </button>
+                                </div>
+                                <div class="pt-content">
+                                    <div class="md-body">
+                                        <h3>身份与背景</h3>
+                                        <ul>
+                                            <li>使用中文进行交流</li>
+                                            <li>使用 Windows 多显示器环境，不同屏幕有不同 DPI 缩放设置</li>
+                                        </ul>
+                                        <h3>沟通风格</h3>
+                                        <p>直接、简洁，会明确指出问题所在。委派调研任务时使用结构化格式。</p>
+                                        <h3>UI/UX 偏好</h3>
+                                        <p>
+                                            追求优雅、精致的设计。偏好<b>内联展开动画</b>，反感浮窗式
+                                            tooltip。要求适配深色模式。
+                                        </p>
+                                        <h3>代码偏好</h3>
+                                        <p>
+                                            项目使用 <code>Electron + Web Components</code>。CSS 动画偏好
+                                            <code>transition</code> 方式。
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 编号 -->
+                    <i class="bdg" style="left: 24px; top: 60px">1</i>
+                    <i class="bdg" style="left: 36px; top: 88px">2</i>
+                    <i class="bdg" style="left: 36px; top: 116px">3</i>
+                    <i class="bdg" style="left: 200px; top: 170px">4</i>
+                    <i class="bdg" style="left: 24px; top: 200px">5</i>
+                    <i class="bdg" style="left: 300px; top: 60px">6</i>
+                    <i class="bdg" style="left: 300px; top: 100px">7</i>
+                    <i class="bdg" style="left: 290px; top: 138px">8</i>
+                    <i class="bdg" style="left: 400px; top: 210px">9</i>
+                </div>
+                <div class="legend">
+                    <div class="lg">
+                        <i>1</i
+                        ><span
+                            ><b>Tab 栏</b>：高 <code>48</code>，下划线 Tab，间距 <code>24px</code>，底部
+                            <code>1px line</code> 分隔</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>2</i
+                        ><span><b>眉标</b>：<code>10/700 accent</code> 大写，<code>letter-spacing:.08em</code></span>
+                    </div>
+                    <div class="lg">
+                        <i>3</i><span><b>画像标题</b>：<code>17/650 ink</code>，紧跟眉标</span>
+                    </div>
+                    <div class="lg">
+                        <i>4</i><span><b>画像描述</b>：<code>12/400 ink3</code>，行高 <code>1.6</code></span>
+                    </div>
+                    <div class="lg">
+                        <i>5</i><span><b>编辑按钮</b>：次按钮，距描述 <code>16px</code>，含编辑图标</span>
+                    </div>
+                    <div class="lg">
+                        <i>6</i
+                        ><span
+                            ><b>左元数据栏</b>：宽 <code>240px</code>，渐变背景 <code>card → bg</code>，右描边
+                            <code>1px line-soft</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>7</i
+                        ><span><b>右内容区</b>：<code>flex:1</code>，内边距 <code>28/32</code>，Markdown 渲染</span>
+                    </div>
+                    <div class="lg">
+                        <i>8</i><span><b>Markdown h3</b>：<code>14/650 ink</code>，上间距 <code>16px</code></span>
+                    </div>
+                    <div class="lg">
+                        <i>9</i
+                        ><span
+                            ><b>Markdown 正文</b>：<code>13/400 ink2</code>，行高 <code>1.75</code>，<code>code</code>
+                            用 <code>mono</code> 染色</span
+                        >
+                    </div>
+                </div>
+                <div class="note-block">
+                    <b>画像编辑态：</b>点击编辑按钮后，右内容区替换为编辑卡片（<code>border-radius:14</code>，<code
+                        >card</code
+                    >
+                    底，<code>1px line</code> 描边）。 内含 <code>textarea</code>（<code>min-height:280</code>，<code
+                        >mono</code
+                    >
+                    字体）和保存/取消按钮。左栏保持不变。
+                </div>
+            </section>
+
+            <!-- ============ 03 时间线布局 ============ -->
+            <section class="sec" id="facts">
+                <div class="sec-head">
+                    <span class="sec-no">03</span>
+                    <h2>关键事实时间线布局标注</h2>
+                    <span class="sec-sub">竖向时间线 + 点击展开浮层卡片 · 编号见图例</span>
+                </div>
+                <div class="anno">
+                    <div class="panel-frame" style="height: 580px">
+                        <div class="tabs-bar">
+                            <div class="tabs">
+                                <button class="tab">用户画像</button>
+                                <button class="tab active">关键事实</button>
+                            </div>
+                            <div class="tab-actions">
+                                <button class="btn-s">
+                                    <svg viewBox="0 0 24 24" class="ic" style="width: 13px; height: 13px">
+                                        <path d="m3 21 6-6" />
+                                        <path d="m16 3 5 5-9.5 9.5a2.1 2.1 0 0 1-3 0l-2-2a2.1 2.1 0 0 1 0-3Z" />
+                                        <path d="m15 9 3 3" />
+                                        <path d="M5 19h4" />
+                                    </svg>
+                                    清理过期
+                                </button>
+                                <button class="iconbtn" title="刷新">
+                                    <svg viewBox="0 0 24 24" class="ic" style="width: 14px; height: 14px">
+                                        <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                                        <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="facts-body">
+                            <div class="facts-top">
+                                <div>
+                                    <h2>关键事实</h2>
+                                    <p>AI 自动维护的原子化记忆 · 点击卡片展开全文</p>
+                                </div>
+                                <span class="count-pill">6 条</span>
+                            </div>
+                            <div class="timeline">
+                                <div class="tl-group">
+                                    <div class="tl-group-label">本周<span class="cnt">2</span></div>
+                                    <div class="mem-row" data-scope="workspace">
+                                        <div class="tl-card sel" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-blue">工作区</span>
+                                                <h4>项目使用 ESM 模块规范</h4>
+                                            </div>
+                                            <div class="preview">所有导入使用 .js 后缀。TypeScript strict mode…</div>
+                                            <div class="meta">
+                                                <span>热度 5</span><span class="meta-dot"></span><span>8月4日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col">
+                                            <div class="expand-card">
+                                                <div class="expand-head">
+                                                    <span class="tag t-blue">工作区</span>
+                                                    <span class="heat-tag">热度 5</span>
+                                                    <span class="spacer"></span>
+                                                    <button class="btn-s" onclick="enterEdit(this)">
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            class="ic"
+                                                            style="width: 13px; height: 13px"
+                                                        >
+                                                            <path d="M12 20h9" />
+                                                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                                        </svg>
+                                                        编辑
+                                                    </button>
+                                                </div>
+                                                <div class="expand-title">项目使用 ESM 模块规范</div>
+                                                <div class="expand-body">
+                                                    所有导入使用 <code>.js</code> 后缀。TypeScript strict mode。<br /><br />
+                                                    缩进 4 空格，单引号，必须有分号，无尾逗号。<br /><br />
+                                                    始终使用顶层静态 import 语句，除非有充分理由需要动态导入。ES Modules
+                                                    模式下所有导入使用 <code>.js</code> 后缀。
+                                                </div>
+                                                <div class="expand-foot">
+                                                    <span>创建于 8月4日 14:22</span><span class="meta-dot"></span
+                                                    ><span>更新于 8月4日 14:22</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mem-row" data-scope="global">
+                                        <div class="tl-card" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-green">全局</span>
+                                                <h4>用户偏好内联展开动画</h4>
+                                            </div>
+                                            <div class="preview">偏好图标旁文字从左侧平滑展开…</div>
+                                            <div class="meta">
+                                                <span>热度 8</span><span class="meta-dot"></span><span>8月3日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col"></div>
+                                    </div>
+                                </div>
+                                <div class="tl-group">
+                                    <div class="tl-group-label">本月<span class="cnt">2</span></div>
+                                    <div class="mem-row" data-scope="workspace">
+                                        <div class="tl-card" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-blue">工作区</span>
+                                                <h4>构建命令与验证流程</h4>
+                                            </div>
+                                            <div class="preview">npm run build-cli + npm run build…</div>
+                                            <div class="meta">
+                                                <span>热度 4</span><span class="meta-dot"></span><span>7月28日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col"></div>
+                                    </div>
+                                    <div class="mem-row" data-scope="workspace">
+                                        <div class="tl-card" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-blue">工作区</span>
+                                                <h4>embedBrowserUse 架构约束</h4>
+                                            </div>
+                                            <div class="preview">通用 CDP 库不应引入专用逻辑…</div>
+                                            <div class="meta">
+                                                <span>热度 3</span><span class="meta-dot"></span><span>7月22日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col"></div>
+                                    </div>
+                                </div>
+                                <div class="tl-group">
+                                    <div class="tl-group-label">更早<span class="cnt">2</span></div>
+                                    <div class="mem-row" data-scope="global">
+                                        <div class="tl-card" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-green">全局</span>
+                                                <h4>用户使用 Windows 多显示器</h4>
+                                            </div>
+                                            <div class="preview">不同屏幕有不同 DPI 缩放设置…</div>
+                                            <div class="meta">
+                                                <span>热度 12</span><span class="meta-dot"></span><span>7月10日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col"></div>
+                                    </div>
+                                    <div class="mem-row" data-scope="workspace">
+                                        <div class="tl-card" onclick="toggleCard(this)">
+                                            <div class="tl-card-head">
+                                                <span class="tag t-blue">工作区</span>
+                                                <h4>测试文件放置规范</h4>
+                                            </div>
+                                            <div class="preview">Jest 测试放在 src/tests/ut/…</div>
+                                            <div class="meta">
+                                                <span>热度 2</span><span class="meta-dot"></span><span>7月8日</span>
+                                            </div>
+                                        </div>
+                                        <div class="expand-col"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 编号 -->
+                    <i class="bdg" style="left: 28px; top: 68px">1</i>
+                    <i class="bdg" style="right: 24px; top: 60px">2</i>
+                    <i class="bdg" style="right: 64px; top: 60px">3</i>
+                    <i class="bdg" style="left: 40px; top: 130px">4</i>
+                    <i class="bdg" style="left: 40px; top: 170px">5</i>
+                    <i class="bdg" style="left: 80px; top: 210px">6</i>
+                    <i class="bdg" style="left: 430px; top: 210px">7</i>
+                    <i class="bdg" style="left: 440px; top: 250px">8</i>
+                    <i class="bdg" style="left: 440px; top: 300px">9</i>
+                    <i class="bdg" style="left: 440px; top: 360px">10</i>
+                    <i class="bdg" style="left: 440px; top: 400px">11</i>
+                </div>
+                <div class="legend">
+                    <div class="lg">
+                        <i>1</i
+                        ><span
+                            ><b>Facts 标题区</b>：标题 <code>16/650</code> + 描述 <code>12/ink3</code> + 计数 pill
+                            右置</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>2</i><span><b>清理过期按钮</b>：次按钮，含扫帚图标，仅 Facts Tab 显示</span>
+                    </div>
+                    <div class="lg">
+                        <i>3</i><span><b>刷新按钮</b>：<code>iconbtn 30×30</code>，圆角 <code>8</code></span>
+                    </div>
+                    <div class="lg">
+                        <i>4</i><span><b>时间线轴线</b>：<code>1.5px line</code>，距左 <code>5px</code>，从顶到底</span>
+                    </div>
+                    <div class="lg">
+                        <i>5</i
+                        ><span
+                            ><b>分组节点</b>：<code>9×9</code> 圆，<code>card</code> 底 +
+                            <code>2px accent</code> 描边</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>6</i
+                        ><span
+                            ><b>记忆节点</b>：<code>7×7</code> 圆，workspace=<code>blue</code>，global=<code
+                                >green</code
+                            ></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>7</i
+                        ><span
+                            ><b>时间线卡片</b>：宽 <code>44%</code>，圆角 <code>10</code>，<code>card</code> 底 +
+                            <code>1px line-soft</code></span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>8</i><span><b>卡片头</b>：scope 标签 + 标题 <code>12.5/600</code>（单行省略）</span>
+                    </div>
+                    <div class="lg">
+                        <i>9</i><span><b>预览文字</b>：<code>11.5/ink4</code>，2 行截断</span>
+                    </div>
+                    <div class="lg">
+                        <i>10</i
+                        ><span
+                            ><b>展开浮层卡</b>：圆角 <code>12</code>，<code>card</code> 底 +
+                            <code>shadow-card</code>，<code>fade+scale</code> 动画</span
+                        >
+                    </div>
+                    <div class="lg">
+                        <i>11</i
+                        ><span
+                            ><b>展开卡底部</b>：创建/更新时间 <code>11/ink4</code>，<code>1px line-soft</code>
+                            上分隔</span
+                        >
+                    </div>
+                </div>
+                <div class="note-block">
+                    <b>选中态规则：</b>点击时间线卡片后，该卡片 <code>opacity:.5</code>（淡化），右侧
+                    <code>flex:1</code> 区域展开浮层卡。
+                    再次点击同一卡片收起展开。点击其他卡片切换展开目标。<b>展开卡内含编辑按钮</b>，点击后展开卡内容替换为编辑表单（标题输入
+                    + 内容 textarea + 保存/取消）。 展开卡<b>无左侧三角箭头</b>，仅通过位置对齐和阴影区分层级。
+                </div>
+            </section>
+
+            <!-- ============ 04 组件规范 ============ -->
+            <section class="sec" id="comp">
+                <div class="sec-head">
+                    <span class="sec-no">04</span>
+                    <h2>组件规范</h2>
+                    <span class="sec-sub">全部控件 · 尺寸 / 状态 / 配色</span>
+                </div>
+                <div class="cp-grid">
+                    <!-- Tab -->
+                    <div class="cp">
+                        <div class="cp-demo">
+                            <div class="tabs" style="height: 36px">
+                                <button class="tab active" style="height: 36px">用户画像</button>
+                                <button class="tab" style="height: 36px">关键事实</button>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>下划线 Tab</h4>
+                            <li>高 <code>48</code> · 间距 <code>24px</code></li>
+                            <li>默认 <code>13/500 ink3</code> · 选中 <code>ink 650</code></li>
+                            <li>选中下划线 <code>2px accent</code> · <code>bottom:-1px</code></li>
+                            <li>hover：<code>ink2</code> · 底部 <code>1px line</code> 分隔</li>
+                        </div>
+                    </div>
+
+                    <!-- scope 标签 -->
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 6px">
+                            <span class="tag t-blue">工作区</span><span class="tag t-green">全局</span>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>Scope 标签</h4>
+                            <li><code>10/500</code> · 圆角 <code>5</code> · 内边距 <code>1×7</code></li>
+                            <li>蓝=workspace · 绿=global</li>
+                            <li>同时用于时间线卡片头和展开卡头</li>
+                        </div>
+                    </div>
+
+                    <!-- 计数 pill -->
+                    <div class="cp">
+                        <div class="cp-demo"><span class="count-pill">6 条</span></div>
+                        <div class="cp-spec">
+                            <h4>计数 Pill</h4>
+                            <li>内边距 <code>4×10</code> · 全圆角</li>
+                            <li>底 <code>card-hover</code> · 色 <code>ink3</code></li>
+                            <li>字号 <code>11/600</code></li>
+                        </div>
+                    </div>
+
+                    <!-- 热度标签 -->
+                    <div class="cp">
+                        <div class="cp-demo"><span class="heat-tag">热度 8</span></div>
+                        <div class="cp-spec">
+                            <h4>热度标签 <span class="cp-new">新增</span></h4>
+                            <li>内边距 <code>2×8</code> · 圆角 <code>5</code></li>
+                            <li>底 <code>accent-soft</code> · 色 <code>accent</code></li>
+                            <li>字号 <code>10/700</code> · 展开卡头部右置</li>
+                        </div>
+                    </div>
+
+                    <!-- 时间线卡片 -->
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 4px; width: 200px"
+                        >
+                            <div class="tl-card" style="width: 100%; cursor: default">
+                                <div class="tl-card-head">
+                                    <span class="tag t-blue">工作区</span>
+                                    <h4>ESM 模块规范</h4>
+                                </div>
+                                <div class="preview">所有导入使用 .js 后缀…</div>
+                                <div class="meta">
+                                    <span>热度 5</span><span class="meta-dot"></span><span>8月4日</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>时间线卡片</h4>
+                            <li>宽 <code>44%</code> · 圆角 <code>10</code> · <code>1px line-soft</code></li>
+                            <li>hover：描边 <code>line</code> + 轻阴影</li>
+                            <li>选中：<code>opacity:.5</code> 淡化</li>
+                            <li>标题单行省略 · 预览 2 行截断</li>
+                        </div>
+                    </div>
+
+                    <!-- 展开卡（阅读态） -->
+                    <div class="cp">
+                        <div class="cp-demo" style="flex-direction: column; align-items: stretch; gap: 0; width: 220px">
+                            <div class="expand-card" style="animation: none">
+                                <div class="expand-head" style="padding: 8px 12px">
+                                    <span class="tag t-blue">工作区</span>
+                                    <span class="heat-tag">热度 5</span>
+                                </div>
+                                <div class="expand-title" style="padding: 8px 12px 2px; font-size: 13px">
+                                    ESM 模块规范
+                                </div>
+                                <div class="expand-body" style="padding: 4px 12px 10px; font-size: 11.5px">
+                                    所有导入使用 .js 后缀…
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>展开浮层卡 · 阅读态</h4>
+                            <li>圆角 <code>12</code> · <code>card</code> 底 · <code>shadow-card</code></li>
+                            <li>头部：scope + 热度 + 编辑按钮</li>
+                            <li>标题 <code>15/650</code> · 正文 <code>13/1.72</code></li>
+                            <li>底部：创建/更新时间 · <code>line-soft</code> 上分隔</li>
+                        </div>
+                    </div>
+
+                    <!-- 展开卡（编辑态） -->
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 6px; width: 200px"
+                        >
+                            <div class="expand-card" style="animation: none">
+                                <div class="expand-edit" style="padding: 10px 12px">
+                                    <span class="ed-label" style="margin: 0">标题</span>
+                                    <input
+                                        class="ed-title"
+                                        style="height: 30px; font-size: 12px"
+                                        value="ESM 模块规范"
+                                    />
+                                    <span class="ed-label">内容</span>
+                                    <textarea
+                                        class="ed-area ed-mem"
+                                        style="min-height: 50px; font-size: 11px; padding: 6px 8px"
+                                    >
+所有导入使用 .js 后缀…</textarea
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>展开浮层卡 · 编辑态</h4>
+                            <li>同阅读态外壳 · 内容替换为表单</li>
+                            <li>标题输入 <code>36h</code> · 内容 <code>textarea min-h:160</code></li>
+                            <li>保存（主按钮）+ 取消（次按钮）右置</li>
+                            <li><code>resize:none</code> · focus 描边 <code>accent</code></li>
+                        </div>
+                    </div>
+
+                    <!-- 元数据栏 -->
+                    <div class="cp">
+                        <div class="cp-demo" style="justify-content: flex-start; width: 100%">
+                            <div
+                                style="
+                                    width: 120px;
+                                    padding: 8px;
+                                    background: linear-gradient(180deg, var(--card), var(--bg));
+                                    border-radius: 8px;
+                                    border-right: 1px solid var(--line-soft);
+                                    padding-right: 10px;
+                                "
+                            >
+                                <span
+                                    style="
+                                        font-size: 9px;
+                                        font-weight: 700;
+                                        color: var(--accent);
+                                        text-transform: uppercase;
+                                        letter-spacing: 0.08em;
+                                    "
+                                    >用户画像</span
+                                >
+                                <div style="font-size: 12px; font-weight: 650; margin-top: 3px">关于我</div>
+                                <div style="font-size: 10px; color: var(--ink3); margin-top: 4px">描述文字…</div>
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>画像元数据栏</h4>
+                            <li>宽 <code>240px</code> · 渐变背景 <code>card → bg</code></li>
+                            <li>右描边 <code>1px line-soft</code></li>
+                            <li>内边距 <code>28/24</code></li>
+                            <li>眉标 + 标题 + 描述 + 编辑按钮</li>
+                        </div>
+                    </div>
+
+                    <!-- 通知 -->
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: stretch; gap: 6px; width: 200px"
+                        >
+                            <div class="notice success">
+                                <svg viewBox="0 0 24 24" class="ic">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                    <polyline points="22 4 12 14.01 9 11.01" />
+                                </svg>
+                                画像已保存
+                            </div>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>通知提示</h4>
+                            <li>圆角 <code>8</code> · 内边距 <code>9×12</code></li>
+                            <li>success：<code>green-soft</code> 底 + <code>green</code> 色</li>
+                            <li>图标 <code>14px</code> + 文字 <code>12px</code></li>
+                            <li>显示后 <code>3s</code> 自动消失</li>
+                        </div>
+                    </div>
+
+                    <!-- 按钮 -->
+                    <div class="cp">
+                        <div class="cp-demo" style="gap: 8px">
+                            <button class="btn-p">保存</button>
+                            <button class="btn-s">取消</button>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>按钮系统</h4>
+                            <li>主按钮：<code>accent</code> 底白字 · 圆角 <code>8</code></li>
+                            <li>次按钮：<code>card</code> 底 <code>1px line</code> · hover <code>accent</code></li>
+                            <li>内边距 <code>7×16</code> / <code>6×15</code></li>
+                            <li>含图标时 <code>gap:6px</code></li>
+                        </div>
+                    </div>
+
+                    <!-- 空态 -->
+                    <div class="cp">
+                        <div
+                            class="cp-demo"
+                            style="flex-direction: column; align-items: center; gap: 6px; min-height: 80px"
+                        >
+                            <div class="empty-icon" style="width: 28px; height: 28px; font-size: 14px">✦</div>
+                            <span style="font-size: 11px; color: var(--ink3)">暂无记忆</span>
+                        </div>
+                        <div class="cp-spec">
+                            <h4>空态 / 加载态</h4>
+                            <li>居中布局 · 图标 <code>40×40</code> 圆角 <code>12</code></li>
+                            <li>图标底 <code>accent-soft</code> · 色 <code>accent</code></li>
+                            <li>标题 <code>ink</code> + 描述 <code>ink3</code></li>
+                            <li>加载态：呼吸光效 spinner</li>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 05 动效规范 ============ -->
+            <section class="sec" id="anim">
+                <div class="sec-head">
+                    <span class="sec-no">05</span>
+                    <h2>动效规范</h2>
+                    <span class="sec-sub">展开 / 收起 · Tab 切换 · 通知</span>
+                </div>
+                <div class="anim-grid">
+                    <div class="anim-card">
+                        <h4>展开动画</h4>
+                        <li>
+                            展开卡：<code>opacity 0→1</code> + <code>scale(.98→1)</code> +
+                            <code>translateY(-6px→0)</code>
+                        </li>
+                        <li>缓动：<code>cubic-bezier(0.23,1,0.32,1)</code> · <code>250ms</code></li>
+                        <li>时间线卡片：<code>opacity 1→.5</code> · <code>180ms</code></li>
+                        <li>两者同时启动</li>
+                        <div class="anim-preview">
+                            <div
+                                style="
+                                    background: var(--card);
+                                    border: 1px solid var(--line);
+                                    border-radius: 8px;
+                                    padding: 8px 14px;
+                                    font-size: 11px;
+                                    color: var(--ink2);
+                                    box-shadow: var(--shadow-card);
+                                    animation: demo-expand 2.5s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+                                "
+                            >
+                                展开卡片
+                            </div>
+                        </div>
+                    </div>
+                    <div class="anim-card">
+                        <h4>收起动画</h4>
+                        <li>
+                            展开卡：<code>opacity 1→0</code> + <code>scale(1→.98)</code> +
+                            <code>translateY(0→-6px)</code>
+                        </li>
+                        <li>缓动：<code>ease-in</code> · <code>180ms</code></li>
+                        <li>时间线卡片：<code>opacity .5→1</code> · <code>180ms</code></li>
+                        <li>动画完成后移除展开卡 DOM</li>
+                        <div class="anim-preview">
+                            <div
+                                style="
+                                    background: var(--card);
+                                    border: 1px solid var(--line);
+                                    border-radius: 8px;
+                                    padding: 8px 14px;
+                                    font-size: 11px;
+                                    color: var(--ink2);
+                                    box-shadow: var(--shadow-card);
+                                    animation: demo-collapse 2.5s ease-in infinite;
+                                "
+                            >
+                                收起卡片
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="anim-grid" style="margin-top: 14px">
+                    <div class="anim-card">
+                        <h4>Tab 切换</h4>
+                        <li>内容区：<code>opacity 0→1</code> · <code>150ms ease-out</code></li>
+                        <li>下划线：<code>transition: all .15s</code></li>
+                        <li>切换时取消所有编辑态</li>
+                    </div>
+                    <div class="anim-card">
+                        <h4>通知提示</h4>
+                        <li>进入：<code>opacity 0→1</code> + <code>translateY(-8px→0)</code> · <code>200ms</code></li>
+                        <li>停留 <code>3s</code> 后退出</li>
+                        <li>退出：<code>opacity 1→0</code> · <code>150ms</code></li>
+                    </div>
+                </div>
+                <div class="note-block">
+                    <b>交互规则：</b>① 点击时间线卡片展开/收起浮层卡，同时只展开一张；②
+                    点击展开卡内"编辑"按钮进入编辑态，表单替换卡内容； ③ 保存/取消退出编辑态，保存后刷新数据；④ 切换 Tab
+                    时收起所有展开；⑤ <code>prefers-reduced-motion</code> 时跳过动画； ⑥ 通知提示固定在 Tab
+                    栏下方，<code>3s</code> 自动消失。
+                </div>
+                <style>
+                    @keyframes demo-expand {
+                        0%,
+                        40% {
+                            opacity: 0;
+                            transform: translateY(-6px) scale(0.98);
+                        }
+                        60%,
+                        100% {
+                            opacity: 1;
+                            transform: translateY(0) scale(1);
+                        }
+                    }
+                    @keyframes demo-collapse {
+                        0%,
+                        60% {
+                            opacity: 1;
+                            transform: translateY(0) scale(1);
+                        }
+                        80%,
+                        100% {
+                            opacity: 0;
+                            transform: translateY(-6px) scale(0.98);
+                        }
+                    }
+                </style>
+            </section>
+
+            <div class="page-foot">
+                <span>OpenDesk · 用户画像与记忆界面工程标注稿 · 深底浮层风格（深色 / 浅色双模式）</span>
+                <span>设计标注稿 · 2026-08-06</span>
+            </div>
+        </main>
+
+        <script>
+            // 深浅色切换
+            const themeBtn = document.getElementById('themeToggle');
+            themeBtn.addEventListener('click', () => {
+                document.body.classList.toggle('lm');
+            });
+
+            // 导航
+            const chips = document.querySelectorAll('.nav-chip');
+            const sections = ['tok', 'portrait', 'facts', 'comp', 'anim'];
+            chips.forEach((chip) => {
+                chip.addEventListener('click', () => {
+                    const target = chip.dataset.jump;
+                    if (target) document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+                });
+            });
+            window.addEventListener('scroll', () => {
+                let active = '';
+                sections.forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el && el.getBoundingClientRect().top < 120) active = id;
+                });
+                chips.forEach((chip) => chip.classList.toggle('active', chip.dataset.jump === active));
+            });
+
+            // 时间线卡片展开/收起
+            function toggleCard(card) {
+                const row = card.closest('.mem-row');
+                const timeline = card.closest('.timeline');
+                const wasSel = card.classList.contains('sel');
+                timeline.querySelectorAll('.tl-card.sel').forEach((c) => c.classList.remove('sel'));
+                timeline.querySelectorAll('.expand-col').forEach((col) => {
+                    if (col !== row.querySelector('.expand-col')) col.innerHTML = '';
+                });
+                if (wasSel) return;
+                card.classList.add('sel');
+                const expandCol = row.querySelector('.expand-col');
+                if (expandCol.innerHTML.trim()) return;
+                const tag = card.querySelector('.tag');
+                const title = card.querySelector('h4').textContent;
+                const preview = card.querySelector('.preview')?.textContent || '';
+                const meta = card.querySelector('.meta');
+                const heat = meta?.querySelector('span:first-child')?.textContent || '';
+                const date = meta?.querySelector('span:last-child')?.textContent || '';
+                const tagClass = tag?.className.split(' ').find((c) => c.startsWith('t-')) || 't-blue';
+                const tagText = tag?.textContent || '';
+                expandCol.innerHTML = `
+                    <div class="expand-card">
+                        <div class="expand-head">
+                            <span class="tag ${tagClass}">${tagText}</span>
+                            <span class="heat-tag">${heat}</span>
+                            <span class="spacer"></span>
+                            <button class="btn-s" onclick="enterEdit(this)">
+                                <svg viewBox="0 0 24 24" class="ic" style="width:13px;height:13px"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                                编辑
+                            </button>
+                        </div>
+                        <div class="expand-title">${title}</div>
+                        <div class="expand-body">${preview}</div>
+                        <div class="expand-foot">
+                            <span>创建于 ${date}</span><span class="meta-dot"></span><span>更新于 ${date}</span>
+                        </div>
+                    </div>`;
+            }
+
+            function enterEdit(btn) {
+                const card = btn.closest('.expand-card');
+                const title = card.querySelector('.expand-title')?.textContent || '';
+                const body = card.querySelector('.expand-body')?.textContent || '';
+                const head = card.querySelector('.expand-head');
+                const heatInfo = head.querySelector('.heat-tag')?.textContent || '';
+                const tagHtml = head.querySelector('.tag')?.outerHTML || '';
+                const dateMatch = card.querySelector('.expand-foot')?.textContent?.match(/(\d+月\d+日)/);
+                const dateStr = dateMatch ? dateMatch[1] : '';
+                card.innerHTML = `
+                    <div class="expand-head">
+                        ${tagHtml}
+                        <span style="font-size: 11px; color: var(--ink4);">编辑中 · ${heatInfo} · ${dateStr}</span>
+                        <span class="spacer"></span>
+                    </div>
+                    <div class="expand-edit">
+                        <label class="ed-label">标题</label>
+                        <input class="ed-title" value="${title}" />
+                        <label class="ed-label">内容</label>
+                        <textarea class="ed-area ed-mem">${body.trim()}</textarea>
+                        <div class="ed-actions">
+                            <button class="btn-s" onclick="cancelEdit(this)"><svg viewBox="0 0 24 24" class="ic" style="width:13px;height:13px"><path d="m18 6-12 12M6 6l12 12"/></svg>取消</button>
+                            <button class="btn-p" onclick="cancelEdit(this)"><svg viewBox="0 0 24 24" class="ic" style="width:13px;height:13px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>保存</button>
+                        </div>
+                    </div>`;
+            }
+
+            function cancelEdit(btn) {
+                const expandCol = btn.closest('.expand-col');
+                const timeline = btn.closest('.timeline');
+                timeline.querySelectorAll('.tl-card.sel').forEach((c) => c.classList.remove('sel'));
+                expandCol.innerHTML = '';
+            }
+        </script>
+    </body>
+</html>
