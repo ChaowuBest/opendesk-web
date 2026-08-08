@@ -32,20 +32,6 @@ export class AgentRegistry {
     /** 已加载的应用 Agent 实例，用于 reload 时 dispose */
     private static applicationAgentInstances: AgentDecl[] = [];
 
-    /** 应用 Agent 完成首次加载或最近一次 reload 后为 true。 */
-    private static applicationAgentsReady = false;
-
-    /**
-     * 标记应用 Agent 即将重新收集。此期间未解析到的任务绑定不能被永久回退为 main。
-     */
-    static beginApplicationAgentReload(): void {
-        this.applicationAgentsReady = false;
-    }
-
-    static areApplicationAgentsReady(): boolean {
-        return this.applicationAgentsReady;
-    }
-
     /**
      * 注册一个 Agent。agentId 不可重复，重复注册将抛出异常。
      */
@@ -122,32 +108,27 @@ export class AgentRegistry {
      * 文件扫描和外部资源装配由应用层负责，AIKernel 只管理 AgentDecl。
      */
     static async replaceApplicationAgents(applications: readonly ApplicationAgents[]): Promise<void> {
-        this.beginApplicationAgentReload();
-        try {
-            await this.unloadApplicationAgents();
+        await this.unloadApplicationAgents();
 
-            let loaded = 0;
-            for (const application of applications) {
-                for (const agent of application.agents) {
-                    agent.bindApplicationScope(application.bundleName);
-                    if (this.agents.has(agent.agentId)) {
-                        logger.warn(
-                            `AgentRegistry: agent "${agent.agentId}" already registered, skipping application agent`
-                        );
-                        await agent.dispose();
-                        continue;
-                    }
-                    this.registerAgent(agent);
-                    this.applicationAgentInstances.push(agent);
-                    loaded++;
+        let loaded = 0;
+        for (const application of applications) {
+            for (const agent of application.agents) {
+                agent.bindApplicationScope(application.bundleName);
+                if (this.agents.has(agent.agentId)) {
+                    logger.warn(
+                        `AgentRegistry: agent "${agent.agentId}" already registered, skipping application agent`
+                    );
+                    await agent.dispose();
+                    continue;
                 }
+                this.registerAgent(agent);
+                this.applicationAgentInstances.push(agent);
+                loaded++;
             }
+        }
 
-            if (loaded > 0) {
-                logger.info(`AgentRegistry: registered ${loaded} agent(s) from applications`);
-            }
-        } finally {
-            this.applicationAgentsReady = true;
+        if (loaded > 0) {
+            logger.info(`AgentRegistry: registered ${loaded} agent(s) from applications`);
         }
     }
 

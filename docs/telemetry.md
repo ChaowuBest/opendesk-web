@@ -33,8 +33,7 @@ src/main/telemetry/
     ├── init.ts                      # 全局 Provider、OTLP Exporter 和 Processor
     ├── agent-execution.ts           # OpenTelemetry Agent 插桩实现
     ├── operation.ts                 # OpenTelemetry 技术操作插桩实现
-    ├── tracing.ts                   # tracer 和 withSpan 基础能力
-    └── startup-tracer.ts            # 启动阶段 tracer
+    └── tracing.ts                   # tracer 和 withSpan 基础能力
 ```
 
 公共文件只定义协议中立的模型。Langfuse SDK 相关代码位于 `langfuse/`，OpenTelemetry SDK
@@ -106,8 +105,8 @@ Provider。
 配置变更时，`reloadTelemetry()` 先完整关闭旧实例，再使用新配置重新初始化，避免旧 Processor
 继续持有连接或缓存。
 
-CLI、GUI 和 OpenCode Server 模式都必须在 AI Kernel 开始工作前完成 `initTelemetry()`，否则
-早期创建的任务和模型调用会使用 no-op tracer，无法在初始化后补报。
+GUI 在主窗口显示后初始化运行期遥测，CLI 在 Headless runner 就绪或 TUI 首次渲染后初始化。
+启动加载阶段本身不再创建遥测 span；真正进入 AI Kernel 工作前仍应等待 `initTelemetry()` 完成。
 
 ## 两类公共插桩
 

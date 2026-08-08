@@ -152,7 +152,10 @@ export function initializeRegistryProtocols() {
 /**
  * 注册应用注册器IPC处理程序
  */
-export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
+export function registerApplicationRegistryHandlers(
+    ipcMain: Electron.IpcMain,
+    ensureFullyLoaded: () => Promise<void> = () => ApplicationRegistry.ensureFullyLoaded()
+) {
     ApplicationRegistry.onApplicationListChanged(() => {
         const apps = ApplicationRegistry.getApplicationList();
         for (const win of BrowserWindow.getAllWindows()) {
@@ -162,6 +165,14 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
 
     ipcMain.handle('applicationRegistry:getApplicationList', async (_event) => {
         return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
+    });
+    ipcMain.handle('applicationRegistry:ensureFullyLoaded', async () => {
+        try {
+            await ensureFullyLoaded();
+            return { status: 'ok' };
+        } catch (error) {
+            return { status: 'error', message: formatIpcError(error) };
+        }
     });
     ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (_event, bundleName) => {
         const config = ApplicationRegistry.getApplicationGUIConfig(bundleName);

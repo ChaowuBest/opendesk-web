@@ -19,7 +19,6 @@ import { getPlatform, type PlatformFetchOptions } from '../../platforms/base.js'
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
 import { AgentRegistry } from '../aikernel/agents/registry.js';
-import type { AgentDecl } from '../aikernel/agents/common.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
@@ -72,6 +71,9 @@ export class ApplicationRegistry {
     /** 就绪回调队列 */
     private static readyCallbacks: (() => void)[] = [];
 
+    /** 所有应用延迟资源完成加载后 resolved；所有调用方共享同一个启动屏障。 */
+    private static fullyLoadedPromise?: Promise<void>;
+
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
      * @param callback 就绪后执行的回调函数
@@ -104,6 +106,30 @@ export class ApplicationRegistry {
      */
     static isRegistryReady(): boolean {
         return this.isReady;
+    }
+
+    /**
+     * 返回所有应用延迟资源的共享加载屏障。
+     * 首个调用方触发加载，后续调用方复用同一个 Promise。
+     */
+    static ensureFullyLoaded(): Promise<void> {
+        if (!this.fullyLoadedPromise) {
+            this.fullyLoadedPromise = this.loadAllApplicationResources();
+        }
+        return this.fullyLoadedPromise;
+    }
+
+    private static async loadAllApplicationResources(): Promise<void> {
+        await AgentRegistry.unloadApplicationAgents();
+        await Promise.all(
+            Array.from(this.applications.values()).map(async (application) => {
+                try {
+                    await application.ensureLoaded();
+                } catch (err) {
+                    logger.error(`Lazy load failed for ${application.bundleName}: ${err}`);
+                }
+            })
+        );
     }
 
     static hasGlobalWorker(): boolean {
@@ -220,28 +246,6 @@ export class ApplicationRegistry {
         }
 
         return result;
-    }
-
-    /**
-     * 重新收集应用提供的 Agent，并交给 AIKernel 注册表管理。
-     */
-    static async loadAvailableAgents(): Promise<void> {
-        AgentRegistry.beginApplicationAgentReload();
-        // Agent 构造期间可能注册私有 SkillProvider 等资源，先卸载旧实例以避免新旧资源重叠。
-        // replaceApplicationAgents 内部的再次卸载是无副作用的防御性清理。
-        await AgentRegistry.unloadApplicationAgents();
-        const applicationAgents: Array<{ bundleName: string; agents: AgentDecl[] }> = [];
-        for (const application of this.applications.values()) {
-            try {
-                applicationAgents.push({
-                    bundleName: application.bundleName,
-                    agents: (await application.getAgents()) as AgentDecl[]
-                });
-            } catch (error) {
-                logger.warn(`Failed to load agents from ${application.bundleName}: ${error}`);
-            }
-        }
-        await AgentRegistry.replaceApplicationAgents(applicationAgents);
     }
 
     /**

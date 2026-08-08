@@ -110,22 +110,14 @@ test('TaskState falls missing agent bindings back to main after application agen
     assert.equal(task._dirty, true);
 });
 
-test('TaskState preserves an unresolved application agent binding while agents are being reloaded', async () => {
-    AgentRegistry.beginApplicationAgentReload();
+test('TaskState immediately falls back when an agent binding is unresolved', async () => {
     const task = createTask();
     task.agentId = 'example.app:worker';
     task._dirty = false;
 
     assert.equal(task.getAgent(), AgentRegistry.getMainAgent());
-    assert.equal(task.agentId, 'example.app:worker');
-    assert.equal(task._dirty, false);
-
-    const worker = new ApplicationAgent('worker', true);
-    await AgentRegistry.replaceApplicationAgents([{ bundleName: 'example.app', agents: [worker] }]);
-
-    assert.equal(task.getAgent(), worker);
-    assert.equal(task.agentId, 'example.app:worker');
-    assert.equal(task._dirty, false);
+    assert.equal(task.agentId, 'main');
+    assert.equal(task._dirty, true);
 });
 
 test('TaskState resolves unscoped builtin agent ids directly', () => {
