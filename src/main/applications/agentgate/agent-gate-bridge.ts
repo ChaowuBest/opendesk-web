@@ -161,7 +161,9 @@ class AgentGateBridge {
                     return resolved;
                 }
             }
-        } catch { /* CLI 模式或 worker 线程中 electron 不可用 */ }
+        } catch {
+            /* CLI 模式或 worker 线程中 electron 不可用 */
+        }
         // 2. import.meta.dirname 回退：编译产物位于 dist/main/ 下，
         //    上溯 1 级即 app 根目录（打包和 CLI 开发模式均适用）
         try {
@@ -169,7 +171,9 @@ class AgentGateBridge {
             if (fs.existsSync(path.join(rootFromDirname, 'node_modules'))) {
                 return rootFromDirname;
             }
-        } catch { /* import.meta.dirname 不可用 */ }
+        } catch {
+            /* import.meta.dirname 不可用 */
+        }
         // 3. CLI 模式：process.cwd() 是项目根目录
         return path.resolve(process.cwd());
     }
@@ -381,6 +385,8 @@ class AgentGateBridge {
         if (this._running) return;
         this._running = true;
         this._lastError = null;
+        // 保存当前配置，供崩溃/退出后的自动重启（exit/spawn error 回调）读取 enabled 状态
+        this._currentSetting = settingInstance;
 
         // 包已作为 OpenDesk 的 dependencies 预装到 node_modules（离线 npm install 一次即就绪），
         // 不再运行时 npm install 到 extensions 目录。仅做存在性校验。
@@ -531,6 +537,13 @@ class AgentGateBridge {
 
         // Build env: LLM + custom rules for AgentMoss
         const extraEnv: Record<string, string> = { NODE_ENV: 'production' };
+        // 归属实例标识：health 端点返回 instance 字段。同机多套 agentmoss 并存时，
+        // 第三方探测（如 xiaoO install.sh / bridge.py 扫 9090-9095）按 instance 过滤，
+        // 避免把 OpenDesk 的 agent-moss 当成自己的服务误停/误连。xiaoO 期望 xiaoo，
+        // 这里注入 opendesk 使两者区分。
+        if (state.name === 'agent-moss') {
+            extraEnv['AGENT_MOSS_INSTANCE'] = 'opendesk';
+        }
         const gateArgs: string[] = ['server', '--port', String(state.port), '--host', '127.0.0.1'];
         if (settingInstance) {
             extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
@@ -609,18 +622,11 @@ class AgentGateBridge {
                           : undefined;
                       let storageType =
                           appCfg?.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
-                      // sqlite 模式需要 better-sqlite3，检测是否可用，不可用时自动回退到 json
-                      // ABI 兼容性兜底已在 start() 的 tryBuildSqliteNative 处理，此处只判存在性
-                      if (storageType === 'sqlite') {
-                          const sqliteAvailable = this._findSqliteDirs().some((d) =>
-                              fs.existsSync(path.join(d, 'package.json'))
-                          );
-                          if (!sqliteAvailable) {
-                              logger.warn(
-                                  '[AgentGateBridge] better-sqlite3 not installed, falling back to JSON storage'
-                              );
-                              storageType = 'json';
-                          }
+                      // sqlite 模式需要 better-sqlite3，检测是否真正可用（含鸿蒙强制 json），
+                      // 不可用时自动回退到 json；ABI 兼容性兜底已在 start() 的 tryBuildSqliteNative 处理
+                      if (storageType === 'sqlite' && !this.isSqliteAvailable()) {
+                          logger.warn('[AgentGateBridge] better-sqlite3 not available, falling back to JSON storage');
+                          storageType = 'json';
                       }
                       if (storageType === 'json') {
                           gateEnv['AGENT_GATE_STORAGE'] = 'json';

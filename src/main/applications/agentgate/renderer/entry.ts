@@ -41,6 +41,23 @@ function baseUrlSync(): string {
     return FALLBACK_BASE_URL;
 }
 
+// AgentMoss HTTP 服务（承载 /console 策略控制台）地址。
+// 与 gate 同由 bridge 动态分配端口（moss 从 9090 起），renderer 运行时查 bridge 拿 mossPort。
+// 优先级：AGENT_MOSS_CONSOLE_URL > bridge mossPort > 兜底 9090
+const FALLBACK_MOSS_PORT = 9090;
+
+/** 缓存最近一次从 bridge 拿到的 moss 端口（供同步路径使用） */
+let _cachedMossPort: number | null = null;
+
+/** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090） */
+function mossConsoleUrlSync(): string {
+    if (typeof process !== 'undefined' && process.env?.AGENT_MOSS_CONSOLE_URL) {
+        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console';
+    }
+    if (_cachedMossPort && _cachedMossPort > 0) return `http://127.0.0.1:${_cachedMossPort}/console`;
+    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console`;
+}
+
 // ── Theme & Locale Helpers ───────────────────────────────────────────────────
 
 function getEffectiveTheme(): 'light' | 'dark' {
@@ -117,7 +134,14 @@ function isZh(): boolean {
 
 const T: Record<string, { zh: string; en: string }> = {
     tabDashboard: { zh: '实时状态', en: 'Dashboard' },
+    tabConsole: { zh: '策略控制台', en: 'Policy Console' },
     tabConfig: { zh: '设置', en: 'Config' },
+    consoleUnreachable: { zh: '策略控制台不可用', en: 'Policy console unreachable' },
+    consoleUnreachableHint: {
+        zh: '请确认安全分析引擎服务已启动（AgentMoss HTTP 服务）',
+        en: 'Please ensure the security analysis engine service (AgentMoss HTTP) is running'
+    },
+    consoleRetry: { zh: '重新加载', en: 'Reload' },
     sectionMoss: { zh: '安全分析引擎', en: 'Security Analysis Engine' },
     masterSwitch: { zh: '安全网关总开关', en: 'Security Gateway Master Switch' },
     masterSwitchDesc: {
@@ -349,6 +373,8 @@ const STYLE = `
 .ag-tab.active { color: var(--ag-accent); border-bottom-color: var(--ag-tab-active-border); }
 .ag-panel { flex: 1; overflow: auto; padding: 20px; }
 .ag-panel.hidden { display: none; }
+/* 策略控制台页：整页 iframe 内嵌，panel 不滚动不失padding，滚动交给 console 自身 */
+#ag-console { overflow: hidden; padding: 0; }
 
 /* Cards & Sections */
 .ag-card {
@@ -1541,9 +1567,11 @@ class AgentGateEntryWidget extends HTMLElement {
         this.root.innerHTML = `
             <div class="ag-tabs">
                 <div class="ag-tab active" data-tab="dashboard">${tr('tabDashboard')}</div>
+                <div class="ag-tab" data-tab="console">${tr('tabConsole')}</div>
                 <div class="ag-tab" data-tab="config">${tr('tabConfig')}</div>
             </div>
             <div id="ag-dash" class="ag-panel"></div>
+            <div id="ag-console" class="ag-panel hidden"></div>
             <div id="ag-conf" class="ag-panel hidden"></div>
         `;
 
@@ -1558,8 +1586,13 @@ class AgentGateEntryWidget extends HTMLElement {
                     'hidden',
                     target !== 'dashboard'
                 );
+                (this.shadow.querySelector('#ag-console') as HTMLElement).classList.toggle(
+                    'hidden',
+                    target !== 'console'
+                );
                 (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.toggle('hidden', target !== 'config');
                 if (target === 'dashboard') this._renderDash();
+                if (target === 'console') this._renderConsole();
                 if (target === 'config') this._loadModels();
             });
         });
@@ -1577,6 +1610,9 @@ class AgentGateEntryWidget extends HTMLElement {
         const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
         dash.classList.remove('hidden');
         (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.add('hidden');
+        // 关键：浮窗跳转详情时也要隐藏策略控制台，否则"先点策略控制台再点详情"会
+        // 残留 console panel，导致 dashboard 与 console 同时显示（上实时状态下策略控制台）。
+        (this.shadow.querySelector('#ag-console') as HTMLElement)?.classList.add('hidden');
 
         // 总开关关闭时，正确内容是 emptyDashboardHTML（分行居中布局）。
         // 若此时 panel 残留了之前开总开关时的 dashboard 表格 DOM，children.length
@@ -1596,6 +1632,51 @@ class AgentGateEntryWidget extends HTMLElement {
         if (!dash.children.length) {
             this._renderDash();
         }
+    }
+
+    /** 策略控制台页：内嵌 iframe 加载 AgentMoss /console（浏览器式整页展示，无定制） */
+    async _renderConsole() {
+        const panel = this.shadow.querySelector('#ag-console') as HTMLElement;
+        if (!panel) return;
+
+        // 先检测 moss 服务连通性，连通才注入 iframe，否则显示不可用 + 重新加载
+        let url: string | null = null;
+        let port = 0;
+        try {
+            const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
+            port = status?.mossPort || 0;
+            // 用 bridge 实际分配的 moss 端口拼 iframe URL，并缓存供同步路径使用。
+            // 修复：此前 _renderConsole 用 mossConsoleUrlSync()，而 _cachedMossPort 从未被
+            // resolveMossConsoleUrl() 赋值（该函数无调用点），导致恒走 FALLBACK_MOSS_PORT(9090)，
+            // 当 9090 被其他 agent-moss 实例（如 Python 版）占用时，策略控制台会连错实例。
+            if (port > 0) _cachedMossPort = port;
+        } catch {
+            /* callMainWorld unavailable */
+        }
+        url = mossConsoleUrlSync();
+
+        const unreachableHTML = () =>
+            `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
+  <div style="font-size:48px;margin-bottom:16px;line-height:1;">⚠️</div>
+  <h2 style="font-size: var(--fs-xl);font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('consoleUnreachable')}</h2>
+  <p style="font-size: var(--fs-base);margin:0 0 12px;color:var(--ag-text-secondary);max-width:420px;line-height:1.6;">${tr('consoleUnreachableHint')}</p>
+  <p style="font-size: var(--fs-md);margin:0 0 24px;color:var(--ag-text-tertiary);word-break:break-all;">${url}</p>
+  <button id="ag-console-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size: var(--fs-lg);font-weight:600;cursor:pointer;">${tr('consoleRetry')}</button>
+</div>`;
+
+        // 校验 moss 服务 /api/v1/health：通才嵌 iframe（避免 iframe 白屏/错误页）
+        try {
+            const healthUrl = `http://127.0.0.1:${port || FALLBACK_MOSS_PORT}/api/v1/health`;
+            const r = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        } catch {
+            panel.innerHTML = unreachableHTML();
+            const retry = panel.querySelector('#ag-console-retry');
+            retry?.addEventListener('click', () => this._renderConsole());
+            return;
+        }
+
+        panel.innerHTML = `<iframe id="ag-console-frame" src="${url}" style="width:100%;height:100%;border:0;background:var(--ag-bg);" title="AgentMoss Policy Console"></iframe>`;
     }
 
     async _renderDash() {

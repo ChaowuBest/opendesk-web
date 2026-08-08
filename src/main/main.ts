@@ -678,6 +678,7 @@ const createWindow = () => {
         if (
             url.startsWith('file://') ||
             url.startsWith('http://localhost') ||
+            url.startsWith('http://127.0.0.1') ||
             inAppSchemePrefixes.some((p) => url.startsWith(p))
         ) {
             return false;
