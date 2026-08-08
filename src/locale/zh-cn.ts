@@ -2492,5 +2492,6 @@ export const zhCn: Record<string, string> = {
     'workflow.status.running': '运行中',
     'workflow.status.succeeded': '已完成',
     'workflow.status.failed': '失败',
-    'workflow.status.cancelled': '已停止'
+    'workflow.status.cancelled': '已停止',
+    'agentRuntime.errorTitle': 'Agent 连接错误'
 };

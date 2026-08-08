@@ -2563,5 +2563,6 @@ export const enUs: Record<string, string> = {
     'workflow.status.running': 'Running',
     'workflow.status.succeeded': 'Succeeded',
     'workflow.status.failed': 'Failed',
-    'workflow.status.cancelled': 'Stopped'
+    'workflow.status.cancelled': 'Stopped',
+    'agentRuntime.errorTitle': 'Agent connection error'
 };

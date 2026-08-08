@@ -103,6 +103,14 @@ export class AgentRuntimeTurnController {
         }
     }
 
+    async ensureOutputPart(): Promise<void> {
+        const assistant = this.requireAssistant();
+        if (assistant.content.length === 0) {
+            assistant.appendText('');
+            await this.publishLastPart();
+        }
+    }
+
     private async applyToolCall(update: Extract<AgentRuntimeUpdate, { type: 'tool_call' }>): Promise<void> {
         const assistant = this.requireAssistant();
         let tracked = this.toolCalls.get(update.toolCallId);
