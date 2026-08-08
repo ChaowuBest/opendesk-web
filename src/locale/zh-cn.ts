@@ -2559,6 +2559,15 @@ export const zhCn: Record<string, string> = {
     'workflow.status.cancelled': '已停止',
     'agentRuntime.errorTitle': 'Agent 连接错误',
     'acpmgr.app.name': 'ACP Agents',
+    'acpmgr.mode.name': 'ACP',
+    'acpmgr.mode.description': '远端 Agent 自主管理其运行模式与工具执行。',
+    'acpmgr.agent.whenToUse': '需要调用已配置的 ACP Agent ${name} 时使用',
     'acpmgr.error.agentNotFound': '未找到 ACP agent 配置',
-    'acpmgr.error.mcpManagerUnavailable': 'MCP 管理器不可用'
+    'acpmgr.error.mcpManagerUnavailable': 'MCP 管理器不可用',
+    'acpmgr.error.agentDisabled': 'ACP Agent“${name}”已停用',
+    'acpmgr.error.concurrentTurn': '同一任务不能同时运行多个 ACP 对话轮次',
+    'acpmgr.error.reconcileUnsupported': '此 ACP Agent 无法核对异常中断会话的状态',
+    'acpmgr.error.resumeUnsupported': '此 ACP Agent 不支持恢复已保存的会话',
+    'acpmgr.error.connectionNotInitialized': 'ACP 连接尚未初始化',
+    'acpmgr.error.sessionNotInitialized': 'ACP 会话尚未初始化'
 };

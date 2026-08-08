@@ -25,6 +25,7 @@ import type {
     AgentTaskRuntimeTurnRequest,
     AgentTaskRuntimeTurnResult
 } from '../common.js';
+import { t } from '../../../../locale/index.js';
 import { getTaskArtifactDirectory } from '../../../utils/setting.js';
 import { AcpEventJournal } from './journal.js';
 import { AcpSessionUpdateMapper } from './mapper.js';
@@ -163,10 +164,10 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
 
     async runTurn(request: AgentTaskRuntimeTurnRequest): Promise<AgentTaskRuntimeTurnResult> {
         if (!this.profile.enabled) {
-            throw new Error(`ACP agent "${this.profile.name}" is disabled`);
+            throw new Error(t('acpmgr.error.agentDisabled', { name: this.profile.name }));
         }
         if (this.activeRequest) {
-            throw new Error('ACP runtime does not support concurrent turns for one task');
+            throw new Error(t('acpmgr.error.concurrentTurn'));
         }
 
         this.activeRequest = request;
@@ -286,7 +287,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
             this.sessionId = savedSessionId;
             if (recoveryPhase === 'uncertain' || recoveryPhase === 'running') {
                 if (!this.capabilities?.loadSession) {
-                    throw new Error('The ACP agent cannot reconcile the interrupted session');
+                    throw new Error(t('acpmgr.error.reconcileUnsupported'));
                 }
                 this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: request.workspace });
                 this.replaying = true;
@@ -322,7 +323,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                     this.replaying = false;
                 }
             } else {
-                throw new Error('The ACP agent cannot resume the saved session');
+                throw new Error(t('acpmgr.error.resumeUnsupported'));
             }
         } else {
             this.record('outbound', 'session/new', { cwd: request.workspace, mcpServers });
@@ -446,12 +447,12 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
     }
 
     private requireConnection(): AcpClientConnection {
-        if (!this.connection) throw new Error('ACP connection is not initialized');
+        if (!this.connection) throw new Error(t('acpmgr.error.connectionNotInitialized'));
         return this.connection;
     }
 
     private requireSessionId(): string {
-        if (!this.sessionId) throw new Error('ACP session is not initialized');
+        if (!this.sessionId) throw new Error(t('acpmgr.error.sessionNotInitialized'));
         return this.sessionId;
     }
 

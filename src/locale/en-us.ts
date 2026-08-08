@@ -2633,6 +2633,15 @@ export const enUs: Record<string, string> = {
     'workflow.status.cancelled': 'Stopped',
     'agentRuntime.errorTitle': 'Agent connection error',
     'acpmgr.app.name': 'ACP Agents',
+    'acpmgr.mode.name': 'ACP',
+    'acpmgr.mode.description': 'The remote agent controls its own modes and tool execution.',
+    'acpmgr.agent.whenToUse': 'Use the configured ACP agent ${name}',
     'acpmgr.error.agentNotFound': 'ACP agent profile not found',
-    'acpmgr.error.mcpManagerUnavailable': 'MCP Manager is unavailable'
+    'acpmgr.error.mcpManagerUnavailable': 'MCP Manager is unavailable',
+    'acpmgr.error.agentDisabled': 'ACP agent “${name}” is disabled',
+    'acpmgr.error.concurrentTurn': 'An ACP task cannot run concurrent conversation turns',
+    'acpmgr.error.reconcileUnsupported': 'This ACP agent cannot reconcile an interrupted session',
+    'acpmgr.error.resumeUnsupported': 'This ACP agent cannot resume the saved session',
+    'acpmgr.error.connectionNotInitialized': 'The ACP connection is not initialized',
+    'acpmgr.error.sessionNotInitialized': 'The ACP session is not initialized'
 };

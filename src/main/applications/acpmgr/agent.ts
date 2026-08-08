@@ -18,6 +18,7 @@ import {
     type TaskContext
 } from '../../aikernel/agents/common.js';
 import { AcpTaskRuntime } from '../../aikernel/agents/acp/runtime.js';
+import { t } from '../../../locale/index.js';
 import type { McpServerConfig } from '../mcpmgr/common.js';
 import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from './common.js';
 
@@ -27,6 +28,8 @@ const ACP_MODE: ModeDecl = {
     id: 'acp',
     name: 'ACP',
     description: 'The remote agent controls its own modes and tool execution.',
+    displayNameKey: 'acpmgr.mode.name',
+    descriptionKey: 'acpmgr.mode.description',
     icon: '🔌',
     color: '#6366f1',
     permissionFactory: () => []
@@ -45,7 +48,7 @@ export class AcpAgentDecl extends AgentDecl {
         super();
         this.agentName = profile.id;
         this.dispatchable = profile.enabled && profile.dispatchable;
-        this.whenToUse = profile.whenToUse || `Use the configured ACP agent ${profile.name}`;
+        this.whenToUse = profile.whenToUse || t('acpmgr.agent.whenToUse', { name: profile.name });
     }
 
     supportedModes(): ModeDecl[] {
