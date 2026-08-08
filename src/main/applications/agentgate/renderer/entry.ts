@@ -1626,6 +1626,9 @@ class AgentGateEntryWidget extends HTMLElement {
         const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
         dash.classList.remove('hidden');
         (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.add('hidden');
+        // 关键：浮窗跳转详情时也要隐藏策略控制台，否则"先点策略控制台再点详情"会
+        // 残留 console panel，导致 dashboard 与 console 同时显示（上实时状态下策略控制台）。
+        (this.shadow.querySelector('#ag-console') as HTMLElement)?.classList.add('hidden');
 
         // 总开关关闭时，正确内容是 emptyDashboardHTML（分行居中布局）。
         // 若此时 panel 残留了之前开总开关时的 dashboard 表格 DOM，children.length
