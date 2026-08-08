@@ -300,6 +300,11 @@ html[data-font-preset] .markdown-body .code-block-body {
         'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     color: #1e293b !important;
 }
+/* Dark mode override for the high-specificity code block background */
+html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
+    background: var(--chat-code-bg) !important;
+    color: var(--chat-ink2) !important;
+}
 html[data-font-preset] .markdown-body .code-table {
     border-collapse: collapse !important;
     border-spacing: 0 !important;
