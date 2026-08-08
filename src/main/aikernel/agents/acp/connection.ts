@@ -26,13 +26,9 @@ import {
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import path from 'node:path';
+import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from '../../../../common/acp.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { logger } from '../../../utils/logger.js';
-import {
-    resolveAcpTemplate,
-    resolveAcpTemplateRecord,
-    type AcpAgentProfile
-} from '../../../applications/acpmgr/common.js';
 
 export interface AcpClientHandlers {
     sessionUpdate(params: SessionNotification): Promise<void>;

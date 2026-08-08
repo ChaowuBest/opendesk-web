@@ -26,6 +26,7 @@ import type {
     AgentTaskRuntimeTurnResult
 } from '../common.js';
 import { t } from '../../../../locale/index.js';
+import { createSafeAcpProfileSnapshot, type AcpAgentProfile } from '../../../../common/acp.js';
 import { getTaskArtifactDirectory } from '../../../utils/setting.js';
 import { AcpEventJournal } from './journal.js';
 import { AcpSessionUpdateMapper } from './mapper.js';
@@ -36,7 +37,6 @@ import {
     type AcpConnectionFactory,
     type AcpConnectionHandle
 } from './connection.js';
-import { createSafeAcpProfileSnapshot, type AcpAgentProfile } from '../../../applications/acpmgr/common.js';
 
 type AcpPhase = 'connecting' | 'idle' | 'running' | 'uncertain' | 'cancelled';
 

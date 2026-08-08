@@ -11,6 +11,9 @@
 
 import { z } from 'zod';
 
+export { createSafeAcpProfileSnapshot, resolveAcpTemplate, resolveAcpTemplateRecord } from '../../../common/acp.js';
+export type { SafeAcpProfileSnapshot } from '../../../common/acp.js';
+
 const EnvironmentRecordSchema = z.record(z.string(), z.string()).default({});
 
 const StdioTransportSchema = z
@@ -105,69 +108,3 @@ export const AcpMgrConfigSchema = z.object({
 export type AcpAgentProfile = z.output<typeof AcpAgentProfileSchema>;
 export type AcpTransport = AcpAgentProfile['transport'];
 export type AcpMgrConfig = z.output<typeof AcpMgrConfigSchema>;
-
-export type SafeAcpProfileSnapshot = {
-    id: string;
-    name: string;
-    transport:
-        | {
-              type: 'stdio';
-              command: string;
-              args: string[];
-              cwd: 'workspace' | 'fixed';
-              fixedCwd?: string;
-              envNames: string[];
-          }
-        | {
-              type: 'streamableHttp';
-              url: string;
-              headerNames: string[];
-              cookies: 'include' | 'omit';
-          };
-};
-
-const ENVIRONMENT_TEMPLATE_PATTERN = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
-
-export function resolveAcpTemplate(value: string, environ: NodeJS.ProcessEnv): string {
-    return value.replace(ENVIRONMENT_TEMPLATE_PATTERN, (_match, name: string) => {
-        const replacement = environ[name];
-        if (replacement === undefined) {
-            throw new Error(`Missing environment variable ${name}`);
-        }
-        return replacement;
-    });
-}
-
-export function resolveAcpTemplateRecord(
-    values: Record<string, string>,
-    environ: NodeJS.ProcessEnv
-): Record<string, string> {
-    return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, resolveAcpTemplate(value, environ)]));
-}
-
-export function createSafeAcpProfileSnapshot(profile: AcpAgentProfile): SafeAcpProfileSnapshot {
-    if (profile.transport.type === 'stdio') {
-        return {
-            id: profile.id,
-            name: profile.name,
-            transport: {
-                type: 'stdio',
-                command: profile.transport.command,
-                args: [...profile.transport.args],
-                cwd: profile.transport.cwd,
-                ...(profile.transport.fixedCwd ? { fixedCwd: profile.transport.fixedCwd } : {}),
-                envNames: Object.keys(profile.transport.env).sort()
-            }
-        };
-    }
-    return {
-        id: profile.id,
-        name: profile.name,
-        transport: {
-            type: 'streamableHttp',
-            url: profile.transport.url,
-            headerNames: Object.keys(profile.transport.headers).sort(),
-            cookies: profile.transport.cookies
-        }
-    };
-}
