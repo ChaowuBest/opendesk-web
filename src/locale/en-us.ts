@@ -69,6 +69,8 @@ export const enUs: Record<string, string> = {
 
     // ACP
     'serve.acp.failed': 'ACP server failed: ${message}',
+    'serve.useConfigPermissions':
+        'Use permission rules from setting.json (falls back to the current Mode when missing or invalid)',
     'acp.session.default_title': 'OpenDesk Session',
     'acp.permission.allow_once': 'Allow once',
     'acp.permission.allow_always': 'Always allow ${scope}',

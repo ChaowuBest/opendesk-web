@@ -12,7 +12,7 @@
 import type { ModeDecl } from '../agents/common.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
-import type { PermissionPromptProvider } from '../security/permission.js';
+import type { PermissionEnforcer, PermissionPromptProvider } from '../security/permission.js';
 import type { TaskState } from '../states/tasks.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
@@ -53,6 +53,12 @@ export async function replaceTaskHarnessForMode(
     ctx.executionHost = savedExecutionHost;
     ctx.permissionPrompt = permissionPrompt;
     await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+    const currentPermission = task.harnessContext.permission;
+    let nextFallbackPermission: PermissionEnforcer | null = null;
+    if (currentPermission?.setFallbackEnforcer && ctx.permission) {
+        nextFallbackPermission = ctx.permission;
+        ctx.permission = currentPermission;
+    }
     const previousModeId = task.activeModeId;
     const previousAllowedTools = task.allowedTools;
     const previousDisabledTools = task.disabledTools;
@@ -67,6 +73,9 @@ export async function replaceTaskHarnessForMode(
         task.allowedTools = previousAllowedTools;
         task.disabledTools = previousDisabledTools;
         throw err;
+    }
+    if (currentPermission?.setFallbackEnforcer && nextFallbackPermission) {
+        currentPermission.setFallbackEnforcer(nextFallbackPermission);
     }
     task.harnessContext = ctx;
     task.installBuiltSystemPrompt(systemPrompt);

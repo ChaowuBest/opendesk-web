@@ -145,7 +145,7 @@ function addIfValid(results: PermissionRequest[], action: PermissionAction, toke
  * 将 bash/zsh 命令字符串拆分为简单命令列表（按 ;、&&、||、| 拆分）
  * 忽略引号和括号内的分隔符
  */
-function splitBashCommands(command: string): string[] {
+export function splitBashCommands(command: string): string[] {
     const commands: string[] = [];
     let current = '';
     let inSingleQuote = false;

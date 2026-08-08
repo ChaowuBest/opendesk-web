@@ -12,8 +12,18 @@
 import type { Command } from 'commander';
 import process from 'process';
 import { initTelemetry } from '../../telemetry/index.js';
+import { t } from '../../../locale/index.js';
 
-type ServeOptions = Record<string, string | undefined>;
+interface ServeOptions {
+    mode?: string;
+    port?: string;
+    hostname?: string;
+    cors?: string;
+    password?: string;
+    username?: string;
+    configDirectory?: string;
+    useConfigPermissions?: boolean;
+}
 
 export async function initializeServeTelemetry(initializer: () => Promise<void> = initTelemetry): Promise<void> {
     await initializer();
@@ -29,6 +39,7 @@ export function registerServeCommand(prog: Command): void {
         .option('--password <password>', '启用 HTTP Basic Auth 密码')
         .option('--username <username>', 'HTTP Basic Auth 用户名 (默认 opencode)')
         .option('--config-directory <path>', '指定 OpenDesk 应用数据目录')
+        .option('--use-config-permissions', t('serve.useConfigPermissions'))
         .action(async (opts: ServeOptions, command: Command) => {
             await applyServeConfigDirectory(opts, command);
             const mode = getServeMode(opts);
@@ -162,7 +173,8 @@ async function startOpenCodeServer(opts: ServeOptions) {
             hostname,
             cors,
             password,
-            username
+            username,
+            useConfigPermissions: opts.useConfigPermissions === true
         });
 
         console.log(`[serve] OpenCode 兼容服务器已启动`);

@@ -110,6 +110,41 @@ OpenTelemetry Provider，通过独立的 Span Processor 隔离上报数据：普
 Langfuse Observation 只发送到 Langfuse，不会互相冲突。完整的观测范围、调用层级和环境变量说明见
 [Telemetry 架构文档](telemetry.md)。
 
+### 6. OpenCode Server 权限配置 (`permission`)
+
+使用 `opendesk serve --use-config-permissions` 启动 OpenCode 兼容服务器后，可以在 `setting.json`
+顶层配置 OpenCode 风格的权限规则：
+
+```json
+{
+    "permission": {
+        "*": "allow",
+        "bash": {
+            "rm *": "ask",
+            "del *": "ask",
+            "powershell -Command\"rm *": "ask",
+            "cmd /c del *": "ask"
+        },
+        "read": {
+            "*.env": "deny"
+        },
+        "external_directory": {
+            "/storage/Users/currentUser/Documents/*": "ask"
+        }
+    }
+}
+```
+
+当前版本支持 `bash`、`read` 和 `external_directory`，动作支持 `allow`、`ask` 和 `deny`。
+顶层 `"*"` 必填，用于指定未命中具体规则时的行为；同一权限类型按声明顺序匹配，最后一条
+命中的规则生效。复合 Shell 命令还会逐段检查，文件读取同时支持绝对路径和工作区相对路径。
+
+- 未使用 `--use-config-permissions` 时，该字段只保存、不参与权限判断。
+- 字段缺失、缺少顶层 `"*"`、包含不支持的权限类型或其他格式错误时，Server 继续运行并回退到当前 Mode 权限。
+- `PATCH /global/config` 和 `PATCH /config` 可整体替换 `permission` 并立即影响已有任务及子任务。
+- PATCH `{ "permission": null }` 会移除配置权限并立即回退到 Mode；不包含 `permission` 的 PATCH 不刷新权限。
+- 空 PATCH 或 `{ "config": {} }` 会从磁盘重新读取 `setting.json`，并热重载其中的权限规则。
+
 示例配置结构：
 
 ```json

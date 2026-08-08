@@ -18,13 +18,16 @@ import { Setting } from '../../../utils/setting.js';
 import { getRequestWorkspace } from '../workspace.js';
 import {
     buildOpenCodeConfig,
+    hasOpenCodePermissionPatch,
     isOpenDeskConfigReloadRequest,
     mergeOpenCodeConfigPatch,
     notifyOpenCodeConfigUpdated,
     reloadOpenDeskConfigFromFile
 } from '../config-compat.js';
+import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
+import { ServerPermissionBroker } from '../permission-broker.js';
 
-export function GlobalRoutes() {
+export function GlobalRoutes(permissionRuntime?: ConfigPermissionRuntime) {
     const app = new Hono();
 
     // GET /global/health
@@ -134,12 +137,22 @@ export function GlobalRoutes() {
         const setting = Setting.getInstance();
         if (isOpenDeskConfigReloadRequest(body)) {
             const data = await reloadOpenDeskConfigFromFile(setting);
+            const reloadResult = permissionRuntime?.reload(data.permission);
+            if (reloadResult && reloadResult.status !== 'disabled') {
+                ServerPermissionBroker.getInstance().dispose();
+            }
             notifyOpenCodeConfigUpdated(data);
             return c.json(buildOpenCodeConfig(data));
         }
 
         const nextData = mergeOpenCodeConfigPatch(setting.getData(), body);
         setting.setData(nextData);
+        if (hasOpenCodePermissionPatch(body)) {
+            const reloadResult = permissionRuntime?.reload(setting.getData().permission);
+            if (reloadResult && reloadResult.status !== 'disabled') {
+                ServerPermissionBroker.getInstance().dispose();
+            }
+        }
         notifyOpenCodeConfigUpdated(setting.getData());
         return c.json(buildOpenCodeConfig(setting.getData()));
     });

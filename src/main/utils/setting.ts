@@ -438,6 +438,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             .optional()
             .describe('全局环境变量，所有 shell 命令执行时共享')
             .default({}),
+        // 权限配置独立校验，避免局部配置错误导致整个 setting.json 无法加载。
+        permission: z.unknown().optional(),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
