@@ -213,6 +213,74 @@ test('ACP runtime loads an uncertain session and does not blindly resend a faile
     }
 });
 
+test('ACP runtime preserves an uncertain checkpoint when reconnect initialization fails', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-reconnect-fail-'));
+    try {
+        const connection = new FakeConnection();
+        connection.initialize = async (params) => {
+            connection.calls.push({ method: 'initialize', params });
+            throw new Error('agent unavailable');
+        };
+        const runtime = createRuntime(directory, connection);
+        const request = makeRequest({
+            persistedState: {
+                schemaVersion: 1,
+                profileId: profile.id,
+                sessionId: 'uncertain-session',
+                phase: 'uncertain'
+            }
+        });
+
+        await assert.rejects(runtime.runTurn(request), /agent unavailable/);
+
+        assert.equal((request.checkpoints.at(-1) as any).phase, 'uncertain');
+        assert.equal((request.checkpoints.at(-1) as any).sessionId, 'uncertain-session');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime reconnects before the next turn when an idle transport closes', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-idle-close-'));
+    try {
+        const connections = [new FakeConnection(), new FakeConnection()];
+        let connectionIndex = 0;
+        let closeTransport: (() => void) | undefined;
+        const runtime = new AcpTaskRuntime(profile, {
+            artifactDirectory: () => directory,
+            createConnection: async (_profile, handlers): Promise<AcpConnectionHandle> => {
+                const connection = connections[connectionIndex++];
+                connection.handlers = handlers;
+                return {
+                    connection,
+                    closed: new Promise<void>((resolve) => {
+                        closeTransport = resolve;
+                    }),
+                    close: async () => undefined
+                };
+            },
+            resolveMcpServers: async () => []
+        });
+
+        const first = makeRequest();
+        const firstResult = await runtime.runTurn(first);
+        closeTransport?.();
+        await Promise.resolve();
+        const second = makeRequest({ persistedState: firstResult.state });
+        await runtime.runTurn(second);
+
+        assert.equal(connectionIndex, 2);
+        assert.equal(
+            connections[1].calls.some((call) => call.method === 'session/resume'),
+            true
+        );
+        assert.equal(connections[0].calls.filter((call) => call.method === 'session/prompt').length, 1);
+        assert.equal(connections[1].calls.filter((call) => call.method === 'session/prompt').length, 1);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('ACP runtime bridges exact permission option ids through the host prompt queue', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-permission-'));
     try {

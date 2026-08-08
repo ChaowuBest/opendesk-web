@@ -174,7 +174,16 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         this.checkpoint = restoreCheckpoint(this.profile, request.persistedState, this.journal.lastSequence);
         const recoveryPhase = this.checkpoint.phase;
         try {
-            await this.ensureConnected(request, recoveryPhase);
+            await this.saveCheckpoint();
+            try {
+                await this.ensureConnected(request, recoveryPhase);
+            } catch (error) {
+                this.record('lifecycle', 'session/setup_failed', {
+                    error: error instanceof Error ? error.message : String(error)
+                });
+                await this.resetConnection();
+                throw error;
+            }
             const connection = this.requireConnection();
             const sessionId = this.requireSessionId();
             const promptId = crypto.randomUUID();
@@ -330,8 +339,11 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         let lastError: unknown;
         for (let attempt = 0; attempt < attempts; attempt++) {
             try {
-                await this.saveCheckpoint({ phase: 'connecting' });
+                if (!this.checkpoint?.sessionId) {
+                    await this.saveCheckpoint({ phase: 'connecting' });
+                }
                 this.handle = await this.createConnection(this.profile, this, workspace);
+                this.watchConnectionClosure(this.handle);
                 this.connection = this.handle.connection;
                 this.record('outbound', 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
                 const response = await this.connection.initialize({
@@ -364,6 +376,19 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
             }
         }
         throw lastError;
+    }
+
+    private watchConnectionClosure(handle: AcpConnectionHandle): void {
+        void handle.closed.then(
+            () => this.invalidateConnectionHandle(handle),
+            () => this.invalidateConnectionHandle(handle)
+        );
+    }
+
+    private invalidateConnectionHandle(handle: AcpConnectionHandle): void {
+        if (this.handle !== handle) return;
+        this.handle = undefined;
+        this.connection = undefined;
     }
 
     private async applySessionSettings(): Promise<void> {
