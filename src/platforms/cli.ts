@@ -40,6 +40,7 @@ import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 import { AgentOfficeApplication } from '../main/applications/agentoffice/app.js';
 import { PluginMgrApplication } from '../main/applications/pluginmgr/app.js';
+import { AcpMgrApplication } from '../main/applications/acpmgr/app.js';
 
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
@@ -134,6 +135,7 @@ export class CliPlatform extends AbstractPlatform {
             SearchApplication,
             TerminalApplication,
             McpMgrApplication,
+            AcpMgrApplication,
             TodoMgrApplication,
             SkillMgrApplication,
             PluginMgrApplication,

@@ -81,8 +81,25 @@ export const AcpAgentProfileSchema = z.object({
         .default({ enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5_000 })
 });
 
+const AcpAgentProfilesSchema = z
+    .array(AcpAgentProfileSchema)
+    .default([])
+    .superRefine((profiles, context) => {
+        const seen = new Set<string>();
+        profiles.forEach((profile, index) => {
+            if (seen.has(profile.id)) {
+                context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: [index, 'id'],
+                    message: `Duplicate ACP agent id: ${profile.id}`
+                });
+            }
+            seen.add(profile.id);
+        });
+    });
+
 export const AcpMgrConfigSchema = z.object({
-    agents: z.array(AcpAgentProfileSchema).default([])
+    agents: AcpAgentProfilesSchema
 });
 
 export type AcpAgentProfile = z.output<typeof AcpAgentProfileSchema>;

@@ -1,0 +1,105 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import type { McpServer } from '@agentclientprotocol/sdk';
+import {
+    AgentDecl,
+    type AgentTaskRuntime,
+    type AgentType,
+    type ModeDecl,
+    type TaskContext
+} from '../../aikernel/agents/common.js';
+import { AcpTaskRuntime } from '../../aikernel/agents/acp/runtime.js';
+import type { McpServerConfig } from '../mcpmgr/common.js';
+import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from './common.js';
+
+export type AcpMcpResolver = (profile: AcpAgentProfile) => Promise<McpServer[]>;
+
+const ACP_MODE: ModeDecl = {
+    id: 'acp',
+    name: 'ACP',
+    description: 'The remote agent controls its own modes and tool execution.',
+    icon: '🔌',
+    color: '#6366f1',
+    permissionFactory: () => []
+};
+
+export class AcpAgentDecl extends AgentDecl {
+    readonly agentName: string;
+    readonly agentType: AgentType = 'custom';
+    readonly dispatchable: boolean;
+    readonly whenToUse: string;
+
+    constructor(
+        readonly profile: AcpAgentProfile,
+        private readonly resolveMcpServers: AcpMcpResolver
+    ) {
+        super();
+        this.agentName = profile.id;
+        this.dispatchable = profile.enabled && profile.dispatchable;
+        this.whenToUse = profile.whenToUse || `Use the configured ACP agent ${profile.name}`;
+    }
+
+    supportedModes(): ModeDecl[] {
+        return [ACP_MODE];
+    }
+
+    protected defaultModeId(): string {
+        return ACP_MODE.id;
+    }
+
+    async createSystemPrompt(_activeMode: ModeDecl | undefined, _taskCtx: TaskContext): Promise<string> {
+        return '';
+    }
+
+    createTaskRuntime(_taskCtx: TaskContext): AgentTaskRuntime {
+        return new AcpTaskRuntime(this.profile, { resolveMcpServers: this.resolveMcpServers });
+    }
+}
+
+export function createAcpAgentDeclarations(
+    profiles: AcpAgentProfile[],
+    resolveMcpServers: AcpMcpResolver
+): AcpAgentDecl[] {
+    return profiles.map((profile) => new AcpAgentDecl(profile, resolveMcpServers));
+}
+
+export function resolveAcpMcpServers(
+    profile: AcpAgentProfile,
+    configuredServers: McpServerConfig[],
+    environ: NodeJS.ProcessEnv = process.env
+): McpServer[] {
+    const selectedIds = new Set(profile.session.mcpServerIds);
+    return configuredServers
+        .filter((server) => server.enabled && selectedIds.has(server.id))
+        .map((server): McpServer => {
+            if (server.transport === 'stdio') {
+                if (!server.command) throw new Error(`MCP server ${server.name} is missing command`);
+                const resolvedEnvironment = resolveAcpTemplateRecord(server.env ?? {}, environ);
+                return {
+                    name: server.name,
+                    command: resolveAcpTemplate(server.command, environ),
+                    args: (server.args ?? []).map((argument) => resolveAcpTemplate(argument, environ)),
+                    env: Object.entries(resolvedEnvironment).map(([name, value]) => ({ name, value }))
+                };
+            }
+            if (!server.url) throw new Error(`MCP server ${server.name} is missing URL`);
+            const headers = Object.entries(resolveAcpTemplateRecord(server.headers ?? {}, environ)).map(
+                ([name, value]) => ({ name, value })
+            );
+            return {
+                type: server.transport === 'sse' ? 'sse' : 'http',
+                name: server.name,
+                url: resolveAcpTemplate(server.url, environ),
+                headers
+            };
+        });
+}

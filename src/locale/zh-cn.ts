@@ -2493,5 +2493,8 @@ export const zhCn: Record<string, string> = {
     'workflow.status.succeeded': '已完成',
     'workflow.status.failed': '失败',
     'workflow.status.cancelled': '已停止',
-    'agentRuntime.errorTitle': 'Agent 连接错误'
+    'agentRuntime.errorTitle': 'Agent 连接错误',
+    'acpmgr.app.name': 'ACP Agents',
+    'acpmgr.error.agentNotFound': '未找到 ACP agent 配置',
+    'acpmgr.error.mcpManagerUnavailable': 'MCP 管理器不可用'
 };

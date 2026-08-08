@@ -2564,5 +2564,8 @@ export const enUs: Record<string, string> = {
     'workflow.status.succeeded': 'Succeeded',
     'workflow.status.failed': 'Failed',
     'workflow.status.cancelled': 'Stopped',
-    'agentRuntime.errorTitle': 'Agent connection error'
+    'agentRuntime.errorTitle': 'Agent connection error',
+    'acpmgr.app.name': 'ACP Agents',
+    'acpmgr.error.agentNotFound': 'ACP agent profile not found',
+    'acpmgr.error.mcpManagerUnavailable': 'MCP Manager is unavailable'
 };
