@@ -49,22 +49,6 @@ const FALLBACK_MOSS_PORT = 9090;
 /** 缓存最近一次从 bridge 拿到的 moss 端口（供同步路径使用） */
 let _cachedMossPort: number | null = null;
 
-async function resolveMossConsoleUrl(): Promise<string> {
-    if (typeof process !== 'undefined' && process.env?.AGENT_MOSS_CONSOLE_URL) {
-        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console';
-    }
-    try {
-        const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
-        if (status?.mossPort && status.mossPort > 0) {
-            _cachedMossPort = status.mossPort;
-            return `http://127.0.0.1:${status.mossPort}/console`;
-        }
-    } catch {
-        /* renderer 早期无 applicationAPI，走兜底 */
-    }
-    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console`;
-}
-
 /** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090） */
 function mossConsoleUrlSync(): string {
     if (typeof process !== 'undefined' && process.env?.AGENT_MOSS_CONSOLE_URL) {
@@ -1661,6 +1645,11 @@ class AgentGateEntryWidget extends HTMLElement {
         try {
             const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
             port = status?.mossPort || 0;
+            // 用 bridge 实际分配的 moss 端口拼 iframe URL，并缓存供同步路径使用。
+            // 修复：此前 _renderConsole 用 mossConsoleUrlSync()，而 _cachedMossPort 从未被
+            // resolveMossConsoleUrl() 赋值（该函数无调用点），导致恒走 FALLBACK_MOSS_PORT(9090)，
+            // 当 9090 被其他 agent-moss 实例（如 Python 版）占用时，策略控制台会连错实例。
+            if (port > 0) _cachedMossPort = port;
         } catch {
             /* callMainWorld unavailable */
         }
