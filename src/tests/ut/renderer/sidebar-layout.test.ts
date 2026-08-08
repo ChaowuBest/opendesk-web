@@ -2,6 +2,8 @@ import { jest } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 describe('desktop sidebar layout', () => {
+    let setStoredCollapsedState: jest.Mock;
+
     beforeEach(() => {
         const { window, document } = parseHTML(`
             <div id="app-root">
@@ -11,6 +13,7 @@ describe('desktop sidebar layout', () => {
             </div>
         `);
         const storage = new Map<string, string>();
+        setStoredCollapsedState = jest.fn((key: string, value: string) => storage.set(key, value));
         Object.assign(globalThis, {
             window,
             document,
@@ -20,7 +23,7 @@ describe('desktop sidebar layout', () => {
             Event: window.Event,
             localStorage: {
                 getItem: (key: string) => storage.get(key) ?? null,
-                setItem: (key: string, value: string) => storage.set(key, value)
+                setItem: setStoredCollapsedState
             },
             navigator: { language: 'zh-CN', languages: ['zh-CN'] }
         });
@@ -96,5 +99,26 @@ describe('desktop sidebar layout', () => {
         expect(defaultSplitter.shadowRoot.querySelector('style')?.textContent).toContain(
             'background: var(--od-bg, #f5f5f5);'
         );
+    });
+
+    test('supports temporary automatic collapse without overwriting the user preference', async () => {
+        const { initializeSidebarLayout } = await import('../../../renderer/sidebarLayout.js');
+        const splitter = document.querySelector('splitter-widget') as HTMLElement & {
+            setCollapsed: jest.Mock;
+        };
+        splitter.setCollapsed = jest.fn();
+        const controller = initializeSidebarLayout();
+        setStoredCollapsedState.mockClear();
+
+        document.dispatchEvent(
+            new CustomEvent('sidebar-collapse-request', {
+                detail: { collapsed: true, persist: false },
+                bubbles: true
+            })
+        );
+
+        expect(splitter.setCollapsed).toHaveBeenLastCalledWith(true);
+        expect(setStoredCollapsedState).not.toHaveBeenCalled();
+        controller?.destroy();
     });
 });

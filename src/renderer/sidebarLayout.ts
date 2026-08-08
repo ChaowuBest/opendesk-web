@@ -74,8 +74,8 @@ export function initializeSidebarLayout(root: Document = document): SidebarLayou
     };
 
     const collapseRequestHandler = (event: Event): void => {
-        const collapsed = (event as CustomEvent<{ collapsed?: boolean }>).detail?.collapsed ?? true;
-        applyCollapsedState(collapsed);
+        const detail = (event as CustomEvent<{ collapsed?: boolean; persist?: boolean }>).detail;
+        applyCollapsedState(detail?.collapsed ?? true, detail?.persist ?? true);
     };
     const expandClickHandler = (): void => applyCollapsedState(false);
 

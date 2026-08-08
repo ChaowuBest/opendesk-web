@@ -73,6 +73,14 @@ import { ElectronPermissionPromptProvider } from './aikernel/security/electronPr
 import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
 import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
+import {
+    activateOpenDeskOfficeSlidesContents,
+    attachOpenDeskOfficeSlidesWindow,
+    configureOpenDeskOfficeSlidesWebPreferences,
+    isOpenDeskOfficeSlidesUrl,
+    registerEmbeddedOpenDeskOfficeSlides,
+    requestCloseOpenDeskOfficeSlidesContents
+} from './office/openDeskOfficeSlidesHost.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import {
@@ -256,6 +264,8 @@ const converter = new Convert();
 let globalMainWindow: BrowserWindow | null = null;
 let globalTray: Tray | null = null;
 let isAppQuitting = false;
+let officeQuitCheckPending = false;
+let officeQuitApproved = false;
 
 function getPreferredSystemLanguagesForLocale(): string[] {
     try {
@@ -690,6 +700,10 @@ const createWindow = () => {
         // 非活跃 webview 开启后台节流，降低 CPU 和电量消耗
         webPreferences.backgroundThrottling = true;
         const src = params.src ?? '';
+        if (isOpenDeskOfficeSlidesUrl(src)) {
+            configureOpenDeskOfficeSlidesWebPreferences(webPreferences);
+            return;
+        }
         const isApplicationGuest = src.includes('application.html');
         if (isApplicationGuest) {
             webPreferences.preload = getRendererPreloadPath();
@@ -715,6 +729,9 @@ const createWindow = () => {
     // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
     // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        if (isOpenDeskOfficeSlidesUrl(webContents.getURL())) {
+            activateOpenDeskOfficeSlidesContents(webContents);
+        }
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
                 safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
@@ -786,6 +803,7 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
+    attachOpenDeskOfficeSlidesWindow(mainWindow);
     BrowserManager.setMainWindow(mainWindow);
 };
 
@@ -2981,8 +2999,28 @@ async function startApplication(): Promise<void> {
     initializeRegistryProtocols();
     t.end();
 
-    app.on('before-quit', () => {
-        isAppQuitting = true;
+    app.on('before-quit', (event) => {
+        if (officeQuitApproved) {
+            isAppQuitting = true;
+            return;
+        }
+
+        event.preventDefault();
+        if (officeQuitCheckPending) return;
+        officeQuitCheckPending = true;
+        void requestCloseOpenDeskOfficeSlidesContents()
+            .then((canQuit) => {
+                if (!canQuit) return;
+                officeQuitApproved = true;
+                isAppQuitting = true;
+                app.quit();
+            })
+            .catch((error: unknown) => {
+                logger.error(`Failed to confirm OpenDesk Office shutdown: ${String(error)}`);
+            })
+            .finally(() => {
+                officeQuitCheckPending = false;
+            });
     });
 
     // macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
@@ -3141,6 +3179,9 @@ async function startApplication(): Promise<void> {
         // renderer 调用 theme:getResolvedTheme 时 createWindow() 已完成，安全。
         registerThemeHandlers();
 
+        // 仅注册轻量准备入口；完整的 OpenDesk Office Slides 运行时在用户打开 PPTX 后加载。
+        registerEmbeddedOpenDeskOfficeSlides();
+
         // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
         // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
         const p4 = startupTrace.createPhase('startup.ready.create_window');
@@ -3253,8 +3294,7 @@ async function startApplication(): Promise<void> {
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

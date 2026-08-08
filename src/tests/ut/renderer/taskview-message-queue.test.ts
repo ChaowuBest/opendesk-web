@@ -215,6 +215,69 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('task-artifacts')).toBeNull();
     });
 
+    test('animates the task and focused workspace columns to a one-to-three ratio', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _rightSidebarExpanded: boolean;
+            render: () => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView._rightSidebarExpanded = true;
+        taskView.render();
+        const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')!;
+        const collapseRequests: Array<{ collapsed?: boolean; persist?: boolean }> = [];
+        const onCollapseRequest = (event: Event) => {
+            collapseRequests.push((event as CustomEvent<{ collapsed?: boolean; persist?: boolean }>).detail);
+        };
+        document.addEventListener('sidebar-collapse-request', onCollapseRequest);
+
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
+        );
+
+        expect(artifacts.style.width).toBe('75%');
+        expect(artifacts.style.transition).toContain('width');
+        expect(collapseRequests).toEqual([{ collapsed: true, persist: false }]);
+
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: false, fullscreen: false } })
+        );
+
+        expect(artifacts.style.width).toBe('380px');
+        document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
+    });
+
+    test('keeps focused content and focus width when the right sidebar is collapsed and reopened', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _rightSidebarExpanded: boolean;
+            _rightSidebarWidth: number;
+            render: () => void;
+            _collapseRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
+            _expandRightSidebar: (rightSidebar: HTMLElement, resizer: HTMLElement | null) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView._rightSidebarExpanded = true;
+        taskView.render();
+        const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')! as HTMLElement & {
+            closeEditor: jest.Mock;
+        };
+        const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
+        artifacts.closeEditor = jest.fn();
+
+        taskView.dispatchEvent(
+            new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
+        );
+        taskView._collapseRightSidebar(artifacts, resizer);
+
+        expect(artifacts.closeEditor).not.toHaveBeenCalled();
+        expect(taskView._rightSidebarWidth).toBe(380);
+
+        taskView._expandRightSidebar(artifacts, resizer);
+
+        expect(artifacts.style.width).toBe('75%');
+    });
+
     test('emits task status changes for embedded hosts', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

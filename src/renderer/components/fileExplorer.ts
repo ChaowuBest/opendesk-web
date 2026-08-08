@@ -30,6 +30,11 @@ import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
+import {
+    OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL,
+    OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
+} from '@bitclub.ai/opendesk-office/host-events';
+import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 
 const t = createRendererTranslator();
 
@@ -159,6 +164,22 @@ function pickFileIcon(entry: FSEntry): string {
         default:
             return 'fa-file';
     }
+}
+
+function isPptxFile(filePath: string): boolean {
+    return filePath.toLowerCase().endsWith('.pptx');
+}
+
+function usesWorkspaceFocusLayout(filePath: string): boolean {
+    return isPptxFile(filePath);
+}
+
+function renderPptxLoadingIndicator(): string {
+    return `
+        <div class="ws-pptx-loading-indicator" role="status" aria-live="polite">
+            <span class="ws-pptx-loading-spinner" aria-hidden="true"></span>
+            <span class="ws-pptx-loading-text">${escapeHtml(t('renderer.fileExplorer.preview.loadingEditor'))}</span>
+        </div>`;
 }
 
 // ============================================================================
@@ -404,6 +425,34 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: var(--fs-lg); color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: var(--fs-sm); color: #94a3b8; margin-top: 2px; }
+        .ws-pptx-host { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #e9edf3; }
+        .ws-pptx-loading { background: #ffffff; }
+        .ws-pptx-loading-indicator {
+            position: absolute; inset: 0; z-index: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+            box-sizing: border-box;
+            background: #ffffff;
+            color: #6b7280;
+        }
+        .ws-pptx-loading-spinner {
+            width: 28px; height: 28px; box-sizing: border-box;
+            border: 2px solid rgba(222, 68, 51, 0.18);
+            border-top-color: var(--brand-red, #DE4433);
+            border-radius: 50%;
+            animation: ws-pptx-loading-spin 0.8s linear infinite;
+        }
+        .ws-pptx-loading-text {
+            font-size: var(--fs-sm, 13px); line-height: 1.4; font-weight: 400;
+            letter-spacing: 0.02em;
+        }
+        @keyframes ws-pptx-loading-spin {
+            to { transform: rotate(360deg); }
+        }
+        .ws-pptx-frame {
+            position: absolute; inset: 0; display: flex;
+            width: 100%; height: 100%; border: 0; background: #ffffff;
+        }
+        .ws-pptx-frame--loading { visibility: hidden; }
         .ws-editor-host {
             flex: 1;
             display: flex;
@@ -967,9 +1016,13 @@ export class FileExplorer {
     };
     private _browserFullscreen = false;
     private _previewFullscreen = false;
+    private _pptxClosePending = false;
+    private _pptxCloseApproved = false;
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
+    /** 聚焦内容的工作区布局变化回调（由 task-artifacts 协调外层布局） */
+    onWorkspaceFocusLayoutChange: ((state: WorkspaceFocusLayoutState) => void) | null = null;
 
     /**
      * 将文件浏览器渲染到指定容器中。
@@ -1003,6 +1056,7 @@ export class FileExplorer {
      * @param workspace 可选的任务级工作空间路径，传入后优先使用而非全局 default_workspace
      */
     refresh(workspace?: string): void {
+        if (this._deferUntilPptxCanClose(() => this.refresh(workspace))) return;
         // 切换任务/工作空间时先关闭预览
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
@@ -1023,6 +1077,7 @@ export class FileExplorer {
         this._gridPath = null;
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
+        this._notifyWorkspaceFocusLayoutChange();
         if (this._container) {
             void this._ensureWorkspaceLoaded();
         }
@@ -1032,6 +1087,7 @@ export class FileExplorer {
      * 关闭预览（供外部调用，如侧边栏收起时）。
      */
     closeEditor(): void {
+        if (this._deferUntilPptxCanClose(() => this.closeEditor())) return;
         void this._saveEditorIfNeeded();
         this._destroyEditorInstance();
         this._selectedFile = null;
@@ -1044,6 +1100,8 @@ export class FileExplorer {
         this._editorPendingSave = false;
         this._previewState = { status: 'idle' };
         this._previewFullscreen = false;
+        this._browserFullscreen = false;
+        this._notifyWorkspaceFocusLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1155,7 +1213,7 @@ export class FileExplorer {
     private _setViewMode(mode: ViewMode): void {
         if (this._viewMode === mode) return;
         this._viewMode = mode;
-        this._renderPanel();
+        this._renderBrowserSection();
         if (mode === 'grid' && this._gridPath) {
             void this._loadChildren(this._gridPath);
         }
@@ -1176,7 +1234,7 @@ export class FileExplorer {
 
     private _enterGridDir(dirPath: string): void {
         this._gridPath = dirPath;
-        this._renderPanel();
+        this._renderBrowserSection();
         void this._loadChildren(dirPath);
     }
 
@@ -1185,6 +1243,10 @@ export class FileExplorer {
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
     selectFile(filePath: string): void {
+        if (this._selectedFile === filePath && isPptxFile(filePath)) return;
+        if (this._deferUntilPptxCanClose(() => this.selectFile(filePath))) return;
+        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
+        const openingFocusedPreview = usesWorkspaceFocusLayout(filePath);
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
@@ -1196,8 +1258,16 @@ export class FileExplorer {
         // 检查当前是否为空状态（展开动画）
         const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
+        if (openingFocusedPreview) {
+            this._previewFullscreen = true;
+            this._browserFullscreen = false;
+        } else if (wasFocusedPreview) {
+            this._previewFullscreen = false;
+            this._browserFullscreen = false;
+        }
         this._previewState = { status: 'loading' };
         this._renderPreview(wasEmpty);
+        this._notifyWorkspaceFocusLayoutChange();
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1210,8 +1280,53 @@ export class FileExplorer {
         void this._loadPreview(filePath);
     }
 
+    private _deferUntilPptxCanClose(onApproved: () => void): boolean {
+        if (this._pptxCloseApproved) {
+            this._pptxCloseApproved = false;
+            return false;
+        }
+        if (!this._selectedFile || !isPptxFile(this._selectedFile)) return false;
+        if (this._pptxClosePending) return true;
+
+        const webview = this._rootNode?.querySelector<HTMLElement>('.ws-pptx-frame') as
+            (HTMLElement & { getWebContentsId?: () => number }) | null;
+        const webContentsId = webview?.getWebContentsId?.();
+        if (!webContentsId || !window.slidesHostAPI?.requestClose) return false;
+
+        this._pptxClosePending = true;
+        void window.slidesHostAPI
+            .requestClose(webContentsId)
+            .then((canClose) => {
+                if (!canClose) return;
+                this._pptxCloseApproved = true;
+                onApproved();
+            })
+            .catch(() => {})
+            .finally(() => {
+                this._pptxClosePending = false;
+            });
+        return true;
+    }
+
     private async _loadPreview(filePath: string): Promise<void> {
         try {
+            if (isPptxFile(filePath)) {
+                const slidesHostAPI = window.slidesHostAPI;
+                if (!slidesHostAPI?.prepare) {
+                    throw new Error(t('renderer.fileExplorer.pptx.unavailable'));
+                }
+                // 先让局部 loading 完成一次绘制，再启动 OpenDesk Office 冷初始化。
+                await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+                if (this._selectedFile !== filePath) return;
+                await slidesHostAPI.prepare();
+                if (this._selectedFile !== filePath) return;
+                this._previewState = {
+                    status: 'idle',
+                    data: { tooLarge: false, size: 0, limit: 0, content: '', binary: false }
+                };
+                this._mountPptxEditor(filePath);
+                return;
+            }
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
                 throw new Error(t('renderer.fileExplorer.error.noReadFile'));
@@ -1308,7 +1423,11 @@ export class FileExplorer {
                         this.selectFile(filePath);
                         break;
                     case 'edit':
-                        this.openEditor(filePath);
+                        if (isPptxFile(filePath)) {
+                            this.selectFile(filePath);
+                        } else {
+                            this.openEditor(filePath);
+                        }
                         break;
                     case 'open-in-browser':
                         this.onOpenInBrowser?.(filePath);
@@ -1402,7 +1521,7 @@ export class FileExplorer {
                 this._toggleTreeNode(p);
                 break;
             case 'tree-file':
-                if (this._editorMode) {
+                if (this._editorMode && !isPptxFile(p)) {
                     this.openEditor(p);
                 } else {
                     this.selectFile(p);
@@ -1412,7 +1531,7 @@ export class FileExplorer {
                 this._enterGridDir(p);
                 break;
             case 'grid-file':
-                if (this._editorMode) {
+                if (this._editorMode && !isPptxFile(p)) {
                     this.openEditor(p);
                 } else {
                     this.selectFile(p);
@@ -1426,6 +1545,47 @@ export class FileExplorer {
     }
 
     // ----- full panel render -----
+
+    private _notifyWorkspaceFocusLayoutChange(): void {
+        const active = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
+        this.onWorkspaceFocusLayoutChange?.({
+            active,
+            fullscreen: active && this._previewFullscreen
+        });
+    }
+
+    private _applyFullscreenLayout(): void {
+        const panel = this._container;
+        if (!panel) return;
+
+        const browser = panel.querySelector<HTMLElement>('.ws-browser');
+        browser?.classList.toggle('ws-browser--fullscreen', this._browserFullscreen);
+        browser?.classList.toggle('ws-browser--hidden', this._previewFullscreen);
+
+        const preview = panel.querySelector<HTMLElement>('[data-preview-root]');
+        preview?.classList.toggle('ws-preview--fullscreen', this._previewFullscreen);
+
+        const browserIcon = panel.querySelector<HTMLElement>('[data-action="browser-fullscreen"] i');
+        if (browserIcon) {
+            browserIcon.className = `fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}`;
+        }
+
+        const previewIcon = panel.querySelector<HTMLElement>('[data-action="preview-fullscreen"] i');
+        if (previewIcon) {
+            previewIcon.className = `fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}`;
+        }
+    }
+
+    private _renderBrowserSection(): void {
+        const panel = this._container;
+        const browserBody = panel?.querySelector<HTMLElement>('.ws-browser-body');
+        if (!panel || !browserBody) return;
+        panel.querySelectorAll<HTMLButtonElement>('.ws-view-btn').forEach((button) => {
+            button.classList.toggle('ws-view-active', button.dataset.view === this._viewMode);
+        });
+        browserBody.innerHTML =
+            this._viewMode === 'tree' ? this._renderTreeContainerHtml() : this._renderGridContainerHtml();
+    }
 
     private _renderPanel(): void {
         const panel = this._container;
@@ -1515,7 +1675,8 @@ export class FileExplorer {
             btn.addEventListener('click', () => {
                 this._browserFullscreen = !this._browserFullscreen;
                 this._previewFullscreen = false;
-                this._renderPanel();
+                this._applyFullscreenLayout();
+                this._notifyWorkspaceFocusLayoutChange();
             });
         });
 
@@ -1548,10 +1709,8 @@ export class FileExplorer {
                 if (target.closest('[data-action="preview-fullscreen"]')) {
                     this._previewFullscreen = !this._previewFullscreen;
                     this._browserFullscreen = false;
-                    this._renderPanel();
-                    if (this._editorMode && this._editorFilePath) {
-                        void this._loadFileForEditor(this._editorFilePath);
-                    }
+                    this._applyFullscreenLayout();
+                    this._notifyWorkspaceFocusLayoutChange();
                     return;
                 }
                 if (target.closest('[data-action="editor-save"]')) {
@@ -1779,6 +1938,11 @@ export class FileExplorer {
      * 打开文件编辑器。
      */
     openEditor(filePath: string, line?: number): void {
+        if (isPptxFile(filePath)) {
+            this.selectFile(filePath);
+            return;
+        }
+        if (this._deferUntilPptxCanClose(() => this.openEditor(filePath, line))) return;
         if (this._editorMode && this._editorFilePath === filePath && this._editorInstance) {
             if (line != null && line > 0) {
                 this._gotoEditorLine(line);
@@ -1810,8 +1974,14 @@ export class FileExplorer {
         this._editorSaveError = null;
         this._editorOpenLine = line != null && line > 0 ? line : null;
         const selected = filePath;
+        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
         this._selectedFile = selected;
+        if (wasFocusedPreview) {
+            this._previewFullscreen = false;
+            this._browserFullscreen = false;
+        }
         this._previewState = { status: 'loading' };
+        this._notifyWorkspaceFocusLayoutChange();
 
         // 更新树中文件高亮
         const rn = this._rootNode;
@@ -2169,6 +2339,7 @@ export class FileExplorer {
         el.innerHTML = this._renderPreviewHtml();
         el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
         el.classList.toggle('ws-preview--unsupported', this._isPreviewUnsupported());
+        this._applyFullscreenLayout();
 
         // 首次展开时触发动画
         if (animate && this._selectedFile) {
@@ -2191,12 +2362,44 @@ export class FileExplorer {
         }
     }
 
+    private _mountPptxEditor(filePath: string): void {
+        const host = this._rootNode?.querySelector<HTMLElement>('.ws-pptx-host');
+        if (!host) {
+            this._renderPreview();
+            return;
+        }
+
+        const editorUrl = `./slides_editor.html?mode=tab&file=${encodeURIComponent(filePath)}`;
+        const webview = document.createElement('webview');
+        webview.className = 'ws-pptx-frame ws-pptx-frame--loading';
+        webview.setAttribute('src', editorUrl);
+        webview.setAttribute('title', t('renderer.fileExplorer.pptx.editor'));
+        const handleEditorMessage = (event: Event): void => {
+            const ipcEvent = event as Event & { channel?: string };
+            if (
+                ipcEvent.channel !== OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL &&
+                ipcEvent.channel !== OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL
+            ) {
+                return;
+            }
+            webview.removeEventListener('ipc-message', handleEditorMessage);
+            host.classList.remove('ws-pptx-loading');
+            host.querySelector('.ws-pptx-loading-indicator')?.remove();
+            webview.classList.remove('ws-pptx-frame--loading');
+        };
+        webview.addEventListener('ipc-message', handleEditorMessage);
+        host.classList.add('ws-pptx-loading');
+        host.innerHTML = renderPptxLoadingIndicator();
+        host.prepend(webview);
+    }
+
     private _isPreviewUnsupported(): boolean {
         if (this._editorMode) return false;
         if (this._previewState.status !== 'idle' || !this._previewState.data) return false;
         const d = this._previewState.data;
         // 图片文件有自己的预览方式，不算"不支持"
         if (this._selectedFile && isImageFile(this._selectedFile)) return false;
+        if (this._selectedFile && isPptxFile(this._selectedFile)) return false;
         return d.tooLarge || d.binary;
     }
 
@@ -2322,7 +2525,7 @@ export class FileExplorer {
 
         const header = `
         <div class="ws-preview-header">
-            <i class="fas fa-file-lines"></i>
+            <i class="fas ${isPptxFile(this._selectedFile) ? 'fa-file-powerpoint' : 'fa-file-lines'}"></i>
             <span class="ws-preview-name" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
             ${
                 this._previewState.data
@@ -2330,7 +2533,10 @@ export class FileExplorer {
                     : ''
             }
             ${
-                this._previewState.data && !this._previewState.data.binary && !this._previewState.data.tooLarge
+                this._previewState.data &&
+                !isPptxFile(this._selectedFile) &&
+                !this._previewState.data.binary &&
+                !this._previewState.data.tooLarge
                     ? `<button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.editFile')}" data-action="open-editor"><i class="fas fa-pen-to-square"></i></button>`
                     : ''
             }
@@ -2344,7 +2550,10 @@ export class FileExplorer {
 
         let bodyHtml = '';
         if (this._previewState.status === 'loading') {
-            bodyHtml = `
+            bodyHtml =
+                this._selectedFile && isPptxFile(this._selectedFile)
+                    ? `<div class="ws-pptx-host ws-pptx-loading">${renderPptxLoadingIndicator()}</div>`
+                    : `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>
                 <span>${t('renderer.fileExplorer.preview.reading')}</span>
@@ -2357,7 +2566,10 @@ export class FileExplorer {
             </div>`;
         } else if (this._previewState.data) {
             const d = this._previewState.data;
-            if (d.tooLarge) {
+            if (isPptxFile(this._selectedFile)) {
+                const editorUrl = `./slides_editor.html?mode=tab&file=${encodeURIComponent(this._selectedFile)}`;
+                bodyHtml = `<div class="ws-pptx-host"><webview class="ws-pptx-frame" src="${escapeHtml(editorUrl)}" title="${escapeHtml(t('renderer.fileExplorer.pptx.editor'))}"></webview></div>`;
+            } else if (d.tooLarge) {
                 bodyHtml = `
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-circle-xmark"></i>
