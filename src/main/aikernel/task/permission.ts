@@ -35,12 +35,16 @@ export async function handleToolPermissionsForTask(
         return false;
     }
 
-    const declaredPermissions = tool.getDeclaredPermissions(args, task);
-    if (!declaredPermissions || declaredPermissions.length === 0) {
-        return false;
-    }
-
-    const allResults = await enforcer.checkAllDetailed(declaredPermissions);
+    const contextualResults = enforcer.checkToolCall
+        ? await enforcer.checkToolCall({
+              toolName: tool.name,
+              args,
+              workspace: task.getWorkspace()
+          })
+        : [];
+    const declaredPermissions = tool.getDeclaredPermissions(args, task) || [];
+    const declaredResults = declaredPermissions.length > 0 ? await enforcer.checkAllDetailed(declaredPermissions) : [];
+    const allResults = [...contextualResults, ...declaredResults];
     if (allResults.length === 0) {
         return false;
     }

@@ -20,6 +20,7 @@ import {
     UserMessage
 } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import type { ConfigPermissionRuntime } from '../../../main/server/opencode/config-permission-runtime.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -187,6 +188,30 @@ describe('opencode session routes', () => {
                 })
             })
         );
+    });
+
+    test('wraps newly initialized server tasks with the config permission runtime', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+        const permissionRuntime = {
+            wrapTask: jest.fn()
+        } as unknown as ConfigPermissionRuntime;
+
+        const response = await SessionRoutes(permissionRuntime).request(
+            `/?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({}),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(permissionRuntime.wrapTask).toHaveBeenCalledWith(task);
     });
 
     test('GET /session exposes stable task lifecycle timestamps for historical tasks', async () => {
@@ -1145,8 +1170,7 @@ describe('opencode session routes', () => {
         expect(childMessages.some((event) => event.properties.info.role === 'assistant')).toBe(true);
         expect(
             events.some(
-                (event) =>
-                    event.type === 'message.part.updated' && event.properties.part.sessionID === 'ses_child'
+                (event) => event.type === 'message.part.updated' && event.properties.part.sessionID === 'ses_child'
             )
         ).toBe(true);
     });
@@ -1164,18 +1188,14 @@ describe('opencode session routes', () => {
         });
         const taskManagerState = {
             tasks: [parent, child],
-            getTask: jest.fn((taskId: string) =>
-                [parent, child].find((candidate) => candidate.task_id === taskId)
-            )
+            getTask: jest.fn((taskId: string) => [parent, child].find((candidate) => candidate.task_id === taskId))
         };
         jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState } as any);
 
         const childrenResponse = await SessionRoutes().request(
             `/ses_parent/children?directory=${encodeURIComponent(workspace)}`
         );
-        const childResponse = await SessionRoutes().request(
-            `/ses_child?directory=${encodeURIComponent(workspace)}`
-        );
+        const childResponse = await SessionRoutes().request(`/ses_child?directory=${encodeURIComponent(workspace)}`);
         const abortResponse = await SessionRoutes().request(
             `/ses_child/abort?directory=${encodeURIComponent(workspace)}`,
             { method: 'POST' }

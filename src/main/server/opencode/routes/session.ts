@@ -31,6 +31,7 @@ import {
     getTaskWorkspace
 } from '../workspace.js';
 import { getOpenCodeSessionTime } from '../session-info.js';
+import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -325,7 +326,12 @@ function getStableMessageId(sourceMessageID: unknown, fallbackKey: string): stri
     return id;
 }
 
-async function ensureServerTaskHarness(tms: any, task: any, workspace = getTaskWorkspace(task)): Promise<void> {
+async function ensureServerTaskHarness(
+    tms: any,
+    task: any,
+    workspace = getTaskWorkspace(task),
+    permissionRuntime?: ConfigPermissionRuntime
+): Promise<void> {
     const previousAgentId = task.agentId;
     task.getAgent();
     const agentChanged = task.agentId !== previousAgentId;
@@ -336,9 +342,10 @@ async function ensureServerTaskHarness(tms: any, task: any, workspace = getTaskW
         await tms.initHarness(task, workspace, task.getAgentMode());
     }
     task.workspace = workspace;
+    permissionRuntime?.wrapTask(task);
     task.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
     task.interactionToolset = createAskUserToolset(ServerQuestionBroker.getInstance());
-    registerServerSubTaskLifecycle(task);
+    registerServerSubTaskLifecycle(task, permissionRuntime);
     await ensureMcpWorkspace(workspace);
 
     if (agentChanged || workspaceChanged || !task.chat_context?.system_prompt) {
@@ -437,10 +444,11 @@ function publishCompletedChildMessage(
     publishCompletedAssistantMessage(sessionID, workspace, formatted);
 }
 
-function attachServerChildSession(child: any): void {
+function attachServerChildSession(child: any, permissionRuntime?: ConfigPermissionRuntime): void {
     if (_serverSubTaskLifecycleChildren.has(child)) return;
     _serverSubTaskLifecycleChildren.add(child);
-    registerServerSubTaskLifecycle(child);
+    permissionRuntime?.wrapTask(child);
+    registerServerSubTaskLifecycle(child, permissionRuntime);
     child.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
 
     const sessionID = toExternalId(child.task_id);
@@ -486,13 +494,7 @@ function attachServerChildSession(child: any): void {
     };
 
     const subscriber = new ServerTaskUpdateSubscriber((chunk) => {
-        const publishedUserMessageID = publishChunkEvents(
-            sessionID,
-            chunk,
-            parentUserMessageID,
-            workspace,
-            modelInfo
-        );
+        const publishedUserMessageID = publishChunkEvents(sessionID, chunk, parentUserMessageID, workspace, modelInfo);
         if (publishedUserMessageID) {
             parentUserMessageID = publishedUserMessageID;
         }
@@ -508,10 +510,10 @@ function attachServerChildSession(child: any): void {
     });
 }
 
-export function registerServerSubTaskLifecycle(task: any): void {
+export function registerServerSubTaskLifecycle(task: any, permissionRuntime?: ConfigPermissionRuntime): void {
     if (_serverSubTaskLifecycleParents.has(task) || typeof task.onSubTaskCreated !== 'function') return;
     _serverSubTaskLifecycleParents.add(task);
-    task.onSubTaskCreated((child: any) => attachServerChildSession(child));
+    task.onSubTaskCreated((child: any) => attachServerChildSession(child, permissionRuntime));
 }
 
 async function waitUntilServerTaskFinished(task: any, callback?: (chunk: TaskUpdateChunk) => void): Promise<void> {
@@ -1510,7 +1512,7 @@ export function publishChunkEvents(
  * 对应 opencode 的 /session/* 端点。
  * 内部使用 OpenDesk 的 TaskManagerState 和 TaskState。
  */
-export function SessionRoutes() {
+export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
     const app = new Hono();
 
     // GET /session - 列出所有会话
@@ -1567,7 +1569,7 @@ export function SessionRoutes() {
         applyOpenCodeRequestModel(task, body);
 
         // 初始化 harness 和 system prompt
-        await ensureServerTaskHarness(tms, task, workspace);
+        await ensureServerTaskHarness(tms, task, workspace, permissionRuntime);
         const info = taskToSessionInfo(task, workspace, workspaceID);
 
         EventBus.publish({
@@ -1698,7 +1700,7 @@ export function SessionRoutes() {
         }
 
         const workspace = getRequestOrTaskWorkspace(c, task);
-        await ensureServerTaskHarness(tms, task, workspace);
+        await ensureServerTaskHarness(tms, task, workspace, permissionRuntime);
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
         }
@@ -1831,7 +1833,7 @@ export function SessionRoutes() {
         }
 
         const workspace = getRequestOrTaskWorkspace(c, task);
-        await ensureServerTaskHarness(tms, task, workspace);
+        await ensureServerTaskHarness(tms, task, workspace, permissionRuntime);
 
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);
@@ -1925,7 +1927,7 @@ export function SessionRoutes() {
 
         // 异步提交，不等待完成
         const workspace = getRequestOrTaskWorkspace(c, task);
-        await ensureServerTaskHarness(tms, task, workspace);
+        await ensureServerTaskHarness(tms, task, workspace, permissionRuntime);
 
         if (task.task_status === 'running') {
             await waitUntilServerTaskFinished(task);

@@ -245,6 +245,13 @@ export interface PermissionCheckResult {
     request: PermissionRequest;
 }
 
+/** 工具调用级权限上下文，用于命令等无法仅由资源声明表达的权限检查。 */
+export interface PermissionToolCallContext {
+    toolName: string;
+    args: Record<string, unknown>;
+    workspace?: string;
+}
+
 /**
  * 一条权限规则定义（用于初始化和动态添加规则）
  *
@@ -294,6 +301,16 @@ export interface PermissionEnforcer {
      * 全部 allow 时返回空数组。
      */
     checkAllDetailed(requests: PermissionRequest[]): Promise<PermissionCheckResult[]>;
+
+    /**
+     * 可选的工具调用级检查。普通 Mode 权限引擎无需实现，保持原有行为。
+     */
+    checkToolCall?(context: PermissionToolCallContext): Promise<PermissionCheckResult[]>;
+
+    /**
+     * 动态包装权限引擎可通过此钩子更新其 Mode 回退执行器。
+     */
+    setFallbackEnforcer?(enforcer: PermissionEnforcer): void;
 
     /**
      * 动态添加一条权限规则

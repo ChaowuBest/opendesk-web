@@ -5,6 +5,7 @@ import { ProviderRoutes } from '../../../main/server/opencode/routes/provider.js
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
+import type { ConfigPermissionRuntime } from '../../../main/server/opencode/config-permission-runtime.js';
 
 function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -158,16 +159,67 @@ describe('opencode config routes', () => {
 
     test('PATCH /global/config uses the same hot-reload path', async () => {
         const setting = mockSetting();
+        const permissionRuntime = {
+            reload: jest.fn(() => ({ status: 'active' }))
+        } as unknown as ConfigPermissionRuntime;
 
-        const response = await GlobalRoutes().request('/config', {
+        const response = await GlobalRoutes(permissionRuntime).request('/config', {
             method: 'PATCH',
-            body: JSON.stringify({ default_model: 'gpt4o' }),
+            body: JSON.stringify({
+                default_model: 'gpt4o',
+                permission: {
+                    '*': 'allow',
+                    bash: { 'rm *': 'ask' }
+                }
+            }),
             headers: { 'content-type': 'application/json' }
         });
 
         expect(response.status).toBe(200);
         expect(setting.setData).toHaveBeenCalledTimes(1);
         expect((setting.setData.mock.calls[0][0] as SettingData).default_model).toBe('gpt4o');
+        expect((setting.setData.mock.calls[0][0] as SettingData).permission).toEqual({
+            '*': 'allow',
+            bash: { 'rm *': 'ask' }
+        });
+        expect(permissionRuntime.reload).toHaveBeenCalledWith({
+            '*': 'allow',
+            bash: { 'rm *': 'ask' }
+        });
+        expect(await response.json()).toMatchObject({
+            permission: {
+                '*': 'allow',
+                bash: { 'rm *': 'ask' }
+            }
+        });
+    });
+
+    test('PATCH /global/config removes configured permissions with null without reloading on unrelated patches', async () => {
+        const setting = mockSetting({
+            ...baseSettingData(),
+            permission: { '*': 'deny' }
+        });
+        const permissionRuntime = {
+            reload: jest.fn(() => ({ status: 'missing' }))
+        } as unknown as ConfigPermissionRuntime;
+        const routes = GlobalRoutes(permissionRuntime);
+
+        const unrelatedResponse = await routes.request('/config', {
+            method: 'PATCH',
+            body: JSON.stringify({ default_model: 'gpt4o' }),
+            headers: { 'content-type': 'application/json' }
+        });
+        expect(unrelatedResponse.status).toBe(200);
+        expect(permissionRuntime.reload).not.toHaveBeenCalled();
+
+        const removeResponse = await routes.request('/config', {
+            method: 'PATCH',
+            body: JSON.stringify({ permission: null }),
+            headers: { 'content-type': 'application/json' }
+        });
+        expect(removeResponse.status).toBe(200);
+        expect(permissionRuntime.reload).toHaveBeenCalledWith(undefined);
+        expect(await removeResponse.json()).not.toHaveProperty('permission');
     });
 
     test('opencode provider responses honor provider enabled flags', async () => {
@@ -262,6 +314,10 @@ describe('opencode config routes', () => {
         const diskData = {
             ...baseSettingData(),
             default_model: 'gpt4o',
+            permission: {
+                '*': 'allow',
+                bash: { 'rm *': 'deny' }
+            },
             providers: [
                 {
                     name: 'openai',
@@ -326,7 +382,10 @@ describe('opencode config routes', () => {
                 tasks: [task]
             }
         } as any);
-        const response = await GlobalRoutes().request('/config', {
+        const permissionRuntime = {
+            reload: jest.fn(() => ({ status: 'active' }))
+        } as unknown as ConfigPermissionRuntime;
+        const response = await GlobalRoutes(permissionRuntime).request('/config', {
             method: 'PATCH',
             body: JSON.stringify({ config: {} }),
             headers: { 'content-type': 'application/json' }
@@ -355,5 +414,6 @@ describe('opencode config routes', () => {
             no_proxy: true
         });
         expect((nextData.applications as any).mcpmgr.servers).toEqual((diskData.applications as any).mcpmgr.servers);
+        expect(permissionRuntime.reload).toHaveBeenCalledWith(diskData.permission);
     });
 });

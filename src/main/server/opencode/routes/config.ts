@@ -14,17 +14,20 @@ import { Setting } from '../../../utils/setting.js';
 import {
     buildOpenCodeConfig,
     buildOpenCodeConfigProviders,
+    hasOpenCodePermissionPatch,
     isOpenDeskConfigReloadRequest,
     mergeOpenCodeConfigPatch,
     notifyOpenCodeConfigUpdated,
     reloadOpenDeskConfigFromFile
 } from '../config-compat.js';
+import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
+import { ServerPermissionBroker } from '../permission-broker.js';
 
 /**
  * Config 路由。
  * 对应 opencode 的 /config/* 端点。
  */
-export function ConfigRoutes() {
+export function ConfigRoutes(permissionRuntime?: ConfigPermissionRuntime) {
     const app = new Hono();
 
     // GET /config - 获取配置
@@ -40,12 +43,22 @@ export function ConfigRoutes() {
         const setting = Setting.getInstance();
         if (isOpenDeskConfigReloadRequest(body)) {
             const data = await reloadOpenDeskConfigFromFile(setting);
+            const reloadResult = permissionRuntime?.reload(data.permission);
+            if (reloadResult && reloadResult.status !== 'disabled') {
+                ServerPermissionBroker.getInstance().dispose();
+            }
             notifyOpenCodeConfigUpdated(data);
             return c.json(buildOpenCodeConfig(data));
         }
 
         const nextData = mergeOpenCodeConfigPatch(setting.getData(), body);
         setting.setData(nextData);
+        if (hasOpenCodePermissionPatch(body)) {
+            const reloadResult = permissionRuntime?.reload(setting.getData().permission);
+            if (reloadResult && reloadResult.status !== 'disabled') {
+                ServerPermissionBroker.getInstance().dispose();
+            }
+        }
         notifyOpenCodeConfigUpdated(setting.getData());
         return c.json(buildOpenCodeConfig(setting.getData()));
     });

@@ -68,6 +68,7 @@ export const zhCn: Record<string, string> = {
 
     // ACP
     'serve.acp.failed': 'ACP 服务启动失败: ${message}',
+    'serve.useConfigPermissions': '使用 setting.json 中的权限规则（配置缺失或无效时回退当前 Mode）',
     'acp.session.default_title': 'OpenDesk 会话',
     'acp.permission.allow_once': '仅允许本次',
     'acp.permission.allow_always': '始终允许 ${scope}',

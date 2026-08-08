@@ -24,6 +24,8 @@ import { AuthMiddleware, CorsMiddleware, LoggerMiddleware } from './middleware.j
 import { EventBus } from './event-bus.js';
 import { ServerPermissionBroker } from './permission-broker.js';
 import { ServerQuestionBroker } from './question-broker.js';
+import { ConfigPermissionRuntime } from './config-permission-runtime.js';
+import { Setting } from '../../utils/setting.js';
 
 export interface ServerOptions {
     port: number;
@@ -31,6 +33,7 @@ export interface ServerOptions {
     cors?: string[];
     password?: string;
     username?: string;
+    useConfigPermissions?: boolean;
 }
 
 export interface ServerListener {
@@ -40,7 +43,12 @@ export interface ServerListener {
     stop: () => Promise<void>;
 }
 
-function create(opts: { cors?: string[]; password?: string; username?: string }) {
+function create(opts: {
+    cors?: string[];
+    password?: string;
+    username?: string;
+    permissionRuntime: ConfigPermissionRuntime;
+}) {
     const app = new Hono();
 
     app.onError((err, c) => {
@@ -53,24 +61,29 @@ function create(opts: { cors?: string[]; password?: string; username?: string })
     app.use('*', LoggerMiddleware);
     app.use('*', CorsMiddleware(opts.cors));
 
-    app.route('/global', GlobalRoutes());
+    app.route('/global', GlobalRoutes(opts.permissionRuntime));
     app.route('/', EventRoutes());
     app.route('/', InstanceRoutes());
     app.route('/', McpRoutes());
     app.route('/', PermissionRoutes());
     app.route('/', QuestionRoutes());
-    app.route('/session', SessionRoutes());
-    app.route('/config', ConfigRoutes());
+    app.route('/session', SessionRoutes(opts.permissionRuntime));
+    app.route('/config', ConfigRoutes(opts.permissionRuntime));
     app.route('/provider', ProviderRoutes());
 
     return app;
 }
 
 export async function listen(opts: ServerOptions): Promise<ServerListener> {
+    const permissionRuntime = new ConfigPermissionRuntime(
+        opts.useConfigPermissions === true,
+        Setting.getInstance().getData().permission
+    );
     const app = create({
         cors: opts.cors,
         password: opts.password,
-        username: opts.username
+        username: opts.username,
+        permissionRuntime
     });
 
     return new Promise<ServerListener>((resolve, reject) => {

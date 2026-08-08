@@ -29,6 +29,10 @@ function cloneSettingData(data: SettingData): SettingData {
     return JSON.parse(JSON.stringify(data)) as SettingData;
 }
 
+function cloneJsonValue<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function hasOwnProperty(value: JsonRecord, key: string): boolean {
     return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -163,6 +167,13 @@ function applyNativeSettingPatch(data: SettingData, body: JsonRecord): void {
     if (isRecord(body.applications)) {
         data.applications = mergeRecordDeep(data.applications, body.applications) as SettingData['applications'];
     }
+    if (hasOwnProperty(body, 'permission')) {
+        if (body.permission === null || body.permission === undefined) {
+            delete (data as Record<string, unknown>).permission;
+        } else {
+            data.permission = cloneJsonValue(body.permission);
+        }
+    }
 }
 
 export function isOpenCodeProviderAllowed(data: SettingData, providerName: string): boolean {
@@ -198,10 +209,18 @@ export function buildOpenCodeConfig(data: SettingData): Record<string, unknown> 
         }
     }
 
-    return {
+    const config: Record<string, unknown> = {
         model: defaultModel,
         provider: providerConfig
     };
+    if (data.permission !== undefined) {
+        config.permission = cloneJsonValue(data.permission);
+    }
+    return config;
+}
+
+export function hasOpenCodePermissionPatch(rawBody: unknown): boolean {
+    return isRecord(rawBody) && hasOwnProperty(rawBody, 'permission');
 }
 
 /**
