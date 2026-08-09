@@ -151,6 +151,48 @@ function preview(s: unknown): string {
     return str.length > PREVIEW_LEN ? str.slice(0, PREVIEW_LEN) + '...' : str;
 }
 
+/**
+ * OpenDesk mailbox 应用的裸名工具集合。
+ *
+ * 这些工具经 skill（operate-mailbox / manage-mailbox）调用，实际传给 AgentGate
+ * 的 tool_name 是裸名（sendEmail / getEmailList / ...），而 AgentMoss 的规则
+ * （EXCLUDED_PREFIXES / builtin_safe_action_types 等）统一按 `mailbox-` 前缀约定。
+ * 裸名不命中任何 mailbox- 前缀规则 → sendEmail 这类发信工具会走 L2 意图偏差检测，
+ * 把邮件正文里的 "rm 命令分级检测" 之类介绍性文字误判为删除操作（误报）。
+ *
+ * 因此传给 AgentGate 前需把裸名规范化为 `mailbox-<name>`：
+ *   - mailbox-getEmailList 等只读/管理工具 → 命中 rules.json builtin_safe_action_types
+ *     → 跳过 L2+L3（本就该跳过，修复了裸名导致的白名单从未生效 bug）
+ *   - mailbox-sendEmail / mailbox-replyEmail → 不在白名单 → 走 L2+L3；
+ *     L2 意图偏差因 mailbox- 前缀被豁免，L3 邮件外传风险检测保留（符合 rules.json 设计意图）
+ *
+ * 注：extractCommand 用 matchesAny（短名后缀匹配），mailbox-sendEmail 仍能匹配
+ * sendEmail 候选，故本地 command 构造不受前缀影响。
+ */
+const MAILBOX_TOOLS = new Set([
+    'addMailAccount',
+    'listMailAccounts',
+    'removeMailAccount',
+    'switchMailAccount',
+    'getMailSyncStatus',
+    'getEmailList',
+    'getEmailContent',
+    'searchEmails',
+    'sendEmail',
+    'replyEmail',
+    'markEmailReadStatus',
+    'starEmail',
+    'deleteEmail'
+]);
+
+/** 传给 AgentGate 前规范化 tool_name：mailbox 裸名加 mailbox- 前缀，其余原样透传 */
+function normalizeGateToolName(toolName: string): string {
+    if (MAILBOX_TOOLS.has(toolName)) {
+        return `mailbox-${toolName}`;
+    }
+    return toolName;
+}
+
 /** 判断 tool_name 是否匹配任一候选短名（兼容 filemgr-writeFile / writeFile 两种格式） */
 function matchesAny(toolName: string, candidates: Iterable<string>): boolean {
     for (const n of candidates) {
@@ -543,7 +585,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
         const { allowed, reason, riskLevel, riskType } = await checkWithAgentGate(
             command,
             sessionId,
-            toolCall.tool_name,
+            normalizeGateToolName(toolCall.tool_name),
             cwd,
             userPrompt,
             task
