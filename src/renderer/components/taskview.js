@@ -1498,7 +1498,6 @@ class TaskView extends HTMLElement {
 
         const containerRect = container.getBoundingClientRect();
         const userMessages = Array.from(container.querySelectorAll('.od-user-msg-container'));
-        if (userMessages.length === 0) return;
 
         const isVisible = (el) => {
             const r = el.getBoundingClientRect();
@@ -1507,13 +1506,14 @@ class TaskView extends HTMLElement {
 
         let target = null;
 
+        // 在已渲染的用户消息中找到跳转目标
         if (direction === 'prev') {
-            // 找到可见区域中最顶部的用户消息
             const topmostVisibleIdx = userMessages.findIndex(isVisible);
             if (topmostVisibleIdx > 0) {
+                // 可见区域内有用户消息 → 取最顶部那条的上一条
                 target = userMessages[topmostVisibleIdx - 1];
             } else if (topmostVisibleIdx === -1) {
-                // 无可见用户消息：往上找最近的一条
+                // 可见区域内无用户消息 → 往上找最近的一条已渲染消息
                 for (let i = userMessages.length - 1; i >= 0; i--) {
                     if (userMessages[i].getBoundingClientRect().bottom <= containerRect.top) {
                         target = userMessages[i];
@@ -1521,8 +1521,8 @@ class TaskView extends HTMLElement {
                     }
                 }
             }
+            // topmostVisibleIdx === 0：第一条可见即第一条已渲染，无上一条 → target 保持 null
         } else {
-            // 找到可见区域中最底部的用户消息
             let bottommostVisibleIdx = -1;
             for (let i = userMessages.length - 1; i >= 0; i--) {
                 if (isVisible(userMessages[i])) {
@@ -1533,7 +1533,6 @@ class TaskView extends HTMLElement {
             if (bottommostVisibleIdx >= 0 && bottommostVisibleIdx < userMessages.length - 1) {
                 target = userMessages[bottommostVisibleIdx + 1];
             } else if (bottommostVisibleIdx === -1) {
-                // 无可见用户消息：往下找最近的一条
                 for (let i = 0; i < userMessages.length; i++) {
                     if (userMessages[i].getBoundingClientRect().top >= containerRect.bottom) {
                         target = userMessages[i];
@@ -1541,6 +1540,18 @@ class TaskView extends HTMLElement {
                     }
                 }
             }
+        }
+
+        // 无已渲染的上一条（target 为 null 或已是第一条已渲染用户消息）
+        // 且还有更早的历史未加载 → 加载一批后同步递归重试
+        if (
+            direction === 'prev' &&
+            (!target || target === userMessages[0]) &&
+            this._hasOlderHistory() &&
+            this._loadOlderHistoryBatch()
+        ) {
+            this._scrollToUserMessage(direction);
+            return;
         }
 
         if (!target) return;
