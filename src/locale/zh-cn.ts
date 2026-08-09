@@ -1470,6 +1470,12 @@ export const zhCn: Record<string, string> = {
     'renderer.memory.cleanupFailed': '清理失败，请稍后重试',
     'renderer.memory.readFailedDetail': '暂时无法读取记忆，请刷新后重试。',
 
+    // Main - Context Menu
+    'contextmenu.cut': '剪切',
+    'contextmenu.copy': '复制',
+    'contextmenu.paste': '粘贴',
+    'contextmenu.selectAll': '全选',
+
     // Main - Tray
     'main.tray.openMainWindow': '打开主窗口',
     'main.tray.openLogs': '打开日志',

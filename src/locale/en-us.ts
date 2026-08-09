@@ -1507,6 +1507,12 @@ export const enUs: Record<string, string> = {
     'renderer.memory.cleanupFailed': 'Cleanup failed. Please try again.',
     'renderer.memory.readFailedDetail': 'Memories are temporarily unavailable. Refresh to try again.',
 
+    // Main - Context Menu
+    'contextmenu.cut': 'Cut',
+    'contextmenu.copy': 'Copy',
+    'contextmenu.paste': 'Paste',
+    'contextmenu.selectAll': 'Select All',
+
     // Main - Tray
     'main.tray.openMainWindow': 'Open Main Window',
     'main.tray.openLogs': 'Open Logs',
