@@ -2791,7 +2791,7 @@ html[data-theme='dark'] .od-retry-now-btn:active {
 .agent-send-divider {
     display: none;
 }
-.agent-send-menu-btn {
+.agent-clear-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2800,13 +2800,23 @@ html[data-theme='dark'] .od-retry-now-btn:active {
     border: none;
     border-radius: 2px 8px 8px 2px;
     cursor: pointer;
+    background: #b03a3a;
+    color: #fff;
     transition:
         background 0.25s ease,
         color 0.25s ease;
     line-height: 1;
 }
-.agent-send-menu-btn i {
+.agent-clear-btn i {
     font-size: 12px;
+}
+.agent-clear-btn:hover:not(:disabled) {
+    background: #993333;
+}
+.agent-clear-btn:disabled {
+    background: #f1efec;
+    color: #b4afa9;
+    cursor: default;
 }
 .agent-speech-btn-round {
     display: inline-flex;
@@ -2933,10 +2943,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     background: #f1efec;
     color: #b4afa9;
 }
-.agent-send-menu-btn.agent-send-inactive {
-    background: #f1efec;
-    color: #b4afa9;
-}
 .agent-send-btn.agent-send-inactive ~ .agent-send-divider {
     display: none;
 }
@@ -2945,17 +2951,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
     background: #1c1917;
     color: #fff;
 }
-.agent-send-menu-btn.agent-send-active {
-    background: #1c1917;
-    color: #fff;
-}
 .agent-send-btn.agent-send-active ~ .agent-send-divider {
     display: none;
 }
 .agent-send-btn.agent-send-active:hover {
-    background: #2a2522;
-}
-.agent-send-menu-btn.agent-send-active:hover {
     background: #2a2522;
 }
 
@@ -2970,8 +2969,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     padding: 0 12px;
     border: none;
     border-radius: 8px;
-    background: rgba(239, 115, 115, 0.78);
-    backdrop-filter: blur(4px);
+    background: #b03a3a;
     color: #fff;
     font-size: 12px;
     font-weight: 600;
@@ -2988,7 +2986,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     align-items: center;
 }
 .agent-stop-btn:hover {
-    background: rgba(220, 100, 100, 0.88);
+    background: #993333;
 }
 @keyframes agent-stop-pulse {
     0%,

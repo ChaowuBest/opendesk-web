@@ -244,8 +244,6 @@ class AgentInput extends HTMLElement {
         this._autocompleteTriggerPosition = null;
         /** 是否使用 Ctrl+Enter 发送（false=Enter 发送） */
         this.ctrlEnterSend = false;
-        /** 发送选项菜单是否打开 */
-        this.sendMenuOpen = false;
         /** 关联的任务 ID，用于per-task模式管理 */
         this.taskId = null;
         this.speechSession = null;
@@ -972,7 +970,7 @@ class AgentInput extends HTMLElement {
     updateSendButtonState() {
         const textarea = this.querySelector('#agent-input-textarea');
         const submitBtn = this.querySelector('#agent-input-submit-btn');
-        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
+        const clearBtn = this.querySelector('#agent-input-clear-btn');
         if (!textarea || !submitBtn) return;
 
         const hasText = textarea.value.trim().length > 0;
@@ -988,15 +986,8 @@ class AgentInput extends HTMLElement {
             submitBtn.classList.add('agent-send-inactive');
         }
 
-        if (sendMenuBtn) {
-            sendMenuBtn.disabled = this.speechRecording;
-            if (active) {
-                sendMenuBtn.classList.add('agent-send-active');
-                sendMenuBtn.classList.remove('agent-send-inactive');
-            } else {
-                sendMenuBtn.classList.remove('agent-send-active');
-                sendMenuBtn.classList.add('agent-send-inactive');
-            }
+        if (clearBtn) {
+            clearBtn.disabled = !hasText || this.speechRecording;
         }
     }
 
@@ -1244,9 +1235,9 @@ class AgentInput extends HTMLElement {
                                 <span>${submitLabel}</span>
                             </button>
                             <div class="agent-send-divider"></div>
-                            <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
-                                title="发送选项">
-                                <i class="fas fa-ellipsis"></i>
+                            <button id="agent-input-clear-btn" class="agent-clear-btn" disabled
+                                title="${this.t('renderer.agentInput.clearInput')}">
+                                <i class="fas fa-trash-can"></i>
                             </button>
                         </div>
                         <button id="agent-input-stop-btn" class="agent-stop-btn" style="display:none;">
@@ -1435,7 +1426,6 @@ class AgentInput extends HTMLElement {
         this.closeNodePanel(true);
         this.toggleSkillPanel(true);
         this.closeAutocompletePanel();
-        this.closeSendMenu();
     }
 
     toggleModelPanel(forceClose = false) {
@@ -1850,68 +1840,6 @@ class AgentInput extends HTMLElement {
         // 关闭技能面板，跳转到技能中心让用户选择安装方式（市场或手动导入）
         this.toggleSkillPanel(true);
         window.globalControlAPI?.openApplication('skillmgr');
-    }
-
-    // ── 发送选项菜单 ────────────────────────────────────────
-
-    showSendMenu() {
-        this.closeSendMenu();
-        const groupEl = this.querySelector('.agent-send-group');
-        if (!groupEl) return;
-
-        const menu = document.createElement('div');
-        menu.id = 'agent-send-options-menu';
-        menu.className = 'ctx-menu';
-
-        Object.assign(menu.style, {
-            position: 'fixed',
-            zIndex: '10002'
-        });
-
-        const checked = this.ctrlEnterSend;
-        menu.innerHTML = `
-            <button class="ctx-item" data-action="toggle-ctrl-enter">
-                <span class="ctx-label">按 Ctrl+Enter 发送</span>
-                <span class="ctx-toggle">
-                    <input type="checkbox" ${checked ? 'checked' : ''}>
-                    <span class="ctx-toggle-slider"></span>
-                </span>
-            </button>
-        `;
-
-        document.body.appendChild(menu);
-
-        // 定位：向下弹出，右对齐到按钮组
-        const groupRect = groupEl.getBoundingClientRect();
-        const menuRect = menu.getBoundingClientRect();
-        let top = groupRect.bottom + 6;
-        let left = groupRect.right - menuRect.width;
-        if (top + menuRect.height > window.innerHeight - 8) {
-            top = groupRect.top - menuRect.height - 6;
-        }
-        if (left < 8) left = 8;
-        menu.style.top = top + 'px';
-        menu.style.left = left + 'px';
-
-        this.sendMenuOpen = true;
-
-        // 事件绑定 — 点击整行或直接点 checkbox 都切换
-        const menuItem = menu.querySelector('[data-action="toggle-ctrl-enter"]');
-        const checkbox = menu.querySelector('input[type="checkbox"]');
-        if (menuItem && checkbox) {
-            menuItem.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                checkbox.checked = !checkbox.checked;
-                this.saveCtrlEnterSend(checkbox.checked);
-            });
-        }
-    }
-
-    closeSendMenu() {
-        const existing = document.querySelector('#agent-send-options-menu');
-        if (existing) existing.remove();
-        this.sendMenuOpen = false;
     }
 
     // ── 内联补全面板 ────────────────────────────────────────
@@ -2572,19 +2500,6 @@ class AgentInput extends HTMLElement {
                         this.closeAutocompletePanel();
                     }
                 }
-                // 关闭发送选项菜单
-                if (this.sendMenuOpen) {
-                    const sendMenu = document.querySelector('#agent-send-options-menu');
-                    const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
-                    if (
-                        sendMenu &&
-                        !sendMenu.contains(e.target) &&
-                        e.target !== sendMenuBtn &&
-                        !sendMenuBtn?.contains(e.target)
-                    ) {
-                        this.closeSendMenu();
-                    }
-                }
             });
         }
 
@@ -2682,17 +2597,13 @@ class AgentInput extends HTMLElement {
             });
         }
 
-        // 发送选项菜单按钮
-        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
-        if (sendMenuBtn) {
-            sendMenuBtn.addEventListener('click', (e) => {
+        // 清除输入按钮
+        const clearBtn = this.querySelector('#agent-input-clear-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (this.sendMenuOpen) {
-                    this.closeSendMenu();
-                } else {
-                    this.closeAllPanels();
-                    this.showSendMenu();
-                }
+                this.clearInput();
+                this.querySelector('#agent-input-textarea')?.focus();
             });
         }
 
