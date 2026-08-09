@@ -642,12 +642,9 @@ const createWindow = () => {
         globalTray?.setContextMenu(buildTrayMenu());
     });
 
+    let isCloseDialogShowing = false;
     mainWindow.on('close', (event) => {
-        if (!isAppQuitting) {
-            // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
-            event.preventDefault();
-            mainWindow.hide();
-        } else {
+        if (isAppQuitting) {
             // 应用退出时保存窗口 normal bounds，下次启动恢复
             try {
                 const bounds = mainWindow.getNormalBounds();
@@ -664,6 +661,49 @@ const createWindow = () => {
             } catch {
                 /* best-effort */
             }
+            return;
+        }
+
+        event.preventDefault();
+
+        const setting = Setting.getInstance();
+        const data = setting.getData() as Record<string, unknown>;
+        const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
+        const closeAction = guiConfig.on_mainwindow_close as string | undefined;
+
+        if (closeAction === 'quit') {
+            app.quit();
+        } else if (closeAction === 'minimize') {
+            mainWindow.hide();
+        } else {
+            // undefined — 询问用户退出还是最小化
+            if (isCloseDialogShowing) return;
+            isCloseDialogShowing = true;
+            void dialog
+                .showMessageBox(mainWindow, {
+                    type: 'question',
+                    buttons: [t('main.closeDialog.quit'), t('main.closeDialog.minimize')],
+                    defaultId: 1,
+                    cancelId: 1,
+                    message: t('main.closeDialog.message'),
+                    checkboxLabel: t('main.closeDialog.dontAsk'),
+                    checkboxChecked: false,
+                    noLink: true
+                })
+                .then((result) => {
+                    if (result.checkboxChecked) {
+                        guiConfig.on_mainwindow_close = result.response === 0 ? 'quit' : 'minimize';
+                        setting.setData(data);
+                    }
+                    if (result.response === 0) {
+                        app.quit();
+                    } else {
+                        mainWindow.hide();
+                    }
+                })
+                .finally(() => {
+                    isCloseDialogShowing = false;
+                });
         }
     });
 

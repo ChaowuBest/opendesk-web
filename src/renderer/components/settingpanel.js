@@ -1227,6 +1227,7 @@ class SettingPanel extends HTMLElement {
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
+        const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -1307,18 +1308,23 @@ class SettingPanel extends HTMLElement {
                     </span>
                 </div>
             </div>
-            </div>
-        </section>
-
-        <section class="sp-section">
-            <h2 class="sp-section-title">${this._t('sp.general.inputSettings')}</h2>
-            <div class="sp-section-card">
-            <div class="sp-form-group" style="margin-bottom:0">
-                <label class="sp-form-label">${this._t('sp.general.sendShortcut')}</label>
-                <select id="send-shortcut-select" class="sp-form-input">
-                    <option value="enter"${!ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.enter')}</option>
-                    <option value="ctrl-enter"${ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.ctrlEnter')}</option>
-                </select>
+            <hr class="sp-section-divider">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.sendShortcut')}</label>
+                    <select id="send-shortcut-select" class="sp-form-input">
+                        <option value="enter"${!ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.enter')}</option>
+                        <option value="ctrl-enter"${ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.ctrlEnter')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.closeWindowBehavior')}</label>
+                    <select id="on-mainwindow-close-select" class="sp-form-input">
+                        <option value="ask"${!onMainWindowClose ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.ask')}</option>
+                        <option value="quit"${onMainWindowClose === 'quit' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.quit')}</option>
+                        <option value="minimize"${onMainWindowClose === 'minimize' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.minimize')}</option>
+                    </select>
+                </div>
             </div>
             </div>
         </section>
@@ -3526,6 +3532,16 @@ class SettingPanel extends HTMLElement {
                 this.currentData.gui_config.ctrl_enter_send = e.target.value === 'ctrl-enter';
                 this.saveImmediately();
                 window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
+            });
+            this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                const val = e.target.value;
+                if (val === 'ask') {
+                    delete this.currentData.gui_config.on_mainwindow_close;
+                } else {
+                    this.currentData.gui_config.on_mainwindow_close = val;
+                }
+                this.saveImmediately();
             });
             this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
                 if (!this.currentData.debug) this.currentData.debug = {};
