@@ -1811,7 +1811,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         const fwWidth = 320; // 浮窗宽度
         const rightPanel = document.getElementById('rightPanel');
         // 距 opendesk 窗口最上方偏移：原 96 的一半
-        const topOffset = 48;
+        const topOffset = 46;
         if (rightPanel) {
             const rect = rightPanel.getBoundingClientRect();
             // 水平居中于右侧面板
