@@ -224,7 +224,11 @@ const GUIConfigSchema = z.object({
         .enum(['inline', 'bubble'])
         .optional()
         .default('inline')
-        .describe('思考内容显示模式: inline=内联式, bubble=气泡式')
+        .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
+    on_mainwindow_close: z
+        .enum(['quit', 'minimize'])
+        .optional()
+        .describe('关闭主窗口时的行为: quit=退出应用, minimize=最小化, 未设置时每次询问')
 });
 
 export const DEFAULT_SHORTCUTS = {

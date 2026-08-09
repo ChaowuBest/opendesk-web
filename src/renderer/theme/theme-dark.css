@@ -677,7 +677,7 @@ html[data-theme='dark'] agent-input .agent-send-btn.agent-send-inactive {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text-muted) !important;
 }
-html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-inactive {
+html[data-theme='dark'] agent-input .agent-clear-btn:disabled {
     background: var(--od-bg-subtle) !important;
     color: var(--od-text-muted) !important;
 }
@@ -685,14 +685,7 @@ html[data-theme='dark'] agent-input .agent-send-btn.agent-send-active {
     background: var(--od-text) !important;
     color: var(--od-bg) !important;
 }
-html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-active {
-    background: var(--od-text) !important;
-    color: var(--od-bg) !important;
-}
 html[data-theme='dark'] agent-input .agent-send-btn.agent-send-active:hover {
-    background: var(--od-text-muted) !important;
-}
-html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-active:hover {
     background: var(--od-text-muted) !important;
 }
 

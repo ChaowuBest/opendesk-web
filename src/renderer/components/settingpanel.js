@@ -1226,6 +1226,8 @@ class SettingPanel extends HTMLElement {
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
+        const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
+        const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -1304,6 +1306,24 @@ class SettingPanel extends HTMLElement {
                     <span style="margin-left:auto;font-size:12px;color:var(--sp-color-text-tertiary);display:flex;align-items:center;gap:4px">
                         ${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
                     </span>
+                </div>
+            </div>
+            <hr class="sp-section-divider">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.sendShortcut')}</label>
+                    <select id="send-shortcut-select" class="sp-form-input">
+                        <option value="enter"${!ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.enter')}</option>
+                        <option value="ctrl-enter"${ctrlEnterSend ? ' selected' : ''}>${this._t('sp.general.sendShortcut.ctrlEnter')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.closeWindowBehavior')}</label>
+                    <select id="on-mainwindow-close-select" class="sp-form-input">
+                        <option value="ask"${!onMainWindowClose ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.ask')}</option>
+                        <option value="quit"${onMainWindowClose === 'quit' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.quit')}</option>
+                        <option value="minimize"${onMainWindowClose === 'minimize' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.minimize')}</option>
+                    </select>
                 </div>
             </div>
             </div>
@@ -2159,6 +2179,24 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
             if (!this.currentData.gui_config) this.currentData.gui_config = {};
             this.currentData.gui_config.gui_reason_display = e.target.value;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#send-shortcut-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.ctrl_enter_send = e.target.value === 'ctrl-enter';
+            this.saveImmediately();
+            window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
+        });
+
+        this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            const val = e.target.value;
+            if (val === 'ask') {
+                delete this.currentData.gui_config.on_mainwindow_close;
+            } else {
+                this.currentData.gui_config.on_mainwindow_close = val;
+            }
             this.saveImmediately();
         });
 
@@ -3497,6 +3535,22 @@ class SettingPanel extends HTMLElement {
                     } catch (err) {
                         console.warn('[setting] theme setPreference failed', err);
                     }
+                }
+                this.saveImmediately();
+            });
+            this.querySelector('#send-shortcut-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.ctrl_enter_send = e.target.value === 'ctrl-enter';
+                this.saveImmediately();
+                window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
+            });
+            this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                const val = e.target.value;
+                if (val === 'ask') {
+                    delete this.currentData.gui_config.on_mainwindow_close;
+                } else {
+                    this.currentData.gui_config.on_mainwindow_close = val;
                 }
                 this.saveImmediately();
             });

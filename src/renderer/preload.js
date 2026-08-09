@@ -1415,6 +1415,23 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    // closeWindow: 主窗口关闭时由 main 进程发起，renderer 显示自定义弹窗后回传用户选择
+    const closeWindowRequestCallbacks = new Set();
+    ipcRenderer.on('closeWindow:request', (_event, requestId) => {
+        for (const cb of closeWindowRequestCallbacks) cb(requestId);
+    });
+    safeExposeInMainWorld('closeWindowAPI', {
+        onCloseWindowRequest: (callback) => {
+            closeWindowRequestCallbacks.add(callback);
+        },
+        offCloseWindowRequest: (callback) => {
+            closeWindowRequestCallbacks.delete(callback);
+        },
+        respondCloseWindow: (requestId, response) => {
+            ipcRenderer.send('closeWindow:response', requestId, response);
+        }
+    });
+
     safeExposeInMainWorld('applicationRegistryAPI', {
         ensureFullyLoaded: async () => {
             const result = await ipcRenderer.invoke('applicationRegistry:ensureFullyLoaded');

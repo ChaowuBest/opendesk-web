@@ -642,12 +642,9 @@ const createWindow = () => {
         globalTray?.setContextMenu(buildTrayMenu());
     });
 
+    let isCloseDialogShowing = false;
     mainWindow.on('close', (event) => {
-        if (!isAppQuitting) {
-            // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
-            event.preventDefault();
-            mainWindow.hide();
-        } else {
+        if (isAppQuitting) {
             // 应用退出时保存窗口 normal bounds，下次启动恢复
             try {
                 const bounds = mainWindow.getNormalBounds();
@@ -664,6 +661,47 @@ const createWindow = () => {
             } catch {
                 /* best-effort */
             }
+            return;
+        }
+
+        event.preventDefault();
+
+        const setting = Setting.getInstance();
+        const data = setting.getData() as Record<string, unknown>;
+        const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
+        const closeAction = guiConfig.on_mainwindow_close as string | undefined;
+
+        if (closeAction === 'quit') {
+            app.quit();
+        } else if (closeAction === 'minimize') {
+            mainWindow.hide();
+        } else {
+            // undefined — 询问用户退出还是最小化
+            if (isCloseDialogShowing) return;
+            isCloseDialogShowing = true;
+            const requestId = `close-${Date.now()}`;
+            const responseChannel = 'closeWindow:response';
+            const handler = (_e: Electron.IpcMainEvent, respRequestId: string, response: unknown) => {
+                if (respRequestId !== requestId) return;
+                ipcMain.removeListener(responseChannel, handler);
+                const result = response as { action: string; dontAsk: boolean };
+                if (result.action === 'cancel') {
+                    isCloseDialogShowing = false;
+                    return;
+                }
+                if (result.dontAsk) {
+                    guiConfig.on_mainwindow_close = result.action === 'quit' ? 'quit' : 'minimize';
+                    setting.setData(data);
+                }
+                if (result.action === 'quit') {
+                    app.quit();
+                } else {
+                    mainWindow.hide();
+                }
+                isCloseDialogShowing = false;
+            };
+            ipcMain.on(responseChannel, handler);
+            safeSendToWebContents(mainWindow.webContents, 'closeWindow:request', requestId);
         }
     });
 
@@ -689,9 +727,17 @@ const createWindow = () => {
         return true;
     };
 
-    // 全局右键菜单已禁用：所有右键菜单均由 renderer 侧自定义实现（公共样式见 styles/context-menu.css）。
-    mainWindow.webContents.on('context-menu', () => {
-        return;
+    // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域保持禁用。
+    // label 使用 t() 以跟随 OpenDesk 语言设置；role 保留以维持系统原生快捷键和启用/禁用逻辑。
+    mainWindow.webContents.on('context-menu', (_event, params) => {
+        if (!params.isEditable) return;
+        Menu.buildFromTemplate([
+            { role: 'cut', label: t('contextmenu.cut') },
+            { role: 'copy', label: t('contextmenu.copy') },
+            { role: 'paste', label: t('contextmenu.paste') },
+            { type: 'separator' },
+            { role: 'selectAll', label: t('contextmenu.selectAll') }
+        ]).popup();
     });
 
     mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
@@ -3302,7 +3348,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

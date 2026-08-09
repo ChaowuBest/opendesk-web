@@ -34,9 +34,10 @@ import '../components/shortcutHelp.ts';
 import '../components/agentgate-floating-window.js';
 import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';
-import { showConfirmModal } from '../components/confirmModal.ts';
+import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
+import { createRendererTranslator } from '../locale.ts';
 
 // 本地化字符串映射
 const LOCALE_STRINGS = {
@@ -237,6 +238,24 @@ if (window.settingErrorAPI) {
 if (window.skillBlacklistAPI) {
     window.skillBlacklistAPI.onBlacklistPrompt((data) => {
         showBlacklistPrompt(data);
+    });
+}
+
+// 监听主窗口关闭确认请求，显示自定义模态弹窗
+if (window.closeWindowAPI) {
+    window.closeWindowAPI.onCloseWindowRequest(async (requestId) => {
+        const settings = await window.settingAPI.loadSettingObject();
+        const t = createRendererTranslator(settings);
+        const result = await showCloseDialog({
+            title: t('main.closeDialog.title'),
+            message: t('main.closeDialog.message'),
+            cancelText: t('main.closeDialog.cancel'),
+            minimizeText: t('main.closeDialog.minimize'),
+            quitText: t('main.closeDialog.quit'),
+            dontAskText: t('main.closeDialog.dontAsk'),
+            dontAskHint: t('main.closeDialog.dontAskHint')
+        });
+        window.closeWindowAPI.respondCloseWindow(requestId, result);
     });
 }
 
