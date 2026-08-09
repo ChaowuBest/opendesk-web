@@ -186,6 +186,9 @@ function getEffortIconSVG(effortValue) {
     return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
 }
 
+/** 主页 AgentInput 草稿文本，在组件销毁/重建之间持久化 */
+let _homeDraftText = '';
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -625,6 +628,9 @@ class AgentInput extends HTMLElement {
     }
 
     disconnectedCallback() {
+        if (!this.taskId) {
+            _homeDraftText = this.getCurrentText();
+        }
         this._unsubSettingChanged?.();
         this._unsubExecutionNodesChanged?.();
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
@@ -996,7 +1002,7 @@ class AgentInput extends HTMLElement {
 
     render() {
         const prevTextarea = this.querySelector('#agent-input-textarea');
-        const savedValue = prevTextarea ? prevTextarea.value : '';
+        const savedValue = prevTextarea ? prevTextarea.value : this.hasAttribute('hide-goal') ? _homeDraftText : '';
         const savedSelStart = prevTextarea ? prevTextarea.selectionStart : 0;
         const savedSelEnd = prevTextarea ? prevTextarea.selectionEnd : 0;
 
