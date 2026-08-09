@@ -1289,7 +1289,8 @@ export class FileExplorer {
         if (this._pptxClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-pptx-frame') as
-            (HTMLElement & { getWebContentsId?: () => number }) | null;
+            | (HTMLElement & { getWebContentsId?: () => number })
+            | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.slidesHostAPI?.requestClose) return false;
 
@@ -1717,6 +1718,14 @@ export class FileExplorer {
                     ev.preventDefault();
                     ev.stopPropagation();
                     void this._saveEditorContent();
+                    return;
+                }
+                if (target.closest('[data-action="editor-preview"]')) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    if (this._selectedFile) {
+                        this.selectFile(this._selectedFile);
+                    }
                     return;
                 }
                 if (target.closest('[data-action="editor-close"]')) {
@@ -2504,6 +2513,9 @@ export class FileExplorer {
                 <span class="ws-editor-status"></span>
                 <button class="ws-editor-save-btn" data-action="editor-save" title="${t('renderer.fileExplorer.preview.saveTitle')}" style="display:none;">
                     <i class="fas fa-floppy-disk" style="font-size: var(--fs-xs);"></i> ${t('renderer.fileExplorer.preview.save')}
+                </button>
+                <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.previewFile')}" data-action="editor-preview">
+                    <i class="fas fa-eye"></i>
                 </button>
                 <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.fullscreen')}" data-action="preview-fullscreen">
                     <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>

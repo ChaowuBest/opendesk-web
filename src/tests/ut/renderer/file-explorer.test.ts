@@ -243,6 +243,56 @@ describe('file explorer', () => {
         expect(prepare).toHaveBeenCalledTimes(1);
     });
 
+    test('switches from editor mode to rendered preview via the preview button', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const readTextFile = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            tooLarge: false,
+            size: 8,
+            limit: 0,
+            content: '# Title\n\nbody text',
+            binary: false
+        });
+        (window as any).fsAPI = { readTextFile };
+
+        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
+            _container: HTMLElement;
+            _rootNode: ParentNode;
+            _workspaceRoot: string;
+            _editorMode: boolean;
+            _editorFilePath: string | null;
+            _selectedFile: string;
+            _previewState: {
+                status: 'idle';
+                data: { tooLarge: boolean; size: number; limit: number; content: string; binary: boolean };
+            };
+            _renderPanel(): void;
+        };
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._editorMode = true;
+        explorer._editorFilePath = '/workspace/readme.md';
+        explorer._selectedFile = '/workspace/readme.md';
+        explorer._previewState = {
+            status: 'idle',
+            data: { tooLarge: false, size: 8, limit: 0, content: '# Title\n\nbody text', binary: false }
+        };
+        explorer._renderPanel();
+
+        const previewBtn = container.querySelector<HTMLButtonElement>('[data-action="editor-preview"]');
+        expect(previewBtn).not.toBeNull();
+        expect(container.querySelector('.ws-editor-host')).not.toBeNull();
+
+        previewBtn?.click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(explorer._editorMode).toBe(false);
+        expect(container.querySelector('.ws-editor-host')).toBeNull();
+        expect(container.querySelector('.ws-preview-md-host')).not.toBeNull();
+        delete (window as any).fsAPI;
+    });
+
     test('asks the embedded editor to handle unsaved changes before switching files', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
