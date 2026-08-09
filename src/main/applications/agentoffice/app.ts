@@ -264,6 +264,28 @@ export class AgentOfficeApplication extends BaseApplication {
         return [...agents, ...this.staffAgents.values()];
     }
 
+    private agentsLoadedPromise?: Promise<void>;
+
+    async ensureLoaded(): Promise<void> {
+        if (this.agentsLoadedPromise) return this.agentsLoadedPromise;
+        this.agentsLoadedPromise = this.doEnsureLoaded();
+        return this.agentsLoadedPromise;
+    }
+
+    private async doEnsureLoaded(): Promise<void> {
+        try {
+            const agents = await this.getAgents();
+            for (const agent of agents) {
+                await AgentRegistry.replaceApplicationAgent('agentoffice', agent);
+            }
+            if (agents.length > 0) {
+                logger.info(`AgentRegistry: registered ${agents.length} agent(s) from agentoffice (lazy)`);
+            }
+        } catch (error) {
+            logger.error(`AgentOffice: ensureLoaded failed: ${error}`);
+        }
+    }
+
     private async loadStaffAgents(): Promise<void> {
         let staffs: StaffListItem[];
         try {

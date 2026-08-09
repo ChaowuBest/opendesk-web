@@ -1398,6 +1398,21 @@ html[data-theme='dark'] .od-inline-toolcall-container .hover\:text-slate-800:hov
     color: var(--od-text) !important;
 }
 
+/* ToolCall renderError rose overrides for dark mode */
+html[data-theme='dark'] .od-inline-toolcall-container .bg-rose-50 {
+    background: rgba(244, 63, 94, 0.12) !important;
+}
+html[data-theme='dark'] .od-inline-toolcall-container .bg-rose-500 {
+    background: rgba(244, 63, 94, 0.35) !important;
+}
+html[data-theme='dark'] .od-inline-toolcall-container .text-rose-500,
+html[data-theme='dark'] .od-inline-toolcall-container .text-rose-600 {
+    color: #fda4af !important;
+}
+html[data-theme='dark'] .od-inline-toolcall-container .hover\:text-rose-600:hover {
+    color: #fecdd3 !important;
+}
+
 /* notes / calendar / todomgr */
 html[data-theme='dark'] .notes-root {
     color: var(--od-text);
@@ -2774,4 +2789,21 @@ html[data-theme='dark'] .markdown-body mark {
 /* 深色模式：缩写下划线 */
 html[data-theme='dark'] .markdown-body abbr[title] {
     border-bottom-color: var(--od-border-strong);
+}
+
+/* ErrorMessagePart dark mode overrides */
+html[data-theme='dark'] .od-error-msg {
+    background: rgba(244, 63, 94, 0.12) !important;
+    border-color: rgba(244, 63, 94, 0.25) !important;
+}
+html[data-theme='dark'] .od-error-msg .text-rose-600 {
+    color: #fda4af !important;
+}
+html[data-theme='dark'] .od-error-msg .text-slate-600 {
+    color: var(--od-text-muted) !important;
+}
+
+/* Code preview container dark mode override */
+html[data-theme='dark'] .code-preview-container {
+    background: var(--od-bg-subtle) !important;
 }

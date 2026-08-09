@@ -326,6 +326,13 @@ export abstract class BaseApplication {
 
     async beforeExit(): Promise<void> {}
 
+    /**
+     * 确保应用已完成延迟加载（Agent、插件等资源）。
+     * 默认实现为空操作；支持延迟加载的应用覆写此方法。
+     * 调用方在打开应用或访问其资源前应 await ensureLoaded()。
+     */
+    async ensureLoaded(): Promise<void> {}
+
     setTUIStatusUpdateCallback(cb: () => void): void {
         this._tuiStatusUpdateCallback = cb;
     }

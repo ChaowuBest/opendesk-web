@@ -314,9 +314,6 @@ export class TaskState {
         }
 
         const mainAgent = AgentRegistry.getMainAgent();
-        if (!AgentRegistry.areApplicationAgentsReady()) {
-            return mainAgent;
-        }
         if (this.agentId !== mainAgent.agentId) {
             logger.warn(
                 `TaskState: agent "${this.agentId}" not found for task ${this.task_id}, ` +

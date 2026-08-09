@@ -93,16 +93,8 @@ import { readUserPortrait, writeUserPortrait } from './aikernel/memory/user_port
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
-import {
-    getUsageDashboardSummary,
-    getUsageRankings,
-    type RankPeriod,
-    initTelemetry,
-    shutdownTelemetry,
-    reloadTelemetry
-} from './telemetry/index.js';
+import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
-import { StartupTrace } from './telemetry/opentelemetry/startup-tracer.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
@@ -130,6 +122,14 @@ import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { replaceTaskHarnessForMode } from './aikernel/task/mode.js';
+
+let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
+function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
+    if (!telemetryModulePromise) {
+        telemetryModulePromise = import('./telemetry/index.js');
+    }
+    return telemetryModulePromise;
+}
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: AgentDecl | null = null;
@@ -614,6 +614,7 @@ const createWindow = () => {
             mainWindow.setBounds(savedBounds);
         }
         mainWindow.show();
+        logger.info('[startup] 主窗口已显示 (ready-to-show)');
     });
 
     mainWindow.setMenu(null);
@@ -635,14 +636,10 @@ const createWindow = () => {
 
     // 全屏状态变化时更新 tray 菜单文案
     mainWindow.on('enter-full-screen', () => {
-        if (globalTray) {
-            globalTray.setContextMenu(buildTrayMenu());
-        }
+        globalTray?.setContextMenu(buildTrayMenu());
     });
     mainWindow.on('leave-full-screen', () => {
-        if (globalTray) {
-            globalTray.setContextMenu(buildTrayMenu());
-        }
+        globalTray?.setContextMenu(buildTrayMenu());
     });
 
     mainWindow.on('close', (event) => {
@@ -2089,7 +2086,9 @@ const registerSettingAPIHandlers = () => {
             const oldTelemetryJson = JSON.stringify(oldSettings?.telemetry);
             const newTelemetryJson = JSON.stringify(Setting.getInstance().getData().telemetry);
             if (oldTelemetryJson !== newTelemetryJson) {
-                void reloadTelemetry().catch((err) => logger.warn('[telemetry] hot reload failed', err));
+                void loadTelemetryModule()
+                    .then((telemetry) => telemetry.reloadTelemetry())
+                    .catch((err) => logger.warn('[telemetry] hot reload failed', err));
             }
             // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
             const updatedData = withResolvedLocale(Setting.getInstance().getData());
@@ -2993,12 +2992,16 @@ async function startApplication(): Promise<void> {
     }
 
     // 在 app.whenReady() 之前初始化 Registry 和协议 schemes
-    await initTelemetry();
-    const startupTrace = new StartupTrace('startup.gui');
-    const t = startupTrace.createPhase('startup.pre_ready.registry');
     initializeRegistry();
     initializeRegistryProtocols();
-    t.end();
+
+    let telemetryReadyPromise: Promise<void> | undefined;
+    const ensureTelemetryReady = (): Promise<void> => {
+        if (!telemetryReadyPromise) {
+            telemetryReadyPromise = loadTelemetryModule().then((telemetry) => telemetry.initTelemetry());
+        }
+        return telemetryReadyPromise;
+    };
 
     app.on('before-quit', (event) => {
         if (officeQuitApproved) {
@@ -3036,158 +3039,163 @@ async function startApplication(): Promise<void> {
     });
 
     app.whenReady().then(async () => {
-        const p1a = startupTrace.createPhase('startup.ready.global_state.init');
+        let resolveRegistryWorkerReady!: () => void;
+        const registryWorkerReady = new Promise<void>((resolve) => {
+            resolveRegistryWorkerReady = resolve;
+        });
+        let browserReadyPromise: Promise<void> | undefined;
+        const ensureBrowserReady = (): Promise<void> => {
+            if (!browserReadyPromise) {
+                browserReadyPromise = (async () => {
+                    try {
+                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
+                        if (browserApp?.constructor?._refreshCertCache) {
+                            await browserApp.constructor._refreshCertCache();
+                        }
+                    } catch (err: any) {
+                        logger.error(`证书缓存初始化失败: ${err?.message || err}`);
+                    }
+
+                    await initBrowserSession();
+                    registerRendererFramePreload();
+
+                    // 全局证书错误处理：使用内存缓存同步匹配
+                    app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
+                        const matched = browserApp?.constructor?.matchCachedFingerprint?.(certificate.fingerprint);
+                        callback(!!matched);
+                    });
+                })();
+            }
+            return browserReadyPromise;
+        };
+        const ensureElectronFullyLoaded = async (): Promise<void> => {
+            await registryWorkerReady;
+            await Promise.all([ensureTelemetryReady(), ApplicationRegistry.ensureFullyLoaded(), ensureBrowserReady()]);
+        };
+
+        // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
+        // taskManager handler 会在本回调首次让出事件循环前完成注册。
+        registerSettingAPIHandlers();
+        registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
+        registerNotificationAPIHandlers();
+        registerThemeHandlers();
+        registerEmbeddedOpenDeskOfficeSlides();
+
+        createWindow();
+
+        // 启动阶段不采集遥测；主窗口显示后再初始化运行期遥测。
+        const triggerTelemetryInitialization = () => void ensureTelemetryReady();
+        if (globalMainWindow && !globalMainWindow.isVisible()) {
+            globalMainWindow.once('ready-to-show', triggerTelemetryInitialization);
+        } else {
+            triggerTelemetryInitialization();
+        }
+
+        // 浏览器持久化 session 不参与主窗口首屏，窗口显示后再在后台初始化。
+        const triggerBrowserInitialization = () => void ensureBrowserReady();
+        if (globalMainWindow && !globalMainWindow.isVisible()) {
+            globalMainWindow.once('ready-to-show', triggerBrowserInitialization);
+        } else {
+            triggerBrowserInitialization();
+        }
+
+        // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
+        registerTaskManagerAPIHandlers();
         AgentRegistry.initBuiltinAgents();
         startMemoryCleanupScheduler(() =>
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
-        p1a.end();
 
-        const p1b = startupTrace.createPhase('startup.ready.global_state.toolset_provider');
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
-        p1b.end();
 
-        const p1c = startupTrace.createPhase('startup.ready.global_state.memory_review_hook');
         registerMemoryReviewHook({
             taskManagerState: GlobalState.getInstance().taskManagerState,
             initializeReviewTask: initializeMemoryReviewTask
         });
-        p1c.end();
 
-        const p1d = startupTrace.createPhase('startup.ready.global_state.goal_hooks');
         registerGoalHooks();
-        p1d.end();
 
-        const p1e = startupTrace.createPhase('startup.ready.global_state.harnesses');
         initializeHarnesses();
-        p1e.end();
         initAgentGateHook();
 
         // Worker 会继承 ARKDATA_AVAILABLE，因此原生桥探测必须先于 Worker 和应用 Agent 初始化。
-        // 同时保持在 createWindow 之前注册，确保 renderer 首次调用 native bridge 时 handler 已就绪。
+        // 在本回调首次让出事件循环前注册，确保 renderer 的 native bridge IPC 被派发时 handler 已就绪。
         registerNativeBridge();
         await probeArkdataAvailability();
 
-        // 应用 Agent 必须先于恢复任务的 lazy harness 可用。否则 renderer 若在启动阶段较早
-        // 打开旧任务，尚未注册的应用 agentId 会被误判为缺失并永久回退到 main。
-        const p1f = startupTrace.createPhase('startup.ready.application_agents');
+        // 启动 global worker（同步 spawn，不阻塞）。
+        // Worker 初始化与应用 Agent 加载将在 createWindow 之后并行执行，避免阻塞窗口显示。
         initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
-        await ApplicationRegistry.loadAvailableAgents();
-        p1f.end();
+        resolveRegistryWorkerReady();
 
-        // 注册 GUI 侧 afterFinishTurn 钩子（会话结束时恶意 skill 归因 + 弹窗推送）。
-        // 钩子注册逻辑在 AgentGateApplication.registerGuiHooks 内部，此处只注入 IPC 推送回调。
-        {
-            const { AgentGateApplication } = await import('./applications/agentgate/app');
-            const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
-            agApp?.registerGuiHooks((channel: string, payload: object) => {
-                if (globalMainWindow && !globalMainWindow.isDestroyed()) {
-                    safeSendToWebContents(globalMainWindow.webContents, channel, payload);
-                }
-            });
-        }
-
-        // IPC handler：用户确认后将 skill 加入黑名单（转发到 SkillMgrApplication）
-        ipcMain.on(
-            'skill:blacklist:add',
-            (_event, items: Array<{ bundleName: string; skillName: string; reason: string; evidence: string }>) => {
-                // 恶意技能检测开关关闭时，拒绝新增黑名单（已有条目仍由 filter 生效）
-                const agCfgAdd = Setting.getInstance().getApplicationConfig('agentgate') as any;
-                if (agCfgAdd?.maliciousSkillDetection === false) return;
-                const skillmgr = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication | undefined;
-                skillmgr?.addSkillsToBlacklist(items);
-            }
-        );
-
-        // IPC handler：清除指定任务的拦截记录（用户忽略时，转发到 SkillMgrApplication）
-        ipcMain.on('skill:blacklist:dismiss', (_event, taskId: string) => {
-            const skillmgr = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication | undefined;
-            skillmgr?.dismissInterceptions(taskId);
-        });
-
-        // 为恢复的任务设置共享 harness 延迟初始化。
-        // 旧方案在启动时遍历所有 task 创建 HarnessContext（含 GlobPermissionEnforcer），
-        // 每个 enforcer 编译 ~17 条 picomatch 规则（~70KB），814 个 task ≈ 56 MB。
-        // 新方案：按 workspace 创建共享 enforcer，task 被实际访问时才注入 harness。
-        const p2 = startupTrace.createPhase('startup.ready.restore_tasks');
+        // createWindow 之后并行执行重初始化，不阻塞窗口显示。
+        // renderer 加载页面需要时间（dev 模式需 Vite 编译），这些初始化会在
+        // renderer 就绪前完成。
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const defaultMode =
             agentDecl.supportedModes().find((candidate) => candidate.id === _currentElectronModeId) ??
             agentDecl.getDefaultMode();
 
-        await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
-            defaultMode,
-            startupWorkspace,
-            () => new ElectronPermissionPromptProvider()
-        );
-        p2.end();
-
-        // 刷新证书缓存（不依赖 session，直接从文件加载）
-        const p3 = startupTrace.createPhase('startup.ready.browser_session');
-        try {
-            const browserApp = ApplicationRegistry.getApplication('browser') as any;
-            if (browserApp?.constructor?._refreshCertCache) {
-                await browserApp.constructor._refreshCertCache();
+        // Promise A: AgentGate 钩子注册 -> lazy harness 初始化
+        const agentsReady = (async () => {
+            // 注册 GUI 侧 afterFinishTurn 钩子（会话结束时恶意 skill 归因 + 弹窗推送）。
+            // 钩子注册逻辑在 AgentGateApplication.registerGuiHooks 内部，此处只注入 IPC 推送回调。
+            {
+                const { AgentGateApplication } = await import('./applications/agentgate/app');
+                const agApp = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+                agApp?.registerGuiHooks((channel: string, payload: object) => {
+                    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+                        safeSendToWebContents(globalMainWindow.webContents, channel, payload);
+                    }
+                });
             }
-        } catch (err: any) {
-            logger.error(`证书缓存初始化失败: ${err?.message || err}`);
+
+            // IPC handler：用户确认后将 skill 加入黑名单（转发到 SkillMgrApplication）
+            ipcMain.on(
+                'skill:blacklist:add',
+                (_event, items: Array<{ bundleName: string; skillName: string; reason: string; evidence: string }>) => {
+                    // 恶意技能检测开关关闭时，拒绝新增黑名单（已有条目仍由 filter 生效）
+                    const agCfgAdd = Setting.getInstance().getApplicationConfig('agentgate') as any;
+                    if (agCfgAdd?.maliciousSkillDetection === false) return;
+                    const skillmgr = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication | undefined;
+                    skillmgr?.addSkillsToBlacklist(items);
+                }
+            );
+
+            // IPC handler：清除指定任务的拦截记录（用户忽略时，转发到 SkillMgrApplication）
+            ipcMain.on('skill:blacklist:dismiss', (_event, taskId: string) => {
+                const skillmgr = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication | undefined;
+                skillmgr?.dismissInterceptions(taskId);
+            });
+
+            // 为恢复的任务设置共享 harness 延迟初始化。
+            // 旧方案在启动时遍历所有 task 创建 HarnessContext（含 GlobPermissionEnforcer），
+            // 每个 enforcer 编译 ~17 条 picomatch 规则（~70KB），814 个 task ≈ 56 MB。
+            // 新方案：按 workspace 创建共享 enforcer，task 被实际访问时才注入 harness。
+            await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
+                defaultMode,
+                startupWorkspace,
+                () => new ElectronPermissionPromptProvider()
+            );
+        })();
+
+        await agentsReady;
+
+        // 延迟加载在主窗口显示后触发，避免与 renderer 首次加载竞争资源
+        const triggerLazyLoading = () => ApplicationRegistry.ensureFullyLoaded();
+        if (globalMainWindow && !globalMainWindow.isVisible()) {
+            globalMainWindow.once('ready-to-show', triggerLazyLoading);
+        } else {
+            triggerLazyLoading();
         }
 
-        await initBrowserSession();
-        registerRendererFramePreload();
-
-        // 全局证书错误处理：使用内存缓存同步匹配
-        app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-            const browserApp = ApplicationRegistry.getApplication('browser') as any;
-            const matched = browserApp?.constructor?.matchCachedFingerprint?.(certificate.fingerprint);
-            callback(!!matched);
-        });
-
-        // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
+        // 注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
         new ElectronExitPlanModeProvider();
-        p3.end();
-
-        // 提前注册设置 IPC handler，确保主窗口加载期间 renderer 调用
-        // setting:loadSettingObject（如 needsWizard 判断）能正常返回。
-        // 否则华为登录校验期间 renderer 调用会失败，导致引导页面不显示。
-        registerSettingAPIHandlers();
-
-        // 提前注册任务管理 IPC handler，确保主窗口加载期间 renderer 的
-        // sidebar.connectedCallback 调用 taskManagerAPI.getTaskList() 能正常返回，
-        // 否则 setUpEventListeners() 不会执行，导致"新任务/应用/技能"按钮无 click 事件绑定。
-        registerTaskManagerAPIHandlers();
-
-        // 提前注册应用注册器 IPC handler，确保主窗口加载期间 renderer 的
-        // sidebar 调用 applicationRegistry:getApplicationList 能正常返回，
-        // 否则应用按钮下的菜单列表为空，显示异常。
-        registerApplicationRegistryHandlers(ipcMain);
-
-        // 提前注册通知 IPC handler，确保主窗口加载期间 renderer 的
-        // notification-panel.connectedCallback 调用 notificationAPI.subscribeNotification 能正常返回。
-        registerNotificationAPIHandlers();
-
-        // 提前注册主题 IPC handler，确保主窗口加载期间 renderer 的
-        // initRendererTheme 调用 themeAPI.getResolvedTheme 能正常返回。
-        // 注意：不在此处调用 getMainThemeService().init()，因为 init() 内部会触发
-        // refreshOhosSystemDarkMode()/refreshOhosSystemLanguage() 等 callArkTS 调用，
-        // 在 createWindow() 之前调用 callArkTS 会干扰 ArkTS 侧事件循环，
-        // 导致 WebAbility 的 KVStore NAPI 类型断言 crash。
-        // init() 已在 registerThemeHandlers() 注册的 IPC handler 内部懒调用，
-        // renderer 调用 theme:getResolvedTheme 时 createWindow() 已完成，安全。
-        registerThemeHandlers();
-
-        // 仅注册轻量准备入口；完整的 OpenDesk Office Slides 运行时在用户打开 PPTX 后加载。
-        registerEmbeddedOpenDeskOfficeSlides();
-
-        // 先创建主窗口（hidden），让鸿蒙侧 UIAbility 进入 active 状态，
-        // 这样 ArkTS 侧创建登录窗口时能获取到合法的 window context。
-        const p4 = startupTrace.createPhase('startup.ready.create_window');
-        createWindow();
-        p4.end();
 
         // 鸿蒙平台：启动时校验华为账号登录，未登录则阻塞直到登录成功或退出
         await ensureHuaweiAuthOnStartup();
@@ -3244,21 +3252,18 @@ async function startApplication(): Promise<void> {
         }
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
-        const p5 = startupTrace.createPhase('startup.ready.skills');
         try {
             await installBundledSkillsIfNeeded();
         } catch (err) {
             logger.error('installBundledSkillsIfNeeded error', err);
         }
-        p5.end();
 
-        const p6 = startupTrace.createPhase('startup.ready.ipc_handlers');
         initializeScreenAdaption();
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
-        // registerTaskManagerAPIHandlers() 已在 createWindow 之前提前注册，
-        // 鸿蒙登录校验期间 renderer 的 sidebar 需调用 taskManager:getTaskList
+        // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
+        // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         // registerSettingAPIHandlers() 已在 createWindow 之前提前注册，
@@ -3294,6 +3299,8 @@ async function startApplication(): Promise<void> {
         // 在新窗口中打开应用
         ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
             try {
+                // 确保应用已完成延迟加载
+                await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
                     Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
@@ -3363,11 +3370,7 @@ async function startApplication(): Promise<void> {
 
         migrateFileMgrWorkspaceSettingsOnStartup();
 
-        p6.end();
-
-        const p7 = startupTrace.createPhase('startup.ready.finalize');
         initializeProtocolHandlers();
-        p7.end();
 
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
@@ -3406,8 +3409,14 @@ async function startApplication(): Promise<void> {
                     }
                 };
 
-                await channelMgrApp.initializeChannels(router, startupWorkspace);
-                logger.info('[electron] channelmgr 消息路由已初始化');
+                channelMgrApp.configureRouter(router, startupWorkspace);
+                // 延迟启动渠道插件，避免与启动关键路径竞争资源
+                setTimeout(() => {
+                    channelMgrApp
+                        .ensureLoaded()
+                        .then(() => logger.info('[electron] channelmgr 消息路由已初始化'))
+                        .catch((err) => logger.error(`[electron] channelmgr 初始化失败: ${err}`));
+                }, 3000);
             }
         });
 
@@ -3439,11 +3448,6 @@ async function startApplication(): Promise<void> {
                     safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
                 }
             }
-        });
-
-        // 所有 onReady 回调注册完毕后，追加最后一个回调来结束 root trace
-        ApplicationRegistry.onReady(() => {
-            startupTrace.end();
         });
 
         // 启动完成后异步清理过期日志，不阻塞主流程
@@ -3485,7 +3489,13 @@ async function startApplication(): Promise<void> {
             }
         }
         closeTempDir();
-        await shutdownTelemetry();
+        if (telemetryReadyPromise) {
+            await telemetryReadyPromise;
+        }
+        if (telemetryModulePromise) {
+            const telemetry = await telemetryModulePromise;
+            await telemetry.shutdownTelemetry();
+        }
     });
 }
 

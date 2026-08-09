@@ -257,22 +257,38 @@ export class ChannelMgrApplication extends BaseApplication {
      * @param workspace - 工作目录路径，用于文件发送时验证文件路径
      */
     async initializeChannels(router: ChannelMessageRouter, workspace?: string): Promise<void> {
+        this.configureRouter(router, workspace);
+        return this.ensureLoaded();
+    }
+
+    /**
+     * 配置消息路由器，但不启动插件。
+     * 允许延迟启动：先配置路由器，后续通过 ensureLoaded() 触发实际初始化。
+     */
+    configureRouter(router: ChannelMessageRouter, workspace?: string): void {
         this.workspace = workspace;
         this.router = router;
 
         const outboundToolset = new BaseToolset('channel-outbound');
         outboundToolset.addTool(new SendFileTool());
         router.addExtraToolset(outboundToolset);
-
-        if (this.initPromise) return this.initPromise;
-
-        this.initPromise = this.doInitialize();
-        return this.initPromise;
     }
 
     /** 确保初始化已完成（dashboard 等调用方可 await） */
     async ensureReady(): Promise<void> {
         if (this.initPromise) {
+            await this.initPromise;
+        }
+    }
+
+    /**
+     * 确保消息插件已完成加载。
+     * 如果已配置路由器但尚未启动，触发 doInitialize()。
+     */
+    async ensureLoaded(): Promise<void> {
+        if (this.initPromise) return this.initPromise;
+        if (this.router) {
+            this.initPromise = this.doInitialize();
             await this.initPromise;
         }
     }

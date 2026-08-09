@@ -240,7 +240,45 @@ if (window.skillBlacklistAPI) {
     });
 }
 
-requestAnimationFrame(() => {
-    const appRoot = document.getElementById('app-root');
-    if (appRoot) appRoot.style.opacity = '1';
-});
+function waitForInitialHomeContent() {
+    const homePage = document.getElementById('home-page');
+    if (!homePage || homePage.firstElementChild) return Promise.resolve();
+
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(() => {
+            if (!homePage.firstElementChild) return;
+            observer.disconnect();
+            resolve();
+        });
+        observer.observe(homePage, { childList: true });
+    });
+}
+
+async function revealStartupShell() {
+    await Promise.all([
+        customElements.whenDefined('splitter-widget'),
+        customElements.whenDefined('main-sidebar'),
+        customElements.whenDefined('home-page')
+    ]);
+    await waitForInitialHomeContent();
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const appRoot = document.getElementById('app-root');
+            if (!appRoot) return;
+
+            const startupShell = document.getElementById('startup-shell');
+            appRoot.removeAttribute('inert');
+            appRoot.removeAttribute('aria-hidden');
+            appRoot.style.opacity = '1';
+
+            if (!startupShell) return;
+            const removeStartupShell = () => startupShell.remove();
+            startupShell.addEventListener('transitionend', removeStartupShell, { once: true });
+            startupShell.classList.add('startup-shell-hidden');
+            window.setTimeout(removeStartupShell, 250);
+        });
+    });
+}
+
+void revealStartupShell();

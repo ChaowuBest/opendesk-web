@@ -1416,6 +1416,12 @@ if (shouldExposeMainWindowAPIs()) {
     });
 
     safeExposeInMainWorld('applicationRegistryAPI', {
+        ensureFullyLoaded: async () => {
+            const result = await ipcRenderer.invoke('applicationRegistry:ensureFullyLoaded');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
         getApplicationGUIConfig: async (bundleName) => {
             const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
             if (result.status !== 'ok') {

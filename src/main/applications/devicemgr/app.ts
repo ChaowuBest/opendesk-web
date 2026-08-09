@@ -65,8 +65,7 @@ export class DeviceMgrApplication extends BaseApplication {
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     /**
-     * 覆写 setRegistry：在应用被注册到系统时自动启动网关。
-     * serve 模式（opencode/acp）下不自动启动网关。
+     * 覆写 setRegistry：serve 模式下跳过网关，其余模式延迟到 ensureLoaded() 启动。
      */
     setRegistry(registry: typeof ApplicationRegistry): void {
         super.setRegistry(registry);
@@ -74,9 +73,11 @@ export class DeviceMgrApplication extends BaseApplication {
             logger.info('[devicemgr] serve 模式下跳过自动启动网关');
             return;
         }
-        this.startGateway().catch((err) => {
-            logger.error(`[devicemgr] 自动启动网关失败: ${err?.message || err}`);
-        });
+    }
+
+    async ensureLoaded(): Promise<void> {
+        if (GlobalState.getInstance().isServeMode()) return;
+        await this.startGateway();
     }
 
     /**

@@ -1036,7 +1036,7 @@ export class ErrorMessagePart {
             return this.rendered;
         }
         this.rendered = `
-        <div class="flex flex-col mt-1.5 mb-1.5 text-xs bg-rose-50/80 border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit min-w-[240px] max-w-2xl">
+        <div class="od-error-msg flex flex-col mt-1.5 mb-1.5 text-xs bg-rose-50/80 border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit min-w-[240px] max-w-2xl">
             <div class="flex items-center gap-1.5 mb-1">
                 <span class="text-xs">🔴</span>
                 <span class="font-semibold text-rose-600">${this.title}</span>

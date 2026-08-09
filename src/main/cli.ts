@@ -33,7 +33,6 @@ import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
-import { StartupTrace } from './telemetry/opentelemetry/startup-tracer.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
@@ -386,29 +385,21 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
-    // Worker 线程不需要遥测和启动追踪，其 LLM 请求通过 IPC 转发到主进程
+    // Worker 线程不需要遥测，其 LLM 请求通过 IPC 转发到主进程
     if (!isMainThread) {
         initializeAppWorkers();
         return;
     }
 
-    // 初始化遥测系统（尽早初始化，在任何 LLM 请求之前）
-    await initTelemetry();
-    const startupTrace = new StartupTrace('startup.cli');
-
-    const t1 = startupTrace.createPhase('startup.cli.temp_dir');
     const { initTempDir } = await import('./utils/temp.js');
     initTempDir();
-    t1.end();
 
-    const t2 = startupTrace.createPhase('startup.cli.platform');
     (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();
     if (args.dumpLog) {
         useDumpLogTransport(path.resolve(args.dumpLog));
     }
     interceptConsole();
-    t2.end();
 
     // Apply language setting from command line (runtime only, does not modify setting)
     if (args.language) {
@@ -433,68 +424,49 @@ async function main(args: CommandLineArgs) {
     }
 
     if (args.headless && args.command) {
-        const t3a = startupTrace.createPhase('startup.cli.global_state.init');
         GlobalState.initialize();
-        t3a.end();
-
-        const t3b = startupTrace.createPhase('startup.cli.global_state.builtin_agents');
         AgentRegistry.initBuiltinAgents();
-        t3b.end();
-
-        const t3c = startupTrace.createPhase('startup.cli.global_state.goal_hooks');
         registerGoalHooks();
-        t3c.end();
-
-        const t3d = startupTrace.createPhase('startup.cli.global_state.harnesses');
         initializeHarnesses();
-        t3d.end();
 
-        const t4 = startupTrace.createPhase('startup.cli.registry');
         initializeRegistry();
         initializeRegistryWorker();
-        await ApplicationRegistry.loadAvailableAgents();
+        await ApplicationRegistry.ensureFullyLoaded();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
-        t4.end();
 
         const runner = new HeadlessRunner(args);
         await runner.setupLazyHarnessInit();
+        await initTelemetry();
         ApplicationRegistry.onReady(() => {
             runner.execute(args.command!);
-            startupTrace.end();
         });
     } else {
-        const t3 = startupTrace.createPhase('startup.cli.global_state');
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();
-        t3.end();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
-        const t4 = startupTrace.createPhase('startup.cli.terminal_theme');
         const { detectTerminalColorScheme } = await import('./tui/theme.js');
         await detectTerminalColorScheme();
-        t4.end();
 
         if (process.stdout.isTTY) {
             process.stdout.write(FULL_CLEAR);
         }
 
-        const t5 = startupTrace.createPhase('startup.cli.registry');
         initializeRegistry();
         initializeRegistryWorker();
-        await ApplicationRegistry.loadAvailableAgents();
+        await ApplicationRegistry.ensureFullyLoaded();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
-        t5.end();
 
-        const t6 = startupTrace.createPhase('startup.cli.tui_start');
         const tui = new OpenDeskTUI(args);
         tui.start();
-        t6.end();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await initTelemetry();
 
         // 为从磁盘恢复的旧任务设置延迟 harness 初始化
         await tui.taskManagerState.setupLazyHarnessInit(
@@ -579,11 +551,6 @@ async function main(args: CommandLineArgs) {
                 tui.resumeTask(args.resume);
             });
         }
-
-        // 所有 onReady 回调注册完毕后，追加最后一个回调来结束 root trace
-        ApplicationRegistry.onReady(() => {
-            startupTrace.end();
-        });
     }
 
     // 启动完成后异步清理过期日志，不阻塞主流程
