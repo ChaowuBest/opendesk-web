@@ -828,6 +828,7 @@ export async function processTaskCompletion(
 
         // After streaming ends, finalize all reasoning timing
         assistant_message.finalizeReasoningTiming();
+        assistant_message.timestamp = Date.now();
 
         // After streaming ends, send any remaining text part if it hasn't been sent
         const lastPart = assistant_message.content[assistant_message.content.length - 1];
@@ -859,6 +860,9 @@ export async function processTaskCompletion(
         }
         // 确保无论流式成功还是异常，持久化前所有 reasoning part 的耗时都已固化
         assistant_message.finalizeReasoningTiming();
+        if (!assistant_message.timestamp) {
+            assistant_message.timestamp = Date.now();
+        }
     }
 
     task.persistLater();

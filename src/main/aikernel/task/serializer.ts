@@ -364,7 +364,7 @@ export function indexEntryHasMetadata(entry: Record<string, unknown>): boolean {
 
 // ═══════════════════ Fork ═══════════════════
 
-export function forkTask(task: TaskState): TaskState {
+export function forkTask(task: TaskState, upToMessageId?: string): TaskState {
     task.refreshEvidenceCardFeatureState();
     const forkedTask = new TaskState(task.task_manager_state, null);
     forkedTask.agentId = task.agentId;
@@ -372,6 +372,15 @@ export function forkTask(task: TaskState): TaskState {
 
     // Copy chat context via serialization
     forkedTask.chat_context = ChatContext.assign(task.chat_context.toJSON());
+
+    // Truncate messages if upToMessageId is specified (fork from a specific point)
+    if (upToMessageId) {
+        const messages = forkedTask.chat_context.messages;
+        const idx = messages.findIndex((m) => m.message_id === upToMessageId);
+        if (idx >= 0) {
+            messages.splice(idx + 1);
+        }
+    }
     forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
     forkedTask.auto_compact_state = AutoCompactStates.clone(task.auto_compact_state);
     forkedTask.microcompact_state = MicrocompactStates.create();
@@ -388,13 +397,19 @@ export function forkTask(task: TaskState): TaskState {
     // Set forked name with "-fork" suffix
     forkedTask.task_name = task.task_name ? `${task.task_name}-fork` : null;
 
-    // Copy task status (forked task should have the same status as the original)
-    forkedTask.task_status = task.task_status;
+    // Partial fork (from a specific message) creates a clean snapshot: stopped status, fresh timestamps
+    if (upToMessageId) {
+        forkedTask.task_status = 'stopped';
+        forkedTask.started_at = undefined;
+        forkedTask.finished_at = new Date();
+        forkedTask.total_elapsed_ms = 0;
+    } else {
+        forkedTask.task_status = task.task_status;
+        forkedTask.started_at = task.started_at;
+        forkedTask.finished_at = task.finished_at;
+        forkedTask.total_elapsed_ms = task.total_elapsed_ms;
+    }
     forkedTask.internal = task.internal;
-
-    forkedTask.started_at = task.started_at;
-    forkedTask.finished_at = task.finished_at;
-    forkedTask.total_elapsed_ms = task.total_elapsed_ms;
 
     // harnessContext 不落盘但 fork 时复制环境变量和权限引擎（便于工具继续使用）
     forkedTask.harnessContext.environ = { ...task.harnessContext.environ };

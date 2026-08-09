@@ -662,6 +662,14 @@
                     currentNonAppContent = 'task:' + taskId;
                 }
                 showNonApp();
+                // 同步侧边栏活跃任务高亮
+                var sidebar = document.getElementById('main-sidebar');
+                if (sidebar) {
+                    sidebar.currentTaskId = taskId;
+                    if (typeof sidebar._updateTaskHighlight === 'function') {
+                        sidebar._updateTaskHighlight();
+                    }
+                }
             }
 
             async function needsWizard() {

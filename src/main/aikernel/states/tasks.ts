@@ -2229,8 +2229,8 @@ export class TaskState {
      * The forked task's name will have "-fork" suffix
      * @returns the forked task
      */
-    fork(): TaskState {
-        return forkTask(this);
+    fork(upToMessageId?: string): TaskState {
+        return forkTask(this, upToMessageId);
     }
 
     /**
@@ -2386,7 +2386,8 @@ export class TaskState {
                 task_status: this.task_status,
                 message_id: assistantMessage.message_id,
                 parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
-                usage: assistantMessage.usage
+                usage: assistantMessage.usage,
+                timestamp: assistantMessage.timestamp
             };
             this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {

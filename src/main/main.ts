@@ -1240,12 +1240,12 @@ const registerTaskManagerAPIHandlers = () => {
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok', data: taskId };
     });
-    ipcMain.handle('taskManager:forkTask', (event, taskId) => {
+    ipcMain.handle('taskManager:forkTask', (event, taskId, upToMessageId?: string) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        const forkedTask = task.fork();
+        const forkedTask = task.fork(upToMessageId);
         return { status: 'ok', data: forkedTask.task_id };
     });
     ipcMain.handle('taskManager:compactTask', async (_event, taskId) => {

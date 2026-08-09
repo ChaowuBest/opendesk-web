@@ -33,6 +33,13 @@ const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
 const EXPORT_DOWNLOAD_SVG =
     '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
+
+const COPY_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+const REGENERATE_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
+const FORK_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
 import {
     findActiveGoalEvalProgress,
     getGoalEvaluationRecordsForMessage,
@@ -386,16 +393,14 @@ class TaskView extends HTMLElement {
 
     renderUserMessage(user_message) {
         const rawAttr = user_message.rawText ? ` data-raw-text="${escapeHtml(user_message.rawText)}"` : '';
-        const timeHtml = user_message.timestamp
-            ? `<div class="od-msg-timestamp">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
-            : '';
+        const metaRowHtml = TaskView.buildMsgMetaRow('user', user_message.timestamp, user_message.message_id);
 
         const parts = getRenderableUserParts(user_message, user_message.content);
         let inner = '';
         for (const part of parts) {
             inner += this.renderUserPart(part);
         }
-        inner += timeHtml;
+        inner += metaRowHtml;
 
         return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
     }
@@ -410,13 +415,11 @@ class TaskView extends HTMLElement {
         const id = escapeHtml(String(message?.id || crypto.randomUUID()));
         const type = escapeHtml(String(options.type || message?.type || 'context'));
         const rawAttr = ` data-raw-text="${escapeHtml(text)}"`;
-        const timeHtml = message?.timestamp
-            ? `<div class="od-msg-timestamp">${TaskView.formatRelativeTime(message.timestamp)}</div>`
-            : '';
+        const metaRowHtml = TaskView.buildMsgMetaRow('user', message?.timestamp, id);
         return `
             <div id="pending-context-${id}" class="od-user-msg-container od-pending-context-entry" data-pending-context-id="${id}" data-pending-context-type="${type}"${rawAttr}>
                 ${this.renderUserPart(createRenderedTextPartFromPlainText(text))}
-                ${timeHtml}
+                ${metaRowHtml}
             </div>
         `;
     }
@@ -506,6 +509,25 @@ class TaskView extends HTMLElement {
         const d = new Date(timestamp);
         const pad = (n) => String(n).padStart(2, '0');
         return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    static buildMsgMetaRow(role, timestamp, messageId) {
+        if (!timestamp) return '';
+        const timeHtml = `<span class="od-msg-timestamp">${TaskView.formatRelativeTime(timestamp)}</span>`;
+        const escapedId = escapeHtml(messageId);
+        const copyLabel = taskViewT('renderer.taskview.action.copy');
+        const copyBtn = `<button class="od-msg-action-btn" type="button" data-action="copy" data-message-id="${escapedId}">${COPY_ICON_SVG}<span class="od-msg-action-label">${copyLabel}</span></button>`;
+        let menuHtml;
+        if (role === 'assistant') {
+            const regenLabel = taskViewT('renderer.taskview.action.regenerate');
+            const forkLabel = taskViewT('renderer.taskview.action.fork');
+            const regenBtn = `<button class="od-msg-action-btn" type="button" data-action="regenerate" data-message-id="${escapedId}">${REGENERATE_ICON_SVG}<span class="od-msg-action-label">${regenLabel}</span></button>`;
+            const forkBtn = `<button class="od-msg-action-btn" type="button" data-action="fork" data-message-id="${escapedId}">${FORK_ICON_SVG}<span class="od-msg-action-label">${forkLabel}</span></button>`;
+            menuHtml = `${copyBtn}${regenBtn}${forkBtn}`;
+        } else {
+            menuHtml = copyBtn;
+        }
+        return `<div class="od-msg-meta-row">${timeHtml}<div class="od-msg-hover-menu">${menuHtml}</div></div>`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -850,12 +872,18 @@ class TaskView extends HTMLElement {
     renderAssistantMessage(assistant_message, isLast = false) {
         const content = this.renderAssistantParts(assistant_message.content);
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
+        const metaRowHtml = TaskView.buildMsgMetaRow(
+            'assistant',
+            assistant_message.timestamp,
+            assistant_message.message_id
+        );
         const html = `
         <div class="od-assistant-msg-container flex items-start">
             <div id='message-container-${assistant_message.message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
                     ${content}
                 </div>
+                ${metaRowHtml}
                 ${usageHtml}
             </div>
         </div>
@@ -1293,6 +1321,20 @@ class TaskView extends HTMLElement {
                 spinnerEl.style.display = 'none';
             }
         }
+
+        // 任务非运行状态时（已完成），为消息追加时间戳与 hover 菜单
+        if (!isRunning && !message_container.querySelector('.od-msg-meta-row')) {
+            const ts = progress.timestamp || Date.now();
+            const metaRowHtml = TaskView.buildMsgMetaRow('assistant', ts, progress.message_id);
+            if (metaRowHtml) {
+                const usageEl2 = message_container.querySelector('.message-usage');
+                if (usageEl2) {
+                    usageEl2.insertAdjacentHTML('beforebegin', metaRowHtml);
+                } else {
+                    message_container.insertAdjacentHTML('beforeend', metaRowHtml);
+                }
+            }
+        }
     }
 
     _renderAssistantProgress(progress, history_container) {
@@ -1409,6 +1451,19 @@ class TaskView extends HTMLElement {
                 'beforeend',
                 TaskView.formatUsageHtml(usage, this._modelContextSize, isStreaming)
             );
+        }
+
+        // 任务非运行状态时（已完成），为消息追加时间戳与 hover 菜单
+        if (!isStreaming && !message_container.querySelector('.od-msg-meta-row')) {
+            const metaRowHtml = TaskView.buildMsgMetaRow('assistant', Date.now(), progress.message_id);
+            if (metaRowHtml) {
+                const usageEl2 = message_container.querySelector('.message-usage');
+                if (usageEl2) {
+                    usageEl2.insertAdjacentHTML('beforebegin', metaRowHtml);
+                } else {
+                    message_container.insertAdjacentHTML('beforeend', metaRowHtml);
+                }
+            }
         }
 
         return true;
@@ -1779,10 +1834,8 @@ class TaskView extends HTMLElement {
         const part = parts[0];
         container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
         if (progress.isLastPart) {
-            const timeHtml = progress.timestamp
-                ? `<div class="od-msg-timestamp">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                : '';
-            if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+            const metaRowHtml = TaskView.buildMsgMetaRow('user', progress.timestamp, progress.message_id);
+            if (metaRowHtml) container.insertAdjacentHTML('beforeend', metaRowHtml);
         }
         relocateGoalEvaluationsToMessage(history_container, progress.message_id);
         if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
@@ -1968,6 +2021,25 @@ class TaskView extends HTMLElement {
                             });
                             // 移除流式光标
                             historyContainer.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+                            // 为最后一条 assistant 消息追加时间戳与 hover 菜单
+                            const assistantContainers =
+                                historyContainer.querySelectorAll('.od-assistant-msg-container');
+                            const lastAssistantWrapper = assistantContainers[assistantContainers.length - 1];
+                            if (lastAssistantWrapper) {
+                                const msgContainer = lastAssistantWrapper.querySelector('[id^="message-container-"]');
+                                if (msgContainer && !msgContainer.querySelector('.od-msg-meta-row')) {
+                                    const msgId = msgContainer.id.replace('message-container-', '');
+                                    const metaRowHtml = TaskView.buildMsgMetaRow('assistant', Date.now(), msgId);
+                                    if (metaRowHtml) {
+                                        const usageEl = msgContainer.querySelector('.message-usage');
+                                        if (usageEl) {
+                                            usageEl.insertAdjacentHTML('beforebegin', metaRowHtml);
+                                        } else {
+                                            msgContainer.insertAdjacentHTML('beforeend', metaRowHtml);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         this.updateStopButtonVisibility();
                         // 手动停止后启动浏览器空闲回收定时器，
@@ -2983,6 +3055,74 @@ class TaskView extends HTMLElement {
         }
     }
 
+    _handleMsgActionClick(e) {
+        const btn = e.target.closest('.od-msg-action-btn[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const messageId = btn.dataset.messageId;
+        if (!action || !messageId) return;
+        e.stopPropagation();
+        if (action === 'copy') {
+            this._handleCopyMessage(messageId);
+        } else if (action === 'regenerate') {
+            this._handleRegenerateMessage(messageId);
+        } else if (action === 'fork') {
+            this._handleForkMessage(messageId);
+        }
+    }
+
+    _handleCopyMessage(messageId) {
+        const userContainer = this.querySelector(`#user-msg-${CSS.escape(messageId)}`);
+        if (userContainer) {
+            const rawText = userContainer.dataset.rawText;
+            const text =
+                rawText ||
+                Array.from(userContainer.querySelectorAll('.od-user-msg'))
+                    .map((el) => el.textContent || '')
+                    .join('\n');
+            navigator.clipboard.writeText(text).catch(() => {});
+            return;
+        }
+        const messageContent = this.querySelector(`#message-content-${CSS.escape(messageId)}`);
+        if (messageContent) {
+            const textParts = Array.from(messageContent.children).filter((el) =>
+                el.classList.contains('markdown-body')
+            );
+            const lastTextPart = textParts[textParts.length - 1];
+            if (lastTextPart) {
+                navigator.clipboard.writeText(lastTextPart.textContent || '').catch(() => {});
+            }
+        }
+    }
+
+    async _handleRegenerateMessage(messageId) {
+        const assistantIdx = this._historyMessages.findIndex((m) => m.message_id === messageId);
+        if (assistantIdx < 0) return;
+        let userMessageId = null;
+        for (let i = assistantIdx - 1; i >= 0; i--) {
+            if (this._historyMessages[i].role === 'user') {
+                userMessageId = this._historyMessages[i].message_id;
+                break;
+            }
+        }
+        if (!userMessageId) return;
+        try {
+            await window.taskManagerAPI.rewindToUserMessage(this.task_id, userMessageId, { resubmit: true });
+            await this.reload();
+        } catch (err) {
+            console.error('Failed to regenerate:', err);
+        }
+    }
+
+    async _handleForkMessage(messageId) {
+        try {
+            const forkedTaskId = await window.taskManagerAPI.forkTask(this.task_id, messageId);
+            window.globalControlAPI.openTask(forkedTaskId);
+        } catch (err) {
+            console.error('Failed to fork:', err);
+        }
+    }
+
     connectedCallback() {
         const connectionEpoch = ++this._connectionEpoch;
         const task_id = this.getAttribute('task_id');
@@ -3042,6 +3182,10 @@ class TaskView extends HTMLElement {
         // 添加 reasoning 块展开/收起的事件代理
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
+
+        // 消息 hover 菜单按钮事件代理
+        this._handleMsgActionClick = this._handleMsgActionClick.bind(this);
+        this.addEventListener('click', this._handleMsgActionClick);
 
         // Bubble mode hover handlers
         this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
@@ -3169,10 +3313,12 @@ class TaskView extends HTMLElement {
                                     container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                                 }
                                 markRenderedUserParts(this._renderedUserParts, progress.message_id, parts.length);
-                                const timeHtml = progress.timestamp
-                                    ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                                    : '';
-                                if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                                const metaRowHtml = TaskView.buildMsgMetaRow(
+                                    'user',
+                                    progress.timestamp,
+                                    progress.message_id
+                                );
+                                if (metaRowHtml) container.insertAdjacentHTML('beforeend', metaRowHtml);
                             } else if (this._isHistoryMessageBeforeRenderedWindow(progress.message_id)) {
                                 this._applyHiddenUserReplaceToHistory(progress);
                             }
@@ -3215,6 +3361,25 @@ class TaskView extends HTMLElement {
                             });
                         // 移除流式光标
                         history_container.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+                        // 为最后一条 assistant 消息追加时间戳与 hover 菜单
+                        const assistantContainers = history_container.querySelectorAll('.od-assistant-msg-container');
+                        const lastAssistantWrapper = assistantContainers[assistantContainers.length - 1];
+                        if (lastAssistantWrapper) {
+                            const msgContainer = lastAssistantWrapper.querySelector('[id^="message-container-"]');
+                            if (msgContainer && !msgContainer.querySelector('.od-msg-meta-row')) {
+                                const msgId = msgContainer.id.replace('message-container-', '');
+                                const ts = progress.timestamp || Date.now();
+                                const metaRowHtml = TaskView.buildMsgMetaRow('assistant', ts, msgId);
+                                if (metaRowHtml) {
+                                    const usageEl = msgContainer.querySelector('.message-usage');
+                                    if (usageEl) {
+                                        usageEl.insertAdjacentHTML('beforebegin', metaRowHtml);
+                                    } else {
+                                        msgContainer.insertAdjacentHTML('beforeend', metaRowHtml);
+                                    }
+                                }
+                            }
+                        }
                         // 任务结束时也清理过渡中的 supplement 卡片
                         this.resolvePendingGoalSupplements();
                         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);

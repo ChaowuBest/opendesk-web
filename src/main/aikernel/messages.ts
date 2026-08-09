@@ -1485,6 +1485,7 @@ export class AssistantMessage {
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
     metadata?: RuntimeMetadata;
+    timestamp?: number;
     private _insideThinkTag: boolean = false;
     private _allowThinkTagParsing: boolean = true;
     private _allowImplicitThinkClose: boolean = true;
@@ -1569,6 +1570,7 @@ export class AssistantMessage {
             message_id: this.message_id,
             usage: this.usage,
             metadata: this.metadata,
+            timestamp: this.timestamp,
             content: this.content.map((part) => part.toRenderJSON())
         };
     }

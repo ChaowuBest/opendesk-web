@@ -94,6 +94,7 @@ export interface TaskUpdateAssistantReplaceChunk {
     message_id: string;
     parts: AssistantMessagePart[];
     usage?: Usage;
+    timestamp?: number;
 }
 
 export interface TaskUpdateUserReplaceChunk {
