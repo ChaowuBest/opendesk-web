@@ -201,10 +201,10 @@ export function buildSidebarTaskGroups(
     const earlier: SidebarTaskTreeItem[] = [];
 
     for (const item of regularItems) {
-        const createdAt = timestamp(item.task.created_at);
-        if (createdAt >= todayStart) {
+        const activityAt = getTaskActivityTimestamp(item.task);
+        if (activityAt >= todayStart) {
             today.push(item);
-        } else if (createdAt >= weekStart) {
+        } else if (activityAt >= weekStart) {
             thisWeek.push(item);
         } else {
             earlier.push(item);
