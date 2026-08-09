@@ -679,31 +679,29 @@ const createWindow = () => {
             // undefined — 询问用户退出还是最小化
             if (isCloseDialogShowing) return;
             isCloseDialogShowing = true;
-            void dialog
-                .showMessageBox(mainWindow, {
-                    type: 'question',
-                    buttons: [t('main.closeDialog.quit'), t('main.closeDialog.minimize')],
-                    defaultId: 1,
-                    cancelId: 1,
-                    message: t('main.closeDialog.message'),
-                    checkboxLabel: t('main.closeDialog.dontAsk'),
-                    checkboxChecked: false,
-                    noLink: true
-                })
-                .then((result) => {
-                    if (result.checkboxChecked) {
-                        guiConfig.on_mainwindow_close = result.response === 0 ? 'quit' : 'minimize';
-                        setting.setData(data);
-                    }
-                    if (result.response === 0) {
-                        app.quit();
-                    } else {
-                        mainWindow.hide();
-                    }
-                })
-                .finally(() => {
+            const requestId = `close-${Date.now()}`;
+            const responseChannel = 'closeWindow:response';
+            const handler = (_e: Electron.IpcMainEvent, respRequestId: string, response: unknown) => {
+                if (respRequestId !== requestId) return;
+                ipcMain.removeListener(responseChannel, handler);
+                const result = response as { action: string; dontAsk: boolean };
+                if (result.action === 'cancel') {
                     isCloseDialogShowing = false;
-                });
+                    return;
+                }
+                if (result.dontAsk) {
+                    guiConfig.on_mainwindow_close = result.action === 'quit' ? 'quit' : 'minimize';
+                    setting.setData(data);
+                }
+                if (result.action === 'quit') {
+                    app.quit();
+                } else {
+                    mainWindow.hide();
+                }
+                isCloseDialogShowing = false;
+            };
+            ipcMain.on(responseChannel, handler);
+            safeSendToWebContents(mainWindow.webContents, 'closeWindow:request', requestId);
         }
     });
 

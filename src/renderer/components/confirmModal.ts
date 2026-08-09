@@ -543,3 +543,135 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         mountTarget.appendChild(overlay);
     });
 }
+
+/* ================ 关闭窗口确认弹窗 ================ */
+
+export interface CloseDialogOptions {
+    title: string;
+    message: string;
+    cancelText: string;
+    minimizeText: string;
+    quitText: string;
+    dontAskText: string;
+    dontAskHint?: string;
+    mountTarget?: HTMLElement;
+}
+
+export interface CloseDialogResult {
+    action: 'quit' | 'minimize' | 'cancel';
+    dontAsk: boolean;
+}
+
+/**
+ * 关闭窗口确认弹窗 -- warn 色带 + 双操作按钮 + "不再询问" 复选框。
+ *
+ * 设计遵循 modal.html 顶部色带风格，复用 MODAL_CSS 基础样式。
+ * 点击关闭按钮 / ESC / 遮罩等同于"取消"（不关闭窗口）。
+ */
+export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialogResult> {
+    return new Promise((resolve) => {
+        const {
+            title,
+            message,
+            cancelText,
+            minimizeText,
+            quitText,
+            dontAskText,
+            dontAskHint,
+            mountTarget = document.body
+        } = options;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'od-confirm-modal-overlay';
+        if (detectDarkMode(mountTarget)) {
+            overlay.classList.add('od-modal-dark');
+        }
+
+        overlay.innerHTML = `
+<style>${MODAL_CSS}
+.od-close-dialog-body { padding: 16px 24px 0; font-size: 13px; color: var(--mc-ink3); line-height: 1.6; }
+.od-close-dialog-body b { color: var(--mc-ink2); font-weight: 600; }
+.od-close-dialog-checkbox-wrapper { padding: 12px 24px 0; }
+.od-close-dialog-checkbox {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--mc-ink2); cursor: pointer;
+}
+.od-close-dialog-checkbox input { accent-color: var(--mc-accent); width: 14px; height: 14px; }
+.od-close-dialog-checkbox-hint {
+    color: var(--mc-ink3); font-size: 11px; line-height: 1.5;
+    padding-left: 21px; margin-top: 4px;
+}
+.od-close-dialog-footer {
+    padding: 14px 24px 18px; display: flex; justify-content: flex-end; gap: 10px;
+    border-top: 1px solid var(--mc-line-soft); margin-top: 16px;
+}
+</style>
+<div class="od-confirm-modal-card">
+    <div class="od-confirm-modal-banner warn">
+        <div class="od-confirm-modal-icon">${renderIcon('fa-circle-question')}</div>
+        <div class="od-confirm-modal-banner-text">
+            <div class="od-confirm-modal-title">${title}</div>
+        </div>
+        <button class="od-confirm-modal-close" data-action="close" aria-label="关闭">${CLOSE_SVG}</button>
+    </div>
+    <div class="od-close-dialog-body">${message}</div>
+    <div class="od-close-dialog-checkbox-wrapper">
+        <label class="od-close-dialog-checkbox">
+            <input type="checkbox" data-action="dontask" />
+            ${dontAskText}
+        </label>
+        ${dontAskHint ? `<div class="od-close-dialog-checkbox-hint">${dontAskHint}</div>` : ''}
+    </div>
+    <div class="od-close-dialog-footer">
+        <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${cancelText}</button>
+        <button class="od-confirm-btn od-confirm-btn-cancel" data-action="minimize">${minimizeText}</button>
+        <button class="od-confirm-btn od-confirm-btn-danger" data-action="quit">${quitText}</button>
+    </div>
+</div>`;
+
+        let resolved = false;
+        const finish = (result: CloseDialogResult) => {
+            if (resolved) return;
+            resolved = true;
+            overlay.classList.add('od-modal-leaving');
+            setTimeout(() => {
+                overlay.remove();
+                resolve(result);
+            }, ANIM_DURATION_OUT);
+            document.removeEventListener('keydown', escHandler);
+        };
+
+        const escHandler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                finish({ action: 'cancel', dontAsk: false });
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        // 点击遮罩 = 取消（不关闭窗口）
+        overlay.addEventListener('click', (e) => {
+            if ((e.target as HTMLElement).classList.contains('od-confirm-modal-overlay')) {
+                finish({ action: 'cancel', dontAsk: false });
+            }
+        });
+
+        const getDontAsk = () =>
+            (overlay.querySelector('[data-action="dontask"]') as HTMLInputElement)?.checked ?? false;
+
+        overlay
+            .querySelector('[data-action="close"]')!
+            .addEventListener('click', () => finish({ action: 'cancel', dontAsk: getDontAsk() }));
+        overlay
+            .querySelector('[data-action="cancel"]')!
+            .addEventListener('click', () => finish({ action: 'cancel', dontAsk: getDontAsk() }));
+        overlay
+            .querySelector('[data-action="minimize"]')!
+            .addEventListener('click', () => finish({ action: 'minimize', dontAsk: getDontAsk() }));
+        overlay
+            .querySelector('[data-action="quit"]')!
+            .addEventListener('click', () => finish({ action: 'quit', dontAsk: getDontAsk() }));
+
+        mountTarget.appendChild(overlay);
+    });
+}

@@ -2189,6 +2189,17 @@ class SettingPanel extends HTMLElement {
             window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
         });
 
+        this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            const val = e.target.value;
+            if (val === 'ask') {
+                delete this.currentData.gui_config.on_mainwindow_close;
+            } else {
+                this.currentData.gui_config.on_mainwindow_close = val;
+            }
+            this.saveImmediately();
+        });
+
         this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
             if (!this.currentData.debug) this.currentData.debug = {};
             this.currentData.debug.developer_mode = e.target.checked;
