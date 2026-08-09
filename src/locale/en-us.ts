@@ -1539,6 +1539,7 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': 'Internal',
+    'renderer.task.loading': 'The agent is rushing to its position …',
 
     // Renderer - Task View
     'renderer.taskview.menu.copy': 'Copy',

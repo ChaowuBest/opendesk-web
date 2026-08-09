@@ -1502,6 +1502,7 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': '内部',
+    'renderer.task.loading': '你的智能体正在跑步上岗……',
 
     // Renderer - Task View
     'renderer.taskview.menu.copy': '复制',

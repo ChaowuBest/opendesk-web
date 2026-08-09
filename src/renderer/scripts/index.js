@@ -11,6 +11,7 @@
 
 import Alpine from 'alpinejs';
 
+import '../components/loading.js';
 import '../components/agentinput.js';
 import '../components/notification.js';
 import '../components/permissionPrompt.ts';
@@ -61,6 +62,20 @@ function getLocalizedString(key, locale = 'en-us') {
     const strings = LOCALE_STRINGS[locale] || LOCALE_STRINGS['en-us'];
     return strings[key] || key;
 }
+
+// 暴露翻译器实例给 index.html 内联脚本使用
+window.__odT = createRendererTranslator();
+(async () => {
+    try {
+        const settings = await window.settingAPI.loadSettingObject();
+        window.__odT = createRendererTranslator(settings);
+    } catch {
+        /* fallback to browser locale */
+    }
+})();
+window.settingAPI?.onSettingChanged?.((settings) => {
+    window.__odT = createRendererTranslator(settings);
+});
 
 window.Alpine = Alpine;
 Alpine.start();

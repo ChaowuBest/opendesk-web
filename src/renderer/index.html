@@ -589,10 +589,40 @@
             }
 
             async function openTask(taskId) {
-                if (taskId !== null) {
-                    await window.applicationRegistryAPI.ensureFullyLoaded();
-                }
                 ensureSlots();
+                if (taskId !== null) {
+                    // 后端尚未就绪时，先在右侧面板显示 loading
+                    hideAllNonAppChildren();
+                    var loadingEl = document.createElement('content-loading-view');
+                    loadingEl.setAttribute('data-type', 'tb');
+                    if (window.__odT) {
+                        loadingEl.setAttribute('data-message', window.__odT('renderer.task.loading'));
+                    }
+                    loadingEl.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(loadingEl);
+                    if (appFramesContainer) appFramesContainer.style.display = 'none';
+                    nonAppSlot.style.display = '';
+                    await window.applicationRegistryAPI.ensureFullyLoaded();
+                    // 淡出 loading：提升到 rightPanelInner 覆盖层，让内容在下方渲染
+                    var overlayParent = nonAppSlot.parentElement;
+                    if (overlayParent) {
+                        overlayParent.appendChild(loadingEl);
+                        loadingEl.style.cssText = 'position:absolute;inset:0;z-index:50;width:100%;height:100%;';
+                        void loadingEl.offsetHeight; // force reflow
+                        loadingEl.style.transition = 'opacity 0.25s ease-out';
+                        loadingEl.style.opacity = '0';
+                        var __done = false;
+                        var __cleanup = function () {
+                            if (__done) return;
+                            __done = true;
+                            loadingEl.remove();
+                        };
+                        loadingEl.addEventListener('transitionend', __cleanup, { once: true });
+                        setTimeout(__cleanup, 400);
+                    } else {
+                        loadingEl.remove();
+                    }
+                }
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
                 // 切换任务前关闭所有编辑器覆盖层
                 closeAllEditorOverlays();
