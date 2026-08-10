@@ -195,6 +195,32 @@ describe('setting-panel config management', () => {
         expect(options).toEqual(['', 'vision-model']);
     });
 
+    test('tests ACP agents through the main-world application API', async () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'OpenDesk ACP',
+            transport: {
+                type: 'stdio',
+                command: 'node',
+                args: ['D:/OpenDesk/dist/cli/opendesk-debug', 'serve', '--mode', 'acp']
+            }
+        };
+        panel.innerHTML = '<div id="acp-agent-test-result" hidden></div>';
+        panel._readAcpAgentForm = jest.fn(() => profile);
+        const call = jest.fn(async () => {
+            throw new Error('worker acpmgr not found');
+        });
+        const callMainWorld = jest.fn(async () => ({ agentInfo: { name: 'OpenDesk' } }));
+        window.applicationRegistryAPI = { call, callMainWorld };
+
+        await panel._testAcpAgent(profile.id);
+
+        expect(callMainWorld).toHaveBeenCalledWith('acpmgr', 'testAgent', profile);
+        expect(call).not.toHaveBeenCalled();
+        expect(panel.querySelector('#acp-agent-test-result')?.classList.contains('od-sp-verify-success')).toBe(true);
+    });
+
     test.each(['1.5', '9007199254740992'])('rejects non-integer max output tokens %s', async (value) => {
         const panel = createPanel();
         panel.render();

@@ -1261,7 +1261,7 @@ class SettingPanel extends HTMLElement {
             result.hidden = false;
             result.className = 'od-sp-verify-result od-sp-verify-info';
             result.textContent = this._t('sp.agents.test.running');
-            const response = await window.applicationRegistryAPI.call('acpmgr', 'testAgent', profile);
+            const response = await window.applicationRegistryAPI.callMainWorld('acpmgr', 'testAgent', profile);
             const agentName = response?.agentInfo?.name || profile.name;
             result.className = 'od-sp-verify-result od-sp-verify-success';
             result.textContent = this._t('sp.agents.test.success', { name: agentName });
