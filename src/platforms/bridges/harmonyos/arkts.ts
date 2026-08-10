@@ -28,6 +28,7 @@ export const EtsBridgeMethods = {
     SPEECH_STOP: 'EtsBridge.OpenDeskSpeechStop',
     SPEECH_RELEASE: 'EtsBridge.OpenDeskSpeechRelease',
     LOGIN_INIT: 'EtsBridge.OpenDeskLoginInit',
+    LOGIN_RESTORE: 'EtsBridge.OpenDeskLoginRestore',
     LOGIN_PEEK: 'EtsBridge.OpenDeskLoginPeek',
     LOGIN_CLOSE: 'EtsBridge.OpenDeskLoginClose',
     ARKDATA_PING: 'ArkData.Ping',

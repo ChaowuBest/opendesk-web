@@ -266,6 +266,24 @@ let globalTray: Tray | null = null;
 let isAppQuitting = false;
 let officeQuitCheckPending = false;
 let officeQuitApproved = false;
+let isHuaweiStartupAuthPending = false;
+let isHuaweiLoginRestorePending = false;
+
+function restoreHuaweiLoginForWorkbenchWindow(reason: string): void {
+    if (process.platform !== 'openharmony' || !isHuaweiStartupAuthPending || isHuaweiLoginRestorePending) {
+        return;
+    }
+
+    isHuaweiLoginRestorePending = true;
+    void getHuaweiAuthService()
+        .restoreLogin()
+        .catch((error: unknown) => {
+            logger.warn(`[auth] Failed to restore Huawei login window after ${reason}: ${String(error)}`);
+        })
+        .finally(() => {
+            isHuaweiLoginRestorePending = false;
+        });
+}
 
 function getPreferredSystemLanguagesForLocale(): string[] {
     try {
@@ -613,6 +631,10 @@ const createWindow = () => {
         if (savedBounds) {
             mainWindow.setBounds(savedBounds);
         }
+        if (isHuaweiStartupAuthPending) {
+            restoreHuaweiLoginForWorkbenchWindow('workbench ready-to-show');
+            return;
+        }
         mainWindow.show();
         logger.info('[startup] 主窗口已显示 (ready-to-show)');
     });
@@ -837,12 +859,22 @@ const createWindow = () => {
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('show', () => {
+        if (isHuaweiStartupAuthPending) {
+            mainWindow.hide();
+            restoreHuaweiLoginForWorkbenchWindow('workbench show');
+            return;
+        }
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
     mainWindow.on('minimize', () => {
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('restore', () => {
+        if (isHuaweiStartupAuthPending) {
+            mainWindow.hide();
+            restoreHuaweiLoginForWorkbenchWindow('workbench restore');
+            return;
+        }
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
 
@@ -2759,6 +2791,7 @@ async function ensureHuaweiAuthOnStartup(): Promise<void> {
     }
 
     logger.info('[auth] No valid Huawei auth session, launching login window...');
+    isHuaweiStartupAuthPending = true;
 
     // 隐藏主窗口，避免用户在登录校验期间操作应用
     if (globalMainWindow && !globalMainWindow.isDestroyed()) {
@@ -2782,6 +2815,7 @@ async function ensureHuaweiAuthOnStartup(): Promise<void> {
         await authService.login();
         logger.info('[auth] Huawei account login succeeded on startup');
     } catch (err: any) {
+        isHuaweiStartupAuthPending = false;
         logger.error(`[auth] Huawei account login failed on startup: ${err?.message || err}`);
         // 登录失败/取消，立即退出应用；同时使用 app.quit() + process.exit(1) 强制终止，
         // 避免在鸿蒙 Electron 下 app.exit 未能真正结束进程导致悬挂空白窗口。
@@ -2797,6 +2831,7 @@ async function ensureHuaweiAuthOnStartup(): Promise<void> {
     }
 
     // 登录成功，显示主窗口
+    isHuaweiStartupAuthPending = false;
     if (globalMainWindow && !globalMainWindow.isDestroyed()) {
         globalMainWindow.show();
         globalMainWindow.focus();

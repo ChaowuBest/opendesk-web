@@ -29,6 +29,13 @@ export class HarmonyOSHuaweiAccountKit implements HuaweiAccountKit {
         await callArkTS<void>(EtsBridgeMethods.LOGIN_INIT, 'void');
     }
 
+    async restoreLogin(): Promise<void> {
+        if (!this.loginInProgress) {
+            return;
+        }
+        await callArkTS<void>(EtsBridgeMethods.LOGIN_RESTORE, 'void');
+    }
+
     async peekLogin(): Promise<HuaweiLoginResult | null> {
         if (!this.loginInProgress) {
             throw new Error('Huawei account login is not in progress');
