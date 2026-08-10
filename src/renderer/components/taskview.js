@@ -246,6 +246,17 @@ class TaskView extends HTMLElement {
                         bubbles: true
                     })
                 );
+            },
+            isNavigationCollapsed: () => {
+                return document.getElementById('app-root')?.classList.contains('sidebar-collapsed') ?? false;
+            },
+            expandNavigation: () => {
+                document.dispatchEvent(
+                    new CustomEvent('sidebar-collapse-request', {
+                        detail: { collapsed: false, persist: false },
+                        bubbles: true
+                    })
+                );
             }
         });
         this.addEventListener(WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, this._workspaceFocusLayout.handleChange);
