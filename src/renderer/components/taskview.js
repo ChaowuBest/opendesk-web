@@ -36,6 +36,8 @@ const EXPORT_DOWNLOAD_SVG =
 
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+const CHECK_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const REGENERATE_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
 const FORK_ICON_SVG =
@@ -3080,7 +3082,9 @@ class TaskView extends HTMLElement {
         if (!action || !messageId) return;
         e.stopPropagation();
         if (action === 'copy') {
-            this._handleCopyMessage(messageId);
+            this._handleCopyMessage(messageId)
+                .then(() => this._showCopyFeedback(btn))
+                .catch(() => {});
         } else if (action === 'regenerate') {
             this._handleRegenerateMessage(messageId);
         } else if (action === 'fork') {
@@ -3101,19 +3105,55 @@ class TaskView extends HTMLElement {
                 Array.from(userContainer.querySelectorAll('.od-user-msg'))
                     .map((el) => el.textContent || '')
                     .join('\n');
-            navigator.clipboard.writeText(text).catch(() => {});
-            return;
+            return navigator.clipboard.writeText(text);
         }
         const messageContent = this.querySelector(`#message-content-${CSS.escape(messageId)}`);
         if (messageContent) {
+            // 优先从 _historyMessages 取最后一个 text part 的原始 markdown 文本，保留代码块等格式
+            const msgIdx = this._getHistoryMessageIndexById(messageId);
+            if (msgIdx >= 0) {
+                const msg = this._historyMessages[msgIdx];
+                if (msg && Array.isArray(msg.content)) {
+                    const textParts = msg.content.filter((p) => p && p.type === 'text' && p.text);
+                    const lastTextPart = textParts[textParts.length - 1];
+                    if (lastTextPart) {
+                        return navigator.clipboard.writeText(lastTextPart.text);
+                    }
+                }
+            }
+            // fallback: 从 DOM 取 textContent
             const textParts = Array.from(messageContent.children).filter((el) =>
                 el.classList.contains('markdown-body')
             );
             const lastTextPart = textParts[textParts.length - 1];
             if (lastTextPart) {
-                navigator.clipboard.writeText(lastTextPart.textContent || '').catch(() => {});
+                return navigator.clipboard.writeText(lastTextPart.textContent || '');
             }
         }
+        return Promise.resolve();
+    }
+
+    _showCopyFeedback(btn) {
+        const label = btn.querySelector('.od-msg-action-label');
+        const labelHTML = label ? label.outerHTML : '';
+        const originalHTML = btn.innerHTML;
+        const FADE = 140;
+
+        btn.style.opacity = '0';
+        setTimeout(() => {
+            btn.innerHTML = CHECK_ICON_SVG + labelHTML;
+            btn.classList.add('od-msg-action-btn--copied');
+            btn.style.opacity = '';
+        }, FADE);
+
+        setTimeout(() => {
+            btn.style.opacity = '0';
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.classList.remove('od-msg-action-btn--copied');
+                btn.style.opacity = '';
+            }, FADE);
+        }, FADE + 1200);
     }
 
     async _handleRegenerateMessage(messageId) {

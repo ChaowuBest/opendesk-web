@@ -203,9 +203,7 @@ marked.use({
             const displayLang = lang
                 ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
                 : '';
-            const headerHtml = displayLang
-                ? `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`
-                : '';
+            const headerHtml = `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`;
             const lines = highlighted.split('\n');
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
             const rows = lines
@@ -1014,6 +1012,7 @@ export class TextMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
+            text: this.text,
             rendered: this.rendered
         };
     }

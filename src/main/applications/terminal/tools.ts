@@ -415,7 +415,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     constructor(bashPath: string = '/bin/bash') {
         super(
             'executeBash',
-            '执行 bash 命令。可以执行任何有效的 BASH 命令，如 ls、cd、cat、echo 等',
+            '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
             ExecuteBashArgsSchema
         );
 
@@ -500,7 +500,11 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
     constructor() {
-        super('executeZsh', '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等', ExecuteZshArgsSchema);
+        super(
+            'executeZsh',
+            '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
+            ExecuteZshArgsSchema
+        );
 
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
