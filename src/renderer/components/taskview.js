@@ -2491,7 +2491,14 @@ class TaskView extends HTMLElement {
         this._forceExpandRightSidebar();
         // 2. 在侧边栏编辑器中打开文件
         const sidebar = this._getRightSidebarEl();
-        if (sidebar && typeof sidebar.openFileInEditor === 'function') {
+        if (!sidebar) return;
+        // md/markdown 文件默认以渲染预览模式打开，可通过预览头部按钮切换回编辑器
+        const fileExt = filePath.split('.').pop()?.toLowerCase();
+        if ((fileExt === 'md' || fileExt === 'markdown') && typeof sidebar.openFilePreview === 'function') {
+            sidebar.openFilePreview(filePath);
+            return;
+        }
+        if (typeof sidebar.openFileInEditor === 'function') {
             sidebar.openFileInEditor(filePath, validLine);
         }
     }
@@ -2877,7 +2884,7 @@ class TaskView extends HTMLElement {
         if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
-            rightSidebar.style.width = this._getRightSidebarTargetWidth();
+            rightSidebar.style.width = this._workspaceFocusLayout.getTargetPanelWidth();
             rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);

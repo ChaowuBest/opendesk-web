@@ -1631,6 +1631,7 @@ export const enUs: Record<string, string> = {
     'renderer.fileExplorer.preview.loadingEditor': 'Loading editor…',
     'renderer.fileExplorer.preview.readFailed': 'Failed to read file',
     'renderer.fileExplorer.preview.editFile': 'Edit file',
+    'renderer.fileExplorer.preview.previewFile': 'Render preview',
     'renderer.fileExplorer.preview.reading': 'Reading file…',
     'renderer.fileExplorer.preview.readError': 'Read error',
     'renderer.fileExplorer.preview.tooLarge': 'Cannot preview: file size ${size} exceeds ${limit} limit',

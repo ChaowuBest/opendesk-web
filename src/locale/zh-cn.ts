@@ -1593,6 +1593,7 @@ export const zhCn: Record<string, string> = {
     'renderer.fileExplorer.preview.loadingEditor': '正在加载编辑器…',
     'renderer.fileExplorer.preview.readFailed': '读取文件失败',
     'renderer.fileExplorer.preview.editFile': '编辑文件',
+    'renderer.fileExplorer.preview.previewFile': '渲染预览',
     'renderer.fileExplorer.preview.reading': '正在读取文件…',
     'renderer.fileExplorer.preview.readError': '读取失败',
     'renderer.fileExplorer.preview.tooLarge': '无法预览：文件大小 ${size} 超过 ${limit} 限制',
