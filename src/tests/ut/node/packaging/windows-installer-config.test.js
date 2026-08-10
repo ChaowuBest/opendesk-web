@@ -35,7 +35,7 @@ test('keeps the MSI upgrade identity while enabling the branded Chinese x64 inst
     assert.deepEqual([banner.width, banner.height], [493, 58]);
 });
 
-test('restores the previous install directory before a major upgrade', async () => {
+test('restores install preferences and gates shortcut components', async () => {
     const config = getWixConfig();
     const creator = {
         wixTemplate: fs.readFileSync(
@@ -57,9 +57,37 @@ test('restores the previous install directory before a major upgrade', async () 
         /<SetProperty[^>]+Id="APPLICATIONROOTDIRECTORY"[^>]+Sequence="first"[^>]+Value="\[INSTALLPATH\]"/
     );
     assert.match(creator.wixTemplate, /INSTALLPATH AND NOT APPLICATIONROOTDIRECTORY/);
+    assert.match(creator.wixTemplate, /<Property Id="CREATE_DESKTOP_SHORTCUT"[^>]+Value="1"/);
+    assert.match(creator.wixTemplate, /<Property Id="CREATE_START_MENU_SHORTCUT"[^>]+Value="1"/);
+    assert.match(
+        creator.wixTemplate,
+        /<Component Id="DesktopShortcut"[^>]+Transitive="yes">\s*<Condition>CREATE_DESKTOP_SHORTCUT = "1"<\/Condition>/
+    );
+    assert.match(
+        creator.wixTemplate,
+        /<Component Id="ApplicationShortcut"[^>]+Transitive="yes">\s*<Condition>CREATE_START_MENU_SHORTCUT = "1"<\/Condition>/
+    );
     assert.equal((creator.wixTemplate.match(/Key="SOFTWARE\\OpenDesk\\Installer"/g) || []).length, 2);
     assert.deepEqual(creator.getRegistryKeys(), [
         { id: 'RegistryInstallPath', key: 'SOFTWARE\\OpenDesk\\Installer' },
+        {
+            id: 'RegistryDesktopShortcutPreference',
+            root: 'HKLM',
+            key: 'SOFTWARE\\OpenDesk\\Installer',
+            name: 'CreateDesktopShortcut',
+            type: 'integer',
+            value: '[CREATE_DESKTOP_SHORTCUT]',
+            forceDeleteOnUninstall: 'yes'
+        },
+        {
+            id: 'RegistryStartMenuShortcutPreference',
+            root: 'HKLM',
+            key: 'SOFTWARE\\OpenDesk\\Installer',
+            name: 'CreateStartMenuShortcut',
+            type: 'integer',
+            value: '[CREATE_START_MENU_SHORTCUT]',
+            forceDeleteOnUninstall: 'yes'
+        },
         { id: 'UninstallDisplayName', key: 'product-specific-key' }
     ]);
 });
@@ -73,22 +101,36 @@ test('uses an editable MSI install directory page instead of the feature tree', 
     assert.doesNotMatch(ui, /Dialog="CustomizeDlg"/);
 });
 
-test('builds a branded bootstrapper that passes any selected drive to the MSI', () => {
-    const theme = fs.readFileSync(path.join(bootstrapperResources, 'theme.xml'), 'utf8');
+test('builds a custom bootstrapper that passes location and shortcut choices to the MSI', () => {
     const bundle = fs.readFileSync(path.join(bootstrapperResources, 'bundle.wxs'), 'utf8');
+    const bootstrapper = fs.readFileSync(path.join(bootstrapperResources, 'OpenDeskBootstrapper.cs'), 'utf8');
     const localization = fs.readFileSync(path.join(bootstrapperResources, 'zh-cn.wxl'), 'utf8');
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
-    assert.match(theme, /<Window Width="920" Height="600"/);
-    assert.match(theme, /<Page Name="Install">[\s\S]*?<Image[^>]+ImageFile="feature-rows\.png"/);
-    assert.match(theme, /<Editbox Name="FolderEditbox"[^>]+FileSystemAutoComplete="yes"/);
-    assert.match(theme, /<Button Name="BrowseButton"/);
-    assert.match(localization, /<String Id="InstallLocationPreview">可在“安装选项”中查看或更改安装路径。<\/String>/);
-    assert.doesNotMatch(localization, /InstallLocationPreview">[^<]*\[InstallFolder\]/);
+    assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
+    assert.match(bundle, /Payload[^>]+Name="OpenDesk\.Bootstrapper\.dll"/);
     assert.match(bundle, /Variable="InstallFolder"[^>]+Key="SOFTWARE\\OpenDesk\\Installer"/);
     assert.match(bundle, /<MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="\[InstallFolder\]"\s*\/>/);
-    assert.match(localization, /<String Id="OptionsLocationLabel">安装位置：<\/String>/);
+    assert.match(bundle, /<MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="\[CreateDesktopShortcut\]"\s*\/>/);
+    assert.match(bundle, /<MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="\[CreateStartMenuShortcut\]"\s*\/>/);
+    assert.match(bootstrapper, /CreateDesktopShortcutCheckBox/);
+    assert.match(bootstrapper, /CreateStartMenuShortcutCheckBox/);
+    assert.match(bootstrapper, /Engine\.FormatString\(Engine\.StringVariables\["InstallFolder"\]\)/);
+    assert.doesNotMatch(bootstrapper, /OverallProgressPackageText/);
+    assert.match(localization, /<String Id="CreateDesktopShortcut">创建桌面快捷方式<\/String>/);
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
+});
+
+test('compiles a 32-bit managed bootstrapper with a valid .NET configuration', () => {
+    const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
+    const config = fs.readFileSync(path.join(bootstrapperResources, 'BootstrapperCore.config'), 'utf8');
+
+    assert.match(buildScript, /'\/platform:x86'/);
+    assert.match(buildScript, /BootstrapperCore\.dll/);
+    assert.ok(
+        config.indexOf('<configSections>') < config.indexOf('<startup '),
+        'configSections must be the first .NET configuration child'
+    );
 });
 
 test('keeps install-page decoration out of the shared bootstrapper background', async () => {

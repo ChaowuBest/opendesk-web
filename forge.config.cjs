@@ -77,14 +77,24 @@ const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
 
 function preserveWixInstallDirectory(creator) {
     const installPathProperty = / {4}<Property Id="INSTALLPATH">[\s\S]*? {4}<\/Property>/;
+    const startMenuShortcutComponent =
+        /<Component Id="ApplicationShortcut" Guid="\{\{ApplicationShortcutGuid\}\}" Win64="\{\{Win64YesNo\}\}">/;
+    const desktopShortcutComponent = /<Component Id="DesktopShortcut" Guid="\{\{DesktopShortcutGuid\}\}"\s*>/;
 
-    if (!installPathProperty.test(creator.wixTemplate) || typeof creator.getRegistryKeys !== 'function') {
+    if (
+        !installPathProperty.test(creator.wixTemplate) ||
+        !startMenuShortcutComponent.test(creator.wixTemplate) ||
+        !desktopShortcutComponent.test(creator.wixTemplate) ||
+        typeof creator.getRegistryKeys !== 'function'
+    ) {
         throw new Error('electron-wix-msi template no longer exposes the expected install path entries');
     }
 
     creator.wixTemplate = creator.wixTemplate.replace(
         installPathProperty,
         `    <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes" Value="1" />
+    <Property Id="CREATE_START_MENU_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="INSTALLPATH">
       <RegistrySearch Key="${wixInstallPathRegistryKey}"
                       Root="HKCU"
@@ -107,12 +117,46 @@ function preserveWixInstallDirectory(creator) {
       <![CDATA[INSTALLPATH AND NOT APPLICATIONROOTDIRECTORY]]>
     </SetProperty>`
     );
+    creator.wixTemplate = creator.wixTemplate
+        .replace(
+            startMenuShortcutComponent,
+            '<Component Id="ApplicationShortcut" Guid="{{ApplicationShortcutGuid}}" Win64="{{Win64YesNo}}" Transitive="yes">\n        <Condition>CREATE_START_MENU_SHORTCUT = "1"</Condition>'
+        )
+        .replace(
+            desktopShortcutComponent,
+            '<Component Id="DesktopShortcut" Guid="{{DesktopShortcutGuid}}" Transitive="yes">\n          <Condition>CREATE_DESKTOP_SHORTCUT = "1"</Condition>'
+        );
 
     const getRegistryKeys = creator.getRegistryKeys.bind(creator);
-    creator.getRegistryKeys = () =>
-        getRegistryKeys().map((entry) =>
+    creator.getRegistryKeys = () => {
+        const registryKeys = getRegistryKeys().map((entry) =>
             entry.id === 'RegistryInstallPath' ? { ...entry, key: wixInstallPathRegistryKey } : entry
         );
+        const installPathIndex = registryKeys.findIndex((entry) => entry.id === 'RegistryInstallPath');
+        registryKeys.splice(
+            installPathIndex + 1,
+            0,
+            {
+                id: 'RegistryDesktopShortcutPreference',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'CreateDesktopShortcut',
+                type: 'integer',
+                value: '[CREATE_DESKTOP_SHORTCUT]',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
+                id: 'RegistryStartMenuShortcutPreference',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'CreateStartMenuShortcut',
+                type: 'integer',
+                value: '[CREATE_START_MENU_SHORTCUT]',
+                forceDeleteOnUninstall: 'yes'
+            }
+        );
+        return registryKeys;
+    };
 }
 
 module.exports = {

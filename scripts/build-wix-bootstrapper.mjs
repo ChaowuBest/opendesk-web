@@ -19,6 +19,8 @@ const projectRoot = path.resolve(scriptDir, '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 const resourcesDir = path.join(projectRoot, 'resources', 'package', 'bootstrapper');
 const wixBinDir = process.env.WIX_BIN_DIR || 'C:\\Program Files (x86)\\WiX Toolset v3.14\\bin';
+const wixSdkDir = process.env.WIX_SDK_DIR || 'C:\\Program Files (x86)\\WiX Toolset v3.14\\SDK';
+const csharpCompiler = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
 const msiPath = path.resolve(
     process.env.OPENDESK_MSI_PATH || path.join(projectRoot, 'out', 'make', 'wix', 'x64', 'opendesk.msi')
 );
@@ -29,9 +31,11 @@ const bundleVersion = packageJson.version.split('.').concat(['0', '0', '0']).sli
 const sourcePath = path.join(resourcesDir, 'bundle.wxs');
 const objectPath = path.join(outputDir, 'opendesk-bootstrapper.wixobj');
 const setupPath = path.join(outputDir, `OpenDesk-${packageJson.version}-Setup.exe`);
+const bootstrapperSourcePath = path.join(resourcesDir, 'OpenDeskBootstrapper.cs');
+const bootstrapperAssemblyPath = path.join(outputDir, 'OpenDesk.Bootstrapper.dll');
 
-function runWix(executable, args) {
-    const result = spawnSync(path.join(wixBinDir, executable), args, {
+function run(executable, args) {
+    const result = spawnSync(executable, args, {
         cwd: projectRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe']
@@ -39,7 +43,7 @@ function runWix(executable, args) {
 
     if (result.status !== 0) {
         throw new Error(
-            `${executable} failed with exit code ${result.status}\n${result.stdout || ''}${result.stderr || ''}`
+            `${path.basename(executable)} failed with exit code ${result.status}\n${result.stdout || ''}${result.stderr || ''}`
         );
     }
 
@@ -53,7 +57,22 @@ if (!fs.existsSync(msiPath)) {
 
 fs.mkdirSync(outputDir, { recursive: true });
 
-runWix('candle.exe', [
+run(csharpCompiler, [
+    '/nologo',
+    '/target:library',
+    '/optimize+',
+    '/platform:x86',
+    `/out:${bootstrapperAssemblyPath}`,
+    `/reference:${path.join(wixSdkDir, 'BootstrapperCore.dll')}`,
+    '/reference:System.dll',
+    '/reference:System.Core.dll',
+    '/reference:System.Drawing.dll',
+    '/reference:System.Windows.Forms.dll',
+    '/reference:System.Xml.Linq.dll',
+    bootstrapperSourcePath
+]);
+
+run(path.join(wixBinDir, 'candle.exe'), [
     '-nologo',
     '-arch',
     'x64',
@@ -64,16 +83,24 @@ runWix('candle.exe', [
     `-dBundleVersion=${bundleVersion}`,
     `-dMsiPath=${msiPath}`,
     `-dIconPath=${path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico')}`,
-    `-dThemePath=${path.join(resourcesDir, 'theme.xml')}`,
+    `-dBootstrapperApplicationPath=${bootstrapperAssemblyPath}`,
+    `-dBootstrapperConfigPath=${path.join(resourcesDir, 'BootstrapperCore.config')}`,
     `-dLocalizationPath=${path.join(resourcesDir, 'zh-cn.wxl')}`,
     `-dBackgroundPath=${path.join(resourcesDir, 'background.png')}`,
-    `-dFeatureRowsPath=${path.join(resourcesDir, 'feature-rows.png')}`,
-    `-dProgressPath=${path.join(resourcesDir, 'progress.png')}`,
     '-out',
     objectPath,
     sourcePath
 ]);
 
-runWix('light.exe', ['-nologo', '-ext', 'WixBalExtension', '-ext', 'WixUtilExtension', '-out', setupPath, objectPath]);
+run(path.join(wixBinDir, 'light.exe'), [
+    '-nologo',
+    '-ext',
+    'WixBalExtension',
+    '-ext',
+    'WixUtilExtension',
+    '-out',
+    setupPath,
+    objectPath
+]);
 
 console.log(`Created branded OpenDesk setup: ${setupPath}`);

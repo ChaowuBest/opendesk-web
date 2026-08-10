@@ -18,22 +18,22 @@ See the Mulan PSL v2 for more details.
             UpgradeCode="e7b412c3-02cc-4ed8-9fcb-5d33fe3390e4"
             IconSourceFile="$(var.IconPath)"
             Compressed="yes">
-        <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
-            <bal:WixStandardBootstrapperApplication
-                LicenseUrl=""
-                ThemeFile="$(var.ThemePath)"
-                LocalizationFile="$(var.LocalizationPath)"
-                LaunchTarget="[InstallFolder]\opendesk.exe"
-                SuppressOptionsUI="no" />
+        <WixVariable Id="WixMbaPrereqPackageId" Value="" />
+        <WixVariable Id="WixMbaPrereqLicenseUrl" Value="" />
+        <BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost">
+            <Payload SourceFile="$(var.BootstrapperApplicationPath)" Name="OpenDesk.Bootstrapper.dll" />
+            <Payload SourceFile="$(var.BootstrapperConfigPath)" Name="BootstrapperCore.config" />
             <Payload SourceFile="$(var.BackgroundPath)" Name="background.png" />
-            <Payload SourceFile="$(var.FeatureRowsPath)" Name="feature-rows.png" />
-            <Payload SourceFile="$(var.ProgressPath)" Name="progress.png" />
+            <Payload SourceFile="$(var.IconPath)" Name="opendesk.ico" />
+            <Payload SourceFile="$(var.LocalizationPath)" Name="zh-cn.wxl" />
         </BootstrapperApplicationRef>
 
         <Variable Name="InstallFolder"
                   Type="string"
                   Value="[ProgramFiles64Folder]OpenDesk"
                   bal:Overridable="yes" />
+        <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
+        <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <util:RegistrySearch Id="FindPreviousInstallFolder"
                              Variable="PreviousInstallFolder"
                              Root="HKLM"
@@ -60,6 +60,8 @@ See the Mulan PSL v2 for more details.
                         Visible="no"
                         Vital="yes">
                 <MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="[InstallFolder]" />
+                <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
+                <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
             </MsiPackage>
         </Chain>
     </Bundle>
