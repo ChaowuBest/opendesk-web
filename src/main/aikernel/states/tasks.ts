@@ -38,6 +38,7 @@ import {
     imageToDataUri,
     type RuntimeMetadata
 } from '../messages.js';
+import { setRenderWorkspace } from '../marked-file-link.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
@@ -2966,8 +2967,13 @@ export class TaskState {
     }
 
     async render() {
-        for (const message of this.chat_context.messages) {
-            await message.render();
+        setRenderWorkspace(this.getWorkspace() || null);
+        try {
+            for (const message of this.chat_context.messages) {
+                await message.render();
+            }
+        } finally {
+            setRenderWorkspace(null);
         }
     }
 
