@@ -81,13 +81,76 @@ const FILE_PATH_SEARCH_RE = new RegExp(
 // ── Pill HTML ──────────────────────────────────────────────────────
 
 const FILE_ICON_SVG =
-    '<svg class="od-file-pill-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor">' +
-    '<path d="M9 1.5V5h3.5L9 1.5zM4 1h4v4.5a.5.5 0 0 0 .5.5H13v9a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-13a.5.5 0 0 1 .5-.5z"/>' +
+    '<svg class="od-file-pill-icon" width="13" height="13" viewBox="0 0 16 16" fill="none">' +
+    '<path d="M4 1.5h5.5L13 5v9a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' +
+    '<path d="M9 1.5V5h4" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' +
     '</svg>';
+
+const TYPE_MAP: Record<string, string> = {
+    // 代码类
+    ts: 'code',
+    tsx: 'code',
+    js: 'code',
+    jsx: 'code',
+    mjs: 'code',
+    cjs: 'code',
+    css: 'code',
+    scss: 'code',
+    sass: 'code',
+    less: 'code',
+    go: 'code',
+    rs: 'code',
+    py: 'code',
+    rb: 'code',
+    java: 'code',
+    kt: 'code',
+    swift: 'code',
+    c: 'code',
+    h: 'code',
+    cpp: 'code',
+    hpp: 'code',
+    cs: 'code',
+    php: 'code',
+    vue: 'code',
+    svelte: 'code',
+    sh: 'code',
+    bash: 'code',
+    // 文档类
+    doc: 'doc',
+    docx: 'doc',
+    ppt: 'doc',
+    pptx: 'doc',
+    xls: 'doc',
+    xlsx: 'doc',
+    pdf: 'doc',
+    key: 'doc',
+    numbers: 'doc',
+    pages: 'doc',
+    // 文本/数据类
+    md: 'text',
+    markdown: 'text',
+    txt: 'text',
+    rtf: 'text',
+    json: 'text',
+    jsonc: 'text',
+    xml: 'text',
+    yaml: 'text',
+    yml: 'text',
+    toml: 'text',
+    csv: 'text',
+    ini: 'text',
+    conf: 'text',
+    log: 'text'
+};
+
+function getFileType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    return TYPE_MAP[ext] ?? 'default';
+}
 
 function buildPillHTML(filePath: string, label: string): string {
     return (
-        `<a class="od-file-pill" data-open-preview="${escapeHtml(filePath)}" title="${escapeHtml(filePath)}">` +
+        `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}" title="${escapeHtml(filePath)}">` +
         `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span></a>`
     );
 }
