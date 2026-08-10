@@ -1340,7 +1340,7 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.viewByTimeShort': '按时间',
     'renderer.sidebar.viewByWorkspaceShort': '按工作空间',
     'renderer.sidebar.today': '今天',
-    'renderer.sidebar.thisWeek': '本周',
+    'renderer.sidebar.thisWeek': '近7天',
     'renderer.sidebar.earlier': '更早的任务',
     'renderer.sidebar.otherWorkspaces': '其他',
     'renderer.sidebar.automaticTasks': '自动任务',
@@ -1502,6 +1502,7 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': '内部',
+    'renderer.task.loading': '你的智能体正在跑步上岗……',
 
     // Renderer - Task View
     'renderer.taskview.menu.copy': '复制',
@@ -1607,6 +1608,15 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.time.justNow': '刚刚',
     'renderer.taskview.time.minutesAgo': '${minutes} 分钟前',
     'renderer.taskview.time.hoursAgo': '${hours} 小时前',
+    'renderer.taskview.action.copy': '复制',
+    'renderer.taskview.action.regenerate': '重新生成',
+    'renderer.taskview.action.fork': '分支对话',
+    'renderer.taskview.action.edit': '编辑',
+    'renderer.taskview.action.resubmit': '重新发送',
+    'renderer.taskview.edit.title': '确认编辑消息',
+    'renderer.taskview.edit.message': '是否要用编辑后的消息继续对话？<b>后续的所有对话历史将会丢失。</b>',
+    'renderer.taskview.edit.confirm': '继续对话',
+    'renderer.taskview.edit.cancel': '取消',
     'renderer.taskview.usage.title': '输入: ${input}, 输出: ${output}, 总计: ${total}',
     'renderer.taskview.usage.display': '已输出 ${output} 词, 总计 ${total} 词${ratio}',
     'renderer.taskview.usage.contextRatio': ', 上下文占比 ${pct}%',

@@ -90,8 +90,8 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
-        forkTask: async (taskId) => {
-            const result = await ipcRenderer.invoke('taskManager:forkTask', taskId);
+        forkTask: async (taskId, upToMessageId) => {
+            const result = await ipcRenderer.invoke('taskManager:forkTask', taskId, upToMessageId);
             if (result.status === 'ok') {
                 return result.data;
             } else {

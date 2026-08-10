@@ -69,39 +69,57 @@ class ContentLoadingView extends HTMLElement {
     }
 
     render() {
-        const animationHTML = `
-        <div class="flex items-end space-x-2 h-12">
-            <!-- 每一根线条都有不同的延迟 -->
-            <div class="w-2 bg-blue-500 rounded-full animate-[bounce_1s_ease-in-out_infinite] h-8"></div>
-            <div class="w-2 bg-indigo-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.1s] h-12"></div>
-            <div class="w-2 bg-purple-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.2s] h-10"></div>
-            <div class="w-2 bg-pink-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.3s] h-6"></div>
-            <div class="w-2 bg-red-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.4s] h-9"></div>
-            <div class="w-2 bg-orange-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.5s] h-12"></div>
-        </div>
-        `;
+        const delays = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.4, 0.3, 0.2, 0.1];
+        const bars = delays.map((d) => `<div class="od-clv-bar" style="animation-delay:${d}s"></div>`).join('');
 
-        if (this.type === 'tb') {
-            this.innerHTML = `
-            <div class="w-full h-full flex items-center justify-center">
-                <div class="flex flex-col items-center justify-center w-full h-48 bg-transparent">
-                    ${animationHTML}
-                    <div class="mt-6 text-gray-400 text-sm font-light uppercase tracking-[0.3em]">${this.dataset.message}</div>
-                </div>
-            </div>
-            `;
-        } else if (this.type === 'lr') {
-            this.innerHTML = `
-            <div class="w-full h-full flex items-center justify-center">
-                <div class="flex items-center justify-center w-full h-32 bg-transparent">
-                    ${animationHTML}
-                    <div class="ml-6 text-gray-400 text-sm font-light uppercase tracking-[0.3em]">${this.dataset.message}</div>
-                </div>
-            </div>
-            `;
-        }
+        const msg = this.dataset.message ? `<div class="od-clv-msg">${this.dataset.message}</div>` : '';
+
+        const layout = this.type === 'lr' ? 'od-clv-lr' : 'od-clv-tb';
+
+        this.innerHTML = `<style>${ContentLoadingView.STYLES}</style>
+            <div class="od-clv-wrap ${layout}">
+                <div class="od-clv-bars">${bars}</div>
+                ${msg}
+            </div>`;
     }
 }
+
+ContentLoadingView.STYLES = `
+.od-clv-wrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.od-clv-tb { flex-direction: column; gap: 20px; }
+.od-clv-lr { flex-direction: row; gap: 24px; }
+.od-clv-bars {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 40px;
+}
+.od-clv-bar {
+    width: 4px;
+    border-radius: 999px;
+    background: var(--chat-accent, #e8563f);
+    animation: od-clv-wave 1s ease-in-out infinite;
+}
+@keyframes od-clv-wave {
+    0%, 100% { height: 8px; opacity: 0.5; }
+    50% { height: 32px; opacity: 1; }
+}
+.od-clv-msg {
+    font-size: 11px;
+    color: var(--chat-ink3, #9b968f);
+    letter-spacing: 0.15em;
+    white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+    .od-clv-bar { animation-duration: 0.01ms; }
+}
+`;
 
 customElements.define('loading-view', LoadingView);
 customElements.define('content-loading-view', ContentLoadingView);

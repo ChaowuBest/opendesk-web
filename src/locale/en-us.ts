@@ -1375,7 +1375,7 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.viewByTimeShort': 'By time',
     'renderer.sidebar.viewByWorkspaceShort': 'By workspace',
     'renderer.sidebar.today': 'Today',
-    'renderer.sidebar.thisWeek': 'This week',
+    'renderer.sidebar.thisWeek': 'Last 7 days',
     'renderer.sidebar.earlier': 'Earlier',
     'renderer.sidebar.otherWorkspaces': 'Other',
     'renderer.sidebar.automaticTasks': 'Automated tasks',
@@ -1539,6 +1539,7 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': 'Internal',
+    'renderer.task.loading': 'The agent is rushing to its position …',
 
     // Renderer - Task View
     'renderer.taskview.menu.copy': 'Copy',
@@ -1645,6 +1646,16 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.time.justNow': 'Just now',
     'renderer.taskview.time.minutesAgo': '${minutes} min ago',
     'renderer.taskview.time.hoursAgo': '${hours} hr ago',
+    'renderer.taskview.action.copy': 'Copy',
+    'renderer.taskview.action.regenerate': 'Regenerate',
+    'renderer.taskview.action.fork': 'Fork conversation',
+    'renderer.taskview.action.edit': 'Edit',
+    'renderer.taskview.action.resubmit': 'Resend',
+    'renderer.taskview.edit.title': 'Confirm Edit Message',
+    'renderer.taskview.edit.message':
+        'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',
+    'renderer.taskview.edit.confirm': 'Continue',
+    'renderer.taskview.edit.cancel': 'Cancel',
     'renderer.taskview.usage.title': 'Input: ${input}, Output: ${output}, Total: ${total}',
     'renderer.taskview.usage.display': 'Output ${output} words, total ${total} words${ratio}',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',

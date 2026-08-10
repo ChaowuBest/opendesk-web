@@ -27,13 +27,14 @@ interrupted — 满足以下任一条件即判定为 interrupted:
 - 回复看起来像是被截断的，缺少结论或总结。
 
 question — 满足以下任一条件即判定为 question:
-- 回复中包含向用户提出的问题（如"请问...""你希望...""能否提供..."等疑问句）;
-- 回复明确表示需要用户提供更多信息才能继续。
+- 回复中包含向用户提出的问题(如"请问...""你希望...""能否提供..."等疑问句);
+- 回复明确表示需要用户提供更多信息才能继续；
+- 任务本身包含多个步骤，但回复中说明了要往下继续需要用户来确认或者手动执行一些步骤的情况;
 
 finished — 仅当以下条件都满足时才判定为 finished:
 - 回复已经完整回答了用户的问题，或者已经完成了用户请求的任务;
 - 回复中没有未完成的后续步骤;
-- 回复中没有向用户提出需要回答的问题。
+- 回复中没有向用户提出需要回答的问题;
 
 请只输出一个词: finished、interrupted 或 question。不要输出任何解释或其他内容。`;
 
@@ -74,15 +75,21 @@ export async function checkTerminationFromMessages(
 ): Promise<TerminationState> {
     const fastResult = fastInterruptionCheck(lastTextResponse);
     if (fastResult === 'interrupted') {
-        logger.info('termination state checked via fast path: interrupted');
+        logger.info(
+            `termination state checked via fast path: interrupted\n` +
+                `[userQuestion] ${userQuestion}\n` +
+                `[lastTextResponse] ${lastTextResponse}`
+        );
         return 'interrupted';
     }
 
     let userMessage = TERMINATION_SYSTEM_PROMPT + '\n\n';
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
-    const quickModelInstance = Setting.getInstance().getDefaultQuickModelInstance();
-    const modelParam = quickModelInstance || model || Setting.getInstance().getDefaultModelInstance();
+
+    logger.debug(`termination check LLM input:\n${userMessage}`);
+
+    const modelParam = model || Setting.getInstance().getDefaultModelInstance();
     if (!modelParam) {
         logger.warn('model not configured, skipping termination check');
         return 'finished';
@@ -115,7 +122,11 @@ export async function checkTerminationFromMessages(
 
     const normalized = rawResult.trim().toLowerCase();
 
-    logger.info(`termination state checked: ${rawResult} (normalized: ${normalized})`);
+    logger.info(
+        `termination check LLM output: ${rawResult} (normalized: ${normalized})\n` +
+            `[userQuestion] ${userQuestion}\n` +
+            `[lastTextResponse] ${lastTextResponse}`
+    );
 
     if (normalized.includes('interrupted')) {
         return 'interrupted';
@@ -183,7 +194,10 @@ export async function checkTermination(
 
     const trailingResponse = extractTrailingResponse(lastAssistantMessage.content);
     if (!trailingResponse) {
-        // 最后一个 ToolCallMessagePart 之后没有任何文本或思考内容，说明对话被截断
+        logger.warn(
+            'termination check: trailing response is empty, defaulting to interrupted\n' +
+                `[userQuestion] ${lastUserMessage.getPlainText()}`
+        );
         return 'interrupted';
     }
 

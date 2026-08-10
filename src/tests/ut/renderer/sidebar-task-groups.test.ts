@@ -228,6 +228,37 @@ describe('sidebar task grouping', () => {
             'newer-created'
         ]);
     });
+
+    test('moves earlier task to today group when updated_at is today', () => {
+        const tasks = [
+            task('old-task', '2026-07-19T09:00:00', {
+                updated_at: '2026-07-29T10:00:00'
+            }),
+            task('this-week-task', '2026-07-27T09:00:00')
+        ];
+
+        const groups = buildSidebarTaskGroups(tasks, 'time', now);
+
+        const todayIds = groups.find((g) => g.id === 'today')!.items.map((i) => i.task.task_id);
+        const earlierIds = groups.find((g) => g.id === 'earlier')!.items.map((i) => i.task.task_id);
+        expect(todayIds).toContain('old-task');
+        expect(earlierIds).not.toContain('old-task');
+    });
+
+    test('moves earlier task to this-week group when updated_at is this week', () => {
+        const tasks = [
+            task('old-task', '2026-07-10T09:00:00', {
+                updated_at: '2026-07-28T10:00:00'
+            })
+        ];
+
+        const groups = buildSidebarTaskGroups(tasks, 'time', now);
+
+        const thisWeekIds = groups.find((g) => g.id === 'this-week')!.items.map((i) => i.task.task_id);
+        const earlierIds = groups.find((g) => g.id === 'earlier')!.items.map((i) => i.task.task_id);
+        expect(thisWeekIds).toContain('old-task');
+        expect(earlierIds).not.toContain('old-task');
+    });
 });
 
 describe('sidebar search results', () => {

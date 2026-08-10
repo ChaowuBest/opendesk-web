@@ -556,7 +556,7 @@ export class OpenAIAdapter {
             this.client.chat.completions.create({
                 model: this.modelInstance.model_name,
                 messages: [{ role: 'user', content: 'Hi' }],
-                max_tokens: 8
+                max_completion_tokens: 8
             })
         );
         if (!response?.choices?.[0]) {
