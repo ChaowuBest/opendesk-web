@@ -684,6 +684,14 @@ export class TaskState {
         });
     }
 
+    get needsHtmlRender(): boolean {
+        try {
+            return getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
+        } catch {
+            return false;
+        }
+    }
+
     private publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
         for (const subscriber of this.subscribers) {
             try {
@@ -2268,9 +2276,6 @@ export class TaskState {
         this.retainAvailableTaskUpdateSubscribers('subscription feedback');
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender =
-            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
-
         try {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
@@ -2284,7 +2289,7 @@ export class TaskState {
                     );
                     return;
                 }
-                if (needsHtmlRender) {
+                if (this.needsHtmlRender) {
                     await last_message.render();
                 }
                 chunkUpdate = {
@@ -2311,7 +2316,7 @@ export class TaskState {
                     );
                     return;
                 }
-                if (needsHtmlRender) {
+                if (this.needsHtmlRender) {
                     await last_part.render();
                 }
                 chunkUpdate = {
@@ -2348,10 +2353,8 @@ export class TaskState {
         this.retainAvailableTaskUpdateSubscribers('user message replace');
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender =
-            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
-            if (needsHtmlRender) {
+            if (this.needsHtmlRender) {
                 await userMessage.render();
             }
             const chunkUpdate: TaskUpdateUserReplaceChunk = {
@@ -2375,10 +2378,8 @@ export class TaskState {
         this.retainAvailableTaskUpdateSubscribers('assistant message replace');
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender =
-            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
-            if (needsHtmlRender) {
+            if (this.needsHtmlRender) {
                 await assistantMessage.render();
             }
             const chunkUpdate: TaskUpdateAssistantReplaceChunk = {
@@ -2559,7 +2560,9 @@ export class TaskState {
             } catch (instrumentationError) {
                 logger.error('TaskState.processToolCall: instrumentation error', instrumentationError);
             }
-            await tool_call.freezeRenderResult();
+            if (this.needsHtmlRender) {
+                await tool_call.freezeRenderResult();
+            }
             recordEvidenceCardToolCall(this, tool_call);
         }
     }
@@ -2604,7 +2607,7 @@ export class TaskState {
         for (const { tool_call, partIndex } of pendingCalls) {
             if (this.extensions.beforeToolCall(tool_call)) {
                 permissionResults.set(tool_call, true);
-                await tool_call.render();
+                if (this.needsHtmlRender) await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
                 continue;
             }
@@ -2631,12 +2634,12 @@ export class TaskState {
             try {
                 const alreadyDenied = permissionResults.get(tool_call);
                 if (alreadyDenied) {
-                    await tool_call.render();
+                    if (this.needsHtmlRender) await tool_call.render();
                     await this.sendSubscriptionFeedback(partIndex);
                     return;
                 }
                 await this.processToolCall(tool_call, true);
-                await tool_call.render();
+                if (this.needsHtmlRender) await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
             } catch (err) {
                 logger.error(
@@ -2645,7 +2648,7 @@ export class TaskState {
                 tool_call.status = 'error';
                 tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
                 try {
-                    await tool_call.render();
+                    if (this.needsHtmlRender) await tool_call.render();
                     await this.sendSubscriptionFeedback(partIndex);
                 } catch (renderErr) {
                     logger.error(
