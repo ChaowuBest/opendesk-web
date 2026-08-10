@@ -40,6 +40,12 @@ const REGENERATE_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
 const FORK_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
+const EDIT_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+const CTX_FONT_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
+const CTX_SELECT_ALL_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>';
 import {
     findActiveGoalEvalProgress,
     getGoalEvaluationRecordsForMessage,
@@ -525,7 +531,11 @@ class TaskView extends HTMLElement {
             const forkBtn = `<button class="od-msg-action-btn" type="button" data-action="fork" data-message-id="${escapedId}">${FORK_ICON_SVG}<span class="od-msg-action-label">${forkLabel}</span></button>`;
             menuHtml = `${copyBtn}${regenBtn}${forkBtn}`;
         } else {
-            menuHtml = copyBtn;
+            const editLabel = taskViewT('renderer.taskview.action.edit');
+            const resubmitLabel = taskViewT('renderer.taskview.action.resubmit');
+            const editBtn = `<button class="od-msg-action-btn" type="button" data-action="edit" data-message-id="${escapedId}">${EDIT_ICON_SVG}<span class="od-msg-action-label">${editLabel}</span></button>`;
+            const resubmitBtn = `<button class="od-msg-action-btn" type="button" data-action="resubmit" data-message-id="${escapedId}">${REGENERATE_ICON_SVG}<span class="od-msg-action-label">${resubmitLabel}</span></button>`;
+            menuHtml = `${copyBtn}${editBtn}${resubmitBtn}`;
         }
         return `<div class="od-msg-meta-row">${timeHtml}<div class="od-msg-hover-menu">${menuHtml}</div></div>`;
     }
@@ -3068,6 +3078,10 @@ class TaskView extends HTMLElement {
             this._handleRegenerateMessage(messageId);
         } else if (action === 'fork') {
             this._handleForkMessage(messageId);
+        } else if (action === 'edit') {
+            this._handleEditUserMessage(messageId);
+        } else if (action === 'resubmit') {
+            this._handleResubmitUserMessage(messageId);
         }
     }
 
@@ -3120,6 +3134,125 @@ class TaskView extends HTMLElement {
             window.globalControlAPI.openTask(forkedTaskId);
         } catch (err) {
             console.error('Failed to fork:', err);
+        }
+    }
+
+    _handleEditUserMessage(messageId) {
+        const container = this.querySelector(`#user-msg-${CSS.escape(messageId)}`);
+        if (!container) return;
+
+        const textBubble = container.querySelector('.od-user-msg .markdown-body');
+        if (!textBubble) return;
+
+        const bubble = textBubble.parentElement;
+        const rawText = container.dataset.rawText || textBubble.textContent || '';
+        const originalHtml = textBubble.innerHTML;
+        const originalWidth = bubble.offsetWidth;
+
+        bubble.style.width = `${originalWidth}px`;
+        bubble.classList.add('od-user-msg-editing');
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'od-user-msg-editor';
+        textarea.value = rawText;
+        textarea.rows = 1;
+        textBubble.innerHTML = '';
+        textBubble.appendChild(textarea);
+
+        const autoResize = () => {
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+        };
+        textarea.addEventListener('input', autoResize);
+        textarea.focus();
+        textarea.setSelectionRange(rawText.length, rawText.length);
+        requestAnimationFrame(autoResize);
+
+        let editing = true;
+
+        const cleanup = () => {
+            bubble.style.width = '';
+            bubble.classList.remove('od-user-msg-editing');
+            document.removeEventListener('mousedown', outsideClickHandler);
+        };
+
+        const restoreOriginal = () => {
+            if (!editing) return;
+            editing = false;
+            cleanup();
+            textBubble.innerHTML = originalHtml;
+        };
+
+        const outsideClickHandler = (e) => {
+            if (editing && !textBubble.contains(e.target)) {
+                restoreOriginal();
+            }
+        };
+
+        textarea.addEventListener('keydown', async (e) => {
+            if (!editing) return;
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const newText = textarea.value.trim();
+                if (!newText || newText === rawText) {
+                    restoreOriginal();
+                    return;
+                }
+                const confirmed = await showConfirmModal({
+                    variant: 'warn',
+                    title: taskViewT('renderer.taskview.edit.title'),
+                    message: taskViewT('renderer.taskview.edit.message'),
+                    confirmText: taskViewT('renderer.taskview.edit.confirm'),
+                    cancelText: taskViewT('renderer.taskview.edit.cancel')
+                });
+                if (!confirmed) {
+                    textarea.focus();
+                    return;
+                }
+                editing = false;
+                cleanup();
+                try {
+                    await window.taskManagerAPI.rewindToUserMessage(this.task_id, messageId, {
+                        resubmit: true,
+                        overrideMessageText: newText
+                    });
+                    await this.reload();
+                } catch (err) {
+                    console.error('Failed to edit and resubmit:', err);
+                    window.notificationAPI?.sendNotification?.(
+                        'error',
+                        taskViewT('renderer.taskview.menu.operationTitle'),
+                        taskViewT('renderer.taskview.menu.operationFailed'),
+                        err?.message || String(err)
+                    );
+                    textBubble.innerHTML = originalHtml;
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                restoreOriginal();
+            }
+        });
+
+        setTimeout(() => {
+            document.addEventListener('mousedown', outsideClickHandler);
+        }, 0);
+    }
+
+    async _handleResubmitUserMessage(messageId) {
+        if (!this.task_id) return;
+        try {
+            await window.taskManagerAPI.rewindToUserMessage(this.task_id, messageId, {
+                resubmit: true
+            });
+            await this.reload();
+        } catch (err) {
+            console.error('Failed to resubmit user message:', err);
+            window.notificationAPI?.sendNotification?.(
+                'error',
+                taskViewT('renderer.taskview.menu.operationTitle'),
+                taskViewT('renderer.taskview.menu.operationFailed'),
+                err?.message || String(err)
+            );
         }
     }
 
@@ -3976,7 +4109,7 @@ class TaskView extends HTMLElement {
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
 
-        menu.innerHTML = `<button class="ctx-item" data-action="copy"><span class="ctx-icon-sm"><i class="fa-solid fa-copy"></i></span><span class="ctx-label">${taskViewT('renderer.taskview.menu.copy')}</span></button>`;
+        menu.innerHTML = `<button class="ctx-item" data-action="copy"><span class="ctx-icon-sm">${COPY_ICON_SVG}</span><span class="ctx-label">${taskViewT('renderer.taskview.menu.copy')}</span></button>`;
 
         document.body.appendChild(menu);
 
@@ -4017,12 +4150,12 @@ class TaskView extends HTMLElement {
         menu.style.top = `${y}px`;
 
         const items = [
-            { id: 'copy', icon: 'fa-solid fa-copy', label: taskViewT('renderer.taskview.menu.copy') },
-            { id: 'copy-plain', icon: 'fa-solid fa-font', label: taskViewT('renderer.taskview.menu.copyPlain') },
-            { id: 'select-all', icon: 'fa-solid fa-text-width', label: taskViewT('renderer.taskview.menu.selectAll') },
+            { id: 'copy', icon: COPY_ICON_SVG, label: taskViewT('renderer.taskview.menu.copy') },
+            { id: 'copy-plain', icon: CTX_FONT_ICON_SVG, label: taskViewT('renderer.taskview.menu.copyPlain') },
+            { id: 'select-all', icon: CTX_SELECT_ALL_ICON_SVG, label: taskViewT('renderer.taskview.menu.selectAll') },
             {
                 id: 'rewind',
-                icon: 'fa-solid fa-clock-rotate-left',
+                icon: EDIT_ICON_SVG,
                 label: taskViewT('renderer.taskview.menu.rewindToHere'),
                 hint: taskViewT('renderer.taskview.menu.rewindHint'),
                 separatorBefore: true,
@@ -4030,7 +4163,7 @@ class TaskView extends HTMLElement {
             },
             {
                 id: 'continue-from',
-                icon: 'fa-solid fa-play',
+                icon: REGENERATE_ICON_SVG,
                 label: taskViewT('renderer.taskview.menu.continueFromHere'),
                 hint: taskViewT('renderer.taskview.menu.continueHint'),
                 disabled: !canRewind
@@ -4043,7 +4176,7 @@ class TaskView extends HTMLElement {
                 const cls = 'ctx-item' + (item.disabled ? ' disabled' : '');
                 const disabled = item.disabled ? ' disabled aria-disabled="true"' : '';
                 const hint = item.hint ? ` data-hint="${escapeHtml(item.hint)}"` : '';
-                return `${sep}<button class="${cls}" data-action="${item.id}"${hint}${disabled}><span class="ctx-icon-sm"><i class="${item.icon}"></i></span><span class="ctx-label">${escapeHtml(item.label)}</span></button>`;
+                return `${sep}<button class="${cls}" data-action="${item.id}"${hint}${disabled}><span class="ctx-icon-sm">${item.icon}</span><span class="ctx-label">${escapeHtml(item.label)}</span></button>`;
             })
             .join('');
         menu.innerHTML = `${buttonsHtml}<div class="ctx-hint" data-role="hint"></div>`;

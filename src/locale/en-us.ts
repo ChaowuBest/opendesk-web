@@ -1648,6 +1648,13 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.action.copy': 'Copy',
     'renderer.taskview.action.regenerate': 'Regenerate',
     'renderer.taskview.action.fork': 'Fork conversation',
+    'renderer.taskview.action.edit': 'Edit',
+    'renderer.taskview.action.resubmit': 'Resend',
+    'renderer.taskview.edit.title': 'Confirm Edit Message',
+    'renderer.taskview.edit.message':
+        'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',
+    'renderer.taskview.edit.confirm': 'Continue',
+    'renderer.taskview.edit.cancel': 'Cancel',
     'renderer.taskview.usage.title': 'Input: ${input}, Output: ${output}, Total: ${total}',
     'renderer.taskview.usage.display': 'Output ${output} words, total ${total} words${ratio}',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',

@@ -1084,7 +1084,7 @@ export class TaskState {
 
     async rewindToUserMessage(
         messageId: string,
-        options: { resubmit?: boolean; source?: string } = {}
+        options: { resubmit?: boolean; source?: string; overrideMessageText?: string } = {}
     ): Promise<{ removedCount: number; resubmitted: boolean; userMessageText: string }> {
         const idx = this.chat_context.messages.findIndex(
             (message) => message.role === 'user' && message.message_id === messageId
@@ -1094,7 +1094,7 @@ export class TaskState {
         }
 
         const userMessage = this.chat_context.messages[idx] as UserMessage;
-        const messageText = userMessage.rawText || userMessage.getPlainText();
+        const messageText = options.overrideMessageText ?? (userMessage.rawText || userMessage.getPlainText());
         const imageDataUris = userMessage.content
             .filter((part): part is ImageMessagePart => part.type === 'image_url')
             .map((part) => part.image_url.url);

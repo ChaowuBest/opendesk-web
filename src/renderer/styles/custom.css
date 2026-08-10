@@ -3313,6 +3313,16 @@ agent-input[hide-disclaimer] .agent-input-footer {
     border-color: var(--chat-bubble-hover-border);
 }
 
+/* User message editing state */
+.od-user-msg.od-user-msg-editing {
+    background: #ffffff;
+    border-color: var(--chat-bubble-hover-border);
+}
+
+.od-user-msg-editing .od-user-msg-editor {
+    color: #1c1917;
+}
+
 /* User bubble inline code */
 .od-user-msg code:not(pre code) {
     font-family: var(--font-mono);
@@ -3322,6 +3332,26 @@ agent-input[hide-disclaimer] .agent-input-footer {
     padding: 0.12em 0.35em;
     border-radius: 4px;
     border: none !important;
+}
+
+/* User message inline editor */
+.od-user-msg-editor {
+    width: 100%;
+    min-height: 1.65em;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--chat-ink2);
+    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+    font-size: var(--fs-base);
+    line-height: 1.65;
+    resize: none;
+    overflow: hidden;
+}
+
+.od-user-msg-editor:focus {
+    outline: none;
 }
 
 .od-user-image-group {

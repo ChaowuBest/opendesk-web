@@ -157,6 +157,11 @@ html[data-theme='dark'],
     font-size: inherit;
     line-height: 1;
 }
+.ctx-icon-sm svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
 .ctx-item:hover .ctx-icon-sm {
     color: var(--ctx-ink2);
 }

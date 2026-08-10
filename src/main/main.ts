@@ -1673,7 +1673,9 @@ const registerTaskManagerAPIHandlers = () => {
         }
         try {
             const result = await task.rewindToUserMessage(messageId, {
-                resubmit: options?.resubmit === true
+                resubmit: options?.resubmit === true,
+                source: options?.source,
+                overrideMessageText: options?.overrideMessageText
             });
             return { status: 'ok', data: result };
         } catch (err: any) {
