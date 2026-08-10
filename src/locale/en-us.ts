@@ -1375,7 +1375,7 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.viewByTimeShort': 'By time',
     'renderer.sidebar.viewByWorkspaceShort': 'By workspace',
     'renderer.sidebar.today': 'Today',
-    'renderer.sidebar.thisWeek': 'This week',
+    'renderer.sidebar.thisWeek': 'Last 7 days',
     'renderer.sidebar.earlier': 'Earlier',
     'renderer.sidebar.otherWorkspaces': 'Other',
     'renderer.sidebar.automaticTasks': 'Automated tasks',

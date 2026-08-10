@@ -1340,7 +1340,7 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.viewByTimeShort': '按时间',
     'renderer.sidebar.viewByWorkspaceShort': '按工作空间',
     'renderer.sidebar.today': '今天',
-    'renderer.sidebar.thisWeek': '本周',
+    'renderer.sidebar.thisWeek': '近7天',
     'renderer.sidebar.earlier': '更早的任务',
     'renderer.sidebar.otherWorkspaces': '其他',
     'renderer.sidebar.automaticTasks': '自动任务',

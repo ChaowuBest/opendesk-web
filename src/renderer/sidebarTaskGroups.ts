@@ -107,13 +107,6 @@ function startOfLocalDay(date: Date): Date {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function startOfLocalWeek(date: Date): Date {
-    const dayStart = startOfLocalDay(date);
-    const daysSinceMonday = (dayStart.getDay() + 6) % 7;
-    dayStart.setDate(dayStart.getDate() - daysSinceMonday);
-    return dayStart;
-}
-
 export function getSidebarRunningTasks(tasks: SidebarTask[], now: Date = new Date()): SidebarTaskTreeItem[] {
     const rootItems = buildRootItems(tasks);
     const runningItems = rootItems
@@ -195,7 +188,7 @@ export function buildSidebarTaskGroups(
     }
 
     const todayStart = startOfLocalDay(now).getTime();
-    const weekStart = startOfLocalWeek(now).getTime();
+    const sevenDaysAgo = todayStart - 7 * 24 * 60 * 60 * 1000;
     const today: SidebarTaskTreeItem[] = [];
     const thisWeek: SidebarTaskTreeItem[] = [];
     const earlier: SidebarTaskTreeItem[] = [];
@@ -204,7 +197,7 @@ export function buildSidebarTaskGroups(
         const activityAt = getTaskActivityTimestamp(item.task);
         if (activityAt >= todayStart) {
             today.push(item);
-        } else if (activityAt >= weekStart) {
+        } else if (activityAt >= sevenDaysAgo) {
             thisWeek.push(item);
         } else {
             earlier.push(item);
