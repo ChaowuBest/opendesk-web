@@ -278,6 +278,25 @@ describe('task-view message queue', () => {
         expect(artifacts.style.width).toBe('75%');
     });
 
+    test('restores the configured width when switching back to a cached task with an expanded sidebar', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _rightSidebarExpanded: boolean;
+            _rightSidebarWidth: number;
+            render: () => void;
+            syncRightSidebarState: () => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView._rightSidebarExpanded = true;
+        taskView._rightSidebarWidth = 512;
+        taskView.render();
+        const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')!;
+        artifacts.style.width = '0px';
+
+        expect(() => taskView.syncRightSidebarState()).not.toThrow();
+        expect(artifacts.style.width).toBe('512px');
+    });
+
     test('emits task status changes for embedded hosts', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

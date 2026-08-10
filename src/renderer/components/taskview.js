@@ -2873,7 +2873,7 @@ class TaskView extends HTMLElement {
         if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
-            rightSidebar.style.width = this._getRightSidebarTargetWidth();
+            rightSidebar.style.width = this._workspaceFocusLayout.getTargetPanelWidth();
             rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);
