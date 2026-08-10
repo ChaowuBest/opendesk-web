@@ -70,8 +70,53 @@ const extraResources = process.platform === 'darwin' ? undefined : [path.join(__
 // in-place during electron-forge package (requires the cert + keychain profile
 // configured locally).
 const SIGN_LOCALLY = process.env.OPENDESK_SIGN_LOCAL === '1';
+const wixInstallerAssets = path.join(__dirname, 'resources', 'package', 'installer');
+const wixInstallPathRegistryKey = 'SOFTWARE\\OpenDesk\\Installer';
+const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR;
+const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
+
+function preserveWixInstallDirectory(creator) {
+    const installPathProperty = / {4}<Property Id="INSTALLPATH">[\s\S]*? {4}<\/Property>/;
+
+    if (!installPathProperty.test(creator.wixTemplate) || typeof creator.getRegistryKeys !== 'function') {
+        throw new Error('electron-wix-msi template no longer exposes the expected install path entries');
+    }
+
+    creator.wixTemplate = creator.wixTemplate.replace(
+        installPathProperty,
+        `    <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
+    <Property Id="INSTALLPATH">
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKCU"
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKCU"
+                      Name="InstallPath"
+                      Win64="{{Win64YesNo}}"/>
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKLM"
+                      Name="InstallPath"
+                      Win64="{{Win64YesNo}}"/>
+    </Property>
+    <SetProperty Action="RestoreInstallDirectory"
+                 Id="APPLICATIONROOTDIRECTORY"
+                 Sequence="first"
+                 Before="CostFinalize"
+                 Value="[INSTALLPATH]">
+      <![CDATA[INSTALLPATH AND NOT APPLICATIONROOTDIRECTORY]]>
+    </SetProperty>`
+    );
+
+    const getRegistryKeys = creator.getRegistryKeys.bind(creator);
+    creator.getRegistryKeys = () =>
+        getRegistryKeys().map((entry) =>
+            entry.id === 'RegistryInstallPath' ? { ...entry, key: wixInstallPathRegistryKey } : entry
+        );
+}
 
 module.exports = {
+    ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
@@ -102,6 +147,7 @@ module.exports = {
         asar: {
             unpack: '**/node_modules/{sharp,@img}/**/*'
         },
+        ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         ...(extraResources ? { extraResource: extraResources } : {}),
         afterPrune: [pruneDarwinAppNativePrebuilds],
         afterCopyExtraResources: [pruneDarwinExtraResources]
@@ -117,13 +163,20 @@ module.exports = {
                 manufacturer: 'OpenDesk Team, Openharmony',
                 description: 'An All-in-One AI Office Suite for Productivity Scenarios',
                 shortcutFolderName: 'OpenDesk',
-                language: 1033,
+                language: 2052,
+                cultures: 'zh-cn',
+                arch: 'x64',
                 upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
+                beforeCreate: preserveWixInstallDirectory,
                 icon: path.join(__dirname, 'resources', 'package', 'icons', 'icon_round.ico'),
-                // electron-wix-msi defaults ui to false (no wizard). Enable WixUI with directory picker,
-                // progress dialog, and finish screen (ExitDialog).
                 ui: {
-                    chooseDirectory: true
+                    chooseDirectory: true,
+                    template: fs.readFileSync(path.join(wixInstallerAssets, 'ui.xml'), 'utf8'),
+                    localizations: [path.join(wixInstallerAssets, 'zh-cn.wxl')],
+                    images: {
+                        background: path.join(wixInstallerAssets, 'dialog.jpg'),
+                        banner: path.join(wixInstallerAssets, 'banner.jpg')
+                    }
                 }
             }
         },

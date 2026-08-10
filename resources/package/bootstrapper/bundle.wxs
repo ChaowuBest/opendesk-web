@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (c) 2026 The OpenDesk Team
+OpenDesk is licensed under Mulan PSL v2.
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+See the Mulan PSL v2 for more details.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+    <Bundle Name="OpenDesk"
+            Version="$(var.BundleVersion)"
+            Manufacturer="OpenDesk Team, Openharmony"
+            UpgradeCode="e7b412c3-02cc-4ed8-9fcb-5d33fe3390e4"
+            IconSourceFile="$(var.IconPath)"
+            Compressed="yes">
+        <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+            <bal:WixStandardBootstrapperApplication
+                LicenseUrl=""
+                ThemeFile="$(var.ThemePath)"
+                LocalizationFile="$(var.LocalizationPath)"
+                LaunchTarget="[InstallFolder]\opendesk.exe"
+                SuppressOptionsUI="no" />
+            <Payload SourceFile="$(var.BackgroundPath)" Name="background.png" />
+            <Payload SourceFile="$(var.FeatureRowsPath)" Name="feature-rows.png" />
+            <Payload SourceFile="$(var.ProgressPath)" Name="progress.png" />
+        </BootstrapperApplicationRef>
+
+        <Variable Name="InstallFolder"
+                  Type="string"
+                  Value="[ProgramFiles64Folder]OpenDesk"
+                  bal:Overridable="yes" />
+        <util:RegistrySearch Id="FindPreviousInstallFolder"
+                             Variable="PreviousInstallFolder"
+                             Root="HKLM"
+                             Key="SOFTWARE\OpenDesk\Installer"
+                             Value="InstallPath"
+                             Result="value"
+                             Format="raw"
+                             Win64="yes" />
+        <util:RegistrySearch Id="RestorePreviousInstallFolder"
+                             Variable="InstallFolder"
+                             Condition="PreviousInstallFolder"
+                             After="FindPreviousInstallFolder"
+                             Root="HKLM"
+                             Key="SOFTWARE\OpenDesk\Installer"
+                             Value="InstallPath"
+                             Result="value"
+                             Format="raw"
+                             Win64="yes" />
+
+        <Chain>
+            <MsiPackage Id="OpenDeskMsi"
+                        SourceFile="$(var.MsiPath)"
+                        DisplayInternalUI="no"
+                        Visible="no"
+                        Vital="yes">
+                <MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="[InstallFolder]" />
+            </MsiPackage>
+        </Chain>
+    </Bundle>
+</Wix>

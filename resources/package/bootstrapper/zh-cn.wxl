@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (c) 2026 The OpenDesk Team
+OpenDesk is licensed under Mulan PSL v2.
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+See the Mulan PSL v2 for more details.
+-->
+<WixLocalization Culture="zh-cn" Language="2052" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+    <String Id="Caption">OpenDesk 安装程序</String>
+    <String Id="Title">OpenDesk</String>
+    <String Id="BrandCopy">把智能工作台带到你的桌面，让模型、文件与自动化任务在一个空间中协同工作。</String>
+    <String Id="StepPrepare">准备安装</String>
+    <String Id="StepInstall">正在安装</String>
+    <String Id="StepComplete">安装完成</String>
+    <String Id="InstallEyebrow">版本 [WixBundleVersion] · Windows x64</String>
+    <String Id="InstallHeader">欢迎安装 OpenDesk</String>
+    <String Id="InstallMessage">安装程序将把 OpenDesk 部署到这台电脑。你可以先在“安装选项”中选择任意本地磁盘。</String>
+    <String Id="InstallVersion">OpenDesk [WixBundleVersion] · Windows x64</String>
+    <String Id="InstallLocationPreview">可在“安装选项”中查看或更改安装路径。</String>
+    <String Id="FeatureNumber1">01</String>
+    <String Id="FeatureNumber2">02</String>
+    <String Id="FeatureNumber3">03</String>
+    <String Id="FeatureWorkspaceTitle">统一工作空间</String>
+    <String Id="FeatureWorkspaceText">集中管理对话、文件与智能工具</String>
+    <String Id="FeatureLocalTitle">本地优先</String>
+    <String Id="FeatureLocalText">工作数据保留在你的设备与工作区中</String>
+    <String Id="FeatureExtendTitle">灵活扩展</String>
+    <String Id="FeatureExtendText">连接模型、MCP 服务与自动化流程</String>
+    <String Id="InstallLicenseLinkText"></String>
+    <String Id="InstallAcceptCheckbox"></String>
+    <String Id="InstallOptionsButton">安装选项</String>
+    <String Id="InstallInstallButton">开始安装</String>
+    <String Id="InstallCloseButton">退出安装</String>
+    <String Id="OptionsEyebrow">安装选项</String>
+    <String Id="OptionsHeader">选择安装位置</String>
+    <String Id="OptionsMessage">输入或浏览一个文件夹。固定磁盘、移动磁盘和其他可写盘符均可使用。</String>
+    <String Id="OptionsLocationLabel">安装位置：</String>
+    <String Id="OptionsDriveHint">例如：E:\OpenDesk。安装前会由 Windows Installer 校验磁盘与目录权限。</String>
+    <String Id="OptionsBrowseButton">浏览...</String>
+    <String Id="OptionsOkButton">保存选项</String>
+    <String Id="OptionsCancelButton">返回</String>
+    <String Id="ProgressHeader">正在安装 OpenDesk</String>
+    <String Id="ProgressMessage">正在写入应用文件并注册 Windows Installer 信息，请保持安装程序运行。</String>
+    <String Id="ProgressLabel">当前进度</String>
+    <String Id="OverallProgressPackageText">正在准备...</String>
+    <String Id="ProgressCancelButton">取消安装</String>
+    <String Id="ModifyHeader">维护 OpenDesk</String>
+    <String Id="ModifyMessage">你可以修复当前安装，或从这台电脑卸载 OpenDesk。</String>
+    <String Id="ModifyRepairButton">修复</String>
+    <String Id="ModifyUninstallButton">卸载</String>
+    <String Id="ModifyCloseButton">关闭</String>
+    <String Id="SuccessHeader">操作已完成</String>
+    <String Id="SuccessInstallHeader">OpenDesk 已准备就绪</String>
+    <String Id="SuccessRepairHeader">OpenDesk 修复完成</String>
+    <String Id="SuccessUninstallHeader">OpenDesk 已卸载</String>
+    <String Id="SuccessMessage">安装程序已完成所有操作。</String>
+    <String Id="SuccessLaunchButton">打开 OpenDesk</String>
+    <String Id="SuccessRestartText">需要重新启动 Windows 才能完成操作。</String>
+    <String Id="SuccessRestartButton">立即重启</String>
+    <String Id="SuccessCloseButton">完成</String>
+    <String Id="FailureHeader">操作未完成</String>
+    <String Id="FailureInstallHeader">安装未完成</String>
+    <String Id="FailureUninstallHeader">卸载未完成</String>
+    <String Id="FailureRepairHeader">修复未完成</String>
+    <String Id="FailureHyperlinkLogText">安装程序遇到问题。请查看&lt;a href="#"&gt;安装日志&lt;/a&gt;了解详细信息。</String>
+    <String Id="FailureRestartText">需要重新启动 Windows 才能完成回滚。</String>
+    <String Id="FailureRestartButton">立即重启</String>
+    <String Id="FailureCloseButton">关闭</String>
+    <String Id="FilesInUseHeader">OpenDesk 正在运行</String>
+    <String Id="FilesInUseLabel">以下程序正在使用需要更新的文件：</String>
+    <String Id="FilesInUseCloseRadioButton">关闭这些程序，并在安装后尝试重新打开。</String>
+    <String Id="FilesInUseDontCloseRadioButton">暂不关闭，稍后重新启动 Windows。</String>
+    <String Id="FilesInUseOkButton">继续</String>
+    <String Id="FilesInUseCancelButton">取消</String>
+    <String Id="HelpHeader">安装程序帮助</String>
+    <String Id="HelpText">/install 安装 OpenDesk&#xA;/repair 修复安装&#xA;/uninstall 卸载 OpenDesk&#xA;/quiet 静默运行&#xA;/log &lt;路径&gt; 指定日志文件</String>
+    <String Id="HelpCloseButton">关闭</String>
+    <String Id="ConfirmCancelMessage">确定要取消当前操作吗？</String>
+    <String Id="ExecuteUpgradeRelatedBundleMessage">正在处理旧版本</String>
+    <String Id="ErrorFailNoActionReboot">Windows 需要重新启动，当前操作未执行。</String>
+</WixLocalization>
