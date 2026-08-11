@@ -1694,7 +1694,18 @@ class AgentGateEntryWidget extends HTMLElement {
         const panel = this.shadow.querySelector('#ag-console') as HTMLElement;
         if (!panel) return;
 
-        // 先检测 moss 服务连通性，连通才注入 iframe，否则显示不可用 + 重新加载
+        // 先检查总开关状态：关闭时与实时状态一致地提示开启总开关，
+        // 而不是显示"策略控制台不可用"（那是总开关开启但连不上时的内容）。
+        let enabled = true;
+        try {
+            enabled = await (window as any).applicationAPI?.callMainWorld('getEnabled');
+        } catch {}
+        if (enabled === false) {
+            panel.innerHTML = emptyDashboardHTML();
+            return;
+        }
+
+        // 总开关已开启，再检测 moss 服务连通性，连通才注入 iframe，否则显示不可用 + 重新加载
         let url: string | null = null;
         let port = 0;
         try {
