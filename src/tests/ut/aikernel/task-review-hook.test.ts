@@ -1,17 +1,17 @@
 import { jest } from '@jest/globals';
-import { HookRegistry } from '../../../main/aikernel/hooks.js';
+import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { AssistantMessage, ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 
 function resetHookRegistry(): void {
-    HookRegistry.beforeFinishTurnCallbacks = [];
-    HookRegistry.afterFinishTurnCallbacks = [];
-    HookRegistry.beforeTaskStartCallbacks = [];
-    HookRegistry.onTaskReviewCallbacks = [];
-    HookRegistry.onTaskRevertCallbacks = [];
-    HookRegistry.afterParseToolcallCallbacks = [];
-    HookRegistry.beforeToolCallCallbacks = [];
-    HookRegistry.afterToolCallCallbacks = [];
+    GlobalHooks.beforeFinishTurnHooks = [];
+    GlobalHooks.afterFinishTurnHooks = [];
+    GlobalHooks.beforeTaskStartHooks = [];
+    GlobalHooks.onTaskReviewHooks = [];
+    GlobalHooks.onTaskRevertHooks = [];
+    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.beforeToolCallHooks = [];
+    GlobalHooks.afterToolCallHooks = [];
 }
 
 describe('onTaskReview hook', () => {
@@ -42,7 +42,7 @@ describe('onTaskReview hook', () => {
             receivedTasks.push(receivedTask);
             startIndexes.push(start_message_index);
         });
-        HookRegistry.onTaskReview((receivedTask, start_message_index) => {
+        GlobalHooks.onTaskReview((receivedTask, start_message_index) => {
             calls.push('global');
             receivedTasks.push(receivedTask);
             startIndexes.push(start_message_index);
@@ -70,7 +70,7 @@ describe('onTaskReview hook', () => {
         task.hooks.onTaskReview(() => {
             calls.push('task-noop');
         });
-        HookRegistry.onTaskReview(() => {
+        GlobalHooks.onTaskReview(() => {
             calls.push('global-started');
             return true;
         });
@@ -90,7 +90,7 @@ describe('onTaskReview hook', () => {
     test('preserves the earliest review start index across interactions in the same idle window', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();
-        HookRegistry.onTaskReview(callback);
+        GlobalHooks.onTaskReview(callback);
 
         task.recordTaskInteraction();
         task.chat_context.appendMessage(new UserMessage('message A'));
@@ -114,7 +114,7 @@ describe('onTaskReview hook', () => {
     test('resets the idle window when a new user or assistant message is appended', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();
-        HookRegistry.onTaskReview(callback);
+        GlobalHooks.onTaskReview(callback);
 
         task.recordTaskInteraction();
         task.chat_context.appendMessage(new UserMessage('hello'));
@@ -151,7 +151,7 @@ describe('onTaskReview hook', () => {
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
         const processTurnSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
         const callback = jest.fn();
-        HookRegistry.onTaskReview(callback);
+        GlobalHooks.onTaskReview(callback);
 
         await task.submitUserMessage('new input');
 
@@ -170,7 +170,7 @@ describe('onTaskReview hook', () => {
     test('continues observing messages after chat_context is replaced', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();
-        HookRegistry.onTaskReview(callback);
+        GlobalHooks.onTaskReview(callback);
 
         task.chat_context = new ChatContext();
         task.recordTaskInteraction();

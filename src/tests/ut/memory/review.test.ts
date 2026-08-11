@@ -3,7 +3,7 @@
  */
 
 import { jest } from '@jest/globals';
-import { HookRegistry } from '../../../main/aikernel/hooks';
+import { GlobalHooks } from '../../../main/aikernel/hooks';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import {
@@ -36,13 +36,13 @@ function createReviewOptions() {
 }
 
 function resetHookRegistry(): void {
-    HookRegistry.beforeFinishTurnCallbacks = [];
-    HookRegistry.afterFinishTurnCallbacks = [];
-    HookRegistry.beforeTaskStartCallbacks = [];
-    HookRegistry.onTaskReviewCallbacks = [];
-    HookRegistry.afterParseToolcallCallbacks = [];
-    HookRegistry.beforeToolCallCallbacks = [];
-    HookRegistry.afterToolCallCallbacks = [];
+    GlobalHooks.beforeFinishTurnHooks = [];
+    GlobalHooks.afterFinishTurnHooks = [];
+    GlobalHooks.beforeTaskStartHooks = [];
+    GlobalHooks.onTaskReviewHooks = [];
+    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.beforeToolCallHooks = [];
+    GlobalHooks.afterToolCallHooks = [];
 }
 
 afterEach(() => {
@@ -56,7 +56,7 @@ describe('联合长期记忆回顾', () => {
         registerMemoryReviewHook(options);
         registerMemoryReviewHook(options);
 
-        expect(HookRegistry.onTaskReviewCallbacks).toHaveLength(1);
+        expect(GlobalHooks.onTaskReviewHooks).toHaveLength(1);
     });
 
     test('联合 system prompt 同时维护用户画像和关键事实记忆', () => {

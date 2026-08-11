@@ -12,7 +12,7 @@
 import type { TaskState } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart } from '../messages.js';
-import { HookRegistry } from '../hooks.js';
+import { GlobalHooks } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import { checkTermination } from '../termination.js';
 import { logger } from '../../utils/logger.js';
@@ -260,7 +260,7 @@ export function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
  * - 检查待办事项是否都已完成
  */
 export function registerMainTaskTerminationHook(): void {
-    HookRegistry.beforeFinishTurn(async (task, modelRequestOptions) => {
+    GlobalHooks.beforeFinishTurn(async (task, modelRequestOptions) => {
         // 只处理主任务（没有 parent_id）
         if (task.parent_id !== null) {
             return { operation: 'finish' };

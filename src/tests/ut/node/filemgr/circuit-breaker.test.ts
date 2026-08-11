@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HookRegistry } from '../../../../main/aikernel/hooks.js';
+import { GlobalHooks } from '../../../../main/aikernel/hooks.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
 
 function makeToolCall(name: string, args: Record<string, unknown>, status: ToolCall['status'], result = ''): ToolCall {
@@ -14,8 +14,8 @@ function makeToolCall(name: string, args: Record<string, unknown>, status: ToolC
 test('a failed read does not reset the repeated-edit circuit breaker', async () => {
     await import('../../../../main/applications/filemgr/harness/circuit-breaker.js');
 
-    const beforeToolCall = HookRegistry.beforeToolCallCallbacks.at(-1);
-    const afterToolCall = HookRegistry.afterToolCallCallbacks.at(-1);
+    const beforeToolCall = GlobalHooks.beforeToolCallHooks.at(-1)?.callback;
+    const afterToolCall = GlobalHooks.afterToolCallHooks.at(-1)?.callback;
     assert.ok(beforeToolCall);
     assert.ok(afterToolCall);
 
@@ -50,8 +50,8 @@ test('a failed read does not reset the repeated-edit circuit breaker', async () 
 test('a successful read resets the repeated-edit circuit breaker for that file', async () => {
     await import('../../../../main/applications/filemgr/harness/circuit-breaker.js');
 
-    const beforeToolCall = HookRegistry.beforeToolCallCallbacks.at(-1);
-    const afterToolCall = HookRegistry.afterToolCallCallbacks.at(-1);
+    const beforeToolCall = GlobalHooks.beforeToolCallHooks.at(-1)?.callback;
+    const afterToolCall = GlobalHooks.afterToolCallHooks.at(-1)?.callback;
     assert.ok(beforeToolCall);
     assert.ok(afterToolCall);
 

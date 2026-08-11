@@ -14,10 +14,10 @@
 
 import './circuit-breaker.js';
 
-import { HookRegistry } from '../../../aikernel/hooks.js';
+import { GlobalHooks } from '../../../aikernel/hooks.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 
 // 任务回退时清除文件读取缓存，避免"文件未变化"误判导致内容缺失。
-HookRegistry.onTaskRevert((task: TaskState) => {
+GlobalHooks.onTaskRevert((task: TaskState) => {
     task.resetFileReadState();
 });

@@ -21,7 +21,7 @@
  * AgentGate 地址可通过环境变量 AGENT_GATE_URL 配置，默认 http://127.0.0.1:9100
  */
 
-import { HookRegistry, type BeforeToolCallFeedback } from '../../aikernel/hooks.js';
+import { GlobalHooks, type BeforeToolCallFeedback } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import { Setting } from '../../utils/setting.js';
@@ -866,7 +866,7 @@ export function initAgentGateHook(): void {
 
     // Hook 始终注册，运行时由 onBeforeToolCall 内的 isSecurityGatewayEnabled() 决定是否执行
     // 未启用时静默跳过：不记录、不触发 AgentMoss、不推送通知
-    HookRegistry.beforeToolCall(onBeforeToolCall);
+    GlobalHooks.beforeToolCall(onBeforeToolCall);
 
     // 延迟推送通知（仅安全网关总开关已启用时）
     setTimeout(() => {

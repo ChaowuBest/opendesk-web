@@ -12,7 +12,7 @@
  * 在 filemgr 应用启动时导入本模块即可自动注册。
  */
 
-import { HookRegistry } from '../../../aikernel/hooks.js';
+import { GlobalHooks } from '../../../aikernel/hooks.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
 import type { ToolCall } from '../../../aikernel/messages.js';
 import { logger } from '../../../utils/logger.js';
@@ -88,13 +88,13 @@ function getBreaker(task: TaskState): TurnCircuitBreaker {
 
 // --- beforeTurnStart：重置该任务的熔断器 ---
 
-HookRegistry.beforeTurnStart((task: TaskState) => {
+GlobalHooks.beforeTurnStart((task: TaskState) => {
     getBreaker(task).reset();
 });
 
 // --- beforeToolCall：检测 editFile 重复 ---
 
-HookRegistry.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
+GlobalHooks.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
     if (tool_call.tool_name !== 'filemgr-editFile') return { operation: 'allow' as const };
 
     const args = tool_call.args_object as { filePath?: string; oldString?: string } | undefined;
@@ -111,7 +111,7 @@ HookRegistry.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
 
 // --- afterToolCall：检测 readFile file_unchanged 连续 ---
 
-HookRegistry.afterToolCall((task: TaskState, tool_call: ToolCall) => {
+GlobalHooks.afterToolCall((task: TaskState, tool_call: ToolCall) => {
     if (tool_call.tool_name !== 'filemgr-readFile' || !tool_call.result) return;
 
     if (tool_call.status !== 'success') {

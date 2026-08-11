@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
-import { HookRegistry } from '../../../main/aikernel/hooks';
+import { GlobalHooks } from '../../../main/aikernel/hooks';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import { formatUserPortraitSection } from '../../../main/aikernel/agents/main/agent';
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 afterEach(() => {
     jest.useRealTimers();
-    HookRegistry.onTaskReviewCallbacks = [];
+    GlobalHooks.onTaskReviewHooks = [];
     if (testDir && fs.existsSync(testDir)) {
         fs.rmSync(testDir, { recursive: true, force: true });
     }
@@ -115,13 +115,13 @@ describe('用户画像记忆', () => {
 
     test('取消 pending task review 后不会触发 onTaskReview', async () => {
         jest.useFakeTimers();
-        HookRegistry.onTaskReviewCallbacks = [];
+        GlobalHooks.onTaskReviewHooks = [];
         const originalIdleMs = TaskState.TASK_REVIEW_IDLE_MS;
         TaskState.TASK_REVIEW_IDLE_MS = 1000;
 
         try {
             const callback = jest.fn();
-            HookRegistry.onTaskReview(callback);
+            GlobalHooks.onTaskReview(callback);
 
             const task = new TaskState(new TaskManagerState());
             task.recordTaskInteraction();

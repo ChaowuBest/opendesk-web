@@ -7,7 +7,7 @@ import {
     readTaskSessionMemory,
     type SessionMemoryUpdateRequest
 } from '../../../main/aikernel/compaction/session-memory-compact';
-import { HookRegistry } from '../../../main/aikernel/hooks';
+import { GlobalHooks } from '../../../main/aikernel/hooks';
 import { AssistantMessage, ChatContext, Usage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
@@ -29,11 +29,11 @@ function cleanupTempAppDirectory(): void {
 }
 
 function resetHookRegistry(): void {
-    HookRegistry.beforeFinishTurnCallbacks = [];
-    HookRegistry.afterFinishTurnCallbacks = [];
-    HookRegistry.onTaskReviewCallbacks = [];
-    HookRegistry.beforeToolCallCallbacks = [];
-    HookRegistry.afterToolCallCallbacks = [];
+    GlobalHooks.beforeFinishTurnHooks = [];
+    GlobalHooks.afterFinishTurnHooks = [];
+    GlobalHooks.onTaskReviewHooks = [];
+    GlobalHooks.beforeToolCallHooks = [];
+    GlobalHooks.afterToolCallHooks = [];
 }
 
 function validSessionMemory(content = 'Background session memory updated.'): string {

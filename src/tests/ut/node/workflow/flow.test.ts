@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { TaskHooks } from '../../../../main/aikernel/hooks.js';
+import { GlobalHooks } from '../../../../main/aikernel/hooks.js';
 import {
     AssistantMessage,
     ChatContext,
@@ -117,7 +117,7 @@ test('AuthorWorkflow, ListWorkflows, and RunWorkflow preserve a Task-local defin
         task_id: 'task-flow',
         chat_context: new ChatContext(),
         disabledTools: [],
-        hooks: new TaskHooks(),
+        hooks: GlobalHooks.createChildHooks(),
         stop: () => undefined,
         task_manager_state: {
             toolsetProvider: {

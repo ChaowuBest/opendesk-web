@@ -11,7 +11,7 @@
 
 import { ChatContext, ToolCall } from './messages.js';
 import { logger } from '../utils/logger.js';
-import { HookRegistry } from './hooks.js';
+import { GlobalHooks } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { countNonBoundaryMessages } from './compaction/context-view.js';
 import { getAutoCompactDecision } from './compaction/auto-compact.js';
@@ -198,4 +198,4 @@ function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall
     }
 }
 
-HookRegistry.afterToolCall(afterToolCallLargeResultToArtifact);
+GlobalHooks.afterToolCall(afterToolCallLargeResultToArtifact);

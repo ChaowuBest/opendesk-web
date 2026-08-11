@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
-import { HookRegistry } from '../../../main/aikernel/hooks.js';
+import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { GoalController, getGoalTokenUsage } from '../../../main/aikernel/goal/controller.js';
 import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
 import { registerGoalHooks } from '../../../main/aikernel/goal/hooks.js';
@@ -60,16 +60,16 @@ function cleanupTempAppDirectory(): void {
 }
 
 function resetHookRegistry(): void {
-    HookRegistry.beforeFinishTurnCallbacks = [];
-    HookRegistry.afterFinishTurnCallbacks = [];
-    HookRegistry.beforeTaskStartCallbacks = [];
-    HookRegistry.onTaskReviewCallbacks = [];
-    HookRegistry.onTaskRevertCallbacks = [];
-    HookRegistry.afterParseToolcallCallbacks = [];
-    HookRegistry.beforeToolCallCallbacks = [];
-    HookRegistry.afterToolCallCallbacks = [];
-    HookRegistry.beforeTurnStartCallbacks = [];
-    HookRegistry.afterProcessCompletionCallbacks = [];
+    GlobalHooks.beforeFinishTurnHooks = [];
+    GlobalHooks.afterFinishTurnHooks = [];
+    GlobalHooks.beforeTaskStartHooks = [];
+    GlobalHooks.onTaskReviewHooks = [];
+    GlobalHooks.onTaskRevertHooks = [];
+    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.beforeToolCallHooks = [];
+    GlobalHooks.afterToolCallHooks = [];
+    GlobalHooks.beforeTurnStartHooks = [];
+    GlobalHooks.afterProcessCompletionHooks = [];
 }
 
 function createTask(): TaskState {
@@ -1676,7 +1676,7 @@ describe('goal controller and scheduler', () => {
         });
     });
 
-    test('beforeFinishTurn priority orders task-local and global hooks together', async () => {
+    test('beforeFinishTurn priority orders task-local and global hooks within their own layer', async () => {
         const task = createTask();
         const calls: string[] = [];
         task.hooks.beforeFinishTurn(
@@ -1686,7 +1686,7 @@ describe('goal controller and scheduler', () => {
             },
             { priority: 400 }
         );
-        HookRegistry.beforeFinishTurn(
+        GlobalHooks.beforeFinishTurn(
             async () => {
                 calls.push('global-early');
                 return { operation: 'finish' };
@@ -1696,7 +1696,8 @@ describe('goal controller and scheduler', () => {
 
         await task.hooks.checkBeforeFinishTurn(task);
 
-        expect(calls).toEqual(['global-early', 'task-late']);
+        // task-level 始终先于 global-level，各自内部按 priority 升序
+        expect(calls).toEqual(['task-late', 'global-early']);
     });
 
     test('goal_eval chunk omits nextPrompt while evaluator nextPrompt drives continuation', async () => {
@@ -1845,7 +1846,7 @@ describe('goal controller and scheduler', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
         const goal = task.goal_state!;
-        HookRegistry.beforeFinishTurn(async () => ({ operation: 'reject', message: 'todo incomplete' }));
+        GlobalHooks.beforeFinishTurn(async () => ({ operation: 'reject', message: 'todo incomplete' }));
         const evaluateSpy = jest.spyOn(GoalEvaluator, 'evaluate').mockResolvedValue({
             goalId: goal.id,
             goalRevision: goal.revision,

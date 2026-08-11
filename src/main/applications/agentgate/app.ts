@@ -16,7 +16,7 @@ import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { attributeBatchInterceptions, confidenceWeight, sortByConfidenceDesc } from './skillAttribution.js';
 import { readInterceptionRecords } from '../skillmgr/blacklist.js';
-import { HookRegistry } from '../../aikernel/hooks.js';
+import { GlobalHooks } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
 import { logger } from '../../utils/logger.js';
@@ -594,7 +594,7 @@ class AgentGateApplication extends BaseApplication {
      * @param notify  IPC 事件推送函数，由 main.ts 注入（持有 globalMainWindow）
      */
     registerGuiHooks(notify: (channel: string, payload: object) => void): void {
-        HookRegistry.afterFinishTurn(async (task) => {
+        GlobalHooks.afterFinishTurn(async (task) => {
             if (task.task_status !== 'stopped') return;
             await this.analyzeAndPromptMaliciousSkills(task, {
                 onAttributionStart: (taskId: string) => notify('agentgate:attributionStart', { taskId }),
@@ -609,7 +609,7 @@ class AgentGateApplication extends BaseApplication {
      * CLI 无 GUI 弹窗通道，仅做轻量级文本输出。
      */
     registerCliHooks(): void {
-        HookRegistry.afterFinishTurn(async (task) => {
+        GlobalHooks.afterFinishTurn(async (task) => {
             if (task.task_status !== 'stopped') return;
             const allRecords = readInterceptionRecords(task.task_id);
             if (allRecords.length === 0) return;

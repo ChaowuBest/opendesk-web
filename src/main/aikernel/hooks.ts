@@ -61,6 +61,18 @@ import { logger } from '../utils/logger.js';
  * 3. 典型用途：工具调用数量限制、重复工具调用检测（模型死循环检测）等。
  ******************************************************************************/
 
+/******************************************************************************
+ * Hooks 调度模型
+ * ------------------------
+ * 1. Hooks 类支持多级继承，通过 parent 链形成父子关系。
+ * 2. 调度时先按 priority 升序执行本层全部钩子，再递交给 parent 继续执行。
+ *    priority 越小越先执行，相同 priority 按注册顺序执行。
+ * 3. check 类钩子（返回 reject/deny 的）会在第一次拒绝时短路返回；
+ *    notice 类钩子（无返回值的）始终全部执行。
+ * 4. 系统中存在一个全局实例 GlobalHooks，每个任务通过 createChildHooks()
+ *    创建任务级钩子实例，其 parent 指向 GlobalHooks。
+ ******************************************************************************/
+
 type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
 
 type BeforeToolcallCreatedFeedback = { operation: 'accept' } | { operation: 'reject'; message: string };
@@ -104,73 +116,77 @@ type BeforeToolcallCreatedCallback = (
     requestToolCalls: readonly ToolCall[]
 ) => Promise<BeforeToolcallCreatedFeedback>;
 
-export interface HookRegistrationOptions {
+/** 钩子注册选项；priority 范围 [0, 65535]，缺省为 0；priority 越小越先执行 */
+export interface HookOptions {
     priority?: number;
-    phase?: string;
 }
 
-type BeforeFinishTurnRegistration =
-    | BeforeFinishTurnCallback
-    | {
-          callback: BeforeFinishTurnCallback;
-          priority: number;
-          phase?: string;
-          scope: 'task' | 'global';
-          order: number;
-      };
+/** 钩子条目：包含 callback 与解析后的 options */
+export interface Hook<CallbackTy> {
+    callback: CallbackTy;
+    options: Required<HookOptions>;
+}
 
-function normalizeBeforeFinishRegistration(
-    item: BeforeFinishTurnRegistration,
-    scope: 'task' | 'global',
-    fallbackOrder: number
-): {
-    callback: BeforeFinishTurnCallback;
-    priority: number;
-    phase?: string;
-    scope: 'task' | 'global';
-    order: number;
-} {
-    if (typeof item === 'function') {
-        return { callback: item, priority: 500, scope, order: fallbackOrder };
+const MAX_HOOK_PRIORITY = 65535;
+
+/** 解析 HookOptions，做范围校验；越界时截断到 [0, 65535] 并记录警告 */
+function resolveHookOptions(options?: HookOptions): Required<HookOptions> {
+    let priority = options?.priority ?? 0;
+    if (!Number.isInteger(priority) || priority < 0 || priority > MAX_HOOK_PRIORITY) {
+        logger.warn(`Hook priority ${priority} is out of range [0, ${MAX_HOOK_PRIORITY}], clamping to valid range`);
+        if (!Number.isFinite(priority)) {
+            priority = 0;
+        } else {
+            priority = Math.trunc(priority);
+            priority = Math.max(0, Math.min(MAX_HOOK_PRIORITY, priority));
+        }
     }
-    return {
-        callback: item.callback,
-        priority: typeof item.priority === 'number' ? item.priority : 500,
-        phase: item.phase,
-        scope: item.scope ?? scope,
-        order: typeof item.order === 'number' ? item.order : fallbackOrder
-    };
+    return { priority };
 }
 
-function sortBeforeFinishRegistrations(
-    registrations: Array<{
-        callback: BeforeFinishTurnCallback;
-        priority: number;
-        phase?: string;
-        scope: 'task' | 'global';
-        order: number;
-    }>
-) {
-    return registrations.sort((left, right) => {
-        if (left.priority !== right.priority) return left.priority - right.priority;
-        if (left.scope !== right.scope) return left.scope === 'task' ? -1 : 1;
-        return left.order - right.order;
-    });
+/** 将钩子数组按 priority 升序排序（稳定排序：相同 priority 保持注册顺序） */
+function sortHooks<T>(hooks: Hook<T>[]): Hook<T>[] {
+    return [...hooks].sort((a, b) => a.options.priority - b.options.priority);
 }
 
-/** 全局钩子注册表，与 TaskHooks 钩子种类一致；由 TaskHooks 内部在任务级之后调用，顺序为任务级 → 全局 */
-export class HookRegistry {
-    static beforeFinishTurnCallbacks: BeforeFinishTurnRegistration[] = [];
-    static afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
-    static beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
-    static onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
-    static onTaskRevertCallbacks: OnTaskRevertCallback[] = [];
-    static afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
-    static beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
-    static afterToolCallCallbacks: AfterToolCallCallback[] = [];
-    static beforeTurnStartCallbacks: BeforeTurnStartCallback[] = [];
-    static afterProcessCompletionCallbacks: AfterProcessCompletionCallback[] = [];
-    static beforeToolcallCreatedCallbacks: BeforeToolcallCreatedCallback[] = [];
+/**
+ * 钩子容器：支持多级继承关系。
+ *
+ * - 调度时先按 priority 升序执行本层全部钩子，再递交给 parent 继续执行。
+ * - priority 越小越先执行，相同 priority 按注册顺序执行。
+ * - check 类钩子在第一次拒绝时短路返回；notice 类钩子始终全部执行。
+ *
+ * 全局唯一实例 GlobalHooks 通过 Hooks.createGlobal() 创建；
+ * 任务级钩子通过 GlobalHooks.createChildHooks() 创建，其 parent 指向 GlobalHooks。
+ */
+export class Hooks {
+    private readonly parent: Hooks | undefined;
+
+    beforeFinishTurnHooks: Hook<BeforeFinishTurnCallback>[] = [];
+    afterFinishTurnHooks: Hook<AfterFinishTurnCallback>[] = [];
+    beforeTaskStartHooks: Hook<BeforeTaskStartCallback>[] = [];
+    onTaskReviewHooks: Hook<OnTaskReviewCallback>[] = [];
+    onTaskRevertHooks: Hook<OnTaskRevertCallback>[] = [];
+    afterParseToolcallHooks: Hook<AfterParseToolcallCallback>[] = [];
+    beforeToolCallHooks: Hook<BeforeToolCallCallback>[] = [];
+    afterToolCallHooks: Hook<AfterToolCallCallback>[] = [];
+    beforeTurnStartHooks: Hook<BeforeTurnStartCallback>[] = [];
+    afterProcessCompletionHooks: Hook<AfterProcessCompletionCallback>[] = [];
+    beforeToolcallCreatedHooks: Hook<BeforeToolcallCreatedCallback>[] = [];
+
+    private constructor(parent?: Hooks) {
+        this.parent = parent;
+    }
+
+    /** 创建全局 Hooks 实例（无 parent） */
+    static createGlobal(): Hooks {
+        return new Hooks(undefined);
+    }
+
+    /** 创建一个子 Hooks 实例，其 parent 指向当前实例 */
+    createChildHooks(): Hooks {
+        return new Hooks(this);
+    }
 
     /**
      * 注册 `beforeFinishTurn` 钩子。
@@ -182,14 +198,8 @@ export class HookRegistry {
      *
      * 典型用途：确保任务以特定工具结尾（如 attemptCompletion），或检测未完成的待办事项强制继续。
      */
-    static beforeFinishTurn(callback: BeforeFinishTurnCallback, options: HookRegistrationOptions = {}): void {
-        this.beforeFinishTurnCallbacks.push({
-            callback,
-            priority: options.priority ?? 500,
-            phase: options.phase,
-            scope: 'global',
-            order: this.beforeFinishTurnCallbacks.length
-        });
+    beforeFinishTurn(callback: BeforeFinishTurnCallback, options?: HookOptions): void {
+        this.beforeFinishTurnHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -200,8 +210,8 @@ export class HookRegistry {
      *
      * 典型用途：记录日志、统计、触发后续异步任务（如会话记忆提取）。
      */
-    static afterFinishTurn(callback: AfterFinishTurnCallback): void {
-        this.afterFinishTurnCallbacks.push(callback);
+    afterFinishTurn(callback: AfterFinishTurnCallback, options?: HookOptions): void {
+        this.afterFinishTurnHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -212,8 +222,8 @@ export class HookRegistry {
      *
      * 典型用途：在任务开始前注入额外的系统消息或进行初始化配置。
      */
-    static beforeTaskStart(callback: BeforeTaskStartCallback): void {
-        this.beforeTaskStartCallbacks.push(callback);
+    beforeTaskStart(callback: BeforeTaskStartCallback, options?: HookOptions): void {
+        this.beforeTaskStartHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -225,8 +235,8 @@ export class HookRegistry {
      *
      * 典型用途：为任务提供自动审查 / 代码审查能力。
      */
-    static onTaskReview(callback: OnTaskReviewCallback): void {
-        this.onTaskReviewCallbacks.push(callback);
+    onTaskReview(callback: OnTaskReviewCallback, options?: HookOptions): void {
+        this.onTaskReviewHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -238,8 +248,8 @@ export class HookRegistry {
      *
      * 典型用途：清理回退相关的临时状态、记录审计日志。
      */
-    static onTaskRevert(callback: OnTaskRevertCallback): void {
-        this.onTaskRevertCallbacks.push(callback);
+    onTaskRevert(callback: OnTaskRevertCallback, options?: HookOptions): void {
+        this.onTaskRevertHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -255,8 +265,8 @@ export class HookRegistry {
      *
      * 典型用途：安全审查、参数合规性校验、在解析阶段提前拦截高风险工具调用。
      */
-    static afterParseToolcall(callback: AfterParseToolcallCallback): void {
-        this.afterParseToolcallCallbacks.push(callback);
+    afterParseToolcall(callback: AfterParseToolcallCallback, options?: HookOptions): void {
+        this.afterParseToolcallHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -269,8 +279,8 @@ export class HookRegistry {
      *
      * 典型用途：安全拦截（AgentGate）、循环检测（电路断路器）、参数审计。
      */
-    static beforeToolCall(callback: BeforeToolCallCallback): void {
-        this.beforeToolCallCallbacks.push(callback);
+    beforeToolCall(callback: BeforeToolCallCallback, options?: HookOptions): void {
+        this.beforeToolCallHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -283,17 +293,18 @@ export class HookRegistry {
      *
      * 典型用途：结果后处理（摘要、索引）、观测（性能埋点）、循环检测（readFile unchanged 计数）。
      */
-    static afterToolCall(callback: AfterToolCallCallback): void {
-        this.afterToolCallCallbacks.push(callback);
+    afterToolCall(callback: AfterToolCallCallback, options?: HookOptions): void {
+        this.afterToolCallHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /** 按裸工具名或带 bundle 前缀的工具名注册钩子。 */
-    static registerToolHook(
+    registerToolHook(
         toolName: string,
         hooks: {
             beforeToolCall?: BeforeToolCallCallback;
             afterToolCall?: AfterToolCallCallback;
-        }
+        },
+        options?: HookOptions
     ): void {
         const matches = (name: string) => name === toolName || name.endsWith(`-${toolName}`);
         if (hooks.beforeToolCall) {
@@ -303,7 +314,7 @@ export class HookRegistry {
                     return { operation: 'allow' };
                 }
                 return callback(task, toolCall);
-            });
+            }, options);
         }
         if (hooks.afterToolCall) {
             const callback = hooks.afterToolCall;
@@ -311,7 +322,7 @@ export class HookRegistry {
                 if (matches(toolCall.tool_name)) {
                     await callback(task, toolCall);
                 }
-            });
+            }, options);
         }
     }
 
@@ -324,8 +335,8 @@ export class HookRegistry {
      *
      * 典型用途：重置轮次内的计数器、熔断器状态、性能计时器等。
      */
-    static beforeTurnStart(callback: BeforeTurnStartCallback): void {
-        this.beforeTurnStartCallbacks.push(callback);
+    beforeTurnStart(callback: BeforeTurnStartCallback, options?: HookOptions): void {
+        this.beforeTurnStartHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -341,8 +352,8 @@ export class HookRegistry {
      *
      * 典型用途：检测 reasoning 重复（电路断路器）、输出质量检查、自动纠偏提示注入。
      */
-    static afterProcessCompletion(callback: AfterProcessCompletionCallback): void {
-        this.afterProcessCompletionCallbacks.push(callback);
+    afterProcessCompletion(callback: AfterProcessCompletionCallback, options?: HookOptions): void {
+        this.afterProcessCompletionHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     /**
@@ -358,356 +369,155 @@ export class HookRegistry {
      *
      * 典型用途：工具调用数量限制、重复工具调用检测（模型死循环）。
      */
-    static beforeToolcallCreated(callback: BeforeToolcallCreatedCallback): void {
-        this.beforeToolcallCreatedCallbacks.push(callback);
-    }
-
-    static async checkBeforeFinishTurn(
-        task: TaskState,
-        modelRequestOptions?: LLMRequestOptions
-    ): Promise<FinishTurnFeedback> {
-        const callbacks = sortBeforeFinishRegistrations(
-            this.beforeFinishTurnCallbacks.map((item, index) =>
-                normalizeBeforeFinishRegistration(item, 'global', index)
-            )
-        );
-        for (const entry of callbacks) {
-            try {
-                const feedback = await entry.callback(task, modelRequestOptions);
-                if (feedback.operation === 'reject') {
-                    return feedback;
-                }
-            } catch (err) {
-                logger.error('HookRegistry.checkBeforeFinishTurn: callback error', err);
-            }
-        }
-        return { operation: 'finish' };
-    }
-
-    static async noticeAfterFinishTurn(task: TaskState): Promise<void> {
-        for (const callback of this.afterFinishTurnCallbacks) {
-            try {
-                await callback(task);
-            } catch (err) {
-                logger.error('HookRegistry.noticeAfterFinishTurn: callback error', err);
-            }
-        }
-    }
-
-    static async noticeBeforeTaskStart(task: TaskState): Promise<void> {
-        for (const callback of this.beforeTaskStartCallbacks) {
-            try {
-                await callback(task);
-            } catch (err) {
-                logger.error('HookRegistry.noticeBeforeTaskStart: callback error', err);
-            }
-        }
-    }
-
-    static async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
-        let started = false;
-        for (const callback of this.onTaskReviewCallbacks) {
-            try {
-                started = (await callback(task, start_message_index)) === true || started;
-            } catch (err) {
-                logger.error('HookRegistry.noticeTaskReview: callback error', err);
-            }
-        }
-        return started;
-    }
-
-    static async noticeTaskRevert(task: TaskState): Promise<void> {
-        for (const callback of this.onTaskRevertCallbacks) {
-            try {
-                await callback(task);
-            } catch (err) {
-                logger.error('HookRegistry.noticeTaskRevert: callback error', err);
-            }
-        }
-    }
-
-    static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
-        for (const callback of this.afterParseToolcallCallbacks) {
-            try {
-                const feedback = await callback(task, tool_call);
-                if (feedback.operation === 'reject') {
-                    return feedback;
-                }
-            } catch (err) {
-                logger.error('HookRegistry.checkAfterParseToolcall: callback error', err);
-            }
-        }
-        return { operation: 'finish' };
-    }
-
-    static async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<BeforeToolCallFeedback> {
-        for (const callback of this.beforeToolCallCallbacks) {
-            try {
-                const feedback = await callback(task, tool_call);
-                if (feedback.operation === 'deny') {
-                    return feedback;
-                }
-            } catch (err) {
-                logger.error('HookRegistry.checkBeforeToolCall: callback error', err);
-            }
-        }
-        return { operation: 'allow' };
-    }
-
-    static async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
-        for (const callback of this.afterToolCallCallbacks) {
-            try {
-                await callback(task, tool_call);
-            } catch (err) {
-                logger.error('HookRegistry.noticeAfterToolCall: callback error', err);
-            }
-        }
-    }
-
-    static async noticeBeforeTurnStart(task: TaskState): Promise<void> {
-        for (const callback of this.beforeTurnStartCallbacks) {
-            try {
-                await callback(task);
-            } catch (err) {
-                logger.error('HookRegistry.noticeBeforeTurnStart: callback error', err);
-            }
-        }
-    }
-
-    static async noticeAfterProcessCompletion(task: TaskState, assistantMessage: AssistantMessage): Promise<void> {
-        for (const callback of this.afterProcessCompletionCallbacks) {
-            try {
-                await callback(task, assistantMessage);
-            } catch (err) {
-                logger.error('HookRegistry.noticeAfterProcessCompletion: callback error', err);
-            }
-        }
-    }
-
-    static async checkBeforeToolcallCreated(
-        task: TaskState,
-        assistantMessage: AssistantMessage,
-        chunkHasNewToolCall: boolean,
-        requestToolCalls: readonly ToolCall[]
-    ): Promise<BeforeToolcallCreatedFeedback> {
-        for (const callback of this.beforeToolcallCreatedCallbacks) {
-            try {
-                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
-                if (feedback.operation === 'reject') {
-                    return feedback;
-                }
-            } catch (err) {
-                logger.error('HookRegistry.checkBeforeToolcallCreated: callback error', err);
-            }
-        }
-        return { operation: 'accept' };
-    }
-}
-
-export class TaskHooks {
-    beforeFinishTurnCallbacks: BeforeFinishTurnRegistration[] = [];
-    afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
-    beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
-    onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
-    onTaskRevertCallbacks: OnTaskRevertCallback[] = [];
-    afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
-    beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
-    afterToolCallCallbacks: AfterToolCallCallback[] = [];
-    beforeTurnStartCallbacks: BeforeTurnStartCallback[] = [];
-    afterProcessCompletionCallbacks: AfterProcessCompletionCallback[] = [];
-    beforeToolcallCreatedCallbacks: BeforeToolcallCreatedCallback[] = [];
-
-    constructor() {}
-
-    /** @see HookRegistry.beforeFinishTurn */
-    beforeFinishTurn(callback: BeforeFinishTurnCallback, options: HookRegistrationOptions = {}) {
-        this.beforeFinishTurnCallbacks.push({
-            callback,
-            priority: options.priority ?? 500,
-            phase: options.phase,
-            scope: 'task',
-            order: this.beforeFinishTurnCallbacks.length
-        });
-    }
-
-    /** @see HookRegistry.afterFinishTurn */
-    afterFinishTurn(callback: AfterFinishTurnCallback) {
-        this.afterFinishTurnCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.beforeTaskStart */
-    beforeTaskStart(callback: BeforeTaskStartCallback) {
-        this.beforeTaskStartCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.onTaskReview */
-    onTaskReview(callback: OnTaskReviewCallback) {
-        this.onTaskReviewCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.onTaskRevert */
-    onTaskRevert(callback: OnTaskRevertCallback) {
-        this.onTaskRevertCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.afterParseToolcall */
-    afterParseToolcall(callback: AfterParseToolcallCallback) {
-        this.afterParseToolcallCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.beforeToolCall */
-    beforeToolCall(callback: BeforeToolCallCallback) {
-        this.beforeToolCallCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.afterToolCall */
-    afterToolCall(callback: AfterToolCallCallback) {
-        this.afterToolCallCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.beforeTurnStart */
-    beforeTurnStart(callback: BeforeTurnStartCallback) {
-        this.beforeTurnStartCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.afterProcessCompletion */
-    afterProcessCompletion(callback: AfterProcessCompletionCallback) {
-        this.afterProcessCompletionCallbacks.push(callback);
-    }
-
-    /** @see HookRegistry.beforeToolcallCreated */
-    beforeToolcallCreated(callback: BeforeToolcallCreatedCallback) {
-        this.beforeToolcallCreatedCallbacks.push(callback);
+    beforeToolcallCreated(callback: BeforeToolcallCreatedCallback, options?: HookOptions): void {
+        this.beforeToolcallCreatedHooks.push({ callback, options: resolveHookOptions(options) });
     }
 
     async checkBeforeFinishTurn(task: TaskState, modelRequestOptions?: LLMRequestOptions): Promise<FinishTurnFeedback> {
-        const taskCallbacks = this.beforeFinishTurnCallbacks.map((item, index) =>
-            normalizeBeforeFinishRegistration(item, 'task', index)
-        );
-        const globalOffset = taskCallbacks.length;
-        const globalCallbacks = HookRegistry.beforeFinishTurnCallbacks.map((item, index) =>
-            normalizeBeforeFinishRegistration(item, 'global', globalOffset + index)
-        );
-        const callbacks = sortBeforeFinishRegistrations([...taskCallbacks, ...globalCallbacks]);
-        for (const entry of callbacks) {
+        for (const hook of sortHooks(this.beforeFinishTurnHooks)) {
             try {
-                const feedback = await entry.callback(task, modelRequestOptions);
+                const feedback = await hook.callback(task, modelRequestOptions);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
             } catch (err) {
-                logger.error('TaskHooks.checkBeforeFinishTurn: callback error', err);
+                logger.error('Hooks.checkBeforeFinishTurn: callback error', err);
             }
+        }
+        if (this.parent) {
+            return this.parent.checkBeforeFinishTurn(task, modelRequestOptions);
         }
         return { operation: 'finish' };
     }
 
     async noticeAfterFinishTurn(task: TaskState): Promise<void> {
-        for (const callback of this.afterFinishTurnCallbacks) {
+        for (const hook of sortHooks(this.afterFinishTurnHooks)) {
             try {
-                await callback(task);
+                await hook.callback(task);
             } catch (err) {
-                logger.error('TaskHooks.noticeAfterFinishTurn: callback error', err);
+                logger.error('Hooks.noticeAfterFinishTurn: callback error', err);
             }
         }
-        await HookRegistry.noticeAfterFinishTurn(task);
+        if (this.parent) {
+            await this.parent.noticeAfterFinishTurn(task);
+        }
     }
 
     async noticeBeforeTaskStart(task: TaskState): Promise<void> {
-        for (const callback of this.beforeTaskStartCallbacks) {
+        for (const hook of sortHooks(this.beforeTaskStartHooks)) {
             try {
-                await callback(task);
+                await hook.callback(task);
             } catch (err) {
-                logger.error('TaskHooks.noticeBeforeTaskStart: callback error', err);
+                logger.error('Hooks.noticeBeforeTaskStart: callback error', err);
             }
         }
-        await HookRegistry.noticeBeforeTaskStart(task);
+        if (this.parent) {
+            await this.parent.noticeBeforeTaskStart(task);
+        }
     }
 
     async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
         let started = false;
-        for (const callback of this.onTaskReviewCallbacks) {
+        for (const hook of sortHooks(this.onTaskReviewHooks)) {
             try {
-                started = (await callback(task, start_message_index)) === true || started;
+                started = (await hook.callback(task, start_message_index)) === true || started;
             } catch (err) {
-                logger.error('TaskHooks.noticeTaskReview: callback error', err);
+                logger.error('Hooks.noticeTaskReview: callback error', err);
             }
         }
-        return (await HookRegistry.noticeTaskReview(task, start_message_index)) || started;
+        if (this.parent) {
+            const parentStarted = await this.parent.noticeTaskReview(task, start_message_index);
+            return parentStarted || started;
+        }
+        return started;
     }
 
     async noticeTaskRevert(task: TaskState): Promise<void> {
-        for (const callback of this.onTaskRevertCallbacks) {
+        for (const hook of sortHooks(this.onTaskRevertHooks)) {
             try {
-                await callback(task);
+                await hook.callback(task);
             } catch (err) {
-                logger.error('TaskHooks.noticeTaskRevert: callback error', err);
+                logger.error('Hooks.noticeTaskRevert: callback error', err);
             }
         }
-        await HookRegistry.noticeTaskRevert(task);
+        if (this.parent) {
+            await this.parent.noticeTaskRevert(task);
+        }
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
         // afterParseToolcall 在流式解析期间每个 tool call 参数完成时触发，
         // 不创建 span 以避免噪声
-        for (const callback of this.afterParseToolcallCallbacks) {
+        for (const hook of sortHooks(this.afterParseToolcallHooks)) {
             try {
-                const feedback = await callback(task, tool_call);
+                const feedback = await hook.callback(task, tool_call);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
             } catch (err) {
-                logger.error('TaskHooks.checkAfterParseToolcall: callback error', err);
+                logger.error('Hooks.checkAfterParseToolcall: callback error', err);
             }
         }
-        return HookRegistry.checkAfterParseToolcall(task, tool_call);
+        if (this.parent) {
+            return this.parent.checkAfterParseToolcall(task, tool_call);
+        }
+        return { operation: 'finish' };
     }
 
     async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<BeforeToolCallFeedback> {
-        for (const callback of this.beforeToolCallCallbacks) {
+        for (const hook of sortHooks(this.beforeToolCallHooks)) {
             try {
-                const feedback = await callback(task, tool_call);
+                const feedback = await hook.callback(task, tool_call);
                 if (feedback.operation === 'deny') {
                     return feedback;
                 }
             } catch (err) {
-                logger.error('TaskHooks.checkBeforeToolCall: callback error', err);
+                logger.error('Hooks.checkBeforeToolCall: callback error', err);
             }
         }
-        return HookRegistry.checkBeforeToolCall(task, tool_call);
+        if (this.parent) {
+            return this.parent.checkBeforeToolCall(task, tool_call);
+        }
+        return { operation: 'allow' };
     }
 
     async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
-        for (const callback of this.afterToolCallCallbacks) {
+        for (const hook of sortHooks(this.afterToolCallHooks)) {
             try {
-                await callback(task, tool_call);
+                await hook.callback(task, tool_call);
             } catch (err) {
-                logger.error('TaskHooks.noticeAfterToolCall: callback error', err);
+                logger.error('Hooks.noticeAfterToolCall: callback error', err);
             }
         }
-        await HookRegistry.noticeAfterToolCall(task, tool_call);
+        if (this.parent) {
+            await this.parent.noticeAfterToolCall(task, tool_call);
+        }
     }
 
     async noticeBeforeTurnStart(task: TaskState): Promise<void> {
-        for (const callback of this.beforeTurnStartCallbacks) {
+        for (const hook of sortHooks(this.beforeTurnStartHooks)) {
             try {
-                await callback(task);
+                await hook.callback(task);
             } catch (err) {
-                logger.error('TaskHooks.noticeBeforeTurnStart: callback error', err);
+                logger.error('Hooks.noticeBeforeTurnStart: callback error', err);
             }
         }
-        await HookRegistry.noticeBeforeTurnStart(task);
+        if (this.parent) {
+            await this.parent.noticeBeforeTurnStart(task);
+        }
     }
 
     async noticeAfterProcessCompletion(task: TaskState, assistantMessage: AssistantMessage): Promise<void> {
-        for (const callback of this.afterProcessCompletionCallbacks) {
+        for (const hook of sortHooks(this.afterProcessCompletionHooks)) {
             try {
-                await callback(task, assistantMessage);
+                await hook.callback(task, assistantMessage);
             } catch (err) {
-                logger.error('TaskHooks.noticeAfterProcessCompletion: callback error', err);
+                logger.error('Hooks.noticeAfterProcessCompletion: callback error', err);
             }
         }
-        await HookRegistry.noticeAfterProcessCompletion(task, assistantMessage);
+        if (this.parent) {
+            await this.parent.noticeAfterProcessCompletion(task, assistantMessage);
+        }
     }
 
     async checkBeforeToolcallCreated(
@@ -717,16 +527,27 @@ export class TaskHooks {
         requestToolCalls: readonly ToolCall[]
     ): Promise<BeforeToolcallCreatedFeedback> {
         // beforeToolcallCreated 在流式输出中每个 chunk 都会触发一次，不创建 span 以避免噪声
-        for (const callback of this.beforeToolcallCreatedCallbacks) {
+        for (const hook of sortHooks(this.beforeToolcallCreatedHooks)) {
             try {
-                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
+                const feedback = await hook.callback(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
             } catch (err) {
-                logger.error('TaskHooks.checkBeforeToolcallCreated: callback error', err);
+                logger.error('Hooks.checkBeforeToolcallCreated: callback error', err);
             }
         }
-        return HookRegistry.checkBeforeToolcallCreated(task, assistantMessage, chunkHasNewToolCall, requestToolCalls);
+        if (this.parent) {
+            return this.parent.checkBeforeToolcallCreated(
+                task,
+                assistantMessage,
+                chunkHasNewToolCall,
+                requestToolCalls
+            );
+        }
+        return { operation: 'accept' };
     }
 }
+
+/** 全局钩子实例；任务级钩子通过 GlobalHooks.createChildHooks() 创建 */
+export const GlobalHooks = Hooks.createGlobal();

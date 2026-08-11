@@ -60,7 +60,7 @@ import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
 import { FileReadStateCache } from './read-state.js';
-import { TaskHooks } from '../hooks.js';
+import { GlobalHooks, type Hooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import { escapeGlobLiteralPath } from '../security/permission.js';
@@ -452,7 +452,7 @@ export class TaskState {
     interactionToolset: BaseToolset | null = null;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
-    hooks: TaskHooks = new TaskHooks();
+    hooks: Hooks = GlobalHooks.createChildHooks();
     /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
     subscribers: BaseTaskUpdateSubscriber[] = [];
     /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */

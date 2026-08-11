@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { HookRegistry } from '../hooks.js';
+import { GlobalHooks } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
 import { GoalStates, type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
@@ -134,9 +134,7 @@ function clearCancelledEvaluationMessage(): string {
 export function registerGoalHooks(): void {
     if (
         registeredCallback &&
-        HookRegistry.beforeFinishTurnCallbacks.some((entry: any) =>
-            typeof entry === 'function' ? entry === registeredCallback : entry.callback === registeredCallback
-        )
+        GlobalHooks.beforeFinishTurnHooks.some((entry: any) => entry.callback === registeredCallback)
     ) {
         return;
     }
@@ -290,5 +288,5 @@ export function registerGoalHooks(): void {
         }
         return { operation: 'finish' };
     };
-    HookRegistry.beforeFinishTurn(registeredCallback, { priority: 900, phase: 'goal_evaluation' });
+    GlobalHooks.beforeFinishTurn(registeredCallback, { priority: 1000 });
 }
