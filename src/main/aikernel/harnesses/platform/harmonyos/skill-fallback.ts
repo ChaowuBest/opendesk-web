@@ -32,10 +32,10 @@ export const OPENDESK_META_FILENAME = 'opendesk_meta.json';
  * 临时文件与目标文件位于同一目录；文件内容 fsync 后 rename，随后 fsync 目录，
  * 任一步骤失败都会关闭句柄并清理尚存的临时文件。文件不存在时以空对象创建。
  */
-export async function mutateMeta<T>(
+export async function mutateMeta(
     metaPath: string,
-    mutation: (meta: Record<string, unknown>) => T | Promise<T>
-): Promise<T> {
+    mutation: (meta: Record<string, unknown>) => void | Promise<void>
+): Promise<void> {
     const resolvedMetaPath = path.resolve(metaPath);
     const lock = new FileLock(resolvedMetaPath);
 

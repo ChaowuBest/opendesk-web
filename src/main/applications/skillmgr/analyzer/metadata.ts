@@ -172,7 +172,7 @@ export interface ValidationResult {
 export const OPENDESK_META_FILENAME = 'opendesk_meta.json';
 
 export type MutableOpendeskMeta = Record<string, unknown>;
-export type OpendeskMetaMutation<T> = (meta: MutableOpendeskMeta) => T | Promise<T>;
+export type OpendeskMetaMutation = (meta: MutableOpendeskMeta) => void | Promise<void>;
 
 /**
  * 在共享路径锁内读取最新元数据、执行修改并原子落盘。
@@ -180,7 +180,7 @@ export type OpendeskMetaMutation<T> = (meta: MutableOpendeskMeta) => T | Promise
  * 临时文件与目标文件位于同一目录；文件内容 fsync 后 rename，随后 fsync 目录，
  * 任一步骤失败都会关闭句柄并清理尚存的临时文件。文件不存在时以空对象创建。
  */
-export async function mutateOpendeskMeta<T>(metaPath: string, mutation: OpendeskMetaMutation<T>): Promise<T> {
+export async function mutateOpendeskMeta(metaPath: string, mutation: OpendeskMetaMutation): Promise<void> {
     const resolvedMetaPath = path.resolve(metaPath);
     const lock = new FileLock(resolvedMetaPath);
 
