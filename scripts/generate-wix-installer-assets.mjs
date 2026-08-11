@@ -86,7 +86,6 @@ async function createDialogBackground() {
 
     fillRect(pixels, width, height, 0, 0, 124, height, colors.sidebar);
     fillRect(pixels, width, height, 124, 0, 4, height, colors.teal);
-    drawRing(pixels, width, height, 105, 252, 76, 18, colors.sidebarRing);
     fillRect(pixels, width, height, 58, 282, 48, 5, colors.coral);
 
     await sharp(pixels, { raw: { width, height, channels: 3 } })

@@ -140,3 +140,14 @@ test('keeps install-page decoration out of the shared bootstrapper background', 
     assert.deepEqual([background.width, background.height], [920, 600]);
     assert.deepEqual([featureRows.width, featureRows.height], [530, 238]);
 });
+
+test('keeps the compact MSI background free of the decorative ring', () => {
+    const assetScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'generate-wix-installer-assets.mjs'), 'utf8');
+    const dialogBackground = assetScript.match(/async function createDialogBackground\(\) \{[\s\S]*?\n\}/)[0];
+    const bootstrapperBackground = assetScript.match(
+        /async function createBootstrapperBackground\(\) \{[\s\S]*?\n\}/
+    )[0];
+
+    assert.doesNotMatch(dialogBackground, /drawRing\(/);
+    assert.match(bootstrapperBackground, /drawRing\(/);
+});
