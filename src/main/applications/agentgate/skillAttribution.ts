@@ -9,11 +9,14 @@
  */
 
 import { LLM, type LLMRequestOptions } from '../../aikernel/llm.js';
-import { ChatContext, SystemMessage, UserMessage } from '../../aikernel/messages.js';
+import { ChatContext, SystemMessage, UserMessage, type Usage } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { logger } from '../../utils/logger.js';
 import type { InterceptionRecord } from '../skillmgr/blacklist.js';
+import { homedir } from 'os';
+import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 
 export interface AttributionCandidate {
     bundleName: string;
@@ -52,6 +55,88 @@ export function confidenceWeight(confidence: string): number {
 /** 按置信度降序排序（原地），返回原数组。条目需含 confidence 字段。 */
 export function sortByConfidenceDesc<T extends { confidence: string }>(arr: T[]): T[] {
     return arr.sort((a, b) => confidenceWeight(b.confidence) - confidenceWeight(a.confidence));
+}
+
+/**
+ * 恶意技能检测（拦截归因）的 LLM token 记账。
+ *
+ * 归因调用走的是 OpenDesk 主进程自己的 LLM.complete()，不经过 AgentMoss 服务，
+ * 所以 AgentMoss 内部只记 L3_security_judge / step2_policy_gen，看不到这部分的
+ * token 开销。这里把归因调用的 usage 追加写入 AgentMoss 的 token-stats 文件
+ * （step 标记为 malicious_skill_attribution），让策略控制台的 token 标签页能统计到。
+ *
+ * 路径与 AgentMoss ts/src/infra/paths.ts 保持一致：默认
+ *   AGENT_MOSS_DATA_DIR/<instance>/agent_moss_token_stats.json
+ * OpenDesk 启动 agent-moss 时注入 AGENT_MOSS_INSTANCE=opendesk，故默认落在
+ *   ~/.config/agentmoss/opendesk/agent_moss_token_stats.json
+ */
+const MALICIOUS_SKILL_ATTRIBUTION_STEP = 'malicious_skill_attribution';
+const MAX_STATS_RECORDS = 10000;
+
+function getAgentMossInstance(): string {
+    const v = process.env.AGENT_MOSS_INSTANCE || 'opendesk';
+    return v.trim().replace(/^[/\\]+|[/\\]+$/g, '');
+}
+
+function getAgentMossDataRoot(): string {
+    const envPath = process.env.AGENT_MOSS_DATA_DIR;
+    if (envPath) return envPath;
+    return join(homedir(), '.config', 'agentmoss');
+}
+
+function getTokenStatsPath(): string {
+    return join(getAgentMossDataRoot(), getAgentMossInstance(), 'agent_moss_token_stats.json');
+}
+
+interface TokenUsageRecord {
+    timestamp: string;
+    session_id: string;
+    step: string;
+    model: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+}
+
+/** 将一次归因调用的 token usage 追加写入 AgentMoss token-stats 文件（best-effort）。 */
+function recordMaliciousSkillAttributionTokenUsage(usage: Usage, opts: { sessionId: string; model?: string }): void {
+    try {
+        const promptTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+        const completionTokens = usage.completion_tokens ?? usage.output_tokens ?? 0;
+        const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
+
+        const statsPath = getTokenStatsPath();
+        let records: TokenUsageRecord[] = [];
+        if (existsSync(statsPath)) {
+            try {
+                const data = JSON.parse(readFileSync(statsPath, 'utf-8'));
+                if (Array.isArray(data)) records = data;
+                else if (data && Array.isArray(data.records)) records = data.records;
+            } catch {
+                // 损坏则从空数组重建
+            }
+        }
+
+        records.push({
+            timestamp: new Date().toISOString(),
+            session_id: opts.sessionId || 'unknown',
+            step: MALICIOUS_SKILL_ATTRIBUTION_STEP,
+            model: opts.model || 'unknown',
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: totalTokens
+        });
+
+        if (records.length > MAX_STATS_RECORDS) {
+            records.splice(0, records.length - MAX_STATS_RECORDS);
+        }
+
+        const dir = statsPath.substring(0, statsPath.lastIndexOf('/'));
+        if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+        writeFileSync(statsPath, JSON.stringify(records, null, 2), 'utf-8');
+    } catch (err) {
+        logger.warn(`[AgentGate] 恶意技能归因 token 记账失败（不影响归因结果）: ${err}`);
+    }
 }
 
 const BATCH_ATTRIBUTION_SYSTEM_PROMPT = `你是一个安全分析助手。你的任务是分析一次 AI 助手会话中发生的**全部**安全拦截事件（共多条），判断这些被拦截的操作整体上更可能是由哪个已加载的 skill 驱动的。
@@ -177,11 +262,15 @@ export async function attributeBatchInterceptions(
 
         // 调用 LLM
         const modelName = task.model || undefined;
+        const sessionId = task.task_id || 'unknown';
         logger.info(`[AgentGate] batch attribution prompt (${userPrompt.length} chars):\n${userPrompt.slice(0, 2000)}`);
         const response = await LLM.complete(attributionContext, modelName, {}, {
             maxTokens: 3000,
             temperature: 0.1,
-            reasoningEffort: 'none'
+            reasoningEffort: 'none',
+            onUsage: (usage) => {
+                recordMaliciousSkillAttributionTokenUsage(usage, { sessionId, model: modelName });
+            }
         } as LLMRequestOptions);
 
         // 提取文本
@@ -347,10 +436,14 @@ export async function attributeInterception(
 
         // 使用任务当前的 model 进行归因
         const modelName = task.model || undefined;
+        const sessionId = task.task_id || 'unknown';
         const response = await LLM.complete(attributionContext, modelName, {}, {
             maxTokens: 2000,
             temperature: 0.1,
-            reasoningEffort: 'none'
+            reasoningEffort: 'none',
+            onUsage: (usage) => {
+                recordMaliciousSkillAttributionTokenUsage(usage, { sessionId, model: modelName });
+            }
         } as LLMRequestOptions);
         // 从 AssistantResponse 中提取纯文本内容
         // response.content 是 AssistantMessage，遍历所有 part 类型提取文本

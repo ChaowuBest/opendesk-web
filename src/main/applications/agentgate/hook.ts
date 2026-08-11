@@ -151,6 +151,48 @@ function preview(s: unknown): string {
     return str.length > PREVIEW_LEN ? str.slice(0, PREVIEW_LEN) + '...' : str;
 }
 
+/**
+ * OpenDesk mailbox 应用的裸名工具集合。
+ *
+ * 这些工具经 skill（operate-mailbox / manage-mailbox）调用，实际传给 AgentGate
+ * 的 tool_name 是裸名（sendEmail / getEmailList / ...），而 AgentMoss 的规则
+ * （EXCLUDED_PREFIXES / builtin_safe_action_types 等）统一按 `mailbox-` 前缀约定。
+ * 裸名不命中任何 mailbox- 前缀规则 → sendEmail 这类发信工具会走 L2 意图偏差检测，
+ * 把邮件正文里的 "rm 命令分级检测" 之类介绍性文字误判为删除操作（误报）。
+ *
+ * 因此传给 AgentGate 前需把裸名规范化为 `mailbox-<name>`：
+ *   - mailbox-getEmailList 等只读/管理工具 → 命中 rules.json builtin_safe_action_types
+ *     → 跳过 L2+L3（本就该跳过，修复了裸名导致的白名单从未生效 bug）
+ *   - mailbox-sendEmail / mailbox-replyEmail → 不在白名单 → 走 L2+L3；
+ *     L2 意图偏差因 mailbox- 前缀被豁免，L3 邮件外传风险检测保留（符合 rules.json 设计意图）
+ *
+ * 注：extractCommand 用 matchesAny（短名后缀匹配），mailbox-sendEmail 仍能匹配
+ * sendEmail 候选，故本地 command 构造不受前缀影响。
+ */
+const MAILBOX_TOOLS = new Set([
+    'addMailAccount',
+    'listMailAccounts',
+    'removeMailAccount',
+    'switchMailAccount',
+    'getMailSyncStatus',
+    'getEmailList',
+    'getEmailContent',
+    'searchEmails',
+    'sendEmail',
+    'replyEmail',
+    'markEmailReadStatus',
+    'starEmail',
+    'deleteEmail'
+]);
+
+/** 传给 AgentGate 前规范化 tool_name：mailbox 裸名加 mailbox- 前缀，其余原样透传 */
+function normalizeGateToolName(toolName: string): string {
+    if (MAILBOX_TOOLS.has(toolName)) {
+        return `mailbox-${toolName}`;
+    }
+    return toolName;
+}
+
 /** 判断 tool_name 是否匹配任一候选短名（兼容 filemgr-writeFile / writeFile 两种格式） */
 function matchesAny(toolName: string, candidates: Iterable<string>): boolean {
     for (const n of candidates) {
@@ -416,6 +458,97 @@ function extractCommand(toolCall: ToolCall): string {
     return parts.length > 0 ? `${toolName}: ${parts.join(', ')}` : toolName;
 }
 
+/** 单条 UserMessage 提取纯文本（兼容 UserMessagePart 数组 / 直接 content 字符串）。 */
+function getUserMessageText(msg: unknown): string {
+    if (!msg || typeof msg !== 'object') return '';
+    const m = msg as { role?: string; content?: unknown; getPlainText?: () => string };
+    if (typeof m.getPlainText === 'function') {
+        try {
+            return m.getPlainText() || '';
+        } catch {
+            /* fallthrough */
+        }
+    }
+    const content = m.content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part: unknown) =>
+                part && typeof part === 'object' && (part as any).type === 'text'
+                    ? String((part as any).text ?? '')
+                    : ''
+            )
+            .join('\n');
+    }
+    if (typeof content === 'string') return content;
+    return '';
+}
+
+/** 从一条 AssistantMessage 提取其发起的工具调用（tool_call parts）。 */
+function getToolCallsFromMsg(msg: unknown): Array<{ name: string; args: string }> {
+    const out: Array<{ name: string; args: string }> = [];
+    if (!msg || typeof msg !== 'object') return out;
+    const m = msg as { content?: Array<Record<string, unknown>> };
+    if (!Array.isArray(m.content)) return out;
+    for (const part of m.content) {
+        if (!part || typeof part !== 'object') continue;
+        // ToolCallMessagePart: { type: 'tool_call', toolcalls: ToolCall[] }
+        if ((part as any).type === 'tool_call') {
+            const calls = (part as any).toolcalls;
+            if (Array.isArray(calls)) {
+                for (const c of calls) {
+                    if (c && typeof c === 'object') {
+                        out.push({
+                            name: String((c as any).tool_name ?? 'unknown'),
+                            args: String((c as any).args_string ?? '')
+                        });
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * 构造 session 交错历史（prompt_history + action_history）供 AgentMoss L2/L3 使用。
+ * 遍历官方消息列表：User 消息开新 turn，其后 assistant 发起的工具调用归入该 turn，
+ * 直到下一条 User。同时拍平所有工具调用进 action_history（行为链检测消费）。
+ * 返回 { prompt_history, action_history }，均兼容 AgentMoss AnalyzeRequest 契约。
+ */
+function buildSessionHistory(chatContext?: { messages?: unknown[] } | null) {
+    const promptHistory: Array<{ text: string; actions: Array<{ action_type: string; action_detail: string }> }> = [];
+    const actionHistory: Array<{ action_type: string; action_detail: string }> = [];
+    const messages = chatContext?.messages;
+    if (!Array.isArray(messages)) return { prompt_history: [], action_history: [] };
+
+    let currentTurn: { text: string; actions: Array<{ action_type: string; action_detail: string }> } | null = null;
+    for (const msg of messages) {
+        if (!msg || typeof msg !== 'object') continue;
+        const role = (msg as any).role;
+        if (role === 'user' || role === 'compact_separator') {
+            // compact_separator 是摘要边界：不承载意图摘要就跳过；User 才开新 turn。
+            if (role === 'user') {
+                const text = getUserMessageText(msg);
+                currentTurn = { text, actions: [] };
+                promptHistory.push(currentTurn);
+            }
+            continue;
+        }
+        // assistant 消息里的 tool_call parts → 归入当前 turn（若还没有 User，则放一个空 turn 兜底）
+        const calls = getToolCallsFromMsg(msg);
+        for (const c of calls) {
+            const action = { action_type: c.name, action_detail: c.args };
+            actionHistory.push(action);
+            if (!currentTurn) {
+                currentTurn = { text: '', actions: [] };
+                promptHistory.push(currentTurn);
+            }
+            currentTurn.actions.push(action);
+        }
+    }
+    return { prompt_history: promptHistory, action_history: actionHistory };
+}
+
 /**
  * 将命令发送到 AgentGate 做安全分析。
  * 返回 true 表示允许执行，false 表示应拦截。
@@ -449,6 +582,11 @@ async function checkWithAgentGate(
         }
     }
 
+    // 构造同 session 完整历史（prompt + tool call 交错时序），供 AgentMoss L2/L3 判断
+    // 意图一致性与行为链。此前 missing → action_history 为空、prompt 仅最近一条，
+    // 长会话里"继续"会覆盖初始意图导致漏报。见 docs/INTEGRATION_GUIDE.md 第 4 节。
+    const { prompt_history, action_history } = buildSessionHistory(task?.chat_context);
+
     const payload: Record<string, unknown> = {
         agent_type: AGENT_TYPE,
         agent_version: AGENT_VERSION,
@@ -458,6 +596,8 @@ async function checkWithAgentGate(
         cwd: cwd,
         description: `OpenDesk ${toolName}: ${command.slice(0, 200)}`,
         user_prompt: userPrompt,
+        prompt_history,
+        action_history,
         metadata: { source: 'opendesk-hook', ...(llmConfig ? { llm_config: llmConfig } : {}) }
     };
 
@@ -543,7 +683,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
         const { allowed, reason, riskLevel, riskType } = await checkWithAgentGate(
             command,
             sessionId,
-            toolCall.tool_name,
+            normalizeGateToolName(toolCall.tool_name),
             cwd,
             userPrompt,
             task

@@ -573,6 +573,55 @@ const STYLE = `
     font-size: var(--fs-md);
     cursor: pointer;
 }
+/* 自定义每页下拉：向上展开，弹层 fixed 相对视口，避开容器 overflow 裁剪 */
+.ag-page-size {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,.14);
+    background: rgba(255,255,255,.9);
+    color: var(--ag-text);
+    font-size: var(--fs-md);
+    cursor: pointer;
+    user-select: none;
+}
+.ag-page-size:hover { border-color: var(--ag-accent); }
+.ag-page-size::after {
+    content: '';
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid currentColor;
+    margin-left: 4px;
+}
+.ag-page-size-menu {
+    position: fixed;
+    z-index: 100002;
+    background: var(--ag-card-bg, #fff);
+    color: var(--ag-text);
+    border: 1px solid var(--ag-card-border, rgba(0,0,0,.14));
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.16);
+    padding: 4px;
+    min-width: 64px;
+}
+.ag-page-size-menu .ag-page-size-opt {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 5px 10px;
+    border: none;
+    background: transparent;
+    color: var(--ag-text);
+    font-size: var(--fs-md);
+    border-radius: 5px;
+    cursor: pointer;
+}
+.ag-page-size-menu .ag-page-size-opt:hover { background: var(--ag-accent); color: #fff; }
+.ag-page-size-menu .ag-page-size-opt.ag-selected { font-weight: 700; }
 `;
 
 // ── Dashboard Modern Theme Injection ─────────────────────────────────────────
@@ -2076,23 +2125,71 @@ class AgentGateEntryWidget extends HTMLElement {
                                 this._currentPage++;
                                 refresh();
                             });
-                            // Per-page selector
+                            // Per-page selector（自定义下拉：向上展开，避免原生 select 下拉被容器裁剪）
                             const pageSizeLabel = document.createElement('span');
                             pageSizeLabel.className = 'page-info';
                             pageSizeLabel.textContent = tr('perPage');
-                            const pageSizeSelect = document.createElement('select');
-                            pageSizeSelect.className = 'page-size-select';
-                            [10, 20, 50, 100].forEach((size) => {
-                                const opt = document.createElement('option');
-                                opt.value = String(size);
-                                opt.textContent = String(size);
-                                if (size === this._pageSize) opt.selected = true;
-                                pageSizeSelect.appendChild(opt);
-                            });
-                            pageSizeSelect.addEventListener('change', () => {
-                                this._pageSize = parseInt(pageSizeSelect.value, 10);
-                                this._currentPage = 1;
-                                refresh();
+                            const pageSizeBtn = document.createElement('button');
+                            pageSizeBtn.className = 'ag-page-size';
+                            pageSizeBtn.type = 'button';
+                            pageSizeBtn.textContent = String(this._pageSize);
+                            pageSizeBtn.setAttribute('aria-label', tr('perPage'));
+                            let menuEl: HTMLElement | null = null;
+                            const openMenu = () => {
+                                if (menuEl && menuEl.parentNode) return; // 已打开
+                                const rect = pageSizeBtn.getBoundingClientRect();
+                                menuEl = document.createElement('div');
+                                menuEl.className = 'ag-page-size-menu';
+                                [10, 20, 50, 100].forEach((size) => {
+                                    const opt = document.createElement('button');
+                                    opt.type = 'button';
+                                    opt.className =
+                                        'ag-page-size-opt' + (size === this._pageSize ? ' ag-selected' : '');
+                                    opt.textContent = String(size);
+                                    // 用 mousedown 而非 click：shadow DOM 内事件不冒泡到外部拦截层，
+                                    // 且 mousedown 不依赖 click 合成时序，最稳
+                                    opt.addEventListener('mousedown', (ev) => {
+                                        ev.preventDefault();
+                                        ev.stopPropagation();
+                                        if (size !== this._pageSize) {
+                                            this._pageSize = size;
+                                            this._currentPage = 1;
+                                            try {
+                                                refresh();
+                                            } catch (err) {}
+                                        }
+                                        closeMenu();
+                                    });
+                                    menuEl!.appendChild(opt);
+                                });
+                                // 向上展开：弹层底边对齐按钮顶部，避免超出可视区
+                                const menuH = 4 + [10, 20, 50, 100].length * 30 + 4;
+                                menuEl.style.left = rect.left + 'px';
+                                menuEl.style.top = rect.top - menuH + 'px';
+                                // 弹层必须放进 shadow root，样式类才生效（shadow 外无该 CSS）；fixed 相对视口不受 overflow 裁剪
+                                this.shadow.appendChild(menuEl);
+                                // 监听 shadow 内 mousedown 关闭（shadow 内事件监听能收到内部所有事件，无边界问题）
+                                setTimeout(() => {
+                                    this.shadow.addEventListener('mousedown', handleShadowDown);
+                                    this.shadow.addEventListener('keydown', handleShadowKey);
+                                });
+                            };
+                            const closeMenu = () => {
+                                if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+                                menuEl = null;
+                                this.shadow.removeEventListener('mousedown', handleShadowDown);
+                                this.shadow.removeEventListener('keydown', handleShadowKey);
+                            };
+                            const handleShadowDown = (e: MouseEvent) => {
+                                if (menuEl && !menuEl.contains(e.target as Node) && e.target !== pageSizeBtn)
+                                    closeMenu();
+                            };
+                            const handleShadowKey = (e: KeyboardEvent) => {
+                                if (e.key === 'Escape') closeMenu();
+                            };
+                            pageSizeBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                openMenu();
                             });
                             // Nav group: Prev | Page info | Next
                             const navGroup = document.createElement('div');
@@ -2104,7 +2201,7 @@ class AgentGateEntryWidget extends HTMLElement {
                             const sizeGroup = document.createElement('div');
                             sizeGroup.className = 'page-size-group';
                             sizeGroup.appendChild(pageSizeLabel);
-                            sizeGroup.appendChild(pageSizeSelect);
+                            sizeGroup.appendChild(pageSizeBtn);
                             paginationContainer.appendChild(navGroup);
                             paginationContainer.appendChild(sizeGroup);
                         }
