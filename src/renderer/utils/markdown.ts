@@ -11,6 +11,7 @@
 
 import { Marked, Renderer, type Tokens } from 'marked';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 
 const renderer = new Renderer();
 
@@ -35,6 +36,7 @@ renderer.image = function ({ href, title, text }: Tokens.Image): string {
 };
 
 const safeMarked = new Marked({ renderer, gfm: true, breaks: true });
+safeMarked.use(cjkAutolinkFix);
 
 function safeMarkdownUrl(value: string, image: boolean): string | null {
     const trimmed = value.trim();

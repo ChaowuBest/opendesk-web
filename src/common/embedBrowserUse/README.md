@@ -134,8 +134,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         return {
             currentUrl: this.activeWebview?.getURL() ?? '',
             canGoBack: this.activeWebview?.canGoBack() ?? false,
-            canGoForward: this.activeWebview?.canGoForward() ?? false,
-            isFullscreen: this._isFullscreen
+            canGoForward: this.activeWebview?.canGoForward() ?? false
         };
     }
     getCurrentUrl(): string {

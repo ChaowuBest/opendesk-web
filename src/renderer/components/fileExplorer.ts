@@ -26,6 +26,7 @@ import { showConfirmModal } from './confirmModal';
 import { showImageLightbox } from './imageLightbox.js';
 import { createRendererTranslator } from '../locale';
 import { marked } from 'marked';
+import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
@@ -37,6 +38,8 @@ import {
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 
 const t = createRendererTranslator();
+
+marked.use(cjkAutolinkFix);
 
 // ============================================================================
 // Types
@@ -720,7 +723,7 @@ function isMarkdownFile(filePath: string): boolean {
     return ext === 'md' || ext === 'markdown';
 }
 
-function isHtmlFile(filePath: string): boolean {
+export function isHtmlFile(filePath: string): boolean {
     const ext = filePath.split('.').pop()?.toLowerCase();
     return ext === 'html' || ext === 'htm';
 }
@@ -1245,6 +1248,33 @@ export class FileExplorer {
     selectFile(filePath: string): void {
         if (this._selectedFile === filePath && isPptxFile(filePath)) return;
         if (this._deferUntilPptxCanClose(() => this.selectFile(filePath))) return;
+
+        // HTML/HTM 文件在浏览器 tab 中打开，不在文件预览面板中渲染
+        if (isHtmlFile(filePath)) {
+            if (this._editorMode) {
+                void this._saveEditorIfNeeded();
+                this._destroyEditorInstance();
+                this._editorMode = false;
+                this._editorFilePath = null;
+                this._editorDirty = false;
+                this._editorStatus = 'idle';
+            }
+            this._selectedFile = null;
+            this._previewState = { status: 'idle' };
+            this._previewFullscreen = false;
+            this._browserFullscreen = false;
+            this._notifyWorkspaceFocusLayoutChange();
+            const rn = this._rootNode;
+            if (rn) {
+                rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
+                    el.classList.remove('ws-file-selected');
+                });
+            }
+            this._renderPanel();
+            this.onOpenInBrowser?.(filePath);
+            return;
+        }
+
         const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
         const openingFocusedPreview = usesWorkspaceFocusLayout(filePath);
         if (this._editorMode) {

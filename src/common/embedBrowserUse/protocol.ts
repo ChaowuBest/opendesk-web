@@ -55,7 +55,6 @@ export interface BrowserState {
     currentUrl: string;
     canGoBack: boolean;
     canGoForward: boolean;
-    isFullscreen: boolean;
 }
 
 export interface TabInfo {

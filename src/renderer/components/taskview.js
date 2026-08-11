@@ -36,6 +36,8 @@ const EXPORT_DOWNLOAD_SVG =
 
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+const CHECK_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const REGENERATE_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
 const FORK_ICON_SVG =
@@ -46,6 +48,12 @@ const CTX_FONT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
 const CTX_SELECT_ALL_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>';
+const FILE_TAG_PREVIEW_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const FILE_TAG_OPEN_DEFAULT_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+const FILE_TAG_REVEAL_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
 import {
     findActiveGoalEvalProgress,
     getGoalEvaluationRecordsForMessage,
@@ -241,6 +249,17 @@ class TaskView extends HTMLElement {
                 document.dispatchEvent(
                     new CustomEvent('sidebar-collapse-request', {
                         detail: { collapsed: true, persist: false },
+                        bubbles: true
+                    })
+                );
+            },
+            isNavigationCollapsed: () => {
+                return document.getElementById('app-root')?.classList.contains('sidebar-collapsed') ?? false;
+            },
+            expandNavigation: () => {
+                document.dispatchEvent(
+                    new CustomEvent('sidebar-collapse-request', {
+                        detail: { collapsed: false, persist: false },
                         bubbles: true
                     })
                 );
@@ -2368,9 +2387,9 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
-        // 聚焦布局下收起侧边栏只隐藏内容，保留当前会话和未保存内容。
-        if (!this._workspaceFocusLayout.active && typeof rightSidebar.closeEditor === 'function') {
-            rightSidebar.closeEditor();
+        // 收起侧边栏时退出预览/编辑器状态
+        if (typeof rightSidebar.exitPreview === 'function') {
+            rightSidebar.exitPreview();
         }
 
         // 聚焦布局使用临时百分比宽度，不能写回用户的固定侧边栏宽度。
@@ -2623,6 +2642,104 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 处理 .od-file-pill 元素的右键菜单事件。
+     */
+    _handleFilePillContextMenu(e) {
+        const target = e.target.closest('.od-file-pill[data-open-preview]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const filePath = target.dataset.openPreview;
+        if (!filePath) return;
+
+        this._dismissFilePillContextMenu();
+
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const menu = document.createElement('div');
+        menu.id = 'od-file-pill-ctx';
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '180px';
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+
+        const items = [
+            { action: 'preview', icon: FILE_TAG_PREVIEW_SVG, label: taskViewT('renderer.taskview.fileTag.preview') },
+            { action: 'copy-path', icon: COPY_ICON_SVG, label: taskViewT('renderer.taskview.fileTag.copyPath') },
+            {
+                action: 'open-default',
+                icon: FILE_TAG_OPEN_DEFAULT_SVG,
+                label: taskViewT('renderer.taskview.fileTag.openDefault')
+            },
+            { action: 'reveal', icon: FILE_TAG_REVEAL_SVG, label: taskViewT('renderer.taskview.fileTag.reveal') }
+        ];
+
+        menu.innerHTML = items
+            .map(
+                (item) =>
+                    `<button class="ctx-item" data-action="${item.action}">` +
+                    `<span class="ctx-icon-sm">${item.icon}</span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
+            )
+            .join('');
+
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const margin = 8;
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth - margin) {
+                menu.style.left = `${window.innerWidth - rect.width - margin}px`;
+            }
+            if (rect.bottom > window.innerHeight - margin) {
+                menu.style.top = `${window.innerHeight - rect.height - margin}px`;
+            }
+        });
+
+        menu.querySelector('[data-action="preview"]').addEventListener('click', () => {
+            this._dismissFilePillContextMenu();
+            this._forceExpandRightSidebar();
+            const sidebar = this._getRightSidebarEl();
+            if (sidebar && typeof sidebar.openFilePreview === 'function') {
+                sidebar.openFilePreview(filePath);
+            }
+        });
+
+        menu.querySelector('[data-action="copy-path"]').addEventListener('click', () => {
+            this._dismissFilePillContextMenu();
+            navigator.clipboard.writeText(filePath).catch(() => {});
+        });
+
+        menu.querySelector('[data-action="open-default"]').addEventListener('click', () => {
+            this._dismissFilePillContextMenu();
+            window.fsAPI?.openPath?.(filePath);
+        });
+
+        menu.querySelector('[data-action="reveal"]').addEventListener('click', () => {
+            this._dismissFilePillContextMenu();
+            window.fsAPI?.showItemInFolder?.(filePath);
+        });
+
+        this._filePillCtxDismissHandler = (ev) => {
+            if (!menu.contains(ev.target)) {
+                this._dismissFilePillContextMenu();
+            }
+        };
+        document.addEventListener('mousedown', this._filePillCtxDismissHandler);
+    }
+
+    _dismissFilePillContextMenu() {
+        document.getElementById('od-file-pill-ctx')?.remove();
+        if (this._filePillCtxDismissHandler) {
+            document.removeEventListener('mousedown', this._filePillCtxDismissHandler);
+            this._filePillCtxDismissHandler = null;
+        }
+    }
+
+    /**
      * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
      */
     _handleReasoningToggleClick(e) {
@@ -2685,6 +2802,18 @@ class TaskView extends HTMLElement {
 
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    /**
+     * 公开方法：在侧边栏内置浏览器中打开外部链接。
+     * 从 renderer 全局链接拦截器调用，自动展开侧边栏并切换到浏览器 tab。
+     */
+    openUrlInSidebar(url) {
+        this._forceExpandRightSidebar();
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.browserAddTab === 'function') {
+            sidebar.browserAddTab(url);
+        }
     }
 
     _getDeepActiveElement() {
@@ -3080,7 +3209,9 @@ class TaskView extends HTMLElement {
         if (!action || !messageId) return;
         e.stopPropagation();
         if (action === 'copy') {
-            this._handleCopyMessage(messageId);
+            this._handleCopyMessage(messageId)
+                .then(() => this._showCopyFeedback(btn))
+                .catch(() => {});
         } else if (action === 'regenerate') {
             this._handleRegenerateMessage(messageId);
         } else if (action === 'fork') {
@@ -3101,19 +3232,55 @@ class TaskView extends HTMLElement {
                 Array.from(userContainer.querySelectorAll('.od-user-msg'))
                     .map((el) => el.textContent || '')
                     .join('\n');
-            navigator.clipboard.writeText(text).catch(() => {});
-            return;
+            return navigator.clipboard.writeText(text);
         }
         const messageContent = this.querySelector(`#message-content-${CSS.escape(messageId)}`);
         if (messageContent) {
+            // 优先从 _historyMessages 取最后一个 text part 的原始 markdown 文本，保留代码块等格式
+            const msgIdx = this._getHistoryMessageIndexById(messageId);
+            if (msgIdx >= 0) {
+                const msg = this._historyMessages[msgIdx];
+                if (msg && Array.isArray(msg.content)) {
+                    const textParts = msg.content.filter((p) => p && p.type === 'text' && p.text);
+                    const lastTextPart = textParts[textParts.length - 1];
+                    if (lastTextPart) {
+                        return navigator.clipboard.writeText(lastTextPart.text);
+                    }
+                }
+            }
+            // fallback: 从 DOM 取 textContent
             const textParts = Array.from(messageContent.children).filter((el) =>
                 el.classList.contains('markdown-body')
             );
             const lastTextPart = textParts[textParts.length - 1];
             if (lastTextPart) {
-                navigator.clipboard.writeText(lastTextPart.textContent || '').catch(() => {});
+                return navigator.clipboard.writeText(lastTextPart.textContent || '');
             }
         }
+        return Promise.resolve();
+    }
+
+    _showCopyFeedback(btn) {
+        const label = btn.querySelector('.od-msg-action-label');
+        const labelHTML = label ? label.outerHTML : '';
+        const originalHTML = btn.innerHTML;
+        const FADE = 140;
+
+        btn.style.opacity = '0';
+        setTimeout(() => {
+            btn.innerHTML = CHECK_ICON_SVG + labelHTML;
+            btn.classList.add('od-msg-action-btn--copied');
+            btn.style.opacity = '';
+        }, FADE);
+
+        setTimeout(() => {
+            btn.style.opacity = '0';
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.classList.remove('od-msg-action-btn--copied');
+                btn.style.opacity = '';
+            }, FADE);
+        }, FADE + 1200);
     }
 
     async _handleRegenerateMessage(messageId) {
@@ -3318,6 +3485,10 @@ class TaskView extends HTMLElement {
         // 添加预览打开按钮的点击事件监听（事件代理）
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
+
+        // 添加文件标签右键菜单的事件监听（事件代理）
+        this._handleFilePillContextMenu = this._handleFilePillContextMenu.bind(this);
+        this.addEventListener('contextmenu', this._handleFilePillContextMenu);
 
         // 添加 reasoning 块展开/收起的事件代理
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
@@ -3578,6 +3749,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handleOpenFileClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
+        this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
+        this._dismissFilePillContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
         this.removeEventListener('mouseout', this._handleReasoningHoverLeave);

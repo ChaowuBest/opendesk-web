@@ -12,6 +12,7 @@
 import { Marked, Renderer } from 'marked';
 import markdownCSS from '../styles/print-markdown.css?inline';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { groupMemoriesByUpdatedAt, type MemoryListItem, type MemoryTimeGroupId } from './memory_view_model.js';
 
@@ -40,6 +41,7 @@ renderer.html = (token) => {
     return escapeHtml(raw);
 };
 const marked = new Marked({ renderer });
+marked.use(cjkAutolinkFix);
 
 function icon(name: 'edit' | 'refresh' | 'cleanup' | 'save' | 'close' | 'check' | 'trash'): string {
     const paths = {

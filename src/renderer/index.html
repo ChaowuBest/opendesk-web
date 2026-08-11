@@ -582,11 +582,18 @@
             function closeAllEditorOverlays() {
                 var artifacts = document.querySelectorAll('task-artifacts');
                 artifacts.forEach(function (el) {
-                    if (typeof el.closeEditor === 'function') {
-                        el.closeEditor();
+                    if (typeof el.exitPreview === 'function') {
+                        el.exitPreview();
                     }
                 });
             }
+
+            // 左侧边栏展开时，自动退出右侧 taskview 的预览模式
+            document.addEventListener('sidebar-visibility-changed', function (e) {
+                if (e.detail && !e.detail.collapsed) {
+                    closeAllEditorOverlays();
+                }
+            });
 
             async function openTask(taskId) {
                 ensureSlots();

@@ -290,6 +290,35 @@ html[data-theme='dark'] .reasoning-icon-breathing {
     color: #64748b !important;
     user-select: none !important;
 }
+/* Code block copy button */
+.markdown-body .code-copy-btn {
+    order: 2;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    flex-shrink: 0;
+    opacity: 0.55;
+    transition:
+        opacity 0.15s,
+        color 0.15s;
+}
+/* 无 preview toggle 时，copy button 自身靠右 */
+.markdown-body .code-copy-btn:last-child {
+    margin-left: auto;
+}
+.markdown-body .code-copy-btn:hover {
+    opacity: 1;
+    color: #3b82f6;
+}
+.markdown-body .code-copy-btn--copied {
+    color: #22c55e;
+    opacity: 1;
+}
 /* Code block styles with high-specificity font protection */
 html[data-font-preset] .markdown-body .code-block-body {
     overflow-x: auto !important;
@@ -552,12 +581,12 @@ task-view .markdown-body em {
 }
 
 /* 链接 */
-task-view .markdown-body a {
+task-view .markdown-body a:not(.od-file-pill) {
     color: var(--chat-accent) !important;
     text-decoration: none !important;
     border-bottom: 1px solid var(--chat-accent-soft) !important;
 }
-task-view .markdown-body a:hover {
+task-view .markdown-body a:not(.od-file-pill):hover {
     border-bottom-color: var(--chat-accent) !important;
 }
 
@@ -585,6 +614,12 @@ task-view .markdown-body .code-block-header {
 }
 task-view .markdown-body .code-block-lang {
     color: var(--chat-ink3) !important;
+}
+task-view .markdown-body .code-copy-btn {
+    color: var(--chat-ink3) !important;
+}
+task-view .markdown-body .code-copy-btn:hover {
+    color: var(--chat-accent, #3b82f6) !important;
 }
 task-view .markdown-body .code-block-body {
     background: var(--chat-code-bg) !important;
@@ -1013,7 +1048,8 @@ pre.terminal-tool-output {
     outline: none;
     transition:
         background 0.15s ease,
-        color 0.15s ease;
+        color 0.15s ease,
+        opacity 0.14s ease;
 }
 .agent-input-toolbar-control i {
     font-size: 12px;
@@ -3267,6 +3303,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
     transform: scale(0.92);
 }
 
+.od-msg-action-btn--copied {
+    color: #22c55e !important;
+}
+
 .od-msg-action-btn svg {
     pointer-events: none;
     flex-shrink: 0;
@@ -3492,6 +3532,80 @@ agent-input[hide-disclaimer] .agent-input-footer {
 [data-theme='dark'] .od-file-card-menu:hover {
     background: rgba(255, 255, 255, 0.08);
     color: #a1a1aa;
+}
+
+/* ── File link pill (inline file path in markdown text) ── */
+.od-file-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+    line-height: 1.5;
+    cursor: pointer;
+    text-decoration: none;
+    vertical-align: baseline;
+    transition: all 0.18s ease;
+}
+.od-file-pill[data-type='code'] {
+    background: #ebf1fb;
+    border: 1px solid rgba(66, 103, 178, 0.22);
+    color: #4267b2;
+}
+.od-file-pill[data-type='doc'] {
+    background: #fdf3e3;
+    border: 1px solid rgba(184, 117, 3, 0.22);
+    color: #b87503;
+}
+.od-file-pill[data-type='text'] {
+    background: #e7f5ee;
+    border: 1px solid rgba(31, 157, 102, 0.22);
+    color: #1f9d66;
+}
+.od-file-pill[data-type='default'] {
+    background: #fef9f8;
+    border: 1px solid rgba(223, 68, 54, 0.2);
+    color: #df4436;
+}
+.od-file-pill:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+    filter: brightness(1.1);
+    text-decoration: none;
+}
+.od-file-pill-icon {
+    flex-shrink: 0;
+}
+.od-file-pill-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+[data-theme='dark'] .od-file-pill[data-type='code'] {
+    background: rgba(122, 162, 232, 0.16);
+    border-color: rgba(122, 162, 232, 0.22);
+    color: #7aa2e8;
+}
+[data-theme='dark'] .od-file-pill[data-type='doc'] {
+    background: rgba(226, 162, 59, 0.15);
+    border-color: rgba(226, 162, 59, 0.22);
+    color: #e2a23b;
+}
+[data-theme='dark'] .od-file-pill[data-type='text'] {
+    background: rgba(61, 191, 130, 0.15);
+    border-color: rgba(61, 191, 130, 0.22);
+    color: #3dbf82;
+}
+[data-theme='dark'] .od-file-pill[data-type='default'] {
+    background: rgba(232, 86, 63, 0.12);
+    border-color: rgba(232, 86, 63, 0.22);
+    color: #e8563f;
+}
+[data-theme='dark'] .od-file-pill:hover {
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
 }
 
 /* ApplicationAgentInput stop button animation */

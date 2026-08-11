@@ -832,6 +832,58 @@ const createWindow = () => {
         return { action: 'allow' };
     });
 
+    // 防御性兜底：如果主框架导航到外部 URL 后加载失败（will-navigate 拦截未生效或被绕过），
+    // 自动重载应用入口页，避免用户面对灰色空白屏幕无法操作。
+    let appReloadCount = 0;
+    let appReloadResetTimer: NodeJS.Timeout | null = null;
+    mainWindow.webContents.on('did-fail-load', (_event, _errorCode, _errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        // 只处理非内部 URL 的加载失败，避免应用自身入口页加载失败时无限重载
+        if (
+            validatedURL.startsWith('file://') ||
+            validatedURL.startsWith('http://localhost') ||
+            validatedURL.startsWith('http://127.0.0.1') ||
+            inAppSchemePrefixes.some((p) => validatedURL.startsWith(p))
+        ) {
+            return;
+        }
+        // 限制重载频率，防止极端情况下无限重载
+        if (appReloadCount >= 3) {
+            logger.error(`did-fail-load: reload limit reached for ${validatedURL}`);
+            return;
+        }
+        appReloadCount++;
+        if (appReloadResetTimer) clearTimeout(appReloadResetTimer);
+        appReloadResetTimer = setTimeout(() => {
+            appReloadCount = 0;
+        }, 10000);
+        logger.warn(`did-fail-load: main frame failed to load ${validatedURL}, reloading app entry`);
+        if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+            void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
+        } else {
+            mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+        }
+    });
+
+    // renderer 进程崩溃时自动重载
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        logger.error(`render-process-gone: ${details.reason}`);
+        if (appReloadCount >= 3) {
+            logger.error('render-process-gone: reload limit reached, not reloading');
+            return;
+        }
+        appReloadCount++;
+        if (appReloadResetTimer) clearTimeout(appReloadResetTimer);
+        appReloadResetTimer = setTimeout(() => {
+            appReloadCount = 0;
+        }, 10000);
+        if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+            void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
+        } else {
+            mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+        }
+    });
+
     // 窗口隐藏/最小化时通知 renderer 降低刷新率，节省 CPU 和电量
     mainWindow.on('hide', () => {
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
@@ -1786,6 +1838,15 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('fs:showItemInFolder', async (_event, filePath) => {
+        try {
+            await getPlatform().showItemInFolder(filePath);
+            return { status: 'ok' };
+        } catch (error: any) {
+            logger.error('showing item in folder failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
     // 显示保存文件对话框
     ipcMain.handle('dialog:saveFile', async (event, options) => {
         try {
@@ -2491,6 +2552,19 @@ const registerSettingAPIHandlers = () => {
         globalMainWindow.webContents.openDevTools();
         return { status: 'ok' };
     }),
+        ipcMain.handle('setting:openConfigDirectory', async () => {
+            try {
+                const configDir = getOpendeskDirectory();
+                await getPlatform().openPath(configDir);
+                return { status: 'ok' };
+            } catch (error: any) {
+                return { status: 'error', message: error.message };
+            }
+        }),
+        ipcMain.handle('setting:openLogWindow', () => {
+            openLogViewFromTray();
+            return { status: 'ok' };
+        }),
         ipcMain.handle('setting:getLogContent', () => {
             return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
         }));

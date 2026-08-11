@@ -262,6 +262,10 @@ class SideBar extends HTMLElement {
             window.removeEventListener('blur', this._appPopoverBlurHandler);
             this._appPopoverBlurHandler = null;
         }
+        if (this._debugMenuDismissHandler) {
+            document.removeEventListener('click', this._debugMenuDismissHandler, true);
+            this._debugMenuDismissHandler = null;
+        }
         this._disconnectGroupScrollObservers();
         if (this._runningZoneClearTimer !== null) {
             clearTimeout(this._runningZoneClearTimer);
@@ -586,7 +590,7 @@ class SideBar extends HTMLElement {
     _getBottomToolbarButtons() {
         const svg = (path) =>
             `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
-        return [
+        const buttons = [
             {
                 id: 'open-memory-btn',
                 icon: '',
@@ -617,26 +621,31 @@ class SideBar extends HTMLElement {
                 action: () => {
                     window.globalControlAPI.openSettingEditor();
                 }
-            },
-            {
-                id: 'open-dev-tools-btn',
-                icon: '',
-                iconSvg: svg('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
-                label: this._t('renderer.toolbar.devTools'),
-                action: () => {
-                    window.settingAPI.openDevTools();
-                }
-            },
-            {
-                id: 'open-personal-center-btn',
-                icon: '',
-                iconSvg: svg('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
-                label: this._t('renderer.toolbar.personalCenter'),
-                action: () => {
-                    window.globalControlAPI.openPersonalCenter();
-                }
             }
         ];
+        if (this._developerMode) {
+            buttons.push({
+                id: 'open-debug-btn',
+                icon: '',
+                iconSvg: svg(
+                    '<path d="M4 3v5a5 5 0 0 0 10 0V3"/><path d="M4 3H2M14 3h2"/><path d="M9 13v3a5 5 0 0 0 10 0v-2"/><circle cx="19" cy="11" r="2"/>'
+                ),
+                label: this._t('renderer.toolbar.debug'),
+                action: (event) => {
+                    this._showDebugMenu(event);
+                }
+            });
+        }
+        buttons.push({
+            id: 'open-personal-center-btn',
+            icon: '',
+            iconSvg: svg('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+            label: this._t('renderer.toolbar.personalCenter'),
+            action: () => {
+                window.globalControlAPI.openPersonalCenter();
+            }
+        });
+        return buttons;
     }
 
     _createBottomToolbar() {
@@ -951,6 +960,102 @@ class SideBar extends HTMLElement {
     _dismissAppContextMenu() {
         const existing = this.querySelector('#app-context-menu');
         if (existing) existing.remove();
+    }
+
+    _dismissDebugMenu() {
+        const existing = this.querySelector('#debug-context-menu');
+        if (existing) existing.remove();
+        document.removeEventListener('click', this._debugMenuDismissHandler, true);
+        this._debugMenuDismissHandler = null;
+    }
+
+    _showDebugMenu(event) {
+        this._dismissDebugMenu();
+
+        const targetEl = event.target?.closest?.('button') || event.target;
+        const rect = targetEl.getBoundingClientRect();
+
+        const menu = document.createElement('div');
+        menu.id = 'debug-context-menu';
+        menu.className = 'ctx-menu';
+        menu.style.cssText = 'position:fixed;z-index:99999;min-width:180px;';
+
+        const svgIcon = (path) =>
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+
+        const items = [
+            {
+                id: 'dev-tools',
+                icon: svgIcon('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
+                label: this._t('renderer.toolbar.developerTools'),
+                action: () => {
+                    window.settingAPI.openDevTools();
+                }
+            },
+            {
+                id: 'logs',
+                icon: svgIcon(
+                    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'
+                ),
+                label: this._t('renderer.toolbar.logs'),
+                action: () => {
+                    window.settingAPI.openLogWindow();
+                }
+            },
+            {
+                id: 'config-dir',
+                icon: svgIcon(
+                    '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+                ),
+                label: this._t('renderer.toolbar.openConfigDir'),
+                action: () => {
+                    window.settingAPI.openConfigDirectory();
+                }
+            }
+        ];
+
+        menu.innerHTML = items
+            .map(
+                (item) =>
+                    `<button class="ctx-item" data-action="${item.id}">
+                        <span class="ctx-icon-sm">${item.icon}</span>
+                        <span class="ctx-label">${item.label}</span>
+                    </button>`
+            )
+            .join('');
+
+        this.appendChild(menu);
+
+        // Position: above the button, aligned to its left edge
+        requestAnimationFrame(() => {
+            const menuRect = menu.getBoundingClientRect();
+            let left = rect.left;
+            let top = rect.top - menuRect.height - 4;
+            if (left + menuRect.width > window.innerWidth) {
+                left = window.innerWidth - menuRect.width - 8;
+            }
+            if (top < 0) {
+                top = rect.bottom + 4;
+            }
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+
+        // Bind actions
+        items.forEach((item) => {
+            menu.querySelector(`[data-action="${item.id}"]`).addEventListener('click', () => {
+                this._dismissDebugMenu();
+                item.action();
+            });
+        });
+
+        // Dismiss on outside click
+        this._debugMenuDismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissDebugMenu();
+            }
+        };
+        setTimeout(() => document.addEventListener('click', this._debugMenuDismissHandler, true), 0);
     }
 
     _showTaskInfoModal(taskId) {

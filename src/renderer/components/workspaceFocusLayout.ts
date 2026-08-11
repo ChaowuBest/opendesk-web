@@ -21,6 +21,8 @@ interface WorkspaceFocusLayoutControllerOptions {
     getDefaultPanelWidth: () => string;
     shouldSuppressAnimation: () => boolean;
     collapseNavigation: () => void;
+    isNavigationCollapsed: () => boolean;
+    expandNavigation: () => void;
 }
 
 const FOCUS_PANEL_WIDTH = '75%';
@@ -30,6 +32,7 @@ const FOCUS_LAYOUT_TRANSITION = 'width 320ms cubic-bezier(0.4, 0, 0.2, 1)';
 export class WorkspaceFocusLayoutController {
     private _active = false;
     private _previousPanelWidth: string | null = null;
+    private _navigationWasCollapsed: boolean | null = null;
     private _transitionTimer: number | null = null;
 
     constructor(private readonly _options: WorkspaceFocusLayoutControllerOptions) {}
@@ -54,6 +57,7 @@ export class WorkspaceFocusLayoutController {
             this._previousPanelWidth =
                 panel.style.width ||
                 (panel.offsetWidth > 0 ? `${panel.offsetWidth}px` : this._options.getDefaultPanelWidth());
+            this._navigationWasCollapsed = this._options.isNavigationCollapsed();
             this._options.collapseNavigation();
             this._animatePanelWidth(panel, FOCUS_PANEL_WIDTH);
             return;
@@ -62,6 +66,10 @@ export class WorkspaceFocusLayoutController {
         this._active = false;
         const restoreWidth = this._previousPanelWidth || this._options.getDefaultPanelWidth();
         this._previousPanelWidth = null;
+        if (this._navigationWasCollapsed === false) {
+            this._options.expandNavigation();
+        }
+        this._navigationWasCollapsed = null;
         this._animatePanelWidth(panel, restoreWidth);
     }
 

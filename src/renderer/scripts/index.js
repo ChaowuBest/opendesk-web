@@ -77,6 +77,33 @@ window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
 });
 
+/**
+ * 全局拦截 <a> 链接点击，在侧边栏内置浏览器中预览外部链接，
+ * 避免主窗口导航到外部 URL 导致灰屏。
+ *
+ * 逻辑：找到链接所属的 <task-view>，调用其 openUrlInSidebar() 方法
+ * 展开侧边栏 → 切换到浏览器 tab → 导航到目标 URL。
+ */
+document.addEventListener(
+    'click',
+    (e) => {
+        const anchor = e.target.closest('a[href]');
+        if (!anchor) return;
+        const href = anchor.getAttribute('href') || '';
+        // 只拦截 http/https 协议的外部链接
+        if (!href.startsWith('http://') && !href.startsWith('https://')) return;
+        // 允许内部地址（开发服务器等）
+        if (href.startsWith('http://localhost') || href.startsWith('http://127.0.0.1')) return;
+
+        const taskView = anchor.closest('task-view');
+        if (taskView && typeof taskView.openUrlInSidebar === 'function') {
+            e.preventDefault();
+            taskView.openUrlInSidebar(href);
+        }
+    },
+    true
+);
+
 window.Alpine = Alpine;
 Alpine.start();
 

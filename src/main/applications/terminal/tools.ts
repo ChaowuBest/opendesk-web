@@ -140,10 +140,6 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
         bodyContent = `
             <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
                 <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
-            </div>
-            <div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px] border-t border-gray-100">
-                <i class="fa-solid fa-circle-notch fa-spin"></i>
-                <span class="text-gray-400">命令执行中，请稍候…</span>
             </div>`;
     } else {
         bodyContent = `
@@ -416,7 +412,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     constructor(bashPath: string = '/bin/bash') {
         super(
             'executeBash',
-            '执行 bash 命令。可以执行任何有效的 BASH 命令，如 ls、cd、cat、echo 等',
+            '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
             ExecuteBashArgsSchema
         );
 
@@ -501,7 +497,11 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
     constructor() {
-        super('executeZsh', '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等', ExecuteZshArgsSchema);
+        super(
+            'executeZsh',
+            '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1',
+            ExecuteZshArgsSchema
+        );
 
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }

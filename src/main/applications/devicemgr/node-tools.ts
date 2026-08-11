@@ -676,13 +676,7 @@ function renderNodeShellToolCall(toolcall: ToolCall): string {
         bodyContent = `
         <div class="px-4 pt-2.5 text-[11px] text-gray-400">cwd: ${escapeHtml(args.workingDirectory)}</div>${bodyContent}`;
     }
-    if (isRunning) {
-        bodyContent += `
-        <div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px] border-t border-gray-100">
-            <i class="fa-solid fa-circle-notch fa-spin"></i>
-            <span class="text-gray-400">命令执行中，请稍候…</span>
-        </div>`;
-    } else if (toolcall.result) {
+    if (toolcall.result) {
         bodyContent += `
         <div class="px-4 py-2.5 border-t border-gray-100">
             <pre class="terminal-tool-output ${outputColor}">${escapeHtml(toolcall.result)}</pre>

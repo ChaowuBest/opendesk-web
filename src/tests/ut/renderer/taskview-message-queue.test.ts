@@ -247,7 +247,7 @@ describe('task-view message queue', () => {
         document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
     });
 
-    test('keeps focused content and focus width when the right sidebar is collapsed and reopened', () => {
+    test('exits preview but keeps focus width when the right sidebar is collapsed and reopened', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _rightSidebarExpanded: boolean;
@@ -260,22 +260,47 @@ describe('task-view message queue', () => {
         taskView._rightSidebarExpanded = true;
         taskView.render();
         const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')! as HTMLElement & {
-            closeEditor: jest.Mock;
+            exitPreview: jest.Mock;
         };
         const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
-        artifacts.closeEditor = jest.fn();
+        artifacts.exitPreview = jest.fn();
 
         taskView.dispatchEvent(
             new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
         taskView._collapseRightSidebar(artifacts, resizer);
 
-        expect(artifacts.closeEditor).not.toHaveBeenCalled();
+        expect(artifacts.exitPreview).toHaveBeenCalled();
         expect(taskView._rightSidebarWidth).toBe(380);
 
         taskView._expandRightSidebar(artifacts, resizer);
 
         expect(artifacts.style.width).toBe('75%');
+    });
+
+    test('reveals a Windows file pill through the filesystem API', () => {
+        const showItemInFolder = jest.fn(async () => undefined);
+        window.fsAPI = { showItemInFolder };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _handleFilePillContextMenu: (event: unknown) => void;
+        };
+        const pill = document.createElement('a');
+        pill.className = 'od-file-pill';
+        pill.dataset.openPreview = 'C:\\Users\\Alice\\report.html';
+        taskView.appendChild(pill);
+
+        taskView._handleFilePillContextMenu({
+            target: pill,
+            preventDefault: jest.fn(),
+            stopPropagation: jest.fn(),
+            clientX: 0,
+            clientY: 0
+        });
+        (document.querySelector('[data-action="reveal"]') as HTMLButtonElement).click();
+
+        expect(showItemInFolder).toHaveBeenCalledWith('C:\\Users\\Alice\\report.html');
+        taskView.remove();
+        delete window.fsAPI;
     });
 
     test('restores the configured width when switching back to a cached task with an expanded sidebar', () => {

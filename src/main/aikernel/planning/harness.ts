@@ -90,7 +90,10 @@ export async function appendSubTaskStopCompletion(subTask: TaskState): Promise<v
 
     const tool = subTask.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
     if (tool) toolCall.setTool(tool);
-    await toolCall.freezeRenderResult();
+
+    if (subTask.needsHtmlRender) {
+        await toolCall.freezeRenderResult();
+    }
 
     const toolCallPart = new ToolCallMessagePart();
     toolCallPart.push(toolCall);
@@ -210,7 +213,10 @@ async function appendSyntheticErrorAttemptCompletion(task: TaskState, errorPart:
 
     const tool = task.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
     if (tool) toolCall.setTool(tool);
-    await toolCall.freezeRenderResult();
+
+    if (task.needsHtmlRender) {
+        await toolCall.freezeRenderResult();
+    }
 
     const toolCallPart = new ToolCallMessagePart();
     toolCallPart.push(toolCall);

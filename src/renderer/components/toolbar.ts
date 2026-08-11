@@ -22,7 +22,7 @@ interface Button {
     /** spread 布局下，悬停时在图标右侧展开文本 label */
     expandLabel?: boolean;
     active?: boolean;
-    action: () => void;
+    action: (event?: MouseEvent) => void;
 }
 
 export class ElasticToolbarWidget extends HTMLElement {
@@ -213,8 +213,8 @@ export class ElasticToolbarWidget extends HTMLElement {
         this.buttons.forEach((button) => {
             const buttonElement = this.querySelector(`#${button.id}-${this.uid}`);
             if (buttonElement) {
-                buttonElement.addEventListener('click', () => {
-                    button.action();
+                buttonElement.addEventListener('click', (event) => {
+                    button.action(event);
                 });
             }
         });

@@ -18,6 +18,8 @@ import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
+import { fileLinkExtension } from './marked-file-link.js';
+import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 
 export interface RuntimeMetadata {
     /** 运行域：标记消息属于普通任务、goal 生命周期还是全局后台流程。 */
@@ -202,9 +204,7 @@ marked.use({
             const displayLang = lang
                 ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
                 : '';
-            const headerHtml = displayLang
-                ? `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`
-                : '';
+            const headerHtml = `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`;
             const lines = highlighted.split('\n');
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
             const rows = lines
@@ -228,6 +228,9 @@ marked.use({
         }
     }
 });
+
+marked.use(fileLinkExtension);
+marked.use(cjkAutolinkFix);
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
@@ -1011,6 +1014,7 @@ export class TextMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
+            text: this.text,
             rendered: this.rendered
         };
     }
