@@ -158,7 +158,7 @@ export function createAcpAgentPresetDraft(
     return {
         name: preset.name,
         enabled: true,
-        dispatchable: false,
+        dispatchable: true,
         whenToUse: translate(preset.whenToUseKey),
         transport: {
             type: 'stdio',

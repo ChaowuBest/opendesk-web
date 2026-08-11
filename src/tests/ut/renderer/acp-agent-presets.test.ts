@@ -83,7 +83,31 @@ describe('ACP agent preset picker', () => {
         expect(panel.querySelector('#acp-agent-args').value).toContain('-y');
         expect(panel.querySelector('#acp-agent-args').value).toContain('@zed-industries/codex-acp@latest');
         expect(panel.querySelector('#acp-agent-enabled').hasAttribute('checked')).toBe(true);
-        expect(panel.querySelector('#acp-agent-dispatchable').hasAttribute('checked')).toBe(false);
+        expect(panel.querySelector('#acp-agent-dispatchable').hasAttribute('checked')).toBe(true);
         expect(panel.querySelector('#acp-agent-preset-download-notice').textContent).toContain('首次测试或使用');
+    });
+
+    test('custom agents are dispatchable by default without changing saved profiles', () => {
+        const panel = createPanel();
+        panel.querySelector('#add-acp-agent-btn').dispatchEvent(new Event('click'));
+
+        panel.querySelector('.acp-agent-custom-btn').dispatchEvent(new Event('click'));
+
+        expect(panel.querySelector('#acp-agent-dispatchable').hasAttribute('checked')).toBe(true);
+
+        panel.currentData.applications.acpmgr = {
+            agents: [
+                {
+                    id: 'saved-agent',
+                    name: 'Saved Agent',
+                    enabled: true,
+                    dispatchable: false,
+                    transport: { type: 'stdio', command: 'saved-agent', args: [] }
+                }
+            ]
+        };
+        panel.showAcpAgentEditModal(0);
+
+        expect(panel.querySelector('#acp-agent-dispatchable').hasAttribute('checked')).toBe(false);
     });
 });

@@ -1140,6 +1140,7 @@ class SettingPanel extends HTMLElement {
         };
         const session = profile?.session || { configOptions: {}, mcpServerIds: [] };
         const isHttp = transport.type === 'streamableHttp';
+        const dispatchableChecked = isEdit ? profile?.dispatchable === true : profile?.dispatchable !== false;
         const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
 
         this.showModal(`
@@ -1175,7 +1176,7 @@ class SettingPanel extends HTMLElement {
                         <label for="acp-agent-enabled">${this._t('sp.agents.field.enabled')}</label>
                     </div>
                     <div class="od-sp-fc">
-                        <input id="acp-agent-dispatchable" type="checkbox" ${profile?.dispatchable ? 'checked' : ''}>
+                        <input id="acp-agent-dispatchable" type="checkbox" ${dispatchableChecked ? 'checked' : ''}>
                         <label for="acp-agent-dispatchable">${this._t('sp.agents.field.dispatchable')}</label>
                     </div>
                     <div class="od-sp-fg">
