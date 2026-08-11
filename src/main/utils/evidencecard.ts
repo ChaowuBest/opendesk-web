@@ -18,6 +18,7 @@ import {
     type UsageFields
 } from '../aikernel/messages.js';
 import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
+import type { TaskState } from '../aikernel/states/tasks.js';
 import { Setting } from './setting.js';
 
 export type EvidenceCardPhase = 'plan' | 'localize' | 'inspect' | 'patch' | 'verify' | 'replan' | 'answer' | 'other';
@@ -897,7 +898,6 @@ export function buildEvidenceCardRuntimePrompt(
     const ledgerText = recentLedger.length > 0 ? recentLedger.map(formatLedgerEntry).join('\n') : '- none yet';
 
     return [
-        '[Internal runtime note from EvidenceCard. This is not a new user request.]',
         '# EvidenceCard Runtime',
         '- enabled: true',
         '- current_query: ' + (latestQuery || 'n/a'),
@@ -912,3 +912,29 @@ export function buildEvidenceCardRuntimePrompt(
 }
 
 export const buildEvidenceCardRuntimeTail = buildEvidenceCardRuntimePrompt;
+
+/**
+ * 将 EvidenceCard 的运行时 tail 注册为 TaskState 的 onTailcardGenerate 钩子。
+ *
+ * 钩子在每次发起 LLM 请求时被调度，根据当前 EvidenceCard feature 开关与
+ * `evidencecard_state` 生成 TailCard 内容；feature 关闭时返回 `undefined`。
+ * 同一个 task 内重复注册会保留首次注册（由 Hooks 保证幂等）。
+ */
+export function registerEvidenceCardTailcard(task: TaskState): void {
+    task.hooks.onTailcardGenerate(
+        (currentTask, context) => {
+            if (!currentTask.refreshEvidenceCardFeatureState()) {
+                return undefined;
+            }
+            const content = buildEvidenceCardRuntimeTail(
+                context.activeContext ?? context.chatContext,
+                currentTask.evidencecard_state
+            );
+            return content.trim().length > 0 ? { id: 'evidence-card', content } : undefined;
+        },
+        {
+            id: 'evidence-card',
+            maxChars: 8_000
+        }
+    );
+}

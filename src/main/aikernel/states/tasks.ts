@@ -41,14 +41,14 @@ import {
 import { setRenderWorkspace } from '../marked-file-link.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
-import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
+import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import {
-    buildEvidenceCardRuntimeTail,
     createEvidenceCardState,
     getEvidenceCardSettings,
+    registerEvidenceCardTailcard,
     recordEvidenceCardToolCall,
     syncEvidenceCardTaskState,
     type EvidenceCardState
@@ -608,6 +608,7 @@ export class TaskState {
         this.parent_id = parent_id;
         this._extensions = new TaskExtensionManager(this);
         syncEvidenceCardTaskState(this);
+        registerEvidenceCardTailcard(this);
         this.bindChatContextMessageAppend();
     }
 
@@ -961,14 +962,6 @@ export class TaskState {
     resetEvidenceCardState(): void {
         const enabled = this.refreshEvidenceCardFeatureState();
         this.evidencecard_state = createEvidenceCardState(enabled, getEvidenceCardSettings(enabled).globalBudgetTokens);
-    }
-
-    buildEvidenceCardRequestTail(activeContext?: Pick<ActiveContextView, 'messages'>): string | undefined {
-        if (!this.refreshEvidenceCardFeatureState()) {
-            return undefined;
-        }
-        const requestTail = buildEvidenceCardRuntimeTail(activeContext ?? this.chat_context, this.evidencecard_state);
-        return requestTail.trim().length > 0 ? requestTail : undefined;
     }
 
     /**

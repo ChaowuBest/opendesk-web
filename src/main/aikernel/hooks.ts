@@ -10,8 +10,9 @@
  */
 
 import type { TaskState } from './states/tasks.js';
-import type { ToolCall, AssistantMessage } from './messages.js';
+import type { ToolCall, AssistantMessage, ChatContext } from './messages.js';
 import type { LLMRequestOptions } from './llm.js';
+import type { ActiveContextView } from './compaction/types.js';
 import { logger } from '../utils/logger.js';
 
 /******************************************************************************
@@ -116,6 +117,101 @@ type BeforeToolcallCreatedCallback = (
     requestToolCalls: readonly ToolCall[]
 ) => Promise<BeforeToolcallCreatedFeedback>;
 
+/******************************************************************************
+ * TailCard / onTailcardGenerate
+ * ------------------------
+ * 1. 在每次向 LLM 发起请求之前，允许不同模块在请求末尾插入一段内容（TailCard），
+ *    用于向模型提供本次请求的运行时上下文（如 EvidenceCard 的 ledger、其它模块
+ *    的运行态等）；上一轮插入的 TailCard 不会留存到下一轮请求；
+ * 2. 模块通过 onTailcardGenerate 注册回调，回调返回一个 TailCard（包含 id 与
+ *    content），调度时按 priority 升序拼接，最终包装成完整的 TailCards 区域
+ *    插入到 LLM 请求中；
+ * 3. 回调签名会收到压缩后的 ActiveContextView，便于依赖真实上下文视图生成内容。
+ ******************************************************************************/
+
+/** 单个模块生成的 TailCard 内容 */
+export interface TailCard {
+    id: string;
+    content: string;
+}
+
+/** onTailcardGenerate 回调上下文 */
+export interface TailcardContext {
+    activeContext?: ActiveContextView;
+    chatContext: Pick<ChatContext, 'messages'>;
+    model?: string;
+    requestType: 'streamComplete';
+}
+
+/** onTailcardGenerate 回调签名 */
+export type TailcardCallback = (
+    task: TaskState,
+    context: TailcardContext
+) => TailCard | undefined | Promise<TailCard | undefined>;
+
+/** onTailcardGenerate 注册选项 */
+export interface TailcardOptions extends HookOptions {
+    id: string;
+    maxChars?: number;
+}
+
+/** TailCard 注册条目 */
+interface TailcardRegistration {
+    callback: TailcardCallback;
+    id: string;
+    priority: number;
+    maxChars?: number;
+    order: number;
+}
+
+const TAILCARDS_HEADER = [
+    '[OpenDesk Internal Request Tail]',
+    'This is internal runtime context for the current model request, not a new user request.',
+    'Use it for analysis, planning, and tool selection.'
+].join('\n');
+
+const TAILCARDS_FOOTER = [
+    '[End OpenDesk Internal Request Tail]',
+    "Answer the user's original request directly. Unless the user explicitly asks about this internal context, do not mention, quote, or summarize the Tail or its sections in the final answer."
+].join('\n');
+
+function normalizeTailcardId(id: string): string {
+    const normalized = id.replace(/[\r\n]+/g, ' ').trim();
+    if (normalized.length === 0) {
+        throw new Error('onTailcardGenerate id must not be empty');
+    }
+    return normalized;
+}
+
+function normalizeTailcardMaxChars(maxChars: number | undefined): number | undefined {
+    if (maxChars === undefined) {
+        return undefined;
+    }
+    if (!Number.isFinite(maxChars) || maxChars <= 0) {
+        throw new Error('onTailcardGenerate maxChars must be a positive number');
+    }
+    return Math.floor(maxChars);
+}
+
+function truncateTailcardContent(content: string, maxChars: number | undefined): string {
+    if (maxChars === undefined || content.length <= maxChars) {
+        return content;
+    }
+    if (maxChars <= 3) {
+        return content.slice(0, maxChars);
+    }
+    return content.slice(0, maxChars - 3) + '...';
+}
+
+function composeTailcards(sections: Array<{ id: string; content: string }>): string {
+    return [
+        TAILCARDS_HEADER,
+        '',
+        ...sections.flatMap((section) => [`## Section: ${section.id}`, section.content, '']),
+        TAILCARDS_FOOTER
+    ].join('\n');
+}
+
 /** 钩子注册选项；priority 范围 [0, 65535]，缺省为 0；priority 越小越先执行 */
 export interface HookOptions {
     priority?: number;
@@ -173,6 +269,7 @@ export class Hooks {
     beforeTurnStartHooks: Hook<BeforeTurnStartCallback>[] = [];
     afterProcessCompletionHooks: Hook<AfterProcessCompletionCallback>[] = [];
     beforeToolcallCreatedHooks: Hook<BeforeToolcallCreatedCallback>[] = [];
+    tailcardRegistrations: TailcardRegistration[] = [];
 
     private constructor(parent?: Hooks) {
         this.parent = parent;
@@ -371,6 +468,80 @@ export class Hooks {
      */
     beforeToolcallCreated(callback: BeforeToolcallCreatedCallback, options?: HookOptions): void {
         this.beforeToolcallCreatedHooks.push({ callback, options: resolveHookOptions(options) });
+    }
+
+    /**
+     * 注册 `onTailcardGenerate` 钩子。
+     *
+     * 触发时机：每次向 LLM 发起请求之前（streamComplete 之前），在请求末尾
+     * 拼接各模块生成的 TailCard。上一轮插入的 TailCard 不会留存到下一轮请求。
+     * 回调签名：`(task: TaskState, context: TailcardContext) => TailCard | undefined`
+     * - 返回 `TailCard`：参与本次请求的 TailCards 拼接；
+     * - 返回 `undefined`：本次不插入该模块的内容。
+     *
+     * `context.activeContext` 是任务被上下文压缩之后的真实视图；上下文准备失败时
+     * 为 `undefined`，模块可使用 `context.chatContext` 回退。`options.id` 唯一标识
+     * 一个模块的 TailCard，相同 id 重复注册时保留首次注册；`options.priority`
+     * 越小越先执行；`options.maxChars` 用于限制单条 TailCard 的字符数（超出会截断
+     * 并加 `...`）。
+     *
+     * 典型用途：EvidenceCard 注入运行时 ledger、其它模块注入运行态上下文。
+     */
+    onTailcardGenerate(callback: TailcardCallback, options: TailcardOptions): void {
+        const id = normalizeTailcardId(options.id);
+        if (this.tailcardRegistrations.some((registration) => registration.id === id)) {
+            return;
+        }
+        this.tailcardRegistrations.push({
+            callback,
+            id,
+            priority: options.priority ?? 0,
+            maxChars: normalizeTailcardMaxChars(options.maxChars),
+            order: this.tailcardRegistrations.length
+        });
+    }
+
+    /**
+     * 调度所有已注册的 `onTailcardGenerate` 钩子，按 priority 升序（相同
+     * priority 按注册顺序）依次执行回调，收集非空 TailCard 并拼接成完整的
+     * TailCards 区域。单个回调抛错时仅记录日志并跳过，不影响其它回调。
+     *
+     * @returns 拼接后的 TailCards 文本；如果没有回调返回内容则返回 `undefined`。
+     */
+    private async collectTailcardSections(
+        task: TaskState,
+        context: TailcardContext
+    ): Promise<Array<{ id: string; content: string }>> {
+        const registrations = [...this.tailcardRegistrations].sort((left, right) => {
+            if (left.priority !== right.priority) return left.priority - right.priority;
+            return left.order - right.order;
+        });
+        const sections: Array<{ id: string; content: string }> = [];
+        for (const registration of registrations) {
+            try {
+                const result = await registration.callback(task, context);
+                if (result === undefined) continue;
+                let content = result.content.trim();
+                if (content.length === 0) continue;
+                content = truncateTailcardContent(content, registration.maxChars);
+                if (content.length === 0) continue;
+                sections.push({ id: registration.id, content });
+            } catch (err) {
+                logger.error(`Hooks.buildTailcards: callback ${registration.id} failed`, err);
+            }
+        }
+        if (this.parent) {
+            sections.push(...(await this.parent.collectTailcardSections(task, context)));
+        }
+        return sections;
+    }
+
+    async buildTailcards(task: TaskState, context: TailcardContext): Promise<string | undefined> {
+        const sections = await this.collectTailcardSections(task, context);
+        if (sections.length === 0) {
+            return undefined;
+        }
+        return composeTailcards(sections);
     }
 
     async checkBeforeFinishTurn(task: TaskState, modelRequestOptions?: LLMRequestOptions): Promise<FinishTurnFeedback> {
