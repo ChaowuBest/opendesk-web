@@ -28,15 +28,19 @@ namespace OpenDesk.Installer
     public sealed class OpenDeskBootstrapperApplication : BootstrapperApplication
     {
         private const string PackageId = "OpenDeskMsi";
+        private const int UnsafeLegacyExitCode = 1603;
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
+        private bool relatedMsiDetected;
         private bool cancelRequested;
         private int exitCode;
         private string lastError;
+        private string activeInstallFolder;
 
         public OpenDeskBootstrapperApplication()
         {
+            DetectRelatedMsiPackage += OnDetectRelatedMsiPackage;
             DetectPackageComplete += OnDetectPackageComplete;
             DetectComplete += OnDetectComplete;
             PlanComplete += OnPlanComplete;
@@ -70,7 +74,13 @@ namespace OpenDesk.Installer
 
         public string GetInstallFolder()
         {
-            return InstallerPath.Normalize(Engine.FormatString(Engine.StringVariables["InstallFolder"]));
+            if (!string.IsNullOrEmpty(activeInstallFolder))
+            {
+                return activeInstallFolder;
+            }
+
+            string folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
+            return InstallerPath.ResolveInitialDirectory(folder, GetSavedInstallPathCustomized());
         }
 
         public bool GetSavedPreference(string name)
@@ -90,42 +100,70 @@ namespace OpenDesk.Installer
             }
         }
 
-        public string GetUnsafeLegacyInstallFolder()
+        public bool GetSavedInstallPathCustomized()
         {
-            string folder = null;
             try
             {
-                folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
-                if (InstallerPath.IsDedicated(folder))
+                using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = root.OpenSubKey("SOFTWARE\\OpenDesk\\Installer"))
                 {
-                    return null;
-                }
-
-                string fullPath = Path.GetFullPath(folder);
-                if (File.Exists(Path.Combine(fullPath, ".installInfo.json")))
-                {
-                    return fullPath;
-                }
-                foreach (string versionFolder in Directory.GetDirectories(fullPath, "app-*", SearchOption.TopDirectoryOnly))
-                {
-                    if (File.Exists(Path.Combine(versionFolder, "opendesk.exe")))
-                    {
-                        return fullPath;
-                    }
+                    object value = key == null ? null : key.GetValue("InstallPathCustomized");
+                    return value != null && Convert.ToInt32(value) != 0;
                 }
             }
             catch
             {
-                return string.IsNullOrWhiteSpace(folder) ? null : folder;
+                return false;
             }
-            return null;
         }
 
-        public void Install(string folder, bool desktopShortcut, bool startMenuShortcut)
+        public string GetUnsafeLegacyInstallFolder()
         {
-            Engine.StringVariables["InstallFolder"] = folder;
+            if (!IsUnsafeLegacyUpgrade())
+            {
+                return null;
+            }
+
+            try
+            {
+                string folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
+                return string.IsNullOrWhiteSpace(folder) ? GetInstallFolder() : InstallerPath.Normalize(folder);
+            }
+            catch
+            {
+                return GetInstallFolder();
+            }
+        }
+
+        private bool IsUnsafeLegacyUpgrade()
+        {
+            return relatedMsiDetected && GetSavedLayoutVersion() < 2;
+        }
+
+        private static int GetSavedLayoutVersion()
+        {
+            try
+            {
+                using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = root.OpenSubKey("SOFTWARE\\OpenDesk\\Installer"))
+                {
+                    object value = key == null ? null : key.GetValue("LayoutVersion");
+                    return value == null ? 0 : Convert.ToInt32(value);
+                }
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        public void Install(string folder, bool desktopShortcut, bool startMenuShortcut, bool installPathCustomized)
+        {
+            activeInstallFolder = InstallerPath.Normalize(folder);
+            Engine.StringVariables["InstallFolder"] = activeInstallFolder;
             Engine.NumericVariables["CreateDesktopShortcut"] = desktopShortcut ? 1 : 0;
             Engine.NumericVariables["CreateStartMenuShortcut"] = startMenuShortcut ? 1 : 0;
+            Engine.NumericVariables["InstallPathCustomized"] = installPathCustomized ? 1 : 0;
             StartAction(LaunchAction.Install);
         }
 
@@ -156,6 +194,20 @@ namespace OpenDesk.Installer
 
         private void StartAction(LaunchAction action)
         {
+            if (IsUnsafeLegacyUpgrade())
+            {
+                exitCode = UnsafeLegacyExitCode;
+                if (Command.Display == Display.None)
+                {
+                    form.Close();
+                }
+                else
+                {
+                    form.ShowDetected(packageState == PackageState.Present, true);
+                }
+                return;
+            }
+
             activeAction = action;
             cancelRequested = false;
             lastError = null;
@@ -168,6 +220,14 @@ namespace OpenDesk.Installer
             if (e.PackageId == PackageId)
             {
                 packageState = e.State;
+            }
+        }
+
+        private void OnDetectRelatedMsiPackage(object sender, DetectRelatedMsiPackageEventArgs e)
+        {
+            if (e.PackageId == PackageId)
+            {
+                relatedMsiDetected = true;
             }
         }
 
@@ -308,6 +368,8 @@ namespace OpenDesk.Installer
         private string selectedFolder;
         private bool selectedDesktopShortcut;
         private bool selectedStartMenuShortcut;
+        private bool selectedInstallPathCustomized;
+        private bool editingInstallPathCustomized;
         private bool busy;
 
         public InstallerForm(OpenDeskBootstrapperApplication application, Localizer localizer)
@@ -338,6 +400,7 @@ namespace OpenDesk.Installer
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
             selectedStartMenuShortcut = application.GetSavedPreference("CreateStartMenuShortcut");
+            selectedInstallPathCustomized = application.GetSavedInstallPathCustomized();
 
             BuildSidebar();
 
@@ -362,6 +425,7 @@ namespace OpenDesk.Installer
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
             selectedStartMenuShortcut = application.GetSavedPreference("CreateStartMenuShortcut");
+            selectedInstallPathCustomized = application.GetSavedInstallPathCustomized();
             string unsafeLegacyFolder = application.GetUnsafeLegacyInstallFolder();
             if (!string.IsNullOrEmpty(unsafeLegacyFolder))
             {
@@ -616,6 +680,8 @@ namespace OpenDesk.Installer
                 folderTextBox.Font = BodyFont;
                 folderTextBox.SetBounds(46, 249, 416, 34);
                 folderTextBox.Text = selectedFolder;
+                editingInstallPathCustomized = selectedInstallPathCustomized;
+                folderTextBox.TextChanged += delegate { editingInstallPathCustomized = true; };
                 rightBody.Controls.Add(folderTextBox);
 
                 Button browse = AddButton(rightBody, "BrowseFolderButton", T("OptionsBrowseButton"), 468, 247, 128, 38);
@@ -627,7 +693,8 @@ namespace OpenDesk.Installer
                         dialog.SelectedPath = folderTextBox.Text;
                         if (dialog.ShowDialog(this) == DialogResult.OK)
                         {
-                            folderTextBox.Text = dialog.SelectedPath;
+                            folderTextBox.Text = InstallerPath.AppendDefaultDirectory(dialog.SelectedPath);
+                            editingInstallPathCustomized = false;
                         }
                     }
                 };
@@ -682,7 +749,12 @@ namespace OpenDesk.Installer
 
         private void StartInstallFromWelcome()
         {
-            application.Install(selectedFolder, selectedDesktopShortcut, selectedStartMenuShortcut);
+            application.Install(
+                selectedFolder,
+                selectedDesktopShortcut,
+                selectedStartMenuShortcut,
+                selectedInstallPathCustomized
+            );
         }
 
         private void SaveOptions()
@@ -703,6 +775,7 @@ namespace OpenDesk.Installer
             selectedFolder = folder;
             selectedDesktopShortcut = desktopShortcutCheckBox.Checked;
             selectedStartMenuShortcut = startMenuShortcutCheckBox.Checked;
+            selectedInstallPathCustomized = editingInstallPathCustomized;
             ShowWelcome(true);
         }
 
@@ -949,24 +1022,37 @@ namespace OpenDesk.Installer
             try
             {
                 string fullPath = Path.GetFullPath(folder.Trim());
+                string root = Path.GetPathRoot(fullPath);
                 string normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                string leaf = Path.GetFileName(normalized);
-                if (string.Equals(leaf, "opendesk", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(normalized, root.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
                 {
-                    string parent = Path.GetDirectoryName(normalized);
-                    return string.IsNullOrEmpty(parent) ? normalized : Path.Combine(parent, "opendesk");
+                    return root;
                 }
-
-                if (string.IsNullOrEmpty(leaf))
-                {
-                    return Path.Combine(fullPath, "opendesk");
-                }
-                return Path.Combine(normalized, "opendesk");
+                return normalized;
             }
             catch
             {
                 return folder.Trim();
             }
+        }
+
+        public static string AppendDefaultDirectory(string folder)
+        {
+            string normalized = Normalize(folder);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return normalized;
+            }
+
+            string leaf = Path.GetFileName(normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return string.Equals(leaf, "opendesk", StringComparison.OrdinalIgnoreCase)
+                ? normalized
+                : Path.Combine(normalized, "opendesk");
+        }
+
+        public static string ResolveInitialDirectory(string folder, bool pathCustomized)
+        {
+            return pathCustomized ? Normalize(folder) : AppendDefaultDirectory(folder);
         }
     }
 

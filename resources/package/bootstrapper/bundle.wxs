@@ -34,6 +34,7 @@ See the Mulan PSL v2 for more details.
                   bal:Overridable="yes" />
         <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
+        <Variable Name="InstallPathCustomized" Type="numeric" Value="0" bal:Overridable="yes" />
         <util:RegistrySearch Id="FindPreviousInstallFolder"
                              Variable="PreviousInstallFolder"
                              Root="HKLM"
@@ -62,6 +63,7 @@ See the Mulan PSL v2 for more details.
                 <MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="[InstallFolder]" />
                 <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
                 <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
+                <MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="[InstallPathCustomized]" />
             </MsiPackage>
         </Chain>
     </Bundle>

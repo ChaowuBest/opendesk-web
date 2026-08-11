@@ -25,6 +25,11 @@ See the Mulan PSL v2 for more details.
       <DialogRef Id="ProgressDlg" />
       <DialogRef Id="ResumeDlg" />
       <DialogRef Id="UserExit" />
+      <Publish Dialog="BrowseDlg"
+               Control="OK"
+               Property="APPLICATIONROOTDIRECTORY"
+               Value="[APPLICATIONROOTDIRECTORY]opendesk\"
+               Order="2"><![CDATA[NOT Installed AND NOT APPLICATIONROOTDIRECTORY ~>> "\opendesk\"]]></Publish>
       <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath" Order="3">1</Publish>
       <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
