@@ -425,6 +425,13 @@ class AgentGateApplication extends BaseApplication {
         return typeof t === 'number' && t >= 10 ? t : 300;
     }
 
+    /** 一次性设置 LLM 模型 + 超时（合并为一次配置更新，避免多次触发重启） */
+    setLLMConfig(model: string, timeout?: number): void {
+        const patch: Record<string, unknown> = { llmModel: model || '' };
+        if (typeof timeout === 'number' && timeout >= 10 && timeout <= 600) patch.llmTimeout = timeout;
+        this._updateAppConfig(patch);
+    }
+
     /** 设置 LLM 超时 */
     setLLMTimeout(timeout: number): void {
         this._updateAppConfig({ llmTimeout: timeout });

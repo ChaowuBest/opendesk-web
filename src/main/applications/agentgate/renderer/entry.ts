@@ -160,6 +160,27 @@ const T: Record<string, { zh: string; en: string }> = {
     llmModelDefault: { zh: '默认模型', en: 'Default Model' },
     llmTimeout: { zh: '超时', en: 'Timeout' },
     llmTimeoutUnit: { zh: '秒', en: 's' },
+    llmDisableConfirmTitle: { zh: '关闭 LLM 深度分析', en: 'Disable LLM Deep Analysis' },
+    llmDisableConfirmMsg: {
+        zh: '关闭 LLM 深度分析将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Disabling LLM deep analysis will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
+    llmDisableConfirmBtn: { zh: '关闭并重启', en: 'Disable & Restart' },
+    llmEnableConfirmTitle: { zh: '启用 LLM 深度分析', en: 'Enable LLM Deep Analysis' },
+    llmEnableConfirmMsg: {
+        zh: '启用 LLM 深度分析将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Enabling LLM deep analysis will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
+    llmEnableConfirmBtn: { zh: '启用并重启', en: 'Enable & Restart' },
+    llmApplyBtn: { zh: '确认修改并重启', en: 'Apply & Restart' },
+    llmApplyHint: {
+        zh: '修改后需重启 AgentMoss 服务生效，可能短暂中断数秒。',
+        en: 'Changes take effect after restarting the AgentMoss service, which may briefly interrupt for a few seconds.'
+    },
+    llmApplyConfirmMsg: {
+        zh: '保存模型与超时设置将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Saving model and timeout settings will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
     maliciousSkillTitle: { zh: '恶意技能检测', en: 'Malicious Skill Detection' },
     maliciousSkillEnable: {
         zh: '启用恶意技能检测',
@@ -1385,6 +1406,10 @@ function configHTML(): string {
             <label class="ag-label">${tr('llmTimeout')} (${tr('llmTimeoutUnit')})</label>
             <input id="ag-llm-timeout" type="number" min="10" max="600" value="300" class="ag-input">
         </div>
+    </div>
+    <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('llmApplyHint')}</div>
+    <div style="margin-top:10px;text-align:right;">
+        <button id="ag-llm-apply" class="ag-btn ag-btn-primary ag-btn-sm">${tr('llmApplyBtn')}</button>
     </div>
 </div>
 
@@ -2866,14 +2891,39 @@ class AgentGateEntryWidget extends HTMLElement {
 
         // LLM toggle（初始化从后端读真实状态，避免硬编码默认）
         const llm = this.shadow.querySelector('#ag-llm-toggle') as HTMLElement;
+        // 记录 LLM 开关最新状态，用于 LLM 关闭时禁用模型/超时/确认按钮
+        let llmOn = true;
+        /** 根据 LLM 开关状态，禁用/启用模型、超时、确认修改按钮（LLM 关闭时这些设置无意义） */
+        const _setLLMConfigEnabled = (enabled: boolean) => {
+            const select = this.shadow.querySelector('#ag-llm-model') as HTMLSelectElement;
+            const input = this.shadow.querySelector('#ag-llm-timeout') as HTMLInputElement;
+            const btn = this.shadow.querySelector('#ag-llm-apply') as HTMLButtonElement;
+            if (select) select.disabled = !enabled;
+            if (input) input.disabled = !enabled;
+            if (btn) btn.disabled = !enabled;
+        };
         if (llm) {
             try {
-                const llmOn = await (window as any).applicationAPI?.callMainWorld('getEnableLLM');
-                _tog(llm, llmOn !== false);
+                const llmInit = await (window as any).applicationAPI?.callMainWorld('getEnableLLM');
+                llmOn = llmInit !== false;
+                _tog(llm, llmOn);
+                _setLLMConfigEnabled(llmOn);
             } catch {}
-            llm.addEventListener('click', () => {
+            llm.addEventListener('click', async () => {
                 const on = !llm.classList.contains('on');
+                // 启用/关闭 LLM 深度分析都会重启 AgentMoss 服务，弹窗提醒用户可能短暂中断
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-microchip',
+                    title: on ? tr('llmEnableConfirmTitle') : tr('llmDisableConfirmTitle'),
+                    message: on ? tr('llmEnableConfirmMsg') : tr('llmDisableConfirmMsg'),
+                    confirmText: on ? tr('llmEnableConfirmBtn') : tr('llmDisableConfirmBtn'),
+                    cancelText: tr('cancel'),
+                    variant: on ? 'info' : 'danger'
+                });
+                if (!confirmed) return; // 取消则保持原状态
                 _tog(llm, on);
+                llmOn = on;
+                _setLLMConfigEnabled(on); // LLM 关闭时禁用模型/超时/确认按钮
                 try {
                     (window as any).applicationAPI?.callMainWorld('setEnableLLM', on);
                 } catch {}
@@ -2896,29 +2946,41 @@ class AgentGateEntryWidget extends HTMLElement {
             });
         }
 
-        // LLM model 下拉（选中已在 _loadModels 完成，这里挂 change 监听）
+        // LLM model 下拉（选中已在 _loadModels 完成）。修改不立即保存，点「确认修改并重启」才生效。
         const lm = this.shadow.querySelector('#ag-llm-model') as HTMLSelectElement;
-        if (lm) {
-            lm.addEventListener('change', () => {
-                try {
-                    (window as any).applicationAPI?.callMainWorld('setLLMModel', lm.value || '');
-                } catch {}
-            });
-        }
-
-        // LLM timeout（初始化从后端读真实值，避免硬编码默认 300）
         const to = this.shadow.querySelector('#ag-llm-timeout') as HTMLInputElement;
+        const applyBtn = this.shadow.querySelector('#ag-llm-apply') as HTMLButtonElement;
+        // LLM timeout 初始化从后端读真实值
         if (to) {
             try {
                 const tv = await (window as any).applicationAPI?.callMainWorld('getLLMTimeout');
                 if (tv && tv >= 10 && tv <= 600) to.value = String(tv);
             } catch {}
-            to.addEventListener('blur', () => {
-                const v = parseInt(to.value, 10);
-                if (v >= 10 && v <= 600)
-                    try {
-                        (window as any).applicationAPI?.callMainWorld('setLLMTimeout', v);
-                    } catch {}
+        }
+        // 「确认修改并重启」：先确认，再一次性保存模型 + 超时（触发重启生效）
+        if (applyBtn) {
+            applyBtn.addEventListener('click', async () => {
+                if (!llmOn) return; // LLM 关闭时不应保存
+                // 弹窗告知用户即将重启
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-microchip',
+                    title: tr('llmApplyBtn'),
+                    message: tr('llmApplyConfirmMsg'),
+                    confirmText: tr('confirm'),
+                    cancelText: tr('cancel'),
+                    variant: 'info'
+                });
+                if (!confirmed) return;
+                // 合并保存模型 + 超时，触发一次重启
+                const modelVal = lm ? lm.value || '' : '';
+                const timeoutVal = to ? parseInt(to.value, 10) : NaN;
+                try {
+                    await (window as any).applicationAPI?.callMainWorld(
+                        'setLLMConfig',
+                        modelVal,
+                        timeoutVal >= 10 && timeoutVal <= 600 ? timeoutVal : undefined
+                    );
+                } catch {}
             });
         }
 
