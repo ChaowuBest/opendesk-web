@@ -961,6 +961,8 @@ if (shouldExposeMainWindowAPIs()) {
             return () => ipcRenderer.removeListener('setting:changed', handler);
         },
         openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
+        openConfigDirectory: () => ipcRenderer.invoke('setting:openConfigDirectory'),
+        openLogWindow: () => ipcRenderer.invoke('setting:openLogWindow'),
         getLogContent: async () => {
             const result = await ipcRenderer.invoke('setting:getLogContent');
             if (result.status !== 'ok') {

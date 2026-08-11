@@ -1373,7 +1373,10 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.fileSystem': '文件系统',
     'renderer.toolbar.settings': '设置',
     'renderer.toolbar.devTools': '开发工具',
+    'renderer.toolbar.debug': '调试',
+    'renderer.toolbar.developerTools': '开发人员工具',
     'renderer.toolbar.logs': '日志',
+    'renderer.toolbar.openConfigDir': '打开配置目录',
     'renderer.toolbar.personalCenter': '个人中心',
 
     // Renderer - Personal Center

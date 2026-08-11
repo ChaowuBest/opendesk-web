@@ -2552,6 +2552,19 @@ const registerSettingAPIHandlers = () => {
         globalMainWindow.webContents.openDevTools();
         return { status: 'ok' };
     }),
+        ipcMain.handle('setting:openConfigDirectory', async () => {
+            try {
+                const configDir = getOpendeskDirectory();
+                await getPlatform().openPath(configDir);
+                return { status: 'ok' };
+            } catch (error: any) {
+                return { status: 'error', message: error.message };
+            }
+        }),
+        ipcMain.handle('setting:openLogWindow', () => {
+            openLogViewFromTray();
+            return { status: 'ok' };
+        }),
         ipcMain.handle('setting:getLogContent', () => {
             return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
         }));
@@ -3411,7 +3424,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

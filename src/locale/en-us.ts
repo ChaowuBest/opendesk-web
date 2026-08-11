@@ -1409,7 +1409,10 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.fileSystem': 'File System',
     'renderer.toolbar.settings': 'Settings',
     'renderer.toolbar.devTools': 'Developer Tools',
+    'renderer.toolbar.debug': 'Debug',
+    'renderer.toolbar.developerTools': 'Developer Tools',
     'renderer.toolbar.logs': 'Logs',
+    'renderer.toolbar.openConfigDir': 'Open Config Directory',
     'renderer.toolbar.personalCenter': 'Profile',
 
     // Renderer - Personal Center
