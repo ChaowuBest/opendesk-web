@@ -24,7 +24,7 @@
  *   - pending：不展示耗时。
  */
 
-import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
+import { FileExplorer, getFileExplorerCSS, isHtmlFile } from './fileExplorer';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, type WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
@@ -36,6 +36,7 @@ import {
     type GoalRenderSummaryLike
 } from './taskartifacts-goal/controller.js';
 import { formatCompactDuration } from '../../common/goal/format.js';
+import { filePathToFileUrl } from '../../common/file-url.js';
 
 // ============================================================================
 // Types
@@ -196,9 +197,7 @@ class TaskArtifacts extends HTMLElement {
 
     private _fileExplorer = new FileExplorer();
     private _browser: EmbeddedBrowser | null = null;
-    private _isBrowserFullscreen = false;
     private _settingUnsubscribe: (() => void) | null = null;
-    private _savedWidthBeforeFullscreen: string = '';
     private _workspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
     private _reportedWorkspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
 
@@ -229,9 +228,7 @@ class TaskArtifacts extends HTMLElement {
             translate: (key, params) => t(key, params)
         });
         this._fileExplorer.onOpenInBrowser = (filePath: string) => {
-            const normalized = filePath.replace(/\\/g, '/');
-            const fileUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`;
-            this.browserAddTab(fileUrl);
+            this.browserAddTab(filePathToFileUrl(filePath));
         };
         this._fileExplorer.onWorkspaceFocusLayoutChange = (state) => {
             this._workspaceFocusLayoutState = state;
@@ -489,15 +486,25 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：切换到工作空间 tab 并打开指定文件的预览。
      */
     openFilePreview(filePath: string): void {
+        if (isHtmlFile(filePath)) {
+            this._fileExplorer.onOpenInBrowser?.(filePath);
+            return;
+        }
         this._switchTab('workspace');
         this._fileExplorer.selectFile(filePath);
     }
 
-    /**
-     * 外部调用：关闭编辑器（如侧边栏收起时）。
-     */
+    /** Backward-compatible alias for callers that previously closed only the editor. */
     closeEditor(): void {
+        this.exitPreview();
+    }
+
+    /** Exit either a workspace file preview/editor or the focused browser preview. */
+    exitPreview(): void {
         this._fileExplorer.closeEditor();
+        if (this._activeTab === 'browser') {
+            this._switchTab('workspace');
+        }
     }
 
     /**
@@ -838,8 +845,10 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _syncWorkspaceFocusLayout(): void {
-        const active = this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
-        const fullscreen = active && this._workspaceFocusLayoutState.fullscreen;
+        const wsFocusActive = this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
+        const browserFocusActive = this._activeTab === 'browser' && this._browserVisible;
+        const active = wsFocusActive || browserFocusActive;
+        const fullscreen = active && (browserFocusActive || this._workspaceFocusLayoutState.fullscreen);
         this.toggleAttribute('data-workspace-focus-fullscreen', fullscreen);
 
         if (
@@ -849,6 +858,7 @@ class TaskArtifacts extends HTMLElement {
             return;
         }
         this._reportedWorkspaceFocusLayoutState = { active, fullscreen };
+        this._browser?.setPreviewMode(active);
         this.dispatchEvent(
             new CustomEvent<WorkspaceFocusLayoutState>(WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, {
                 detail: this._reportedWorkspaceFocusLayoutState,
@@ -895,51 +905,15 @@ class TaskArtifacts extends HTMLElement {
             this._browser.register(browserAPI);
         }
 
-        // Listen for fullscreen toggle
-        panel.addEventListener('browser-fullscreen-toggle', (e: any) => {
-            this._isBrowserFullscreen = e.detail.isFullscreen;
-            this._handleBrowserFullscreen(e.detail.isFullscreen);
+        // 退出网页预览：切回工作空间 tab
+        panel.addEventListener('browser-exit-preview', () => {
+            this.exitPreview();
         });
 
         // 标签页状态变更时同步浏览器活跃状态
         this._browser.onTabsChanged = () => {
             this._syncBrowserActiveState();
         };
-    }
-
-    private _handleBrowserFullscreen(isFullscreen: boolean): void {
-        const root = this.shadowRoot;
-        if (!root) return;
-
-        const tabBar = root.querySelector<HTMLElement>('.tab-bar');
-
-        if (isFullscreen) {
-            // Remember current width before going fullscreen
-            this._savedWidthBeforeFullscreen = this.style.width || this.offsetWidth + 'px';
-
-            this.style.position = 'fixed';
-            this.style.top = '0';
-            this.style.left = '0';
-            this.style.width = '100vw';
-            this.style.height = '100vh';
-            this.style.zIndex = '9999';
-
-            if (tabBar) {
-                tabBar.style.display = 'none';
-            }
-        } else {
-            // Restore to previous width
-            this.style.position = '';
-            this.style.top = '';
-            this.style.left = '';
-            this.style.width = this._savedWidthBeforeFullscreen;
-            this.style.height = '';
-            this.style.zIndex = '';
-
-            if (tabBar) {
-                tabBar.style.display = '';
-            }
-        }
     }
 
     /** 外部可设置的标志：为 true 时 ensureBrowserReady 不自动切换 tab */
@@ -1100,8 +1074,7 @@ class TaskArtifacts extends HTMLElement {
     async browserAddTab(url: string): Promise<number> {
         this.ensureBrowserReady();
         if (!this._browser) return -1;
-        const tabId = this._browser.addTab();
-        this._browser.navigateTo(url);
+        const tabId = this._browser.addTab(url);
         return tabId;
     }
 

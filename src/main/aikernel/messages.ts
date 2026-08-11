@@ -19,6 +19,7 @@ import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension } from './marked-file-link.js';
+import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 
 export interface RuntimeMetadata {
     /** 运行域：标记消息属于普通任务、goal 生命周期还是全局后台流程。 */
@@ -229,6 +230,7 @@ marked.use({
 });
 
 marked.use(fileLinkExtension);
+marked.use(cjkAutolinkFix);
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.

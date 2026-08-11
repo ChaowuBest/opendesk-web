@@ -1651,6 +1651,10 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.action.fork': 'Fork conversation',
     'renderer.taskview.action.edit': 'Edit',
     'renderer.taskview.action.resubmit': 'Resend',
+    'renderer.taskview.fileTag.preview': 'Preview',
+    'renderer.taskview.fileTag.copyPath': 'Copy file path',
+    'renderer.taskview.fileTag.openDefault': 'Open with default app',
+    'renderer.taskview.fileTag.reveal': 'Reveal in folder',
     'renderer.taskview.edit.title': 'Confirm Edit Message',
     'renderer.taskview.edit.message':
         'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',
@@ -1682,6 +1686,9 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.quickpass.successDetail': 'Import scope: ${scope}',
     'renderer.taskview.quickpass.failedTitle': 'Quickpass import failed',
     'renderer.taskview.quickpass.failedDetail': 'Error importing quickpass',
+
+    // Renderer - Browser
+    'renderer.browser.exitPreview': 'Exit preview',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': 'Restore browser panel',

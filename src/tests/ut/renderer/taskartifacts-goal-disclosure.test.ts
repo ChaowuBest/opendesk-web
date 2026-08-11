@@ -56,7 +56,11 @@ describe('task artifacts goal disclosure state', () => {
                     return false;
                 }
             },
-            getFileExplorerCSS: () => ''
+            getFileExplorerCSS: () => '',
+            isHtmlFile: (filePath: string) => {
+                const ext = filePath.split('.').pop()?.toLowerCase();
+                return ext === 'html' || ext === 'htm';
+            }
         }));
         await jest.unstable_mockModule('../../../renderer/browser.ts', () => ({
             EmbeddedBrowser: class {
@@ -64,6 +68,7 @@ describe('task artifacts goal disclosure state', () => {
                 register() {}
                 unregister() {}
                 destroy() {}
+                setPreviewMode() {}
             }
         }));
         await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
@@ -160,6 +165,44 @@ describe('task artifacts goal disclosure state', () => {
             ':host([data-workspace-focus-fullscreen]) .tab-header'
         );
         expect(focusStates).toEqual([{ active: true, fullscreen: true }]);
+    });
+
+    test('activates focus layout when browser becomes active and restores on destroy', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            forceBrowserActive: () => void;
+            destroyBrowser: () => void;
+        };
+        const focusStates: Array<{ active: boolean; fullscreen: boolean }> = [];
+        artifacts.addEventListener('workspace-focus-layout-change', (event) => {
+            focusStates.push((event as CustomEvent<{ active: boolean; fullscreen: boolean }>).detail);
+        });
+
+        artifacts.forceBrowserActive();
+
+        expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(true);
+        expect(focusStates).toContainEqual({ active: true, fullscreen: true });
+
+        artifacts.destroyBrowser();
+
+        expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(false);
+        expect(focusStates).toContainEqual({ active: false, fullscreen: false });
+    });
+
+    test('exits browser and file previews through the unified exitPreview method', () => {
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            forceBrowserActive: () => void;
+            exitPreview: () => void;
+        };
+        const focusStates: Array<{ active: boolean; fullscreen: boolean }> = [];
+        artifacts.addEventListener('workspace-focus-layout-change', (event) => {
+            focusStates.push((event as CustomEvent<{ active: boolean; fullscreen: boolean }>).detail);
+        });
+
+        artifacts.forceBrowserActive();
+        artifacts.exitPreview();
+
+        expect(artifacts.hasAttribute('data-workspace-focus-fullscreen')).toBe(false);
+        expect(focusStates.at(-1)).toEqual({ active: false, fullscreen: false });
     });
 
     function terminalGoal(id: string) {

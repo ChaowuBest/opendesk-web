@@ -48,8 +48,7 @@ describe('embedBrowserUse/protocol', () => {
             const state: BrowserState = {
                 currentUrl: 'https://example.com',
                 canGoBack: true,
-                canGoForward: false,
-                isFullscreen: false
+                canGoForward: false
             };
             expect(state.currentUrl).toBe('https://example.com');
         });

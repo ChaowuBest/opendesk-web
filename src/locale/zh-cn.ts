@@ -1613,6 +1613,10 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.action.fork': '分支对话',
     'renderer.taskview.action.edit': '编辑',
     'renderer.taskview.action.resubmit': '重新发送',
+    'renderer.taskview.fileTag.preview': '预览',
+    'renderer.taskview.fileTag.copyPath': '复制文件路径',
+    'renderer.taskview.fileTag.openDefault': '用默认应用打开',
+    'renderer.taskview.fileTag.reveal': '在文件夹中显示',
     'renderer.taskview.edit.title': '确认编辑消息',
     'renderer.taskview.edit.message': '是否要用编辑后的消息继续对话？<b>后续的所有对话历史将会丢失。</b>',
     'renderer.taskview.edit.confirm': '继续对话',
@@ -1643,6 +1647,9 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.quickpass.successDetail': '导入范围：${scope}',
     'renderer.taskview.quickpass.failedTitle': '口令导入失败',
     'renderer.taskview.quickpass.failedDetail': '导入口令时出错',
+
+    // Renderer - Browser
+    'renderer.browser.exitPreview': '退出预览',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': '恢复浏览器面板',

@@ -34,7 +34,7 @@ class TestBrowser extends BrowserInstance {
         this.calls.push({ method: 'goHome', args: [] });
     }
     getState(): BrowserState {
-        return { currentUrl: 'https://test.com', canGoBack: true, canGoForward: false, isFullscreen: false };
+        return { currentUrl: 'https://test.com', canGoBack: true, canGoForward: false };
     }
     getCurrentUrl(): string {
         return 'https://test.com';

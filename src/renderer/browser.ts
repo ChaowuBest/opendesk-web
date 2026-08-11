@@ -14,10 +14,17 @@ import { BrowserInstance } from '../common/embedBrowserUse/renderer';
 import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../common/browserErrors';
 import { WINDOW_OPEN_PROXY_SCRIPT, OPENER_BRIDGE_SCRIPT, NOTIFY_POPUP_CLOSED_SCRIPT } from './webviewScripts';
+import { createRendererTranslator } from './locale.js';
 
 export type { BrowserState, TabInfo };
 
 const HOME_PAGE = 'about:blank';
+const fallbackT = createRendererTranslator();
+
+function browserT(key: string): string {
+    const runtimeTranslator = (window as any).__odT;
+    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key) : fallbackT(key);
+}
 
 let nextTabId = 1;
 
@@ -47,7 +54,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     private urlInput: HTMLInputElement | null = null;
     private tabBarInner: HTMLElement | null = null;
     private webviewContainer: HTMLElement | null = null;
-    private _isFullscreen: boolean = false;
+    private _isPreviewMode: boolean = false;
 
     private tabs: BrowserTab[] = [];
     private activeTabId: number = -1;
@@ -335,22 +342,14 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-btn:hover { background: #f3f4f6; color: #374151; }
             .bw-btn:active { background: #e5e7eb; }
             .bw-btn.disabled { opacity: 0.35; cursor: default; pointer-events: none; }
-            .bw-fullscreen-btn {
+            .bw-exit-preview-btn {
                 width: auto;
                 padding: 0 6px;
                 gap: 4px;
             }
-            .bw-fullscreen-label {
+            .bw-exit-preview-label {
                 font-size: var(--fs-sm);
                 white-space: nowrap;
-                max-width: 0;
-                overflow: hidden;
-                opacity: 0;
-                transition: max-width 0.25s ease, opacity 0.2s ease;
-            }
-            .bw-fullscreen-btn.bw-fullscreen-active .bw-fullscreen-label {
-                max-width: 60px;
-                opacity: 1;
             }
             .bw-url-wrap {
                 flex: 1; min-width: 0;
@@ -582,7 +581,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                     <button class="bw-btn bw-menu-btn" title="工具菜单"><i class="fas fa-ellipsis"></i></button>
                     <div class="bw-tool-menu"></div>
                 </div>
-                <button class="bw-btn bw-fullscreen-btn" title="全屏"><i class="fas fa-expand"></i><span class="bw-fullscreen-label"></span></button>
+                <button class="bw-btn bw-exit-preview-btn" title="${browserT('renderer.browser.exitPreview')}" style="display:none;"><i class="fas fa-compress"></i><span class="bw-exit-preview-label">${browserT('renderer.browser.exitPreview')}</span></button>
             </div>
             <div class="bw-webview-container"></div>
         </div>`;
@@ -685,14 +684,16 @@ export class EmbeddedBrowser extends BrowserInstance {
         const backBtn = this.container.querySelector('.bw-back-btn') as HTMLButtonElement;
         const forwardBtn = this.container.querySelector('.bw-forward-btn') as HTMLButtonElement;
         const refreshBtn = this.container.querySelector('.bw-refresh-btn') as HTMLButtonElement;
-        const fullscreenBtn = this.container.querySelector('.bw-fullscreen-btn') as HTMLButtonElement;
+        const exitPreviewBtn = this.container.querySelector('.bw-exit-preview-btn') as HTMLButtonElement;
         const menuBtn = this.container.querySelector('.bw-menu-btn') as HTMLButtonElement;
         const toolMenu = this.container.querySelector('.bw-tool-menu') as HTMLElement;
 
         backBtn.addEventListener('click', () => this.goBack());
         forwardBtn.addEventListener('click', () => this.goForward());
         refreshBtn.addEventListener('click', () => this.refresh());
-        fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+        exitPreviewBtn.addEventListener('click', () => {
+            this.container?.dispatchEvent(new CustomEvent('browser-exit-preview'));
+        });
 
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1474,28 +1475,13 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.navigateTo(HOME_PAGE);
     }
 
-    public toggleFullscreen(): void {
-        this._isFullscreen = !this._isFullscreen;
-
-        // Update fullscreen button icon and label
-        const fullscreenBtn = this.container?.querySelector('.bw-fullscreen-btn');
-        if (fullscreenBtn) {
-            const icon = fullscreenBtn.querySelector('i');
-            const label = fullscreenBtn.querySelector('.bw-fullscreen-label') as HTMLElement | null;
-            if (icon) {
-                icon.className = this._isFullscreen ? 'fas fa-compress' : 'fas fa-expand';
-            }
-            if (label) {
-                label.textContent = this._isFullscreen ? '退出全屏' : '';
-            }
-            fullscreenBtn.classList.toggle('bw-fullscreen-active', this._isFullscreen);
-            fullscreenBtn.title = this._isFullscreen ? '退出全屏' : '全屏';
+    public setPreviewMode(active: boolean): void {
+        if (this._isPreviewMode === active) return;
+        this._isPreviewMode = active;
+        const btn = this.container?.querySelector('.bw-exit-preview-btn') as HTMLElement | null;
+        if (btn) {
+            btn.style.display = active ? '' : 'none';
         }
-
-        const event = new CustomEvent('browser-fullscreen-toggle', {
-            detail: { isFullscreen: this._isFullscreen }
-        });
-        this.container?.dispatchEvent(event);
     }
 
     public getCurrentUrl(): string {
@@ -1517,8 +1503,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         return {
             currentUrl: tab?.url ?? '',
             canGoBack: canBack,
-            canGoForward: canForward,
-            isFullscreen: this._isFullscreen
+            canGoForward: canForward
         };
     }
 

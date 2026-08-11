@@ -569,6 +569,13 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
         },
+        showItemInFolder: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:showItemInFolder', filePath);
+            if (result.status !== 'ok') {
+                console.error('showing item in folder failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         selectFile: async () => {
             // 调用主进程的 dialog
             const filePaths = await ipcRenderer.invoke('fs:dialog-open');
