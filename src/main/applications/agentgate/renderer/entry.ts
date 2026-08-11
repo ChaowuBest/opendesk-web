@@ -189,9 +189,6 @@ const T: Record<string, { zh: string; en: string }> = {
         zh: '所有 deny 一律直接拦截，不提供 override。适用于严格安全环境。',
         en: 'All denies are blocked with no override option.'
     },
-    rulesTitle: { zh: '自定义安全规则', en: 'Custom Security Rules' },
-    rulesAdd: { zh: '+ 添加规则', en: '+ Add Rule' },
-    rulesPatternPlaceholder: { zh: '正则匹配模式, 如 rm -rf /', en: 'Regex pattern, e.g. rm -rf /' },
     confirm: { zh: '确认', en: 'Confirm' },
     cancel: { zh: '取消', en: 'Cancel' },
     sectionGate: { zh: '数据网关服务', en: 'Data Gateway Service' },
@@ -464,29 +461,12 @@ const STYLE = `
 .ag-btn-muted:hover { background: rgba(0,0,0,.04); }
 .ag-btn-sm { padding: 4px 10px; font-size: var(--fs-sm); border-radius: 6px; }
 
-/* Rules List */
-.ag-rule-item {
-    display: flex; align-items: center; gap: 8px; padding: 8px 0;
-    border-bottom: 1px solid var(--ag-divider); font-size: var(--fs-base);
-}
-.ag-rule-item:last-child { border-bottom: none; }
-.ag-rule-pattern {
-    flex: 1; background: var(--ag-code-bg); padding: 3px 6px; border-radius: 5px;
-    font-family: 'SF Mono', monospace; font-size: var(--fs-sm); color: var(--ag-text);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .ag-badge {
     display: inline-block; min-width: 48px; text-align: center;
     padding: 2px 6px; border-radius: 8px; font-size: var(--fs-xs); font-weight: 600;
 }
 .ag-badge-deny { background: var(--ag-badge-deny-bg); color: var(--ag-red); }
 .ag-badge-allow { background: var(--ag-badge-allow-bg); color: var(--ag-green); }
-.ag-rule-form {
-    margin-top: 12px; padding: 12px; background: var(--ag-card-bg);
-    border-radius: 10px; border: 1px solid var(--ag-divider);
-}
-.ag-rule-form-row { display: flex; gap: 8px; margin-top: 8px; }
-.ag-rule-form-row:first-child { margin-top: 0; }
 
 /* Status */
 .ag-status-row {
@@ -1430,27 +1410,6 @@ function configHTML(): string {
         </select>
     </div>
     <div id="ag-sec-desc" style="font-size: var(--fs-md);color:var(--ag-text-secondary);line-height:1.5;"></div>
-</div>
-
-<div class="ag-card">
-    <h3 class="ag-section-title" style="margin-top:0;">${tr('rulesTitle')}</h3>
-    <div id="ag-rules"></div>
-    <div style="margin-top:10px;">
-        <button id="ag-add-rule" class="ag-btn ag-btn-ghost ag-btn-sm">${tr('rulesAdd')}</button>
-    </div>
-    <div id="ag-rule-form" class="ag-rule-form" style="display:none;">
-        <div class="ag-rule-form-row">
-            <input id="ag-rule-pat" class="ag-input" placeholder="${tr('rulesPatternPlaceholder')}" style="flex:1;">
-        </div>
-        <div class="ag-rule-form-row">
-            <select id="ag-rule-act" class="ag-select" style="flex:1;"><option value="Deny">Deny</option><option value="Allow">Allow</option></select>
-            <select id="ag-rule-sev" class="ag-select" style="flex:1;">
-                <option value="critical">Critical</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option>
-            </select>
-            <button id="ag-rule-save" class="ag-btn ag-btn-primary ag-btn-sm">${tr('confirm')}</button>
-            <button id="ag-rule-cancel" class="ag-btn ag-btn-muted ag-btn-sm">${tr('cancel')}</button>
-        </div>
-    </div>
 </div>
 
 <hr class="ag-divider">
@@ -3243,35 +3202,6 @@ class AgentGateEntryWidget extends HTMLElement {
                 }
                 exitJson();
             });
-
-        // Rules
-        const addBtn = this.shadow.querySelector('#ag-add-rule');
-        const form = this.shadow.querySelector('#ag-rule-form') as HTMLElement;
-        if (addBtn && form) {
-            addBtn.addEventListener('click', () => {
-                form.style.display = form.style.display === 'none' ? '' : 'none';
-            });
-        }
-        const cancelBtn = this.shadow.querySelector('#ag-rule-cancel');
-        if (cancelBtn && form)
-            cancelBtn.addEventListener('click', () => {
-                form.style.display = 'none';
-            });
-
-        const saveBtn = this.shadow.querySelector('#ag-rule-save');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
-                const pat = (this.shadow.querySelector('#ag-rule-pat') as HTMLInputElement)?.value;
-                const act = (this.shadow.querySelector('#ag-rule-act') as HTMLSelectElement)?.value;
-                const sev = (this.shadow.querySelector('#ag-rule-sev') as HTMLSelectElement)?.value;
-                if (!pat) return;
-                this._addRule(pat, act, sev);
-                if (form) form.style.display = 'none';
-                (this.shadow.querySelector('#ag-rule-pat') as HTMLInputElement).value = '';
-            });
-        }
-
-        this._renderRules();
     }
 
     /** 查询主进程 Bridge 状态并更新配置页的服务状态指示器 */
@@ -3348,58 +3278,6 @@ class AgentGateEntryWidget extends HTMLElement {
                 if (chosen) sel.value = chosen;
             } catch {}
         } catch {}
-    }
-
-    async _addRule(pat: string, act: string, sev: string) {
-        const r = await this._getRules();
-        r.push({ pattern: pat, action: act, severity: sev });
-        await this._saveRules(r);
-        this._renderRules(r);
-    }
-    async _removeRule(i: number) {
-        const r = await this._getRules();
-        r.splice(i, 1);
-        await this._saveRules(r);
-        this._renderRules(r);
-    }
-    async _getRules() {
-        try {
-            return (await (window as any).applicationAPI?.callMainWorld('getCustomRules')) || [];
-        } catch {}
-        try {
-            return JSON.parse(localStorage.getItem('ag_rules') || '[]');
-        } catch {
-            return [];
-        }
-    }
-    async _saveRules(r: any[]) {
-        try {
-            await (window as any).applicationAPI?.callMainWorld('saveCustomRules', r);
-            return;
-        } catch {}
-        localStorage.setItem('ag_rules', JSON.stringify(r));
-    }
-    async _renderRules(r?: any[]) {
-        const el = this.shadow.querySelector('#ag-rules');
-        if (!el) return;
-        if (!r) r = await this._getRules();
-        if (!r.length) {
-            el.innerHTML = `<div style="font-size: var(--fs-md);color:var(--ag-text-secondary);padding:8px 0;">${isZh() ? '暂无自定义规则' : 'No custom rules'}</div>`;
-            return;
-        }
-        el.innerHTML = r
-            .map(
-                (x: any, i: number) => `
-            <div class="ag-rule-item">
-                <code class="ag-rule-pattern">${x.pattern}</code>
-                <span class="ag-badge ${x.action === 'Deny' ? 'ag-badge-deny' : 'ag-badge-allow'}">${x.action}</span>
-                <span style="font-size: var(--fs-xs);color:var(--ag-orange);min-width:48px;text-align:center;">${x.severity}</span>
-                <button class="ag-btn ag-btn-muted ag-btn-sm" style="padding:2px 6px;font-size: var(--fs-md);">✕</button>
-            </div>
-        `
-            )
-            .join('');
-        el.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => this._removeRule(i)));
     }
 
     disconnectedCallback() {
