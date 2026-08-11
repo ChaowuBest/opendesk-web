@@ -610,7 +610,6 @@ function renderDiffCard(
     const expandLabel = t('filemgr.diff.expand', { count: totalLines });
     const collapseLabel = t('filemgr.diff.collapse');
     const fileName = path.basename(filePath);
-    const extBadge = getFileExtBadge(filePath);
     const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
     const openBadge = openFileBadge(filePath);
     const statsHtml = `<span class="text-emerald-600 font-medium">+${addedCount}</span> <span class="text-rose-500 font-medium">-${removedCount}</span>`;
@@ -626,7 +625,6 @@ function renderDiffCard(
             <span class="text-xs font-medium text-slate-700 truncate">${escapeHtml(fileName)}</span>
             ${statusDot}
             <span class="text-[11px] text-slate-400 ml-auto shrink-0">${statsHtml}</span>
-            ${extBadge}
             ${editBadge}
             ${openBadge}
             <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>

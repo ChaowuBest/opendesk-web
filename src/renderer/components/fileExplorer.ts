@@ -66,8 +66,8 @@ export interface PreviewPayload {
 type ChildrenCache = FSEntry[] | 'loading' | { error: string };
 type ViewMode = 'tree' | 'grid';
 
-// 不再对预览文件体积做硬性限制；传 0 表示由后端自行决定（不截断）。
-const PREVIEW_MAX_BYTES = 0;
+// Ace 文本预览和编辑的单文件体积上限。
+const ACE_TEXT_MAX_BYTES = 10 * 1024 * 1024;
 
 // ============================================================================
 // Utilities
@@ -452,12 +452,36 @@ export function getFileExplorerCSS(): string {
             flex: 1; min-width: 0; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; font-weight: 500;
         }
-        .ws-preview-size { font-size: var(--fs-xs); color: #9ca3af; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-        .ws-preview-close {
-            width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
-            background: transparent; border: none; border-radius: 4px; color: #6b7280; cursor: pointer; font-size: var(--fs-sm);
+        .ws-breadcrumb {
+            flex: 1; min-width: 0; overflow: hidden;
+            display: flex; align-items: center; gap: 1px;
+            font-size: var(--fs-sm); font-weight: 500;
         }
-        .ws-preview-close:hover { background: #f3f4f6; color: #1f2937; }
+        .ws-breadcrumb-item {
+            padding: 2px 4px; border-radius: 4px; cursor: pointer;
+            white-space: nowrap; color: #64748b;
+            transition: background 0.15s, color 0.15s;
+            flex-shrink: 0;
+        }
+        .ws-breadcrumb-item:hover { background: #f1f3f6; color: #1f2937; }
+        .ws-breadcrumb-current { color: #1f2937; }
+        .ws-breadcrumb-sep {
+            color: #9ca3af; font-size: 8px; flex-shrink: 0; padding: 0 1px;
+        }
+        .ws-mode-tag {
+            flex-shrink: 0; font-size: 11px;
+            padding: 1px 7px; border-radius: 3px;
+            font-weight: 500; line-height: 1.6;
+        }
+        .ws-mode-readonly {
+            color: #6b7280; background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+        }
+        .ws-mode-edit {
+            color: #b45309; background: #fffbeb;
+            border: 1px solid #fde68a;
+        }
+        .ws-preview-size { font-size: var(--fs-xs); color: #9ca3af; font-variant-numeric: tabular-nums; flex-shrink: 0; }
         .ws-preview-body { flex: 1; overflow: auto; overflow-x: auto; background: #fafafa; min-height: 60px; }
         .ws-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
         .ws-preview-body::-webkit-scrollbar-thumb {
@@ -601,13 +625,28 @@ export function getFileExplorerCSS(): string {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 22px; height: 22px;
+            height: 22px;
+            padding: 0 4px;
             background: transparent; border: none; border-radius: 4px;
             cursor: pointer; color: #9ca3af; font-size: var(--fs-xs);
             transition: color 0.15s, background 0.15s;
             flex-shrink: 0;
         }
         .ws-fullscreen-btn:hover { color: #374151; background: #f1f3f6; }
+        .ws-preview-close {
+            height: 22px; display: inline-flex; align-items: center; justify-content: center;
+            padding: 0 4px;
+            background: transparent; border: none; border-radius: 4px; color: #6b7280; cursor: pointer; font-size: var(--fs-sm);
+        }
+        .ws-preview-close:hover { background: #f3f4f6; color: #1f2937; }
+        .ws-btn-label {
+            max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
+            margin-left: 0; transition: max-width 0.25s ease, opacity 0.2s ease, margin-left 0.25s ease;
+        }
+        .ws-fullscreen-btn:hover .ws-btn-label,
+        .ws-preview-close:hover .ws-btn-label {
+            max-width: 60px; opacity: 1; margin-left: 4px;
+        }
 
         /* When browser is fullscreen, hide preview */
         .ws-browser--fullscreen { flex: 1 !important; }
@@ -695,6 +734,12 @@ export function getFileExplorerCSS(): string {
             border-bottom-color: rgba(255, 255, 255, 0.12) !important;
         }
         :host([data-theme="dark"]) .ws-editor-filename { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-breadcrumb-item { color: #787878; }
+        :host([data-theme="dark"]) .ws-breadcrumb-item:hover { background: #333333; color: #cccccc; }
+        :host([data-theme="dark"]) .ws-breadcrumb-current { color: #cccccc; }
+        :host([data-theme="dark"]) .ws-breadcrumb-sep { color: #555555; }
+        :host([data-theme="dark"]) .ws-mode-readonly { color: #9ca3af; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); }
+        :host([data-theme="dark"]) .ws-mode-edit { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.25); }
         :host([data-theme="dark"]) .ws-editor-status { color: #cccccc !important; }
         :host([data-theme="dark"]) .ws-editor-save-btn { background: #2563eb !important; }
         :host([data-theme="dark"]) .ws-preview-info > i { color: #787878 !important; }
@@ -878,11 +923,11 @@ type AceEditorMode = typeof import('ace-builds/src-noconflict/ace.js');
 type AceEditorInstance = AceLib.Editor;
 
 const ACE_THEME: {
-    light: 'chrome';
-    dark: 'monokai';
+    light: 'clouds';
+    dark: 'dracula';
 } = {
-    light: 'chrome',
-    dark: 'monokai'
+    light: 'clouds',
+    dark: 'dracula'
 };
 
 const ACE_MODE_LOADERS: Record<NonNullable<AceMode>, () => Promise<unknown>> = {
@@ -918,13 +963,16 @@ const ACE_MODE_LOADERS: Record<NonNullable<AceMode>, () => Promise<unknown>> = {
     text: () => Promise.resolve()
 };
 
-const ACE_THEME_LOADERS: Record<'chrome' | 'monokai', () => Promise<unknown>> = {
-    chrome: () => import('ace-builds/src-noconflict/theme-chrome.js'),
-    monokai: () => import('ace-builds/src-noconflict/theme-monokai.js')
+const ACE_THEME_LOADERS: Record<'clouds' | 'dracula', () => Promise<unknown>> = {
+    clouds: () => import('ace-builds/src-noconflict/theme-clouds.js'),
+    dracula: () => import('ace-builds/src-noconflict/theme-dracula.js')
 };
 
 // 编辑器自动保存延迟（毫秒）
 const EDITOR_AUTO_SAVE_DELAY = 1500;
+
+// 与 ws-preview-pre 保持一致的字体栈
+const PREVIEW_FONT_FAMILY = "'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace";
 
 type AceEditorStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
 
@@ -961,9 +1009,23 @@ function resolveAceMode(filePath: string): AceMode {
     return codeLang as AceMode;
 }
 
-function resolveThemeName(): 'chrome' | 'monokai' {
+function resolveThemeName(): 'clouds' | 'dracula' {
     const themeToken = document.documentElement.dataset.theme;
-    return themeToken === 'dark' ? 'monokai' : 'chrome';
+    return themeToken === 'dark' ? 'dracula' : 'clouds';
+}
+
+/**
+ * 判断文件是否应在预览时直接使用 Ace editor（只读模式）。
+ * 排除有专属渲染预览的文件类型（markdown/html/svg/image/office 文档），
+ * 其余文本文件（含 .txt/.log 等无语言模式的）均使用 Ace editor。
+ */
+function shouldUseAcePreview(filePath: string): boolean {
+    if (isOfficeDocument(filePath)) return false;
+    if (isHtmlFile(filePath)) return false;
+    if (isSvgFile(filePath)) return false;
+    if (isMarkdownFile(filePath)) return false;
+    if (isImageFile(filePath)) return false;
+    return true;
 }
 
 const MARKDOWN_PREVIEW_CSS = `
@@ -1047,6 +1109,7 @@ export class FileExplorer {
     private _gridPath: string | null = null;
     private _selectedFile: string | null = null;
     private _editorMode = false;
+    private _editorReadOnly = false;
     private _editorFilePath: string | null = null;
     private _editorInstance: AceEditorInstance | null = null;
     private _editorDirty = false;
@@ -1110,11 +1173,13 @@ export class FileExplorer {
     refresh(workspace?: string): void {
         if (this._deferUntilOfficeCanClose(() => this.refresh(workspace))) return;
         // 切换任务/工作空间时先关闭预览
+        this._dismissBreadcrumbDropdown();
         this._selectedFile = null;
         this._previewState = { status: 'idle' };
         this._browserFullscreen = false;
         this._previewFullscreen = false;
         this._editorMode = false;
+        this._editorReadOnly = false;
         this._editorFilePath = null;
         this._editorOpenLine = null;
         this._editorDirty = false;
@@ -1142,8 +1207,10 @@ export class FileExplorer {
         if (this._deferUntilOfficeCanClose(() => this.closeEditor())) return;
         void this._saveEditorIfNeeded();
         this._destroyEditorInstance();
+        this._dismissBreadcrumbDropdown();
         this._selectedFile = null;
         this._editorMode = false;
+        this._editorReadOnly = false;
         this._editorFilePath = null;
         this._editorOpenLine = null;
         this._editorDirty = false;
@@ -1304,6 +1371,7 @@ export class FileExplorer {
                 void this._saveEditorIfNeeded();
                 this._destroyEditorInstance();
                 this._editorMode = false;
+                this._editorReadOnly = false;
                 this._editorFilePath = null;
                 this._editorDirty = false;
                 this._editorStatus = 'idle';
@@ -1325,11 +1393,11 @@ export class FileExplorer {
         }
 
         const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
-        const openingFocusedPreview = usesWorkspaceFocusLayout(filePath);
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
             this._editorMode = false;
+            this._editorReadOnly = false;
             this._editorFilePath = null;
             this._editorDirty = false;
             this._editorStatus = 'idle';
@@ -1337,12 +1405,17 @@ export class FileExplorer {
         // 检查当前是否为空状态（展开动画）
         const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
-        if (openingFocusedPreview) {
-            this._previewFullscreen = true;
-            this._browserFullscreen = false;
-        } else if (wasFocusedPreview) {
-            this._previewFullscreen = false;
-            this._browserFullscreen = false;
+        // 代码文件直接以 Ace editor 只读模式预览
+        const useAcePreview = shouldUseAcePreview(filePath);
+        if (useAcePreview) {
+            this._editorMode = true;
+            this._editorReadOnly = true;
+            this._editorFilePath = filePath;
+            this._editorDirty = false;
+            this._editorStatus = 'idle';
+            this._editorSaving = false;
+            this._editorPendingSave = false;
+            this._editorSaveError = null;
         }
         this._previewState = { status: 'loading' };
         this._renderPreview(wasEmpty);
@@ -1356,7 +1429,11 @@ export class FileExplorer {
                 el.classList.add('ws-file-selected');
             });
         }
-        void this._loadPreview(filePath);
+        if (useAcePreview) {
+            void this._loadFileForEditor(filePath);
+        } else {
+            void this._loadPreview(filePath);
+        }
     }
 
     private _deferUntilOfficeCanClose(onApproved: () => void): boolean {
@@ -1406,6 +1483,9 @@ export class FileExplorer {
                     status: 'idle',
                     data: { tooLarge: false, size: 0, limit: 0, content: '', binary: false }
                 };
+                this._previewFullscreen = true;
+                this._notifyWorkspaceFocusLayoutChange();
+                this._renderPreview();
                 this._mountOfficeEditor(filePath, editorConfig);
                 return;
             }
@@ -1413,14 +1493,22 @@ export class FileExplorer {
             if (!api || typeof api.readTextFile !== 'function') {
                 throw new Error(t('renderer.fileExplorer.error.noReadFile'));
             }
-            const data = await api.readTextFile(filePath, PREVIEW_MAX_BYTES);
+            const data = await api.readTextFile(filePath, 0);
             if (this._selectedFile !== filePath) return;
             this._previewState = { status: 'idle', data };
+            // 可预览内容进入全屏（图片即使 binary 也可通过 dataUri 预览）
+            const isImage = isImageFile(filePath);
+            this._previewFullscreen = !data.binary || (isImage && !!data.dataUri);
+            if (data.tooLarge) this._previewFullscreen = false;
+            this._notifyWorkspaceFocusLayoutChange();
         } catch (err) {
             if (this._selectedFile !== filePath) return;
             this._previewState = { status: 'error', error: err instanceof Error ? err.message : String(err) };
+            this._previewFullscreen = false;
+            this._notifyWorkspaceFocusLayoutChange();
         }
         this._renderPreview();
+        this._applyFullscreenLayout();
     }
 
     // ----- context menu -----
@@ -1604,7 +1692,7 @@ export class FileExplorer {
                 break;
             case 'tree-file':
                 if (this._editorMode && !isOfficeDocument(p)) {
-                    this.openEditor(p);
+                    this.openEditor(p, undefined, this._editorReadOnly);
                 } else {
                     this.selectFile(p);
                 }
@@ -1614,7 +1702,7 @@ export class FileExplorer {
                 break;
             case 'grid-file':
                 if (this._editorMode && !isOfficeDocument(p)) {
-                    this.openEditor(p);
+                    this.openEditor(p, undefined, this._editorReadOnly);
                 } else {
                     this.selectFile(p);
                 }
@@ -1629,10 +1717,10 @@ export class FileExplorer {
     // ----- full panel render -----
 
     private _notifyWorkspaceFocusLayoutChange(): void {
-        const active = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
+        const active = this._previewFullscreen;
         this.onWorkspaceFocusLayoutChange?.({
             active,
-            fullscreen: active && this._previewFullscreen
+            fullscreen: active
         });
     }
 
@@ -1650,11 +1738,6 @@ export class FileExplorer {
         const browserIcon = panel.querySelector<HTMLElement>('[data-action="browser-fullscreen"] i');
         if (browserIcon) {
             browserIcon.className = `fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}`;
-        }
-
-        const previewIcon = panel.querySelector<HTMLElement>('[data-action="preview-fullscreen"] i');
-        if (previewIcon) {
-            previewIcon.className = `fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}`;
         }
     }
 
@@ -1784,15 +1867,12 @@ export class FileExplorer {
                 if (!target) return;
                 if (target.closest('[data-action="open-editor"]')) {
                     if (this._selectedFile) {
-                        this.openEditor(this._selectedFile);
+                        if (this._editorMode && this._editorReadOnly) {
+                            this._toggleEditorReadOnly();
+                        } else {
+                            this.openEditor(this._selectedFile);
+                        }
                     }
-                    return;
-                }
-                if (target.closest('[data-action="preview-fullscreen"]')) {
-                    this._previewFullscreen = !this._previewFullscreen;
-                    this._browserFullscreen = false;
-                    this._applyFullscreenLayout();
-                    this._notifyWorkspaceFocusLayoutChange();
                     return;
                 }
                 if (target.closest('[data-action="editor-save"]')) {
@@ -1805,7 +1885,11 @@ export class FileExplorer {
                     ev.preventDefault();
                     ev.stopPropagation();
                     if (this._selectedFile) {
-                        this.selectFile(this._selectedFile);
+                        if (shouldUseAcePreview(this._selectedFile)) {
+                            void this._toggleEditorReadOnly();
+                        } else {
+                            this.selectFile(this._selectedFile);
+                        }
                     }
                     return;
                 }
@@ -1817,6 +1901,15 @@ export class FileExplorer {
                 }
                 if (target.closest('[data-preview-close]')) {
                     this.closeEditor();
+                    return;
+                }
+                const bcItem = target.closest<HTMLElement>('[data-breadcrumb-dir]');
+                if (bcItem) {
+                    ev.stopPropagation();
+                    const dir = bcItem.dataset.breadcrumbDir;
+                    if (dir) {
+                        this._showBreadcrumbDropdown(dir, bcItem);
+                    }
                     return;
                 }
             });
@@ -2027,13 +2120,29 @@ export class FileExplorer {
     /**
      * 打开文件编辑器。
      */
-    openEditor(filePath: string, line?: number): void {
+    openEditor(filePath: string, line?: number, readOnly?: boolean): void {
         if (isOfficeDocument(filePath)) {
             this.selectFile(filePath);
             return;
         }
-        if (this._deferUntilOfficeCanClose(() => this.openEditor(filePath, line))) return;
+        if (this._deferUntilOfficeCanClose(() => this.openEditor(filePath, line, readOnly))) return;
         if (this._editorMode && this._editorFilePath === filePath && this._editorInstance) {
+            // 已打开同一文件：若 readOnly 状态不同则切换
+            if (this._editorReadOnly && !readOnly) {
+                this._editorReadOnly = false;
+                this._editorInstance.setReadOnly(false);
+                const rn = this._rootNode;
+                if (rn) {
+                    const oldHeader = rn.querySelector('.ws-preview-header');
+                    if (oldHeader) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = this._renderPreviewHtml();
+                        const newHeader = temp.querySelector('.ws-preview-header');
+                        if (newHeader) oldHeader.replaceWith(newHeader);
+                    }
+                }
+                this._updateEditorStatus();
+            }
             if (line != null && line > 0) {
                 this._gotoEditorLine(line);
             }
@@ -2056,6 +2165,7 @@ export class FileExplorer {
         this._destroyEditorInstance();
 
         this._editorMode = true;
+        this._editorReadOnly = !!readOnly;
         this._editorFilePath = filePath;
         this._editorDirty = false;
         this._editorStatus = 'idle';
@@ -2064,12 +2174,7 @@ export class FileExplorer {
         this._editorSaveError = null;
         this._editorOpenLine = line != null && line > 0 ? line : null;
         const selected = filePath;
-        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
         this._selectedFile = selected;
-        if (wasFocusedPreview) {
-            this._previewFullscreen = false;
-            this._browserFullscreen = false;
-        }
         this._previewState = { status: 'loading' };
         this._notifyWorkspaceFocusLayoutChange();
 
@@ -2107,20 +2212,27 @@ export class FileExplorer {
                 throw new Error(t('renderer.fileExplorer.error.noReadFile'));
             }
             const resolvedPath = await this._resolveFilePath(filePath);
-            const data = await api.readTextFile(resolvedPath, 0);
+            const data = await api.readTextFile(resolvedPath, ACE_TEXT_MAX_BYTES);
             if (this._editorMode === false || this._editorFilePath !== filePath || seq !== this._currentLoadSeq) {
                 return;
             }
             if (data.binary || data.tooLarge) {
                 this._editorMode = false;
+                this._editorReadOnly = false;
                 this._editorFilePath = null;
                 this._previewState = { status: 'idle', data };
+                this._previewFullscreen = false;
+                this._notifyWorkspaceFocusLayoutChange();
                 this._renderPreview();
+                this._applyFullscreenLayout();
                 return;
             }
             this._previewState = { status: 'idle', data };
+            this._previewFullscreen = true;
+            this._notifyWorkspaceFocusLayoutChange();
             this._renderPreview();
-            await this._initAceEditor(filePath, data.content);
+            this._applyFullscreenLayout();
+            await this._initAceEditor(filePath, data.content, seq);
         } catch (err) {
             if (this._editorFilePath !== filePath || seq !== this._currentLoadSeq) {
                 return;
@@ -2130,9 +2242,17 @@ export class FileExplorer {
                 error: err instanceof Error ? err.message : String(err)
             };
             this._editorMode = false;
+            this._editorReadOnly = false;
             this._editorFilePath = null;
+            this._previewFullscreen = false;
+            this._notifyWorkspaceFocusLayoutChange();
             this._renderPreview();
+            this._applyFullscreenLayout();
         }
+    }
+
+    private _isCurrentEditorLoad(filePath: string, seq: number): boolean {
+        return this._editorMode && this._editorFilePath === filePath && seq === this._currentLoadSeq;
     }
 
     private async _ensureAce(): Promise<AceEditorMode> {
@@ -2153,7 +2273,7 @@ export class FileExplorer {
         this._loadedAceModes.add(mode);
     }
 
-    private async _ensureAceTheme(theme: 'chrome' | 'monokai'): Promise<{ cssText: string; cssClass: string }> {
+    private async _ensureAceTheme(theme: 'clouds' | 'dracula'): Promise<{ cssText: string; cssClass: string }> {
         const cached = this._loadedThemeData.get(theme);
         if (cached) return cached;
         const loader = ACE_THEME_LOADERS[theme];
@@ -2187,12 +2307,20 @@ export class FileExplorer {
             aceCss +
             '\n' +
             themeCssText +
-            "\n.ace_editor, .ace_editor * { font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important; }";
+            `\n.ace_editor, .ace_editor * { font-family: ${PREVIEW_FONT_FAMILY} !important; }`;
         (rn as unknown as Node).appendChild(style);
     }
 
-    private async _initAceEditor(filePath: string, content: string): Promise<void> {
-        if (!this._editorMode || this._editorFilePath !== filePath) return;
+    private _resolvePreviewFontSize(): number {
+        const host =
+            this._rootNode instanceof ShadowRoot ? this._rootNode.host : (this._rootNode as HTMLElement | null);
+        if (!host) return 11;
+        const val = getComputedStyle(host).getPropertyValue('--fs-sm').trim();
+        return parseFloat(val) || 11;
+    }
+
+    private async _initAceEditor(filePath: string, content: string, seq: number): Promise<void> {
+        if (!this._isCurrentEditorLoad(filePath, seq)) return;
 
         const rn = this._rootNode;
         const editorContainer = rn?.querySelector<HTMLElement>('.ws-editor-container');
@@ -2200,9 +2328,11 @@ export class FileExplorer {
 
         this._destroyEditorInstance();
         const ace = await this._ensureAce();
+        if (!this._isCurrentEditorLoad(filePath, seq)) return;
         const mode = resolveAceMode(filePath);
         const theme = resolveThemeName();
         const [themeData] = await Promise.all([this._ensureAceTheme(theme), this._ensureAceMode(mode)]);
+        if (!this._isCurrentEditorLoad(filePath, seq)) return;
 
         // 注入 ace 结构和主题 CSS 到 Shadow DOM（确保 Shadow DOM 内的 ace 元素能匹配到样式）
         this._injectAceShadowStyles(themeData.cssText);
@@ -2212,15 +2342,15 @@ export class FileExplorer {
             mode: `ace/mode/${mode}`,
             theme: `ace/theme/${theme}`,
             showPrintMargin: false,
-            fontSize: 13,
-            fontFamily:
-                "'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            fontSize: this._resolvePreviewFontSize(),
+            fontFamily: PREVIEW_FONT_FAMILY,
             tabSize: 4,
-            showLineNumbers: true
+            showLineNumbers: true,
+            readOnly: this._editorReadOnly
         });
         editor.setOption('useSoftTabs', true);
-        editor.setOption('wrap', true);
-        editor.getSession().setUseWrapMode(true);
+        editor.setOption('wrap', false);
+        editor.getSession().setUseWrapMode(false);
         editor.focus();
         this._editorInstance = editor;
         this._editorDirty = false;
@@ -2272,6 +2402,42 @@ export class FileExplorer {
         });
     }
 
+    /**
+     * 在只读预览与可编辑之间切换，不销毁 Ace editor 实例。
+     */
+    private async _toggleEditorReadOnly(): Promise<void> {
+        const nextReadOnly = !this._editorReadOnly;
+        if (nextReadOnly && !(await this._saveEditorIfNeeded())) {
+            this._updateEditorStatus();
+            return;
+        }
+
+        this._editorReadOnly = nextReadOnly;
+        if (this._editorInstance) {
+            this._editorInstance.setReadOnly(this._editorReadOnly);
+        }
+        if (this._editorReadOnly) {
+            this._editorStatus = 'idle';
+        }
+        // 仅替换头部，不触碰编辑器容器
+        const rn = this._rootNode;
+        if (rn) {
+            const oldHeader = rn.querySelector('.ws-preview-header');
+            if (oldHeader) {
+                const temp = document.createElement('div');
+                temp.innerHTML = this._renderPreviewHtml();
+                const newHeader = temp.querySelector('.ws-preview-header');
+                if (newHeader) {
+                    oldHeader.replaceWith(newHeader);
+                }
+            }
+        }
+        if (!this._editorReadOnly) {
+            this._updateEditorStatus();
+            this._editorInstance?.focus();
+        }
+    }
+
     private _gotoEditorLine(line: number): void {
         if (!this._editorInstance || !line || line <= 0) return;
         this._editorInstance.gotoLine(line, 0, true);
@@ -2282,8 +2448,8 @@ export class FileExplorer {
         if (!root || !this._editorMode) return;
         const statusEl = root.querySelector<HTMLElement>('.ws-editor-status');
         const saveBtn = root.querySelector<HTMLElement>('.ws-editor-save-btn');
-        const filenameEl = root.querySelector<HTMLElement>('.ws-editor-filename');
-        if (!statusEl || !saveBtn || !filenameEl) return;
+        if (!statusEl || !saveBtn) return;
+        const filenameEl = root.querySelector<HTMLElement>('.ws-breadcrumb-current');
 
         if (this._editorSaveError) {
             statusEl.innerHTML = `<i class="fas fa-triangle-exclamation" style="font-size: var(--fs-xs);"></i> ${escapeHtml(this._editorSaveError)}`;
@@ -2309,7 +2475,7 @@ export class FileExplorer {
             statusEl.style.color = '#d97706';
             saveBtn.style.display = 'inline-flex';
             saveBtn.dataset.disabled = '0';
-            if (filenameEl.textContent && !filenameEl.textContent.startsWith('● ')) {
+            if (filenameEl && filenameEl.textContent && !filenameEl.textContent.startsWith('● ')) {
                 filenameEl.textContent = `● ${filenameEl.textContent}`;
             }
             return;
@@ -2322,7 +2488,7 @@ export class FileExplorer {
             statusEl.style.color = '#16a34a';
             saveBtn.style.display = 'none';
             saveBtn.dataset.disabled = '1';
-            if (filenameEl.textContent && filenameEl.textContent.startsWith('● ')) {
+            if (filenameEl && filenameEl.textContent && filenameEl.textContent.startsWith('● ')) {
                 filenameEl.textContent = filenameEl.textContent.slice(2);
             }
             if (!this._editorSaving && !this._editorDirty) {
@@ -2354,19 +2520,19 @@ export class FileExplorer {
         }
     }
 
-    private async _saveEditorIfNeeded(): Promise<void> {
-        if (!this._editorInstance || !this._editorFilePath) return;
-        if (!this._editorDirty && !this._editorPendingSave && !this._editorSaving) return;
-        await this._saveEditorContent();
+    private async _saveEditorIfNeeded(): Promise<boolean> {
+        if (!this._editorInstance || !this._editorFilePath) return true;
+        if (!this._editorDirty && !this._editorPendingSave && !this._editorSaving) return true;
+        return this._saveEditorContent();
     }
 
-    private async _saveEditorContent(): Promise<void> {
+    private async _saveEditorContent(): Promise<boolean> {
         const editor = this._editorInstance;
         const filePath = this._editorFilePath;
-        if (!editor || !filePath) return;
+        if (!editor || !filePath) return true;
         if (this._editorSaving) {
             this._editorPendingSave = true;
-            return;
+            return false;
         }
 
         this._clearEditorAutoSaveTimer();
@@ -2383,14 +2549,18 @@ export class FileExplorer {
                 throw new Error(t('renderer.fileExplorer.error.noWriteFile'));
             }
             await fs.writeTextFile(filePath, content);
-            if (this._editorFilePath === filePath) {
+            const contentUnchanged = this._editorFilePath === filePath && editor.getValue() === content;
+            if (contentUnchanged) {
                 this._editorDirty = false;
                 this._editorStatus = 'saved';
             }
             this.softRefresh();
+            return contentUnchanged;
         } catch (err: any) {
+            this._editorDirty = true;
             this._editorStatus = 'error';
             this._editorSaveError = err?.message || String(err);
+            return false;
         } finally {
             this._editorSaving = false;
             this._updateEditorStatus();
@@ -2577,6 +2747,206 @@ export class FileExplorer {
         host.appendChild(img);
     }
 
+    private _breadcrumbDropdown: HTMLElement | null = null;
+    private _breadcrumbDismissHandler: ((e: MouseEvent) => void) | null = null;
+    // 面包屑下拉菜单中已展开的目录路径集合
+    private _dropdownExpandedDirs: Set<string> = new Set();
+
+    private _renderBreadcrumbHtml(): string {
+        if (!this._selectedFile) return '';
+        const file = this._selectedFile;
+        const root = this._workspaceRoot || '';
+
+        const segments: { name: string; dir: string }[] = [];
+        if (root && file.startsWith(root + '/')) {
+            const relPath = file.slice(root.length + 1);
+            const parts = relPath.split('/');
+            let currentDir = root;
+            for (let i = 0; i < parts.length; i++) {
+                const isLast = i === parts.length - 1;
+                if (!isLast) {
+                    currentDir = currentDir + '/' + parts[i];
+                    segments.push({ name: parts[i], dir: currentDir });
+                } else {
+                    segments.push({ name: parts[i], dir: currentDir });
+                }
+            }
+        } else {
+            segments.push({ name: file.split('/').pop() || file, dir: this._parentOf(file) });
+        }
+
+        const html = segments
+            .map((seg, i) => {
+                const isLast = i === segments.length - 1;
+                const cls = isLast ? 'ws-breadcrumb-item ws-breadcrumb-current' : 'ws-breadcrumb-item';
+                const sep = i > 0 ? '<i class="fas fa-chevron-right ws-breadcrumb-sep"></i>' : '';
+                return `${sep}<span class="${cls}" data-breadcrumb-dir="${escapeHtml(seg.dir)}">${escapeHtml(seg.name)}</span>`;
+            })
+            .join('');
+        return `<div class="ws-breadcrumb">${html}</div>`;
+    }
+
+    private _dismissBreadcrumbDropdown(): void {
+        if (this._breadcrumbDropdown) {
+            this._breadcrumbDropdown.remove();
+            this._breadcrumbDropdown = null;
+        }
+        if (this._breadcrumbDismissHandler) {
+            document.removeEventListener('click', this._breadcrumbDismissHandler);
+            this._breadcrumbDismissHandler = null;
+        }
+    }
+
+    private _showBreadcrumbDropdown(dirPath: string, anchorEl: HTMLElement): void {
+        this._dismissBreadcrumbDropdown();
+        this._dismissContextMenu();
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'ctx-menu bc-dropdown';
+
+        // 每次打开下拉菜单时重置展开状态，默认展开根目录
+        this._dropdownExpandedDirs = new Set<string>();
+        this._dropdownExpandedDirs.add(dirPath);
+
+        const BC_INDENT = 16; // 每级缩进像素
+
+        // 递归渲染树，已展开的目录会内联渲染子条目
+        const renderTree = (parentPath: string, depth: number): string => {
+            const cached = this._childrenCache.get(parentPath);
+
+            if (!cached || cached === 'loading') {
+                return `<div class="ctx-item" style="pointer-events:none;padding-left:${12 + depth * BC_INDENT}px">
+                    <span class="ctx-icon-sm"><i class="fas fa-circle-notch fa-spin"></i></span>
+                    <span class="ctx-label">Loading…</span></div>`;
+            }
+
+            if (!Array.isArray(cached)) {
+                const errMsg = cached.error || 'Error';
+                return `<div class="ctx-item" style="pointer-events:none;color:var(--ctx-danger);padding-left:${12 + depth * BC_INDENT}px">
+                    <span class="ctx-icon-sm"><i class="fas fa-exclamation-triangle"></i></span>
+                    <span class="ctx-label">${escapeHtml(errMsg)}</span></div>`;
+            }
+
+            const sorted = [...cached].sort((a, b) => {
+                if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            const currentFile = this._selectedFile;
+            let html = '';
+
+            for (const entry of sorted) {
+                const isCurrent = entry.path === currentFile;
+                const paddingLeft = 12 + depth * BC_INDENT;
+
+                if (entry.isDirectory) {
+                    const isExpanded = this._dropdownExpandedDirs.has(entry.path);
+                    const arrowIcon = isExpanded ? 'fa-chevron-down' : 'fa-chevron-right';
+                    const cls = isCurrent ? 'ctx-item bc-dir-item favorite' : 'ctx-item bc-dir-item';
+
+                    html += `<button class="${cls}" data-bc-path="${escapeHtml(entry.path)}" data-bc-dir="true"
+                        style="padding-left:${paddingLeft}px">
+                        <span class="bc-arrow"><i class="fas ${arrowIcon}"></i></span>
+                        <span class="ctx-icon-sm"><i class="fas fa-folder" style="color:#f59e0b"></i></span>
+                        <span class="ctx-label">${escapeHtml(entry.name)}</span></button>`;
+
+                    if (isExpanded) {
+                        html += renderTree(entry.path, depth + 1);
+                    }
+                } else {
+                    const icon = pickFileIcon(entry);
+                    const cls = isCurrent ? 'ctx-item favorite' : 'ctx-item';
+                    html += `<button class="${cls}" data-bc-path="${escapeHtml(entry.path)}" data-bc-dir="false"
+                        style="padding-left:${paddingLeft}px">
+                        <span class="ctx-icon-sm"><i class="fas ${icon}" style="color:#94a3b8"></i></span>
+                        <span class="ctx-label">${escapeHtml(entry.name)}</span></button>`;
+                }
+            }
+
+            return html;
+        };
+
+        const renderAll = (): void => {
+            dropdown.innerHTML = renderTree(dirPath, 0);
+        };
+
+        renderAll();
+
+        // 首次加载
+        const cached = this._childrenCache.get(dirPath);
+        if (!cached || !Array.isArray(cached)) {
+            dropdown.innerHTML =
+                '<div class="ctx-item" style="pointer-events:none;"><span class="ctx-icon-sm"><i class="fas fa-circle-notch fa-spin"></i></span><span class="ctx-label">Loading…</span></div>';
+            void this._loadChildren(dirPath).then(() => {
+                if (this._breadcrumbDropdown === dropdown) {
+                    renderAll();
+                }
+            });
+        }
+
+        // 定位：不超出视口
+        const rect = anchorEl.getBoundingClientRect();
+        const menuMaxH = 400;
+        const viewportH = window.innerHeight;
+        let top = rect.bottom + 2;
+        if (top + menuMaxH > viewportH - 8) {
+            top = Math.max(8, rect.top - Math.min(menuMaxH, viewportH - 16) - 2);
+        }
+        dropdown.style.left = `${Math.max(4, rect.left)}px`;
+        dropdown.style.top = `${top}px`;
+        document.body.appendChild(dropdown);
+        this._breadcrumbDropdown = dropdown;
+
+        // 点击处理
+        dropdown.addEventListener('click', (ev) => {
+            const item = (ev.target as HTMLElement).closest('[data-bc-path]');
+            if (!item) return;
+            const path = item.dataset.bcPath;
+            const isDir = item.dataset.bcDir === 'true';
+            if (!path) return;
+
+            if (isDir) {
+                ev.stopPropagation();
+                if (this._dropdownExpandedDirs.has(path)) {
+                    this._dropdownExpandedDirs.delete(path);
+                    renderAll();
+                } else {
+                    this._dropdownExpandedDirs.add(path);
+                    const dirCached = this._childrenCache.get(path);
+                    if (!dirCached || !Array.isArray(dirCached)) {
+                        // 先渲染 loading 态，等加载完再刷新
+                        renderAll();
+                        void this._loadChildren(path).then(() => {
+                            if (this._breadcrumbDropdown === dropdown) {
+                                renderAll();
+                            }
+                        });
+                    } else {
+                        renderAll();
+                    }
+                }
+            } else {
+                this._dismissBreadcrumbDropdown();
+                this.selectFile(path);
+            }
+        });
+
+        // 点击外部关闭（跳过本次点击冒泡）
+        let skipCurrent = true;
+        this._breadcrumbDismissHandler = (e: MouseEvent): void => {
+            if (skipCurrent) {
+                skipCurrent = false;
+                return;
+            }
+            if (!dropdown.contains(e.target as Node) && !anchorEl.contains(e.target as Node)) {
+                this._dismissBreadcrumbDropdown();
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', this._breadcrumbDismissHandler!);
+        }, 0);
+    }
+
     private _renderPreviewHtml(): string {
         if (!this._selectedFile) {
             return `
@@ -2585,24 +2955,43 @@ export class FileExplorer {
                 <span>${t('renderer.fileExplorer.preview.empty')}</span>
             </div>`;
         }
-        const name = this._selectedFile.split('/').pop() || this._selectedFile;
         if (this._editorMode) {
+            // 只读预览模式：显示预览风格头部（编辑按钮 + 全屏 + 关闭）
+            if (this._editorReadOnly) {
+                return `
+                <div class="ws-preview-header">
+                    <i class="fas fa-file-code"></i>
+                    ${this._renderBreadcrumbHtml()}
+                    <span class="ws-mode-tag ws-mode-readonly">${t('renderer.fileExplorer.preview.readonly')}</span>
+                    <button class="ws-fullscreen-btn" data-action="open-editor"><i class="fas fa-pen-to-square"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnEdit')}</span></button>
+                    <button class="ws-preview-close" data-preview-close>
+                        <i class="fas fa-xmark"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnClose')}</span>
+                    </button>
+                </div>
+                <div class="ws-editor-host">
+                    ${
+                        this._previewState.status === 'loading'
+                            ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-circle-notch fa-spin"></i><span>${t('renderer.fileExplorer.preview.reading')}</span></div>`
+                            : this._previewState.status === 'error'
+                              ? `<div class="ws-preview-body ws-preview-info"><i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(this._previewState.error || t('renderer.fileExplorer.preview.readFailed'))}</span></div>`
+                              : `<div class="ws-editor-container"></div>`
+                    }
+                </div>`;
+            }
             return `
             <div class="ws-preview-header">
                 <i class="fas fa-file-code"></i>
-                <span class="ws-editor-filename" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
+                ${this._renderBreadcrumbHtml()}
+                <span class="ws-mode-tag ws-mode-edit">${t('renderer.fileExplorer.preview.editing')}</span>
                 <span class="ws-editor-status"></span>
-                <button class="ws-editor-save-btn" data-action="editor-save" title="${t('renderer.fileExplorer.preview.saveTitle')}" style="display:none;">
+                <button class="ws-editor-save-btn" data-action="editor-save" style="display:none;">
                     <i class="fas fa-floppy-disk" style="font-size: var(--fs-xs);"></i> ${t('renderer.fileExplorer.preview.save')}
                 </button>
-                <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.previewFile')}" data-action="editor-preview">
-                    <i class="fas fa-eye"></i>
+                <button class="ws-fullscreen-btn" data-action="editor-preview">
+                    <i class="fas fa-eye"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnPreview')}</span>
                 </button>
-                <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.fullscreen')}" data-action="preview-fullscreen">
-                    <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
-                </button>
-                <button class="ws-preview-close" title="${t('renderer.fileExplorer.preview.close')}" data-action="editor-close">
-                    <i class="fas fa-xmark"></i>
+                <button class="ws-preview-close" data-action="editor-close">
+                    <i class="fas fa-xmark"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnClose')}</span>
                 </button>
             </div>
             <div class="ws-editor-host">
@@ -2619,7 +3008,7 @@ export class FileExplorer {
         const header = `
         <div class="ws-preview-header">
             <i class="fas ${getOfficeEditorConfig(this._selectedFile)?.iconClass ?? 'fa-file-lines'}"></i>
-            <span class="ws-preview-name" title="${escapeHtml(this._selectedFile)}">${escapeHtml(name)}</span>
+            ${this._renderBreadcrumbHtml()}
             ${
                 this._previewState.data
                     ? `<span class="ws-preview-size">${escapeHtml(formatBytes(this._previewState.data.size))}</span>`
@@ -2630,14 +3019,11 @@ export class FileExplorer {
                 !isOfficeDocument(this._selectedFile) &&
                 !this._previewState.data.binary &&
                 !this._previewState.data.tooLarge
-                    ? `<button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.editFile')}" data-action="open-editor"><i class="fas fa-pen-to-square"></i></button>`
+                    ? `<button class="ws-fullscreen-btn" data-action="open-editor"><i class="fas fa-pen-to-square"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnEdit')}</span></button>`
                     : ''
             }
-            <button class="ws-fullscreen-btn" title="${t('renderer.fileExplorer.preview.fullscreen')}" data-action="preview-fullscreen">
-                <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
-            </button>
-            <button class="ws-preview-close" title="${t('renderer.fileExplorer.preview.closePreview')}" data-preview-close>
-                <i class="fas fa-xmark"></i>
+            <button class="ws-preview-close" data-preview-close>
+                <i class="fas fa-xmark"></i><span class="ws-btn-label">${t('renderer.fileExplorer.preview.btnClose')}</span>
             </button>
         </div>`;
 

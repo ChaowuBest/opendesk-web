@@ -235,7 +235,7 @@ describe('task-view message queue', () => {
             new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
 
-        expect(artifacts.style.width).toBe('75%');
+        expect(artifacts.style.width).toBe('70%');
         expect(artifacts.style.transition).toContain('width');
         expect(collapseRequests).toEqual([{ collapsed: true, persist: false }]);
 
@@ -275,7 +275,7 @@ describe('task-view message queue', () => {
 
         taskView._expandRightSidebar(artifacts, resizer);
 
-        expect(artifacts.style.width).toBe('75%');
+        expect(artifacts.style.width).toBe('70%');
     });
 
     test('reveals a Windows file pill through the filesystem API', () => {

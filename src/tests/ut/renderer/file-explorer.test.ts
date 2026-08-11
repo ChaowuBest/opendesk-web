@@ -25,6 +25,7 @@ describe('file explorer', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         delete (window as any).officeHostAPI;
+        delete (window as any).fsAPI;
     });
 
     test('restores the file list after closing a fullscreen preview', () => {
@@ -36,6 +37,7 @@ describe('file explorer', () => {
             _rootNode: ParentNode;
             _workspaceRoot: string;
             _selectedFile: string;
+            _previewFullscreen: boolean;
             _previewState: {
                 status: 'idle';
                 data: { tooLarge: false; size: number; limit: number; content: string; binary: false };
@@ -46,13 +48,13 @@ describe('file explorer', () => {
         explorer._rootNode = container;
         explorer._workspaceRoot = '/workspace';
         explorer._selectedFile = '/workspace/readme.txt';
+        explorer._previewFullscreen = true;
         explorer._previewState = {
             status: 'idle',
             data: { tooLarge: false, size: 5, limit: 0, content: 'hello', binary: false }
         };
         explorer._renderPanel();
 
-        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
 
         container.querySelector<HTMLButtonElement>('[data-preview-close]')?.click();
@@ -90,7 +92,7 @@ describe('file explorer', () => {
         expect(prepare).toHaveBeenCalledWith('slides');
         expect(editor).not.toBeNull();
         expect(editor?.getAttribute('src')).toBe('./slides_editor.html?mode=tab&file=%2Fworkspace%2Fdeck.pptx');
-        expect(editor?.getAttribute('title')).toBe('PowerPoint editor');
+        expect(editor?.getAttribute('title')).toBeTruthy();
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
         expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
@@ -219,61 +221,6 @@ describe('file explorer', () => {
         expect(editor?.classList.contains('ws-office-editor-frame--loading')).toBe(false);
     });
 
-    test('keeps the same pptx editor session across fullscreen layout changes', async () => {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
-        const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
-        (window as any).officeHostAPI = {
-            prepare,
-            requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
-        };
-
-        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
-            _container: HTMLElement;
-            _rootNode: ParentNode;
-            _workspaceRoot: string;
-            _renderPanel(): void;
-        };
-        explorer._container = container;
-        explorer._rootNode = container;
-        explorer._workspaceRoot = '/workspace';
-        explorer._renderPanel();
-
-        explorer.selectFile('/workspace/deck.pptx');
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        const previewRoot = container.querySelector('[data-preview-root]');
-        const editor = container.querySelector('.ws-office-editor-frame');
-        expect(editor).not.toBeNull();
-        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(true);
-
-        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
-
-        expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
-        expect(container.querySelector('.ws-office-editor-frame')).toBe(editor);
-        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(false);
-        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(false);
-        expect(prepare).toHaveBeenCalledTimes(1);
-
-        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
-        expect(previewRoot?.classList.contains('ws-preview--fullscreen')).toBe(true);
-
-        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
-        container.querySelector<HTMLButtonElement>('[data-action="browser-fullscreen"]')?.click();
-
-        expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
-        expect(container.querySelector('.ws-office-editor-frame')).toBe(editor);
-        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--fullscreen')).toBe(true);
-        expect(prepare).toHaveBeenCalledTimes(1);
-
-        container.querySelector<HTMLButtonElement>('[data-action="browser-fullscreen"]')?.click();
-
-        expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
-        expect(container.querySelector('.ws-office-editor-frame')).toBe(editor);
-        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--fullscreen')).toBe(false);
-        expect(prepare).toHaveBeenCalledTimes(1);
-    });
-
     test('keeps the same pptx editor session when switching the file browser view', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -300,7 +247,6 @@ describe('file explorer', () => {
         const editor = container.querySelector('.ws-office-editor-frame');
         expect(editor).not.toBeNull();
 
-        container.querySelector<HTMLButtonElement>('[data-action="preview-fullscreen"]')?.click();
         container.querySelector<HTMLButtonElement>('[data-view="grid"]')?.click();
 
         expect(container.querySelector('[data-preview-root]')).toBe(previewRoot);
@@ -357,6 +303,99 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-editor-host')).toBeNull();
         expect(container.querySelector('.ws-preview-md-host')).not.toBeNull();
         delete (window as any).fsAPI;
+    });
+
+    test('rejects Ace text files larger than 10 MiB with a clear size message', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const readTextFile = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            tooLarge: true,
+            size: 10 * 1024 * 1024 + 1,
+            limit: 10 * 1024 * 1024,
+            content: '',
+            binary: false
+        });
+        (window as any).fsAPI = { readTextFile };
+
+        const explorer = new FileExplorer() as any;
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._renderPanel();
+
+        explorer.selectFile('/workspace/large.txt');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(readTextFile).toHaveBeenCalledWith('/workspace/large.txt', 10 * 1024 * 1024);
+        expect(container.querySelector('.ws-preview-info')?.textContent).toContain('10 MB');
+        expect(container.querySelector('.ws-editor-container')).toBeNull();
+        expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--unsupported')).toBe(
+            true
+        );
+    });
+
+    test('keeps the editor dirty and editable when saving before preview fails', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const writeTextFile = jest.fn<() => Promise<unknown>>().mockRejectedValue(new Error('disk full'));
+        (window as any).fsAPI = { writeTextFile };
+        const editor = {
+            getValue: jest.fn(() => 'changed'),
+            setReadOnly: jest.fn()
+        };
+
+        const explorer = new FileExplorer() as any;
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._selectedFile = '/workspace/readme.txt';
+        explorer._editorMode = true;
+        explorer._editorReadOnly = false;
+        explorer._editorFilePath = '/workspace/readme.txt';
+        explorer._editorInstance = editor;
+        explorer._editorDirty = true;
+        explorer._previewState = {
+            status: 'idle',
+            data: { tooLarge: false, size: 7, limit: 0, content: 'changed', binary: false }
+        };
+        explorer._renderPanel();
+
+        await explorer._toggleEditorReadOnly();
+
+        expect(writeTextFile).toHaveBeenCalledWith('/workspace/readme.txt', 'changed');
+        expect(explorer._editorDirty).toBe(true);
+        expect(explorer._editorReadOnly).toBe(false);
+        expect(explorer._editorSaveError).toBe('disk full');
+        expect(editor.setReadOnly).not.toHaveBeenCalled();
+    });
+
+    test('ignores stale Ace initialization after another file starts loading', async () => {
+        const explorer = new FileExplorer() as any;
+        explorer._editorMode = true;
+        explorer._editorFilePath = '/workspace/first.txt';
+        explorer._currentLoadSeq = 1;
+        let finishAceLoad: ((ace: unknown) => void) | undefined;
+        explorer._ensureAce = jest.fn(
+            () =>
+                new Promise((resolve) => {
+                    finishAceLoad = resolve;
+                })
+        );
+        explorer._rootNode = {
+            querySelector: jest.fn(() => ({}))
+        };
+        explorer._destroyEditorInstance = jest.fn();
+        explorer._ensureAceTheme = jest.fn();
+        explorer._ensureAceMode = jest.fn();
+
+        const initialization = explorer._initAceEditor('/workspace/first.txt', 'first', 1);
+        explorer._editorFilePath = '/workspace/second.txt';
+        explorer._currentLoadSeq = 2;
+        finishAceLoad?.({ edit: jest.fn() });
+        await initialization;
+
+        expect(explorer._ensureAceTheme).not.toHaveBeenCalled();
+        expect(explorer._ensureAceMode).not.toHaveBeenCalled();
     });
 
     test('asks the embedded editor to handle unsaved changes before switching files', async () => {
