@@ -30,7 +30,7 @@ See the Mulan PSL v2 for more details.
 
         <Variable Name="InstallFolder"
                   Type="string"
-                  Value="[ProgramFiles64Folder]OpenDesk"
+                  Value="[ProgramFiles64Folder]opendesk"
                   bal:Overridable="yes" />
         <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />

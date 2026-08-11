@@ -89,6 +89,8 @@ See the Mulan PSL v2 for more details.
     <String Id="FailureRestartButton">立即重启</String>
     <String Id="FailureCloseButton">关闭</String>
     <String Id="FailureMessage">安装程序未能完成操作。错误代码：{0}</String>
+    <String Id="LegacyInstallHeader">检测到旧版安装目录</String>
+    <String Id="LegacyInstallMessage">旧版 OpenDesk 将公共目录“{0}”记录成了卸载清理范围。为保护该目录中的其他程序，本次安装已停止。请先完成旧版安装迁移，再重新运行安装程序。</String>
     <String Id="CancelConfirmTitle">取消安装</String>
     <String Id="CancelConfirmMessage">确定要取消当前操作吗？</String>
     <String Id="FilesInUseHeader">OpenDesk 正在运行</String>

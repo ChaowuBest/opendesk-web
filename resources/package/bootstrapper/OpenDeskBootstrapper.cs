@@ -70,7 +70,7 @@ namespace OpenDesk.Installer
 
         public string GetInstallFolder()
         {
-            return Engine.FormatString(Engine.StringVariables["InstallFolder"]);
+            return InstallerPath.Normalize(Engine.FormatString(Engine.StringVariables["InstallFolder"]));
         }
 
         public bool GetSavedPreference(string name)
@@ -88,6 +88,37 @@ namespace OpenDesk.Installer
             {
                 return true;
             }
+        }
+
+        public string GetUnsafeLegacyInstallFolder()
+        {
+            string folder = null;
+            try
+            {
+                folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
+                if (InstallerPath.IsDedicated(folder))
+                {
+                    return null;
+                }
+
+                string fullPath = Path.GetFullPath(folder);
+                if (File.Exists(Path.Combine(fullPath, ".installInfo.json")))
+                {
+                    return fullPath;
+                }
+                foreach (string versionFolder in Directory.GetDirectories(fullPath, "app-*", SearchOption.TopDirectoryOnly))
+                {
+                    if (File.Exists(Path.Combine(versionFolder, "opendesk.exe")))
+                    {
+                        return fullPath;
+                    }
+                }
+            }
+            catch
+            {
+                return string.IsNullOrWhiteSpace(folder) ? null : folder;
+            }
+            return null;
         }
 
         public void Install(string folder, bool desktopShortcut, bool startMenuShortcut)
@@ -331,7 +362,12 @@ namespace OpenDesk.Installer
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
             selectedStartMenuShortcut = application.GetSavedPreference("CreateStartMenuShortcut");
-            if (installed)
+            string unsafeLegacyFolder = application.GetUnsafeLegacyInstallFolder();
+            if (!string.IsNullOrEmpty(unsafeLegacyFolder))
+            {
+                ShowLegacyInstallBlocked(unsafeLegacyFolder);
+            }
+            else if (installed)
             {
                 ShowMaintenance();
             }
@@ -346,6 +382,38 @@ namespace OpenDesk.Installer
             {
                 Reveal();
             }
+        }
+
+        private void ShowLegacyInstallBlocked(string folder)
+        {
+            busy = false;
+            RenderPage(delegate
+            {
+                SetActiveStep(-1);
+                AddLabel(
+                    rightBody,
+                    "LegacyInstallHeader",
+                    T("LegacyInstallHeader"),
+                    46,
+                    105,
+                    540,
+                    58,
+                    HeadingFont,
+                    Color.FromArgb(178, 59, 49)
+                );
+                AddLabel(
+                    rightBody,
+                    "LegacyInstallMessage",
+                    string.Format(T("LegacyInstallMessage"), folder),
+                    46,
+                    180,
+                    540,
+                    110,
+                    BodyFont,
+                    MutedColor
+                );
+                AddFooterButton("LegacyInstallCloseButton", T("FailureCloseButton"), 470, Close);
+            });
         }
 
         public void Reveal()
@@ -619,7 +687,7 @@ namespace OpenDesk.Installer
 
         private void SaveOptions()
         {
-            string folder = folderTextBox.Text.Trim();
+            string folder = InstallerPath.Normalize(folderTextBox.Text);
             if (!IsUsableInstallPath(folder))
             {
                 MessageBox.Show(
@@ -845,6 +913,60 @@ namespace OpenDesk.Installer
         private static string GetPayloadPath(string fileName)
         {
             return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), fileName);
+        }
+    }
+
+    internal static class InstallerPath
+    {
+        public static bool IsDedicated(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return false;
+            }
+
+            try
+            {
+                string normalized = Path.GetFullPath(folder.Trim()).TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                );
+                return string.Equals(Path.GetFileName(normalized), "opendesk", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static string Normalize(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return folder;
+            }
+
+            try
+            {
+                string fullPath = Path.GetFullPath(folder.Trim());
+                string normalized = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string leaf = Path.GetFileName(normalized);
+                if (string.Equals(leaf, "opendesk", StringComparison.OrdinalIgnoreCase))
+                {
+                    string parent = Path.GetDirectoryName(normalized);
+                    return string.IsNullOrEmpty(parent) ? normalized : Path.Combine(parent, "opendesk");
+                }
+
+                if (string.IsNullOrEmpty(leaf))
+                {
+                    return Path.Combine(fullPath, "opendesk");
+                }
+                return Path.Combine(normalized, "opendesk");
+            }
+            catch
+            {
+                return folder.Trim();
+            }
         }
     }
 

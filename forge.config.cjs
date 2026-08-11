@@ -72,6 +72,7 @@ const extraResources = process.platform === 'darwin' ? undefined : [path.join(__
 const SIGN_LOCALLY = process.env.OPENDESK_SIGN_LOCAL === '1';
 const wixInstallerAssets = path.join(__dirname, 'resources', 'package', 'installer');
 const wixInstallPathRegistryKey = 'SOFTWARE\\OpenDesk\\Installer';
+const wixLauncherFiles = new Set(['opendesk.exe', '.installinfo.json']);
 const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR;
 const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
 
@@ -85,6 +86,8 @@ function preserveWixInstallDirectory(creator) {
         !installPathProperty.test(creator.wixTemplate) ||
         !startMenuShortcutComponent.test(creator.wixTemplate) ||
         !desktopShortcutComponent.test(creator.wixTemplate) ||
+        typeof creator.getTree !== 'function' ||
+        typeof creator.getSpecialFiles !== 'function' ||
         typeof creator.getRegistryKeys !== 'function'
     ) {
         throw new Error('electron-wix-msi template no longer exposes the expected install path entries');
@@ -126,6 +129,29 @@ function preserveWixInstallDirectory(creator) {
             desktopShortcutComponent,
             '<Component Id="DesktopShortcut" Guid="{{DesktopShortcutGuid}}" Transitive="yes">\n          <Condition>CREATE_DESKTOP_SHORTCUT = "1"</Condition>'
         );
+
+    const getSpecialFiles = creator.getSpecialFiles.bind(creator);
+    creator.getSpecialFiles = async () =>
+        (await getSpecialFiles()).filter((entry) => !wixLauncherFiles.has(entry.name.toLowerCase()));
+
+    const getTree = creator.getTree.bind(creator);
+    creator.getTree = async () => {
+        const tree = await getTree();
+        const versionDirectory = `app-${creator.semanticVersion}`;
+        const applicationTree = tree[versionDirectory];
+        if (!applicationTree) {
+            throw new Error(`electron-wix-msi did not create the expected ${versionDirectory} directory`);
+        }
+
+        tree.__ELECTRON_WIX_MSI_FILES__ = applicationTree.__ELECTRON_WIX_MSI_FILES__;
+        for (const [name, child] of Object.entries(applicationTree)) {
+            if (!name.startsWith('__ELECTRON_WIX_MSI_')) {
+                tree[name] = child;
+            }
+        }
+        delete tree[versionDirectory];
+        return tree;
+    };
 
     const getRegistryKeys = creator.getRegistryKeys.bind(creator);
     creator.getRegistryKeys = () => {
@@ -207,6 +233,7 @@ module.exports = {
                 manufacturer: 'OpenDesk Team, Openharmony',
                 description: 'An All-in-One AI Office Suite for Productivity Scenarios',
                 shortcutFolderName: 'OpenDesk',
+                programFilesFolderName: 'opendesk',
                 language: 2052,
                 cultures: 'zh-cn',
                 arch: 'x64',

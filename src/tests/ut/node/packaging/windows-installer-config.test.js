@@ -38,10 +38,28 @@ test('keeps the MSI upgrade identity while enabling the branded Chinese x64 inst
 test('restores install preferences and gates shortcut components', async () => {
     const config = getWixConfig();
     const creator = {
+        semanticVersion: '0.3.3',
+        exe: 'opendesk',
         wixTemplate: fs.readFileSync(
             path.join(projectRoot, 'node_modules', 'electron-wix-msi', 'static', 'wix.xml'),
             'utf8'
         ),
+        getSpecialFiles: async () => [
+            { name: 'opendesk.exe', path: 'temporary-launcher.exe' },
+            { name: '.installInfo.json', path: 'temporary-install-info.json' }
+        ],
+        getTree: async () => ({
+            __ELECTRON_WIX_MSI_FILES__: [
+                { name: 'opendesk.exe', path: 'temporary-launcher.exe' },
+                { name: '.installInfo.json', path: 'temporary-install-info.json' }
+            ],
+            __ELECTRON_WIX_MSI_REGISTRY__: [],
+            'app-0.3.3': {
+                __ELECTRON_WIX_MSI_FILES__: [{ name: 'opendesk.exe', path: 'packaged-opendesk.exe' }],
+                __ELECTRON_WIX_MSI_REGISTRY__: [],
+                locales: { __ELECTRON_WIX_MSI_FILES__: [], __ELECTRON_WIX_MSI_REGISTRY__: [] }
+            }
+        }),
         getRegistryKeys: () => [
             { id: 'RegistryInstallPath', key: 'product-specific-key' },
             { id: 'UninstallDisplayName', key: 'product-specific-key' }
@@ -68,6 +86,12 @@ test('restores install preferences and gates shortcut components', async () => {
         /<Component Id="ApplicationShortcut"[^>]+Transitive="yes">\s*<Condition>CREATE_START_MENU_SHORTCUT = "1"<\/Condition>/
     );
     assert.equal((creator.wixTemplate.match(/Key="SOFTWARE\\OpenDesk\\Installer"/g) || []).length, 2);
+    assert.deepEqual(await creator.getSpecialFiles(), []);
+    assert.deepEqual(await creator.getTree(), {
+        __ELECTRON_WIX_MSI_FILES__: [{ name: 'opendesk.exe', path: 'packaged-opendesk.exe' }],
+        __ELECTRON_WIX_MSI_REGISTRY__: [],
+        locales: { __ELECTRON_WIX_MSI_FILES__: [], __ELECTRON_WIX_MSI_REGISTRY__: [] }
+    });
     assert.deepEqual(creator.getRegistryKeys(), [
         { id: 'RegistryInstallPath', key: 'SOFTWARE\\OpenDesk\\Installer' },
         {
@@ -116,8 +140,13 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /CreateDesktopShortcutCheckBox/);
     assert.match(bootstrapper, /CreateStartMenuShortcutCheckBox/);
     assert.match(bootstrapper, /Engine\.FormatString\(Engine\.StringVariables\["InstallFolder"\]\)/);
+    assert.match(bootstrapper, /InstallerPath\.Normalize/);
+    assert.match(bootstrapper, /Path\.Combine\(normalized, "opendesk"\)/);
+    assert.match(bootstrapper, /GetUnsafeLegacyInstallFolder/);
+    assert.match(bootstrapper, /ShowLegacyInstallBlocked/);
     assert.doesNotMatch(bootstrapper, /OverallProgressPackageText/);
     assert.match(localization, /<String Id="CreateDesktopShortcut">创建桌面快捷方式<\/String>/);
+    assert.match(localization, /<String Id="LegacyInstallHeader">检测到旧版安装目录<\/String>/);
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
 });
 
@@ -127,7 +156,7 @@ test('renders every bootstrapper page transition atomically', () => {
     assert.match(bootstrapper, /class BufferedPanel : Panel/);
     assert.match(bootstrapper, /OptimizedDoubleBuffer/);
     assert.match(bootstrapper, /WM_SETREDRAW/);
-    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 6);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 7);
     assert.match(bootstrapper, /Opacity = 0D/);
     assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
     assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);
