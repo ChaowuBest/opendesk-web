@@ -81,6 +81,7 @@ import {
     type AgentRuntimePermissionRequest,
     type AgentRuntimePermissionResponse,
     type AgentTaskRuntime,
+    type AgentTaskRuntimeTurnResult,
     type ModeDecl,
     type PersistedAgentRuntimeState,
     type TaskSkillExposure
@@ -1718,10 +1719,24 @@ export class TaskState {
                 },
                 requestPermission: (request) => this.requestAgentRuntimePermission(request)
             });
-            if (result.state) {
-                this.agent_runtime = { kind: runtime.kind, state: result.state };
-            }
+            const currentState =
+                this.agent_runtime?.kind === runtime.kind ? this.agent_runtime.state : ({} as Record<string, unknown>);
+            this.agent_runtime = {
+                kind: runtime.kind,
+                state: result.state ?? currentState,
+                lastTurnStopReason: result.stopReason
+            };
         } catch (err) {
+            const currentState =
+                this.agent_runtime?.kind === runtime.kind ? this.agent_runtime.state : ({} as Record<string, unknown>);
+            const lastTurnStopReason: AgentTaskRuntimeTurnResult['stopReason'] = abortController.signal.aborted
+                ? 'cancelled'
+                : 'error';
+            this.agent_runtime = {
+                kind: runtime.kind,
+                state: currentState,
+                lastTurnStopReason
+            };
             if (!abortController.signal.aborted) {
                 await turn.apply({
                     type: 'error',

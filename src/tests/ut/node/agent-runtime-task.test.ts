@@ -13,6 +13,7 @@ import {
 } from '../../../main/aikernel/agents/common.js';
 import { AgentRegistry } from '../../../main/aikernel/agents/registry.js';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
+import { startSubTask } from '../../../main/aikernel/planning/tools.js';
 import { TaskManagerState } from '../../../main/aikernel/task/manager.js';
 import { deserializeTask, serializeTask } from '../../../main/aikernel/task/serializer.js';
 import { TaskState } from '../../../main/aikernel/states/tasks.js';
@@ -99,8 +100,36 @@ test('TaskState delegates external agents while persisting a local canonical tas
     assert.equal(((task.chat_context.messages[1] as AssistantMessage).content[0] as any).text, 'Remote answer');
     assert.deepEqual((serializeTask(task) as any).agent_runtime, {
         kind: 'test-runtime',
-        state: { sessionId: 'session-1', phase: 'idle' }
+        state: { sessionId: 'session-1', phase: 'idle' },
+        lastTurnStopReason: 'completed'
     });
+});
+
+test('startSubTask returns the final output from an external agent runtime', async (context) => {
+    const runtime = new FakeRuntime();
+    const agent = new RuntimeAgent(runtime);
+    await AgentRegistry.replaceApplicationAgents([{ bundleName: 'runtime.test', agents: [agent] }]);
+    context.after(async () => AgentRegistry.unloadApplicationAgents());
+    const manager = new TaskManagerState();
+    (manager as any).save = () => undefined;
+    const parent = new TaskState(manager);
+    manager.tasks.push(parent);
+    parent.task_name = 'Parent task';
+
+    const result = await startSubTask({
+        parentTask: parent,
+        config: {
+            title: 'Remote child',
+            objective: 'Do remote work',
+            criteria: 'Return the remote answer',
+            isAsync: false,
+            agentName: agent.agentId
+        }
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result, 'Remote answer');
 });
 
 test('TaskState stop cancels an active external runtime turn', async (context) => {
@@ -144,7 +173,8 @@ test('TaskState restores persisted runtime checkpoints after restart', () => {
             agentId: 'runtime.test:remote',
             agent_runtime: {
                 kind: 'test-runtime',
-                state: { sessionId: 'session-1', phase: 'idle' }
+                state: { sessionId: 'session-1', phase: 'idle' },
+                lastTurnStopReason: 'completed'
             },
             chat_context: { messages: [] },
             created_at: new Date().toISOString()
@@ -155,7 +185,8 @@ test('TaskState restores persisted runtime checkpoints after restart', () => {
         const task = deserializeTask(filePath, new TaskManagerState());
         assert.deepEqual(task.agent_runtime, {
             kind: 'test-runtime',
-            state: { sessionId: 'session-1', phase: 'idle' }
+            state: { sessionId: 'session-1', phase: 'idle' },
+            lastTurnStopReason: 'completed'
         });
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });

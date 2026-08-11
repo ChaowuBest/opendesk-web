@@ -208,6 +208,7 @@ export interface AgentTaskRuntimeTurnResult {
 export interface PersistedAgentRuntimeState {
     kind: string;
     state: Record<string, unknown>;
+    lastTurnStopReason?: AgentTaskRuntimeTurnResult['stopReason'];
 }
 
 /**

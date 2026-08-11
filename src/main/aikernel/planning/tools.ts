@@ -21,7 +21,7 @@ import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.
 import {
     registerSubTaskAttemptCompletionHook,
     appendSubTaskStopCompletion,
-    extractAttemptCompletionResult,
+    extractSubTaskCompletionResult,
     hasAttemptCompletion
 } from './harness.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -216,7 +216,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
                     if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
                         await appendSubTaskStopCompletion(subTask);
                     }
-                    const completionResult = extractAttemptCompletionResult(subTask);
+                    const completionResult = extractSubTaskCompletionResult(subTask);
                     if (completionResult) {
                         return { ...completionResult, subtask_id: subTask.task_id };
                     }
@@ -269,8 +269,8 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             await appendSubTaskStopCompletion(subTask);
         }
 
-        // 统一通过 extractAttemptCompletionResult 提取结果
-        const completionResult = extractAttemptCompletionResult(subTask);
+        // 统一提取原生 attemptCompletion 或外部 Agent runtime 的最终结果
+        const completionResult = extractSubTaskCompletionResult(subTask);
         if (completionResult) {
             return {
                 ...completionResult,
@@ -340,7 +340,7 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
     }
 
     // 如果已经有结果，直接返回
-    const existingResult = extractAttemptCompletionResult(subTask);
+    const existingResult = extractSubTaskCompletionResult(subTask);
     if (existingResult) {
         return {
             ...existingResult,
@@ -355,7 +355,7 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
         await appendSubTaskStopCompletion(subTask);
     }
 
-    const completionResult = extractAttemptCompletionResult(subTask);
+    const completionResult = extractSubTaskCompletionResult(subTask);
     if (completionResult) {
         return {
             ...completionResult,
@@ -447,7 +447,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
         const resultPromise = new Promise<SubTaskResult>((resolve) => {
             const checkCompletion = async () => {
                 await waitForTaskWithProgress(subTask, onProgress);
-                const completionResult = extractAttemptCompletionResult(subTask);
+                const completionResult = extractSubTaskCompletionResult(subTask);
                 if (completionResult) {
                     resolve({
                         ...completionResult,
@@ -480,7 +480,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
     // 同步模式：等待子任务完成
     await waitForTaskWithProgress(subTask, onProgress);
 
-    const completionResult = extractAttemptCompletionResult(subTask);
+    const completionResult = extractSubTaskCompletionResult(subTask);
     if (completionResult) {
         return {
             ...completionResult,

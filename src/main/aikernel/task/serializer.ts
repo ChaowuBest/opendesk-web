@@ -67,9 +67,18 @@ function normalizeAgentRuntimeState(value: unknown): TaskState['agent_runtime'] 
         return undefined;
     }
     if (Array.isArray(runtime.state)) return undefined;
+    const lastTurnStopReason =
+        runtime.lastTurnStopReason === 'completed' ||
+        runtime.lastTurnStopReason === 'cancelled' ||
+        runtime.lastTurnStopReason === 'max_tokens' ||
+        runtime.lastTurnStopReason === 'refusal' ||
+        runtime.lastTurnStopReason === 'error'
+            ? runtime.lastTurnStopReason
+            : undefined;
     return {
         kind: runtime.kind,
-        state: runtime.state as Record<string, unknown>
+        state: runtime.state as Record<string, unknown>,
+        ...(lastTurnStopReason ? { lastTurnStopReason } : {})
     };
 }
 
