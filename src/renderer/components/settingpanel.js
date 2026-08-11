@@ -11,6 +11,7 @@
 
 import { createRendererTranslator } from '../locale.ts';
 import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
+import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/agentPresets.ts';
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
@@ -75,6 +76,14 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-template-custom:hover { border-color: var(--mc-accent); background: var(--mc-hover); }
 .od-sp-template-custom i { color: var(--mc-ink3); margin-bottom: 4px; }
 .od-sp-template-custom span { font-size: 12px; color: var(--mc-ink3); }
+.od-sp-agent-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.od-sp-agent-template-card { align-items: flex-start; justify-content: flex-start; min-height: 116px; text-align: left; }
+.od-sp-agent-template-card .description { color: var(--mc-ink3); font-size: 11px; line-height: 1.45; margin-top: 5px; }
+.od-sp-agent-template-card .package { color: var(--mc-ink4); font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 10px; margin-top: auto; overflow: hidden; padding-top: 8px; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.od-sp-agent-custom { min-height: 116px; }
+.od-sp-agent-catalog-description { color: var(--mc-ink3); font-size: 12px; line-height: 1.5; margin-bottom: 14px; }
+.od-sp-agent-preset-notice { align-items: flex-start; background: rgba(184,117,3,0.08); border: 1px solid rgba(184,117,3,0.24); border-radius: 8px; color: var(--mc-ink2); display: flex; font-size: 11.5px; gap: 8px; line-height: 1.5; margin-bottom: 14px; padding: 10px 12px; }
+.od-sp-agent-preset-notice i { color: #B87503; margin-top: 2px; }
 .od-sp-combo { position: relative; }
 .od-sp-model-dropdown { position: absolute; z-index: 10; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--mc-card-bg); border: 1px solid var(--mc-line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); max-height: 180px; overflow-y: auto; }
 .od-sp-model-option { padding: 7px 12px; font-size: 12px; cursor: pointer; color: var(--mc-ink); transition: background 0.1s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -103,7 +112,7 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-loading-text { color: var(--mc-ink3); }
 .od-sp-fs { margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--mc-line); font-size: 12px; font-weight: 650; color: var(--mc-ink2); }
 .od-sp-two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-@media (max-width: 620px) { .od-sp-two-col { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .od-sp-two-col, .od-sp-agent-template-grid { grid-template-columns: 1fr; } }
 `;
 
 class SettingPanel extends HTMLElement {
@@ -1003,7 +1012,7 @@ class SettingPanel extends HTMLElement {
 
     _bindAcpAgentEvents() {
         this.querySelector('#add-acp-agent-btn')?.addEventListener('click', () => {
-            this.showAcpAgentEditModal(-1);
+            this.showAcpAgentPresetModal();
         });
         this.querySelectorAll('.edit-acp-agent-btn').forEach((button) => {
             button.addEventListener('click', () => {
@@ -1014,6 +1023,64 @@ class SettingPanel extends HTMLElement {
             button.addEventListener('click', () => {
                 void this.deleteAcpAgent(Number(button.dataset.index));
             });
+        });
+    }
+
+    showAcpAgentPresetModal() {
+        const presetCards = ACP_AGENT_PRESETS.map(
+            (preset) => `
+                <button class="acp-agent-preset-btn od-sp-template-card od-sp-agent-template-card" data-preset-id="${preset.id}">
+                    <span class="name">${this.escapeHtml(preset.name)}</span>
+                    <span class="description">${this.escapeHtml(this._t(preset.descriptionKey))}</span>
+                    <span class="package">${this.escapeHtml(preset.packageName)}</span>
+                </button>
+            `
+        ).join('');
+
+        this.showModal(`
+            <div class="od-confirm-modal-card od-sp-largest">
+                <div class="od-confirm-modal-banner info">
+                    <div class="od-confirm-modal-icon"><i class="fas fa-robot"></i></div>
+                    <div class="od-confirm-modal-banner-text">
+                        <div class="od-confirm-modal-title">${this._t('sp.agents.catalog.title')}</div>
+                    </div>
+                    <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
+                </div>
+                <div class="od-confirm-modal-body od-sp-scroll">
+                    <p class="od-sp-agent-catalog-description">${this._t('sp.agents.catalog.description')}</p>
+                    <div class="od-sp-agent-template-grid">
+                        ${presetCards}
+                        <button class="acp-agent-custom-btn od-sp-template-custom od-sp-agent-custom">
+                            <i class="fas fa-plus"></i>
+                            <span>${this._t('sp.agents.catalog.custom')}</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="od-confirm-modal-footer">
+                    <button class="od-confirm-btn od-confirm-btn-cancel modal-close-btn">${this._t('common.close')}</button>
+                </div>
+            </div>
+        `);
+
+        this.querySelectorAll('.acp-agent-preset-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                const presetId = button.dataset.presetId;
+                const preset = ACP_AGENT_PRESETS.find((candidate) => candidate.id === presetId);
+                if (!preset) return;
+                const platform = window.systemInfo?.platform || 'linux';
+                const draft = createAcpAgentPresetDraft(preset.id, platform, (key) => this._t(key));
+                this.closeModal();
+                this.showAcpAgentEditModal(-1, draft, {
+                    showDownloadNotice: preset.requiresDownloadNotice
+                });
+            });
+        });
+        this.querySelector('.acp-agent-custom-btn')?.addEventListener('click', () => {
+            this.closeModal();
+            this.showAcpAgentEditModal(-1);
+        });
+        this.querySelectorAll('.modal-close-btn').forEach((button) => {
+            button.addEventListener('click', () => this.closeModal());
         });
     }
 
@@ -1054,9 +1121,10 @@ class SettingPanel extends HTMLElement {
         );
     }
 
-    showAcpAgentEditModal(index) {
-        const existing = index >= 0 ? this._getAcpAgents()[index] : null;
-        const transport = existing?.transport || {
+    showAcpAgentEditModal(index, template = null, options = {}) {
+        const isEdit = index >= 0;
+        const profile = isEdit ? this._getAcpAgents()[index] : template;
+        const transport = profile?.transport || {
             type: 'stdio',
             command: '',
             args: [],
@@ -1064,13 +1132,13 @@ class SettingPanel extends HTMLElement {
             env: {},
             inheritEnv: true
         };
-        const reconnect = existing?.reconnect || {
+        const reconnect = profile?.reconnect || {
             enabled: true,
             maxAttempts: 3,
             initialDelayMs: 500,
             maxDelayMs: 5000
         };
-        const session = existing?.session || { configOptions: {}, mcpServerIds: [] };
+        const session = profile?.session || { configOptions: {}, mcpServerIds: [] };
         const isHttp = transport.type === 'streamableHttp';
         const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
 
@@ -1079,15 +1147,20 @@ class SettingPanel extends HTMLElement {
                 <div class="od-confirm-modal-banner info">
                     <div class="od-confirm-modal-icon"><i class="fas fa-robot"></i></div>
                     <div class="od-confirm-modal-banner-text">
-                        <div class="od-confirm-modal-title">${existing ? this._t('sp.agents.modal.edit') : this._t('sp.agents.modal.add')}</div>
+                        <div class="od-confirm-modal-title">${isEdit ? this._t('sp.agents.modal.edit') : this._t('sp.agents.modal.add')}</div>
                     </div>
                     <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
                 <div class="od-confirm-modal-body od-sp-scroll">
+                    ${
+                        options.showDownloadNotice
+                            ? `<div id="acp-agent-preset-download-notice" class="od-sp-agent-preset-notice"><i class="fas fa-circle-info"></i><span>${this._t('sp.agents.catalog.downloadNotice')}</span></div>`
+                            : ''
+                    }
                     <div class="od-sp-two-col">
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.name')}</label>
-                            <input id="acp-agent-name" class="od-sp-fi" value="${this.escapeHtml(existing?.name || '')}" placeholder="Codex">
+                            <input id="acp-agent-name" class="od-sp-fi" value="${this.escapeHtml(profile?.name || '')}" placeholder="Codex">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.transport')}</label>
@@ -1098,16 +1171,16 @@ class SettingPanel extends HTMLElement {
                         </div>
                     </div>
                     <div class="od-sp-fc">
-                        <input id="acp-agent-enabled" type="checkbox" ${existing?.enabled === false ? '' : 'checked'}>
+                        <input id="acp-agent-enabled" type="checkbox" ${profile?.enabled === false ? '' : 'checked'}>
                         <label for="acp-agent-enabled">${this._t('sp.agents.field.enabled')}</label>
                     </div>
                     <div class="od-sp-fc">
-                        <input id="acp-agent-dispatchable" type="checkbox" ${existing?.dispatchable ? 'checked' : ''}>
+                        <input id="acp-agent-dispatchable" type="checkbox" ${profile?.dispatchable ? 'checked' : ''}>
                         <label for="acp-agent-dispatchable">${this._t('sp.agents.field.dispatchable')}</label>
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.whenToUse')}</label>
-                        <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${this.escapeHtml(existing?.whenToUse || '')}</textarea>
+                        <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${this.escapeHtml(profile?.whenToUse || '')}</textarea>
                     </div>
 
                     <div id="acp-agent-stdio-fields" ${isHttp ? 'hidden' : ''}>
@@ -1227,14 +1300,14 @@ class SettingPanel extends HTMLElement {
         });
         this.querySelector('#save-acp-agent-btn')?.addEventListener('click', () => {
             try {
-                const profile = this._readAcpAgentForm(existing?.id || '');
-                this._saveAcpAgent(index, profile);
+                const nextProfile = this._readAcpAgentForm(profile?.id || '');
+                this._saveAcpAgent(index, nextProfile);
             } catch (error) {
                 this._showAcpAgentFormError(error);
             }
         });
         this.querySelector('#test-acp-agent-btn')?.addEventListener('click', () => {
-            void this._testAcpAgent(existing?.id || '');
+            void this._testAcpAgent(profile?.id || '');
         });
     }
 

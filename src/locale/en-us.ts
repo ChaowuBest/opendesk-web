@@ -1327,6 +1327,29 @@ export const enUs: Record<string, string> = {
     'sp.agents.desc':
         'Connect local stdio or remote Streamable HTTP agents. Task context and event records remain stored locally.',
     'sp.agents.add': 'Add Agent',
+    'sp.agents.catalog.title': 'Choose an ACP Agent',
+    'sp.agents.catalog.description':
+        'Start from a recommended template, or create a custom stdio or Streamable HTTP agent. Template fields remain editable before saving.',
+    'sp.agents.catalog.custom': 'Custom Agent',
+    'sp.agents.catalog.downloadNotice':
+        'This template starts through npx. The first connection test or use may download a third-party package and may require signing in to the selected agent.',
+    'sp.agents.preset.copilot.description': 'Use ACP coding capabilities through GitHub Copilot Language Server.',
+    'sp.agents.preset.copilot.whenToUse':
+        'Use GitHub Copilot for code understanding, code changes, and software engineering tasks.',
+    'sp.agents.preset.claude.description': 'Connect to Claude Code through a community ACP adapter.',
+    'sp.agents.preset.claude.whenToUse':
+        'Use Claude Code for complex code analysis, implementation, and refactoring tasks.',
+    'sp.agents.preset.gemini.description': 'Use the experimental ACP mode provided by Gemini CLI.',
+    'sp.agents.preset.gemini.whenToUse':
+        'Use Gemini CLI for code analysis, implementation, and general development tasks.',
+    'sp.agents.preset.qwen.description': 'Use Qwen Code ACP mode with experimental skill support enabled.',
+    'sp.agents.preset.qwen.whenToUse':
+        'Use Qwen Code for code generation, repository understanding, and Chinese-language development tasks.',
+    'sp.agents.preset.codex.description': 'Connect to Codex CLI through an ACP adapter.',
+    'sp.agents.preset.codex.whenToUse':
+        'Use Codex CLI for implementation, debugging, testing, and repository-wide code changes.',
+    'sp.agents.preset.opencode.description': 'Use the ACP server mode built into OpenCode.',
+    'sp.agents.preset.opencode.whenToUse': 'Use OpenCode for general software engineering and codebase tasks.',
     'sp.agents.empty': 'No ACP agents configured',
     'sp.agents.enabled': 'Enabled',
     'sp.agents.disabled': 'Disabled',
