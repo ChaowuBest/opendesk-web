@@ -14,7 +14,12 @@ import { BaseApplication } from '../base.js';
 import { t } from './locale/index.js';
 import { loadPoolSkill } from './pool.js';
 import { loadAnalysisResultVisualizerSkill } from './analysis-result-visualizer.js';
+import { registerHarmonyosBashFrictionHook } from '../../aikernel/harnesses/platform/harmonyos/harmonyos-recovery/hook.js';
 import { loadUseHarmonySkill } from './skills/use-harmony/skill.js';
+
+if ((process.platform as string) === 'openharmony') {
+    registerHarmonyosBashFrictionHook();
+}
 
 export class BuiltinApplication extends BaseApplication {
     constructor() {

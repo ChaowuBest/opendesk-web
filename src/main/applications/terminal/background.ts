@@ -259,6 +259,9 @@ export function installTimeoutBackgrounding(opts: {
             let output = getOutput();
             if (isKilledByStop()) output = `[中断] 命令被用户终止。\n` + output;
             result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
+            if (Number.isInteger(code)) {
+                result.updateResultObject({ exitCode: code });
+            }
             settle(false);
         };
 

@@ -19,7 +19,6 @@ import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
-import { loadHarmonyosFallbackSkill } from '../../aikernel/harnesses/platform/harmonyos/skills.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
@@ -49,9 +48,6 @@ import fs from 'fs';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
-
-const HARMONYOS_FALLBACK_SKILL_NAME = 'harmonyos-fallback-skill';
-const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -438,13 +434,6 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsSkill.toolsets = [manageSkillsToolset];
         skills.push(manageSkillsSkill);
 
-        if (isHarmonyosRuntime) {
-            const harmonyosSkill = loadHarmonyosFallbackSkill();
-            if (harmonyosSkill) {
-                skills.push(harmonyosSkill);
-            }
-        }
-
         return skills;
     }
 
@@ -483,7 +472,7 @@ export class SkillMgrApplication extends BaseApplication {
 
     /**
      * 获取所有系统内置技能，供技能中心的"内置技能"Tab 使用。
-     * 对于 skillmgr bundle，排除用户安装的技能，保留内置技能（如 harmonyos-fallback-skill）。
+     * 对于 skillmgr bundle，排除用户安装的技能和 manage-skills。
      */
     async getBuiltinSkills() {
         const registry = AISkillRegistry.getInstance();
@@ -504,11 +493,7 @@ export class SkillMgrApplication extends BaseApplication {
         }> = [];
         for (const [bundleName, skills] of allSkills) {
             for (const skill of skills) {
-                // skillmgr bundle：只在 HarmonyOS PC 运行时暴露 harmonyos-fallback-skill 为内置技能，
-                // 其他技能（用户安装的 + manage-skills）不在此 Tab 显示
-                if (bundleName === 'skillmgr') {
-                    if (!isHarmonyosRuntime || skill.frontmatter.name !== HARMONYOS_FALLBACK_SKILL_NAME) continue;
-                }
+                if (bundleName === 'skillmgr') continue;
                 const tools: Array<{
                     name: string;
                     description: string;
