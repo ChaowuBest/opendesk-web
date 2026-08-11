@@ -434,6 +434,7 @@ export function buildInterpretersEnv(
     const baseEnv = options.baseEnv ?? process.env;
     const useIsolatedPython = options.useIsolatedPython !== false;
     const interpretersDir = path.join(getOpendeskDirectory(), 'interpreters');
+    const cmdPkgsDir = path.join(interpretersDir, 'cmd-pkgs');
     const isWindows = process.platform === 'win32';
 
     const npmPrefix = baseEnv.NPM_CONFIG_PREFIX || path.join(interpretersDir, 'npm-global');
@@ -441,6 +442,7 @@ export function buildInterpretersEnv(
     const npmBinDir = isWindows ? npmPrefix : path.join(npmPrefix, 'bin');
     const env: NodeJS.ProcessEnv = {
         NPM_CONFIG_PREFIX: npmPrefix,
+        CMD_PKGS_DIR: cmdPkgsDir,
         PATH: prependEnvPath([npmBinDir], baseEnv.PATH)
     };
 

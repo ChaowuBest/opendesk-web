@@ -93,7 +93,10 @@ function formatUnifiedEnvironmentItems(
         }
 
         if (nodes.length > 0) {
-            items.push('如需在其他节点上执行，通过 nodeId 参数指定目标节点');
+            items.push(
+                '如需在其他节点上执行，通过 nodeId 参数指定目标节点',
+                '本机命令执行失败时，应先向用户报告错误原因，不要自行切换到其他节点重试，除非获得明确提示'
+            );
         } else if (!defaultNodeId) {
             items.push(
                 '本机 shell/file 工具会在 OpenDesk 本地工作目录下运行，除非工具调用显式指定 workingDirectory 或绝对路径'

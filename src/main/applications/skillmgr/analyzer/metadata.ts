@@ -21,38 +21,59 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
+import { randomUUID } from 'crypto';
+import { FileLock } from '../../../utils/file-lock.js';
 
 // ── Zod Schema 定义 ──
 
-/** 环境变量依赖 */
-export const EnvVarDependencySchema = z.object({
-    name: z.string().min(1, '环境变量名称不能为空'),
-    description: z.string().optional(),
-    required: z.boolean().optional().default(false),
-    defaultValue: z.string().optional()
+/**
+ * 所有依赖类型共用的 HarmonyOS fallback 字段。
+ * recordedAt 刻意只校验为字符串：缺失或非法时间由 fallback 日落机制识别并清理，
+ * 不能因为一条待清理记录而导致整个元数据文件无法加载。
+ */
+export const DependencyFallbackSchema = z.object({
+    fallback: z.string().optional(),
+    note: z.string().optional(),
+    recordedAt: z.string().optional()
 });
+
+/** 环境变量依赖 */
+export const EnvVarDependencySchema = z
+    .object({
+        name: z.string().min(1, '环境变量名称不能为空'),
+        description: z.string().optional(),
+        required: z.boolean().optional().default(false),
+        defaultValue: z.string().optional()
+    })
+    .merge(DependencyFallbackSchema);
 
 /** Python 三方库依赖 */
-export const PythonDependencySchema = z.object({
-    name: z.string().min(1, 'Python 包名称不能为空'),
-    version: z.string().optional(),
-    description: z.string().optional()
-});
+export const PythonDependencySchema = z
+    .object({
+        name: z.string().min(1, 'Python 包名称不能为空'),
+        version: z.string().optional(),
+        description: z.string().optional()
+    })
+    .merge(DependencyFallbackSchema);
 
 /** npm 三方库依赖 */
-export const NpmDependencySchema = z.object({
-    name: z.string().min(1, 'npm 包名称不能为空'),
-    version: z.string().optional(),
-    description: z.string().optional()
-});
+export const NpmDependencySchema = z
+    .object({
+        name: z.string().min(1, 'npm 包名称不能为空'),
+        version: z.string().optional(),
+        description: z.string().optional()
+    })
+    .merge(DependencyFallbackSchema);
 
 /** 二进制可执行程序/命令依赖 */
-export const BinaryDependencySchema = z.object({
-    name: z.string().min(1, '命令名称不能为空'),
-    version: z.string().optional(),
-    description: z.string().optional(),
-    installHint: z.string().optional()
-});
+export const BinaryDependencySchema = z
+    .object({
+        name: z.string().min(1, '命令名称不能为空'),
+        version: z.string().optional(),
+        description: z.string().optional(),
+        installHint: z.string().optional()
+    })
+    .merge(DependencyFallbackSchema);
 
 /** 技能依赖项汇总 */
 export const SkillDependenciesSchema = z.object({
@@ -149,6 +170,66 @@ export interface ValidationResult {
 
 /** opendesk_meta.json 文件名 */
 export const OPENDESK_META_FILENAME = 'opendesk_meta.json';
+
+export type MutableOpendeskMeta = Record<string, unknown>;
+export type OpendeskMetaMutation = (meta: MutableOpendeskMeta) => void | Promise<void>;
+
+/**
+ * 在共享路径锁内读取最新元数据、执行修改并原子落盘。
+ *
+ * 临时文件与目标文件位于同一目录；文件内容 fsync 后 rename，随后 fsync 目录，
+ * 任一步骤失败都会关闭句柄并清理尚存的临时文件。文件不存在时以空对象创建。
+ */
+export async function mutateOpendeskMeta(metaPath: string, mutation: OpendeskMetaMutation): Promise<void> {
+    const resolvedMetaPath = path.resolve(metaPath);
+    const lock = new FileLock(resolvedMetaPath);
+
+    return lock.runExclusive(async () => {
+        const directory = path.dirname(resolvedMetaPath);
+        const tempPath = path.join(directory, `.${path.basename(resolvedMetaPath)}.${process.pid}.${randomUUID()}.tmp`);
+        let mode = 0o666;
+        let meta: MutableOpendeskMeta = {};
+
+        await fs.promises.mkdir(directory, { recursive: true });
+        try {
+            try {
+                const [raw, stat] = await Promise.all([
+                    fs.promises.readFile(resolvedMetaPath, 'utf-8'),
+                    fs.promises.stat(resolvedMetaPath)
+                ]);
+                mode = stat.mode;
+                const parsed: unknown = JSON.parse(jsonrepair(raw));
+                if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error(`${OPENDESK_META_FILENAME} 顶层必须是一个 JSON 对象`);
+                }
+                meta = parsed as MutableOpendeskMeta;
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            }
+
+            const result = await mutation(meta);
+            const file = await fs.promises.open(tempPath, 'wx', mode);
+            try {
+                await file.writeFile(`${JSON.stringify(meta, null, 2)}\n`, 'utf-8');
+                await file.sync();
+            } finally {
+                await file.close();
+            }
+
+            await fs.promises.rename(tempPath, resolvedMetaPath);
+            const directoryHandle = await fs.promises.open(directory, 'r');
+            try {
+                await directoryHandle.sync();
+            } finally {
+                await directoryHandle.close();
+            }
+            return result;
+        } catch (error) {
+            await fs.promises.rm(tempPath, { force: true }).catch(() => {});
+            throw error;
+        }
+    });
+}
 
 /** 分析结果校验失败后的最大重试轮数 */
 export const MAX_VALIDATION_RETRIES = 5;

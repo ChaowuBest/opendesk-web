@@ -287,6 +287,34 @@ export class HookRegistry {
         this.afterToolCallCallbacks.push(callback);
     }
 
+    /** 按裸工具名或带 bundle 前缀的工具名注册钩子。 */
+    static registerToolHook(
+        toolName: string,
+        hooks: {
+            beforeToolCall?: BeforeToolCallCallback;
+            afterToolCall?: AfterToolCallCallback;
+        }
+    ): void {
+        const matches = (name: string) => name === toolName || name.endsWith(`-${toolName}`);
+        if (hooks.beforeToolCall) {
+            const callback = hooks.beforeToolCall;
+            this.beforeToolCall(async (task, toolCall) => {
+                if (!matches(toolCall.tool_name)) {
+                    return { operation: 'allow' };
+                }
+                return callback(task, toolCall);
+            });
+        }
+        if (hooks.afterToolCall) {
+            const callback = hooks.afterToolCall;
+            this.afterToolCall(async (task, toolCall) => {
+                if (matches(toolCall.tool_name)) {
+                    await callback(task, toolCall);
+                }
+            });
+        }
+    }
+
     /**
      * 注册 `beforeTurnStart` 钩子（纯通知，无返回值）。
      *
