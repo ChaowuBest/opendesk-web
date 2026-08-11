@@ -18,7 +18,8 @@ import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
-import { MANAGE_SKILLS_SKILL } from './skills.js';
+import { MANAGE_SKILLS_SKILL, MANAGE_SKILLS_SKILL_HARMONYOS } from './skills.js';
+import { RecordHarmonyosFallbackTool } from '../../aikernel/harnesses/platform/harmonyos/skill-fallback-tools.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
@@ -48,6 +49,8 @@ import fs from 'fs';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
+
+const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -419,7 +422,9 @@ export class SkillMgrApplication extends BaseApplication {
                 })
         );
 
-        const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
+        const manageSkillsSkill = Skill.parseMd(
+            isHarmonyosRuntime ? MANAGE_SKILLS_SKILL + MANAGE_SKILLS_SKILL_HARMONYOS : MANAGE_SKILLS_SKILL
+        );
         const manageSkillsToolset = new BaseToolset('manage-skills');
 
         manageSkillsToolset.addTool(new AddSkillFromDirectoryTool(this));
@@ -430,6 +435,9 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsToolset.addTool(new DeleteSkillsTool(this));
         manageSkillsToolset.addTool(new RefreshSkillsTool(this));
         manageSkillsToolset.addTool(new GetSkillsDirectoryTool(this));
+        if (isHarmonyosRuntime) {
+            manageSkillsToolset.addTool(new RecordHarmonyosFallbackTool());
+        }
 
         manageSkillsSkill.toolsets = [manageSkillsToolset];
         skills.push(manageSkillsSkill);

@@ -14,3 +14,6 @@ export const BASH_FRICTION_WINDOW_SIZE = 5;
 
 // Bash 摩擦检测失败阈值：窗口内失败次数达到此值时触发提示。
 export const BASH_FRICTION_FAILURE_THRESHOLD = 2;
+
+// 回看窗口大小：检查当前 Node 成功调用之前最近多少次工具调用中是否存在失败的 Bash。
+export const FAILED_BASH_WINDOW_SIZE = 5;

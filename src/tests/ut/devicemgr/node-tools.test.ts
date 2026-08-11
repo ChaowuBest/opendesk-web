@@ -190,7 +190,7 @@ describe('devicemgr node tools', () => {
 
     test('executes shell commands through gateway node.invoke and formats shell output', async () => {
         const { app, invoke } = createFakeApp({
-            invokeResult: { success: true, stdout: 'hello from node\n', stderr: '', error: null }
+            invokeResult: { success: true, exitCode: 0, stdout: 'hello from node\n', stderr: '', error: null }
         });
         const task = createTask(['system.run'], ['bash', 'sh']);
         const tool = createNodeToolset(app).getTool('executeNodeShell')!;
@@ -208,6 +208,7 @@ describe('devicemgr node tools', () => {
 
         expect(result.status).toBe('success');
         expect(result.result).toBe('hello from node');
+        expect(result.result_object).toEqual({ exitCode: 0, nodeId: 'node-a' });
         expect(invoke).toHaveBeenCalledWith({
             nodeId: 'node-a',
             command: 'system.run',
@@ -219,6 +220,20 @@ describe('devicemgr node tools', () => {
             },
             timeoutMs: 5000
         });
+    });
+
+    test('rejects a shell response without an integer exitCode', async () => {
+        const { app } = createFakeApp({
+            invokeResult: { success: true, exitCode: 0.5, stdout: 'bad protocol', stderr: '', error: null }
+        });
+        const task = createTask(['system.run']);
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
+
+        const result = await tool.execute({ command: 'echo hello' }, undefined, task);
+
+        expect(result.status).toBe('error');
+        expect(result.result).toContain('缺少整数 exitCode');
+        expect(result.result_object).toBeUndefined();
     });
 
     test('rejects shell choices not declared by the selected node', async () => {
@@ -418,9 +433,9 @@ describe('devicemgr node tools', () => {
         }
     });
 
-    test('does not mutate tool args or result object with render-only node metadata', async () => {
+    test('records the resolved nodeId without mutating tool args', async () => {
         const { app } = createFakeApp({
-            invokeResult: { success: true, stdout: 'hello\n', stderr: '', error: null }
+            invokeResult: { success: true, exitCode: 0, stdout: 'hello\n', stderr: '', error: null }
         });
         const task = createTask(['system.run']);
         const tool = createNodeToolset(app).getTool('executeNodeShell')!;
@@ -432,7 +447,7 @@ describe('devicemgr node tools', () => {
         const result = await tool.execute(args, undefined, task);
 
         expect(result.status).toBe('success');
-        expect(result.result_object).toBeUndefined();
+        expect(result.result_object).toEqual({ exitCode: 0, nodeId: 'node-a' });
         expect(args).toEqual({
             command: 'echo hello',
             shell: 'bash'
@@ -591,7 +606,7 @@ describe('devicemgr node tools', () => {
 
     test('routes to explicit nodeId when specified, bypassing selected node', async () => {
         const { app, invoke } = createFakeApp({
-            invokeResult: 'node-b-ok',
+            invokeResult: { exitCode: 0, stdout: 'node-b-ok' },
             multiNodes: [
                 { nodeId: 'node-a', commands: ['system.run'], displayName: 'Node A' },
                 { nodeId: 'node-b', commands: ['system.run'], displayName: 'Node B' }
@@ -604,6 +619,7 @@ describe('devicemgr node tools', () => {
 
         expect(result.status).toBe('success');
         expect(result.result).toBe('node-b-ok');
+        expect(result.result_object).toEqual({ exitCode: 0, nodeId: 'node-b' });
         expect(invoke).toHaveBeenCalledWith({
             nodeId: 'node-b',
             command: 'system.run',

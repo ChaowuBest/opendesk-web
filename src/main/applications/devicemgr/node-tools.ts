@@ -860,6 +860,12 @@ export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema
             args.timeout
         );
         result.updateResult(formatShellOutput(payload));
+        const exitCode =
+            payload && typeof payload === 'object' ? (payload as Record<string, unknown>).exitCode : undefined;
+        if (!Number.isInteger(exitCode)) {
+            throw new Error(`节点 ${host.nodeId} 返回的 shell 结果缺少整数 exitCode`);
+        }
+        result.updateResultObject({ exitCode: exitCode as number, nodeId: host.nodeId });
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {

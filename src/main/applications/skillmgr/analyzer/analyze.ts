@@ -28,15 +28,14 @@ import {
     TestFailureReasonCategory,
     OPENDESK_META_FILENAME,
     MAX_VALIDATION_RETRIES,
-    MAX_TESTRESULT_RETRIES
+    MAX_TESTRESULT_RETRIES,
+    mutateOpendeskMeta
 } from './metadata.js';
 import { appendAdditionalPrompt, readAnalysisPrompts } from './prompts.js';
 import { generateAnalyzeExportPage, generateAnalyzeExportDataJs, type AnalyzeSkillExport } from './analyze-export.js';
 import { extractPythonTopLevelImports, extractSubprocessCommands, extractShellCommands } from './dep-prescan.js';
 import { logger } from '../../../utils/logger.js';
 import { getTempDir } from '../../../utils/temp.js';
-import { Mutex } from 'async-mutex';
-import { randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -129,7 +128,6 @@ export class SkillAnalyzer {
     private onStatusChange?: StatusChangeCallback;
     /** 当前正在执行的分析队列引用，用于 stop() 时清空 */
     private _currentQueue?: Array<string | TestCasePlan>;
-    private readonly _testResultWriteMutexes = new Map<string, Mutex>();
 
     constructor(onStatusChange?: StatusChangeCallback) {
         this.state = this._createInitialState();
@@ -541,15 +539,23 @@ export class SkillAnalyzer {
                     const extractedPath = path.join(tempDir, entry.entryName);
                     const content = fs.readFileSync(extractedPath, 'utf-8');
 
+                    let importedMeta: Record<string, unknown>;
                     try {
-                        JSON.parse(content);
+                        const parsed: unknown = JSON.parse(content);
+                        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                            throw new Error('metadata root is not an object');
+                        }
+                        importedMeta = parsed as Record<string, unknown>;
                     } catch {
                         failedCount++;
                         details.push({ skillName, status: 'failed', message: '元数据文件不是有效的 JSON' });
                         continue;
                     }
 
-                    fs.writeFileSync(metaPath, content, 'utf-8');
+                    await mutateOpendeskMeta(metaPath, (meta) => {
+                        for (const key of Object.keys(meta)) delete meta[key];
+                        Object.assign(meta, importedMeta);
+                    });
                     successCount++;
                     details.push({ skillName, status: 'success', message: '导入成功' });
                 } catch (e) {
@@ -1301,18 +1307,8 @@ ${preScanSection}`;
         }
     }
 
-    private _getTestResultWriteMutex(skillDir: string): Mutex {
-        const key = path.resolve(skillDir);
-        let mutex = this._testResultWriteMutexes.get(key);
-        if (!mutex) {
-            mutex = new Mutex();
-            this._testResultWriteMutexes.set(key, mutex);
-        }
-        return mutex;
-    }
-
     /**
-     * 串行且原子地提交单条测试结果；磁盘提交成功后才更新内存状态。
+     * 通过 metadata 模块共享的路径锁原子提交单条测试结果；磁盘成功后才更新内存状态。
      */
     private async _updateTestCaseStatus(
         skillId: string,
@@ -1321,46 +1317,23 @@ ${preScanSection}`;
         testResult: TestResult,
         taskId?: string
     ): Promise<void> {
-        const mutex = this._getTestResultWriteMutex(skillDir);
-
-        await mutex.runExclusive(async () => {
-            const metaPath = path.join(skillDir, OPENDESK_META_FILENAME);
-            const tempPath = path.join(skillDir, `.${OPENDESK_META_FILENAME}.${process.pid}.${randomUUID()}.tmp`);
-
-            try {
-                const [raw, stat] = await Promise.all([
-                    fs.promises.readFile(metaPath, 'utf-8'),
-                    fs.promises.stat(metaPath)
-                ]);
-                const meta = JSON.parse(raw);
-                if (!Array.isArray(meta?.testCases)) {
-                    throw new Error(`${OPENDESK_META_FILENAME} 未包含测试用例`);
-                }
-
-                const testCase = meta.testCases.find(
-                    (candidate: Record<string, unknown>) => candidate['index'] === testCaseIndex
-                );
-                if (!testCase) throw new Error(`未找到测试用例 #${testCaseIndex}`);
-                this._applyTestCaseResult(testCase, testResult, taskId);
-
-                const file = await fs.promises.open(tempPath, 'wx', stat.mode);
-                try {
-                    await file.writeFile(`${JSON.stringify(meta, null, 2)}\n`, 'utf-8');
-                    await file.sync();
-                } finally {
-                    await file.close();
-                }
-                await fs.promises.rename(tempPath, metaPath);
-
-                const memoryTestCase = (
-                    this.state.results[skillId]?.testCases as Array<Record<string, unknown>> | undefined
-                )?.find((candidate) => candidate['index'] === testCaseIndex);
-                if (memoryTestCase) this._applyTestCaseResult(memoryTestCase, testResult, taskId);
-            } catch (e) {
-                await fs.promises.rm(tempPath, { force: true }).catch(() => {});
-                throw e;
+        const metaPath = path.join(skillDir, OPENDESK_META_FILENAME);
+        await mutateOpendeskMeta(metaPath, (meta) => {
+            if (!Array.isArray(meta['testCases'])) {
+                throw new Error(`${OPENDESK_META_FILENAME} 未包含测试用例`);
             }
+
+            const testCase = (meta['testCases'] as Array<Record<string, unknown>>).find(
+                (candidate) => candidate['index'] === testCaseIndex
+            );
+            if (!testCase) throw new Error(`未找到测试用例 #${testCaseIndex}`);
+            this._applyTestCaseResult(testCase, testResult, taskId);
         });
+
+        const memoryTestCase = (
+            this.state.results[skillId]?.testCases as Array<Record<string, unknown>> | undefined
+        )?.find((candidate) => candidate['index'] === testCaseIndex);
+        if (memoryTestCase) this._applyTestCaseResult(memoryTestCase, testResult, taskId);
     }
 
     private _applyTestCaseResult(testCase: Record<string, unknown>, testResult: TestResult, taskId?: string): void {

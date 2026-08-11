@@ -77,3 +77,10 @@ license: MIT
 或者\`Ctrl+N\`快捷键来打开新的对话来测试。这是因为在已有的对话中修改工具的定义会导致上下文
 缓存失效，因此我们不会在已有的对话上下文中调整工具的定义。
 `;
+
+export const MANAGE_SKILLS_SKILL_HARMONYOS = `
+
+## HarmonyOS fallback 记录
+
+在 OpenHarmony 上确认某个已加载 Skill 的依赖只能通过 Linux VM 执行时，使用本 Skill 内置的recordHarmonyosFallback工具更新该 Skill 的opendesk_meta.json。目标 Skill 必须已通过LoadSkill加载；不要使用通用文件写工具修改 fallback 字段。
+`;

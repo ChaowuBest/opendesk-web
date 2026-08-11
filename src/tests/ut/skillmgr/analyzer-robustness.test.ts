@@ -5,6 +5,9 @@ import { jest } from '@jest/globals';
 import { SkillAnalyzer } from '../../../main/applications/skillmgr/analyzer/analyze.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { logger } from '../../../main/utils/logger.js';
+import AdmZip from 'adm-zip';
+import { SkillRegistry } from '../../../main/applications/skillmgr/utils.js';
+import { mutateOpendeskMeta } from '../../../main/applications/skillmgr/analyzer/metadata.js';
 
 function makeAnalyzerWithTaskManager(taskManagerState: { getTask: jest.Mock }): SkillAnalyzer {
     jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState } as any);
@@ -81,8 +84,53 @@ describe('SkillAnalyzer robustness boundaries', () => {
         expect((analyzer as any).state.runningTaskIds.size).toBe(0);
     });
 
-    test('serializes concurrent result writes without losing either status', async () => {
+    test('importMetadatas shares the metadata mutation lock and retains whole-file replacement semantics', async () => {
+        const analyzer = new SkillAnalyzer();
+        const skillDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-analyzer-import-lock-'));
+        const metaPath = path.join(skillDir, 'opendesk_meta.json');
+        const zipPath = path.join(skillDir, 'import.zip');
+        fs.writeFileSync(metaPath, JSON.stringify({ original: true }), 'utf8');
+        const zip = new AdmZip();
+        zip.addFile('demo_meta.json', Buffer.from(JSON.stringify({ imported: true, testCases: [{ index: 9 }] })));
+        zip.writeZip(zipPath);
+        jest.spyOn(SkillRegistry, 'skillExists').mockReturnValue(true);
+        jest.spyOn(SkillRegistry, 'getSkillDetail').mockReturnValue({ skillDir } as any);
+
+        let releaseMutation!: () => void;
+        let mutationStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            mutationStarted = resolve;
+        });
+        const canFinish = new Promise<void>((resolve) => {
+            releaseMutation = resolve;
+        });
+
+        try {
+            const firstMutation = mutateOpendeskMeta(metaPath, async (meta) => {
+                mutationStarted();
+                await canFinish;
+                meta['concurrent'] = true;
+            });
+            await started;
+            const imported = analyzer.importMetadatas(zipPath);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            releaseMutation();
+
+            const [result] = await Promise.all([imported, firstMutation]);
+            expect(result).toMatchObject({ success: true, successCount: 1, failedCount: 0 });
+            expect(JSON.parse(fs.readFileSync(metaPath, 'utf8'))).toEqual({
+                imported: true,
+                testCases: [{ index: 9 }]
+            });
+            expect(fs.readdirSync(skillDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+        } finally {
+            fs.rmSync(skillDir, { recursive: true, force: true });
+        }
+    });
+
+    test('serializes concurrent result writes across analyzer instances without losing either status', async () => {
         const analyzer = makeAnalyzerWithTaskManager({ getTask: jest.fn() });
+        const otherAnalyzer = new SkillAnalyzer();
         const skillDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-analyzer-status-'));
         const metaPath = path.join(skillDir, 'opendesk_meta.json');
         const testCases = [
@@ -96,6 +144,10 @@ describe('SkillAnalyzer robustness boundaries', () => {
                 ...makeRunningState(2),
                 results: { 'skill-a': { testCases: testCases.map((testCase) => ({ ...testCase })) } }
             };
+            (otherAnalyzer as any).state = {
+                ...makeRunningState(2),
+                results: { 'skill-a': { testCases: testCases.map((testCase) => ({ ...testCase })) } }
+            };
 
             await Promise.all([
                 (analyzer as any)._updateTestCaseStatus(
@@ -105,7 +157,7 @@ describe('SkillAnalyzer robustness boundaries', () => {
                     { result: 'succeeded', message: 'done' },
                     'task-1'
                 ),
-                (analyzer as any)._updateTestCaseStatus(
+                (otherAnalyzer as any)._updateTestCaseStatus(
                     'skill-a',
                     skillDir,
                     2,
@@ -129,7 +181,8 @@ describe('SkillAnalyzer robustness boundaries', () => {
                     taskId: 'task-2'
                 }
             ]);
-            expect(analyzer.getStatus().results['skill-a'].testCases).toMatchObject(persisted.testCases);
+            expect(analyzer.getStatus().results['skill-a'].testCases?.[0]).toMatchObject(persisted.testCases[0]);
+            expect(otherAnalyzer.getStatus().results['skill-a'].testCases?.[1]).toMatchObject(persisted.testCases[1]);
             expect(fs.readdirSync(skillDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
         } finally {
             fs.rmSync(skillDir, { recursive: true, force: true });

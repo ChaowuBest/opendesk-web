@@ -39,6 +39,7 @@ describe('installTimeoutBackgrounding', () => {
 
     test('does not fabricate an exit code when the process emits an error', async () => {
         const proc = new EventEmitter() as ChildProcess;
+        const updateResult = jest.fn();
         const updateResultObject = jest.fn();
         const completion = installTimeoutBackgrounding({
             handle: { proc, detachListeners: jest.fn() },
@@ -46,7 +47,7 @@ describe('installTimeoutBackgrounding', () => {
             startTime: Date.now(),
             timeout: 0,
             getOutput: () => '',
-            result: { updateResult: jest.fn(), updateResultObject } as any,
+            result: { updateResult, updateResultObject } as any,
             isKilledByStop: () => false,
             onFinish: jest.fn()
         });
@@ -54,6 +55,7 @@ describe('installTimeoutBackgrounding', () => {
         proc.emit('error', new Error('spawn failed'));
 
         await expect(completion).resolves.toBe(false);
+        expect(updateResult).toHaveBeenCalledWith('执行命令时出错: spawn failed');
         expect(updateResultObject).not.toHaveBeenCalled();
     });
 
