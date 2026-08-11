@@ -668,7 +668,8 @@ function exposeFSAPI() {
 function exposeOfficeHostAPI() {
     const requestCloseChannels = Object.freeze({
         slides: 'office-host:slides:request-close',
-        word: 'office-host:word:request-close'
+        word: 'office-host:word:request-close',
+        sheets: 'office-host:sheets:request-close'
     });
     const isOfficeEditorKind = (kind) => Object.prototype.hasOwnProperty.call(requestCloseChannels, kind);
     safeExposeInMainWorld('officeHostAPI', {

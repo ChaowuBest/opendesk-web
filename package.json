@@ -58,7 +58,7 @@
         ]
     },
     "devDependencies": {
-        "@bitclub.ai/opendesk-office": "0.2.0",
+        "@bitclub.ai/opendesk-office": "0.3.0",
         "@electron-forge/cli": "^7.10.2",
         "@electron-forge/maker-deb": "^7.10.2",
         "@electron-forge/maker-dmg": "^7.10.2",

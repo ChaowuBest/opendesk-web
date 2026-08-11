@@ -1646,6 +1646,8 @@ export const enUs: Record<string, string> = {
     'renderer.fileExplorer.pptx.unavailable': 'The PowerPoint editor is unavailable',
     'renderer.fileExplorer.word.editor': 'Word editor',
     'renderer.fileExplorer.word.unavailable': 'The Word editor is unavailable',
+    'renderer.fileExplorer.xlsx.editor': 'Excel editor',
+    'renderer.fileExplorer.xlsx.unavailable': 'The Excel editor is unavailable',
 
     // Renderer - TaskView (toolbar, usage, retry, quickpass)
     'renderer.taskview.time.justNow': 'Just now',

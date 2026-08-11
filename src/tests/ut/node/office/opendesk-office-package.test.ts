@@ -11,16 +11,21 @@ test('OpenDesk Office exposes an npm-like host package boundary', () => {
     for (const subpath of [
         'main',
         'word-main',
+        'sheets-main',
         'host-security',
         'preload',
         'word-preload',
+        'sheets-preload',
         'renderer',
         'word-renderer',
+        'sheets-renderer',
         'vite',
         'hap',
         'hap-manifest',
         'engine',
-        'word-engine'
+        'word-engine',
+        'workbook-engine',
+        'ironcalc-wasm'
     ]) {
         assert.ok(require.resolve(`@bitclub.ai/opendesk-office/${subpath}`));
     }
@@ -36,12 +41,18 @@ test('OpenDesk Office declares every HAP runtime dependency and asset', async ()
     };
 
     assert.deepEqual(manifest.artifacts.sort(), [
+        'dist/main/assets/opendesk-office-ironcalc.wasm',
+        'dist/preload/sheetsPreload.js',
         'dist/preload/slidesPreload.js',
         'dist/preload/wordPreload.js',
+        'dist/renderer/sheets_editor.html',
         'dist/renderer/slides_editor.html',
         'dist/renderer/word_editor.html'
     ]);
-    assert.deepEqual(manifest.wasmAssets, ['dist/main/chunks/harfbuzz-*.wasm']);
+    assert.deepEqual(manifest.wasmAssets, [
+        'dist/main/chunks/harfbuzz-*.wasm',
+        'dist/main/assets/opendesk-office-ironcalc.wasm'
+    ]);
     assert.deepEqual(manifest.legalArtifacts, [
         'third_party_licenses/opendesk-office/LICENSE',
         'third_party_licenses/opendesk-office/NOTICE',

@@ -132,6 +132,38 @@ describe('file explorer', () => {
         expect(onWorkspaceFocusLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
     });
 
+    test('opens xlsx files in the embedded OpenDesk Office editor', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
+        (window as any).officeHostAPI = {
+            prepare,
+            requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
+        };
+
+        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
+            _container: HTMLElement;
+            _rootNode: ParentNode;
+            _workspaceRoot: string;
+            _renderPanel(): void;
+        };
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._renderPanel();
+
+        explorer.selectFile('/workspace/budget.xlsx');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const editor = container.querySelector<HTMLIFrameElement>('.ws-office-editor-frame');
+        expect(prepare).toHaveBeenCalledWith('sheets');
+        expect(editor?.getAttribute('src')).toBe('./sheets_editor.html?mode=tab&file=%2Fworkspace%2Fbudget.xlsx');
+        expect(editor?.getAttribute('title')).toBe('Excel editor');
+        expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
+        expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
+        expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
+    });
+
     test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);

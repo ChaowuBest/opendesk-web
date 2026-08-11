@@ -30,8 +30,8 @@ declare module '*.jsonl?raw' {
 declare global {
     interface Window {
         officeHostAPI: {
-            prepare: (kind: 'slides' | 'word') => Promise<boolean>;
-            requestClose: (kind: 'slides' | 'word', webContentsId: number) => Promise<boolean>;
+            prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
+            requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
         };
         settingErrorAPI: {
             onSettingLoadError: (callback: (message: string) => void) => void;

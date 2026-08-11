@@ -151,6 +151,8 @@ function pickFileIcon(entry: FSEntry): string {
             return 'fa-file-powerpoint';
         case 'docx':
             return 'fa-file-word';
+        case 'xlsx':
+            return 'fa-file-excel';
         case 'zip':
         case 'tar':
         case 'gz':
@@ -173,7 +175,7 @@ function pickFileIcon(entry: FSEntry): string {
     }
 }
 
-type OfficeEditorKind = 'slides' | 'word';
+type OfficeEditorKind = 'slides' | 'word' | 'sheets';
 
 interface OfficeEditorConfig {
     kind: OfficeEditorKind;
@@ -200,6 +202,14 @@ const OFFICE_EDITOR_CONFIGS: readonly OfficeEditorConfig[] = [
         iconClass: 'fa-file-word',
         titleKey: 'renderer.fileExplorer.word.editor',
         unavailableKey: 'renderer.fileExplorer.word.unavailable'
+    },
+    {
+        kind: 'sheets',
+        extension: '.xlsx',
+        rendererPage: 'sheets_editor.html',
+        iconClass: 'fa-file-excel',
+        titleKey: 'renderer.fileExplorer.xlsx.editor',
+        unavailableKey: 'renderer.fileExplorer.xlsx.unavailable'
     }
 ];
 

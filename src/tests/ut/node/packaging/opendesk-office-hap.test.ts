@@ -26,9 +26,11 @@ async function createFakePayload(): Promise<{ appDir: string; cleanup(): Promise
     await mkdir(path.join(appDir, 'dist/preload'), { recursive: true });
     await mkdir(path.join(appDir, 'dist/renderer/assets'), { recursive: true });
     await mkdir(path.join(appDir, 'dist/main/chunks'), { recursive: true });
+    await mkdir(path.join(appDir, 'dist/main/assets'), { recursive: true });
     await writeFile(path.join(appDir, 'dist/main/ohos-compat.js'), 'export {};');
     await writeFile(path.join(appDir, 'dist/preload/slidesPreload.js'), 'module.exports = {};');
     await writeFile(path.join(appDir, 'dist/preload/wordPreload.js'), 'module.exports = {};');
+    await writeFile(path.join(appDir, 'dist/preload/sheetsPreload.js'), 'module.exports = {};');
     await writeFile(
         path.join(appDir, 'dist/renderer/slides_editor.html'),
         '<script type="module" src="./assets/slides-entry.js"></script>'
@@ -39,6 +41,11 @@ async function createFakePayload(): Promise<{ appDir: string; cleanup(): Promise
         '<script type="module" src="./assets/word-entry.js"></script>'
     );
     await writeFile(path.join(appDir, 'dist/renderer/assets/word-entry.js'), 'export {};');
+    await writeFile(
+        path.join(appDir, 'dist/renderer/sheets_editor.html'),
+        '<script type="module" src="./assets/sheets-entry.js"></script>'
+    );
+    await writeFile(path.join(appDir, 'dist/renderer/assets/sheets-entry.js'), 'export {};');
     await writeFile(path.join(appDir, 'dist/main/chunks/harfbuzz-test.wasm'), new Uint8Array([0]));
 
     for (const packageName of manifest.runtimePackages) {
@@ -62,6 +69,8 @@ test('Office staging produces a complete HAP payload with legal notices', async 
         const staged = await stat(path.join(payload.appDir, 'dist/preload/slidesPreload.js'));
         assert.ok(staged.size > 0);
         assert.ok((await stat(path.join(payload.appDir, 'dist/preload/wordPreload.js'))).size > 0);
+        assert.ok((await stat(path.join(payload.appDir, 'dist/preload/sheetsPreload.js'))).size > 0);
+        assert.ok((await stat(path.join(payload.appDir, 'dist/main/assets/opendesk-office-ironcalc.wasm'))).size > 0);
         for (const fileName of ['LICENSE', 'NOTICE', 'UPSTREAM.md']) {
             const legalFile = path.join(payload.appDir, 'third_party_licenses', 'opendesk-office', fileName);
             assert.ok((await stat(legalFile)).isFile());

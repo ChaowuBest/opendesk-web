@@ -43,6 +43,9 @@ export default defineConfig(({ mode }) => {
                             if (/\/@bitclub\.ai\/opendesk-office\/dist\/word-main\.js$/.test(normalizedId)) {
                                 return 'opendesk-office-word-main';
                             }
+                            if (/\/@bitclub\.ai\/opendesk-office\/dist\/sheets-main\.js$/.test(normalizedId)) {
+                                return 'opendesk-office-sheets-main';
+                            }
                         }
                     },
                     input: {
@@ -93,7 +96,8 @@ export default defineConfig(({ mode }) => {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
                         webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
                         slidesPreload: openDeskOfficeEntries.slides.preload,
-                        wordPreload: openDeskOfficeEntries.word.preload
+                        wordPreload: openDeskOfficeEntries.word.preload,
+                        sheetsPreload: openDeskOfficeEntries.sheets.preload
                     },
                     output: {
                         format: 'cjs',
@@ -137,7 +141,8 @@ export default defineConfig(({ mode }) => {
                         logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html'),
                         slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html'),
-                        word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html')
+                        word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html'),
+                        sheets_editor: path.join(__dirname, 'src', 'renderer', 'sheets_editor.html')
                     },
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告

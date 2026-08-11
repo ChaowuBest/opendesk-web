@@ -12,9 +12,13 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
 
-export type OpenDeskOfficeEditorKind = 'slides' | 'word';
+export type OpenDeskOfficeEditorKind = 'slides' | 'word' | 'sheets';
+
+const require = createRequire(import.meta.url);
 
 interface OpenDeskOfficeHost {
     register(): void;
@@ -33,6 +37,7 @@ interface OfficeEditorDefinition {
         rendererFilePath: string;
         rendererDevUrl?: string;
         requestCloseChannel: string;
+        ironCalcWasmPath?: string;
     }): Promise<OpenDeskOfficeHost>;
 }
 
@@ -48,6 +53,12 @@ function getRendererDevUrl(rendererPageName: string): string | undefined {
     const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
     if (!rendererUrl) return undefined;
     return new URL(rendererPageName, rendererUrl.endsWith('/') ? rendererUrl : `${rendererUrl}/`).toString();
+}
+
+function getIronCalcWasmPath(): string {
+    const stagedPath = path.join(__dirname, 'assets', 'opendesk-office-ironcalc.wasm');
+    if (existsSync(stagedPath)) return stagedPath;
+    return require.resolve('@bitclub.ai/opendesk-office/ironcalc-wasm');
 }
 
 const editorDefinitions: readonly OfficeEditorDefinition[] = [
@@ -69,6 +80,16 @@ const editorDefinitions: readonly OfficeEditorDefinition[] = [
         async createHost(options) {
             const { createOpenDeskOfficeWordHost } = await import('@bitclub.ai/opendesk-office/word-main');
             return createOpenDeskOfficeWordHost(options);
+        }
+    },
+    {
+        kind: 'sheets',
+        rendererPageName: 'sheets_editor.html',
+        preloadName: 'sheetsPreload.js',
+        requestCloseChannel: 'office-host:sheets:request-close',
+        async createHost(options) {
+            const { createOpenDeskOfficeSheetsHost } = await import('@bitclub.ai/opendesk-office/sheets-main');
+            return createOpenDeskOfficeSheetsHost(options);
         }
     }
 ];
@@ -103,7 +124,8 @@ async function loadEditorHost(runtime: OfficeEditorRuntime): Promise<OpenDeskOff
             preloadPath: runtime.preloadPath,
             rendererDevUrl: runtime.rendererDevUrl,
             rendererFilePath: runtime.rendererFilePath,
-            requestCloseChannel: runtime.requestCloseChannel
+            requestCloseChannel: runtime.requestCloseChannel,
+            ...(runtime.kind === 'sheets' ? { ironCalcWasmPath: getIronCalcWasmPath() } : {})
         })
         .then((host) => {
             host.register();
