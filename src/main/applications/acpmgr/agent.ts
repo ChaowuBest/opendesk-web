@@ -44,11 +44,12 @@ export class AcpAgentDecl extends AgentDecl {
 
     constructor(
         readonly profile: AcpAgentProfile,
-        private readonly resolveMcpServers: AcpMcpResolver
+        private readonly resolveMcpServers: AcpMcpResolver,
+        dispatchBlocked: boolean = false
     ) {
         super();
         this.agentName = profile.id;
-        this.dispatchable = profile.enabled && profile.dispatchable;
+        this.dispatchable = profile.enabled && profile.dispatchable && !dispatchBlocked;
         this.whenToUse = profile.whenToUse || t('acpmgr.agent.whenToUse', { name: profile.name });
     }
 
@@ -71,9 +72,10 @@ export class AcpAgentDecl extends AgentDecl {
 
 export function createAcpAgentDeclarations(
     profiles: AcpAgentProfile[],
-    resolveMcpServers: AcpMcpResolver
+    resolveMcpServers: AcpMcpResolver,
+    blockedProfileIds: ReadonlySet<string> = new Set()
 ): AcpAgentDecl[] {
-    return profiles.map((profile) => new AcpAgentDecl(profile, resolveMcpServers));
+    return profiles.map((profile) => new AcpAgentDecl(profile, resolveMcpServers, blockedProfileIds.has(profile.id)));
 }
 
 export function resolveAcpMcpServers(

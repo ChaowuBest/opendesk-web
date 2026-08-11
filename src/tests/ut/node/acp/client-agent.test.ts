@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentRegistry } from '../../../../main/aikernel/agents/registry.js';
+import {
+    ACP_ACTIVE_PROFILE_IDS_ENV,
+    addActiveAcpProfile,
+    getActiveAcpProfileIds
+} from '../../../../main/aikernel/agents/acp/connection.js';
 import { createAcpAgentDeclarations, resolveAcpMcpServers } from '../../../../main/applications/acpmgr/agent.js';
+import { AcpMgrApplication } from '../../../../main/applications/acpmgr/app.js';
 import { AcpAgentProfileSchema, AcpMgrConfigSchema } from '../../../../main/applications/acpmgr/common.js';
 
 const enabledProfile = AcpAgentProfileSchema.parse({
@@ -32,6 +38,62 @@ test('ACP profiles become scoped AgentDecl instances and disabled profiles remai
     assert.equal(enabled?.createTaskRuntime({} as any)?.kind, 'acp');
     assert.equal(disabled?.dispatchable, false);
     assert.ok(disabled, 'disabled profiles stay registered so saved tasks do not fall back to main');
+});
+
+test('ACP manager registers configured agents during lazy application loading', async (context) => {
+    const application = new AcpMgrApplication();
+    application.getConfig = () => ({ agents: [enabledProfile] });
+    context.after(async () => AgentRegistry.unloadApplicationAgents());
+
+    await application.ensureLoaded();
+
+    assert.ok(AgentRegistry.getAgent(`acpmgr:${enabledProfile.id}`));
+});
+
+test('ACP dispatch ancestry is inherited without mutating the source environment', () => {
+    const environ = { [ACP_ACTIVE_PROFILE_IDS_ENV]: JSON.stringify([enabledProfile.id]) };
+
+    const childEnviron = addActiveAcpProfile(environ, disabledProfile.id);
+
+    assert.deepEqual([...getActiveAcpProfileIds(childEnviron)], [enabledProfile.id, disabledProfile.id]);
+    assert.deepEqual([...getActiveAcpProfileIds(environ)], [enabledProfile.id]);
+});
+
+test('ACP manager keeps an active ancestor profile registered but prevents recursive dispatch', async (context) => {
+    const previous = process.env[ACP_ACTIVE_PROFILE_IDS_ENV];
+    process.env[ACP_ACTIVE_PROFILE_IDS_ENV] = JSON.stringify([enabledProfile.id]);
+    const application = new AcpMgrApplication();
+    application.getConfig = () => ({ agents: [enabledProfile] });
+    context.after(async () => AgentRegistry.unloadApplicationAgents());
+
+    try {
+        await application.ensureLoaded();
+
+        const agent = AgentRegistry.getAgent(`acpmgr:${enabledProfile.id}`);
+        assert.ok(agent);
+        assert.equal(agent.dispatchable, false);
+    } finally {
+        if (previous === undefined) {
+            delete process.env[ACP_ACTIVE_PROFILE_IDS_ENV];
+        } else {
+            process.env[ACP_ACTIVE_PROFILE_IDS_ENV] = previous;
+        }
+    }
+});
+
+test('ACP manager refreshes registered agents after its configuration changes', async (context) => {
+    const application = new AcpMgrApplication();
+    let config = { agents: [enabledProfile] };
+    application.getConfig = () => config;
+    context.after(async () => AgentRegistry.unloadApplicationAgents());
+
+    await application.ensureLoaded();
+    config = { agents: [disabledProfile] };
+    application.onConfigChanged();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(AgentRegistry.getAgent(`acpmgr:${enabledProfile.id}`), undefined);
+    assert.ok(AgentRegistry.getAgent(`acpmgr:${disabledProfile.id}`));
 });
 
 test('ACP manager config rejects duplicate stable profile ids', () => {

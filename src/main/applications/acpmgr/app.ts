@@ -13,9 +13,11 @@ import { PROTOCOL_VERSION, type McpServer } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
 import type { AgentDecl } from '../../aikernel/agents/common.js';
-import { createDefaultAcpConnectionFactory } from '../../aikernel/agents/acp/connection.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
+import { createDefaultAcpConnectionFactory, getActiveAcpProfileIds } from '../../aikernel/agents/acp/connection.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { t } from '../../../locale/index.js';
+import { logger } from '../../utils/logger.js';
 import type { McpMgrApplication } from '../mcpmgr/app.js';
 import { createAcpAgentDeclarations, resolveAcpMcpServers } from './agent.js';
 import { AcpAgentProfileSchema, AcpMgrConfigSchema, type AcpAgentProfile, type AcpMgrConfig } from './common.js';
@@ -25,6 +27,10 @@ function parseConfig(value: unknown): AcpMgrConfig {
 }
 
 export class AcpMgrApplication extends BaseApplication {
+    private agentsLoadedPromise?: Promise<void>;
+    private agentRefreshTail: Promise<void> = Promise.resolve();
+    private registeredAgentNames = new Set<string>();
+
     constructor() {
         super('acpmgr', false);
     }
@@ -39,7 +45,18 @@ export class AcpMgrApplication extends BaseApplication {
 
     async getAgents(): Promise<AgentDecl[]> {
         const config = parseConfig(this.getConfig());
-        return createAcpAgentDeclarations(config.agents, (profile) => this.resolveMcpServers(profile));
+        return createAcpAgentDeclarations(
+            config.agents,
+            (profile) => this.resolveMcpServers(profile),
+            getActiveAcpProfileIds()
+        );
+    }
+
+    async ensureLoaded(): Promise<void> {
+        if (!this.agentsLoadedPromise) {
+            this.agentsLoadedPromise = this.enqueueAgentRefresh();
+        }
+        return this.agentsLoadedPromise;
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
@@ -49,7 +66,9 @@ export class AcpMgrApplication extends BaseApplication {
     onConfigChanged(): void {
         super.onConfigChanged();
         this.sendEventToSubscribers('agentsUpdated');
-        void this.registry?.loadAvailableAgents?.();
+        void this.enqueueAgentRefresh().catch((error) => {
+            logger.error(`ACP manager: failed to refresh configured agents: ${error}`);
+        });
     }
 
     listAgents(): AcpAgentProfile[] {
@@ -108,6 +127,27 @@ export class AcpMgrApplication extends BaseApplication {
         } finally {
             await handle.close();
         }
+    }
+
+    private enqueueAgentRefresh(): Promise<void> {
+        const refresh = this.agentRefreshTail.then(() => this.refreshRegisteredAgents());
+        this.agentRefreshTail = refresh.catch(() => undefined);
+        return refresh;
+    }
+
+    private async refreshRegisteredAgents(): Promise<void> {
+        const agents = await this.getAgents();
+        const nextAgentNames = new Set(agents.map((agent) => agent.agentName));
+
+        for (const agentName of this.registeredAgentNames) {
+            if (!nextAgentNames.has(agentName)) {
+                await AgentRegistry.removeApplicationAgent(this.bundleName, agentName);
+            }
+        }
+        for (const agent of agents) {
+            await AgentRegistry.replaceApplicationAgent(this.bundleName, agent);
+        }
+        this.registeredAgentNames = nextAgentNames;
     }
 
     private async resolveMcpServers(profile: AcpAgentProfile): Promise<McpServer[]> {

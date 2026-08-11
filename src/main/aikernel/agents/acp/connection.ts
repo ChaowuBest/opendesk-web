@@ -65,6 +65,37 @@ export type AcpConnectionFactory = (
     workspace: string
 ) => Promise<AcpConnectionHandle>;
 
+export const ACP_ACTIVE_PROFILE_IDS_ENV = 'OPENDESK_ACP_ACTIVE_PROFILE_IDS';
+
+// stdio ACP servers inherit this chain so an OpenDesk-backed agent cannot dispatch itself recursively.
+export function getActiveAcpProfileIds(environ: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+    const value = environ[ACP_ACTIVE_PROFILE_IDS_ENV];
+    if (!value) return new Set();
+    try {
+        const parsed = JSON.parse(value);
+        return new Set(
+            Array.isArray(parsed)
+                ? parsed.filter(
+                      (profileId): profileId is string => typeof profileId === 'string' && profileId.length > 0
+                  )
+                : []
+        );
+    } catch {
+        return new Set();
+    }
+}
+
+export function addActiveAcpProfile(environ: NodeJS.ProcessEnv, profileId: string): NodeJS.ProcessEnv {
+    const activeProfileIds = [...getActiveAcpProfileIds(environ)];
+    if (!activeProfileIds.includes(profileId)) {
+        activeProfileIds.push(profileId);
+    }
+    return {
+        ...environ,
+        [ACP_ACTIVE_PROFILE_IDS_ENV]: JSON.stringify(activeProfileIds)
+    };
+}
+
 function mergedProcessEnvironment(profile: AcpAgentProfile): NodeJS.ProcessEnv {
     const injected = Object.fromEntries(getPlatform().getInjectedEnviron());
     if (profile.transport.type !== 'stdio') return { ...process.env, ...injected };
@@ -92,7 +123,7 @@ function createStdioHandle(
     if (profile.transport.type !== 'stdio') {
         throw new Error('Expected an ACP stdio profile');
     }
-    const environ = mergedProcessEnvironment(profile);
+    const environ = addActiveAcpProfile(mergedProcessEnvironment(profile), profile.id);
     const command = resolveAcpTemplate(profile.transport.command, environ);
     const args = profile.transport.args.map((argument) => resolveAcpTemplate(argument, environ));
     const cwd = path.resolve(
