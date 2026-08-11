@@ -49,13 +49,19 @@ const FALLBACK_MOSS_PORT = 9090;
 /** 缓存最近一次从 bridge 拿到的 moss 端口（供同步路径使用） */
 let _cachedMossPort: number | null = null;
 
-/** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090） */
+/** 根据当前 locale 追加 ?lang= 参数（英文传给 AgentMoss console i18n，非英文不传走默认中文） */
+function consoleLangQuery(): string {
+    return isZh() ? '' : '?lang=en';
+}
+
+/** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090）；英文 locale 时追加 ?lang=en */
 function mossConsoleUrlSync(): string {
+    const lang = consoleLangQuery();
     if (typeof process !== 'undefined' && process.env?.AGENT_MOSS_CONSOLE_URL) {
-        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console';
+        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console' + lang;
     }
-    if (_cachedMossPort && _cachedMossPort > 0) return `http://127.0.0.1:${_cachedMossPort}/console`;
-    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console`;
+    if (_cachedMossPort && _cachedMossPort > 0) return `http://127.0.0.1:${_cachedMossPort}/console${lang}`;
+    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console${lang}`;
 }
 
 // ── Theme & Locale Helpers ───────────────────────────────────────────────────
