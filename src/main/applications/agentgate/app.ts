@@ -439,7 +439,9 @@ class AgentGateApplication extends BaseApplication {
 
     private _updateAppConfig(patch: Record<string, any>): void {
         const setting = Setting.getInstance();
-        const data = setting.getData() as any;
+        // 深拷贝，避免通过 getData() 返回的引用直接修改 this.data，
+        // 否则 setData 里 oldConfig 已是改后的值，detect 不到变化，onConfigChanged 不触发。
+        const data = JSON.parse(JSON.stringify(setting.getData())) as any;
         const apps = data.applications || {};
         apps[this.bundleName] = { ...(apps[this.bundleName] || {}), ...patch };
         setting.setData({ ...data, applications: apps });
