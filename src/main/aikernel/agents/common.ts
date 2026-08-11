@@ -235,6 +235,11 @@ export abstract class AgentDecl {
     /** Agent 的唯一名称标识 */
     abstract readonly agentName: string;
 
+    /** Agent 面向用户的显示名称，默认与唯一名称标识一致。 */
+    get displayName(): string {
+        return this.agentName;
+    }
+
     /**
      * Agent 的运行时唯一标识。agentName 仅在所属作用域内唯一。
      */

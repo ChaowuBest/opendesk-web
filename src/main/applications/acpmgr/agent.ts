@@ -42,6 +42,10 @@ export class AcpAgentDecl extends AgentDecl {
     readonly dispatchable: boolean;
     readonly whenToUse: string;
 
+    get displayName(): string {
+        return this.profile.name;
+    }
+
     constructor(
         readonly profile: AcpAgentProfile,
         private readonly resolveMcpServers: AcpMcpResolver,

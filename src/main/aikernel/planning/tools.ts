@@ -579,6 +579,10 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         return (toolcall.result_object as any)?.subtask_progress as SubTaskProgressInfo | undefined;
     }
 
+    private static getAgentDisplayName(agentReference: string): string {
+        return AgentRegistry.resolveAgentReference(agentReference)?.displayName ?? agentReference;
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as z.output<typeof CreateSubTaskArgsSchema> | undefined;
         const body: string[] = [];
@@ -593,7 +597,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         let cardTitle: string;
         if (args?.agentName) {
             const maxAgent = Math.max(6, Math.floor((width - 24 - modelTag.length) / 2));
-            const agentLabel = truncText(args.agentName, maxAgent);
+            const agentLabel = truncText(CreateSubTaskTool.getAgentDisplayName(args.agentName), maxAgent);
             const maxTitle = Math.max(12, width - 24 - agentLabel.length - modelTag.length);
             cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})${modelTag}`;
         } else {
@@ -684,7 +688,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const toolName = t('tools.createSubTask.name');
         const objective = args?.objective || '';
         const agentTag = args?.agentName
-            ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(args.agentName)}</span>`
+            ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(CreateSubTaskTool.getAgentDisplayName(args.agentName))}</span>`
             : '';
 
         // explore 子任务使用了快速模型且与默认模型不同时，在标题栏标注模型名称

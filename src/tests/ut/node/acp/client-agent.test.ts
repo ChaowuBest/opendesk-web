@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentRegistry } from '../../../../main/aikernel/agents/registry.js';
+import { ToolCall } from '../../../../main/aikernel/messages.js';
+import { CreateSubTaskTool } from '../../../../main/aikernel/planning/tools.js';
 import {
     ACP_ACTIVE_PROFILE_IDS_ENV,
     addActiveAcpProfile,
@@ -38,6 +40,31 @@ test('ACP profiles become scoped AgentDecl instances and disabled profiles remai
     assert.equal(enabled?.createTaskRuntime({} as any)?.kind, 'acp');
     assert.equal(disabled?.dispatchable, false);
     assert.ok(disabled, 'disabled profiles stay registered so saved tasks do not fall back to main');
+});
+
+test('subtask cards display the ACP profile name instead of its stable id', async (context) => {
+    const agents = createAcpAgentDeclarations([enabledProfile], async () => []);
+    await AgentRegistry.replaceApplicationAgents([{ bundleName: 'acpmgr', agents }]);
+    context.after(async () => AgentRegistry.unloadApplicationAgents());
+    const agentId = `acpmgr:${enabledProfile.id}`;
+    const args = {
+        title: 'Review repository changes',
+        objective: 'Review the current changes',
+        criteria: 'Return the review result',
+        isAsync: false,
+        agentName: agentId
+    };
+    const toolCall = new ToolCall(0, 'create-subtask-call', 'planning-createSubTask', JSON.stringify(args));
+    toolCall.args_object = args;
+    const tool = new CreateSubTaskTool();
+
+    const html = await tool.renderToolCall(toolCall);
+    const cli = tool.renderToolCallCli(toolCall, 120)?.join('\n') ?? '';
+
+    assert.match(html ?? '', /Codex ACP/);
+    assert.doesNotMatch(html ?? '', new RegExp(enabledProfile.id));
+    assert.match(cli, /Codex ACP/);
+    assert.doesNotMatch(cli, new RegExp(enabledProfile.id));
 });
 
 test('ACP manager registers configured agents during lazy application loading', async (context) => {
