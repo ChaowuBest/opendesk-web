@@ -121,6 +121,18 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
 });
 
+test('renders every bootstrapper page transition atomically', () => {
+    const bootstrapper = fs.readFileSync(path.join(bootstrapperResources, 'OpenDeskBootstrapper.cs'), 'utf8');
+
+    assert.match(bootstrapper, /class BufferedPanel : Panel/);
+    assert.match(bootstrapper, /OptimizedDoubleBuffer/);
+    assert.match(bootstrapper, /WM_SETREDRAW/);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 6);
+    assert.match(bootstrapper, /Opacity = 0D/);
+    assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
+    assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);
+});
+
 test('compiles a 32-bit managed bootstrapper with a valid .NET configuration', () => {
     const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
     const config = fs.readFileSync(path.join(bootstrapperResources, 'BootstrapperCore.config'), 'utf8');

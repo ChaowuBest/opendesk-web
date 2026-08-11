@@ -15,6 +15,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Microsoft.Tools.WindowsInstallerXml.Bootstrapper;
@@ -144,13 +145,20 @@ namespace OpenDesk.Installer
             if (e.Status < 0)
             {
                 exitCode = e.Status;
-                Post(delegate { form.ShowFailure(e.Status, null); });
+                Post(delegate
+                {
+                    form.ShowFailure(e.Status, null);
+                    if (Command.Display != Display.None)
+                    {
+                        form.Reveal();
+                    }
+                });
                 return;
             }
 
             Post(delegate
             {
-                form.ShowDetected(packageState == PackageState.Present);
+                form.ShowDetected(packageState == PackageState.Present, Command.Display != Display.None);
                 if (Command.Display != Display.Full)
                 {
                     LaunchAction action = Command.Action == LaunchAction.Unknown ? LaunchAction.Install : Command.Action;
@@ -263,6 +271,9 @@ namespace OpenDesk.Installer
         private TextBox folderTextBox;
         private CheckBox desktopShortcutCheckBox;
         private CheckBox startMenuShortcutCheckBox;
+        private Label installLocationLabel;
+        private Button installOptionsButton;
+        private Button startInstallButton;
         private string selectedFolder;
         private bool selectedDesktopShortcut;
         private bool selectedStartMenuShortcut;
@@ -281,10 +292,17 @@ namespace OpenDesk.Installer
             MinimizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.None;
+            Opacity = 0D;
+            ShowInTaskbar = false;
             BackColor = Surface;
             BackgroundImage = LoadImage("background.png");
             BackgroundImageLayout = ImageLayout.None;
             Icon = new Icon(GetPayloadPath("opendesk.ico"));
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint,
+                true
+            );
+            UpdateStyles();
 
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
@@ -292,13 +310,13 @@ namespace OpenDesk.Installer
 
             BuildSidebar();
 
-            rightBody = new Panel();
+            rightBody = new BufferedPanel();
             rightBody.Name = "RightContentPanel";
             rightBody.SetBounds(284, 0, 636, 516);
-            rightBody.BackColor = Color.Transparent;
+            rightBody.BackColor = Surface;
             Controls.Add(rightBody);
 
-            footer = new Panel();
+            footer = new BufferedPanel();
             footer.Name = "FooterPanel";
             footer.SetBounds(284, 516, 636, 84);
             footer.BackColor = Color.FromArgb(252, 253, 253);
@@ -308,7 +326,7 @@ namespace OpenDesk.Installer
             ShowWelcome(false);
         }
 
-        public void ShowDetected(bool installed)
+        public void ShowDetected(bool installed, bool reveal)
         {
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
@@ -319,43 +337,71 @@ namespace OpenDesk.Installer
             }
             else
             {
-                ShowWelcome(true);
+                installLocationLabel.Text = string.Format(T("SelectedInstallLocation"), selectedFolder);
+                installOptionsButton.Enabled = true;
+                startInstallButton.Enabled = true;
             }
+
+            if (reveal)
+            {
+                Reveal();
+            }
+        }
+
+        public void Reveal()
+        {
+            ShowInTaskbar = true;
+            Opacity = 1D;
         }
 
         public void ShowProgress(LaunchAction action)
         {
             busy = true;
-            ClearPage();
-            SetActiveStep(1);
-            string headerId = action == LaunchAction.Repair
-                ? "ProgressRepairHeader"
-                : action == LaunchAction.Uninstall ? "ProgressUninstallHeader" : "ProgressHeader";
-            string messageId = action == LaunchAction.Repair
-                ? "ProgressRepairMessage"
-                : action == LaunchAction.Uninstall ? "ProgressUninstallMessage" : "ProgressMessage";
-            AddLabel(rightBody, "ProgressHeader", T(headerId), 46, 86, 540, 46, HeadingFont, TextColor);
-            AddLabel(rightBody, "ProgressMessage", T(messageId), 46, 145, 540, 44, BodyFont, MutedColor);
-            AddLabel(rightBody, "ProgressLabel", T("ProgressLabel"), 46, 244, 540, 24, LabelFont, TextColor);
-            progressStatus = AddLabel(
-                rightBody,
-                "ProgressStatusLabel",
-                T("ProgressPreparing"),
-                46,
-                282,
-                500,
-                24,
-                BodyFont,
-                MutedColor
-            );
-            progressBar = new ProgressBar();
-            progressBar.Name = "InstallProgressBar";
-            progressBar.SetBounds(46, 322, 530, 18);
-            progressBar.Style = ProgressBarStyle.Continuous;
-            rightBody.Controls.Add(progressBar);
-            progressPercent = AddLabel(rightBody, "ProgressPercentLabel", "0%", 46, 350, 530, 22, SmallFont, MutedColor);
-            progressPercent.TextAlign = ContentAlignment.MiddleRight;
-            AddFooterButton("CancelInstallButton", T("ProgressCancelButton"), 470, delegate { application.RequestCancel(); });
+            RenderPage(delegate
+            {
+                SetActiveStep(1);
+                string headerId = action == LaunchAction.Repair
+                    ? "ProgressRepairHeader"
+                    : action == LaunchAction.Uninstall ? "ProgressUninstallHeader" : "ProgressHeader";
+                string messageId = action == LaunchAction.Repair
+                    ? "ProgressRepairMessage"
+                    : action == LaunchAction.Uninstall ? "ProgressUninstallMessage" : "ProgressMessage";
+                AddLabel(rightBody, "ProgressHeader", T(headerId), 46, 86, 540, 46, HeadingFont, TextColor);
+                AddLabel(rightBody, "ProgressMessage", T(messageId), 46, 145, 540, 44, BodyFont, MutedColor);
+                AddLabel(rightBody, "ProgressLabel", T("ProgressLabel"), 46, 244, 540, 24, LabelFont, TextColor);
+                progressStatus = AddLabel(
+                    rightBody,
+                    "ProgressStatusLabel",
+                    T("ProgressPreparing"),
+                    46,
+                    282,
+                    500,
+                    24,
+                    BodyFont,
+                    MutedColor
+                );
+                progressBar = new ProgressBar();
+                progressBar.Name = "InstallProgressBar";
+                progressBar.SetBounds(46, 322, 530, 18);
+                progressBar.Style = ProgressBarStyle.Continuous;
+                rightBody.Controls.Add(progressBar);
+                progressPercent = AddLabel(
+                    rightBody,
+                    "ProgressPercentLabel",
+                    "0%",
+                    46,
+                    350,
+                    530,
+                    22,
+                    SmallFont,
+                    MutedColor
+                );
+                progressPercent.TextAlign = ContentAlignment.MiddleRight;
+                AddFooterButton("CancelInstallButton", T("ProgressCancelButton"), 470, delegate
+                {
+                    application.RequestCancel();
+                });
+            });
         }
 
         public void SetProgressStatus(string localizationId)
@@ -385,135 +431,185 @@ namespace OpenDesk.Installer
         public void ShowSuccess(LaunchAction action)
         {
             busy = false;
-            ClearPage();
-            SetActiveStep(2);
-            string header = action == LaunchAction.Uninstall
-                ? T("SuccessUninstallHeader")
-                : action == LaunchAction.Repair ? T("SuccessRepairHeader") : T("SuccessInstallHeader");
-            AddLabel(rightBody, "SuccessHeader", header, 46, 110, 540, 58, HeadingFont, Teal);
-            AddLabel(rightBody, "SuccessMessage", T("SuccessMessage"), 46, 190, 540, 44, BodyFont, MutedColor);
-
-            if (action != LaunchAction.Uninstall)
+            RenderPage(delegate
             {
-                AddFooterButton("LaunchOpenDeskButton", T("SuccessLaunchButton"), 336, delegate
+                SetActiveStep(2);
+                string header = action == LaunchAction.Uninstall
+                    ? T("SuccessUninstallHeader")
+                    : action == LaunchAction.Repair ? T("SuccessRepairHeader") : T("SuccessInstallHeader");
+                AddLabel(rightBody, "SuccessHeader", header, 46, 110, 540, 58, HeadingFont, Teal);
+                AddLabel(rightBody, "SuccessMessage", T("SuccessMessage"), 46, 190, 540, 44, BodyFont, MutedColor);
+
+                if (action != LaunchAction.Uninstall)
                 {
-                    application.LaunchInstalledApplication();
-                    Close();
-                });
-            }
-            AddFooterButton("FinishButton", T("SuccessCloseButton"), 470, Close);
+                    AddFooterButton("LaunchOpenDeskButton", T("SuccessLaunchButton"), 336, delegate
+                    {
+                        application.LaunchInstalledApplication();
+                        Close();
+                    });
+                }
+                AddFooterButton("FinishButton", T("SuccessCloseButton"), 470, Close);
+            });
         }
 
         public void ShowFailure(int status, string detail)
         {
             busy = false;
-            ClearPage();
-            SetActiveStep(-1);
-            AddLabel(rightBody, "FailureHeader", T("FailureHeader"), 46, 110, 540, 58, HeadingFont, Color.FromArgb(178, 59, 49));
-            string message = string.Format(T("FailureMessage"), "0x" + status.ToString("X8"));
-            AddLabel(rightBody, "FailureMessage", message, 46, 190, 540, 60, BodyFont, MutedColor);
-            if (!string.IsNullOrWhiteSpace(detail))
+            RenderPage(delegate
             {
-                AddLabel(rightBody, "FailureDetail", detail, 46, 265, 540, 100, SmallFont, MutedColor);
-            }
-            AddFooterButton("FailureCloseButton", T("FailureCloseButton"), 470, Close);
+                SetActiveStep(-1);
+                AddLabel(
+                    rightBody,
+                    "FailureHeader",
+                    T("FailureHeader"),
+                    46,
+                    110,
+                    540,
+                    58,
+                    HeadingFont,
+                    Color.FromArgb(178, 59, 49)
+                );
+                string message = string.Format(T("FailureMessage"), "0x" + status.ToString("X8"));
+                AddLabel(rightBody, "FailureMessage", message, 46, 190, 540, 60, BodyFont, MutedColor);
+                if (!string.IsNullOrWhiteSpace(detail))
+                {
+                    AddLabel(rightBody, "FailureDetail", detail, 46, 265, 540, 100, SmallFont, MutedColor);
+                }
+                AddFooterButton("FailureCloseButton", T("FailureCloseButton"), 470, Close);
+            });
         }
 
         private void ShowWelcome(bool enabled)
         {
             busy = false;
-            ClearPage();
-            SetActiveStep(0);
-            string version = application.Engine.FormatString(T("InstallEyebrow"));
-            AddLabel(rightBody, "InstallEyebrow", version, 46, 58, 540, 22, SmallFont, Teal).Font = LabelFont;
-            AddLabel(rightBody, "InstallHeader", T("InstallHeader"), 46, 88, 540, 46, HeadingFont, TextColor);
-            AddLabel(rightBody, "InstallMessage", T("InstallMessage"), 46, 143, 540, 50, BodyFont, MutedColor);
-            AddFeatureRow(206, "01", T("FeatureWorkspaceTitle"), T("FeatureWorkspaceText"));
-            AddFeatureRow(280, "02", T("FeatureLocalTitle"), T("FeatureLocalText"));
-            AddFeatureRow(354, "03", T("FeatureExtendTitle"), T("FeatureExtendText"));
-            Label installLocation = AddLabel(
-                rightBody,
-                "InstallLocationHint",
-                string.Format(T("SelectedInstallLocation"), selectedFolder),
-                46,
-                455,
-                540,
-                22,
-                SmallFont,
-                MutedColor
-            );
-            installLocation.AutoEllipsis = true;
+            RenderPage(delegate
+            {
+                SetActiveStep(0);
+                string version = application.Engine.FormatString(T("InstallEyebrow"));
+                AddLabel(rightBody, "InstallEyebrow", version, 46, 58, 540, 22, SmallFont, Teal).Font = LabelFont;
+                AddLabel(rightBody, "InstallHeader", T("InstallHeader"), 46, 88, 540, 46, HeadingFont, TextColor);
+                AddLabel(rightBody, "InstallMessage", T("InstallMessage"), 46, 143, 540, 50, BodyFont, MutedColor);
+                AddFeatureRow(206, "01", T("FeatureWorkspaceTitle"), T("FeatureWorkspaceText"));
+                AddFeatureRow(280, "02", T("FeatureLocalTitle"), T("FeatureLocalText"));
+                AddFeatureRow(354, "03", T("FeatureExtendTitle"), T("FeatureExtendText"));
+                installLocationLabel = AddLabel(
+                    rightBody,
+                    "InstallLocationHint",
+                    string.Format(T("SelectedInstallLocation"), selectedFolder),
+                    46,
+                    455,
+                    540,
+                    22,
+                    SmallFont,
+                    MutedColor
+                );
+                installLocationLabel.AutoEllipsis = true;
 
-            AddFooterButton("ExitInstallerButton", T("InstallCloseButton"), 38, Close);
-            Button options = AddFooterButton("InstallOptionsButton", T("InstallOptionsButton"), 336, ShowOptions);
-            Button install = AddFooterButton("StartInstallButton", T("InstallInstallButton"), 470, StartInstallFromWelcome);
-            options.Enabled = enabled;
-            install.Enabled = enabled;
+                AddFooterButton("ExitInstallerButton", T("InstallCloseButton"), 38, Close);
+                installOptionsButton = AddFooterButton(
+                    "InstallOptionsButton",
+                    T("InstallOptionsButton"),
+                    336,
+                    ShowOptions
+                );
+                startInstallButton = AddFooterButton(
+                    "StartInstallButton",
+                    T("InstallInstallButton"),
+                    470,
+                    StartInstallFromWelcome
+                );
+                installOptionsButton.Enabled = enabled;
+                startInstallButton.Enabled = enabled;
+            });
         }
 
         private void ShowOptions()
         {
-            ClearPage();
-            SetActiveStep(0);
-            AddLabel(rightBody, "OptionsEyebrow", T("OptionsEyebrow"), 46, 58, 540, 22, LabelFont, Teal);
-            AddLabel(rightBody, "OptionsHeader", T("OptionsHeader"), 46, 88, 540, 46, HeadingFont, TextColor);
-            AddLabel(rightBody, "OptionsMessage", T("OptionsMessage"), 46, 143, 540, 50, BodyFont, MutedColor);
-            AddLabel(rightBody, "OptionsLocationLabel", T("OptionsLocationLabel"), 46, 214, 540, 24, LabelFont, TextColor);
-
-            folderTextBox = new TextBox();
-            folderTextBox.Name = "InstallFolderTextBox";
-            folderTextBox.Font = BodyFont;
-            folderTextBox.SetBounds(46, 249, 416, 34);
-            folderTextBox.Text = selectedFolder;
-            rightBody.Controls.Add(folderTextBox);
-
-            Button browse = AddButton(rightBody, "BrowseFolderButton", T("OptionsBrowseButton"), 468, 247, 128, 38);
-            browse.Click += delegate
+            RenderPage(delegate
             {
-                using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+                SetActiveStep(0);
+                AddLabel(rightBody, "OptionsEyebrow", T("OptionsEyebrow"), 46, 58, 540, 22, LabelFont, Teal);
+                AddLabel(rightBody, "OptionsHeader", T("OptionsHeader"), 46, 88, 540, 46, HeadingFont, TextColor);
+                AddLabel(rightBody, "OptionsMessage", T("OptionsMessage"), 46, 143, 540, 50, BodyFont, MutedColor);
+                AddLabel(
+                    rightBody,
+                    "OptionsLocationLabel",
+                    T("OptionsLocationLabel"),
+                    46,
+                    214,
+                    540,
+                    24,
+                    LabelFont,
+                    TextColor
+                );
+
+                folderTextBox = new TextBox();
+                folderTextBox.Name = "InstallFolderTextBox";
+                folderTextBox.Font = BodyFont;
+                folderTextBox.SetBounds(46, 249, 416, 34);
+                folderTextBox.Text = selectedFolder;
+                rightBody.Controls.Add(folderTextBox);
+
+                Button browse = AddButton(rightBody, "BrowseFolderButton", T("OptionsBrowseButton"), 468, 247, 128, 38);
+                browse.Click += delegate
                 {
-                    dialog.Description = T("FolderBrowseDescription");
-                    dialog.SelectedPath = folderTextBox.Text;
-                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    using (FolderBrowserDialog dialog = new FolderBrowserDialog())
                     {
-                        folderTextBox.Text = dialog.SelectedPath;
+                        dialog.Description = T("FolderBrowseDescription");
+                        dialog.SelectedPath = folderTextBox.Text;
+                        if (dialog.ShowDialog(this) == DialogResult.OK)
+                        {
+                            folderTextBox.Text = dialog.SelectedPath;
+                        }
                     }
-                }
-            };
+                };
 
-            desktopShortcutCheckBox = AddCheckBox(
-                "CreateDesktopShortcutCheckBox",
-                T("CreateDesktopShortcut"),
-                46,
-                318,
-                selectedDesktopShortcut
-            );
-            startMenuShortcutCheckBox = AddCheckBox(
-                "CreateStartMenuShortcutCheckBox",
-                T("CreateStartMenuShortcut"),
-                46,
-                356,
-                selectedStartMenuShortcut
-            );
-            AddLabel(rightBody, "OptionsDriveHint", T("OptionsDriveHint"), 46, 407, 540, 24, SmallFont, MutedColor);
-            AddLabel(rightBody, "ShortcutOptionsHint", T("ShortcutOptionsHint"), 46, 435, 540, 24, SmallFont, MutedColor);
+                desktopShortcutCheckBox = AddCheckBox(
+                    "CreateDesktopShortcutCheckBox",
+                    T("CreateDesktopShortcut"),
+                    46,
+                    318,
+                    selectedDesktopShortcut
+                );
+                startMenuShortcutCheckBox = AddCheckBox(
+                    "CreateStartMenuShortcutCheckBox",
+                    T("CreateStartMenuShortcut"),
+                    46,
+                    356,
+                    selectedStartMenuShortcut
+                );
+                AddLabel(rightBody, "OptionsDriveHint", T("OptionsDriveHint"), 46, 407, 540, 24, SmallFont, MutedColor);
+                AddLabel(
+                    rightBody,
+                    "ShortcutOptionsHint",
+                    T("ShortcutOptionsHint"),
+                    46,
+                    435,
+                    540,
+                    24,
+                    SmallFont,
+                    MutedColor
+                );
 
-            AddFooterButton("OptionsBackButton", T("OptionsCancelButton"), 336, delegate { ShowWelcome(true); });
-            AddFooterButton("OptionsSaveButton", T("OptionsOkButton"), 470, SaveOptions);
+                AddFooterButton("OptionsBackButton", T("OptionsCancelButton"), 336, delegate { ShowWelcome(true); });
+                AddFooterButton("OptionsSaveButton", T("OptionsOkButton"), 470, SaveOptions);
+            });
         }
 
         private void ShowMaintenance()
         {
             busy = false;
-            ClearPage();
-            SetActiveStep(0);
-            AddLabel(rightBody, "ModifyHeader", T("ModifyHeader"), 46, 92, 540, 46, HeadingFont, TextColor);
-            AddLabel(rightBody, "ModifyMessage", T("ModifyMessage"), 46, 150, 540, 48, BodyFont, MutedColor);
-            AddFeatureRow(236, "01", T("ModifyRepairButton"), T("ModifyRepairDescription"));
-            AddFeatureRow(324, "02", T("ModifyUninstallButton"), T("ModifyUninstallDescription"));
-            AddFooterButton("ModifyCloseButton", T("ModifyCloseButton"), 202, Close);
-            AddFooterButton("RepairButton", T("ModifyRepairButton"), 336, application.Repair);
-            AddFooterButton("UninstallButton", T("ModifyUninstallButton"), 470, application.Uninstall);
+            RenderPage(delegate
+            {
+                SetActiveStep(0);
+                AddLabel(rightBody, "ModifyHeader", T("ModifyHeader"), 46, 92, 540, 46, HeadingFont, TextColor);
+                AddLabel(rightBody, "ModifyMessage", T("ModifyMessage"), 46, 150, 540, 48, BodyFont, MutedColor);
+                AddFeatureRow(236, "01", T("ModifyRepairButton"), T("ModifyRepairDescription"));
+                AddFeatureRow(324, "02", T("ModifyUninstallButton"), T("ModifyUninstallDescription"));
+                AddFooterButton("ModifyCloseButton", T("ModifyCloseButton"), 202, Close);
+                AddFooterButton("RepairButton", T("ModifyRepairButton"), 336, application.Repair);
+                AddFooterButton("UninstallButton", T("ModifyUninstallButton"), 470, application.Uninstall);
+            });
         }
 
         private void StartInstallFromWelcome()
@@ -653,13 +749,62 @@ namespace OpenDesk.Installer
             }
         }
 
+        private void RenderPage(MethodInvoker buildPage)
+        {
+            bool redrawLocked = IsHandleCreated;
+            if (redrawLocked)
+            {
+                NativeMethods.SetRedraw(this, false);
+                NativeMethods.SetRedraw(rightBody, false);
+                NativeMethods.SetRedraw(footer, false);
+            }
+
+            SuspendLayout();
+            rightBody.SuspendLayout();
+            footer.SuspendLayout();
+            try
+            {
+                ClearPage();
+                buildPage();
+            }
+            finally
+            {
+                footer.ResumeLayout(false);
+                rightBody.ResumeLayout(false);
+                ResumeLayout(false);
+
+                if (redrawLocked)
+                {
+                    NativeMethods.SetRedraw(footer, true);
+                    NativeMethods.SetRedraw(rightBody, true);
+                    NativeMethods.SetRedraw(this, true);
+                    Invalidate(true);
+                    Update();
+                }
+            }
+        }
+
         private void ClearPage()
         {
-            rightBody.Controls.Clear();
-            footer.Controls.Clear();
+            DisposeChildren(rightBody);
+            DisposeChildren(footer);
             progressBar = null;
             progressStatus = null;
             progressPercent = null;
+            folderTextBox = null;
+            desktopShortcutCheckBox = null;
+            startMenuShortcutCheckBox = null;
+            installLocationLabel = null;
+            installOptionsButton = null;
+            startInstallButton = null;
+        }
+
+        private static void DisposeChildren(Control parent)
+        {
+            while (parent.Controls.Count > 0)
+            {
+                parent.Controls[0].Dispose();
+            }
         }
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
@@ -700,6 +845,34 @@ namespace OpenDesk.Installer
         private static string GetPayloadPath(string fileName)
         {
             return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), fileName);
+        }
+    }
+
+    internal sealed class BufferedPanel : Panel
+    {
+        public BufferedPanel()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint,
+                true
+            );
+            UpdateStyles();
+        }
+    }
+
+    internal static class NativeMethods
+    {
+        private const int WM_SETREDRAW = 0x000B;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wordParameter, IntPtr longParameter);
+
+        public static void SetRedraw(Control control, bool enabled)
+        {
+            if (control.IsHandleCreated)
+            {
+                SendMessage(control.Handle, WM_SETREDRAW, enabled ? new IntPtr(1) : IntPtr.Zero, IntPtr.Zero);
+            }
         }
     }
 
