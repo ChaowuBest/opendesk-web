@@ -16,7 +16,6 @@ import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
 import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
-import TurndownService from 'turndown';
 
 const fallbackSupportedFileExtensions = [
     'doc',
@@ -2741,82 +2740,23 @@ class AgentInput extends HTMLElement {
             const items = e.clipboardData?.items;
             if (!items) return;
 
-            // 检查是否有HTML内容（从富文本编辑器复制），转为Markdown保留格式
-            let hasHtml = false;
-            let htmlContent = '';
-            for (const item of items) {
-                if (item.type === 'text/html') {
-                    hasHtml = true;
-                    htmlContent = e.clipboardData.getData('text/html');
-                    break;
-                }
-            }
+            // 如果有图片，优先处理图片；文本由 textarea 原生粘贴逻辑处理
+            const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
+            if (!hasImage) return;
 
-            // 如果有图片，优先处理图片
-            let hasImage = false;
+            e.preventDefault();
             for (const item of items) {
                 if (item.type.startsWith('image/')) {
-                    hasImage = true;
-                    break;
-                }
-            }
-
-            if (hasImage) {
-                e.preventDefault();
-                for (const item of items) {
-                    if (item.type.startsWith('image/')) {
-                        const file = item.getAsFile();
-                        if (!file) continue;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            this.addImage(reader.result, file.name || '粘贴的图片');
-                        };
-                        reader.readAsDataURL(file);
-                    }
-                }
-                return;
-            }
-
-            // 如果有HTML内容，转为Markdown保留格式（列表、编号等）
-            if (hasHtml && htmlContent) {
-                // 从 macOS 终端等复制的 HTML 中可能包含 <style> 标签（CSS 代码），
-                // 先将其清除，防止 turndown 误将 CSS 代码当作正文输出。
-                const cleanedHtml = htmlContent.replace(/<style[\s\S]*?<\/style>/gi, '');
-
-                const rawMarkdown = this._htmlToMarkdown(cleanedHtml);
-                const markdown = rawMarkdown ? rawMarkdown.trim() : '';
-                if (markdown) {
-                    e.preventDefault();
-                    // 在光标位置插入Markdown文本
-                    const start = textarea.selectionStart;
-                    const end = textarea.selectionEnd;
-                    const before = textarea.value.substring(0, start);
-                    const after = textarea.value.substring(end);
-                    textarea.value = before + markdown + after;
-                    textarea.selectionStart = textarea.selectionEnd = start + markdown.length;
-                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    const file = item.getAsFile();
+                    if (!file) continue;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.addImage(reader.result, file.name || '粘贴的图片');
+                    };
+                    reader.readAsDataURL(file);
                 }
             }
         });
-    }
-
-    /**
-     * 将HTML内容转换为Markdown格式，使用 turndown 库
-     */
-    _htmlToMarkdown(html) {
-        if (!this._turndownService) {
-            this._turndownService = new TurndownService({
-                headingStyle: 'atx',
-                codeBlockStyle: 'fenced',
-                bulletListMarker: '-'
-            });
-            // 支持 strikethrough
-            this._turndownService.addRule('strikethrough', {
-                filter: ['del', 's', 'strike'],
-                replacement: (content) => '~~' + content + '~~'
-            });
-        }
-        return this._turndownService.turndown(html);
     }
 
     handleSpeechButtonPointerDown(e) {
