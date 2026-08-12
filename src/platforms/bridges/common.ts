@@ -41,6 +41,7 @@ export interface HuaweiLoginResult {
 export interface HuaweiAccountKit {
     available(): Promise<boolean>;
     startLogin(): Promise<void>;
+    restoreLogin(): Promise<void>;
     peekLogin(): Promise<HuaweiLoginResult | null>;
     closeLogin(): Promise<void>;
 }
@@ -109,6 +110,10 @@ export class NaiveHuaweiAccountKit implements HuaweiAccountKit {
     }
 
     async startLogin(): Promise<void> {
+        this.unavailable();
+    }
+
+    async restoreLogin(): Promise<void> {
         this.unavailable();
     }
 

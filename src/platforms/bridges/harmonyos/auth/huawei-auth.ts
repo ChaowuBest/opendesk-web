@@ -129,6 +129,12 @@ export class HuaweiAuthService {
         return session;
     }
 
+    /** OpenDesk 工作台窗口恢复时，重新显示仍在进行中的原生登录窗口。 */
+    async restoreLogin(): Promise<void> {
+        const kit = await getAccountKit();
+        await kit.restoreLogin();
+    }
+
     /** 刷新 access_token */
     async refreshToken(): Promise<UserSession> {
         if (!this.cachedSession || !this.cachedSession.refreshToken) {
