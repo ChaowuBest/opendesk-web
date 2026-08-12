@@ -104,7 +104,7 @@ function makeRequest(
     };
 }
 
-function createRuntime(directory: string, connection: FakeConnection): AcpTaskRuntime {
+function createRuntime(directory: string, connection: FakeConnection, logs: string[] = []): AcpTaskRuntime {
     return new AcpTaskRuntime(profile, {
         artifactDirectory: () => directory,
         createConnection: async (_profile, handlers): Promise<AcpConnectionHandle> => {
@@ -115,7 +115,11 @@ function createRuntime(directory: string, connection: FakeConnection): AcpTaskRu
                 close: async () => undefined
             };
         },
-        resolveMcpServers: async () => []
+        resolveMcpServers: async () => [],
+        log: {
+            info: (message) => logs.push(message),
+            warn: (message) => logs.push(message)
+        }
     });
 }
 
@@ -123,7 +127,8 @@ test('ACP runtime creates a session, applies configured parameters, and checkpoi
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-runtime-'));
     try {
         const connection = new FakeConnection();
-        const runtime = createRuntime(directory, connection);
+        const logs: string[] = [];
+        const runtime = createRuntime(directory, connection, logs);
         const request = makeRequest();
 
         const result = await runtime.runTurn(request);
@@ -147,6 +152,9 @@ test('ACP runtime creates a session, applies configured parameters, and checkpoi
         assert.equal('env' in (result.state as any).safeProfile.transport, false);
         assert.ok(request.checkpoints.length >= 3);
         assert.ok(fs.existsSync(path.join(directory, 'acp', 'events.jsonl')));
+        assert.ok(logs.some((message) => message.includes('dispatch started') && message.includes(profile.id)));
+        assert.ok(logs.some((message) => message.includes('dispatch completed') && message.includes('task-1')));
+        assert.ok(logs.every((message) => !message.includes(request.prompt)));
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

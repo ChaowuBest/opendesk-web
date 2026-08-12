@@ -43,7 +43,7 @@ export class AcpAgentDecl extends AgentDecl {
     readonly whenToUse: string;
 
     get displayName(): string {
-        return this.profile.name;
+        return `ACP · ${this.profile.name}`;
     }
 
     constructor(

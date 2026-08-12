@@ -28,6 +28,7 @@ import type {
 import { t } from '../../../../locale/index.js';
 import { createSafeAcpProfileSnapshot, type AcpAgentProfile } from '../../../../common/acp.js';
 import { getTaskArtifactDirectory } from '../../../utils/setting.js';
+import { logger } from '../../../utils/logger.js';
 import { AcpEventJournal } from './journal.js';
 import { AcpSessionUpdateMapper } from './mapper.js';
 import {
@@ -63,6 +64,10 @@ export interface AcpTaskRuntimeDependencies {
     createConnection?: AcpConnectionFactory;
     resolveMcpServers?(profile: AcpAgentProfile): Promise<McpServer[]>;
     sleep?(milliseconds: number): Promise<void>;
+    log?: {
+        info(message: string): unknown;
+        warn(message: string): unknown;
+    };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,6 +146,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
     private readonly artifactDirectory: (taskId: string) => string;
     private readonly resolveMcpServers: (profile: AcpAgentProfile) => Promise<McpServer[]>;
     private readonly sleep: (milliseconds: number) => Promise<void>;
+    private readonly log: NonNullable<AcpTaskRuntimeDependencies['log']>;
     private handle?: AcpConnectionHandle;
     private connection?: AcpClientConnection;
     private activeRequest?: AgentTaskRuntimeTurnRequest;
@@ -160,6 +166,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         this.resolveMcpServers = dependencies.resolveMcpServers ?? (async () => []);
         this.sleep =
             dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+        this.log = dependencies.log ?? logger;
     }
 
     async runTurn(request: AgentTaskRuntimeTurnRequest): Promise<AgentTaskRuntimeTurnResult> {
@@ -174,6 +181,12 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         this.journal = this.journal ?? new AcpEventJournal(this.artifactDirectory(request.taskId));
         this.checkpoint = restoreCheckpoint(this.profile, request.persistedState, this.journal.lastSequence);
         const recoveryPhase = this.checkpoint.phase;
+        const sessionStrategy = this.checkpoint.sessionId ? 'restore' : 'new';
+        this.log.info(
+            `[ACP] dispatch started: task=${request.taskId} profile=${this.profile.id} ` +
+                `name=${JSON.stringify(this.profile.name)} transport=${this.profile.transport.type} ` +
+                `session=${sessionStrategy}`
+        );
         try {
             await this.saveCheckpoint();
             try {
@@ -202,8 +215,12 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                     activePrompt: undefined,
                     lastStopReason: response.stopReason
                 });
+                const stopReason = mapStopReason(response.stopReason);
+                this.log.info(
+                    `[ACP] dispatch completed: task=${request.taskId} profile=${this.profile.id} stopReason=${stopReason}`
+                );
                 return {
-                    stopReason: mapStopReason(response.stopReason),
+                    stopReason,
                     state: this.snapshot()
                 };
             } catch (error) {
@@ -215,6 +232,13 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                 await this.resetConnection();
                 throw error;
             }
+        } catch (error) {
+            const errorType = error instanceof Error ? error.name : typeof error;
+            this.log.warn(
+                `[ACP] dispatch failed: task=${request.taskId} profile=${this.profile.id} ` +
+                    `phase=${this.checkpoint?.phase ?? recoveryPhase} errorType=${errorType}`
+            );
+            throw error;
         } finally {
             this.activeRequest = undefined;
         }

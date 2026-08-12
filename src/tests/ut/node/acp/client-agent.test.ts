@@ -61,20 +61,32 @@ test('subtask cards display the ACP profile name instead of its stable id', asyn
     const html = await tool.renderToolCall(toolCall);
     const cli = tool.renderToolCallCli(toolCall, 120)?.join('\n') ?? '';
 
-    assert.match(html ?? '', /Codex ACP/);
+    assert.match(html ?? '', /ACP · Codex ACP/);
     assert.doesNotMatch(html ?? '', new RegExp(enabledProfile.id));
-    assert.match(cli, /Codex ACP/);
+    assert.match(cli, /ACP · Codex ACP/);
     assert.doesNotMatch(cli, new RegExp(enabledProfile.id));
 });
 
 test('ACP manager registers configured agents during lazy application loading', async (context) => {
-    const application = new AcpMgrApplication();
+    const logs: string[] = [];
+    const application = new AcpMgrApplication({
+        log: {
+            info: (message) => logs.push(message),
+            error: (message) => logs.push(message)
+        }
+    });
     application.getConfig = () => ({ agents: [enabledProfile] });
     context.after(async () => AgentRegistry.unloadApplicationAgents());
 
     await application.ensureLoaded();
 
     assert.ok(AgentRegistry.getAgent(`acpmgr:${enabledProfile.id}`));
+    assert.ok(logs.some((message) => message.includes('agent added') && message.includes(enabledProfile.id)));
+    assert.ok(
+        logs.some((message) => message.includes('registration completed') && message.includes(enabledProfile.name))
+    );
+    assert.ok(logs.some((message) => message.includes('registry refresh completed')));
+    assert.ok(logs.every((message) => !message.includes(enabledProfile.transport.command)));
 });
 
 test('ACP dispatch ancestry is inherited without mutating the source environment', () => {

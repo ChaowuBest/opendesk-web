@@ -26,13 +26,24 @@ function parseConfig(value: unknown): AcpMgrConfig {
     return AcpMgrConfigSchema.parse(value ?? {});
 }
 
+interface AcpMgrLog {
+    info(message: string): unknown;
+    error(message: string): unknown;
+}
+
+export interface AcpMgrApplicationDependencies {
+    log?: AcpMgrLog;
+}
+
 export class AcpMgrApplication extends BaseApplication {
     private agentsLoadedPromise?: Promise<void>;
     private agentRefreshTail: Promise<void> = Promise.resolve();
     private registeredAgentNames = new Set<string>();
+    private readonly log: AcpMgrLog;
 
-    constructor() {
+    constructor(dependencies: AcpMgrApplicationDependencies = {}) {
         super('acpmgr', false);
+        this.log = dependencies.log ?? logger;
     }
 
     getName(): string {
@@ -67,7 +78,7 @@ export class AcpMgrApplication extends BaseApplication {
         super.onConfigChanged();
         this.sendEventToSubscribers('agentsUpdated');
         void this.enqueueAgentRefresh().catch((error) => {
-            logger.error(`ACP manager: failed to refresh configured agents: ${error}`);
+            this.log.error(`[ACP] registry refresh failed: ${error}`);
         });
     }
 
@@ -138,16 +149,37 @@ export class AcpMgrApplication extends BaseApplication {
     private async refreshRegisteredAgents(): Promise<void> {
         const agents = await this.getAgents();
         const nextAgentNames = new Set(agents.map((agent) => agent.agentName));
+        const profilesById = new Map(parseConfig(this.getConfig()).agents.map((profile) => [profile.id, profile]));
 
         for (const agentName of this.registeredAgentNames) {
             if (!nextAgentNames.has(agentName)) {
+                const registered = AgentRegistry.getApplicationAgent(this.bundleName, agentName);
                 await AgentRegistry.removeApplicationAgent(this.bundleName, agentName);
+                this.log.info(
+                    `[ACP] agent removed: profile=${agentName} name=${JSON.stringify(registered?.displayName ?? agentName)}`
+                );
             }
         }
         for (const agent of agents) {
+            const profile = profilesById.get(agent.agentName);
+            const isNew = !this.registeredAgentNames.has(agent.agentName);
+            if (isNew && profile) {
+                this.log.info(
+                    `[ACP] agent added: profile=${profile.id} name=${JSON.stringify(profile.name)} ` +
+                        `transport=${profile.transport.type}`
+                );
+            }
             await AgentRegistry.replaceApplicationAgent(this.bundleName, agent);
+            this.log.info(
+                `[ACP] agent registration completed: agent=${agent.agentId} name=${JSON.stringify(agent.displayName)} ` +
+                    `enabled=${profile?.enabled ?? true} dispatchable=${agent.dispatchable}`
+            );
         }
         this.registeredAgentNames = nextAgentNames;
+        this.log.info(
+            `[ACP] registry refresh completed: total=${agents.length} ` +
+                `dispatchable=${agents.filter((agent) => agent.dispatchable).length}`
+        );
     }
 
     private async resolveMcpServers(profile: AcpAgentProfile): Promise<McpServer[]> {
