@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { HookRegistry } from '../../hooks.js';
+import { GlobalHooks } from '../../hooks.js';
 import type { ToolCall } from '../../messages.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -22,7 +22,7 @@ export function registerDeadloopHarness(): void {
     if (registered) return;
     registered = true;
 
-    HookRegistry.beforeToolcallCreated(async (task, _assistantMessage, chunkHasNewToolCall, requestToolCalls) => {
+    GlobalHooks.beforeToolcallCreated(async (task, _assistantMessage, chunkHasNewToolCall, requestToolCalls) => {
         // 1. 工具调用数量限制：当前已有 >= MAX 个，且即将追加新工具调用时拒绝
         if (chunkHasNewToolCall && requestToolCalls.length >= MAX_TOOLCALLS_PER_REQUEST) {
             logger.warn(

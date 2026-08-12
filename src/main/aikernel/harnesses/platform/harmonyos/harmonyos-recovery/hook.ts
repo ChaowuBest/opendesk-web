@@ -12,7 +12,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { HookRegistry } from '../../../../hooks.js';
+import { GlobalHooks } from '../../../../hooks.js';
 import type { ToolCall } from '../../../../messages.js';
 import type { TaskState } from '../../../../states/tasks.js';
 import { BASH_FRICTION_WINDOW_SIZE, BASH_FRICTION_FAILURE_THRESHOLD } from '../constants.js';
@@ -100,10 +100,10 @@ export function registerHarmonyosBashFrictionHook(): void {
     }
 
     const outcomesByTask: BashOutcomesByTask = new WeakMap();
-    HookRegistry.registerToolHook('executeBash', {
+    GlobalHooks.registerToolHook('executeBash', {
         afterToolCall: createHarmonyosBashFrictionAfterToolCall(outcomesByTask)
     });
-    HookRegistry.afterFinishTurn((task) => {
+    GlobalHooks.afterFinishTurn((task) => {
         if (task.lastTerminationState === 'finished' || task.lastTerminationState === 'interrupted') {
             outcomesByTask.delete(task);
         }

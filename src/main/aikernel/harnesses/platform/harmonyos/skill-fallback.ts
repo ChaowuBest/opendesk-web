@@ -15,7 +15,7 @@ import { jsonrepair } from 'jsonrepair';
 import { randomUUID } from 'crypto';
 import { logger } from '../../../../utils/logger.js';
 import { FileLock } from '../../../../utils/file-lock.js';
-import { HookRegistry } from '../../../hooks.js';
+import { GlobalHooks } from '../../../hooks.js';
 import type { BeforeToolCallFeedback } from '../../../hooks.js';
 import type { TaskState } from '../../../states/tasks.js';
 import type { ToolCall } from '../../../messages.js';
@@ -301,6 +301,6 @@ let registered = false;
 export function registerHarmonyosFallbackHooks(): void {
     if (registered) return;
     registered = true;
-    HookRegistry.registerToolHook('executeBash', { beforeToolCall: onBeforeExecuteBash });
-    HookRegistry.registerToolHook('executeNodeShell', { afterToolCall: onAfterExecuteNodeShell });
+    GlobalHooks.registerToolHook('executeBash', { beforeToolCall: onBeforeExecuteBash });
+    GlobalHooks.registerToolHook('executeNodeShell', { afterToolCall: onAfterExecuteNodeShell });
 }

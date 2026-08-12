@@ -41,14 +41,14 @@ import {
 import { setRenderWorkspace } from '../marked-file-link.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
-import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
+import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import {
-    buildEvidenceCardRuntimeTail,
     createEvidenceCardState,
     getEvidenceCardSettings,
+    registerEvidenceCardTailcard,
     recordEvidenceCardToolCall,
     syncEvidenceCardTaskState,
     type EvidenceCardState
@@ -60,7 +60,7 @@ import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
 import { FileReadStateCache } from './read-state.js';
-import { TaskHooks } from '../hooks.js';
+import { GlobalHooks, type Hooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import { escapeGlobLiteralPath } from '../security/permission.js';
@@ -452,7 +452,7 @@ export class TaskState {
     interactionToolset: BaseToolset | null = null;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
-    hooks: TaskHooks = new TaskHooks();
+    hooks: Hooks = GlobalHooks.createChildHooks();
     /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
     subscribers: BaseTaskUpdateSubscriber[] = [];
     /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */
@@ -608,6 +608,7 @@ export class TaskState {
         this.parent_id = parent_id;
         this._extensions = new TaskExtensionManager(this);
         syncEvidenceCardTaskState(this);
+        registerEvidenceCardTailcard(this);
         this.bindChatContextMessageAppend();
     }
 
@@ -961,14 +962,6 @@ export class TaskState {
     resetEvidenceCardState(): void {
         const enabled = this.refreshEvidenceCardFeatureState();
         this.evidencecard_state = createEvidenceCardState(enabled, getEvidenceCardSettings(enabled).globalBudgetTokens);
-    }
-
-    buildEvidenceCardRequestTail(activeContext?: Pick<ActiveContextView, 'messages'>): string | undefined {
-        if (!this.refreshEvidenceCardFeatureState()) {
-            return undefined;
-        }
-        const requestTail = buildEvidenceCardRuntimeTail(activeContext ?? this.chat_context, this.evidencecard_state);
-        return requestTail.trim().length > 0 ? requestTail : undefined;
     }
 
     /**

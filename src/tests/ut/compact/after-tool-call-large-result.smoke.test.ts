@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import '../../../main/aikernel/compact';
 import { getToolResultArtifactPath } from '../../../main/aikernel/compaction/tool-results';
-import { HookRegistry } from '../../../main/aikernel/hooks';
+import { GlobalHooks } from '../../../main/aikernel/hooks';
 import { ToolCall } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
@@ -36,7 +36,7 @@ describe('compact smoke: afterToolCall large result storage', () => {
         toolCall.status = 'success';
         toolCall.result = originalResult;
 
-        await HookRegistry.noticeAfterToolCall(task, toolCall);
+        await GlobalHooks.noticeAfterToolCall(task, toolCall);
 
         const resultId = toolCall.result_storage?.result_id;
         expect(resultId).toBeDefined();

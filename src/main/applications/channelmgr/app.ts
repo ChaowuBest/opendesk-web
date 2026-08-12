@@ -51,7 +51,7 @@ import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset, ToolResult } from '../../aikernel/tool.js';
-import { HookRegistry } from '../../aikernel/hooks.js';
+import { GlobalHooks } from '../../aikernel/hooks.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
@@ -298,7 +298,7 @@ export class ChannelMgrApplication extends BaseApplication {
         try {
             // 注册全局钩子：任何带渠道绑定的任务在 turn 结束后，
             // 自动将用户消息和 assistant 回复（文本 + 媒体）发送回渠道。
-            HookRegistry.afterFinishTurn(async (task) => {
+            GlobalHooks.afterFinishTurn(async (task) => {
                 if (task.origin?.type !== 'channel') return;
 
                 const skipUserEcho = this.skipUserEchoTasks.has(task);

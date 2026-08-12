@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { AssistantMessage, ChatContext, ToolCall, ToolCallMessagePart } from '../../../../main/aikernel/messages.js';
-import { TaskHooks } from '../../../../main/aikernel/hooks.js';
+import { GlobalHooks } from '../../../../main/aikernel/hooks.js';
 import type { TaskState } from '../../../../main/aikernel/states/tasks.js';
 import { WorkflowAuthoringCancelledError } from '../../../../main/applications/workflowMgr/authoring/service.js';
 import { createWorkflowSkills } from '../../../../main/applications/workflowMgr/tooling/skills.js';
@@ -147,7 +147,7 @@ test('RunWorkflowTool returns a started result and owns its detail navigation ca
     let stopReason: 'user' | 'system' | undefined;
     const runTask = {
         task_id: 'task-host',
-        hooks: new TaskHooks(),
+        hooks: GlobalHooks.createChildHooks(),
         stop: (reason: 'user' | 'system') => {
             stopReason = reason;
         }
@@ -238,7 +238,7 @@ test('RunWorkflow starts a temporary definition with complete explicit input', a
     const task = {
         task_id: 'task-host',
         chat_context: new ChatContext(),
-        hooks: new TaskHooks(),
+        hooks: GlobalHooks.createChildHooks(),
         stop: () => undefined
     } as TaskState;
     task.chat_context.appendMessage(authorMessage);

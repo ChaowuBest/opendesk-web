@@ -41,7 +41,7 @@ import type { PermissionRequest } from './security/permission';
 import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
-import { HookRegistry } from './hooks';
+import { GlobalHooks } from './hooks';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -1039,7 +1039,7 @@ function isArgsObjectEmpty(args: unknown): boolean {
  *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
  */
 function registerParseToolcallValidationHooks(): void {
-    HookRegistry.afterParseToolcall(async (_task, tool_call) => {
+    GlobalHooks.afterParseToolcall(async (_task, tool_call) => {
         const raw = tool_call.args_string || '';
         if (raw.trim().length > 0 && tool_call.args_object === undefined) {
             return {
@@ -1050,7 +1050,7 @@ function registerParseToolcallValidationHooks(): void {
         return { operation: 'finish' };
     });
 
-    HookRegistry.afterParseToolcall(async (_task, tool_call) => {
+    GlobalHooks.afterParseToolcall(async (_task, tool_call) => {
         if (!tool_call.tool_name || !tool_call.tool_name.endsWith('CallSkillTool')) {
             return { operation: 'finish' };
         }

@@ -11,7 +11,7 @@
 
 import { logger } from '../../utils/logger.js';
 import { AssistantMessage, UserMessage, type ChatMessage } from '../messages.js';
-import { HookRegistry } from '../hooks.js';
+import { GlobalHooks } from '../hooks.js';
 import type { TaskManagerState, TaskState } from '../states/tasks.js';
 import { getGlobalMemoryFilePath, getWorkspaceMemoryFilePath } from './common.js';
 import { FactorialMemoryStore } from './store.js';
@@ -309,5 +309,5 @@ export function registerMemoryReviewHook(options: RegisterMemoryReviewHookOption
     reviewHookRegistered = true;
 
     const reviewQueue = new MemoryReviewQueue(options);
-    HookRegistry.onTaskReview((task, startMessageIndex) => reviewQueue.enqueue(task, startMessageIndex));
+    GlobalHooks.onTaskReview((task, startMessageIndex) => reviewQueue.enqueue(task, startMessageIndex));
 }

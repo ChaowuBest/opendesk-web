@@ -236,6 +236,7 @@ export async function processTaskCompletion(
         | undefined = undefined;
     let dynamicMaxCompletionTokens: number | undefined = undefined;
     let requestTailText: string | undefined = undefined;
+    let preparedContextTokens = 0;
     const evidenceCardEnabled = task.refreshEvidenceCardFeatureState();
     const evidenceCardSettings = getEvidenceCardSettings(evidenceCardEnabled);
     try {
@@ -481,47 +482,56 @@ export async function processTaskCompletion(
             activeContext: preparation.activeContext,
             toolResultOverrides: preparation.toolResultOverrides
         };
-        requestTailText = task.buildEvidenceCardRequestTail(preparation.activeContext);
-
-        const estimatedContextTokens =
-            (preparation.contextTokenEstimate?.estimatedContextTokens ?? 0) + estimateTextTokens(requestTailText);
-        if (estimatedContextTokens > 0) {
-            try {
-                let contextWindow = 0;
-                const modelInstance = model
-                    ? Setting.getInstance().getModelInstance(model, 'chat')
-                    : Setting.getInstance().getDefaultModelInstance();
-                if (modelInstance?.context_length && modelInstance.context_length > 0) {
-                    contextWindow = modelInstance.context_length;
-                } else {
-                    const modelName = modelInstance?.model_name ?? model ?? '';
-                    contextWindow = lookupKnownContextSize(modelName);
-                    if (contextWindow <= 0 && modelInstance) {
-                        contextWindow = await fetchContextSizeFromAPI(modelInstance);
-                    }
-                }
-                if (contextWindow > 0) {
-                    const remaining = contextWindow - estimatedContextTokens;
-                    if (remaining > 0) {
-                        const modelName = modelInstance?.model_name ?? model ?? '';
-                        const configuredMaxOutput =
-                            modelInstance?.max_output_tokens && modelInstance.max_output_tokens > 0
-                                ? modelInstance.max_output_tokens
-                                : lookupKnownMaxOutputTokens(modelName) || 16384;
-                        dynamicMaxCompletionTokens = Math.min(remaining, configuredMaxOutput);
-                    }
-                }
-            } catch {
-                // 解析失败时保持默认值
-            }
-        }
+        preparedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
     } catch (err: unknown) {
         logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
     }
 
     if (!isCurrentTurn()) return false;
 
-    requestTailText ??= task.buildEvidenceCardRequestTail(streamOptions?.activeContext);
+    // TailCards 由 onTailcardGenerate 钩子生成。上下文准备成功时回调可读取压缩后的
+    // ActiveContextView；准备失败时保留旧行为，直接使用原始 chat context 回退，
+    // 不在回退点重新构建或修改 active view。
+    requestTailText = await task.hooks.buildTailcards(task, {
+        activeContext: streamOptions?.activeContext,
+        chatContext: task.chat_context,
+        model,
+        requestType: 'streamComplete'
+    });
+
+    if (!isCurrentTurn()) return false;
+
+    const estimatedContextTokens = preparedContextTokens + estimateTextTokens(requestTailText);
+    if (estimatedContextTokens > 0) {
+        try {
+            let contextWindow = 0;
+            const modelInstance = model
+                ? Setting.getInstance().getModelInstance(model, 'chat')
+                : Setting.getInstance().getDefaultModelInstance();
+            if (modelInstance?.context_length && modelInstance.context_length > 0) {
+                contextWindow = modelInstance.context_length;
+            } else {
+                const modelName = modelInstance?.model_name ?? model ?? '';
+                contextWindow = lookupKnownContextSize(modelName);
+                if (contextWindow <= 0 && modelInstance) {
+                    contextWindow = await fetchContextSizeFromAPI(modelInstance);
+                }
+            }
+            if (contextWindow > 0) {
+                const remaining = contextWindow - estimatedContextTokens;
+                if (remaining > 0) {
+                    const modelName = modelInstance?.model_name ?? model ?? '';
+                    const configuredMaxOutput =
+                        modelInstance?.max_output_tokens && modelInstance.max_output_tokens > 0
+                            ? modelInstance.max_output_tokens
+                            : lookupKnownMaxOutputTokens(modelName) || 16384;
+                    dynamicMaxCompletionTokens = Math.min(remaining, configuredMaxOutput);
+                }
+            }
+        } catch {
+            // 解析失败时保持默认值
+        }
+    }
 
     task.profiler?.beginLLM(task._currentTurn);
     const benchmarkRequest = task.ensureBenchmarkUsageLedger().beginRequest({

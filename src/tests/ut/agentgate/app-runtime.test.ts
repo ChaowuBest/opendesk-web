@@ -160,7 +160,7 @@ jest.unstable_mockModule('../../../main/plugins/manager.js', () => ({
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/hooks.js', () => ({
-    HookRegistry: { beforeToolCall: jest.fn(), afterFinishTurn: jest.fn() }
+    GlobalHooks: { beforeToolCall: jest.fn(), afterFinishTurn: jest.fn() }
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/states/tasks.js', () => ({
