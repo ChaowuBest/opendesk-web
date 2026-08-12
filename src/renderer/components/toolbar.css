@@ -21,6 +21,46 @@ elastic-toolbar-widget.inline header > div {
     padding: 0 !important;
 }
 
+/* ===== 按钮状态角标（安全网关 dock 图标健康状态） ===== */
+.elastic-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+    color: #fff;
+    overflow: hidden;
+}
+.elastic-badge svg {
+    width: 5px;
+    height: 5px;
+}
+.elastic-badge--err {
+    background: #ef4444;
+    box-shadow: 0 0 3px rgba(239, 68, 68, 0.5);
+}
+.elastic-badge--warn {
+    background: #eab308;
+    box-shadow: 0 0 3px rgba(234, 179, 8, 0.5);
+}
+.elastic-badge--ok .elastic-badge-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 3px rgba(34, 197, 94, 0.5);
+}
+/* 图标包裹元素需相对定位，角标才能锚定到图标右上角 */
+.elastic-capsule-btn .elastic-icon-wrap {
+    position: relative;
+}
+
 /* ===== 药丸按钮变体：白底圆角药丸形按钮（用于设置面板等） ===== */
 elastic-toolbar-widget.pill-buttons header {
     height: auto !important;

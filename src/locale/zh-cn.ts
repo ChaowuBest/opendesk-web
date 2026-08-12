@@ -1379,6 +1379,10 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.logs': '日志',
     'renderer.toolbar.openConfigDir': '打开配置目录',
     'renderer.toolbar.personalCenter': '个人中心',
+    'renderer.toolbar.securityGateway': '安全网关',
+    'renderer.toolbar.securityGateway.ok': '安全网关运行正常',
+    'renderer.toolbar.securityGateway.warn': '安全网关已开启，AgentMoss 服务不可达',
+    'renderer.toolbar.securityGateway.err': '安全网关不可达',
 
     // Renderer - Personal Center
     'renderer.personal.title': '个人中心',

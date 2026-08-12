@@ -1415,6 +1415,10 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.logs': 'Logs',
     'renderer.toolbar.openConfigDir': 'Open Config Directory',
     'renderer.toolbar.personalCenter': 'Profile',
+    'renderer.toolbar.securityGateway': 'Security Gateway',
+    'renderer.toolbar.securityGateway.ok': 'Security Gateway is running normally',
+    'renderer.toolbar.securityGateway.warn': 'Security Gateway is on, AgentMoss service unreachable',
+    'renderer.toolbar.securityGateway.err': 'Security Gateway unreachable',
 
     // Renderer - Personal Center
     'renderer.personal.title': 'Profile',

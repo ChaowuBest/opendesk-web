@@ -73,6 +73,12 @@ class SideBar extends HTMLElement {
         this._taskListUnsubscribe = null;
         this._developerMode = false;
         this._experimentalFeature = false;
+        /** 安全网关总开关状态（决定 dock 图标是否显示） */
+        this._agentgateEnabled = false;
+        /** 安全网关运行状态：'ok' | 'warn'(AgentMoss 不可达) | 'err'(AgentGate 不可达) | null */
+        this._agentgateStatus = null;
+        this._agentgateStatusTimer = null;
+        this._bottomToolbar = null;
         this._t = createRendererTranslator();
         this._collapsed = false;
         this._taskView = localStorage.getItem(TASK_VIEW_STORAGE_KEY) === 'workspace' ? 'workspace' : 'time';
@@ -190,10 +196,12 @@ class SideBar extends HTMLElement {
                 .then((setting) => {
                     this._developerMode = !!setting?.debug?.developer_mode;
                     this._experimentalFeature = !!setting?.debug?.experimental_feature;
+                    this._agentgateEnabled = setting?.applications?.agentgate?.enabled === true;
                     this._t = createRendererTranslator(setting);
                     this._updateLocalizedChrome();
                     this.reloadTaskList();
                     this.reloadApplicationList();
+                    this._syncAgentgateStatusPolling();
                 })
                 .catch((err) => {
                     console.warn('Failed to load developer mode setting:', err);
@@ -201,12 +209,15 @@ class SideBar extends HTMLElement {
         }
         if (window.settingAPI?.onSettingChanged) {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
+                const agentgateEnabled = setting?.applications?.agentgate?.enabled === true;
                 this._developerMode = !!setting?.debug?.developer_mode;
                 this._experimentalFeature = !!setting?.debug?.experimental_feature;
+                this._agentgateEnabled = agentgateEnabled;
                 this._t = createRendererTranslator(setting);
                 this._updateLocalizedChrome();
                 this.reloadTaskList();
                 this.reloadApplicationList();
+                this._syncAgentgateStatusPolling();
             });
         }
 
@@ -271,6 +282,7 @@ class SideBar extends HTMLElement {
             clearTimeout(this._runningZoneClearTimer);
             this._runningZoneClearTimer = null;
         }
+        this._stopAgentgateStatusPolling();
     }
 
     /**
@@ -623,6 +635,17 @@ class SideBar extends HTMLElement {
                 }
             }
         ];
+        if (this._agentgateEnabled) {
+            buttons.push({
+                id: 'open-agentgate-btn',
+                icon: '',
+                iconSvg: svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'),
+                label: this._t('renderer.toolbar.securityGateway'),
+                action: () => {
+                    window.globalControlAPI.openApplication('agentgate');
+                }
+            });
+        }
         if (this._developerMode) {
             buttons.push({
                 id: 'open-debug-btn',
@@ -650,12 +673,73 @@ class SideBar extends HTMLElement {
 
     _createBottomToolbar() {
         const toolbar = new ElasticToolbarWidget(this._getBottomToolbarButtons());
+        this._bottomToolbar = toolbar;
 
         // 覆盖默认样式以匹配侧边栏毛玻璃风格
         toolbar.classList.add('sidebar-bottom');
         const container = this.querySelector('#sidebar-bottom-toolbar');
         if (container) {
             container.appendChild(toolbar);
+        }
+        this._startAgentgateStatusPolling();
+    }
+
+    /**
+     * 安全网关总开关开启时，轮询 Bridge 运行状态并为 dock 盾牌图标设置角标。
+     * ok=正常，warn=AgentMoss 不可达，err=AgentGate 不可达。
+     */
+    _startAgentgateStatusPolling() {
+        this._stopAgentgateStatusPolling();
+        if (!this._agentgateEnabled) return;
+        this._pollAgentgateStatus();
+        this._agentgateStatusTimer = setInterval(() => this._pollAgentgateStatus(), 10000);
+    }
+
+    /** 根据总开关状态同步轮询启停（开关从配置页切换时调用） */
+    _syncAgentgateStatusPolling() {
+        if (this._agentgateEnabled) {
+            this._startAgentgateStatusPolling();
+        } else {
+            this._stopAgentgateStatusPolling();
+            this._agentgateStatus = null;
+            if (this._bottomToolbar) this._bottomToolbar.setButtonBadge('open-agentgate-btn', null);
+        }
+    }
+
+    async _pollAgentgateStatus() {
+        try {
+            const status = await window.applicationRegistryAPI?.callMainWorld('agentgate', 'getBridgeStatus');
+            if (!status) {
+                this._setAgentgateStatus(null);
+                return;
+            }
+            if (status.gateRunning === false) {
+                this._setAgentgateStatus('err');
+            } else if (status.gateRunning === true && status.mossRunning === false) {
+                this._setAgentgateStatus('warn');
+            } else if (status.gateRunning === true && status.mossRunning === true && status.llmAvailable === false) {
+                this._setAgentgateStatus('warn');
+            } else {
+                this._setAgentgateStatus('ok');
+            }
+        } catch {
+            this._setAgentgateStatus('err');
+        }
+    }
+
+    _setAgentgateStatus(status) {
+        if (this._agentgateStatus === status) return;
+        this._agentgateStatus = status;
+        if (!this._bottomToolbar?.setButtonBadge) return;
+        const titleKey = status ? `renderer.toolbar.securityGateway.${status}` : null;
+        const title = titleKey ? this._t(titleKey) : null;
+        this._bottomToolbar.setButtonBadge('open-agentgate-btn', this._agentgateStatus, title);
+    }
+
+    _stopAgentgateStatusPolling() {
+        if (this._agentgateStatusTimer) {
+            clearInterval(this._agentgateStatusTimer);
+            this._agentgateStatusTimer = null;
         }
     }
 
@@ -670,6 +754,7 @@ class SideBar extends HTMLElement {
         else if (appBundle === 'filemgr') activeId = 'open-file-system-btn';
         else if (view === 'setting' || view === 'wizard') activeId = 'open-setting-editor-btn';
         else if (view === 'personal-center') activeId = 'open-personal-center-btn';
+        else if (appBundle === 'agentgate') activeId = 'open-agentgate-btn';
 
         toolbar.setActiveButton(activeId);
     }
@@ -757,9 +842,14 @@ class SideBar extends HTMLElement {
             searchClear.setAttribute('title', label);
             searchClear.setAttribute('aria-label', label);
         }
-        const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
+        const toolbar = this._bottomToolbar ?? this.querySelector('elastic-toolbar-widget.sidebar-bottom');
         if (toolbar?.setButtons) {
             toolbar.setButtons(this._getBottomToolbarButtons());
+            // setButtons 会整体重渲染，重渲染后需重新挂载安全网关角标及其状态说明
+            if (this._agentgateStatus) {
+                const titleKey = `renderer.toolbar.securityGateway.${this._agentgateStatus}`;
+                toolbar.setButtonBadge('open-agentgate-btn', this._agentgateStatus, this._t(titleKey));
+            }
         }
     }
 
