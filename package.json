@@ -112,7 +112,7 @@
         "@fortawesome/fontawesome-free": "^7.1.0",
         "@hono/node-server": "^2.0.3",
         "@kenhkl/agent-gate": "0.6.3",
-        "@kenhkl/agent-moss": "0.12.5",
+        "@kenhkl/agent-moss": "0.12.7",
         "@langfuse/otel": "^5.9.1",
         "@langfuse/tracing": "^5.9.1",
         "@modelcontextprotocol/sdk": "^1.26.0",
