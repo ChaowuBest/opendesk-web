@@ -855,6 +855,7 @@ export const enUs: Record<string, string> = {
     'tools.waitSubTask.name': 'Await Sub-task',
     'tools.attachToSubTask.name': 'Append to Sub-task',
     'tools.askUser.name': 'Ask User',
+    'tools.askUser.summary': 'Asking User with ${count} Questions',
     'tools.memory.add.name': 'Add Memory',
     'tools.memory.remove.name': 'Remove Memory',
     'tools.memory.search.name': 'Search Memory',

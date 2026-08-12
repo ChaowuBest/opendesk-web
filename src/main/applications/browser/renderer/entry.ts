@@ -3268,6 +3268,7 @@ class BrowserEntryWidget extends HTMLElement {
     /**
      * 将用户输入规范化为有效 URL：
      * - 已有协议 → 保持不变
+     * - 本地绝对路径（以 / 开头）→ 添加 file://
      * - 看起来像域名（含点号且无空格）→ 添加 https://
      * - 其他 → 作为搜索关键词
      */
@@ -3275,6 +3276,7 @@ class BrowserEntryWidget extends HTMLElement {
         if (!raw) return null;
         if (/^opendesk:\/\//.test(raw)) return raw;
         if (/^(https?|about|file|data):/.test(raw)) return raw;
+        if (/^\//.test(raw)) return `file://${raw}`;
         if (/^[^\s]+\.[^\s]+$/.test(raw) && !raw.includes(' ')) return `https://${raw}`;
         return SEARCH_ENGINE + encodeURIComponent(raw);
     }

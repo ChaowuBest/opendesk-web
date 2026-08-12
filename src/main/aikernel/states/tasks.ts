@@ -2395,6 +2395,16 @@ export class TaskState {
     }
 
     async buildToolsets(): Promise<BaseToolset[]> {
+        // 从磁盘恢复的主任务 interactionToolset 未持久化，需要重新注入
+        if (this.parent_id === null && !this.interactionToolset) {
+            try {
+                await getPlatform().initPlatformHarness(this);
+            } catch (err) {
+                logger.warn(
+                    `Failed to re-init interaction toolset for loaded task ${this.task_id}: ${(err as Error)?.message || String(err)}`
+                );
+            }
+        }
         return buildToolsetsForTask(this);
     }
 

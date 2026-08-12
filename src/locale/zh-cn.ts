@@ -833,6 +833,7 @@ export const zhCn: Record<string, string> = {
     'tools.waitSubTask.name': '等待子任务',
     'tools.attachToSubTask.name': '追加消息到子任务',
     'tools.askUser.name': '询问用户',
+    'tools.askUser.summary': '向用户提问 ${count} 个问题',
     'tools.memory.add.name': '添加记忆',
     'tools.memory.remove.name': '删除记忆',
     'tools.memory.search.name': '搜索记忆',
