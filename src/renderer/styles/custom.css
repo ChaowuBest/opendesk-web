@@ -3355,12 +3355,12 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 /* User message editing state */
 .od-user-msg.od-user-msg-editing {
-    background: #ffffff;
+    background: var(--chat-bubble-hover-bg);
     border-color: var(--chat-bubble-hover-border);
 }
 
 .od-user-msg-editing .od-user-msg-editor {
-    color: #1c1917;
+    color: var(--chat-ink2);
 }
 
 /* User bubble inline code */
@@ -3376,7 +3376,10 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 /* User message inline editor */
 .od-user-msg-editor {
-    width: 100%;
+    /* 宽度随输入内容自动增长，达到气泡 max-width(75%) 后再换行 */
+    field-sizing: content;
+    min-width: 3em;
+    max-width: 100%;
     min-height: 1.65em;
     padding: 0;
     border: none;

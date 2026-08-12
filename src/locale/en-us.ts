@@ -1549,6 +1549,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.menu.copy': 'Copy',
     'renderer.taskview.menu.copyPlain': 'Copy Plain Text',
     'renderer.taskview.menu.selectAll': 'Select All',
+    'renderer.taskview.menu.edit': 'Edit Message',
     'renderer.taskview.menu.rewindToHere': 'Rewind to Here',
     'renderer.taskview.menu.continueFromHere': 'Continue from Here',
     'renderer.taskview.menu.rewindHint': 'Delete this user message and everything after it from the task.',

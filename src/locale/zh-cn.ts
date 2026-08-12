@@ -1512,6 +1512,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.menu.copy': '复制',
     'renderer.taskview.menu.copyPlain': '复制纯文本',
     'renderer.taskview.menu.selectAll': '全选',
+    'renderer.taskview.menu.edit': '编辑消息',
     'renderer.taskview.menu.rewindToHere': '回退到这里',
     'renderer.taskview.menu.continueFromHere': '从这里继续',
     'renderer.taskview.menu.rewindHint': '删除这条用户消息及其后面的所有任务内容。',

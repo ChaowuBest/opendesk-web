@@ -44,6 +44,8 @@ const FORK_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
 const EDIT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+const REWIND_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
 const CTX_FONT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
 const CTX_SELECT_ALL_ICON_SVG =
@@ -3319,11 +3321,9 @@ class TaskView extends HTMLElement {
         if (!textBubble) return;
 
         const bubble = textBubble.parentElement;
-        const rawText = container.dataset.rawText || textBubble.textContent || '';
+        const rawText = (container.dataset.rawText || textBubble.textContent || '').replace(/\n+$/, '');
         const originalHtml = textBubble.innerHTML;
-        const originalWidth = bubble.offsetWidth;
 
-        bubble.style.width = `${originalWidth}px`;
         bubble.classList.add('od-user-msg-editing');
 
         const textarea = document.createElement('textarea');
@@ -3333,19 +3333,13 @@ class TaskView extends HTMLElement {
         textBubble.innerHTML = '';
         textBubble.appendChild(textarea);
 
-        const autoResize = () => {
-            textarea.style.height = 'auto';
-            textarea.style.height = textarea.scrollHeight + 'px';
-        };
-        textarea.addEventListener('input', autoResize);
         textarea.focus();
         textarea.setSelectionRange(rawText.length, rawText.length);
-        requestAnimationFrame(autoResize);
 
         let editing = true;
+        let submitting = false;
 
         const cleanup = () => {
-            bubble.style.width = '';
             bubble.classList.remove('od-user-msg-editing');
             document.removeEventListener('mousedown', outsideClickHandler);
         };
@@ -3358,20 +3352,25 @@ class TaskView extends HTMLElement {
         };
 
         const outsideClickHandler = (e) => {
-            if (editing && !textBubble.contains(e.target)) {
+            if (editing && !submitting && !textBubble.contains(e.target)) {
                 restoreOriginal();
             }
         };
 
         textarea.addEventListener('keydown', async (e) => {
             if (!editing) return;
+            // 输入法（IME）组合期间不拦截按键，避免选词回车被误判为提交
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
+                if (submitting) return;
                 const newText = textarea.value.trim();
                 if (!newText || newText === rawText) {
                     restoreOriginal();
                     return;
                 }
+                submitting = true;
+                textarea.blur();
                 const confirmed = await showConfirmModal({
                     variant: 'warn',
                     title: taskViewT('renderer.taskview.edit.title'),
@@ -3379,6 +3378,7 @@ class TaskView extends HTMLElement {
                     confirmText: taskViewT('renderer.taskview.edit.confirm'),
                     cancelText: taskViewT('renderer.taskview.edit.cancel')
                 });
+                submitting = false;
                 if (!confirmed) {
                     textarea.focus();
                     return;
@@ -4334,11 +4334,17 @@ class TaskView extends HTMLElement {
             { id: 'copy-plain', icon: CTX_FONT_ICON_SVG, label: taskViewT('renderer.taskview.menu.copyPlain') },
             { id: 'select-all', icon: CTX_SELECT_ALL_ICON_SVG, label: taskViewT('renderer.taskview.menu.selectAll') },
             {
-                id: 'rewind',
+                id: 'edit',
                 icon: EDIT_ICON_SVG,
+                label: taskViewT('renderer.taskview.menu.edit'),
+                separatorBefore: true,
+                disabled: !canRewind
+            },
+            {
+                id: 'rewind',
+                icon: REWIND_ICON_SVG,
                 label: taskViewT('renderer.taskview.menu.rewindToHere'),
                 hint: taskViewT('renderer.taskview.menu.rewindHint'),
-                separatorBefore: true,
                 disabled: !canRewind
             },
             {
@@ -4436,6 +4442,12 @@ class TaskView extends HTMLElement {
                 );
             }
         };
+
+        menu.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
+            TaskView._dismissUserMsgContextMenu();
+            if (!taskView || !messageId) return;
+            taskView._handleEditUserMessage(messageId);
+        });
 
         menu.querySelector('[data-action="rewind"]')?.addEventListener('click', () => {
             runRewindAction(false);
