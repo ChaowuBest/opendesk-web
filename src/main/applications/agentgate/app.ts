@@ -71,7 +71,7 @@ class AgentGateApplication extends BaseApplication {
                 .describe('存储类型：sqlite 或 json（鸿蒙默认 json）'),
             dbPath: z.string().default('').describe('SQLite 数据库路径（空则使用默认值）'),
             jsonDataDir: z.string().default('').describe('JSON 文件存储目录（空则使用默认值）'),
-            floatingWindowEnabled: z.boolean().default(true).describe('浮窗显示开关'),
+            floatingWindowEnabled: z.boolean().default(false).describe('浮窗显示开关'),
             floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度'),
             maliciousSkillDetection: z
                 .boolean()
