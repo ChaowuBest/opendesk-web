@@ -278,6 +278,47 @@ describe('task-view message queue', () => {
         expect(artifacts.style.width).toBe('70%');
     });
 
+    test('opens a slash skill pill in the shared skill detail modal', async () => {
+        const callMainWorld = jest.fn(async () => ({
+            id: 'calendar/calendar',
+            name: 'calendar',
+            description: 'Calendar skill',
+            body: '# Calendar',
+            directory: '/skills/calendar'
+        }));
+        Object.defineProperty(window, 'applicationRegistryAPI', {
+            configurable: true,
+            writable: true,
+            value: { callMainWorld }
+        });
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _handleSkillPillClick: (event: unknown) => Promise<void>;
+        };
+        const pill = document.createElement('a');
+        pill.className = 'od-skill-pill';
+        pill.dataset.skillBundle = 'calendar';
+        pill.dataset.skillName = 'calendar';
+        taskView.appendChild(pill);
+
+        await taskView._handleSkillPillClick({
+            target: pill,
+            preventDefault: jest.fn(),
+            stopPropagation: jest.fn()
+        });
+
+        expect(callMainWorld).toHaveBeenCalledWith('skillmgr', 'getSkillDetailForReference', 'calendar', 'calendar');
+        const card = taskView.querySelector('#taskview-skill-detail') as HTMLElement & { shadowRoot: ShadowRoot };
+        expect(card).not.toBeNull();
+        expect(card.shadowRoot.querySelector('.detail-dialog')).not.toBeNull();
+        expect(card.shadowRoot.querySelector('.detail-name')?.textContent).toBe('calendar');
+        taskView.remove();
+        Object.defineProperty(window, 'applicationRegistryAPI', {
+            configurable: true,
+            writable: true,
+            value: undefined
+        });
+    });
+
     test('reveals a Windows file pill through the filesystem API', () => {
         const showItemInFolder = jest.fn(async () => undefined);
         window.fsAPI = { showItemInFolder };

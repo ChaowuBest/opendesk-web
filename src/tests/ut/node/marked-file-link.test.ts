@@ -25,6 +25,15 @@ test('resolveFilePath: returns null when file does not exist', () => {
     setRenderWorkspace(null);
 });
 
+test('resolveFilePath: returns null when path points to a directory', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        assert.equal(resolveFilePath(tmp), null);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('resolveFilePath: resolves relative path against workspace', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
@@ -181,6 +190,34 @@ test('markdown link: renders link to existing file as pill', () => {
         const html = marked.parse('[utils.ts](src/utils.ts)') as string;
         assert.ok(html.includes('od-file-pill'));
         assert.ok(html.includes('data-open-preview'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: renders OpenDesk skill links as skill pills', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[calendar](opendesk-skill:calendar/calendar)') as string;
+        assert.ok(html.includes('<button type="button" class="od-skill-pill"'));
+        assert.ok(html.includes('data-skill-bundle="calendar"'));
+        assert.ok(html.includes('data-skill-name="calendar"'));
+        assert.ok(html.includes('od-skill-pill-icon'));
+        assert.ok(!html.includes('data-open-preview'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: does not render a directory link as a file pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse(`[root](${tmp})`) as string;
+        assert.ok(!html.includes('od-file-pill'));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

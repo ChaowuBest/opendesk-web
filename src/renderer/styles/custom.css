@@ -3537,48 +3537,107 @@ agent-input[hide-disclaimer] .agent-input-footer {
     color: #a1a1aa;
 }
 
-/* ── File link pill (inline file path in markdown text) ── */
-.od-file-pill {
+/* ── Skill link pill (slash skill reference in markdown text) ── */
+.od-skill-pill {
+    position: relative;
+    top: -0.02em;
     display: inline-flex;
+    height: 19px;
     align-items: center;
-    gap: 6px;
-    padding: 2px 10px;
-    border-radius: 8px;
-    font-size: 0.85em;
-    font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
-    line-height: 1.5;
+    gap: 4px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 4px;
+    background: #fef1ef;
+    box-shadow: inset 0 -1px 0 rgba(223, 68, 54, 0.22);
+    color: #df4436;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 19px;
     cursor: pointer;
     text-decoration: none;
-    vertical-align: baseline;
-    transition: all 0.18s ease;
+    vertical-align: middle;
+    transition:
+        background 0.18s ease,
+        color 0.18s ease,
+        box-shadow 0.18s ease;
+}
+.od-skill-pill:hover {
+    background: rgba(223, 68, 54, 0.16);
+    box-shadow: inset 0 -1px 0 rgba(223, 68, 54, 0.42);
+}
+.od-skill-pill-icon {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+}
+.od-skill-pill-name {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+[data-theme='dark'] .od-skill-pill {
+    background: rgba(232, 86, 63, 0.14);
+    box-shadow: inset 0 -1px 0 rgba(232, 86, 63, 0.28);
+    color: #e8563f;
+}
+[data-theme='dark'] .od-skill-pill:hover {
+    background: rgba(232, 86, 63, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(232, 86, 63, 0.48);
+}
+
+/* ── File link pill (inline file path in markdown text) ── */
+.od-file-pill {
+    position: relative;
+    top: -0.02em;
+    display: inline-flex;
+    height: 19px;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+    line-height: 19px;
+    cursor: pointer;
+    text-decoration: none;
+    vertical-align: middle;
+    transition:
+        background 0.18s ease,
+        color 0.18s ease,
+        box-shadow 0.18s ease;
 }
 .od-file-pill[data-type='code'] {
     background: #ebf1fb;
-    border: 1px solid rgba(66, 103, 178, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(66, 103, 178, 0.22);
     color: #4267b2;
 }
 .od-file-pill[data-type='doc'] {
     background: #fdf3e3;
-    border: 1px solid rgba(184, 117, 3, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(184, 117, 3, 0.22);
     color: #b87503;
 }
 .od-file-pill[data-type='text'] {
     background: #e7f5ee;
-    border: 1px solid rgba(31, 157, 102, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(31, 157, 102, 0.22);
     color: #1f9d66;
 }
 .od-file-pill[data-type='default'] {
     background: #fef9f8;
-    border: 1px solid rgba(223, 68, 54, 0.2);
+    box-shadow: inset 0 -1px 0 rgba(223, 68, 54, 0.2);
     color: #df4436;
 }
 .od-file-pill:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
-    filter: brightness(1.1);
+    filter: brightness(1.08);
     text-decoration: none;
 }
 .od-file-pill-icon {
+    width: 11px;
+    height: 11px;
     flex-shrink: 0;
 }
 .od-file-pill-name {
@@ -3589,26 +3648,23 @@ agent-input[hide-disclaimer] .agent-input-footer {
 }
 [data-theme='dark'] .od-file-pill[data-type='code'] {
     background: rgba(122, 162, 232, 0.16);
-    border-color: rgba(122, 162, 232, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(122, 162, 232, 0.22);
     color: #7aa2e8;
 }
 [data-theme='dark'] .od-file-pill[data-type='doc'] {
     background: rgba(226, 162, 59, 0.15);
-    border-color: rgba(226, 162, 59, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(226, 162, 59, 0.22);
     color: #e2a23b;
 }
 [data-theme='dark'] .od-file-pill[data-type='text'] {
     background: rgba(61, 191, 130, 0.15);
-    border-color: rgba(61, 191, 130, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(61, 191, 130, 0.22);
     color: #3dbf82;
 }
 [data-theme='dark'] .od-file-pill[data-type='default'] {
     background: rgba(232, 86, 63, 0.12);
-    border-color: rgba(232, 86, 63, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(232, 86, 63, 0.22);
     color: #e8563f;
-}
-[data-theme='dark'] .od-file-pill:hover {
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
 }
 
 /* ApplicationAgentInput stop button animation */

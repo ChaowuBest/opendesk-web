@@ -2078,7 +2078,7 @@ export class TaskState {
      * 未找到的 skill name 静默忽略（不报错）。
      */
     /**
-     * 将用户消息中匹配到的 /skillName 替换为 [技能: skillName](directory) 标签。
+     * 将用户消息中匹配到的 /skillName 替换为专用技能链接标签。
      * 在消息 append 到 chat_context 之前调用，确保渲染时已经是替换后的文本。
      */
     private async replaceSlashSkillsInText(message: string): Promise<string> {
@@ -2102,9 +2102,11 @@ export class TaskState {
                 const loadedSkill = await registry.getSkillForAgent(entry.bundleName, name, this.agentId);
                 if (!loadedSkill) continue;
 
-                const directory = loadedSkill.directory || entry.bundleName;
                 const slashPattern = new RegExp(`(^|\\s)\\/${name.replace(/-/g, '\\-')}(?=\\s|$)`, 'g');
-                updatedMessage = updatedMessage.replace(slashPattern, `$1[技能: ${name}](${directory})`);
+                updatedMessage = updatedMessage.replace(
+                    slashPattern,
+                    `$1[${name}](opendesk-skill:${entry.bundleName}/${name})`
+                );
             } catch {
                 // skill 加载失败时不替换
             }

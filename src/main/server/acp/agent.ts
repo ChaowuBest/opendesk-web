@@ -204,12 +204,14 @@ export class OpenDeskAcpAgent implements acp.Agent {
                 const bTime = b.task.updated_at?.getTime() ?? b.createdAt.getTime();
                 return bTime - aTime;
             })
-            .map((session): acp.SessionInfo => ({
-                sessionId: session.sessionId,
-                cwd: session.cwd,
-                title: session.task.task_name || t('acp.session.default_title'),
-                updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
-            }));
+            .map(
+                (session): acp.SessionInfo => ({
+                    sessionId: session.sessionId,
+                    cwd: session.cwd,
+                    title: session.task.task_name || t('acp.session.default_title'),
+                    updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
+                })
+            );
 
         return { sessions };
     }

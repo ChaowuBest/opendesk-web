@@ -16,9 +16,11 @@ import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
+import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
+import { renderSafeMarkdown } from '../utils/markdown.ts';
 import {
     GoalController,
     canShowWaitingAssistantPlaceholder,
@@ -2622,6 +2624,53 @@ class TaskView extends HTMLElement {
         window.fsAPI?.openPath?.(filePath);
     }
 
+    async _handleSkillPillClick(e) {
+        const target = e.target.closest('[data-skill-bundle][data-skill-name]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { skillBundle, skillName } = target.dataset;
+        if (!skillBundle || !skillName || !window.applicationRegistryAPI?.callMainWorld) return;
+
+        let detail;
+        try {
+            detail = await window.applicationRegistryAPI.callMainWorld(
+                'skillmgr',
+                'getSkillDetailForReference',
+                skillBundle,
+                skillName
+            );
+        } catch (error) {
+            console.warn('Failed to load skill detail:', error);
+            return;
+        }
+        if (!detail) return;
+
+        this.querySelector('#taskview-skill-detail')?.remove();
+        const card = document.createElement('skill-detail-card');
+        card.id = 'taskview-skill-detail';
+        card.dataset.theme = document.documentElement.dataset.theme || 'light';
+        card.model = {
+            id: detail.id,
+            name: detail.name || skillName,
+            closeLabel: taskViewT('renderer.taskview.skillTag.close'),
+            description: detail.description,
+            descriptionLabel: taskViewT('renderer.taskview.skillTag.description'),
+            bodyHtml: detail.body ? renderSafeMarkdown(detail.body) : undefined,
+            bodyLabel: taskViewT('renderer.taskview.skillTag.content'),
+            metadata: [
+                { label: taskViewT('renderer.taskview.skillTag.bundle'), value: skillBundle },
+                ...(detail.directory
+                    ? [{ label: taskViewT('renderer.taskview.skillTag.directory'), value: detail.directory }]
+                    : [])
+            ],
+            metadataLabel: taskViewT('renderer.taskview.skillTag.metadata'),
+            actions: [{ id: 'close', label: taskViewT('renderer.taskview.skillTag.close') }]
+        };
+        card.addEventListener('skill-detail-action', () => card.remove());
+        this.appendChild(card);
+    }
+
     /**
      * 处理聊天区域中 [data-open-preview] 元素的点击事件。
      * 展开侧边栏 → 切换到工作空间 tab → 在预览模式下打开文件。
@@ -3482,6 +3531,9 @@ class TaskView extends HTMLElement {
         this._handleOpenFileClick = this._handleOpenFileClick.bind(this);
         this.addEventListener('click', this._handleOpenFileClick);
 
+        this._handleSkillPillClick = this._handleSkillPillClick.bind(this);
+        this.addEventListener('click', this._handleSkillPillClick);
+
         // 添加预览打开按钮的点击事件监听（事件代理）
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
@@ -3748,6 +3800,7 @@ class TaskView extends HTMLElement {
         }
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handleOpenFileClick);
+        this.removeEventListener('click', this._handleSkillPillClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();

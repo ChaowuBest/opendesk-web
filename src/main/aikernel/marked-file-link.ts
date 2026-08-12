@@ -32,7 +32,7 @@ const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 
 /**
  * Resolve a potentially relative path against the current render workspace.
- * Returns the absolute path if the file exists, otherwise null.
+ * Returns the absolute path if it points to an existing file, otherwise null.
  */
 export function resolveFilePath(rawPath: string): string | null {
     if (!rawPath || URL_SCHEME_RE.test(rawPath) || rawPath.startsWith('#')) {
@@ -49,7 +49,8 @@ export function resolveFilePath(rawPath: string): string | null {
     }
 
     try {
-        return fs.existsSync(absPath) ? absPath : null;
+        const stat = fs.statSync(absPath);
+        return stat.isFile() ? absPath : null;
     } catch {
         return null;
     }
@@ -79,6 +80,15 @@ const FILE_PATH_SEARCH_RE = new RegExp(
 );
 
 // ── Pill HTML ──────────────────────────────────────────────────────
+
+const SKILL_SCHEME = 'opendesk-skill:';
+
+const SKILL_ICON_SVG =
+    '<svg class="od-skill-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4M19 17v4M3 5h4M17 19h4"/></svg>';
+
+function buildSkillPillHTML(bundleName: string, skillName: string, label: string): string {
+    return `<button type="button" class="od-skill-pill" data-skill-bundle="${escapeHtml(bundleName)}" data-skill-name="${escapeHtml(skillName)}">${SKILL_ICON_SVG}<span class="od-skill-pill-name">${escapeHtml(label)}</span></button>`;
+}
 
 const FILE_ICON_SVG =
     '<svg class="od-file-pill-icon" width="13" height="13" viewBox="0 0 16 16" fill="none">' +
@@ -215,6 +225,16 @@ export const fileLinkExtension: MarkedExtension = {
             this: { parser: { parseInline: (tokens: unknown[]) => string } },
             { href, tokens }: Tokens.Link
         ): string | false {
+            if (href.startsWith(SKILL_SCHEME)) {
+                const reference = href.slice(SKILL_SCHEME.length).split('/');
+                if (reference.length === 2 && reference[0] && reference[1]) {
+                    return buildSkillPillHTML(
+                        reference[0],
+                        reference[1],
+                        this.parser.parseInline(tokens) || reference[1]
+                    );
+                }
+            }
             // Markdown link hrefs may be URL-encoded (e.g. %20 for space)
             let decodedHref = href;
             try {

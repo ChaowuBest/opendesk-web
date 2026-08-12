@@ -1672,6 +1672,12 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.fileTag.copyPath': 'Copy file path',
     'renderer.taskview.fileTag.openDefault': 'Open with default app',
     'renderer.taskview.fileTag.reveal': 'Reveal in folder',
+    'renderer.taskview.skillTag.close': 'Close',
+    'renderer.taskview.skillTag.description': 'Description',
+    'renderer.taskview.skillTag.content': 'Skill content',
+    'renderer.taskview.skillTag.metadata': 'Metadata',
+    'renderer.taskview.skillTag.bundle': 'Application',
+    'renderer.taskview.skillTag.directory': 'Directory',
     'renderer.taskview.edit.title': 'Confirm Edit Message',
     'renderer.taskview.edit.message':
         'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',

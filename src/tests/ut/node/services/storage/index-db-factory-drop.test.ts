@@ -2,8 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createChunkIndexDB, dropChunkIndexStore } from '../../../../../main/services/storage/chunk-index-db-factory.js';
-import { createVectorIndexDB, dropVectorIndexStore } from '../../../../../main/services/storage/vector-index-db-factory.js';
+import {
+    createChunkIndexDB,
+    dropChunkIndexStore
+} from '../../../../../main/services/storage/chunk-index-db-factory.js';
+import {
+    createVectorIndexDB,
+    dropVectorIndexStore
+} from '../../../../../main/services/storage/vector-index-db-factory.js';
 import { toWasmDbPath } from '../../../../../main/services/storage/wasm-path.js';
 
 function tmpDir(name: string): string {
