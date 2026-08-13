@@ -564,7 +564,10 @@ class HomePage extends HTMLElement {
         const wsBar = this.querySelector('#hp-workspace-bar');
         if (wsBar) {
             wsBar.addEventListener('click', async () => {
-                const selected = await showWorkspacePicker({ title: this.t('workspace.defaultPickerTitle') });
+                const selected = await showWorkspacePicker({
+                    title: this.t('workspace.defaultPickerTitle'),
+                    t: this._t
+                });
                 if (selected) {
                     // 先立即更新 UI，持久化和 filemgr 扫描异步进行，不要等
                     const pathLabel = this.querySelector('#hp-workspace-path');

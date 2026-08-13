@@ -1241,7 +1241,7 @@ class AgentInput extends HTMLElement {
                         </div>
                         <button id="agent-input-stop-btn" class="agent-stop-btn" style="display:none;">
                             <span class="agent-stop-icon"><i class="fas fa-stop"></i></span>
-                            <span>停止</span>
+                            <span>${this.t('renderer.agentInput.stop')}</span>
                         </button>
                     </div>
                 </div>

@@ -1938,7 +1938,7 @@ const registerFSAPIHandlers = () => {
         }));
     ipcMain.handle('fs:dialog-open', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
-            title: '选择附件',
+            title: t('main.dialog.openFile'),
             properties: ['openFile', 'multiSelections'] // 允许选文件、允许多选
         });
 
@@ -1951,7 +1951,7 @@ const registerFSAPIHandlers = () => {
     });
     ipcMain.handle('fs:dialog-open-directory', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
-            title: '选择目录',
+            title: t('main.dialog.openDirectory'),
             properties: ['openDirectory']
         });
 
@@ -2419,7 +2419,7 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:selectWorkspaceDirectory', async () => {
         try {
             const result = await dialog.showOpenDialog(globalMainWindow!, {
-                title: '选择工作空间目录',
+                title: t('main.dialog.selectWorkspaceDirectory'),
                 properties: ['openDirectory']
             });
             if (result.canceled || result.filePaths.length === 0) {
@@ -2435,7 +2435,7 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:pickDirectoryDialog', async () => {
         try {
             const result = await dialog.showOpenDialog(globalMainWindow!, {
-                title: '选择工作空间目录',
+                title: t('main.dialog.selectWorkspaceDirectory'),
                 properties: ['openDirectory', 'createDirectory']
             });
             if (result.canceled || result.filePaths.length === 0) {

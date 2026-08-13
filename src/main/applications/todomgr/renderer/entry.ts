@@ -13,6 +13,7 @@ import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { showWorkspacePicker } from '../../../../renderer/components/workspacePicker.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import { createRendererTranslator } from '../../../../renderer/locale.js';
 import type { TodoTemplate } from '../templates.js';
 
 /* ═══════════════════════════════════════════════════
@@ -2085,8 +2086,14 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 return;
             }
 
-            const title = (this.querySelector('#tm-edit-title') as HTMLInputElement)?.value?.trim() || '任务';
-            const selected = await showWorkspacePicker({ title: `选择 ${title} 的工作空间` });
+            const t = createRendererTranslator();
+            const title =
+                (this.querySelector('#tm-edit-title') as HTMLInputElement)?.value?.trim() ||
+                t('renderer.workspacePicker.taskNameFallback');
+            const selected = await showWorkspacePicker({
+                title: t('renderer.workspacePicker.titleWithName', { name: title }),
+                t
+            });
             if (selected) {
                 this._ensureWorkspacePathOption(select, selected);
                 select.value = `${WORKSPACE_SELECT_PATH_PREFIX}${selected}`;

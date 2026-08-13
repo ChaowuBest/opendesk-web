@@ -39,6 +39,39 @@ export const zhCn: Record<string, string> = {
     'workspace.mismatch.title': '任务工作空间',
     'workspace.mismatch.message': '当前任务绑定在 ${workspace}，与全局工作空间不同。全局工作空间未切换。',
 
+    // Renderer - 工作空间选择器
+    'renderer.workspacePicker.defaultTitle': '选择工作空间',
+    'renderer.workspacePicker.titleWithName': '选择 ${name} 的工作空间',
+    'renderer.workspacePicker.taskNameFallback': '任务',
+    'renderer.workspacePicker.current': '当前：',
+    'renderer.workspacePicker.unset': '未设置',
+    'renderer.workspacePicker.editPath': '点击编辑路径',
+    'renderer.workspacePicker.pathPlaceholder': '输入工作空间路径…',
+    'renderer.workspacePicker.pickInSystemHint': '在系统文件管理器中选择',
+    'renderer.workspacePicker.pickInSystem': '在系统窗口中选择',
+    'renderer.workspacePicker.recent': '最近使用',
+    'renderer.workspacePicker.recentEmpty': '暂无最近使用的工作空间',
+    'renderer.workspacePicker.removeRecent': '移除此记录',
+    'renderer.workspacePicker.browse': '浏览目录',
+    'renderer.workspacePicker.showHidden': '显示隐藏文件',
+    'renderer.workspacePicker.cancel': '取消',
+    'renderer.workspacePicker.confirm': '选择',
+    'renderer.workspacePicker.close': '关闭',
+    'renderer.workspacePicker.deleteTitle': '删除确认',
+    'renderer.workspacePicker.deleteMessage': '确定要删除 <b>${name}</b> 吗？此操作无法撤销。',
+    'renderer.workspacePicker.delete': '删除',
+    'renderer.workspacePicker.home': '家目录',
+    'renderer.workspacePicker.sandbox': '应用沙箱',
+
+    // Renderer - 文件选择器（工作空间选择器内部使用）
+    'renderer.fileSelector.emptyDrive': '未检测到磁盘',
+    'renderer.fileSelector.emptyDir': '空目录',
+    'renderer.fileSelector.rename': '重命名',
+    'renderer.fileSelector.newFolder': '新建文件夹',
+    'renderer.fileSelector.newFolderInside': '新建文件夹（在 ${name} 内）',
+    'renderer.fileSelector.newFolderSibling': '新建文件夹（与 ${name} 同级）',
+    'renderer.fileSelector.delete': '删除',
+
     // Homepage
     'homepage.greeting.earlyMorning': '夜深了',
     'homepage.greeting.morning': '早上好',
@@ -1260,6 +1293,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.recording.stopTitle': '正在录音，点击停止',
     'renderer.agentInput.recording.endTitle': '正在录音，点击结束',
     'renderer.agentInput.recording.listening': '正在聆听，识别文字将显示在输入框…',
+    'renderer.agentInput.stop': '停止',
     'renderer.messageQueue.title': '消息队列 (${count})',
     'renderer.messageQueue.empty': '(空消息)',
     'renderer.messageQueue.sendNow': '立即发送',
@@ -1689,6 +1723,11 @@ export const zhCn: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': '未触发任务回顾',
     'renderer.developer.reviewNotTriggeredDetail': '任务回顾请求无法接受',
     'renderer.developer.triggerFailed': '触发失败',
+
+    // Main - Native File Dialogs
+    'main.dialog.openFile': '选择附件',
+    'main.dialog.openDirectory': '选择目录',
+    'main.dialog.selectWorkspaceDirectory': '选择工作空间目录',
 
     // Main - Log Export
     'main.log.export.title': '导出日志',

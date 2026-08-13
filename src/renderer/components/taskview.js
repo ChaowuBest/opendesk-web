@@ -3180,7 +3180,8 @@ class TaskView extends HTMLElement {
         try {
             const wsClickHandler = async () => {
                 const selected = await showWorkspacePicker({
-                    title: this._buildWorkspacePickerTitle()
+                    title: this._buildWorkspacePickerTitle(),
+                    t: taskViewT
                 });
                 if (selected) {
                     await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
@@ -3211,7 +3212,8 @@ class TaskView extends HTMLElement {
             return;
         }
         const selected = await showWorkspacePicker({
-            title: this._buildWorkspacePickerTitle()
+            title: this._buildWorkspacePickerTitle(),
+            t: taskViewT
         });
         if (selected) {
             await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
