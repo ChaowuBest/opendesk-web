@@ -13,19 +13,25 @@ import {
     DoubleClickTool,
     DropFixtureTool,
     DragTool,
+    GetDeviceInfoTool,
     GoBackTool,
     GoForwardTool,
+    InstallAppTool,
     InputTool,
     ListWindowsTool,
     OpenAppTool,
     PressKeyTool,
+    PullFileTool,
+    PushFileTool,
     SelectOptionTool,
     LongClickTool,
     ScreenshotTool,
     ScrollTool,
     ScrollInScrollableTool,
+    ShellTool,
     SnapshotTool,
     SystemDialogTool,
+    UninstallAppTool,
     WaitForTool
 } from '../../../../main/applications/builtin/skills/use-harmony/tools.js';
 
@@ -40,6 +46,8 @@ test('use-harmony skill loader preserves metadata, instructions, and toolset wir
     assert.match(skill.body, /# 鸿蒙设备控制/);
     assert.match(skill.body, /## 核心原则：无障碍优先，截图兜底/);
     assert.match(skill.body, /## 应用管理/);
+    assert.match(skill.body, /### 虚拟滚动选择器/);
+    assert.doesNotMatch(skill.body, /手工操作步骤|09:09|14 次滚动|dumpLayout 手工流程/);
     assert.equal(skill.toolsets?.length, 1);
     assert.equal(skill.getTool('snapshot')?.name, 'snapshot');
     assert.equal(skill.getTool('openApp')?.name, 'openApp');
@@ -1549,3 +1557,357 @@ test(
         }
     }
 );
+
+test('shell runs an arbitrary command and returns the device output', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-shell-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "shell" ]; then',
+                '  shift',
+                '  /bin/sh -c "$*"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const result = await new ShellTool().execute({ command: 'echo hello-from-device' });
+
+        assert.equal(result.status, 'success');
+        assert.deepEqual(JSON.parse(result.result), {
+            success: true,
+            output: 'hello-from-device'
+        });
+        assert.ok(
+            fs.readFileSync(argsLogPath, 'utf8').includes('-t FMR0223C13000649 shell echo hello-from-device'),
+            'command should target the resolved device via -t'
+        );
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('shell reports non-zero exit code and stderr instead of throwing', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-shell-fail-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "shell" ]; then',
+                '  shift',
+                '  /bin/sh -c "$*"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const result = await new ShellTool().execute({ command: 'ls /no/such/path' });
+
+        assert.equal(result.status, 'success');
+        const parsed = JSON.parse(result.result);
+        assert.equal(parsed.success, true);
+        assert.notEqual(parsed.exitCode, 0);
+        assert.ok(parsed.stderr.length > 0, 'command stderr should be surfaced');
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('getDeviceInfo reports model, resolution, system version, and wlan ip', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-deviceinfo-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const originalPath = process.env.PATH;
+
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "shell" ] && [ "$2" = "param" ] && [ "$3" = "get" ]; then',
+                '  case "$4" in',
+                '    const.product.model) printf "HUAWEI MateBook X Pro\\n" ;;',
+                '    const.product.brand) printf "HUAWEI\\n" ;;',
+                '    const.product.name) printf "MateBook\\n" ;;',
+                '    const.product.software.version) printf "5.0.0.60\\n" ;;',
+                '    const.ohos.apiversion) printf "12\\n" ;;',
+                '  esac',
+                'elif [ "$1" = "shell" ] && [ "$2" = "hidumper" ] && [ "$3" = "-s" ] && [ "$4" = "RenderService" ]; then',
+                '  printf "activeMode: 2560x1600, refreshrate=60\\n"',
+                'elif [ "$1" = "shell" ] && [ "$2" = "ifconfig" ]; then',
+                '  printf "wlan0 inet addr:192.168.1.100  Bcast:192.168.1.255\\n"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+
+        const result = await new GetDeviceInfoTool().execute({});
+
+        assert.equal(result.status, 'success');
+        assert.deepEqual(JSON.parse(result.result), {
+            success: true,
+            model: 'HUAWEI MateBook X Pro',
+            brand: 'HUAWEI',
+            productName: 'MateBook',
+            sysVersion: '5.0.0.60',
+            sdkVersion: '12',
+            displaySize: { width: 2560, height: 1600 },
+            wlanIp: '192.168.1.100'
+        });
+    } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('pushFile sends a local file to the device via hdc file send', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-push-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const localFilePath = path.join(tempDir, 'fixture.bin');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(localFilePath, 'fixture-data');
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "file" ] && [ "$2" = "send" ]; then',
+                '  printf "No Error\\n"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const result = await new PushFileTool().execute({
+            localPath: localFilePath,
+            remotePath: '/data/local/tmp/fixture.bin'
+        });
+
+        assert.equal(result.status, 'success');
+        assert.deepEqual(JSON.parse(result.result), {
+            success: true,
+            localPath: localFilePath,
+            remotePath: '/data/local/tmp/fixture.bin',
+            sent: true
+        });
+        const commands = fs.readFileSync(argsLogPath, 'utf8');
+        assert.ok(
+            commands.includes(`file send ${localFilePath} /data/local/tmp/fixture.bin`),
+            'hdc file send should be invoked with local and remote paths'
+        );
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('pullFile fetches a device file via hdc file recv', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-pull-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const localFilePath = path.join(tempDir, 'pulled.bin');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "file" ] && [ "$2" = "recv" ]; then',
+                '  printf "No Error\\n"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const result = await new PullFileTool().execute({
+            remotePath: '/data/local/tmp/device.log',
+            localPath: localFilePath
+        });
+
+        assert.equal(result.status, 'success');
+        assert.deepEqual(JSON.parse(result.result), {
+            success: true,
+            remotePath: '/data/local/tmp/device.log',
+            localPath: localFilePath,
+            pulled: true
+        });
+        const commands = fs.readFileSync(argsLogPath, 'utf8');
+        assert.ok(
+            commands.includes(`file recv /data/local/tmp/device.log ${localFilePath}`),
+            'hdc file recv should be invoked with remote and local paths'
+        );
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('installApp validates the .hap extension before invoking hdc install', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-install-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const hapPath = path.join(tempDir, 'demo.hap');
+    const txtPath = path.join(tempDir, 'not-a-hap.txt');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(hapPath, 'fake-hap-content');
+        fs.writeFileSync(txtPath, 'fake-text');
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "install" ]; then',
+                '  printf "No Error\\n"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const rejected = await new InstallAppTool().execute({ hapPath: txtPath });
+        assert.equal(JSON.parse(rejected.result).success, false);
+        assert.equal(fs.existsSync(argsLogPath), false, 'no hdc command should run for a non-.hap file');
+
+        const installed = await new InstallAppTool().execute({ hapPath });
+        assert.equal(installed.status, 'success');
+        assert.deepEqual(JSON.parse(installed.result), {
+            success: true,
+            hapPath,
+            installed: true
+        });
+        assert.ok(fs.readFileSync(argsLogPath, 'utf8').includes(`install ${hapPath}`));
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('uninstallApp requires explicit destructive confirmation', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-uninstall-test-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const argsLogPath = path.join(tempDir, 'hdc-args.log');
+    const originalPath = process.env.PATH;
+    const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            [
+                '#!/bin/sh',
+                'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                'if [ "$1" = "-t" ] && [ "$#" -ge 3 ]; then',
+                '  shift 2',
+                'fi',
+                'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then',
+                '  printf "FMR0223C13000649\\tConnected\\tHarmonyOS Device\\n"',
+                'elif [ "$1" = "uninstall" ]; then',
+                '  printf "No Error\\n"',
+                'fi'
+            ].join('\n'),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_ARGS_LOG = argsLogPath;
+
+        const rejected = await new UninstallAppTool().execute({
+            bundleName: 'com.example.app',
+            confirmDestructive: false
+        });
+        assert.equal(rejected.status, 'success');
+        assert.equal(JSON.parse(rejected.result).success, false);
+        assert.equal(fs.existsSync(argsLogPath), false, 'no hdc command should run without confirmation');
+
+        const uninstalled = await new UninstallAppTool().execute({
+            bundleName: 'com.example.app',
+            confirmDestructive: true
+        });
+        assert.equal(uninstalled.status, 'success');
+        assert.deepEqual(JSON.parse(uninstalled.result), {
+            success: true,
+            bundleName: 'com.example.app',
+            uninstalled: true
+        });
+        assert.ok(fs.readFileSync(argsLogPath, 'utf8').includes('uninstall com.example.app'));
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+        else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});

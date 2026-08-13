@@ -20,7 +20,21 @@ description: 通过 hdc 操控鸿蒙设备：应用管理、界面快照、点�
 
 # 鸿蒙设备控制
 
-通过 hdc（HarmonyOS Device Connector）操控已连接的鸿蒙设备。前提：hdc 在 PATH 中，\`hdc list targets\` 能检测到设备。
+通过 hdc（HarmonyOS Device Connector）操控已连接的鸿蒙设备。前提：hdc 在 PATH 中，\`hdc list targets\` 能检测到设备。若 hdc 缺失或不可用，工具会返回明确报错，请先安装/配置 hdc 再重试。
+
+## 多设备定向规则
+
+多台设备连接时，所有工具都支持可选 \`deviceId\` 参数（取 \`listDevices\` 返回的设备 ID）来指定目标设备：
+
+1. **用户显式声明优先**：prompt 中已明确"操作哪台设备"或"操作全部设备"时，直接按声明执行，不询问：
+   - 指定单台 → 工具调用带 \`deviceId\`
+   - 操作全部 → 对设备列表逐台循环调用工具（\`deviceId\` 逐个指定）
+2. **用户未显式声明、且已连接多台设备** → 必须先询问用户，选项：
+   - A. 第一台设备（默认） / B. 全部设备 / C. 指定 device ID
+   - 禁止未询问就默默操作第一台。
+3. **单台设备** → 无歧义，直接操作，无需传 \`deviceId\`。
+
+先调用 **listDevices** 确认当前连接了哪些设备，再决定目标。
 
 ## 核心原则：无障碍优先，截图兜底
 
@@ -28,7 +42,7 @@ description: 通过 hdc 操控鸿蒙设备：应用管理、界面快照、点�
 
 ## 工作流程
 
-1. **listApps** → 2. **openApp** → 3. **snapshot** → 4. **clickRef**（优先）或 **click**/input/scroll → 5. 目标不可达时 **screenshot** 兜底 → 6. **snapshot** 确认结果
+0. **listDevices**（多设备时先确认目标）→ 1. **listApps** → 2. **openApp** → 3. **snapshot** → 4. **clickRef**（优先）或 **click**/input/scroll → 5. 目标不可达时 **screenshot** 兜底 → 6. **snapshot** 确认结果
 
 ## 操作后自动快照
 
@@ -73,7 +87,7 @@ clickRef({ snapshotId: "s12", ref: "e4", position: "left-center", snapshot: true
 selectOption({
     trigger: { role: "combobox", name: "语言" },
     option: "简体中文",
-    bundleName: "com.develop.opensource.ohpcd.opendesk",
+    bundleName: "<被测应用的 bundleName>",
     verify: true
 })
 \`\`\`
@@ -90,14 +104,14 @@ input({ x: 540, y: 1820, text: "新消息", mode: "replace", bounds: { x1: 300, 
 
 **chooseFile**：必须先通过 GUI 点击打开系统 Picker。工具按路径末尾名称和按钮语义操作，Picker 不暴露目标时不盲点坐标。
 
-文件选择器（com.huawei.hmos.filemanager）无障碍树要点：左侧含快速访问/存储位置/来源，右侧文件列表（listitem 有 ref），底部有文件格式过滤器和取消/打开按钮。用户主目录通过侧边栏「个人」进入（\`file://docs/storage/Users/currentUser/\`）。**chooseFile** 自动处理导航和选择。
+系统文件选择器（华为系设备为内置文件管理器）无障碍树要点：左侧含快速访问/存储位置/来源，右侧文件列表（listitem 有 ref），底部有文件格式过滤器和取消/打开按钮。用户主目录通过侧边栏「个人」进入（\`file://docs/storage/Users/currentUser/\`）。**chooseFile** 自动处理导航和选择。
 
-**dropFixture**：通过 WebView 创建 File + DataTransfer，派发 dragenter/dragover/drop。优先用 **chooseFile**，只有产品支持拖放或 Picker 不可操作时才用 **dropFixture**。文件上限 20 MiB。上传后用 **waitFor** 验证缩略图/文件名/导入结果，不要把工具返回成功直接当业务成功。
+**dropFixture**：通过 WebView 创建 File + DataTransfer，派发 dragenter/dragover/drop。优先用 **chooseFile**，只有产品支持拖放或 Picker 不可操作时才用 **dropFixture**。文件上限 20 MiB。上传后用 **waitFor** 验证缩略图/文件名/导入结果，不要把工具返回成功直接当业务成功。\`bundleName\` 可选：指定投放目标 WebView 应用，缺省自动探测当前可见的非系统窗口；探测不到则报错要求显式传入。依赖设备端 \`arkweb_exec_js\`（华为系 WebView 特性命令），非华为系设备或 WebView 不可用时无法注入。
 
 \`\`\`
 dropFixture({
     localPath: "/absolute/fixtures/gui-gap-icon.png",
-    bundleName: "com.develop.opensource.ohpcd.opendesk",
+    bundleName: "<被测应用的 bundleName>",
     x: 600, y: 720, snapshot: true
 })
 \`\`\`
@@ -156,29 +170,9 @@ scroll({ direction: "up", scrollByContainer: { role: "list", name: "任务" }, d
 scrollTo({ targetRole: "button", targetName: "停止生成", maxScrolls: 10 })
 \`\`\`
 
-### Web 虚拟滚动弹窗（时间/日期选择器）
+### 虚拟滚动选择器
 
-Web 应用内（如 WorkBuddy 定时任务）的时间/日期选择器常是**虚拟滚动列表**：snapshot 与 dumpLayout 报告的按钮 bounds 是**内容坐标**（含滚动偏移），不等于真实屏幕位置。**直接点击内容坐标会落在弹窗遮罩上——弹窗关闭但值不变**（实测：WorkBuddy 时间选择器，点击内容坐标 (1013,563) 后弹窗关闭、时间仍为 09:09）。必须先用真实布局确认目标在滚动容器可视区内，滚动进可视区后再点击。
-
-**首选 **scrollInScrollable** 工具**：它自动 dumpLayout 定位滚动容器可视区、在容器内滑动直到目标 bounds 进入可视区，并返回 \`targetCenter\`（真实可点击坐标）。直接用 click 点击该坐标即可。
-
-**手工操作步骤（工具不可用时的兜底，实测验证）：**
-
-1. **展开选择器**，用 dumpLayout 导出真实布局（与 snapshot 同坐标系，均为内容坐标）：
-   \`\`\`
-   hdc shell uitest dumpLayout -p /data/local/tmp/layout.json -b <bundleName>
-   hdc file recv /data/local/tmp/layout.json <local_path>
-   \`\`\`
-2. **定位滚动容器可视区**：找 \`scrollable=true\` 的 genericContainer 且 bounds 为窄列（如 [729,912][904,1309]）；其 bounds 即真实可点击区域。例：WorkBuddy 时列容器可视区 y∈[912,1309]，分列容器 x∈[926,1100]。**过滤掉宽度/高度 < 20px 的退化容器**（如 1px 宽的最外层滚动包装器）——这类容器不可能承载可滚动列，选中它只会"在真空中滚动"（实测：WorkBuddy 布局首位即 [0,127][1,1955] 的 1px 外层容器，旧版 scrollInScrollable 就误选中了它导致滚动 8 次仍不可见）。
-3. **先判方向再滚动（避免反向浪费）**：比较目标按钮 bounds 与可视区。目标完全在可视区上方（y2 < 可视区 y1）说明被裁剪不可见、**不可直接点击**，应**下拉**（drag 从上往下）；目标在可视区下方（y1 > 可视区 y2）应**上拉**。**方向判错会白滚一轮且数字反向移动**（实测：分列目标 00 在上方，误上拉后 17-49 反而变 30-55）。
-4. **在容器可视区内滚动**：目标在上方 → 在该列容器内**下拉**（drag 从上往下）；目标在下方 → **上拉**。用 \`drag\` 或带 \`region\` 的 \`scroll\` 精确控制，勿用全屏 fling。每次滚动后重新 dumpLayout 复核，直到目标进入可视区。**滚动中勿用整屏快照验滚动态**：虚拟滚动列表的 snapshot/dumpLayout 只报内容坐标、不反映当前滚到哪，整屏快照信息量极低；改用 **screenshot 只裁目标列可视区**（如分列 {x1:926,y1:912,x2:1100,y2:1309}）做**局部 OCR**，识别出的顶部数字即可视区当前顶部——更快更准（实测：OCR 出现目标数字即已到达列头/列尾）。
-5. **点击目标中心**：目标进入可视区后，其 bounds 中心即真实屏幕坐标（实测进入可视区后 dumpLayout 中心 (1013,941) 可直接点击成功）；点击后 snapshot 确认值已更新（如时间按钮从 "09:09" 变为 "09:00"）。
-
-**双列选择器（时/分）要点：**
-
-- 时列与分列常有同名项（如都有 "00"/"09"）。用 **scrollInScrollable 的 \`containerName\`** 精确指定目标所在的列容器；若仍匹配到多列，用返回的 \`targetCenter\` 的 x 坐标区分目标列（时列 x≈817、分列 x≈1013），确认后点击。
-- scrollInScrollable 只在目标 bounds 与滚动容器可视区**重叠**时才返回 \`visible=true\`；\`visible=false\` 表示 maxScrolls 次滚动后目标仍未进入可视区，可增大 \`maxScrolls\` 或检查 \`targetText\` 是否匹配。
-- **容器误定位排查**：scrollInScrollable 用 dumpLayout 定位容器时，可能匹配到语义错误的非目标容器（如侧边栏 genericContainer，宽高正常但并非浮层内的滚动列）。表现为：\`visible=false\` 且 \`matchesFound=0\`，而 \`containerBounds\` 的 x 范围不包含目标元素的 x 坐标。**判断方法：对比 containerBounds.x 范围与目标元素 x 坐标**——若目标在 x=1489（时列）或 x=1685（分列），但容器 x 范围是 672-1174（侧边栏），说明定位到了错误容器。应通过 \`containerName\` 精确指定目标列，或先 scroll 让浮层完全进入视口后再重试。
+\`scrollInScrollable\` 用于虚拟滚动列表/选择器。优先使用它返回的 \`targetCenter\` 点击；如果结果是 \`visible=false\`，先核对 \`bundleName\`、\`containerName\` 和 \`targetText\`，再考虑改用通用 \`scroll\` / \`scrollTo\` / 截图验证，不要把某个页面的坐标、OCR 误判或固定滚动次数写成通用规则。
 
 ### 导航
 
@@ -194,7 +188,7 @@ pressKey({ key: "Enter", snapshot: true })
 pressKey({ key: "v", modifiers: ["Ctrl", "Shift"] })
 \`\`\`
 
-### OpenDesk 消息提交
+### 应用内消息提交
 
 通过设备界面发送：snapshot 定位 textbox → input 输入 → pressKey Enter → waitFor/snapshot 验证。HDC 命令成功不代表消息已被接受。专门测试发送按钮则用 \`clickRef({ position: "left-center" })\`。
 
@@ -209,7 +203,7 @@ ref 不跨轮询稳定，等待元素用 role/name 定位，不要等字面量 "
 \`\`\`
 waitFor({
     condition: { type: "element", locator: { role: "button", name: "停止生成" }, state: "hidden" },
-    bundleName: "com.develop.opensource.ohpcd.opendesk",
+    bundleName: "<被测应用的 bundleName>",
     timeout: 120000, stableFor: 1000
 })
 \`\`\`
@@ -218,7 +212,7 @@ waitFor({
 
 ### 截图与 OCR
 
-**screenshot** 是 snapshot 的兜底，仅用于无障碍树无法暴露目标时（原生 select/XComponent/系统弹窗/视觉状态验证）。\`region\` 裁切区域，\`ocr\` 默认 true（需 tesseract）。返回 \`ocr\` 数组（text/x/y/width/height/confidence）和 \`regions\` 数组（y1/y2/avgBrightness/highlighted 高亮/选中行）。
+**screenshot** 是 snapshot 的兜底，仅用于无障碍树无法暴露目标时（原生 select/XComponent/系统弹窗/视觉状态验证）。\`region\` 裁切区域，\`ocr\` 默认 true——**OCR 在宿主机执行**（截图拉回本地再识别），需宿主机安装 tesseract：macOS（\`brew install tesseract\`，中文识别再加 \`brew install tesseract-lang\`）；Debian/Ubuntu（\`sudo apt install tesseract-ocr tesseract-ocr-chi-sim\`）；Windows（UB-Mannheim 官方安装包，或 \`winget install UB-Mannheim.TesseractOCR\` / \`choco install tesseract\`）。**鸿蒙设备端不运行 OCR、也无法安装 tesseract**：鸿蒙无官方包管理器渠道（无 apt/dnf/brew 类源），设备端只负责截图，识别运算全在宿主机；未安装时 OCR 返回失败标记而非崩溃。返回 \`ocr\` 数组（text/x/y/width/height/confidence）和 \`regions\` 数组（y1/y2/avgBrightness/highlighted 高亮/选中行）。
 
 \`\`\`
 screenshot({ region: { x1: 1654, y1: 459, x2: 2079, y2: 601 } })
@@ -240,6 +234,8 @@ visualAssert({ mode: "color", samples: [{ x: 600, y: 1800, expected: "#1976d2", 
 
 **hover** 模拟鼠标悬停，三层降级：HDC mouseMove → WebView JS 注入 → 0 像素 drag。\`duration\` 默认 800ms，返回 \`method\` 标识实际路径。若 \`method\` 为 \`zero-pixel-drag\` 则前两种方法不可用。
 
+WebView JS 注入降级（Tier 2）需要目标应用：可选 \`bundleName\` 指定，缺省自动探测当前可见的非系统窗口；探测不到时跳过 Tier 2 直接回落 zero-pixel drag。JS 注入依赖设备端 \`arkweb_exec_js\`（华为系 WebView 特性命令）。\`zero-pixel-drag\` 是最后兜底，很可能不触发 :hover 效果，仅在确实需要 hover 且前两层不可用时才采用。
+
 ### 语义元素查询
 
 **findElement** 从最新快照按条件查询元素，无需 LLM 解析文本：\`role\`/\`name\`（模糊匹配）/\`hint\`/\`state\`（disabled/enabled/checked/selected）/\`text\`（纯文本子节点）/ \`ref\`，AND 关系，默认 limit 20。返回 ref 可直接用于 clickRef。
@@ -253,10 +249,30 @@ findElement({ role: "button", name: "发送" })
 
 ## 应用管理
 
+- **listDevices**：列出当前连接的所有 hdc 设备（设备 ID + 状态 + 类型），多台设备时的目标确认入口
 - **listApps**：列出可打开的应用（bundleName + 显示名），按设备 ID 缓存
 - **openApp**：按 bundleName 打开（部分系统应用可能无法打开）
 - **appLifecycle**：强制停止/冷重启/清除缓存/清除数据，构造确定测试前置状态
+- **installApp**：安装本机 .hap 应用到设备（等价于 hdc install），安装前校验文件存在与 .hap 后缀
+- **uninstallApp**：卸载设备上的应用（等价于 hdc uninstall），**破坏性操作**，须显式传 \`confirmDestructive: true\` 才执行
 - **listWindows**：当前窗口列表
+
+### 设备信息
+
+**getDeviceInfo** 获取设备基本信息：型号（\`model\`）、品牌（\`brand\`）、产品名（\`productName\`）、系统版本（\`sysVersion\`）、SDK/API 版本（\`sdkVersion\`）、屏幕分辨率（\`displaySize\`）、WLAN IP（\`wlanIp\`）。分辨率为绝对坐标类操作（click/input/scroll 等）提供换算与校验基准，也能用于判断设备形态（手机/平板/PC）。单个字段读取失败不影响整体，缺失字段返回 \`undefined\`。
+
+### 设备文件传输
+
+- **pushFile**：本机文件 → 设备端（等价于 hdc file send），用于导入测试数据、HAP 包、配置文件等到设备端目录
+- **pullFile**：设备端文件 → 本机（等价于 hdc file recv），用于提取设备端日志、截图、配置文件
+
+### 通用命令
+
+**shell** 执行任意 hdc shell 命令并在设备端 shell 中运行（支持管道/重定向/引号），返回 stdout/stderr/退出码。仅当上述专用工具无法覆盖需求时使用，例如：查询系统信息（\`hidumper\`）、查看设备文件（\`ls\`/\`cat\`）、执行 bm 能力查询等。**破坏性命令（删除文件、修改系统配置）须谨慎**，已有专用工具的场景（\`openApp\`/\`appLifecycle\`/\`pressKey\`/\`screenshot\` 等）优先使用专用工具。
+
+\`\`\`
+shell({ command: "bm dump -n <bundleName>", deviceId: "<deviceId>" })
+\`\`\`
 
 ### 应用生命周期
 
@@ -264,7 +280,7 @@ findElement({ role: "button", name: "发送" })
 
 \`\`\`
 appLifecycle({
-    bundleName: "com.develop.opensource.ohpcd.opendesk",
+    bundleName: "<被测应用的 bundleName>",
     action: "clearData", confirmDestructive: true,
     settleTime: 2000, snapshot: true
 })
@@ -274,7 +290,7 @@ appLifecycle({
 
 1. 每次界面变化后重新 **snapshot**（或开 \`snapshot: true\` 自动获取）
 2. **发送按钮**：用 \`clickRef({ position: "left-center" })\`，避免命中相邻选项按钮
-3. OpenDesk 消息：snapshot 定位 textbox → input → pressKey Enter → 快照验证
+3. 应用内消息：snapshot 定位 textbox → input → pressKey Enter → 快照验证
 4. **禁止 hdc shell uinput**：用 **pressKey** 工具，它能正确路由到目标应用
 5. \`clearData\` 需确认 bundleName 和测试环境后才执行
 `;
