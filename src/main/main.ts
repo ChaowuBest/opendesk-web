@@ -2436,7 +2436,7 @@ const registerSettingAPIHandlers = () => {
         try {
             const result = await dialog.showOpenDialog(globalMainWindow!, {
                 title: '选择工作空间目录',
-                properties: ['openDirectory']
+                properties: ['openDirectory', 'createDirectory']
             });
             if (result.canceled || result.filePaths.length === 0) {
                 return { status: 'ok', data: null };

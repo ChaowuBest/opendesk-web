@@ -51,6 +51,8 @@ export interface FileSelectorOptions {
     deleteEntry?: (entryPath: string) => Promise<void>;
     /** 删除确认弹窗（可选，提供后删除前会先弹窗确认） */
     confirmDelete?: (name: string) => Promise<boolean>;
+    /** 右键菜单挂载容器（默认 document.body，弹窗场景传入弹窗 overlay） */
+    menuContainer?: HTMLElement;
 }
 
 interface Column {
@@ -565,9 +567,14 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         }
 
         if (entry.isDirectory && this._opts.createDirectory) {
-            this._addMenuItem(menu, 'fa-folder-plus', '新建文件夹', () => {
+            const name = this._truncateMiddle(entry.name, 16);
+            this._addMenuItem(menu, 'fa-folder-plus', `新建文件夹（在 ${name} 内）`, () => {
                 this._dismissMenu();
                 this._startNewFolder(colIdx, entry.path);
+            });
+            this._addMenuItem(menu, 'fa-folder-tree', `新建文件夹（与 ${name} 同级）`, () => {
+                this._dismissMenu();
+                this._startNewFolder(colIdx, this._columns[colIdx].parentPath);
             });
         }
 
@@ -609,7 +616,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         menu.style.minWidth = '140px';
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
-        document.body.appendChild(menu);
+        (this._opts.menuContainer ?? document.body).appendChild(menu);
 
         // 边界修正
         requestAnimationFrame(() => {
@@ -629,6 +636,14 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
             action();
         });
         menu.appendChild(btn);
+    }
+
+    /** 超长目录名中间截断，避免菜单项被撑爆（如 "很长…的目录"） */
+    private _truncateMiddle(name: string, maxLen = 16): string {
+        if (name.length <= maxLen) return name;
+        const head = Math.ceil((maxLen - 1) / 2);
+        const tail = maxLen - 1 - head;
+        return `${name.slice(0, head)}…${name.slice(-tail)}`;
     }
 
     /* ───────── delete ───────── */

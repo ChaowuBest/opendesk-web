@@ -514,7 +514,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                         confirmText: '删除',
                         cancelText: '取消',
                         danger: true
-                    })
+                    }),
+                menuContainer: overlay
             });
 
             // 显示隐藏文件复选框事件
