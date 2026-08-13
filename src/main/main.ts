@@ -74,13 +74,13 @@ import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.
 import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
-    activateOpenDeskOfficeSlidesContents,
-    attachOpenDeskOfficeSlidesWindow,
-    configureOpenDeskOfficeSlidesWebPreferences,
-    isOpenDeskOfficeSlidesUrl,
-    registerEmbeddedOpenDeskOfficeSlides,
-    requestCloseOpenDeskOfficeSlidesContents
-} from './office/openDeskOfficeSlidesHost.js';
+    activateOpenDeskOfficeContents,
+    attachOpenDeskOfficeWindow,
+    configureOpenDeskOfficeWebPreferences,
+    getOpenDeskOfficeEditorKind,
+    registerEmbeddedOpenDeskOffice,
+    requestCloseOpenDeskOfficeContents
+} from './office/openDeskOfficeHost.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import {
@@ -766,8 +766,9 @@ const createWindow = () => {
         // 非活跃 webview 开启后台节流，降低 CPU 和电量消耗
         webPreferences.backgroundThrottling = true;
         const src = params.src ?? '';
-        if (isOpenDeskOfficeSlidesUrl(src)) {
-            configureOpenDeskOfficeSlidesWebPreferences(webPreferences);
+        const officeEditorKind = getOpenDeskOfficeEditorKind(src);
+        if (officeEditorKind) {
+            configureOpenDeskOfficeWebPreferences(officeEditorKind, webPreferences);
             return;
         }
         const isApplicationGuest = src.includes('application.html');
@@ -795,9 +796,8 @@ const createWindow = () => {
     // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
     // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
-        if (isOpenDeskOfficeSlidesUrl(webContents.getURL())) {
-            activateOpenDeskOfficeSlidesContents(webContents);
-        }
+        const officeEditorKind = getOpenDeskOfficeEditorKind(webContents.getURL());
+        if (officeEditorKind) activateOpenDeskOfficeContents(officeEditorKind, webContents);
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
                 safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
@@ -931,7 +931,7 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
-    attachOpenDeskOfficeSlidesWindow(mainWindow);
+    attachOpenDeskOfficeWindow(mainWindow);
     BrowserManager.setMainWindow(mainWindow);
 };
 
@@ -3169,7 +3169,7 @@ async function startApplication(): Promise<void> {
         event.preventDefault();
         if (officeQuitCheckPending) return;
         officeQuitCheckPending = true;
-        void requestCloseOpenDeskOfficeSlidesContents()
+        void requestCloseOpenDeskOfficeContents()
             .then((canQuit) => {
                 if (!canQuit) return;
                 officeQuitApproved = true;
@@ -3237,7 +3237,7 @@ async function startApplication(): Promise<void> {
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
         registerThemeHandlers();
-        registerEmbeddedOpenDeskOfficeSlides();
+        registerEmbeddedOpenDeskOffice();
 
         createWindow();
 

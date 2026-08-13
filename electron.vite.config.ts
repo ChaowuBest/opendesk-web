@@ -2,17 +2,17 @@ import { defineConfig, loadEnv } from 'electron-vite';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import {
-    createOpenDeskOfficeSlidesRendererViteConfig,
-    createOpenDeskOfficeSlidesViteAliases,
-    openDeskOfficeSlidesEntries,
-    openDeskOfficeSlidesMainBuildPlugin
+    createOpenDeskOfficeRendererViteConfig,
+    createOpenDeskOfficeViteAliases,
+    openDeskOfficeEntries,
+    openDeskOfficeMainBuildPlugin
 } from '@bitclub.ai/opendesk-office/vite';
 
 export default defineConfig(({ mode }) => {
     const isProd = mode === 'production';
     const buildTime = new Date().toISOString();
-    const openDeskOfficeAliases = createOpenDeskOfficeSlidesViteAliases();
-    const openDeskOfficeRendererConfig = createOpenDeskOfficeSlidesRendererViteConfig();
+    const openDeskOfficeAliases = createOpenDeskOfficeViteAliases();
+    const openDeskOfficeRendererConfig = createOpenDeskOfficeRendererViteConfig();
 
     return {
         main: {
@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
                 }
             },
             publicDir: path.join(__dirname, 'resources', 'main'),
-            plugins: [openDeskOfficeSlidesMainBuildPlugin, tailwindcss()],
+            plugins: [openDeskOfficeMainBuildPlugin, tailwindcss()],
             build: {
                 outDir: 'dist/main',
                 // 生产环境关闭 sourcemap 以减小体积和内存占用
@@ -36,8 +36,15 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     output: {
                         manualChunks(id) {
-                            if (id.replaceAll('\\', '/').endsWith('/@bitclub.ai/opendesk-office/dist/main.js')) {
-                                return 'opendesk-office-main';
+                            const normalizedId = id.replaceAll('\\', '/');
+                            if (/\/@bitclub\.ai\/opendesk-office\/dist\/main\.js$/.test(normalizedId)) {
+                                return 'opendesk-office-slides-main';
+                            }
+                            if (/\/@bitclub\.ai\/opendesk-office\/dist\/word-main\.js$/.test(normalizedId)) {
+                                return 'opendesk-office-word-main';
+                            }
+                            if (/\/@bitclub\.ai\/opendesk-office\/dist\/sheets-main\.js$/.test(normalizedId)) {
+                                return 'opendesk-office-sheets-main';
                             }
                         }
                     },
@@ -62,7 +69,7 @@ export default defineConfig(({ mode }) => {
                         }
                         if (
                             warning.code === 'UNUSED_EXTERNAL_IMPORT' &&
-                            warning.message?.includes('@bitclub.ai/opendesk-office/dist/main.js')
+                            warning.message?.includes('@bitclub.ai/opendesk-office/dist/')
                         ) {
                             warn(warning);
                             return;
@@ -88,7 +95,9 @@ export default defineConfig(({ mode }) => {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
                         webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
-                        slidesPreload: openDeskOfficeSlidesEntries.preload
+                        slidesPreload: openDeskOfficeEntries.slides.preload,
+                        wordPreload: openDeskOfficeEntries.word.preload,
+                        sheetsPreload: openDeskOfficeEntries.sheets.preload
                     },
                     output: {
                         format: 'cjs',
@@ -110,6 +119,7 @@ export default defineConfig(({ mode }) => {
             publicDir: path.join(__dirname, 'resources', 'renderer'),
             plugins: [tailwindcss()],
             resolve: {
+                ...openDeskOfficeRendererConfig.resolve,
                 alias: {
                     '@': path.resolve(__dirname, 'src'),
                     ...openDeskOfficeAliases
@@ -130,7 +140,9 @@ export default defineConfig(({ mode }) => {
                         application_window: path.join(__dirname, 'src', 'renderer', 'application_window.html'),
                         logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html'),
-                        slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html')
+                        slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html'),
+                        word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html'),
+                        sheets_editor: path.join(__dirname, 'src', 'renderer', 'sheets_editor.html')
                     },
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告
