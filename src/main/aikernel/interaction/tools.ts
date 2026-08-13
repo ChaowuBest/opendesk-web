@@ -232,43 +232,39 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = normalizeQuestions(toolcall.args_object as any) as z.output<typeof AskUserArgsSchema> | undefined;
         const isRunning = toolcall.status === 'running';
+        const isPending = toolcall.status === 'pending';
         const isError = toolcall.status === 'error';
-
         const toolName = t('tools.askUser.name');
+
+        // pending / running 时渲染为行内风格，不展开卡片避免与下方面板重复
+        if (isPending || isRunning) {
+            const questionCount = args?.questions?.length ?? 0;
+            const summary = t('tools.askUser.summary', { count: String(questionCount) });
+            return `<div class="od-inline-toolcall-container">
+                <div class="flex items-center gap-1.5 min-w-0">
+                    <i class="fa-solid fa-circle-question shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(toolName)}</span>
+                    <span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                    <span class="truncate text-xs text-slate-600">${escapeHtml(summary)}</span>
+                </div>
+            </div>`;
+        }
+
         const borderColor = isError ? 'border-red-200' : 'border-gray-200';
-        const iconBg = isError
-            ? 'bg-red-50 text-red-400'
-            : isRunning
-              ? 'bg-amber-50 text-amber-500'
-              : 'bg-emerald-50 text-emerald-500';
+        const iconBg = isError ? 'bg-red-50 text-red-400' : 'bg-emerald-50 text-emerald-500';
 
         const firstQuestion = args?.questions?.[0]?.question ?? '';
         const headerQuestion = escapeHtml(firstQuestion.length > 60 ? firstQuestion.slice(0, 57) + '…' : firstQuestion);
 
         let statusBadge = '';
-        if (isRunning) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>等待回答</span>`;
-        } else if (isError) {
+        if (isError) {
             statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
-        } else if (toolcall.status === 'success') {
+        } else {
             statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>已回答</span>`;
         }
 
         let bodyContent = '';
-        if (isRunning && args?.questions) {
-            const questionsHtml = args.questions
-                .map(
-                    (q) => `
-                <div class="mb-2.5 last:mb-0">
-                    <div class="text-gray-600 font-medium text-[12px] mb-1.5">${escapeHtml(q.question)}</div>
-                    <div class="flex flex-wrap gap-1.5">
-                        ${q.options.map((o) => `<span class="px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-[11px]" title="${escapeHtml(o.description)}">${escapeHtml(o.label)}</span>`).join('')}
-                    </div>
-                </div>`
-                )
-                .join('');
-            bodyContent = `<div class="px-3.5 py-2.5">${questionsHtml}</div>`;
-        } else if (toolcall.status === 'success' && toolcall.result) {
+        if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result) as {
                     answers: Record<string, string[]>;
@@ -304,7 +300,7 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
         }
 
         return `
-        <details class="od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
+        <details class="ask-user-tool od-card-shadow my-2 rounded-[14px] border ${borderColor} bg-white overflow-hidden w-full" open>
             <summary class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150 font-medium">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-circle-question text-[10px]"></i>

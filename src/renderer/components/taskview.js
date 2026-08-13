@@ -16,9 +16,11 @@ import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
+import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
+import { renderSafeMarkdown } from '../utils/markdown.ts';
 import {
     GoalController,
     canShowWaitingAssistantPlaceholder,
@@ -44,6 +46,8 @@ const FORK_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
 const EDIT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+const REWIND_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
 const CTX_FONT_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>';
 const CTX_SELECT_ALL_ICON_SVG =
@@ -2620,6 +2624,53 @@ class TaskView extends HTMLElement {
         window.fsAPI?.openPath?.(filePath);
     }
 
+    async _handleSkillPillClick(e) {
+        const target = e.target.closest('[data-skill-bundle][data-skill-name]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { skillBundle, skillName } = target.dataset;
+        if (!skillBundle || !skillName || !window.applicationRegistryAPI?.callMainWorld) return;
+
+        let detail;
+        try {
+            detail = await window.applicationRegistryAPI.callMainWorld(
+                'skillmgr',
+                'getSkillDetailForReference',
+                skillBundle,
+                skillName
+            );
+        } catch (error) {
+            console.warn('Failed to load skill detail:', error);
+            return;
+        }
+        if (!detail) return;
+
+        this.querySelector('#taskview-skill-detail')?.remove();
+        const card = document.createElement('skill-detail-card');
+        card.id = 'taskview-skill-detail';
+        card.dataset.theme = document.documentElement.dataset.theme || 'light';
+        card.model = {
+            id: detail.id,
+            name: detail.name || skillName,
+            closeLabel: taskViewT('renderer.taskview.skillTag.close'),
+            description: detail.description,
+            descriptionLabel: taskViewT('renderer.taskview.skillTag.description'),
+            bodyHtml: detail.body ? renderSafeMarkdown(detail.body) : undefined,
+            bodyLabel: taskViewT('renderer.taskview.skillTag.content'),
+            metadata: [
+                { label: taskViewT('renderer.taskview.skillTag.bundle'), value: skillBundle },
+                ...(detail.directory
+                    ? [{ label: taskViewT('renderer.taskview.skillTag.directory'), value: detail.directory }]
+                    : [])
+            ],
+            metadataLabel: taskViewT('renderer.taskview.skillTag.metadata'),
+            actions: [{ id: 'close', label: taskViewT('renderer.taskview.skillTag.close') }]
+        };
+        card.addEventListener('skill-detail-action', () => card.remove());
+        this.appendChild(card);
+    }
+
     /**
      * 处理聊天区域中 [data-open-preview] 元素的点击事件。
      * 展开侧边栏 → 切换到工作空间 tab → 在预览模式下打开文件。
@@ -2632,12 +2683,16 @@ class TaskView extends HTMLElement {
         const filePath = target.dataset.openPreview;
         if (!filePath) return;
 
+        const lineAttr = target.dataset.previewLine;
+        const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
+        const validLine = line !== undefined && Number.isFinite(line) && line > 0 ? line : undefined;
+
         // 1. 展开侧边栏
         this._forceExpandRightSidebar();
-        // 2. 在预览模式下打开文件（不打开编辑器）
+        // 2. 在预览模式下打开文件（不打开编辑器），并跳转到指定行
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFilePreview === 'function') {
-            sidebar.openFilePreview(filePath);
+            sidebar.openFilePreview(filePath, validLine);
         }
     }
 
@@ -3319,11 +3374,9 @@ class TaskView extends HTMLElement {
         if (!textBubble) return;
 
         const bubble = textBubble.parentElement;
-        const rawText = container.dataset.rawText || textBubble.textContent || '';
+        const rawText = (container.dataset.rawText || textBubble.textContent || '').replace(/\n+$/, '');
         const originalHtml = textBubble.innerHTML;
-        const originalWidth = bubble.offsetWidth;
 
-        bubble.style.width = `${originalWidth}px`;
         bubble.classList.add('od-user-msg-editing');
 
         const textarea = document.createElement('textarea');
@@ -3333,19 +3386,13 @@ class TaskView extends HTMLElement {
         textBubble.innerHTML = '';
         textBubble.appendChild(textarea);
 
-        const autoResize = () => {
-            textarea.style.height = 'auto';
-            textarea.style.height = textarea.scrollHeight + 'px';
-        };
-        textarea.addEventListener('input', autoResize);
         textarea.focus();
         textarea.setSelectionRange(rawText.length, rawText.length);
-        requestAnimationFrame(autoResize);
 
         let editing = true;
+        let submitting = false;
 
         const cleanup = () => {
-            bubble.style.width = '';
             bubble.classList.remove('od-user-msg-editing');
             document.removeEventListener('mousedown', outsideClickHandler);
         };
@@ -3358,20 +3405,25 @@ class TaskView extends HTMLElement {
         };
 
         const outsideClickHandler = (e) => {
-            if (editing && !textBubble.contains(e.target)) {
+            if (editing && !submitting && !textBubble.contains(e.target)) {
                 restoreOriginal();
             }
         };
 
         textarea.addEventListener('keydown', async (e) => {
             if (!editing) return;
+            // 输入法（IME）组合期间不拦截按键，避免选词回车被误判为提交
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
+                if (submitting) return;
                 const newText = textarea.value.trim();
                 if (!newText || newText === rawText) {
                     restoreOriginal();
                     return;
                 }
+                submitting = true;
+                textarea.blur();
                 const confirmed = await showConfirmModal({
                     variant: 'warn',
                     title: taskViewT('renderer.taskview.edit.title'),
@@ -3379,6 +3431,7 @@ class TaskView extends HTMLElement {
                     confirmText: taskViewT('renderer.taskview.edit.confirm'),
                     cancelText: taskViewT('renderer.taskview.edit.cancel')
                 });
+                submitting = false;
                 if (!confirmed) {
                     textarea.focus();
                     return;
@@ -3481,6 +3534,9 @@ class TaskView extends HTMLElement {
         // 添加系统默认应用打开按钮的点击事件监听（事件代理）
         this._handleOpenFileClick = this._handleOpenFileClick.bind(this);
         this.addEventListener('click', this._handleOpenFileClick);
+
+        this._handleSkillPillClick = this._handleSkillPillClick.bind(this);
+        this.addEventListener('click', this._handleSkillPillClick);
 
         // 添加预览打开按钮的点击事件监听（事件代理）
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
@@ -3748,6 +3804,7 @@ class TaskView extends HTMLElement {
         }
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handleOpenFileClick);
+        this.removeEventListener('click', this._handleSkillPillClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
@@ -4334,11 +4391,17 @@ class TaskView extends HTMLElement {
             { id: 'copy-plain', icon: CTX_FONT_ICON_SVG, label: taskViewT('renderer.taskview.menu.copyPlain') },
             { id: 'select-all', icon: CTX_SELECT_ALL_ICON_SVG, label: taskViewT('renderer.taskview.menu.selectAll') },
             {
-                id: 'rewind',
+                id: 'edit',
                 icon: EDIT_ICON_SVG,
+                label: taskViewT('renderer.taskview.menu.edit'),
+                separatorBefore: true,
+                disabled: !canRewind
+            },
+            {
+                id: 'rewind',
+                icon: REWIND_ICON_SVG,
                 label: taskViewT('renderer.taskview.menu.rewindToHere'),
                 hint: taskViewT('renderer.taskview.menu.rewindHint'),
-                separatorBefore: true,
                 disabled: !canRewind
             },
             {
@@ -4436,6 +4499,12 @@ class TaskView extends HTMLElement {
                 );
             }
         };
+
+        menu.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
+            TaskView._dismissUserMsgContextMenu();
+            if (!taskView || !messageId) return;
+            taskView._handleEditUserMessage(messageId);
+        });
 
         menu.querySelector('[data-action="rewind"]')?.addEventListener('click', () => {
             runRewindAction(false);

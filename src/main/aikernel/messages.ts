@@ -18,7 +18,7 @@ import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
-import { fileLinkExtension } from './marked-file-link.js';
+import { fileLinkExtension, renderFilePillFromText } from './marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 
 export interface RuntimeMetadata {
@@ -198,6 +198,14 @@ const PREVIEWABLE_LANGS = new Set(['html', 'htm', 'svg']);
 marked.use({
     renderer: {
         code({ text, lang }: { text: string; lang?: string; escaped?: boolean }): string {
+            // 围栏代码块（lang 为 '' 或语言名）中仅包含单个文件地址时渲染为文件 pill；
+            // indented 代码块（lang 为 undefined）保持原有代码块渲染。
+            if (lang !== undefined) {
+                const pill = renderFilePillFromText(text);
+                if (pill) {
+                    return `<p>${pill}</p>`;
+                }
+            }
             const langClass = lang ? `hljs language-${lang}` : 'hljs';
             const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
             const highlighted = hljs.highlight(text, { language }).value;

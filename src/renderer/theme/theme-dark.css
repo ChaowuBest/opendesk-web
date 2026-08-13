@@ -1117,6 +1117,58 @@ html[data-theme='dark'] .terminal-tool .terminal-tool-summary:hover {
     background: var(--od-bg-muted) !important;
 }
 
+/* askUser 工具 GUI 渲染卡片 */
+html[data-theme='dark'] .ask-user-tool {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .ask-user-tool .bg-gray-50\/40 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .ask-user-tool .border-t {
+    border-top-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-gray-600 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-gray-500 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .ask-user-tool summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+/* 状态徽章深色适配 */
+html[data-theme='dark'] .ask-user-tool .bg-amber-50 {
+    background: rgba(251, 191, 36, 0.12) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-amber-500,
+html[data-theme='dark'] .ask-user-tool .text-amber-600 {
+    color: #fbbf24 !important;
+}
+html[data-theme='dark'] .ask-user-tool .bg-emerald-50 {
+    background: rgba(52, 211, 153, 0.12) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-emerald-500,
+html[data-theme='dark'] .ask-user-tool .text-emerald-600,
+html[data-theme='dark'] .ask-user-tool .text-emerald-700 {
+    color: #34d399 !important;
+}
+html[data-theme='dark'] .ask-user-tool .bg-red-50 {
+    background: rgba(248, 113, 113, 0.12) !important;
+}
+html[data-theme='dark'] .ask-user-tool .text-red-400,
+html[data-theme='dark'] .ask-user-tool .text-red-500,
+html[data-theme='dark'] .ask-user-tool .text-red-600 {
+    color: #f87171 !important;
+}
+/* 选项 chip 深色适配 */
+html[data-theme='dark'] .ask-user-tool .bg-gray-100 {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
 /* 子任务工具 GUI 渲染卡片 (createSubTask / waitSubTask / attachToSubTask / attemptCompletion) */
 /* 注意：选择器必须包含 #app-root task-view 前缀以覆盖全局 :where(.text-gray-*) 规则的 ID 选择器特异性 */
 html[data-theme='dark'] #app-root task-view .subtask-tool {
@@ -2538,6 +2590,14 @@ html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:bg-gray-100:hove
 
 html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-600:hover {
     color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-700:hover {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-gray-300 {
+    color: rgba(255, 255, 255, 0.2) !important;
 }
 
 /* ========== 设置向导 (Setup Wizard) 深色模式适配 ========== */

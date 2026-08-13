@@ -131,6 +131,27 @@ describe('agent-input attachment support', () => {
         expect(document.querySelector('.od-confirm-modal-overlay')).toBeNull();
     });
 
+    test('leaves rich-text clipboard content to the textarea native plain-text paste', () => {
+        const input = document.createElement('agent-input') as HTMLElement & {
+            render: () => void;
+        };
+        input.render();
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(pasteEvent, 'clipboardData', {
+            value: {
+                items: [{ type: 'text/html' }],
+                getData: jest.fn((type: string) =>
+                    type === 'text/plain' ? '/Users/liyi/.ssh/known_hosts' : '<strong>known_hosts</strong>'
+                )
+            }
+        });
+
+        textarea.dispatchEvent(pasteEvent);
+
+        expect(pasteEvent.defaultPrevented).toBe(false);
+    });
+
     test('hides the goal button when requested by the host surface', () => {
         const input = document.createElement('agent-input') as HTMLElement & {
             render: () => void;

@@ -1425,12 +1425,14 @@ export class EmbeddedBrowser extends BrowserInstance {
      * Normalize user input into a valid URL.
      * - empty / whitespace-only → null (skip navigation)
      * - already has scheme (http/https/about/file/data) → keep as-is
+     * - local absolute path (starts with / or drive letter) → prepend file://
      * - looks like a domain (contains dot, no spaces) → prepend https://
      * - otherwise → treat as search query (not implemented, just prepend https://)
      */
     private normalizeUrl(raw: string): string | null {
         if (!raw) return null;
         if (/^(https?|about|file|data):/.test(raw)) return raw;
+        if (/^\//.test(raw)) return `file://${raw}`;
         if (/^[^\s]+\.[^\s]+/.test(raw)) return `https://${raw}`;
         return `https://${raw}`;
     }

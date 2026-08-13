@@ -25,7 +25,7 @@ interface WorkspaceFocusLayoutControllerOptions {
     expandNavigation: () => void;
 }
 
-const FOCUS_PANEL_WIDTH = '75%';
+const FOCUS_PANEL_WIDTH = '70%';
 const FOCUS_LAYOUT_TRANSITION = 'width 320ms cubic-bezier(0.4, 0, 0.2, 1)';
 
 /** Coordinates the outer task layout while focused workspace content is active. */

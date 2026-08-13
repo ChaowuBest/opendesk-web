@@ -51,19 +51,19 @@ Storage 采用三层架构，职责自上而下递进：
 
 ### 2.2 完整文件清单
 
-| 文件 | 层级 | 说明 |
-|------|------|------|
-| `abstract-storage.ts` | 协调层 | BaseStorage 类、Item/ColumnSchema/FilterCondition 等核心类型 |
-| `indexer.ts` | 抽象 | Indexer 抽象基类定义 |
-| `base-indexer.ts` | Indexer | 标量元数据索引，schema 驱动动态建表 |
-| `bm25-indexer.ts` | Indexer | 全文搜索索引，FTS5 分词 |
-| `vector-indexer.ts` | Indexer | 向量相似度索引，sqlite-vec |
-| `tag-indexer.ts` | Indexer | 标签精确匹配索引 |
-| `chunk-indexer.ts` | Indexer | 分块向量索引（1:N），RAG 场景 |
-| `*-index-db.ts` | IndexDB | Node.js 平台实现（5 个，生产使用） |
-| `*-index-db-wasm.ts` | IndexDB | WASM 实现（5 个，生产使用） |
-| `*-index-db-hm.ts` | IndexDB | HM native addon 实现（5 个，已废弃，仅保留参考） |
-| `hnsw-adapter.ts` | 辅助 | HNSW ANN 索引封装，供 WASM 向量实现使用 |
+| 文件                  | 层级    | 说明                                                         |
+| --------------------- | ------- | ------------------------------------------------------------ |
+| `abstract-storage.ts` | 协调层  | BaseStorage 类、Item/ColumnSchema/FilterCondition 等核心类型 |
+| `indexer.ts`          | 抽象    | Indexer 抽象基类定义                                         |
+| `base-indexer.ts`     | Indexer | 标量元数据索引，schema 驱动动态建表                          |
+| `bm25-indexer.ts`     | Indexer | 全文搜索索引，FTS5 分词                                      |
+| `vector-indexer.ts`   | Indexer | 向量相似度索引，sqlite-vec                                   |
+| `tag-indexer.ts`      | Indexer | 标签精确匹配索引                                             |
+| `chunk-indexer.ts`    | Indexer | 分块向量索引（1:N），RAG 场景                                |
+| `*-index-db.ts`       | IndexDB | Node.js 平台实现（5 个，生产使用）                           |
+| `*-index-db-wasm.ts`  | IndexDB | WASM 实现（5 个，生产使用）                                  |
+| `*-index-db-hm.ts`    | IndexDB | HM native addon 实现（5 个，已废弃，仅保留参考）             |
+| `hnsw-adapter.ts`     | 辅助    | HNSW ANN 索引封装，供 WASM 向量实现使用                      |
 
 ---
 
@@ -93,14 +93,14 @@ abstract class Indexer {
 
 ### 3.2 五种 Indexer 对比
 
-| 属性 | BaseIndexer | BM25Indexer | VectorIndexer | TagIndexer | ChunkIndexer |
-|------|-------------|-------------|---------------|------------|--------------|
-| 数据模型 | 1 item : 1 row | 1 item : N rows（每列一条） | 1 item : N rows（每列一条） | 1 item : 1 row | 1 item : N chunks |
-| 底层引擎 | SQLite 标量表 | SQLite FTS5 | sqlite-vec / HNSW | SQLite 标量表 | sqlite-vec / HNSW |
-| 是否必需 | 是（始终创建） | 否（按 schema） | 否（按 schema） | 否（按 schema） | 否（按 schema） |
-| search() 行为 | 无条件时返回全部 | 无条件时返回空 | 无条件时返回空 | 无条件时返回全部 | 直接 throw |
-| insert 去重 | 依赖 BaseStorage | 自行检查 | 依赖 BaseStorage | 依赖 BaseStorage | 自行检查 |
-| 支持的操作符 | 全部标量操作符 | bm25_match | vector_* 系列 | 标量操作符子集 | vector_* 系列 |
+| 属性          | BaseIndexer      | BM25Indexer                 | VectorIndexer               | TagIndexer       | ChunkIndexer      |
+| ------------- | ---------------- | --------------------------- | --------------------------- | ---------------- | ----------------- |
+| 数据模型      | 1 item : 1 row   | 1 item : N rows（每列一条） | 1 item : N rows（每列一条） | 1 item : 1 row   | 1 item : N chunks |
+| 底层引擎      | SQLite 标量表    | SQLite FTS5                 | sqlite-vec / HNSW           | SQLite 标量表    | sqlite-vec / HNSW |
+| 是否必需      | 是（始终创建）   | 否（按 schema）             | 否（按 schema）             | 否（按 schema）  | 否（按 schema）   |
+| search() 行为 | 无条件时返回全部 | 无条件时返回空              | 无条件时返回空              | 无条件时返回全部 | 直接 throw        |
+| insert 去重   | 依赖 BaseStorage | 自行检查                    | 依赖 BaseStorage            | 依赖 BaseStorage | 自行检查          |
+| 支持的操作符  | 全部标量操作符   | bm25_match                  | vector\_\* 系列             | 标量操作符子集   | vector\_\* 系列   |
 
 ### 3.3 BaseIndexer — 元数据主索引
 
@@ -168,11 +168,12 @@ await Promise.all([
     this.bm25Indexer?.op(items),
     this.vectorIndexer?.op(items),
     this.tagIndexer?.op(items),
-    this.chunkIndexer?.op(items),
+    this.chunkIndexer?.op(items)
 ]);
 ```
 
 **关键约束**：
+
 - `insert()` 先通过 BaseIndexer 查询去重，仅将新 item 传递给各 Indexer
 - 各 Indexer 内部各自决定从 item 中提取哪些数据（通过 `indexer_columns` 或 schema 列）
 - 没有跨 Indexer 事务保证：某个 Indexer 写入失败，其余可能已成功
@@ -234,11 +235,11 @@ await Promise.all([
 
 ### 5.1 两套生产实现
 
-| 平台 | 后缀 | SQLite 引擎 | 向量引擎 | BM25 分词 | 状态 |
-|------|------|------------|----------|----------|------|
-| Node.js / Electron | 无后缀 | better-sqlite3 | sqlite-vec 扩展 | FTS5 内置 | **生产使用** |
-| HarmonyOS WASM | `-wasm.ts` | node-sqlite3-wasm | SQLite BLOB + hnsw ANN 缓存 | jieba-wasm + FTS5 | **生产使用** |
-| HarmonyOS Native | `-hm.ts` | hm_sqlite_addon（native） | hm_sqlite_addon | jieba native addon | **已废弃，仅保留参考** |
+| 平台               | 后缀       | SQLite 引擎               | 向量引擎                    | BM25 分词          | 状态                   |
+| ------------------ | ---------- | ------------------------- | --------------------------- | ------------------ | ---------------------- |
+| Node.js / Electron | 无后缀     | better-sqlite3            | sqlite-vec 扩展             | FTS5 内置          | **生产使用**           |
+| HarmonyOS WASM     | `-wasm.ts` | node-sqlite3-wasm         | SQLite BLOB + hnsw ANN 缓存 | jieba-wasm + FTS5  | **生产使用**           |
+| HarmonyOS Native   | `-hm.ts`   | hm_sqlite_addon（native） | hm_sqlite_addon             | jieba native addon | **已废弃，仅保留参考** |
 
 工厂函数只分发到 node 和 wasm 两条路径，`*-hm.ts` 不再被引用。
 
@@ -259,25 +260,25 @@ export async function createBaseIndexDB(dbPath, schema): Promise<IBaseIndexDB> {
 
 工厂函数位置：
 
-| Indexer | 工厂函数 | 定义文件 |
-|---------|---------|---------|
-| BaseIndexer | `createBaseIndexDB()` | `base-index-db.ts` |
-| BM25Indexer | `createBM25IndexDB()` | `bm25-index-db.ts` |
+| Indexer       | 工厂函数                | 定义文件             |
+| ------------- | ----------------------- | -------------------- |
+| BaseIndexer   | `createBaseIndexDB()`   | `base-index-db.ts`   |
+| BM25Indexer   | `createBM25IndexDB()`   | `bm25-index-db.ts`   |
 | VectorIndexer | `createVectorIndexDB()` | `vector-index-db.ts` |
-| TagIndexer | `createTagIndexDB()` | `tag-index-db.ts` |
-| ChunkIndexer | `createChunkIndexDB()` | `chunk-indexer.ts` |
+| TagIndexer    | `createTagIndexDB()`    | `tag-index-db.ts`    |
+| ChunkIndexer  | `createChunkIndexDB()`  | `chunk-indexer.ts`   |
 
 ### 5.3 接口约束
 
 每种 IndexDB 有对应的 TypeScript 接口（`I*IndexDB`），定义在对应的 Indexer 文件中：
 
-| 接口 | 定义文件 | 方法数 |
-|------|---------|--------|
-| `IBaseIndexDB` | `base-indexer.ts` | 19 |
-| `IBM25IndexDB` | `bm25-indexer.ts` | 10 |
-| `IVectorIndexDB` | `vector-indexer.ts` | 14 |
-| `ITagIndexDB` | `tag-indexer.ts` | 17 |
-| `IChunkIndexDB` | `chunk-indexer.ts` | 8 |
+| 接口             | 定义文件            | 方法数 |
+| ---------------- | ------------------- | ------ |
+| `IBaseIndexDB`   | `base-indexer.ts`   | 19     |
+| `IBM25IndexDB`   | `bm25-indexer.ts`   | 10     |
+| `IVectorIndexDB` | `vector-indexer.ts` | 14     |
+| `ITagIndexDB`    | `tag-indexer.ts`    | 17     |
+| `IChunkIndexDB`  | `chunk-indexer.ts`  | 8      |
 
 两套生产实现（node / wasm）必须实现对应接口的所有方法。`*-hm.ts` 实现同样遵循接口但已不被工厂分发。Indexer 层仅通过接口调用 DB 层，不依赖具体实现类。
 
@@ -297,6 +298,7 @@ export async function createBaseIndexDB(dbPath, schema): Promise<IBaseIndexDB> {
 ```
 
 关键行为：
+
 - 写入先标记 HNSW 缓存为 dirty，成功后刷新快照
 - compact 在 stale/total 比例超过 0.2 时触发
 - `filterItemIds` 走双路径：小子集暴力计算，大子集 ANN 召回后过滤
@@ -311,31 +313,32 @@ export async function createBaseIndexDB(dbPath, schema): Promise<IBaseIndexDB> {
 ```typescript
 // Item — 存储单元
 interface Item {
-    item_id: string;                // 主键
-    item_type: ItemType;            // 'file' | 'mail' | 'memory'
-    [key: string]: any;             // schema 定义的业务字段
-    indexer_columns?: {             // 各 Indexer 需要的额外数据
+    item_id: string; // 主键
+    item_type: ItemType; // 'file' | 'mail' | 'memory'
+    [key: string]: any; // schema 定义的业务字段
+    indexer_columns?: {
+        // 各 Indexer 需要的额外数据
         [indexer: string]: Array<{
             column: string;
             content: string | number[];
-            id?: string;            // ChunkIndexer: chunk_id
-            text?: string;          // ChunkIndexer: chunk_text
+            id?: string; // ChunkIndexer: chunk_id
+            text?: string; // ChunkIndexer: chunk_text
         }>;
     };
 }
 
 // ColumnSchema — 存储定义
 interface ColumnSchema {
-    columns: { [column: string]: ColumnConstraint };    // BaseIndexer 建表列
+    columns: { [column: string]: ColumnConstraint }; // BaseIndexer 建表列
     needIndexers: { [column: string]: IndexerBinding[] }; // 列 → Indexer 绑定
 }
 
 // FilterCondition — 搜索条件
 interface FilterCondition {
-    indexer: string;           // 目标 Indexer 名
-    field: string;             // 查询字段
-    operator: QueryOperator;   // 操作符
-    value: any;                // 查询值
+    indexer: string; // 目标 Indexer 名
+    field: string; // 查询字段
+    operator: QueryOperator; // 操作符
+    value: any; // 查询值
     vectorQuery?: VectorQuery; // 向量查询参数（仅 Vector/Chunk）
 }
 ```
@@ -353,13 +356,13 @@ QueryOperator:   ScalarOperator | VectorOperator | BM25Operator
 
 ```typescript
 interface SearchItem {
-    item: Item;            // 完整业务对象（来自 BaseIndexer）
-    tags?: string;         // tag 值
-    VecScore?: number;     // 向量相似度分数
-    BM25Score?: number;    // BM25 匹配分数
-    ChunkScore?: number;   // chunk 相似度分数
-    chunk_id?: string;     // 命中的 chunk 标识符
-    chunk_text?: string;   // 命中的 chunk 原文
+    item: Item; // 完整业务对象（来自 BaseIndexer）
+    tags?: string; // tag 值
+    VecScore?: number; // 向量相似度分数
+    BM25Score?: number; // BM25 匹配分数
+    ChunkScore?: number; // chunk 相似度分数
+    chunk_id?: string; // 命中的 chunk 标识符
+    chunk_text?: string; // 命中的 chunk 原文
 }
 ```
 
@@ -369,11 +372,11 @@ interface SearchItem {
 
 BaseStorage 对外统一三种写语义：
 
-| 操作 | 语义 | 不存在的 item | 已存在的 item |
-|------|------|--------------|--------------|
-| `insert` | first-write-only | 写入 | 跳过 |
-| `update` | existing-only | 跳过 | 更新（部分字段） |
-| `upsert` | 覆盖写 | 写入 | 覆盖 |
+| 操作     | 语义             | 不存在的 item | 已存在的 item    |
+| -------- | ---------------- | ------------- | ---------------- |
+| `insert` | first-write-only | 写入          | 跳过             |
+| `update` | existing-only    | 跳过          | 更新（部分字段） |
+| `upsert` | 覆盖写           | 写入          | 覆盖             |
 
 **Indexer 层职责**：各 Indexer 实现上述语义时，内部策略可以不同，但对外行为必须一致。
 
@@ -387,36 +390,36 @@ BaseStorage 对外统一三种写语义：
 
 ### 8.1 架构约束
 
-| 约束 | 说明 |
-|------|------|
-| **单 BaseStorage 单实例** | 同一个 dbBasePath 不应被多个 BaseStorage 实例同时使用 |
-| **BaseIndexer 必须存在** | 不可跳过，它是 item 存在性判断和元数据 join 的唯一来源 |
-| **维度不可变** | VectorIndexer / ChunkIndexer 的 dim 在首次写入后固定，变更需清空重建 |
-| **无跨 Indexer 事务** | 多个 Indexer 的写入并行执行，某个失败不会回滚其余 |
-| **搜索只支持 AND** | 多条件取交集；OR 需调用方多次查询取并集 |
-| **ChunkIndexer 搜索受限** | 只能与 BaseIndexer 组合，不能与 BM25/Vector/Tag 联合搜索 |
+| 约束                      | 说明                                                                 |
+| ------------------------- | -------------------------------------------------------------------- |
+| **单 BaseStorage 单实例** | 同一个 dbBasePath 不应被多个 BaseStorage 实例同时使用                |
+| **BaseIndexer 必须存在**  | 不可跳过，它是 item 存在性判断和元数据 join 的唯一来源               |
+| **维度不可变**            | VectorIndexer / ChunkIndexer 的 dim 在首次写入后固定，变更需清空重建 |
+| **无跨 Indexer 事务**     | 多个 Indexer 的写入并行执行，某个失败不会回滚其余                    |
+| **搜索只支持 AND**        | 多条件取交集；OR 需调用方多次查询取并集                              |
+| **ChunkIndexer 搜索受限** | 只能与 BaseIndexer 组合，不能与 BM25/Vector/Tag 联合搜索             |
 
 ### 8.2 当前实现限制
 
-| 限制 | 说明 |
-|------|------|
-| **Indexer 注册为具名字段** | BaseStorage 用 5 个独立字段管理 Indexer，新增 Indexer 需改 7+ 个方法 |
-| **搜索管道顺序硬编码** | `indexerOrder` 数组固定为 Tag → BM25 → Vector → Base |
-| **ChunkIndexer 违反 Indexer 契约** | `search()` 直接 throw，不满足里氏替换原则 |
-| **Item 类型弱** | `[key: string]: any` 绕过了 TypeScript 类型检查 |
-| **TagIndexer 单实例** | BaseStorage 只创建一个 TagIndexer，不支持多 tag 列 |
+| 限制                                           | 说明                                                                 |
+| ---------------------------------------------- | -------------------------------------------------------------------- |
+| **Indexer 注册为具名字段**                     | BaseStorage 用 5 个独立字段管理 Indexer，新增 Indexer 需改 7+ 个方法 |
+| **搜索管道顺序硬编码**                         | `indexerOrder` 数组固定为 Tag → BM25 → Vector → Base                 |
+| **ChunkIndexer 违反 Indexer 契约**             | `search()` 直接 throw，不满足里氏替换原则                            |
+| **Item 类型弱**                                | `[key: string]: any` 绕过了 TypeScript 类型检查                      |
+| **TagIndexer 单实例**                          | BaseStorage 只创建一个 TagIndexer，不支持多 tag 列                   |
 | **searchWithChunkIndexer 中 item_type 硬编码** | stub Item 的 `item_type` 写死为 `'file'`（当前为死代码，不影响功能） |
-| **无 count() 便捷方法** | 获取 item 总数需走 `getStatus().BaseIndexer.size`，不够直观 |
+| **无 count() 便捷方法**                        | 获取 item 总数需走 `getStatus().BaseIndexer.size`，不够直观          |
 
 ### 8.3 平台特殊行为
 
-| 行为 | Node.js | WASM（HarmonyOS） |
-|------|---------|-------------------|
-| 向量搜索 | sqlite-vec 原生 | HNSW ANN 缓存 + SQLite 真源 |
-| BM25 分词 | FTS5 内置分词器 | jieba-wasm 切词 → FTS5 tokens 列 |
-| BM25 评分 | 分词命中数 | 分词命中数（与 Node 一致） |
-| DB 磁盘大小查询 | PRAGMA page_count * page_size | 同左（hm-addon 返回 0） |
-| 向量 compact | 不需要 | stale/total > 0.2 时触发 |
+| 行为            | Node.js                        | WASM（HarmonyOS）                |
+| --------------- | ------------------------------ | -------------------------------- |
+| 向量搜索        | sqlite-vec 原生                | HNSW ANN 缓存 + SQLite 真源      |
+| BM25 分词       | FTS5 内置分词器                | jieba-wasm 切词 → FTS5 tokens 列 |
+| BM25 评分       | 分词命中数                     | 分词命中数（与 Node 一致）       |
+| DB 磁盘大小查询 | PRAGMA page_count \* page_size | 同左（hm-addon 返回 0）          |
+| 向量 compact    | 不需要                         | stale/total > 0.2 时触发         |
 
 ---
 

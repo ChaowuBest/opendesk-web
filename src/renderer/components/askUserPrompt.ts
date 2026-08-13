@@ -220,6 +220,48 @@ class AskUserPrompt extends HTMLElement {
         this.hidePrompt();
     }
 
+    private goToPrevious(): void {
+        if (!this._data || this._currentQuestionIndex <= 0) return;
+        this._currentQuestionIndex--;
+        this._restoreSelection();
+        this.renderContent();
+        this._animatePanelIn();
+    }
+
+    private goToNext(): void {
+        if (!this._data) return;
+        const nextIndex = this._currentQuestionIndex + 1;
+        if (nextIndex >= this._data.questions.length) return;
+        // 仅当前题已回答时才允许前进
+        if (!this._answers[this._currentQuestionIndex]) return;
+        this._currentQuestionIndex = nextIndex;
+        this._restoreSelection();
+        this.renderContent();
+        this._animatePanelIn();
+    }
+
+    private _restoreSelection(): void {
+        this._selectedValues = new Set();
+        const q = this._data?.questions[this._currentQuestionIndex];
+        const ans = this._answers[this._currentQuestionIndex];
+        if (q && ans) {
+            for (const label of ans) {
+                const idx = q.options.findIndex((o) => o.label === label);
+                if (idx >= 0) this._selectedValues.add(idx);
+            }
+        }
+    }
+
+    private _animatePanelIn(): void {
+        requestAnimationFrame(() => {
+            const panel = this.querySelector<HTMLElement>('#ask-user-panel');
+            if (panel) {
+                panel.classList.remove('translate-y-4', 'opacity-0');
+                panel.classList.add('translate-y-0', 'opacity-100');
+            }
+        });
+    }
+
     private submitCustomInput(text: string): void {
         if (!this._data || !text.trim()) return;
         this._answers[this._currentQuestionIndex] = [text.trim()];
@@ -241,7 +283,32 @@ class AskUserPrompt extends HTMLElement {
         }
 
         const totalQuestions = questions.length;
-        const progressText = totalQuestions > 1 ? `问题 ${this._currentQuestionIndex + 1} / ${totalQuestions}` : '';
+        const hasMultiple = totalQuestions > 1;
+        const progressText = hasMultiple ? `问题 ${this._currentQuestionIndex + 1} / ${totalQuestions}` : '';
+        const isFirst = this._currentQuestionIndex === 0;
+        const isLast = this._currentQuestionIndex >= totalQuestions - 1;
+        const hasCurrentAnswer = !!this._answers[this._currentQuestionIndex];
+
+        // 导航按钮（仅多问题时显示）
+        const navBtnBase =
+            'inline-flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors duration-150 cursor-pointer';
+        const navPrevHtml = hasMultiple
+            ? `<button id="ask-prev-btn"
+                    class="${navBtnBase} ${isFirst ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}"
+                    ${isFirst ? 'disabled' : ''}>
+                    <i class="fa-solid fa-chevron-left text-[9px]"></i>
+                </button>`
+            : '';
+        const navNextHtml = hasMultiple
+            ? `<button id="ask-next-btn"
+                    class="${navBtnBase} ${isLast || !hasCurrentAnswer ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}"
+                    ${isLast || !hasCurrentAnswer ? 'disabled' : ''}>
+                    <i class="fa-solid fa-chevron-right text-[9px]"></i>
+                </button>`
+            : '';
+        const navButtonsHtml = hasMultiple
+            ? `<div class="flex items-center gap-0.5 ml-0.5">${navPrevHtml}${navNextHtml}</div>`
+            : '';
 
         const optionsHtml = q.options
             .map((opt, i) => {
@@ -303,6 +370,7 @@ class AskUserPrompt extends HTMLElement {
                 </span>
                 <span class="text-[13px] font-medium text-gray-700">需要确认</span>
                 ${progressText ? `<span class="text-[11px] text-blue-400 ml-1">${escapeHtml(progressText)}</span>` : ''}
+                ${navButtonsHtml}
                 <div class="flex-1"></div>
                 <button id="ask-cancel-btn"
                         class="inline-flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
@@ -356,6 +424,20 @@ class AskUserPrompt extends HTMLElement {
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => {
                 this.cancel();
+            });
+        }
+
+        // 导航按钮（上一个/下一个问题）
+        const prevBtn = this.querySelector<HTMLButtonElement>('#ask-prev-btn');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                this.goToPrevious();
+            });
+        }
+        const nextBtn = this.querySelector<HTMLButtonElement>('#ask-next-btn');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                this.goToNext();
             });
         }
 

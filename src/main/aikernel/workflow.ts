@@ -18,7 +18,12 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 
 export type WorkflowJSONValue =
-    null | boolean | number | string | WorkflowJSONValue[] | { [key: string]: WorkflowJSONValue };
+    | null
+    | boolean
+    | number
+    | string
+    | WorkflowJSONValue[]
+    | { [key: string]: WorkflowJSONValue };
 export type WorkflowJSONSchema = Record<string, unknown>;
 
 export function normalizeWorkflowJSONValue(value: unknown): WorkflowJSONValue {

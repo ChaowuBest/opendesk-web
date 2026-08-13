@@ -4,7 +4,14 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Marked } from 'marked';
-import { fileLinkExtension, setRenderWorkspace, resolveFilePath } from '../../../main/aikernel/marked-file-link.js';
+import {
+    fileLinkExtension,
+    setRenderWorkspace,
+    resolveFilePath,
+    parseFileReference,
+    renderFilePillFromText
+} from '../../../main/aikernel/marked-file-link.js';
+import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
 
 test('resolveFilePath: returns absolute path when file exists (absolute input)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
@@ -23,6 +30,15 @@ test('resolveFilePath: returns null when file does not exist', () => {
     setRenderWorkspace('/tmp');
     assert.equal(resolveFilePath('/nonexistent/path/file.ts'), null);
     setRenderWorkspace(null);
+});
+
+test('resolveFilePath: returns null when path points to a directory', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        assert.equal(resolveFilePath(tmp), null);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
 });
 
 test('resolveFilePath: resolves relative path against workspace', () => {
@@ -187,6 +203,34 @@ test('markdown link: renders link to existing file as pill', () => {
     }
 });
 
+test('markdown link: renders OpenDesk skill links as skill pills', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[calendar](opendesk-skill:calendar/calendar)') as string;
+        assert.ok(html.includes('<button type="button" class="od-skill-pill"'));
+        assert.ok(html.includes('data-skill-bundle="calendar"'));
+        assert.ok(html.includes('data-skill-name="calendar"'));
+        assert.ok(html.includes('od-skill-pill-icon'));
+        assert.ok(!html.includes('data-open-preview'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: does not render a directory link as a file pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse(`[root](${tmp})`) as string;
+        assert.ok(!html.includes('od-file-pill'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('markdown link: renders link with custom label as pill', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
@@ -341,6 +385,245 @@ test('markdown link: URL-encoded href with spaces is decoded', () => {
         const html = marked.parse('[report](My%20Documents/report.pptx)') as string;
         assert.ok(html.includes('od-file-pill'), 'should decode %20 and match file');
         assert.ok(html.includes('data-open-preview'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ── File path + line reference parsing ───────────────────────────────
+
+test('parseFileReference: strips trailing line number', () => {
+    assert.deepEqual(parseFileReference('/path/to/file.ts:134'), {
+        filePath: '/path/to/file.ts',
+        line: 134
+    });
+});
+
+test('parseFileReference: strips line and column', () => {
+    assert.deepEqual(parseFileReference('/path/to/file.ts:12:8'), {
+        filePath: '/path/to/file.ts',
+        line: 12
+    });
+});
+
+test('parseFileReference: returns null line when no suffix', () => {
+    assert.deepEqual(parseFileReference('/path/to/file.ts'), {
+        filePath: '/path/to/file.ts',
+        line: null
+    });
+});
+
+test('parseFileReference: returns null line for URL', () => {
+    assert.deepEqual(parseFileReference('https://example.com/file.ts'), {
+        filePath: 'https://example.com/file.ts',
+        line: null
+    });
+});
+
+test('parseFileReference: returns null line for non-numeric suffix', () => {
+    assert.deepEqual(parseFileReference('/path/to/file.ts:abc'), {
+        filePath: '/path/to/file.ts:abc',
+        line: null
+    });
+});
+
+test('parseFileReference: returns null line for zero line number', () => {
+    assert.deepEqual(parseFileReference('/path/to/file.ts:0'), {
+        filePath: '/path/to/file.ts:0',
+        line: null
+    });
+});
+
+test('markdown link: renders link with line number as pill with data-preview-line', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts:134)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-open-preview'));
+        assert.ok(html.includes('data-preview-line="134"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('auto-detection: plain text path with line number renders pill with data-preview-line', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('See src/utils.ts:134 for details.') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="134"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: pill without line number has no data-preview-line', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(!html.includes('data-preview-line'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('codespan: inline code with file path and line number renders pill with data-preview-line', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('See `src/utils.ts:134` for details.') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-open-preview'));
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(!html.includes('<code>'), 'file path in backticks should become pill, not code');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('codespan: absolute path with line number renders pill with data-preview-line', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const absPath = path.join(tmp, 'main.ts');
+        fs.writeFileSync(absPath, 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse(`See \`${absPath}:3\` now.`) as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes(`data-open-preview="${absPath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ── renderFilePillFromText ───────────────────────────────────────────
+
+test('renderFilePillFromText: single file path with line renders pill with line badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        const html = renderFilePillFromText('src/utils.ts:134');
+        assert.ok(html);
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(html.includes('od-file-pill-line'), 'pill should display the line number');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('renderFilePillFromText: single file path without line renders pill without line badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        const html = renderFilePillFromText('main.ts');
+        assert.ok(html);
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(!html.includes('od-file-pill-line'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('renderFilePillFromText: multi-line content returns null', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        assert.equal(renderFilePillFromText('main.ts\nother.ts'), null);
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('renderFilePillFromText: non-file content returns null', () => {
+    assert.equal(renderFilePillFromText('console.log(1)'), null);
+});
+
+test('renderFilePillFromText: blank content returns null', () => {
+    assert.equal(renderFilePillFromText('  \n  '), null);
+});
+
+test('pill: plain text path with line displays line badge in label', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('See src/utils.ts:134 for details.') as string;
+        assert.ok(html.includes('od-file-pill-line'));
+        assert.ok(html.includes(':134'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ── fenced code block integration (messages.ts marked) ───────────────
+
+test('fenced code block: single file path renders pill (messages marked)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const absPath = path.join(tmp, 'main.ts');
+        fs.writeFileSync(absPath, 'export {};');
+        setRenderWorkspace(tmp);
+        const html = messagesMarked.parse('```\n' + absPath + ':3\n```') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="3"'));
+        assert.ok(!html.includes('code-block-wrapper'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('fenced code block: multi-line code stays as code block (messages marked)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        const html = messagesMarked.parse('```js\nconsole.log(1);\n```') as string;
+        assert.ok(html.includes('code-block-wrapper'));
+        assert.ok(!html.includes('od-file-pill'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('indented code block: single file path stays as code block (messages marked)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const absPath = path.join(tmp, 'main.ts');
+        fs.writeFileSync(absPath, 'export {};');
+        setRenderWorkspace(tmp);
+        const html = messagesMarked.parse('    ' + absPath) as string;
+        assert.ok(html.includes('code-block-wrapper'));
+        assert.ok(!html.includes('od-file-pill'));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

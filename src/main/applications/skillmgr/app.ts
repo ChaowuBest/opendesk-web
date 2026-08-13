@@ -465,6 +465,17 @@ export class SkillMgrApplication extends BaseApplication {
         return skillRegistry.listSkills();
     }
 
+    async getSkillDetailForReference(bundleName: string, skillName: string) {
+        const skill = await AISkillRegistry.getInstance().getSkill(bundleName, skillName);
+        if (!skill) return null;
+        return {
+            id: `${bundleName}/${skillName}`,
+            name: skill.frontmatter.name,
+            description: skill.frontmatter.description || '',
+            body: skill.body,
+            directory: skill.directory || ''
+        };
+    }
     /**
      * 获取所有 user-invocable 的技能（包含系统内置 + 已安装），供渲染进程技能选择器使用
      */
