@@ -291,7 +291,7 @@ appLifecycle({
 1. 每次界面变化后重新 **snapshot**（或开 \`snapshot: true\` 自动获取）
 2. **发送按钮**：用 \`clickRef({ position: "left-center" })\`，避免命中相邻选项按钮
 3. 应用内消息：snapshot 定位 textbox → input → pressKey Enter → 快照验证
-4. **禁止 hdc shell uinput**：用 **pressKey** 工具，它能正确路由到目标应用
+4. **禁止用 hdc shell uinput 模拟按键**：用 **pressKey** 工具，它能正确路由到目标应用（hover 的鼠标移动降级除外，见上文「悬停」段落）
 5. \`clearData\` 需确认 bundleName 和测试环境后才执行
 `;
 
