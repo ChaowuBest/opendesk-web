@@ -15,6 +15,8 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
+import { SlidesTaskSessionRegistry } from './slidesTaskSessions.js';
+import { t } from '../../locale/index.js';
 
 export type OpenDeskOfficeEditorKind = 'slides' | 'word' | 'sheets';
 
@@ -24,7 +26,25 @@ interface OpenDeskOfficeHost {
     register(): void;
     attachWindow(window: BrowserWindow): void;
     activateContents(contents: WebContents): void;
+    getCapabilities?(): readonly SlidesCapabilityDefinition[];
+    executeCapability?(
+        contents: WebContents,
+        call: { name: string; input: Record<string, unknown> }
+    ): Promise<SlidesCapabilityExecution>;
     requestCloseAll(): Promise<boolean>;
+}
+
+export interface SlidesCapabilityDefinition {
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+}
+
+export interface SlidesCapabilityExecution {
+    output: string;
+    isError?: boolean;
+    mutated?: boolean;
+    summary: string;
 }
 
 interface OfficeEditorDefinition {
@@ -109,6 +129,7 @@ const editorRuntimes: readonly OfficeEditorRuntime[] = editorDefinitions.map((de
 
 let attachedWindow: BrowserWindow | undefined;
 let prepareHandlerRegistered = false;
+const slidesTaskSessions = new SlidesTaskSessionRegistry<WebContents>();
 
 function getEditorRuntime(kind: OpenDeskOfficeEditorKind): OfficeEditorRuntime {
     const runtime = editorRuntimes.find((candidate) => candidate.kind === kind);
@@ -162,6 +183,38 @@ export function registerEmbeddedOpenDeskOffice(): void {
         await loadEditorHost(getEditorRuntime(kind));
         return true;
     });
+    ipcMain.handle(
+        'office-host:slides:bind-task',
+        async (event, taskId: string, filePath: string, webContentsId: number) => {
+            if (!taskId || !filePath || !Number.isInteger(webContentsId)) return false;
+            const target = (await import('electron')).webContents.fromId(webContentsId);
+            if (!target || target.isDestroyed() || target.getType() !== 'webview') return false;
+            if (target.hostWebContents?.id !== event.sender.id) return false;
+            const runtime = getEditorRuntime('slides');
+            if (!runtime.isTrustedUrl(target.getURL())) return false;
+            const host = await loadEditorHost(runtime);
+            host.activateContents(target);
+            slidesTaskSessions.bind(taskId, filePath, target);
+            return true;
+        }
+    );
+}
+
+export async function getOpenDeskSlidesCapabilities(): Promise<readonly SlidesCapabilityDefinition[]> {
+    const host = await loadEditorHost(getEditorRuntime('slides'));
+    return host.getCapabilities?.() ?? [];
+}
+
+export async function executeOpenDeskSlidesCapability(
+    taskId: string,
+    name: string,
+    input: Record<string, unknown>
+): Promise<SlidesCapabilityExecution> {
+    const session = slidesTaskSessions.get(taskId);
+    if (!session) throw new Error(t('office.slides.error.noTaskSession'));
+    const host = await loadEditorHost(getEditorRuntime('slides'));
+    if (!host.executeCapability) throw new Error(t('office.slides.error.capabilityUnavailable'));
+    return await host.executeCapability(session.contents, { name, input });
 }
 
 export function attachOpenDeskOfficeWindow(window: BrowserWindow): void {

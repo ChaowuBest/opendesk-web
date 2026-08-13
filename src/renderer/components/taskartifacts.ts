@@ -234,6 +234,15 @@ class TaskArtifacts extends HTMLElement {
             this._workspaceFocusLayoutState = state;
             this._syncWorkspaceFocusLayout();
         };
+        this._fileExplorer.onSlidesSelectionAction = (context) => {
+            this.dispatchEvent(
+                new CustomEvent('opendesk-slides-selection-action', {
+                    detail: { taskId: this._getTaskId(), context },
+                    bubbles: true,
+                    composed: true
+                })
+            );
+        };
     }
 
     private _getTabs(): TabSpec[] {
@@ -529,6 +538,7 @@ class TaskArtifacts extends HTMLElement {
      */
     setTaskId(taskId: string): void {
         this._taskId = taskId;
+        this._fileExplorer.setTaskId(taskId);
         this._startSessionMemoryRefresh();
     }
 
