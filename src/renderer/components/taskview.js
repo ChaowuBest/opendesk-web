@@ -2683,12 +2683,16 @@ class TaskView extends HTMLElement {
         const filePath = target.dataset.openPreview;
         if (!filePath) return;
 
+        const lineAttr = target.dataset.previewLine;
+        const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
+        const validLine = line !== undefined && Number.isFinite(line) && line > 0 ? line : undefined;
+
         // 1. 展开侧边栏
         this._forceExpandRightSidebar();
-        // 2. 在预览模式下打开文件（不打开编辑器）
+        // 2. 在预览模式下打开文件（不打开编辑器），并跳转到指定行
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFilePreview === 'function') {
-            sidebar.openFilePreview(filePath);
+            sidebar.openFilePreview(filePath, validLine);
         }
     }
 

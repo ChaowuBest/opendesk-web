@@ -222,10 +222,6 @@ function isOfficeDocument(filePath: string): boolean {
     return getOfficeEditorConfig(filePath) !== undefined;
 }
 
-function usesWorkspaceFocusLayout(filePath: string): boolean {
-    return isOfficeDocument(filePath);
-}
-
 function renderOfficeEditorLoadingIndicator(): string {
     return `
         <div class="ws-office-editor-loading-indicator" role="status" aria-live="polite">
@@ -922,14 +918,6 @@ type AceMode =
 type AceEditorMode = typeof import('ace-builds/src-noconflict/ace.js');
 type AceEditorInstance = AceLib.Editor;
 
-const ACE_THEME: {
-    light: 'clouds';
-    dark: 'dracula';
-} = {
-    light: 'clouds',
-    dark: 'dracula'
-};
-
 const ACE_MODE_LOADERS: Record<NonNullable<AceMode>, () => Promise<unknown>> = {
     javascript: () => import('ace-builds/src-noconflict/mode-javascript.js'),
     typescript: () => import('ace-builds/src-noconflict/mode-typescript.js'),
@@ -1361,9 +1349,9 @@ export class FileExplorer {
      * 选中并预览指定文件。
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
-    selectFile(filePath: string): void {
+    selectFile(filePath: string, line?: number): void {
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
-        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath))) return;
+        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line))) return;
 
         // HTML/HTM 文件在浏览器 tab 中打开，不在文件预览面板中渲染
         if (isHtmlFile(filePath)) {
@@ -1392,7 +1380,6 @@ export class FileExplorer {
             return;
         }
 
-        const wasFocusedPreview = !!this._selectedFile && usesWorkspaceFocusLayout(this._selectedFile);
         if (this._editorMode) {
             void this._saveEditorIfNeeded();
             this._destroyEditorInstance();
@@ -1416,6 +1403,7 @@ export class FileExplorer {
             this._editorSaving = false;
             this._editorPendingSave = false;
             this._editorSaveError = null;
+            this._editorOpenLine = line != null && line > 0 ? line : null;
         }
         this._previewState = { status: 'loading' };
         this._renderPreview(wasEmpty);
@@ -1447,7 +1435,8 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            (HTMLElement & { getWebContentsId?: () => number }) | null;
+            | (HTMLElement & { getWebContentsId?: () => number })
+            | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 

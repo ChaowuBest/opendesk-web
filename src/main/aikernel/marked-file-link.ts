@@ -158,11 +158,48 @@ function getFileType(filePath: string): string {
     return TYPE_MAP[ext] ?? 'default';
 }
 
-function buildPillHTML(filePath: string, label: string): string {
+function buildPillHTML(filePath: string, label: string, line: number | null = null): string {
+    const lineAttr = line != null && line > 0 ? ` data-preview-line="${line}"` : '';
+    const lineSpan = line != null && line > 0 ? `<span class="od-file-pill-line">:${line}</span>` : '';
     return (
-        `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}" title="${escapeHtml(filePath)}">` +
-        `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span></a>`
+        `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}"${lineAttr} title="${escapeHtml(filePath)}">` +
+        `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span>${lineSpan}</a>`
     );
+}
+
+// ── File path + line reference parsing ───────────────────────────────
+
+// 匹配文件路径末尾的行号引用，如 "/path/to/file.ts:134" 或 "/path/to/file.ts:12:8"
+// 使用非贪婪匹配，避免 "file.ts:12:8" 中贪婪 (.+) 把 ":12" 误并入文件路径
+const FILE_LINE_REF_RE = /^(.+?):(\d+)(?::(\d+))?$/;
+
+/**
+ * 解析可能携带行号（及可选列号）的文件引用。
+ * 若末尾为 ":<line>" 或 ":<line>:<column>" 则剥离，否则原样返回。
+ */
+export function parseFileReference(rawPath: string): { filePath: string; line: number | null } {
+    const match = FILE_LINE_REF_RE.exec(rawPath);
+    if (match) {
+        const line = parseInt(match[2], 10);
+        if (line > 0) {
+            return { filePath: match[1], line };
+        }
+    }
+    return { filePath: rawPath, line: null };
+}
+
+/**
+ * 将整段文本尝试解析为单个文件引用并渲染成文件 pill。
+ * 仅当 trim 后是合法的文件路径（可带行号）时返回 pill HTML，否则返回 null。
+ * 供围栏代码块等 block 场景复用：整块内容就是一个文件地址时转成可点击的 pill。
+ */
+export function renderFilePillFromText(text: string): string | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    const { filePath, line } = parseFileReference(trimmed);
+    const absPath = resolveFilePath(filePath);
+    if (!absPath) return null;
+    return buildPillHTML(absPath, path.basename(absPath), line);
 }
 
 // ── Marked extension ───────────────────────────────────────────────
@@ -200,11 +237,25 @@ export const fileLinkExtension: MarkedExtension = {
                     const candidate = segments.join(' ');
                     const absPath = resolveFilePath(candidate);
                     if (absPath) {
+                        let raw = candidate;
+                        let line: number | null = null;
+                        // 文件路径后紧跟行号引用（如 file.ts:134）时一并纳入 token，
+                        // 避免行号作为普通文本残留导致跳转信息丢失。
+                        const rest = src.slice(candidate.length);
+                        const lineMatch = /^:(\d+)/.exec(rest);
+                        if (lineMatch) {
+                            const parsed = parseInt(lineMatch[1], 10);
+                            if (parsed > 0) {
+                                raw = candidate + lineMatch[0];
+                                line = parsed;
+                            }
+                        }
                         return {
                             type: 'fileLink',
-                            raw: candidate,
-                            text: candidate,
+                            raw,
+                            text: raw,
                             filePath: absPath,
+                            line,
                             tokens: []
                         };
                     }
@@ -215,8 +266,8 @@ export const fileLinkExtension: MarkedExtension = {
                 return undefined;
             },
             renderer(token) {
-                const filePath = (token as { filePath: string }).filePath;
-                return buildPillHTML(filePath, path.basename(filePath));
+                const { filePath, line } = token as { filePath: string; line: number | null };
+                return buildPillHTML(filePath, path.basename(filePath), line);
             }
         }
     ],
@@ -242,17 +293,19 @@ export const fileLinkExtension: MarkedExtension = {
             } catch {
                 // ignore malformed URI – use raw href
             }
-            const absPath = resolveFilePath(decodedHref);
+            const { filePath, line } = parseFileReference(decodedHref);
+            const absPath = resolveFilePath(filePath);
             if (absPath) {
                 const label = this.parser.parseInline(tokens);
-                return buildPillHTML(absPath, label || path.basename(absPath));
+                return buildPillHTML(absPath, label || path.basename(absPath), line);
             }
             return false;
         },
         codespan({ text }: Tokens.Codespan): string | false {
-            const absPath = resolveFilePath(text);
+            const { filePath, line } = parseFileReference(text);
+            const absPath = resolveFilePath(filePath);
             if (absPath) {
-                return buildPillHTML(absPath, path.basename(absPath));
+                return buildPillHTML(absPath, path.basename(absPath), line);
             }
             return false;
         }

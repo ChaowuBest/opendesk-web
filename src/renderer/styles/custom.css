@@ -3646,6 +3646,11 @@ agent-input[hide-disclaimer] .agent-input-footer {
     white-space: nowrap;
     max-width: 200px;
 }
+.od-file-pill-line {
+    flex-shrink: 0;
+    opacity: 0.72;
+    font-weight: 400;
+}
 [data-theme='dark'] .od-file-pill[data-type='code'] {
     background: rgba(122, 162, 232, 0.16);
     box-shadow: inset 0 -1px 0 rgba(122, 162, 232, 0.22);
