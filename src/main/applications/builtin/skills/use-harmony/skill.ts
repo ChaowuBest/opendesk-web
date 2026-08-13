@@ -67,6 +67,8 @@ clickRef({ snapshotId: "s12", ref: "e4", position: "left-center", snapshot: true
 
 优先 **selectOption**，不要手工组合"点击触发器→截图→猜坐标"。先刷新快照，展开后用无障碍文本选择；原生 \`<select>\`/XComponent 自动 OCR 兜底，点击后验证选中状态。\`trigger.name\` 定位下拉框，\`option\` 为选项文本，默认精确匹配；只有界面给选项附加说明文字时才用 \`match: "contains"\`。失败才手工兜底。默认保留 \`verify: true\`。
 
+**Web 浮层可能在视口外：** 当触发器靠近窗口底部（如时间按钮 y=1388，窗口底 1414），向下弹出的浮层会被裁到视口外。此时 snapshot 返回 "unchanged" 不代表浮层没弹出——浮层已在 DOM 中，只是页面滚动位置导致其不在可视区。截图/OCR/systemDialog 在当前视口内自然找不到。**正确做法：先 scroll 窗口内容让触发器远离窗口边缘，再重新 snapshot，浮层即可见。**
+
 \`\`\`
 selectOption({
     trigger: { role: "combobox", name: "语言" },
@@ -78,10 +80,10 @@ selectOption({
 
 ### 输入文本
 
-用 **input** 在 textbox 输入：从 snapshot 获取坐标，\`mode: "append"\`（默认）或 \`"replace"\`（从开头删 256 字符后输入，更长用 \`maxClearChars\`）。中文自动走剪贴板粘贴。快照无法校验输入框值，\`replace\` 非无上限清空断言。
+用 **input** 在 textbox 输入：从 snapshot 获取坐标，\`mode: "append"\`（默认）或 \`"replace"\`。replace 默认用**拖拽全选**清空：传 \`bounds\`（输入框边界，来自 findElement），工具从输入框内部左上拖到右下全选后输入，支持单行/多行；不传 \`bounds\` 时回退为设备端批量退格删除（可用 \`clearMode: "backspace"\` 强制，最多删 \`maxClearChars\` 个字符，默认 256）。中文自动走剪贴板粘贴。快照无法校验输入框值，\`replace\` 非无上限清空断言。
 
 \`\`\`
-input({ x: 540, y: 1820, text: "新消息", mode: "replace", maxClearChars: 512 })
+input({ x: 540, y: 1820, text: "新消息", mode: "replace", bounds: { x1: 300, y1: 1790, x2: 2100, y2: 1850 } })
 \`\`\`
 
 ### 系统文件选择器
@@ -103,7 +105,7 @@ dropFixture({
 ### 指针手势
 
 - **doubleClick**：原生双击，如双击打开、日期选择
-- **drag**：起点到终点连续拖动，不能两次点击或 scroll 替代
+- **drag**：起点到终点连续拖动，不能两次点击或 scroll 替代。**注意：WebView 内浮层上做 drag 可能被浏览器解释为文本选择**（出现"复制"按钮），而非触发滚动。在 WebView 浮层内需要滚动时，优先用 \`scroll\` + \`region\` 或 \`scrollInScrollable\`
 - **longClick**：原生长按。**HDC 不支持原生右键**，长按是唯一右键模拟方案，部分 WebView/Electron 会将长按转 \`contextmenu\`
 
 均支持 \`snapshot: true\`，\`native: true\` 表示已调用设备原生命令。
@@ -118,7 +120,7 @@ drag({ fromX: 320, fromY: 540, toX: 620, toY: 540, speed: 600, snapshot: true })
 
 三种模式：**inspect**（仅检测弹窗） / **select**（按文本或索引选择选项） / **dismiss**（关闭弹窗）。
 
-工作流程：点击触发元素 → 等待弹窗稳定 → \`snapshot_display\` 全屏截图 → 像素分析 → 点击选项。全链路自动完成。
+工作流程：点击触发元素 → 等待弹窗稳定 → \`snapshot_display\` 全屏截图 → 像素分析 → 点击选项。\`select\` 模式下 \`option\` 按选项文本模糊匹配（对选项行做局部 OCR），OCR 不可用或未匹配到时回退到当前高亮行；也可用 \`optionIndex\` 按索引选择。全链路自动完成。
 
 \`\`\`
 systemDialog({ action: "inspect" })
@@ -153,6 +155,30 @@ scroll({ direction: "up", scrollByContainer: { role: "list", name: "任务" }, d
 \`\`\`
 scrollTo({ targetRole: "button", targetName: "停止生成", maxScrolls: 10 })
 \`\`\`
+
+### Web 虚拟滚动弹窗（时间/日期选择器）
+
+Web 应用内（如 WorkBuddy 定时任务）的时间/日期选择器常是**虚拟滚动列表**：snapshot 与 dumpLayout 报告的按钮 bounds 是**内容坐标**（含滚动偏移），不等于真实屏幕位置。**直接点击内容坐标会落在弹窗遮罩上——弹窗关闭但值不变**（实测：WorkBuddy 时间选择器，点击内容坐标 (1013,563) 后弹窗关闭、时间仍为 09:09）。必须先用真实布局确认目标在滚动容器可视区内，滚动进可视区后再点击。
+
+**首选 **scrollInScrollable** 工具**：它自动 dumpLayout 定位滚动容器可视区、在容器内滑动直到目标 bounds 进入可视区，并返回 \`targetCenter\`（真实可点击坐标）。直接用 click 点击该坐标即可。
+
+**手工操作步骤（工具不可用时的兜底，实测验证）：**
+
+1. **展开选择器**，用 dumpLayout 导出真实布局（与 snapshot 同坐标系，均为内容坐标）：
+   \`\`\`
+   hdc shell uitest dumpLayout -p /data/local/tmp/layout.json -b <bundleName>
+   hdc file recv /data/local/tmp/layout.json <local_path>
+   \`\`\`
+2. **定位滚动容器可视区**：找 \`scrollable=true\` 的 genericContainer 且 bounds 为窄列（如 [729,912][904,1309]）；其 bounds 即真实可点击区域。例：WorkBuddy 时列容器可视区 y∈[912,1309]，分列容器 x∈[926,1100]。**过滤掉宽度/高度 < 20px 的退化容器**（如 1px 宽的最外层滚动包装器）——这类容器不可能承载可滚动列，选中它只会"在真空中滚动"（实测：WorkBuddy 布局首位即 [0,127][1,1955] 的 1px 外层容器，旧版 scrollInScrollable 就误选中了它导致滚动 8 次仍不可见）。
+3. **先判方向再滚动（避免反向浪费）**：比较目标按钮 bounds 与可视区。目标完全在可视区上方（y2 < 可视区 y1）说明被裁剪不可见、**不可直接点击**，应**下拉**（drag 从上往下）；目标在可视区下方（y1 > 可视区 y2）应**上拉**。**方向判错会白滚一轮且数字反向移动**（实测：分列目标 00 在上方，误上拉后 17-49 反而变 30-55）。
+4. **在容器可视区内滚动**：目标在上方 → 在该列容器内**下拉**（drag 从上往下）；目标在下方 → **上拉**。用 \`drag\` 或带 \`region\` 的 \`scroll\` 精确控制，勿用全屏 fling。每次滚动后重新 dumpLayout 复核，直到目标进入可视区。**滚动中勿用整屏快照验滚动态**：虚拟滚动列表的 snapshot/dumpLayout 只报内容坐标、不反映当前滚到哪，整屏快照信息量极低；改用 **screenshot 只裁目标列可视区**（如分列 {x1:926,y1:912,x2:1100,y2:1309}）做**局部 OCR**，识别出的顶部数字即可视区当前顶部——更快更准（实测：OCR 出现目标数字即已到达列头/列尾）。
+5. **点击目标中心**：目标进入可视区后，其 bounds 中心即真实屏幕坐标（实测进入可视区后 dumpLayout 中心 (1013,941) 可直接点击成功）；点击后 snapshot 确认值已更新（如时间按钮从 "09:09" 变为 "09:00"）。
+
+**双列选择器（时/分）要点：**
+
+- 时列与分列常有同名项（如都有 "00"/"09"）。用 **scrollInScrollable 的 \`containerName\`** 精确指定目标所在的列容器；若仍匹配到多列，用返回的 \`targetCenter\` 的 x 坐标区分目标列（时列 x≈817、分列 x≈1013），确认后点击。
+- scrollInScrollable 只在目标 bounds 与滚动容器可视区**重叠**时才返回 \`visible=true\`；\`visible=false\` 表示 maxScrolls 次滚动后目标仍未进入可视区，可增大 \`maxScrolls\` 或检查 \`targetText\` 是否匹配。
+- **容器误定位排查**：scrollInScrollable 用 dumpLayout 定位容器时，可能匹配到语义错误的非目标容器（如侧边栏 genericContainer，宽高正常但并非浮层内的滚动列）。表现为：\`visible=false\` 且 \`matchesFound=0\`，而 \`containerBounds\` 的 x 范围不包含目标元素的 x 坐标。**判断方法：对比 containerBounds.x 范围与目标元素 x 坐标**——若目标在 x=1489（时列）或 x=1685（分列），但容器 x 范围是 672-1174（侧边栏），说明定位到了错误容器。应通过 \`containerName\` 精确指定目标列，或先 scroll 让浮层完全进入视口后再重试。
 
 ### 导航
 

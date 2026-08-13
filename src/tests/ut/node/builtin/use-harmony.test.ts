@@ -20,11 +20,12 @@ import {
     OpenAppTool,
     PressKeyTool,
     SelectOptionTool,
-    StageFixtureTool,
     LongClickTool,
     ScreenshotTool,
     ScrollTool,
+    ScrollInScrollableTool,
     SnapshotTool,
+    SystemDialogTool,
     WaitForTool
 } from '../../../../main/applications/builtin/skills/use-harmony/tools.js';
 
@@ -44,9 +45,8 @@ test('use-harmony skill loader preserves metadata, instructions, and toolset wir
     assert.equal(skill.getTool('openApp')?.name, 'openApp');
 });
 
-test('use-harmony toolset exposes fixture staging, native picker, and WebView drop tools', () => {
+test('use-harmony toolset exposes native picker, and WebView drop tools', () => {
     const toolset = createUseHarmonyToolset();
-    assert.equal(toolset.hasTool('stageFixture'), true);
     assert.equal(toolset.hasTool('chooseFile'), true);
     assert.equal(toolset.hasTool('dropFixture'), true);
     assert.equal(toolset.hasTool('selectOption'), true);
@@ -189,47 +189,6 @@ test(
         }
     }
 );
-
-test('stageFixture sends a local file to the requested device directory', { concurrency: false }, async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-stage-test-'));
-    const fakeHdcPath = path.join(tempDir, 'hdc');
-    const argsLogPath = path.join(tempDir, 'hdc-args.log');
-    const fixturePath = path.join(tempDir, 'fixture.zip');
-    const originalPath = process.env.PATH;
-    const originalArgsLog = process.env.HDC_ARGS_LOG;
-
-    try {
-        fs.writeFileSync(fixturePath, 'zip-fixture');
-        fs.writeFileSync(fakeHdcPath, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HDC_ARGS_LOG"\nprintf "No Error\\n"\n', {
-            mode: 0o755
-        });
-        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
-        process.env.HDC_ARGS_LOG = argsLogPath;
-
-        const result = await new StageFixtureTool().execute({
-            localPath: fixturePath,
-            deviceDirectory: '/data/local/tmp/opendesk-fixtures'
-        });
-
-        assert.equal(result.status, 'success');
-        assert.deepEqual(JSON.parse(result.result), {
-            success: true,
-            localPath: fixturePath,
-            devicePath: '/data/local/tmp/opendesk-fixtures/fixture.zip',
-            kind: 'file',
-            bytes: 11
-        });
-        assert.deepEqual(fs.readFileSync(argsLogPath, 'utf8').trim().split('\n'), [
-            'shell mkdir -p /data/local/tmp/opendesk-fixtures',
-            `file send ${fixturePath} /data/local/tmp/opendesk-fixtures/fixture.zip`
-        ]);
-    } finally {
-        process.env.PATH = originalPath;
-        if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
-        else process.env.HDC_ARGS_LOG = originalArgsLog;
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-});
 
 test('chooseFile selects a visible system picker entry and confirms it', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-picker-test-'));
@@ -770,7 +729,7 @@ test('input passes text to hdc without executing it in a host or device shell', 
 });
 
 test(
-    'input replace clears from the end with a bounded number of Backspace events',
+    'input replace without bounds falls back to a bounded number of Backspace events',
     { concurrency: false },
     async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-replace-test-'));
@@ -823,7 +782,74 @@ test(
                 y: 20,
                 text: '',
                 mode: 'replace',
-                maxClearChars: 3
+                clearMode: 'backspace'
+            });
+        } finally {
+            process.env.PATH = originalPath;
+            if (originalUiTestArgsLog === undefined) {
+                delete process.env.UITEST_ARGS_LOG;
+            } else {
+                process.env.UITEST_ARGS_LOG = originalUiTestArgsLog;
+            }
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    }
+);
+
+test(
+    'input replace dragSelect clears via a field-spanning drag when bounds are provided',
+    { concurrency: false },
+    async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-dragselect-test-'));
+        const fakeHdcPath = path.join(tempDir, 'hdc');
+        const fakeUiTestPath = path.join(tempDir, 'uitest');
+        const uiTestArgsLogPath = path.join(tempDir, 'uitest-args.log');
+        const originalPath = process.env.PATH;
+        const originalUiTestArgsLog = process.env.UITEST_ARGS_LOG;
+
+        try {
+            fs.writeFileSync(
+                fakeHdcPath,
+                ['#!/bin/sh', 'if [ "$1" = "shell" ]; then', '  shift', '  /bin/sh -c "$*"', 'fi'].join('\n'),
+                { mode: 0o755 }
+            );
+            fs.writeFileSync(fakeUiTestPath, '#!/bin/sh\nprintf "%s\\n" "$@" >> "$UITEST_ARGS_LOG"\n', {
+                mode: 0o755
+            });
+            process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+            process.env.UITEST_ARGS_LOG = uiTestArgsLogPath;
+
+            const result = await new InputTool().execute({
+                x: 100,
+                y: 40,
+                text: '',
+                mode: 'replace',
+                bounds: { x1: 10, y1: 20, x2: 210, y2: 60 },
+                maxClearChars: 256,
+                snapshot: false
+            });
+
+            assert.equal(result.status, 'success');
+            assert.deepEqual(fs.readFileSync(uiTestArgsLogPath, 'utf8').trim().split('\n'), [
+                'uiInput',
+                'click',
+                '100',
+                '40',
+                'uiInput',
+                'drag',
+                '30',
+                '24',
+                '190',
+                '56',
+                '600'
+            ]);
+            assert.deepEqual(JSON.parse(result.result), {
+                success: true,
+                x: 100,
+                y: 40,
+                text: '',
+                mode: 'replace',
+                clearMode: 'dragSelect'
             });
         } finally {
             process.env.PATH = originalPath;
@@ -1345,6 +1371,180 @@ test(
             } else {
                 process.env.HDC_LAYOUT_PATH = originalLayoutPath;
             }
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    }
+);
+
+test(
+    'systemDialog select matches the option text via OCR instead of always picking the highlighted row',
+    { concurrency: false },
+    async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-system-dialog-test-'));
+        const fakeHdcPath = path.join(tempDir, 'hdc');
+        const fakeTesseractPath = path.join(tempDir, 'tesseract');
+        const screenshotPath = path.join(tempDir, 'screenshot.png');
+        const argsLogPath = path.join(tempDir, 'hdc-args.log');
+        const originalPath = process.env.PATH;
+        const originalScreenshotPath = process.env.HDC_SCREENSHOT_PATH;
+        const originalArgsLog = process.env.HDC_ARGS_LOG;
+
+        try {
+            fs.writeFileSync(
+                fakeHdcPath,
+                [
+                    '#!/bin/sh',
+                    'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                    'if [ "$1" = "shell" ] && [ "$2" = "snapshot_display" ]; then',
+                    '  printf "write to /data/local/tmp/opendesk_screenshot.png\\n"',
+                    'elif [ "$1" = "file" ] && [ "$2" = "recv" ]; then',
+                    '  cp "$HDC_SCREENSHOT_PATH" "$4"',
+                    'elif [ "$1" = "shell" ] && [ "$2" = "uitest" ] && [ "$3" = "uiInput" ]; then',
+                    '  printf "No Error\\n"',
+                    'fi'
+                ].join('\n'),
+                { mode: 0o755 }
+            );
+            fs.writeFileSync(
+                fakeTesseractPath,
+                [
+                    '#!/bin/sh',
+                    'if [ "$1" = "--list-langs" ]; then',
+                    '  printf "List of available languages (2):\\neng\\nchi_sim\\n"',
+                    'else',
+                    '  printf "level\\tpage_num\\tblock_num\\tpar_num\\tline_num\\tword_num\\tleft\\ttop\\twidth\\theight\\tconf\\ttext\\n5\\t1\\t1\\t1\\t1\\t1\\t20\\t80\\t60\\t20\\t95\\t浅色\\n5\\t1\\t1\\t1\\t1\\t1\\t20\\t160\\t60\\t20\\t95\\t深色\\n5\\t1\\t1\\t1\\t1\\t1\\t20\\t240\\t60\\t20\\t95\\t跟随系统\\n" > "$2.tsv"',
+                    'fi'
+                ].join('\n'),
+                { mode: 0o755 }
+            );
+
+            // 400x300 dialog: three option rows (dark text bars) with the middle one
+            // highlighted in blue (the HarmonyOS picker selected state).
+            const img = new Jimp({ width: 400, height: 300, color: 0xffffffff });
+            const drawBar = (x: number, y: number, w: number, h: number, color: number) => {
+                for (let py = y; py < y + h; py++) {
+                    for (let px = x; px < x + w; px++) {
+                        img.setPixelColor(color, px, py);
+                    }
+                }
+            };
+            drawBar(0, 55, 400, 20, 0x232323ff); // 浅色 row at y≈65
+            drawBar(0, 115, 400, 20, 0x0011aaff); // 深色 row highlighted blue (dark enough to also count as a text row) at y≈125
+            drawBar(0, 175, 400, 20, 0x232323ff); // 跟随系统 row at y≈185
+            const pngBuf = await img.getBuffer('image/png');
+            fs.writeFileSync(screenshotPath, pngBuf);
+            process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+            process.env.HDC_SCREENSHOT_PATH = screenshotPath;
+            process.env.HDC_ARGS_LOG = argsLogPath;
+
+            const result = await new SystemDialogTool().execute({
+                action: 'select',
+                option: '跟随系统',
+                settleTime: 100,
+                snapshot: false
+            });
+
+            assert.equal(result.status, 'success');
+            const parsed = JSON.parse(result.result);
+            assert.equal(parsed.success, true);
+            assert.equal(parsed.optionIndex, 2);
+            // Click lands on the third row (y≈185), not the highlighted middle row.
+            const commands = fs.readFileSync(argsLogPath, 'utf8');
+            assert.match(commands, /uiInput click 200 18[0-9]/);
+            assert.doesNotMatch(commands, /uiInput click 200 12[0-9]/);
+        } finally {
+            process.env.PATH = originalPath;
+            if (originalScreenshotPath === undefined) delete process.env.HDC_SCREENSHOT_PATH;
+            else process.env.HDC_SCREENSHOT_PATH = originalScreenshotPath;
+            if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+            else process.env.HDC_ARGS_LOG = originalArgsLog;
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    }
+);
+
+test(
+    'scrollInScrollable skips degenerate 1px containers and picks the real column',
+    { concurrency: false },
+    async () => {
+        // Regression: real WebView dumps (WorkBuddy time pickers) lead with a
+        // scrollable outer wrapper that is 1px wide ([0,127][1,1955]). The old code
+        // picked the FIRST scrollable container, so it scrolled in thin air and never
+        // made the target visible. The fixed code filters zero-width/height
+        // containers and selects the narrow column that actually contains the target.
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-scroll-scrollable-test-'));
+        const fakeHdcPath = path.join(tempDir, 'hdc');
+        const argsLogPath = path.join(tempDir, 'hdc-args.log');
+        const layoutPath = path.join(tempDir, 'layout.json');
+        const originalPath = process.env.PATH;
+        const originalArgsLog = process.env.HDC_ARGS_LOG;
+        const originalLayout = process.env.HDC_SCROLL_LAYOUT;
+
+        try {
+            // Layout shape observed on WorkBuddy v5.3.8: a degenerate 1px outer
+            // scrollable wrapper first, then the real hour column viewport and the
+            // target item ("09" fully inside the column viewport).
+            const layout = {
+                attributes: {},
+                children: [
+                    {
+                        attributes: { type: 'genericContainer', scrollable: 'true', bounds: '[0,127][1,1955]' },
+                        children: []
+                    },
+                    {
+                        attributes: { type: 'genericContainer', scrollable: 'true', bounds: '[729,912][904,1309]' },
+                        children: []
+                    },
+                    {
+                        attributes: { type: 'button', text: '09', bounds: '[729,1054][904,1112]' },
+                        children: []
+                    }
+                ]
+            };
+            fs.writeFileSync(layoutPath, JSON.stringify(layout));
+            fs.writeFileSync(
+                fakeHdcPath,
+                [
+                    '#!/bin/sh',
+                    'printf "%s\\n" "$*" >> "$HDC_ARGS_LOG"',
+                    'if [ "$1" = "shell" ] && [ "$2" = "uitest" ] && [ "$3" = "dumpLayout" ]; then',
+                    '  printf "saved to:/data/local/tmp/layout.json\\n"',
+                    'elif [ "$1" = "file" ] && [ "$2" = "recv" ]; then',
+                    '  cp "$HDC_SCROLL_LAYOUT" "$4"',
+                    'fi'
+                ].join('\n'),
+                { mode: 0o755 }
+            );
+            process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+            process.env.HDC_ARGS_LOG = argsLogPath;
+            process.env.HDC_SCROLL_LAYOUT = layoutPath;
+
+            const result = await new ScrollInScrollableTool().execute({
+                targetRole: 'button',
+                targetText: '09',
+                bundleName: 'com.tencent.workbuddy',
+                containerRole: 'genericContainer',
+                maxScrolls: 8,
+                settleMs: 100,
+                snapshot: false
+            });
+
+            assert.equal(result.status, 'success');
+            const parsed = JSON.parse(result.result);
+            assert.equal(parsed.success, true);
+            // The fixed container filter picks the hour column, not the 1px wrapper.
+            assert.deepEqual(parsed.containerBounds, { x1: 729, y1: 912, x2: 904, y2: 1309 });
+            assert.equal(parsed.visible, true);
+            assert.equal(parsed.scrollsUsed, 0);
+            assert.deepEqual(parsed.targetCenter, { x: 817, y: 1083 });
+            // No scrolling gesture was issued because the target is already visible.
+            assert.doesNotMatch(fs.readFileSync(argsLogPath, 'utf8'), /uiInput drag/);
+        } finally {
+            process.env.PATH = originalPath;
+            if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
+            else process.env.HDC_ARGS_LOG = originalArgsLog;
+            if (originalLayout === undefined) delete process.env.HDC_SCROLL_LAYOUT;
+            else process.env.HDC_SCROLL_LAYOUT = originalLayout;
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
     }

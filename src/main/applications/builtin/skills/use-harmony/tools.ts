@@ -60,6 +60,43 @@ function fail(error: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Screen / lock state detection
+// ---------------------------------------------------------------------------
+
+export type ScreenState = 'locked' | 'on' | 'unknown';
+
+/**
+ * Queries the device screen / lock state via the PowerManagerService dump.
+ * Used when no app window can be found, to tell "the device may be locked"
+ * apart from "the target app has no visible window".
+ *
+ * The hidumper service id 3301 corresponds to PowerManagerService. Output
+ * formats vary across HarmonyOS versions, so we match loosely on well-known
+ * keywords and degrade to 'unknown' on any failure (command missing, device
+ * unresponsive, etc.).
+ */
+export async function detectScreenState(): Promise<{ state: ScreenState; detail?: string }> {
+    let output: string;
+    try {
+        output = await runHdc(['shell', 'hidumper', '-s', '3301', '-a', '-a'], 10000);
+    } catch {
+        return { state: 'unknown' };
+    }
+    const lockedKeywords =
+        /(?:screen|display|power).{0,40}(?:off|关闭|灭|sleep|suspend)|keyguard|锁屏|已锁定|锁定时|isScreenOn\s*[:=]\s*false|screenOn\s*[:=]\s*false/i;
+    const onKeywords =
+        /(?:screen|display|power).{0,40}(?:on|亮|awake|wakeup|active)|isScreenOn\s*[:=]\s*true|screenOn\s*[:=]\s*true/i;
+    if (lockedKeywords.test(output)) {
+        const detail = output.match(/(?:screen|display|keyguard|isScreenOn|screenOn).{0,60}/i)?.[0]?.trim();
+        return { state: 'locked', detail };
+    }
+    if (onKeywords.test(output)) {
+        return { state: 'on' };
+    }
+    return { state: 'unknown' };
+}
+
+// ---------------------------------------------------------------------------
 // Device ID & listApps cache (in-memory, not persisted)
 // ---------------------------------------------------------------------------
 
@@ -338,6 +375,7 @@ function indent(d: number): string {
 function yamlNeedsQuotes(str: string): boolean {
     if (!str.length) return true;
     if (/^\s|\s$/.test(str)) return true;
+    // eslint-disable-next-line no-control-regex
     if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(str)) return true;
     if (/^-/.test(str)) return true;
     if (/[\n:]( |$)/.test(str)) return true;
@@ -894,6 +932,17 @@ export class ListWindowsTool extends BaseTool<typeof ListWindowsArgsSchema> {
         try {
             const layout = await dumpLayout();
             const windows = findAllWindows(layout);
+            if (windows.length === 0) {
+                const screen = await detectScreenState();
+                if (screen.state === 'locked') {
+                    return ok({
+                        windows,
+                        count: 0,
+                        screenLocked: true,
+                        hint: '设备可能处于锁屏或熄屏状态，无可见窗口。请先点亮并解锁设备后重试。'
+                    });
+                }
+            }
             return ok({ windows, count: windows.length });
         } catch (err) {
             return fail(`Failed to list windows: ${err}`);
@@ -923,6 +972,15 @@ export class SnapshotTool extends BaseTool<typeof SnapshotArgsSchema> {
             const capture = await takeSnapshot(args.bundleName);
 
             if (!capture.snapshot.trim()) {
+                const screen = await detectScreenState();
+                if (screen.state === 'locked') {
+                    return fail(
+                        `No visible windows found. The device appears to be locked or the screen is off` +
+                            `（设备可能处于锁屏/熄屏状态，请先点亮并解锁设备后重试）` +
+                            (screen.detail ? `; PowerManager dump: ${screen.detail}` : '') +
+                            `.`
+                    );
+                }
                 return fail(
                     'No visible windows found. The device may be locked or the specified bundleName has no visible window.'
                 );
@@ -1839,6 +1897,262 @@ export class ScrollToTool extends BaseTool<typeof ScrollToArgsSchema> {
     }
 }
 
+// ========== scrollInScrollable (virtual-scroll pickers) ==========
+
+/**
+ * Resolves the "real" screen bounds of a target inside a virtual-scroll list.
+ *
+ * Web time/date pickers report button bounds as content coordinates (the full
+ * virtual list with scroll offset applied), which do NOT match the actual
+ * rendered position. Clicking such a coordinate lands on the picker overlay and
+ * closes the popup without changing the value. The reliable answer is the
+ * scrolling container's viewport bounds: an item is only clickable once its
+ * bounds overlap the container viewport. This helper locates the container and
+ * the target, and tells whether the target is inside the viewport.
+ */
+
+interface RawBounds {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+}
+
+function parseRawBounds(bounds: string | undefined): RawBounds | undefined {
+    if (!bounds) return undefined;
+    const m = bounds.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+    if (!m) return undefined;
+    return { x1: Number(m[1]), y1: Number(m[2]), x2: Number(m[3]), y2: Number(m[4]) };
+}
+
+function walkLayoutNodes(node: LayoutNode, predicate: (node: LayoutNode) => boolean): LayoutNode[] {
+    const found: LayoutNode[] = [];
+    if (predicate(node)) found.push(node);
+    for (const child of node.children) found.push(...walkLayoutNodes(child, predicate));
+    return found;
+}
+
+const MIN_USABLE_SCROLLABLE_DIMENSION = 20;
+
+/**
+ * Picks the scroll container that should be scrolled to reveal `targetBounds`.
+ * Real WebView dumps (WorkBuddy time pickers, etc.) contain many
+ * `scrollable=true` genericContainers including degenerate ones (1px-wide outer
+ * wrappers) and siblings of a two-column picker (hour/minute). We filter out
+ * zero-width/zero-height containers and, when the target's x is known, pick the
+ * column whose center is closest to it so sibling columns with identical option
+ * text (both have "00"/"09") resolve to the right list.
+ */
+function findScrollableContainer(
+    layout: LayoutNode,
+    containerRole?: string,
+    containerName?: string,
+    targetX?: number
+): { node: LayoutNode; bounds: RawBounds } | undefined {
+    const role = containerRole || 'genericContainer';
+    const candidates = walkLayoutNodes(layout, (n) => n.attributes.type === role && n.attributes.scrollable === 'true');
+    const usable: Array<{ node: LayoutNode; bounds: RawBounds }> = [];
+    for (const node of candidates) {
+        if (containerName) {
+            const text = node.attributes.text || node.attributes.originalText || '';
+            if (!text.includes(containerName)) continue;
+        }
+        const bounds = parseRawBounds(node.attributes.bounds);
+        if (!bounds) continue;
+        const width = bounds.x2 - bounds.x1;
+        const height = bounds.y2 - bounds.y1;
+        // Zero-width/height degenerate containers (e.g. 1px outer wrappers) cannot
+        // host a scrollable column; skipping them avoids scrolling in thin air.
+        if (width < MIN_USABLE_SCROLLABLE_DIMENSION || height < MIN_USABLE_SCROLLABLE_DIMENSION) continue;
+        usable.push({ node, bounds });
+    }
+    if (usable.length === 0) return undefined;
+    if (usable.length === 1) return usable[0];
+
+    if (targetX !== undefined) {
+        // Two-column pickers (hour/minute) share option text; pick the column
+        // whose center x is closest to the target's x.
+        usable.sort((a, b) => {
+            const aCenterX = (a.bounds.x1 + a.bounds.x2) / 2;
+            const bCenterX = (b.bounds.x1 + b.bounds.x2) / 2;
+            return Math.abs(aCenterX - targetX) - Math.abs(bCenterX - targetX);
+        });
+        return usable[0];
+    }
+
+    // No target x: prefer a narrow, tall column (width < 400 and height >= width)
+    // over whole-page containers; among columns prefer the smallest (picker
+    // columns are small modal lists, not sidebars).
+    usable.sort((a, b) => {
+        const columnScore = (bounds: RawBounds): number => {
+            const w = bounds.x2 - bounds.x1;
+            const h = bounds.y2 - bounds.y1;
+            return w < 400 && h >= w ? 0 : 1;
+        };
+        const aScore = columnScore(a.bounds);
+        const bScore = columnScore(b.bounds);
+        if (aScore !== bScore) return aScore - bScore;
+        const area = (bounds: RawBounds): number => (bounds.x2 - bounds.x1) * (bounds.y2 - bounds.y1);
+        return area(a.bounds) - area(b.bounds);
+    });
+    return usable[0];
+}
+
+function targetNodeText(node: LayoutNode): string {
+    return node.attributes.text || node.attributes.originalText || node.attributes['content-desc'] || '';
+}
+
+function findLayoutTarget(layout: LayoutNode, targetRole: string, targetText: string): LayoutNode[] {
+    const q = targetText.toLowerCase();
+    return walkLayoutNodes(
+        layout,
+        (n) => n.attributes.type === targetRole && targetNodeText(n).toLowerCase().includes(q)
+    );
+}
+
+function centerOf(bounds: RawBounds): { x: number; y: number } {
+    return { x: Math.round((bounds.x1 + bounds.x2) / 2), y: Math.round((bounds.y1 + bounds.y2) / 2) };
+}
+
+/**
+ * Returns true when the target bounds overlap the container viewport in both
+ * axes. A virtual-scroll list only renders items inside its viewport, so this
+ * is the single source of truth for "clickable right now".
+ */
+function isInsideViewport(target: RawBounds, viewport: RawBounds): boolean {
+    const overlapY = target.y1 <= viewport.y2 && target.y2 >= viewport.y1;
+    const overlapX = target.x1 <= viewport.x2 && target.x2 >= viewport.x1;
+    return overlapY && overlapX;
+}
+
+const ScrollInScrollableArgsSchema = z.object({
+    targetRole: z.string().describe('目标元素 role，如 "button"'),
+    targetText: z
+        .string()
+        .min(1)
+        .describe(
+            '目标元素文本（如 "09"），模糊匹配。命中多列同名项时用 containerName 或返回的 targetCenter 的 x 区分'
+        ),
+    bundleName: z.string().optional().describe('目标应用 bundleName（dumpLayout 过滤窗口用）'),
+    containerRole: z.string().default('genericContainer').describe('滚动容器 role，默认 genericContainer'),
+    containerName: z.string().optional().describe('滚动容器名称，可选，精确定位'),
+    direction: z.enum(['up', 'down']).optional().describe('滚动方向，不指定则根据目标相对可视区的位置自动判断'),
+    maxScrolls: z.number().int().min(1).max(20).default(8).describe('最大滚动尝试次数，默认 8'),
+    scrollDistance: z.number().int().min(20).optional().describe('每次滑动距离（像素），默认容器可视高度的 50%'),
+    settleMs: z.number().int().min(0).max(5000).default(300).describe('每次滑动后等待界面稳定的时间，默认 300ms'),
+    snapshot: z.boolean().default(true).describe('滚动完成后是否获取界面快照，默认 true')
+});
+
+export class ScrollInScrollableTool extends BaseTool<typeof ScrollInScrollableArgsSchema> {
+    constructor() {
+        super(
+            'scrollInScrollable',
+            '在 Web 虚拟滚动弹窗（时间/日期选择器等）的滚动容器内滑动，直到目标元素进入容器可视区，并返回其真实屏幕坐标。' +
+                '虚拟滚动列表报告的按钮 bounds 是内容坐标（含滚动偏移），直接点击会落在弹窗遮罩上导致值不变；' +
+                '本工具用 dumpLayout 定位滚动容器可视区，在容器内滑动直到目标 bounds 进入可视区，返回 targetCenter（真实可点击坐标）。',
+            ScrollInScrollableArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof ScrollInScrollableArgsSchema>): Promise<string> {
+        try {
+            let layout = await dumpLayout(args.bundleName);
+            // Resolve target x first so sibling columns (hour/minute with identical
+            // option text) pick the right container on the very first layout.
+            const initialTargets = findLayoutTarget(layout, args.targetRole, args.targetText);
+            const initialTargetBounds = initialTargets[0]
+                ? parseRawBounds(initialTargets[0].attributes.bounds)
+                : undefined;
+            const targetX = initialTargetBounds ? centerOf(initialTargetBounds).x : undefined;
+            const container = findScrollableContainer(layout, args.containerRole, args.containerName, targetX);
+            if (!container) {
+                return fail(
+                    `找不到滚动容器：role="${args.containerRole}"` +
+                        (args.containerName ? `, name="${args.containerName}"` : '') +
+                        '（需要 scrollable=true 的节点）。请先打开选择器再重试'
+                );
+            }
+            const viewport = container.bounds;
+
+            let direction = args.direction;
+            let scrollsUsed = 0;
+
+            for (let attempt = 0; attempt <= args.maxScrolls; attempt++) {
+                const targets = findLayoutTarget(layout, args.targetRole, args.targetText);
+                const hit = targets.find((t) => {
+                    const tb = parseRawBounds(t.attributes.bounds);
+                    return tb ? isInsideViewport(tb, viewport) : false;
+                });
+                if (hit) {
+                    const tb = parseRawBounds(hit.attributes.bounds)!;
+                    const center = centerOf(tb);
+                    return ok(
+                        await withSnapshot(args.snapshot, {
+                            visible: true,
+                            scrollsUsed,
+                            targetRole: args.targetRole,
+                            targetText: args.targetText,
+                            targetBounds: tb,
+                            targetCenter: center,
+                            containerBounds: viewport,
+                            hint: 'targetCenter 即真实可点击坐标，可直接用于 click'
+                        })
+                    );
+                }
+
+                if (attempt >= args.maxScrolls) break;
+
+                // Decide direction from the first match's position relative to the viewport.
+                const firstMatch = targets[0];
+                if (firstMatch) {
+                    const tb = parseRawBounds(firstMatch.attributes.bounds);
+                    if (tb) {
+                        if (tb.y2 < viewport.y1) {
+                            direction = 'down'; // 目标在可视区上方 → 向下滑动（查看上方内容）
+                        } else if (tb.y1 > viewport.y2) {
+                            direction = 'up'; // 目标在可视区下方 → 向上滑动（查看下方内容）
+                        }
+                    }
+                }
+                if (!direction) {
+                    // No target match at all and no direction hint: default to upward scrolling.
+                    direction = 'up';
+                }
+
+                const region = {
+                    x: Math.round((viewport.x1 + viewport.x2) / 2),
+                    y: Math.round((viewport.y1 + viewport.y2) / 2),
+                    width: viewport.x2 - viewport.x1,
+                    height: viewport.y2 - viewport.y1
+                };
+                const distance = args.scrollDistance ?? Math.max(50, Math.round(region.height * 0.5));
+                await performScrollGesture(direction, region, distance);
+                scrollsUsed++;
+
+                await new Promise((resolve) => setTimeout(resolve, args.settleMs));
+                layout = await dumpLayout(args.bundleName);
+            }
+
+            // Exhausted maxScrolls without the target entering the viewport.
+            const targets = findLayoutTarget(layout, args.targetRole, args.targetText);
+            return ok(
+                await withSnapshot(args.snapshot, {
+                    visible: false,
+                    scrollsUsed,
+                    targetRole: args.targetRole,
+                    targetText: args.targetText,
+                    matchesFound: targets.length,
+                    containerBounds: viewport,
+                    message: `滚动 ${args.maxScrolls} 次后目标仍未进入可视区。可增大 maxScrolls、检查 targetText 是否匹配，或确认目标所在列与容器一致`
+                })
+            );
+        } catch (err) {
+            return fail(`scrollInScrollable failed: ${err}`);
+        }
+    }
+}
+
 // HarmonyOS keycodes (from https://developer.huawei.com/consumer/cn/doc/harmonyos-references/js-apis-keycode)
 const KEYCODE_PASTE = 2622;
 const KEYCODE_CTRL_LEFT = 2072;
@@ -2022,14 +2336,33 @@ const InputArgsSchema = z.object({
     mode: z
         .enum(['append', 'replace'])
         .default('append')
-        .describe('输入模式：append 在现有光标处追加；replace 从开头删除已有文本后输入'),
+        .describe('输入模式：append 在现有光标处追加；replace 清空已有文本后输入'),
+    clearMode: z
+        .enum(['dragSelect', 'backspace'])
+        .default('dragSelect')
+        .describe(
+            'replace 模式的清空方式：dragSelect=拖拽全选后输入（默认，需提供 bounds 定位拖拽范围，支持单行/多行）；backspace=设备端批量退格删除（无需 bounds，最多删 maxClearChars 个字符）'
+        ),
+    bounds: z
+        .object({
+            x1: z.number().int(),
+            y1: z.number().int(),
+            x2: z.number().int(),
+            y2: z.number().int()
+        })
+        .optional()
+        .describe(
+            '输入框边界（来自 snapshot/findElement）。replace + clearMode=dragSelect 时用于从文本起点拖到末尾全选'
+        ),
     maxClearChars: z
         .number()
         .int()
         .min(1)
         .max(4096)
         .default(DEFAULT_REPLACE_CLEAR_CHARS)
-        .describe('replace 模式最多删除的字符数，默认 256；内容更长时需显式增大'),
+        .describe(
+            'backspace 清空（含 dragSelect 未提供 bounds 时的回退）最多删除的字符数，默认 256；内容更长时需显式增大'
+        ),
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
 });
 
@@ -2038,9 +2371,27 @@ async function clearFocusedText(maxClearChars: number): Promise<void> {
     // HarmonyOS, intercepted by the system and triggers browser / home screen
     // instead of "move cursor to beginning of line". Use Backspace to delete
     // from the end instead.
-    for (let i = 0; i < maxClearChars; i++) {
-        await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Backspace)], 5000);
-    }
+    // Run the whole Backspace sequence in a single device-side shell loop so a
+    // large maxClearChars does not cost one hdc round-trip per key event.
+    const script = `i=0; while [ $i -lt ${maxClearChars} ]; do uitest uiInput keyEvent ${KEY_MAP.Backspace}; i=$((i + 1)); done`;
+    await runHdc(['shell', script], Math.max(10000, maxClearChars * 50));
+}
+
+async function dragSelectAll(bounds: { x1: number; y1: number; x2: number; y2: number }): Promise<void> {
+    // Drag from near the top-left of the field to near the bottom-right to
+    // select the whole text. Web inputs stop the selection at the text end, so
+    // dragging past shorter text still selects it fully; for multi-line fields
+    // the diagonal spans every visible line. Staying inside the field bounds
+    // keeps the drag from landing on a neighboring control.
+    const width = bounds.x2 - bounds.x1;
+    const fromX = Math.round(bounds.x1 + Math.max(4, width * 0.1));
+    const toX = Math.round(bounds.x2 - Math.max(4, width * 0.1));
+    const fromY = bounds.y1 + 4;
+    const toY = bounds.y2 - 4;
+    await runHdc(
+        ['shell', 'uitest', 'uiInput', 'drag', String(fromX), String(fromY), String(toX), String(toY), '600'],
+        10000
+    );
 }
 
 export class InputTool extends BaseTool<typeof InputArgsSchema> {
@@ -2056,6 +2407,7 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
 
     private async handleExecute(args: z.output<typeof InputArgsSchema>): Promise<string> {
         try {
+            // eslint-disable-next-line no-control-regex
             const hasNonAscii = /[^\x00-\x7F]/.test(args.text);
 
             // Click to focus the input.
@@ -2063,9 +2415,14 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
             await new Promise((resolve) => setTimeout(resolve, 300));
 
             if (args.mode === 'replace') {
-                // XComponent can treat Ctrl+A as a literal "a". Delete from the
-                // beginning instead, bounded to avoid an unbounded device operation.
-                await clearFocusedText(args.maxClearChars);
+                if (args.clearMode === 'dragSelect' && args.bounds) {
+                    await dragSelectAll(args.bounds);
+                } else {
+                    // XComponent can treat Ctrl+A as a literal "a". Backspace
+                    // from the end instead, bounded to avoid an unbounded
+                    // device operation.
+                    await clearFocusedText(args.maxClearChars);
+                }
             }
 
             if (hasNonAscii) {
@@ -2087,7 +2444,9 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
                 y: args.y,
                 text: args.text,
                 mode: args.mode,
-                ...(args.mode === 'replace' ? { maxClearChars: args.maxClearChars } : {})
+                ...(args.mode === 'replace'
+                    ? { clearMode: args.clearMode === 'dragSelect' && args.bounds ? 'dragSelect' : 'backspace' }
+                    : {})
             });
             return ok(result);
         } catch (err) {
@@ -3656,6 +4015,42 @@ async function analyzeRegionBrightness(
 
 // ========== systemDialog ==========
 
+/**
+ * OCRs the detected option rows of a system dialog and returns the recognized
+ * text per row. The whole picker area is scanned once, then each recognized
+ * word is assigned to the row band containing its vertical center. Returns an
+ * empty array when OCR is unavailable (no tesseract/jimp) or nothing matches.
+ */
+async function ocrOptionRows(
+    imgPath: string,
+    segments: { y1: number; y2: number }[],
+    width: number
+): Promise<{ text: string; y1: number; y2: number }[]> {
+    try {
+        if (segments.length === 0) return [];
+        const Jimp = await loadJimp();
+        if (!Jimp) return [];
+        const img = await Jimp.read(imgPath);
+        const height = img.bitmap.height;
+        if (!width || !height) return [];
+        const scanY1 = Math.max(0, segments[0].y1);
+        const scanY2 = Math.min(height, segments[segments.length - 1].y2);
+        if (scanY1 >= scanY2) return [];
+
+        const ocr = await performOcr(imgPath, { x1: 0, y1: scanY1, x2: width, y2: scanY2 });
+        const rows = segments.map((seg) => ({ text: '', y1: seg.y1, y2: seg.y2 }));
+        for (const item of ocr) {
+            if (item.confidence <= 10 || item.text.startsWith('(OCR failed:')) continue;
+            const centerY = item.y + item.height / 2;
+            const idx = rows.findIndex((r) => centerY >= r.y1 && centerY <= r.y2);
+            if (idx >= 0) rows[idx].text += (rows[idx].text ? ' ' : '') + item.text;
+        }
+        return rows;
+    } catch {
+        return [];
+    }
+}
+
 const SystemDialogArgsSchema = z.object({
     action: z
         .enum(['inspect', 'select', 'dismiss'])
@@ -3699,7 +4094,7 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
 
             // 2. Take full-screen screenshot (system dialogs visible here, not in snapshot)
             const imgPath = await captureScreenshot();
-            const screenshotDir = dirname(imgPath);
+            dirname(imgPath);
             const Jimp = await loadJimp();
             if (!Jimp) return fail('jimp is required for systemDialog');
             const img = await Jimp.read(imgPath);
@@ -3709,7 +4104,7 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
 
             // 3. Scan for blue-highlighted rows (HarmonyOS picker selected state)
             // System picker highlights the selected option in blue (B > R + 50, B > 150)
-            const OPTION_HEIGHT = 44; // typical HarmonyOS picker option height
+            // typical HarmonyOS picker option height = 44
             const blueRows: number[] = [];
             for (let y = 0; y < height; y += 2) {
                 let blueCount = 0;
@@ -3794,13 +4189,20 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
             if (args.optionIndex !== undefined) {
                 targetIndex = args.optionIndex;
             } else if (args.option) {
-                // Try to match by position: if highlighted, options above/below
-                const highlighted = options.findIndex((o) => o.highlighted);
-                if (highlighted >= 0) {
-                    // Simple heuristic: options are evenly spaced
-                    // The option text can be matched by relative position
-                    targetIndex = highlighted; // default to highlighted
-                    // User can specify optionIndex for different positions
+                // Match the requested option text against the OCR'd rows.
+                // Previously this branch was a no-op that always picked the
+                // highlighted row; the option argument was documented but not
+                // implemented. Fall back to the highlighted row when OCR cannot
+                // identify the text (tesseract unavailable / no match).
+                const ocrRows = await ocrOptionRows(imgPath, optionSegments, width);
+                const matchIdx = ocrRows.findIndex(
+                    (row) => row.text && optionTextMatches(row.text, args.option!, 'contains')
+                );
+                if (matchIdx >= 0) {
+                    targetIndex = matchIdx;
+                } else {
+                    const highlighted = options.findIndex((o) => o.highlighted);
+                    if (highlighted >= 0) targetIndex = highlighted;
                 }
             }
 
@@ -3818,6 +4220,7 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
             return ok({
                 action: 'select',
                 selected: true,
+                option: args.option,
                 optionIndex: targetIndex,
                 totalOptions: options.length,
                 highlightedIndex: options.findIndex((o) => o.highlighted),
@@ -3850,6 +4253,7 @@ export function createUseHarmonyToolset(): BaseToolset {
     toolset.addTool(new LongClickTool());
     toolset.addTool(new ScrollTool());
     toolset.addTool(new ScrollToTool());
+    toolset.addTool(new ScrollInScrollableTool());
     toolset.addTool(new InputTool());
     toolset.addTool(new PressKeyTool());
     toolset.addTool(new GoBackTool());
