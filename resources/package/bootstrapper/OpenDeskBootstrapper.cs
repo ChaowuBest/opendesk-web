@@ -16,6 +16,7 @@ using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Microsoft.Tools.WindowsInstallerXml.Bootstrapper;
@@ -29,6 +30,7 @@ namespace OpenDesk.Installer
     {
         private const string PackageId = "OpenDeskMsi";
         private const int UnsafeLegacyExitCode = 1603;
+        private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
@@ -44,8 +46,20 @@ namespace OpenDesk.Installer
             DetectPackageComplete += OnDetectPackageComplete;
             DetectComplete += OnDetectComplete;
             PlanComplete += OnPlanComplete;
-            CacheAcquireBegin += delegate { Post(delegate { form.SetProgressStatus("ProgressCaching"); }); };
-            ExecutePackageBegin += delegate { Post(delegate { form.SetProgressStatus("ProgressInstalling"); }); };
+            CacheAcquireBegin += delegate
+            {
+                Post(delegate
+                {
+                    form.SetProgressStatus("ProgressCaching", "ProgressRepairCaching", "ProgressUninstallPreparing");
+                });
+            };
+            ExecutePackageBegin += delegate
+            {
+                Post(delegate
+                {
+                    form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
+                });
+            };
             Progress += OnProgress;
             ExecuteProgress += OnExecuteProgress;
             Error += OnError;
@@ -180,7 +194,10 @@ namespace OpenDesk.Installer
         public void RequestCancel()
         {
             cancelRequested = true;
-            Post(delegate { form.SetProgressStatus("ProgressCanceling"); });
+            Post(delegate
+            {
+                form.SetProgressStatus("ProgressCanceling", "ProgressRepairCanceling", "ProgressUninstallCanceling");
+            });
         }
 
         public void LaunchInstalledApplication()
@@ -208,11 +225,88 @@ namespace OpenDesk.Installer
                 return;
             }
 
+            if (!EnsureOpenDeskIsNotRunning())
+            {
+                return;
+            }
+
             activeAction = action;
             cancelRequested = false;
             lastError = null;
             form.ShowProgress(action);
             Engine.Plan(action);
+        }
+
+        private bool EnsureOpenDeskIsNotRunning()
+        {
+            string installFolder = GetInstallFolder();
+            while (HasRunningOpenDeskProcess(installFolder))
+            {
+                if (Command.Display != Display.Full)
+                {
+                    exitCode = unchecked((int)0x80070643);
+                    form.Close();
+                    return false;
+                }
+
+                if (form.PromptForRunningOpenDesk(installFolder) != DialogResult.Retry)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool HasRunningOpenDeskProcess(string installFolder)
+        {
+            Process[] processes = Process.GetProcessesByName("opendesk");
+            try
+            {
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        string runningExecutablePath = NativeMethods.GetProcessExecutablePath(process);
+                        if (!process.HasExited && IsExecutableInsideInstallFolder(runningExecutablePath, installFolder))
+                        {
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                {
+                    process.Dispose();
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsExecutableInsideInstallFolder(string executablePath, string installFolder)
+        {
+            if (string.IsNullOrWhiteSpace(executablePath) || string.IsNullOrWhiteSpace(installFolder))
+            {
+                return false;
+            }
+
+            string normalizedExecutablePath = Path.GetFullPath(executablePath);
+            if (!string.Equals(Path.GetFileName(normalizedExecutablePath), "opendesk.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string normalizedInstallFolder = Path.GetFullPath(installFolder).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar
+            ) + Path.DirectorySeparatorChar;
+            return normalizedExecutablePath.StartsWith(normalizedInstallFolder, StringComparison.OrdinalIgnoreCase);
         }
 
         private void OnDetectPackageComplete(object sender, DetectPackageCompleteEventArgs e)
@@ -238,9 +332,18 @@ namespace OpenDesk.Installer
                 exitCode = e.Status;
                 Post(delegate
                 {
-                    form.ShowFailure(e.Status, null);
-                    if (Command.Display != Display.None)
+                    if (Command.Display == Display.None)
                     {
+                        form.Close();
+                    }
+                    else if (e.Status == ErrorFailNoActionReboot)
+                    {
+                        form.ShowRestartRequired(false);
+                        form.Reveal();
+                    }
+                    else
+                    {
+                        form.ShowFailure(e.Status, null);
                         form.Reveal();
                     }
                 });
@@ -263,13 +366,27 @@ namespace OpenDesk.Installer
             if (e.Status < 0)
             {
                 exitCode = e.Status;
-                Post(delegate { form.ShowFailure(e.Status, lastError); });
+                Post(delegate
+                {
+                    if (Command.Display == Display.None)
+                    {
+                        form.Close();
+                    }
+                    else if (e.Status == ErrorFailNoActionReboot)
+                    {
+                        form.ShowRestartRequired(false);
+                    }
+                    else
+                    {
+                        form.ShowFailure(e.Status, lastError);
+                    }
+                });
                 return;
             }
 
             Post(delegate
             {
-                form.SetProgressStatus("ProgressInstalling");
+                form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
                 Engine.Apply(form.Handle);
             });
         }
@@ -300,7 +417,20 @@ namespace OpenDesk.Installer
             exitCode = e.Status;
             Post(delegate
             {
-                if (e.Status >= 0)
+                if (Command.Display == Display.None)
+                {
+                    form.Close();
+                }
+                else if (e.Status == ErrorFailNoActionReboot)
+                {
+                    form.ShowRestartRequired(false);
+                }
+                else if (e.Restart != ApplyRestart.None)
+                {
+                    form.UpdateProgress(100);
+                    form.ShowRestartRequired(e.Status >= 0);
+                }
+                else if (e.Status >= 0)
                 {
                     form.UpdateProgress(100);
                     form.ShowSuccess(activeAction);
@@ -370,6 +500,7 @@ namespace OpenDesk.Installer
         private bool selectedStartMenuShortcut;
         private bool selectedInstallPathCustomized;
         private bool editingInstallPathCustomized;
+        private LaunchAction progressAction = LaunchAction.Unknown;
         private bool busy;
 
         public InstallerForm(OpenDeskBootstrapperApplication application, Localizer localizer)
@@ -489,6 +620,7 @@ namespace OpenDesk.Installer
         public void ShowProgress(LaunchAction action)
         {
             busy = true;
+            progressAction = action;
             RenderPage(delegate
             {
                 SetActiveStep(1);
@@ -504,7 +636,11 @@ namespace OpenDesk.Installer
                 progressStatus = AddLabel(
                     rightBody,
                     "ProgressStatusLabel",
-                    T("ProgressPreparing"),
+                    T(GetProgressLocalizationId(
+                        "ProgressPreparing",
+                        "ProgressRepairPreparing",
+                        "ProgressUninstallPreparing"
+                    )),
                     46,
                     282,
                     500,
@@ -529,19 +665,90 @@ namespace OpenDesk.Installer
                     MutedColor
                 );
                 progressPercent.TextAlign = ContentAlignment.MiddleRight;
-                AddFooterButton("CancelInstallButton", T("ProgressCancelButton"), 470, delegate
-                {
-                    application.RequestCancel();
-                });
+                AddFooterButton(
+                    "CancelInstallButton",
+                    T(GetProgressLocalizationId(
+                        "ProgressCancelButton",
+                        "ProgressRepairCancelButton",
+                        "ProgressUninstallCancelButton"
+                    )),
+                    470,
+                    delegate
+                    {
+                        application.RequestCancel();
+                    }
+                );
             });
         }
 
-        public void SetProgressStatus(string localizationId)
+        public DialogResult PromptForRunningOpenDesk(string executablePath)
+        {
+            return MessageBox.Show(
+                this,
+                string.Format(T("OpenDeskRunningMessage"), executablePath),
+                T("OpenDeskRunningTitle"),
+                MessageBoxButtons.RetryCancel,
+                MessageBoxIcon.Warning
+            );
+        }
+
+        public void ShowRestartRequired(bool operationCompleted)
+        {
+            busy = false;
+            RenderPage(delegate
+            {
+                SetActiveStep(operationCompleted ? 2 : -1);
+                AddLabel(
+                    rightBody,
+                    "RestartRequiredHeader",
+                    T("RestartRequiredHeader"),
+                    46,
+                    110,
+                    540,
+                    58,
+                    HeadingFont,
+                    operationCompleted ? Teal : Color.FromArgb(178, 59, 49)
+                );
+                AddLabel(
+                    rightBody,
+                    "RestartRequiredMessage",
+                    T(operationCompleted ? "RestartRequiredCompletedMessage" : "RestartRequiredPendingMessage"),
+                    46,
+                    190,
+                    540,
+                    90,
+                    BodyFont,
+                    MutedColor
+                );
+                AddFooterButton("RestartRequiredCloseButton", T("RestartRequiredCloseButton"), 470, Close);
+            });
+        }
+
+        public void SetProgressStatus(
+            string installLocalizationId,
+            string repairLocalizationId,
+            string uninstallLocalizationId
+        )
         {
             if (progressStatus != null)
             {
-                progressStatus.Text = T(localizationId);
+                progressStatus.Text = T(GetProgressLocalizationId(
+                    installLocalizationId,
+                    repairLocalizationId,
+                    uninstallLocalizationId
+                ));
             }
+        }
+
+        private string GetProgressLocalizationId(
+            string installLocalizationId,
+            string repairLocalizationId,
+            string uninstallLocalizationId
+        )
+        {
+            return progressAction == LaunchAction.Repair
+                ? repairLocalizationId
+                : progressAction == LaunchAction.Uninstall ? uninstallLocalizationId : installLocalizationId;
         }
 
         public void UpdateProgress(int percentage)
@@ -556,7 +763,7 @@ namespace OpenDesk.Installer
             progressPercent.Text = value.ToString() + "%";
             if (value >= 95)
             {
-                SetProgressStatus("ProgressFinishing");
+                SetProgressStatus("ProgressFinishing", "ProgressRepairFinishing", "ProgressUninstallFinishing");
             }
         }
 
@@ -991,27 +1198,6 @@ namespace OpenDesk.Installer
 
     internal static class InstallerPath
     {
-        public static bool IsDedicated(string folder)
-        {
-            if (string.IsNullOrWhiteSpace(folder))
-            {
-                return false;
-            }
-
-            try
-            {
-                string normalized = Path.GetFullPath(folder.Trim()).TrimEnd(
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar
-                );
-                return string.Equals(Path.GetFileName(normalized), "opendesk", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         public static string Normalize(string folder)
         {
             if (string.IsNullOrWhiteSpace(folder))
@@ -1071,9 +1257,46 @@ namespace OpenDesk.Installer
     internal static class NativeMethods
     {
         private const int WM_SETREDRAW = 0x000B;
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wordParameter, IntPtr longParameter);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool QueryFullProcessImageName(
+            IntPtr process,
+            int flags,
+            StringBuilder executablePath,
+            ref int size
+        );
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        public static string GetProcessExecutablePath(Process process)
+        {
+            IntPtr handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process.Id);
+            if (handle == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                int capacity = 32768;
+                StringBuilder executablePath = new StringBuilder(capacity);
+                return QueryFullProcessImageName(handle, 0, executablePath, ref capacity)
+                    ? executablePath.ToString()
+                    : null;
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
 
         public static void SetRedraw(Control control, bool enabled)
         {

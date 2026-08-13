@@ -175,6 +175,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     const bundle = fs.readFileSync(path.join(bootstrapperResources, 'bundle.wxs'), 'utf8');
     const bootstrapper = fs.readFileSync(path.join(bootstrapperResources, 'OpenDeskBootstrapper.cs'), 'utf8');
     const localization = fs.readFileSync(path.join(bootstrapperResources, 'zh-cn.wxl'), 'utf8');
+    const buildScript = fs.readFileSync(path.join(projectRoot, 'scripts', 'build-wix-bootstrapper.mjs'), 'utf8');
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
@@ -207,19 +208,51 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /IsUnsafeLegacyUpgrade\(\)[\s\S]*?relatedMsiDetected && GetSavedLayoutVersion\(\) < 2/);
     assert.match(
         bootstrapper,
-        /StartAction\(LaunchAction action\)[\s\S]*?IsUnsafeLegacyUpgrade\(\)[\s\S]*?Display\.None[\s\S]*?form\.Close\(\)/
+        /StartAction\(LaunchAction action\)[\s\S]*?IsUnsafeLegacyUpgrade\(\)[\s\S]*?Display\.None[\s\S]*?form\.Close\(\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(action\)/
     );
-    assert.match(bootstrapper, /GetUnsafeLegacyInstallFolder/);
+    assert.match(
+        bootstrapper,
+        /EnsureOpenDeskIsNotRunning\(\)[\s\S]*?HasRunningOpenDeskProcess\([^)]+\)[\s\S]*?MessageBoxButtons\.RetryCancel/
+    );
+    assert.match(
+        bootstrapper,
+        /HasRunningOpenDeskProcess\(string installFolder\)[\s\S]*?Process\.GetProcessesByName\("opendesk"\)[\s\S]*?GetProcessExecutablePath\(process\)[\s\S]*?IsExecutableInsideInstallFolder/
+    );
+    assert.match(
+        bootstrapper,
+        /IsExecutableInsideInstallFolder\(string executablePath, string installFolder\)[\s\S]*?Path\.GetFileName\(normalizedExecutablePath\)[\s\S]*?"opendesk\.exe"[\s\S]*?StartsWith\(normalizedInstallFolder/
+    );
+    assert.match(bootstrapper, /QueryFullProcessImageName/);
+    assert.doesNotMatch(bootstrapper, /CloseMainWindow\(\)|\.Kill\(\)|WaitForExit\(/);
+    assert.match(bootstrapper, /OnApplyComplete[\s\S]*?e\.Restart != ApplyRestart\.None[\s\S]*?ShowRestartRequired/);
+    assert.match(bootstrapper, /OnDetectComplete[\s\S]*?ErrorFailNoActionReboot[\s\S]*?ShowRestartRequired/);
+    assert.match(bootstrapper, /ErrorFailNoActionReboot[\s\S]*?ShowRestartRequired/);
+    assert.match(localization, /<String Id="RestartRequiredHeader">需要重新启动 Windows<\/String>/);
+    assert.match(localization, /<String Id="RestartRequiredPendingMessage">[^<]+<\/String>/);
+    assert.match(
+        bootstrapper,
+        /SetProgressStatus\(\s*string installLocalizationId,\s*string repairLocalizationId,\s*string uninstallLocalizationId\s*\)/
+    );
+    assert.doesNotMatch(bootstrapper, /SetProgressStatus\("ProgressInstalling"\)/);
+    assert.match(bootstrapper, /Engine\.NumericVariables\["InstallPathCustomized"\]/);
+    assert.doesNotMatch(bootstrapper, /OverallProgressPackageText/);
+    assert.match(localization, /<String Id="CreateDesktopShortcut">创建桌面快捷方式<\/String>/);
+    assert.match(localization, /<String Id="ProgressUninstalling">正在移除应用文件\.\.\.<\/String>/);
+    assert.match(localization, /<String Id="ProgressRepairing">正在修复应用文件\.\.\.<\/String>/);
+    assert.match(localization, /<String Id="ProgressUninstallCancelButton">取消卸载<\/String>/);
+    assert.match(localization, /<String Id="OpenDeskRunningTitle">OpenDesk 正在运行<\/String>/);
+    assert.match(localization, /<String Id="OpenDeskRunningMessage">[^<]+<\/String>/);
+    assert.match(localization, /<String Id="LegacyInstallHeader">检测到旧版安装目录<\/String>/);
+    assert.match(bootstrapper, /ShowLegacyInstallBlocked/);
     const legacyFolderMethod = bootstrapper.match(
         /public string GetUnsafeLegacyInstallFolder\(\)[\s\S]*?\n {8}private bool IsUnsafeLegacyUpgrade/
     )[0];
     assert.doesNotMatch(legacyFolderMethod, /Directory\.Exists|File\.Exists|Directory\.GetDirectories/);
-    assert.match(bootstrapper, /Engine\.NumericVariables\["InstallPathCustomized"\]/);
-    assert.match(bootstrapper, /ShowLegacyInstallBlocked/);
-    assert.doesNotMatch(bootstrapper, /OverallProgressPackageText/);
-    assert.match(localization, /<String Id="CreateDesktopShortcut">创建桌面快捷方式<\/String>/);
-    assert.match(localization, /<String Id="LegacyInstallHeader">检测到旧版安装目录<\/String>/);
+    assert.equal(packageJson.scripts['make:win32'], 'npm run build && electron-forge make --platform=win32');
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
+    assert.equal(packageJson.scripts['make:win32:setup'], 'npm run make:wix-bootstrapper');
+    assert.match(buildScript, /run\(npmExecutable, \['run', 'make:win32'\]\)/);
+    assert.match(buildScript, /generatedMsi\.mtimeMs < buildStartedAt/);
 });
 
 test('renders every bootstrapper page transition atomically', () => {
@@ -228,7 +261,7 @@ test('renders every bootstrapper page transition atomically', () => {
     assert.match(bootstrapper, /class BufferedPanel : Panel/);
     assert.match(bootstrapper, /OptimizedDoubleBuffer/);
     assert.match(bootstrapper, /WM_SETREDRAW/);
-    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 7);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 8);
     assert.match(bootstrapper, /Opacity = 0D/);
     assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
     assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);
