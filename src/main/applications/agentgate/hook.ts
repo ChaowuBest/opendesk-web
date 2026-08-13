@@ -39,7 +39,7 @@ import { logger } from '../../utils/logger.js';
 import path from 'path';
 
 const AGENT_TYPE = 'opendesk';
-const AGENT_VERSION = '0.3.3';
+const AGENT_VERSION = '0.3.4';
 
 /**
  * 解析 AgentGate 服务地址。
