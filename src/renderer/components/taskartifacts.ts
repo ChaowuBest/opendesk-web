@@ -37,6 +37,7 @@ import {
 } from './taskartifacts-goal/controller.js';
 import { formatCompactDuration } from '../../common/goal/format.js';
 import { filePathToFileUrl } from '../../common/file-url.js';
+import { dispatchAgentInputRequest } from '../input/agentInputRequest.js';
 
 // ============================================================================
 // Types
@@ -234,14 +235,8 @@ class TaskArtifacts extends HTMLElement {
             this._workspaceFocusLayoutState = state;
             this._syncWorkspaceFocusLayout();
         };
-        this._fileExplorer.onSlidesSelectionAction = (context) => {
-            this.dispatchEvent(
-                new CustomEvent('opendesk-slides-selection-action', {
-                    detail: { taskId: this._getTaskId(), context },
-                    bubbles: true,
-                    composed: true
-                })
-            );
+        this._fileExplorer.onAgentInputRequest = (request) => {
+            dispatchAgentInputRequest(this, request);
         };
     }
 

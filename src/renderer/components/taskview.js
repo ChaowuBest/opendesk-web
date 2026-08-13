@@ -73,6 +73,7 @@ import {
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
+import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -83,24 +84,6 @@ const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
 let taskViewT = createRendererTranslator();
 let guiReasonDisplayMode = 'inline';
-
-function formatSlidesSelectionForInput(context) {
-    const page = Number(context?.slideIndex) + 1;
-    const elements = Array.isArray(context?.selectedElements) ? context.selectedElements.slice(0, 32) : [];
-    const lines = elements.map((element) => {
-        const type = String(element?.type || 'element');
-        const id = String(element?.id || '');
-        const text = typeof element?.text === 'string' ? element.text.trim().replace(/\s+/g, ' ') : '';
-        const box = [element?.x, element?.y, element?.width, element?.height].every(Number.isFinite)
-            ? ` @ (${Math.round(element.x)}, ${Math.round(element.y)}) ${Math.round(element.width)}×${Math.round(element.height)}`
-            : '';
-        return `- ${type}${id ? ` (${id})` : ''}${box}${text ? `: “${text.slice(0, 160)}”` : ''}`;
-    });
-    const header = taskViewT('renderer.taskview.slides.selectionPrompt', {
-        page: Number.isFinite(page) ? page : 1
-    });
-    return [header, ...lines].join('\n');
-}
 
 function updateTaskViewTranslator(setting) {
     taskViewT = createRendererTranslator(setting);
@@ -3545,18 +3528,10 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
-        this._handleSlidesSelectionAction = (event) => {
-            if (event.detail?.taskId !== this.task_id) return;
-            const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
-            if (!inputWidget?.setText) return;
-            const selectionText = formatSlidesSelectionForInput(event.detail?.context);
-            const currentText = String(inputWidget.getCurrentText?.() || '');
-            // TODO(input-context-capsules): Replace this temporary setText bridge with an
-            // immutable PPT-selection capsule once AgentInput exposes the shared context substrate.
-            inputWidget.setText(currentText.trim() ? `${currentText}\n\n${selectionText}` : selectionText);
-            inputWidget.focus?.();
-        };
-        this.addEventListener('opendesk-slides-selection-action', this._handleSlidesSelectionAction);
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = listenForAgentInputRequests(this, () =>
+            this.querySelector(`#task-${this.task_id}-input`)
+        );
 
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
@@ -3840,7 +3815,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
-        this.removeEventListener('opendesk-slides-selection-action', this._handleSlidesSelectionAction);
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = null;
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
         this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()

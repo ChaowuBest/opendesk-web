@@ -36,6 +36,8 @@ import {
     OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
 } from '@bitclub.ai/opendesk-office/host-events';
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
+import type { AgentInputRequest } from '../input/agentInputRequest.js';
+import { createSlidesSelectionInputRequest } from '../applications/office/slidesSelectionInput.js';
 
 const t = createRendererTranslator();
 
@@ -1127,7 +1129,7 @@ export class FileExplorer {
     onOpenInBrowser: ((filePath: string) => void) | null = null;
     /** 聚焦内容的工作区布局变化回调（由 task-artifacts 协调外层布局） */
     onWorkspaceFocusLayoutChange: ((state: WorkspaceFocusLayoutState) => void) | null = null;
-    onSlidesSelectionAction: ((context: unknown) => void) | null = null;
+    onAgentInputRequest: ((request: AgentInputRequest) => void) | null = null;
 
     setTaskId(taskId: string): void {
         this._taskId = taskId;
@@ -2641,7 +2643,7 @@ export class FileExplorer {
             if (ipcEvent.channel === 'opendesk-office:extension-action') {
                 const payload = ipcEvent.args?.[0] as { action?: { id?: string }; context?: unknown } | undefined;
                 if (payload?.action?.id === 'opendesk-ai-selection') {
-                    this.onSlidesSelectionAction?.(payload.context);
+                    this.onAgentInputRequest?.(createSlidesSelectionInputRequest(payload.context, t));
                 }
                 return;
             }
