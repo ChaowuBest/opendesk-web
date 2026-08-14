@@ -67,11 +67,8 @@ import {
 import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
-import type { AgentDecl } from './aikernel/agents/common.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
-import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
-import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
     activateOpenDeskOfficeContents,
@@ -121,7 +118,7 @@ import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/e
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
-import { replaceTaskHarnessForMode } from './aikernel/task/mode.js';
+import { switchTaskMode } from './aikernel/task/mode.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
 function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
@@ -131,20 +128,12 @@ function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
     return telemetryModulePromise;
 }
 
-/** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
-let _globalAgentDecl: AgentDecl | null = null;
-function getGlobalAgentDecl(): AgentDecl {
-    if (!_globalAgentDecl) {
-        _globalAgentDecl = AgentRegistry.getMainAgent();
-    }
-    return _globalAgentDecl;
-}
 /** 当前在 Electron GUI 中选择的 modeId */
 let _currentElectronModeId: string | null = null;
 
 async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const workspace = Setting.getInstance().getEffectiveWorkspace();
-    const agent = getGlobalAgentDecl();
+    const agent = AgentRegistry.getMainAgent();
     const modes = agent.supportedModes();
     const mode = modes.find((candidate) => candidate.id === _currentElectronModeId) ?? agent.getDefaultMode();
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
@@ -938,7 +927,7 @@ const createWindow = () => {
 const registerModeAPIHandlers = () => {
     ipcMain.handle('mode:getSupportedModes', () => {
         try {
-            const agentDecl = getGlobalAgentDecl();
+            const agentDecl = AgentRegistry.getMainAgent();
             const modes = agentDecl.supportedModes();
             const defaultId = agentDecl.getDefaultMode().id;
             const currentId = _currentElectronModeId || defaultId;
@@ -963,7 +952,7 @@ const registerModeAPIHandlers = () => {
 
     ipcMain.handle('mode:setCurrentMode', async (event, modeId) => {
         try {
-            const agentDecl = getGlobalAgentDecl();
+            const agentDecl = AgentRegistry.getMainAgent();
             const modes = agentDecl.supportedModes();
             const target = modes.find((m) => m.id === modeId);
             if (!target) {
@@ -981,36 +970,15 @@ const registerModeAPIHandlers = () => {
 
     ipcMain.handle('mode:setTaskMode', async (event, taskId: string, modeId: string) => {
         try {
-            const agentDecl = getGlobalAgentDecl();
-            const modes = agentDecl.supportedModes();
-            const target = modes.find((m) => m.id === modeId);
-            if (!target) {
-                return { status: 'error', message: `unknown mode: ${modeId}` };
-            }
-
             const globalState = GlobalState.getInstance();
             const task = globalState.taskManagerState.getTask(taskId);
             if (!task) {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
 
-            const workspace = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-            const oldModeId = task.activeModeId || agentDecl.getDefaultMode().id;
-            if (oldModeId !== modeId) {
-                const oldMode = modes.find((m) => m.id === oldModeId);
-                if (oldMode?.onExitMode) {
-                    await oldMode.onExitMode(workspace);
-                }
-                if (target.onEnterMode) {
-                    await target.onEnterMode(workspace);
-                }
-            }
-
-            try {
-                await replaceTaskHarnessForMode(task, workspace, target, () => new ElectronPermissionPromptProvider());
-            } catch (err) {
-                logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
-                return { status: 'error', message: String(err) };
+            const switched = await switchTaskMode(task, modeId, () => new ElectronPermissionPromptProvider());
+            if (!switched) {
+                return { status: 'error', message: `unknown mode: ${modeId}` };
             }
 
             return { status: 'ok', data: modeId };
@@ -1241,7 +1209,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const task = globalState.taskManagerState.createTask();
         const workspace = Setting.getInstance().getEffectiveWorkspace();
-        const agentDecl = getGlobalAgentDecl();
+        const agentDecl = AgentRegistry.getMainAgent();
         const modes = agentDecl.supportedModes();
         const resolvedModeId = options.modeId || _currentElectronModeId;
         const activeMode = modes.find((candidate) => candidate.id === resolvedModeId) ?? agentDecl.getDefaultMode();
@@ -1254,35 +1222,8 @@ const registerTaskManagerAPIHandlers = () => {
             task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
             await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-            // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
-            const askUserProvider = new ElectronAskUserProvider();
-            const exitPlanModeProvider = new ElectronExitPlanModeProvider();
-            exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
-                const modes2 = getGlobalAgentDecl().supportedModes();
-                const targetMode = modes2.find((m) => m.id === targetModeId);
-                if (!targetMode) return;
-                const ws = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-                const oldId = task.activeModeId || getGlobalAgentDecl().getDefaultMode().id;
-                if (oldId !== targetModeId) {
-                    const oldMode = modes2.find((m) => m.id === oldId);
-                    await oldMode?.onExitMode?.(ws);
-                    await targetMode.onEnterMode?.(ws);
-                }
-                // 仅切换当前任务的模式，不影响其他任务
-                try {
-                    await replaceTaskHarnessForMode(task, ws, targetMode, () => new ElectronPermissionPromptProvider());
-                } catch (err) {
-                    logger.warn(`Failed to switch task ${task.task_id} to mode ${targetModeId}: ${err}`);
-                    return;
-                }
-                // 通知 renderer 侧更新该任务的模式显示
-                for (const w of BrowserWindow.getAllWindows()) {
-                    if (!w.isDestroyed()) {
-                        safeSendToWebContents(w.webContents, 'mode:taskModeChanged', task.task_id, targetModeId);
-                    }
-                }
-            });
-            task.interactionToolset = createInteractionToolset(askUserProvider, exitPlanModeProvider);
+            // 交互工具集由 platform 按需构建（含审批后切模式的 modeSwitcher）；挂载由每次 turn 的 interactive 标记决定
+            task.interactionToolset = getPlatform().createInteractionToolset(task);
 
             if (initialNodeId) {
                 const result = await applyTaskExecutionNode(task, initialNodeId);
@@ -1363,7 +1304,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         try {
             const taskAgent = task.getAgent();
-            const mainAgent = getGlobalAgentDecl();
+            const mainAgent = AgentRegistry.getMainAgent();
             const mainModeId = task.activeModeId || _currentElectronModeId;
             const mainModes = mainAgent.supportedModes();
             const mode =
@@ -1747,7 +1688,7 @@ const registerTaskManagerAPIHandlers = () => {
                 ? details.attachedImages
                 : undefined;
 
-        await task.submitUserMessage(details.message, { imageDataUris });
+        await task.submitUserMessage(details.message, { imageDataUris, interactive: true });
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {
@@ -3293,7 +3234,7 @@ async function startApplication(): Promise<void> {
         // renderer 加载页面需要时间（dev 模式需 Vite 编译），这些初始化会在
         // renderer 就绪前完成。
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
-        const agentDecl = getGlobalAgentDecl();
+        const agentDecl = AgentRegistry.getMainAgent();
         const defaultMode =
             agentDecl.supportedModes().find((candidate) => candidate.id === _currentElectronModeId) ??
             agentDecl.getDefaultMode();

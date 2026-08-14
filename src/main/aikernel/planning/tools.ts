@@ -116,7 +116,6 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
     subTask.model = parentTask.model;
     subTask.task_name = config.title || '未命名子任务';
-    subTask.interactionToolset = parentTask.interactionToolset;
 
     // explore agent 优先使用快速对话模型，未配置则回退到默认对话模型
     if (config.agentName === 'explore') {

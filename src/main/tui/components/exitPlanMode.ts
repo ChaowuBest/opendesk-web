@@ -296,6 +296,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
     private openDeskTUI: OpenDeskTUI;
     private _isPrompting = false;
     private _queue: QueuedExitPlanModeRequest[] = [];
+    private _activeItem: QueuedExitPlanModeRequest | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -303,6 +304,21 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
 
     isPrompting(): boolean {
         return this._isPrompting || this._queue.length > 0;
+    }
+
+    cancelCurrent(): void {
+        for (const item of this._queue.splice(0)) {
+            item.resolve({ action: 'continue-editing' });
+        }
+        if (this._isPrompting && this._activeItem) {
+            const item = this._activeItem;
+            this._activeItem = null;
+            this.openDeskTUI.inputArea.hidePromptWidget();
+            this._isPrompting = false;
+            this.openDeskTUI.focusInputAreaIfAvailable();
+            this.openDeskTUI.tui.requestRender();
+            item.resolve({ action: 'continue-editing' });
+        }
     }
 
     /**
@@ -335,6 +351,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
 
     private _showWidget(item: QueuedExitPlanModeRequest): void {
         this._isPrompting = true;
+        this._activeItem = item;
 
         const widget = new ExitPlanModeWidget(item.planContent, item.planFilePath);
         widget.terminalHeight = this.openDeskTUI.tui.terminal.rows;
@@ -352,6 +369,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         widget.onDone = async (action) => {
             this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
+            this._activeItem = null;
             this.openDeskTUI.focusInputAreaIfAvailable();
 
             if (action === 'execute-standard') {
@@ -370,6 +388,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         widget.onCancel = () => {
             this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
+            this._activeItem = null;
             this.openDeskTUI.focusInputAreaIfAvailable();
             this.openDeskTUI.tui.requestRender();
             item.resolve({ action: 'continue-editing' });

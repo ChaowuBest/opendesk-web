@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod';
-import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
+import { InteractiveTool, InteractiveToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
@@ -64,6 +64,8 @@ export interface AskUserProvider {
     prompt(request: AskUserRequest): Promise<AskUserResponse>;
     /** 当前是否正在显示用户交互界面（TUI 专用，避免 taskview 重复渲染） */
     isPrompting?(): boolean;
+    /** 主动取消当前等待中的提问（模式切换为不交互模式时调用），resolve 为 cancelled。 */
+    cancelCurrent?(): void;
 }
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -143,7 +145,7 @@ function normalizeQuestions(args: any): any {
 
 // ─── Tool ─────────────────────────────────────────────────────────────────────
 
-export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
+export class AskUserTool extends InteractiveTool<typeof AskUserArgsSchema> {
     private provider: AskUserProvider | null = null;
 
     constructor() {
@@ -157,18 +159,19 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
     }
 
     /**
-     * 消息渠道（飞书/微信等）和自动触发任务（定时任务等）没有交互 UI，禁用 askUser。
+     * 无人值守模式（solo / unlimited）不支持阻塞式交互，禁用 askUser。
      */
     isAvailable(taskState?: TaskState): boolean {
-        const originType = taskState?.origin?.type;
-        if (originType === 'channel' || originType === 'automation') {
-            return false;
-        }
-        return true;
+        if (!taskState) return true;
+        return taskState.getAgentMode().interactive !== false;
     }
 
     setProvider(provider: AskUserProvider) {
         this.provider = provider;
+    }
+
+    cancelCurrent(): void {
+        this.provider?.cancelCurrent?.();
     }
 
     private isProviderPrompting(): boolean {
@@ -385,8 +388,8 @@ import { ExitPlanModeTool, type ExitPlanModeProvider } from './exitPlanMode.js';
 export function createInteractionToolset(
     askUserProvider: AskUserProvider,
     exitPlanModeProvider?: ExitPlanModeProvider
-): BaseToolset {
-    const toolset = new BaseToolset('interaction');
+): InteractiveToolset {
+    const toolset = new InteractiveToolset('interaction');
 
     const askUserTool = new AskUserTool();
     askUserTool.setProvider(askUserProvider);
@@ -401,8 +404,8 @@ export function createInteractionToolset(
     return toolset;
 }
 
-export function createAskUserToolset(askUserProvider: AskUserProvider): BaseToolset {
-    const toolset = new BaseToolset('interaction');
+export function createAskUserToolset(askUserProvider: AskUserProvider): InteractiveToolset {
+    const toolset = new InteractiveToolset('interaction');
     const askUserTool = new AskUserTool();
     askUserTool.setProvider(askUserProvider);
     toolset.addTool(askUserTool);

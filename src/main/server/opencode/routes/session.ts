@@ -271,6 +271,7 @@ async function submitServerUserMessage(
 ): Promise<void> {
     const modelRequestOptions = buildModelRequestOptions(c);
     await task.submitUserMessage(text, {
+        interactive: true,
         modelRequestOptions,
         instrumentationContext: {
             traceId: getIncomingTraceHeader(c)?.value,

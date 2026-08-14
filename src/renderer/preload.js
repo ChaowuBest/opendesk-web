@@ -450,8 +450,8 @@ function exposeTaskManagerAPI() {
         respondExitPlanMode: (requestId, response) => {
             ipcRenderer.send('exitPlanMode:response', requestId, response);
         },
-        getPendingRequest: async () => {
-            const result = await ipcRenderer.invoke('exitPlanMode:getPending');
+        getPendingRequest: async (taskId) => {
+            const result = await ipcRenderer.invoke('exitPlanMode:getPending', taskId);
             if (result.status === 'ok') return result.data;
             return null;
         }

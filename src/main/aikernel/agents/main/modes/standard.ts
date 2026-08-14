@@ -23,6 +23,5 @@ export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
     descriptionKey: 'mode.standard.description',
     icon: '⚡',
     color: '#FFFFFF',
-    permissionFactory: (workspace) => createDefaultPermissionRules(workspace),
-    disabledTools: ['exitPlanMode']
+    permissionFactory: (workspace) => createDefaultPermissionRules(workspace)
 };

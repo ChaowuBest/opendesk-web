@@ -14,7 +14,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionEnforcer, PermissionPromptProvider } from '../security/permission.js';
 import type { TaskState } from '../states/tasks.js';
-import { getTaskArtifactDirectory } from '../../utils/setting.js';
+import { getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
 
@@ -24,6 +24,40 @@ import { t } from '../../../locale/index.js';
 export function resolveTaskMode(task: TaskState, mainAgentMode: ModeDecl): ModeDecl {
     const taskAgent = task.getAgent();
     return taskAgent.agentId === AgentRegistry.getMainAgent().agentId ? mainAgentMode : task.getAgentMode();
+}
+
+/**
+ * 将任务切换到指定模式（单任务模式切换）。
+ * 收敛 onExitMode/onEnterMode 钩子与 replaceTaskHarnessForMode 的核心逻辑；
+ * 通知 UI（renderer/session 广播）由各调用方负责。
+ *
+ * @returns 是否成功切换
+ */
+export async function switchTaskMode(
+    task: TaskState,
+    targetModeId: string,
+    permissionPromptFactory: () => PermissionPromptProvider
+): Promise<boolean> {
+    const agent = task.getAgent();
+    const modes = agent.supportedModes();
+    const targetMode = modes.find((m) => m.id === targetModeId);
+    if (!targetMode) return false;
+
+    const ws = task.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+    const oldId = task.activeModeId || agent.getDefaultMode().id;
+    if (oldId !== targetModeId) {
+        const oldMode = modes.find((m) => m.id === oldId);
+        await oldMode?.onExitMode?.(ws);
+        await targetMode.onEnterMode?.(ws);
+    }
+
+    try {
+        await replaceTaskHarnessForMode(task, ws, targetMode, permissionPromptFactory);
+        return true;
+    } catch (err) {
+        logger.warn(`Failed to switch task ${task.task_id} to mode ${targetModeId}: ${err}`);
+        return false;
+    }
 }
 
 /**
@@ -80,6 +114,11 @@ export async function replaceTaskHarnessForMode(
     task.harnessContext = ctx;
     task.installBuiltSystemPrompt(systemPrompt);
     task.task_manager_state.clearLazyTaskSystemPromptRefresh(task);
+    // 模式切换后立即重新过滤工具集，使交互工具的 isAvailable 按新模式求值
+    await task.refreshBaseToolsets();
+    if (taskMode.interactive === false) {
+        task.cancelInteractionPrompts();
+    }
 
     if (taskMode.bypassPermissionChecks && ctx.permission) {
         try {

@@ -43,7 +43,7 @@ import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
-import { BaseTool, BaseToolset } from '../tool.js';
+import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import {
     createEvidenceCardState,
@@ -121,7 +121,6 @@ export type {
     TaskModelRequestOptions,
     SubmitUserMessageOptions,
     ProcessTaskTurnOptions,
-    TaskAwareTool,
     StartInternalTurnOptions,
     InterruptRunningTurnOptions,
     TaskUpdateUserChunk,
@@ -136,7 +135,8 @@ import {
     ATTEMPT_COMPLETION_TOOL_NAME,
     getLLMRetryDelayMs,
     errorToMessage,
-    TaskModelRequestOptions
+    TaskModelRequestOptions,
+    TaskStatus
 } from '../task/types.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
@@ -445,11 +445,19 @@ export class TaskState {
     profiler: TaskProfiler | null = null;
 
     /**
-     * 可选的 interaction 工具集（仅主任务使用）。
-     * 由 TUI/Electron 层在任务创建后注入，包含 askUser 等需要用户交互的工具。
-     * buildToolsets() 会自动将其包含在工具列表中。
+     * 交互工具集（askUser / exitPlanMode），由 Electron/TUI 层在任务创建时注入。
+     * 仅当当前 turn 由用户交互发起（interactive）时才挂载；子任务、内部流程不挂载。
      */
-    interactionToolset: BaseToolset | null = null;
+    interactionToolset: InteractiveToolset | null = null;
+
+    /**
+     * 入口注入的额外工具集（如 workflow 完成协议、opencode / ACP 交互工具）。
+     * 始终挂载，不受 turn 交互性影响。
+     */
+    entryToolset: BaseToolset | null = null;
+
+    /** 当前 turn 是否由用户交互发起（运行时状态，不持久化），决定是否挂载交互工具集。 */
+    private _currentTurnInteractive: boolean = false;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: Hooks = GlobalHooks.createChildHooks();
@@ -1023,6 +1031,7 @@ export class TaskState {
         const generation = ++this._turnGeneration;
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
+        this._currentTurnInteractive = false;
         this.task_status = 'running';
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -1371,8 +1380,19 @@ export class TaskState {
         await this.refreshBaseToolsets();
     }
 
-    private async refreshBaseToolsets(): Promise<void> {
+    /**
+     * 重新构建基础工具集并同步到 chat_context。
+     * 用于模式切换、执行主机切换等场景，使 isAvailable / 工具过滤立即重新求值。
+     * 会移除本次不再返回的受控工具集（interaction / entry），但保留 renderer 动态挂载的工具集。
+     */
+    async refreshBaseToolsets(): Promise<void> {
         const allToolsets = await this.buildToolsets();
+        const returnedNames = new Set(allToolsets.map((ts) => ts.name));
+        for (const managedName of ['interaction', this.entryToolset?.name]) {
+            if (managedName && !returnedNames.has(managedName)) {
+                this.chat_context.toolsets.delete(managedName);
+            }
+        }
         for (const toolset of allToolsets) {
             this.chat_context.toolsets.set(toolset.name, toolset);
         }
@@ -1535,6 +1555,7 @@ export class TaskState {
         if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
+        this._currentTurnInteractive = options.interactive === true;
         this.task_status = 'running';
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
@@ -1778,6 +1799,8 @@ export class TaskState {
             this.task_status = 'stopped';
             this.stop_requested_by_user = reason === 'user';
             this.finished_at = new Date();
+            // turn 结束，清空交互标记，避免模式切换时读到上一个 turn 的残留值
+            this._currentTurnInteractive = false;
             logger.info(`task ${this.task_id} stopped (reason=${reason})`);
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
             this.markInterruptedToolCalls('任务已停止');
@@ -2397,17 +2420,22 @@ export class TaskState {
     }
 
     async buildToolsets(): Promise<BaseToolset[]> {
-        // 从磁盘恢复的主任务 interactionToolset 未持久化，需要重新注入
-        if (this.parent_id === null && !this.interactionToolset) {
-            try {
-                await getPlatform().initPlatformHarness(this);
-            } catch (err) {
-                logger.warn(
-                    `Failed to re-init interaction toolset for loaded task ${this.task_id}: ${(err as Error)?.message || String(err)}`
-                );
-            }
+        // 交互工具集仅在当前 turn 由用户交互发起时挂载。
+        let interactionToolset = this._currentTurnInteractive ? this.interactionToolset : null;
+        if (this._currentTurnInteractive && !interactionToolset) {
+            // 内部入口（channel/agentoffice 等）创建的任务未在创建时注入交互工具集，
+            // 被用户手动打开后需按需从 platform 补充注入。
+            interactionToolset = getPlatform().createInteractionToolset(this);
+            this.interactionToolset = interactionToolset;
         }
-        return buildToolsetsForTask(this);
+        return buildToolsetsForTask(this, interactionToolset);
+    }
+
+    /**
+     * 取消当前等待中的交互提示（模式切换为不交互模式时调用）。
+     */
+    cancelInteractionPrompts(): void {
+        this.interactionToolset?.cancelAll();
     }
 
     async ensureToolsResolved() {

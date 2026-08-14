@@ -20,12 +20,14 @@ import { ElectronPermissionPromptProvider } from '../main/aikernel/security/elec
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
+import { switchTaskMode } from '../main/aikernel/task/mode.js';
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
-import { safeSendToWebFrame } from '../main/utils/electron-ipc.js';
+import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electron-ipc.js';
 import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
 import type { PlatformFetchOptions } from './base.js';
+import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import crypto from 'crypto';
 import path from 'path';
 import { SlidesApplication } from '../main/applications/slides/app.js';
@@ -200,10 +202,24 @@ export class ElectronPlatform extends WorkerPlatform {
 
     async initPlatformHarness(task: TaskState): Promise<void> {
         task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
-        task.interactionToolset = createInteractionToolset(
-            new ElectronAskUserProvider(),
-            new ElectronExitPlanModeProvider()
-        );
+        task.interactionToolset = this.createInteractionToolset(task);
+    }
+
+    createInteractionToolset(task: TaskState): InteractiveToolset {
+        const askUserProvider = new ElectronAskUserProvider();
+        const exitPlanModeProvider = new ElectronExitPlanModeProvider();
+        exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
+            const switched = await switchTaskMode(task, targetModeId, () => new ElectronPermissionPromptProvider());
+            if (!switched) return;
+            // 通知 renderer 更新该任务的模式显示（模式按钮/下拉）
+            const { BrowserWindow } = electron();
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    safeSendToWebContents(win.webContents, 'mode:taskModeChanged', task.task_id, targetModeId);
+                }
+            }
+        });
+        return createInteractionToolset(askUserProvider, exitPlanModeProvider);
     }
 
     getWorkerPath(): string {

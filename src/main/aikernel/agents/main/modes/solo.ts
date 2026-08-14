@@ -82,5 +82,5 @@ export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
     icon: '🎮',
     color: '#00E676',
     permissionFactory: (_workspace) => createSoloModePermissionRules(),
-    disabledTools: ['askUser', 'exitPlanMode']
+    interactive: false
 };

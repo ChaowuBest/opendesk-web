@@ -11,8 +11,6 @@
 
 import type { UserMessagePart, AssistantMessagePart, Usage, RuntimeMetadata } from '../messages.js';
 import type { LLMRequestOptions } from '../llm.js';
-import type { BaseTool } from '../tool.js';
-import type { TaskState } from '../states/tasks.js';
 import type { TaskTurnInstrumentationExternalContext } from '../../telemetry/agent-execution.js';
 
 export type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -33,6 +31,11 @@ export interface SubmitUserMessageOptions {
     imageDataUris?: string[];
     modelRequestOptions?: TaskModelRequestOptions;
     instrumentationContext?: TaskTurnInstrumentationExternalContext;
+    /**
+     * 本次 turn 是否由用户交互发起，决定是否挂载交互工具集（askUser / exitPlanMode）。
+     * 内部/自动化流程（子任务、agentoffice、headless、channel 等）应保持默认 false。
+     */
+    interactive?: boolean;
 }
 
 export interface ProcessTaskTurnOptions {
@@ -40,10 +43,6 @@ export interface ProcessTaskTurnOptions {
     modelRequestOptions?: TaskModelRequestOptions;
     instrumentationContext?: TaskTurnInstrumentationExternalContext;
 }
-
-export type TaskAwareTool = BaseTool<any> & {
-    isAvailable?: (taskState?: TaskState) => boolean | Promise<boolean>;
-};
 
 export interface StartInternalTurnOptions {
     prompt: string;
