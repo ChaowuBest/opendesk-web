@@ -248,11 +248,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /public string GetUnsafeLegacyInstallFolder\(\)[\s\S]*?\n {8}private bool IsUnsafeLegacyUpgrade/
     )[0];
     assert.doesNotMatch(legacyFolderMethod, /Directory\.Exists|File\.Exists|Directory\.GetDirectories/);
-    assert.equal(packageJson.scripts['make:win32'], 'npm run build && electron-forge make --platform=win32');
+    assert.equal(packageJson.scripts['make:win32'], 'electron-forge make --platform=win32');
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
-    assert.equal(packageJson.scripts['make:win32:setup'], 'npm run make:wix-bootstrapper');
-    assert.match(buildScript, /run\(npmExecutable, \['run', 'make:win32'\]\)/);
-    assert.match(buildScript, /generatedMsi\.mtimeMs < buildStartedAt/);
+    assert.equal(packageJson.scripts['make:win32:setup'], 'npm run make:win32 && npm run make:wix-bootstrapper');
+    assert.doesNotMatch(buildScript, /npmExecutable|npmCliPath|make:win32|spawnSync\(['"]npm\.cmd['"]/);
+    assert.match(buildScript, /if \(!fs\.existsSync\(msiPath\)\)/);
 });
 
 test('renders every bootstrapper page transition atomically', () => {
