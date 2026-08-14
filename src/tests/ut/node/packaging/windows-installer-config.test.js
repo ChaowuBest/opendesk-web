@@ -72,7 +72,13 @@ test('keeps versioned application directories without recursively purging the se
         getRegistryKeys: () => [
             { id: 'RegistryInstallPath', key: 'product-specific-key' },
             { id: 'UninstallDisplayName', key: 'product-specific-key' }
-        ]
+        ],
+        getRegistryComponent: (registry) => ({
+            guid: 'test-guid',
+            componentId: registry.id,
+            xml: `<Component Id="${registry.id}" Guid="test-guid" Win64="yes">\n  <RegistryKey Root="HKLM" Key="test-key" />\n</Component>`,
+            featureAffinity: 'main'
+        })
     };
 
     assert.equal(typeof config.beforeCreate, 'function');
@@ -89,13 +95,21 @@ test('keeps versioned application directories without recursively purging the se
     assert.match(creator.wixTemplate, /<Property Id="INSTALL_PATH_CUSTOMIZED"[^>]+Value="1"/);
     assert.match(
         creator.wixTemplate,
+        /<Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes">[\s\S]*?RegistrySearch[\s\S]*?Type="raw"[\s\S]*?Name="BundleInstall"[\s\S]*?<\/Property>/
+    );
+    assert.match(
+        creator.wixTemplate,
+        /RegistrySearch Key="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\{834BCECA-F10C-41E6-9ECF-CB3877565C04\}\.msq"[\s\S]*?Root="HKLM"[\s\S]*?Name="InstallPath"[\s\S]*?Win64="no"/
+    );
+    assert.match(
+        creator.wixTemplate,
         /<Component Id="DesktopShortcut"[^>]+Transitive="yes">\s*<Condition>CREATE_DESKTOP_SHORTCUT = "1"<\/Condition>/
     );
     assert.match(
         creator.wixTemplate,
         /<Component Id="ApplicationShortcut"[^>]+Transitive="yes">\s*<Condition>CREATE_START_MENU_SHORTCUT = "1"<\/Condition>/
     );
-    assert.equal((creator.wixTemplate.match(/Key="SOFTWARE\\OpenDesk\\Installer"/g) || []).length, 2);
+    assert.equal((creator.wixTemplate.match(/Key="SOFTWARE\\OpenDesk\\Installer"/g) || []).length, 3);
     assert.doesNotMatch(creator.wixTemplate, /RemoveFolderEx/);
     assert.doesNotMatch(creator.wixTemplate, /<Component Id="PurgeOnUninstall"/);
     assert.doesNotMatch(creator.wixTemplate, /<ComponentRef Id="PurgeOnUninstall"/);
@@ -127,6 +141,15 @@ test('keeps versioned application directories without recursively purging the se
             forceDeleteOnUninstall: 'yes'
         },
         {
+            id: 'RegistryBundleInstallMode',
+            root: 'HKLM',
+            key: 'SOFTWARE\\OpenDesk\\Installer',
+            name: 'BundleInstall',
+            type: 'integer',
+            value: '1',
+            forceDeleteOnUninstall: 'yes'
+        },
+        {
             id: 'RegistryInstallPathCustomized',
             root: 'HKLM',
             key: 'SOFTWARE\\OpenDesk\\Installer',
@@ -155,20 +178,61 @@ test('keeps versioned application directories without recursively purging the se
         },
         { id: 'UninstallDisplayName', key: 'product-specific-key' }
     ]);
+    assert.match(
+        creator.getRegistryComponent({ id: 'UninstallDisplayName' }, 0).xml,
+        /<Component Id="UninstallDisplayName"[^>]+Transitive="yes">\s*<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"<\/Condition>/
+    );
+    assert.doesNotMatch(
+        creator.getRegistryComponent({ id: 'RegistryInstallPath' }, 0).xml,
+        /Transitive="yes"|OPENDESK_BUNDLE_INSTALL/
+    );
+    assert.match(
+        creator.getRegistryComponent({ id: 'RegistryBundleInstallMode' }, 0).xml,
+        /Transitive="yes">\s*<Condition>OPENDESK_BUNDLE_INSTALL = "1"<\/Condition>/
+    );
 });
 
 test('uses an editable MSI install directory page instead of the feature tree', () => {
     const ui = fs.readFileSync(path.join(installerResources, 'ui.xml'), 'utf8');
+    const localization = fs.readFileSync(path.join(installerResources, 'zh-cn.wxl'), 'utf8');
 
     assert.match(ui, /<Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONROOTDIRECTORY"\s*\/>/);
+    assert.match(ui, /<TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="8"\s*\/>/);
     assert.match(ui, /Dialog="InstallDirDlg"/);
     assert.match(ui, /Event="SetTargetPath"/);
     assert.match(
         ui,
-        /<Publish Dialog="BrowseDlg"\s+Control="OK"[\s\S]*?Property="APPLICATIONROOTDIRECTORY"[\s\S]*?Value="\[APPLICATIONROOTDIRECTORY\]opendesk\\"[\s\S]*?Order="2"[\s\S]*?NOT Installed AND NOT APPLICATIONROOTDIRECTORY ~>> "\\opendesk\\"/
+        /<Publish Dialog="BrowseDlg"\s+Control="OK"[\s\S]*?Property="APPLICATIONROOTDIRECTORY"[\s\S]*?Value="\[APPLICATIONROOTDIRECTORY\]opendesk\\"[\s\S]*?Order="2"[\s\S]*?NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT APPLICATIONROOTDIRECTORY ~>> "\\opendesk\\"/
     );
     assert.doesNotMatch(ui, /<Publish Dialog="InstallDirDlg"[^>]+Property="APPLICATIONROOTDIRECTORY"[^>]+opendesk/);
     assert.doesNotMatch(ui, /Dialog="CustomizeDlg"/);
+    assert.match(ui, /<Dialog Id="UpgradeReadyDlg"/);
+    assert.match(
+        ui,
+        /Publish Dialog="WelcomeDlg"[\s\S]*?Property="WixUI_InstallMode"[\s\S]*?Value="Update"[\s\S]*?WIX_UPGRADE_DETECTED/
+    );
+    assert.match(
+        ui,
+        /Publish Dialog="WelcomeDlg"[\s\S]*?Event="NewDialog" Value="UpgradeReadyDlg"[\s\S]*?WIX_UPGRADE_DETECTED/
+    );
+    assert.doesNotMatch(ui, /Dialog="InstallDirDlg"[^\n]+Value="UpgradeReadyDlg"/);
+    assert.match(
+        ui,
+        /<Dialog Id="UpgradeReadyDlg"[\s\S]*?<Control Id="Folder"[\s\S]*?Type="PathEdit"[\s\S]*?Property="WIXUI_INSTALLDIR"/
+    );
+    assert.match(
+        ui,
+        /Dialog="UpgradeReadyDlg" Control="ChangeFolder"[\s\S]*?Property="_BrowseProperty"[\s\S]*?Event="SpawnDialog" Value="BrowseDlg"/
+    );
+    assert.match(
+        ui,
+        /Dialog="UpgradeReadyDlg" Control="Update" Event="SetTargetPath"[\s\S]*?Event="DoAction" Value="WixUIValidatePath"[\s\S]*?Event="SpawnDialog" Value="InvalidDirDlg"[\s\S]*?Event="EndDialog" Value="Return"/
+    );
+    assert.match(
+        localization,
+        /<String Id="UpgradeReadyDlgTitle">\{\\WixUI_Font_Title\}已准备好更新 OpenDesk<\/String>/
+    );
+    assert.match(localization, /<String Id="UpgradeReadyDlgUpdate">更新\(&amp;U\)<\/String>/);
 });
 
 test('builds a custom bootstrapper that passes location and shortcut choices to the MSI', () => {
@@ -185,6 +249,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bundle, /<MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="\[CreateDesktopShortcut\]"\s*\/>/);
     assert.match(bundle, /<MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="\[CreateStartMenuShortcut\]"\s*\/>/);
     assert.match(bundle, /<MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="\[InstallPathCustomized\]"\s*\/>/);
+    assert.match(bundle, /<MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1"\s*\/>/);
     assert.match(bootstrapper, /CreateDesktopShortcutCheckBox/);
     assert.match(bootstrapper, /CreateStartMenuShortcutCheckBox/);
     assert.match(bootstrapper, /Engine\.FormatString\(Engine\.StringVariables\["InstallFolder"\]\)/);
@@ -203,13 +268,33 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /DetectRelatedMsiPackage \+= OnDetectRelatedMsiPackage/);
     assert.match(
         bootstrapper,
-        /OnDetectRelatedMsiPackage[\s\S]*?e\.PackageId == PackageId[\s\S]*?relatedMsiDetected = true/
+        /OnDetectRelatedMsiPackage[\s\S]*?e\.PackageId == PackageId[\s\S]*?RelatedOperation\.MajorUpgrade[\s\S]*?RelatedOperation\.MinorUpdate[\s\S]*?relatedMsiUpgradeDetected = true/
     );
-    assert.match(bootstrapper, /IsUnsafeLegacyUpgrade\(\)[\s\S]*?relatedMsiDetected && GetSavedLayoutVersion\(\) < 2/);
+    assert.match(bootstrapper, /OnDetectRelatedMsiPackage[\s\S]*?RestoreRelatedMsiInstallFolder\(e\.ProductCode\)/);
+    assert.match(bootstrapper, /FindRelatedMsiInstallFolder\(string productCode\)[\s\S]*?productCode \+ "\.msq"/);
+    assert.match(bootstrapper, /RegistryView\[\] views = \{ RegistryView\.Registry32, RegistryView\.Registry64 \}/);
+    assert.match(bootstrapper, /key\.GetValue\("InstallPath"\)/);
     assert.match(
         bootstrapper,
-        /StartAction\(LaunchAction action\)[\s\S]*?IsUnsafeLegacyUpgrade\(\)[\s\S]*?Display\.None[\s\S]*?form\.Close\(\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(action\)/
+        /RestoreRelatedMsiInstallFolder\(string productCode\)[\s\S]*?activeInstallFolder = InstallerPath\.Normalize\(folder\)[\s\S]*?Engine\.StringVariables\["InstallFolder"\] = activeInstallFolder/
     );
+    assert.match(
+        bootstrapper,
+        /OnDetectComplete[\s\S]*?ShowDetected\([\s\S]*?packageState == PackageState\.Present[\s\S]*?relatedMsiUpgradeDetected/
+    );
+    assert.match(
+        bootstrapper,
+        /OnDetectComplete[\s\S]*?maintenanceRequested[\s\S]*?LaunchAction\.Uninstall[\s\S]*?LaunchAction\.Repair[\s\S]*?packageState == PackageState\.Present \|\| maintenanceRequested/
+    );
+    assert.match(
+        bootstrapper,
+        /ShowWelcome\(bool enabled\)[\s\S]*?upgradeDetected[\s\S]*?UpgradeHeader[\s\S]*?UpgradeInstallButton/
+    );
+    assert.match(
+        bootstrapper,
+        /StartAction\(LaunchAction action\)[\s\S]*?EnsureOpenDeskIsNotRunning\(\)[\s\S]*?Engine\.Plan\(action\)/
+    );
+    assert.doesNotMatch(bootstrapper, /UnsafeLegacy|GetSavedLayoutVersion|ShowLegacyInstallBlocked/);
     assert.match(
         bootstrapper,
         /EnsureOpenDeskIsNotRunning\(\)[\s\S]*?HasRunningOpenDeskProcess\([^)]+\)[\s\S]*?MessageBoxButtons\.RetryCancel/
@@ -242,12 +327,9 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(localization, /<String Id="ProgressUninstallCancelButton">取消卸载<\/String>/);
     assert.match(localization, /<String Id="OpenDeskRunningTitle">OpenDesk 正在运行<\/String>/);
     assert.match(localization, /<String Id="OpenDeskRunningMessage">[^<]+<\/String>/);
-    assert.match(localization, /<String Id="LegacyInstallHeader">检测到旧版安装目录<\/String>/);
-    assert.match(bootstrapper, /ShowLegacyInstallBlocked/);
-    const legacyFolderMethod = bootstrapper.match(
-        /public string GetUnsafeLegacyInstallFolder\(\)[\s\S]*?\n {8}private bool IsUnsafeLegacyUpgrade/
-    )[0];
-    assert.doesNotMatch(legacyFolderMethod, /Directory\.Exists|File\.Exists|Directory\.GetDirectories/);
+    assert.match(localization, /<String Id="UpgradeHeader">更新 OpenDesk<\/String>/);
+    assert.match(localization, /<String Id="UpgradeInstallButton">开始更新<\/String>/);
+    assert.doesNotMatch(localization, /LegacyInstall|检测到旧版安装目录|旧版 OpenDesk/);
     assert.equal(packageJson.scripts['make:win32'], 'electron-forge make --platform=win32');
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
     assert.equal(packageJson.scripts['make:win32:setup'], 'npm run make:win32 && npm run make:wix-bootstrapper');
@@ -261,7 +343,7 @@ test('renders every bootstrapper page transition atomically', () => {
     assert.match(bootstrapper, /class BufferedPanel : Panel/);
     assert.match(bootstrapper, /OptimizedDoubleBuffer/);
     assert.match(bootstrapper, /WM_SETREDRAW/);
-    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 8);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 7);
     assert.match(bootstrapper, /Opacity = 0D/);
     assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
     assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);

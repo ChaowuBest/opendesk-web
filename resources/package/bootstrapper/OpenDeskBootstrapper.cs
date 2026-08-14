@@ -29,12 +29,11 @@ namespace OpenDesk.Installer
     public sealed class OpenDeskBootstrapperApplication : BootstrapperApplication
     {
         private const string PackageId = "OpenDeskMsi";
-        private const int UnsafeLegacyExitCode = 1603;
         private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
         private LaunchAction activeAction = LaunchAction.Unknown;
-        private bool relatedMsiDetected;
+        private bool relatedMsiUpgradeDetected;
         private bool cancelRequested;
         private int exitCode;
         private string lastError;
@@ -131,46 +130,6 @@ namespace OpenDesk.Installer
             }
         }
 
-        public string GetUnsafeLegacyInstallFolder()
-        {
-            if (!IsUnsafeLegacyUpgrade())
-            {
-                return null;
-            }
-
-            try
-            {
-                string folder = Engine.FormatString(Engine.StringVariables["InstallFolder"]);
-                return string.IsNullOrWhiteSpace(folder) ? GetInstallFolder() : InstallerPath.Normalize(folder);
-            }
-            catch
-            {
-                return GetInstallFolder();
-            }
-        }
-
-        private bool IsUnsafeLegacyUpgrade()
-        {
-            return relatedMsiDetected && GetSavedLayoutVersion() < 2;
-        }
-
-        private static int GetSavedLayoutVersion()
-        {
-            try
-            {
-                using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-                using (RegistryKey key = root.OpenSubKey("SOFTWARE\\OpenDesk\\Installer"))
-                {
-                    object value = key == null ? null : key.GetValue("LayoutVersion");
-                    return value == null ? 0 : Convert.ToInt32(value);
-                }
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
         public void Install(string folder, bool desktopShortcut, bool startMenuShortcut, bool installPathCustomized)
         {
             activeInstallFolder = InstallerPath.Normalize(folder);
@@ -211,20 +170,6 @@ namespace OpenDesk.Installer
 
         private void StartAction(LaunchAction action)
         {
-            if (IsUnsafeLegacyUpgrade())
-            {
-                exitCode = UnsafeLegacyExitCode;
-                if (Command.Display == Display.None)
-                {
-                    form.Close();
-                }
-                else
-                {
-                    form.ShowDetected(packageState == PackageState.Present, true);
-                }
-                return;
-            }
-
             if (!EnsureOpenDeskIsNotRunning())
             {
                 return;
@@ -319,10 +264,74 @@ namespace OpenDesk.Installer
 
         private void OnDetectRelatedMsiPackage(object sender, DetectRelatedMsiPackageEventArgs e)
         {
-            if (e.PackageId == PackageId)
+            if (
+                e.PackageId == PackageId &&
+                (e.Operation == RelatedOperation.MajorUpgrade || e.Operation == RelatedOperation.MinorUpdate)
+            )
             {
-                relatedMsiDetected = true;
+                relatedMsiUpgradeDetected = true;
+                RestoreRelatedMsiInstallFolder(e.ProductCode);
             }
+        }
+
+        private void RestoreRelatedMsiInstallFolder(string productCode)
+        {
+            string folder = FindRelatedMsiInstallFolder(productCode);
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return;
+            }
+
+            activeInstallFolder = InstallerPath.Normalize(folder);
+            Engine.StringVariables["InstallFolder"] = activeInstallFolder;
+        }
+
+        private static string FindRelatedMsiInstallFolder(string productCode)
+        {
+            if (string.IsNullOrWhiteSpace(productCode))
+            {
+                return null;
+            }
+
+            string uninstallKey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\";
+            string[] keyPaths = { uninstallKey + productCode + ".msq", uninstallKey + productCode };
+            RegistryView[] views = { RegistryView.Registry32, RegistryView.Registry64 };
+            RegistryHive[] hives = { RegistryHive.LocalMachine, RegistryHive.CurrentUser };
+
+            foreach (RegistryHive hive in hives)
+            {
+                foreach (RegistryView view in views)
+                {
+                    try
+                    {
+                        using (RegistryKey root = RegistryKey.OpenBaseKey(hive, view))
+                        {
+                            foreach (string keyPath in keyPaths)
+                            {
+                                using (RegistryKey key = root.OpenSubKey(keyPath))
+                                {
+                                    if (key == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    object value = key.GetValue("InstallPath") ?? key.GetValue("InstallLocation");
+                                    string folder = value as string;
+                                    if (!string.IsNullOrWhiteSpace(folder))
+                                    {
+                                        return folder;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            return null;
         }
 
         private void OnDetectComplete(object sender, DetectCompleteEventArgs e)
@@ -352,7 +361,15 @@ namespace OpenDesk.Installer
 
             Post(delegate
             {
-                form.ShowDetected(packageState == PackageState.Present, Command.Display != Display.None);
+                bool maintenanceRequested =
+                    Command.Action == LaunchAction.Uninstall ||
+                    Command.Action == LaunchAction.Repair ||
+                    Command.Action == LaunchAction.Modify;
+                form.ShowDetected(
+                    packageState == PackageState.Present || maintenanceRequested,
+                    relatedMsiUpgradeDetected,
+                    Command.Display != Display.None
+                );
                 if (Command.Display != Display.Full)
                 {
                     LaunchAction action = Command.Action == LaunchAction.Unknown ? LaunchAction.Install : Command.Action;
@@ -500,6 +517,7 @@ namespace OpenDesk.Installer
         private bool selectedStartMenuShortcut;
         private bool selectedInstallPathCustomized;
         private bool editingInstallPathCustomized;
+        private bool upgradeDetected;
         private LaunchAction progressAction = LaunchAction.Unknown;
         private bool busy;
 
@@ -551,64 +569,26 @@ namespace OpenDesk.Installer
             ShowWelcome(false);
         }
 
-        public void ShowDetected(bool installed, bool reveal)
+        public void ShowDetected(bool installed, bool relatedUpgradeDetected, bool reveal)
         {
             selectedFolder = application.GetInstallFolder();
             selectedDesktopShortcut = application.GetSavedPreference("CreateDesktopShortcut");
             selectedStartMenuShortcut = application.GetSavedPreference("CreateStartMenuShortcut");
             selectedInstallPathCustomized = application.GetSavedInstallPathCustomized();
-            string unsafeLegacyFolder = application.GetUnsafeLegacyInstallFolder();
-            if (!string.IsNullOrEmpty(unsafeLegacyFolder))
-            {
-                ShowLegacyInstallBlocked(unsafeLegacyFolder);
-            }
-            else if (installed)
+            upgradeDetected = relatedUpgradeDetected;
+            if (installed)
             {
                 ShowMaintenance();
             }
             else
             {
-                installLocationLabel.Text = string.Format(T("SelectedInstallLocation"), selectedFolder);
-                installOptionsButton.Enabled = true;
-                startInstallButton.Enabled = true;
+                ShowWelcome(true);
             }
 
             if (reveal)
             {
                 Reveal();
             }
-        }
-
-        private void ShowLegacyInstallBlocked(string folder)
-        {
-            busy = false;
-            RenderPage(delegate
-            {
-                SetActiveStep(-1);
-                AddLabel(
-                    rightBody,
-                    "LegacyInstallHeader",
-                    T("LegacyInstallHeader"),
-                    46,
-                    105,
-                    540,
-                    58,
-                    HeadingFont,
-                    Color.FromArgb(178, 59, 49)
-                );
-                AddLabel(
-                    rightBody,
-                    "LegacyInstallMessage",
-                    string.Format(T("LegacyInstallMessage"), folder),
-                    46,
-                    180,
-                    540,
-                    110,
-                    BodyFont,
-                    MutedColor
-                );
-                AddFooterButton("LegacyInstallCloseButton", T("FailureCloseButton"), 470, Close);
-            });
         }
 
         public void Reveal()
@@ -825,9 +805,12 @@ namespace OpenDesk.Installer
             {
                 SetActiveStep(0);
                 string version = application.Engine.FormatString(T("InstallEyebrow"));
+                string headerId = upgradeDetected ? "UpgradeHeader" : "InstallHeader";
+                string messageId = upgradeDetected ? "UpgradeMessage" : "InstallMessage";
+                string installButtonId = upgradeDetected ? "UpgradeInstallButton" : "InstallInstallButton";
                 AddLabel(rightBody, "InstallEyebrow", version, 46, 58, 540, 22, SmallFont, Teal).Font = LabelFont;
-                AddLabel(rightBody, "InstallHeader", T("InstallHeader"), 46, 88, 540, 46, HeadingFont, TextColor);
-                AddLabel(rightBody, "InstallMessage", T("InstallMessage"), 46, 143, 540, 50, BodyFont, MutedColor);
+                AddLabel(rightBody, "InstallHeader", T(headerId), 46, 88, 540, 46, HeadingFont, TextColor);
+                AddLabel(rightBody, "InstallMessage", T(messageId), 46, 143, 540, 50, BodyFont, MutedColor);
                 AddFeatureRow(206, "01", T("FeatureWorkspaceTitle"), T("FeatureWorkspaceText"));
                 AddFeatureRow(280, "02", T("FeatureLocalTitle"), T("FeatureLocalText"));
                 AddFeatureRow(354, "03", T("FeatureExtendTitle"), T("FeatureExtendText"));
@@ -853,7 +836,7 @@ namespace OpenDesk.Installer
                 );
                 startInstallButton = AddFooterButton(
                     "StartInstallButton",
-                    T("InstallInstallButton"),
+                    T(installButtonId),
                     470,
                     StartInstallFromWelcome
                 );

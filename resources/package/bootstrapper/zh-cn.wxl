@@ -19,6 +19,8 @@ See the Mulan PSL v2 for more details.
     <String Id="InstallEyebrow">版本 [WixBundleVersion] · Windows x64</String>
     <String Id="InstallHeader">欢迎安装 OpenDesk</String>
     <String Id="InstallMessage">安装程序将把 OpenDesk 部署到这台电脑。你可以先在“安装选项”中选择任意本地磁盘。</String>
+    <String Id="UpgradeHeader">更新 OpenDesk</String>
+    <String Id="UpgradeMessage">检测到已安装的旧版本。安装程序将保留当前安装位置和快捷方式选项并完成更新。</String>
     <String Id="InstallVersion">OpenDesk [WixBundleVersion] · Windows x64</String>
     <String Id="InstallLocationPreview">可在“安装选项”中查看或更改安装路径。</String>
     <String Id="SelectedInstallLocation">安装位置：{0}</String>
@@ -35,6 +37,7 @@ See the Mulan PSL v2 for more details.
     <String Id="InstallAcceptCheckbox"></String>
     <String Id="InstallOptionsButton">安装选项</String>
     <String Id="InstallInstallButton">开始安装</String>
+    <String Id="UpgradeInstallButton">开始更新</String>
     <String Id="InstallCloseButton">退出安装</String>
     <String Id="OptionsEyebrow">安装选项</String>
     <String Id="OptionsHeader">选择安装位置</String>
@@ -106,8 +109,6 @@ See the Mulan PSL v2 for more details.
     <String Id="FailureRestartButton">立即重启</String>
     <String Id="FailureCloseButton">关闭</String>
     <String Id="FailureMessage">安装程序未能完成操作。错误代码：{0}</String>
-    <String Id="LegacyInstallHeader">检测到旧版安装目录</String>
-    <String Id="LegacyInstallMessage">旧版 OpenDesk 将公共目录“{0}”记录成了卸载清理范围。为保护该目录中的其他程序，本次安装已停止。请先完成旧版安装迁移，再重新运行安装程序。</String>
     <String Id="CancelConfirmTitle">取消安装</String>
     <String Id="CancelConfirmMessage">确定要取消当前操作吗？</String>
     <String Id="FilesInUseHeader">OpenDesk 正在运行</String>

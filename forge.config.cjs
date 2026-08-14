@@ -72,6 +72,16 @@ const extraResources = process.platform === 'darwin' ? undefined : [path.join(__
 const SIGN_LOCALLY = process.env.OPENDESK_SIGN_LOCAL === '1';
 const wixInstallerAssets = path.join(__dirname, 'resources', 'package', 'installer');
 const wixInstallPathRegistryKey = 'SOFTWARE\\OpenDesk\\Installer';
+const wixLegacyInstallPathRegistryKey =
+    'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{834BCECA-F10C-41E6-9ECF-CB3877565C04}.msq';
+const wixPublicUninstallComponentIds = new Set([
+    'UninstallDisplayName',
+    'UninstallPublisher',
+    'UninstallDisplayVersion',
+    'UninstallModifyString',
+    'UninstallString',
+    'UninstallDisplayIcon'
+]);
 const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR;
 const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
 
@@ -90,7 +100,8 @@ function preserveWixInstallDirectory(creator) {
         !desktopShortcutComponent.test(creator.wixTemplate) ||
         !recursiveRootCleanup.test(creator.wixTemplate) ||
         !recursiveRootCleanupRef.test(creator.wixTemplate) ||
-        typeof creator.getRegistryKeys !== 'function'
+        typeof creator.getRegistryKeys !== 'function' ||
+        typeof creator.getRegistryComponent !== 'function'
     ) {
         throw new Error('electron-wix-msi template no longer exposes the expected install path entries');
     }
@@ -101,6 +112,14 @@ function preserveWixInstallDirectory(creator) {
     <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="CREATE_START_MENU_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="INSTALL_PATH_CUSTOMIZED" Secure="yes" Value="1" />
+    <Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes">
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="BUNDLE_INSTALL_REGSEARCH_HKLM"
+                      Name="BundleInstall"
+                      Win64="{{Win64YesNo}}"/>
+    </Property>
     <Property Id="INSTALLPATH">
       <RegistrySearch Key="${wixInstallPathRegistryKey}"
                       Root="HKCU"
@@ -114,6 +133,18 @@ function preserveWixInstallDirectory(creator) {
                       Id="INSTALLPATH_REGSEARCH_HKLM"
                       Name="InstallPath"
                       Win64="{{Win64YesNo}}"/>
+      <RegistrySearch Key="${wixLegacyInstallPathRegistryKey}"
+                      Root="HKCU"
+                      Type="raw"
+                      Id="INSTALLPATH_LEGACY_033_REGSEARCH_HKCU"
+                      Name="InstallPath"
+                      Win64="no"/>
+      <RegistrySearch Key="${wixLegacyInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="INSTALLPATH_LEGACY_033_REGSEARCH_HKLM"
+                      Name="InstallPath"
+                      Win64="no"/>
     </Property>
     <SetProperty Action="RestoreInstallDirectory"
                  Id="APPLICATIONROOTDIRECTORY"
@@ -160,6 +191,15 @@ function preserveWixInstallDirectory(creator) {
                 forceDeleteOnUninstall: 'yes'
             },
             {
+                id: 'RegistryBundleInstallMode',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'BundleInstall',
+                type: 'integer',
+                value: '1',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
                 id: 'RegistryInstallPathCustomized',
                 root: 'HKLM',
                 key: wixInstallPathRegistryKey,
@@ -188,6 +228,24 @@ function preserveWixInstallDirectory(creator) {
             }
         );
         return registryKeys;
+    };
+
+    const getRegistryComponent = creator.getRegistryComponent.bind(creator);
+    creator.getRegistryComponent = (registry, indent) => {
+        const component = getRegistryComponent(registry, indent);
+        const condition = wixPublicUninstallComponentIds.has(registry.id)
+            ? 'OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"'
+            : registry.id === 'RegistryBundleInstallMode'
+              ? 'OPENDESK_BUNDLE_INSTALL = "1"'
+              : null;
+        if (!condition) {
+            return component;
+        }
+
+        component.xml = component.xml
+            .replace(new RegExp(`(<Component Id="${registry.id}"[^>]*)(>)`), '$1 Transitive="yes"$2')
+            .replace(/(\r?\n)(\s*)<RegistryKey/, `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`);
+        return component;
     };
 }
 

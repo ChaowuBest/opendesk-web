@@ -64,6 +64,7 @@ See the Mulan PSL v2 for more details.
                 <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
                 <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
                 <MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="[InstallPathCustomized]" />
+                <MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1" />
             </MsiPackage>
         </Chain>
     </Bundle>

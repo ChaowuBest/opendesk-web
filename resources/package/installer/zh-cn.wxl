@@ -15,8 +15,8 @@ See the Mulan PSL v2 for more details.
     <String Id="WixUICancel">取消</String>
     <String Id="WixUIFinish">完成(&amp;F)</String>
     <String Id="WelcomeDlg_Title">OpenDesk 安装程序</String>
-    <String Id="WelcomeDlgTitle">{\WixUI_Font_Bigger}欢迎安装 OpenDesk</String>
-    <String Id="WelcomeDlgDescription">安装程序将把 OpenDesk 部署到这台电脑。继续前请保存正在进行的工作。</String>
+    <String Id="WelcomeDlgTitle">{\WixUI_Font_Bigger}欢迎使用 OpenDesk 安装程序</String>
+    <String Id="WelcomeDlgDescription">安装程序将安装或更新 OpenDesk。继续前请保存正在进行的工作。</String>
     <String Id="CustomizeDlg_Title">OpenDesk 安装程序</String>
     <String Id="CustomizeDlgTitle">{\WixUI_Font_Title}选择安装选项</String>
     <String Id="CustomizeDlgDescription">选择安装位置和需要的组件。</String>
@@ -32,6 +32,10 @@ See the Mulan PSL v2 for more details.
     <String Id="VerifyReadyDlgInstall">安装(&amp;I)</String>
     <String Id="VerifyReadyDlgInstallTitle">{\WixUI_Font_Title}已准备好安装 OpenDesk</String>
     <String Id="VerifyReadyDlgInstallText">单击“安装”开始安装。你仍可返回检查安装设置。</String>
+    <String Id="UpgradeReadyDlg_Title">OpenDesk 更新程序</String>
+    <String Id="UpgradeReadyDlgTitle">{\WixUI_Font_Title}已准备好更新 OpenDesk</String>
+    <String Id="UpgradeReadyDlgDescription">检测到已安装的旧版本。确认当前安装位置，然后单击“更新”。</String>
+    <String Id="UpgradeReadyDlgUpdate">更新(&amp;U)</String>
     <String Id="ProgressDlgTitleInstalling">{\WixUI_Font_Title}正在安装 OpenDesk</String>
     <String Id="ProgressDlgTextInstalling">正在准备你的工作空间，请保持安装程序运行。</String>
     <String Id="ProgressDlgTitleUpdating">{\WixUI_Font_Title}正在更新 OpenDesk</String>
