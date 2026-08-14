@@ -680,6 +680,10 @@ function exposeOfficeHostAPI() {
         requestClose: (kind, webContentsId) => {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);
+        },
+        bindSlidesTask: (taskId, filePath, webContentsId) => {
+            if (!taskId || !filePath || !Number.isInteger(webContentsId)) return Promise.resolve(false);
+            return ipcRenderer.invoke('office-host:slides:bind-task', taskId, filePath, webContentsId);
         }
     });
 }

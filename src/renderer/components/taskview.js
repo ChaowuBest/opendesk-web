@@ -73,6 +73,7 @@ import {
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
+import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -3529,6 +3530,11 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = listenForAgentInputRequests(this, () =>
+            this.querySelector(`#task-${this.task_id}-input`)
+        );
+
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
         this.addEventListener('click', this._handleEditorOpenClick);
@@ -3811,6 +3817,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = null;
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
         this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()

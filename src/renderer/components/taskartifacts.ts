@@ -37,6 +37,7 @@ import {
 } from './taskartifacts-goal/controller.js';
 import { formatCompactDuration } from '../../common/goal/format.js';
 import { filePathToFileUrl } from '../../common/file-url.js';
+import { dispatchAgentInputRequest } from '../input/agentInputRequest.js';
 
 // ============================================================================
 // Types
@@ -233,6 +234,9 @@ class TaskArtifacts extends HTMLElement {
         this._fileExplorer.onWorkspaceFocusLayoutChange = (state) => {
             this._workspaceFocusLayoutState = state;
             this._syncWorkspaceFocusLayout();
+        };
+        this._fileExplorer.onAgentInputRequest = (request) => {
+            dispatchAgentInputRequest(this, request);
         };
     }
 
@@ -529,6 +533,7 @@ class TaskArtifacts extends HTMLElement {
      */
     setTaskId(taskId: string): void {
         this._taskId = taskId;
+        this._fileExplorer.setTaskId(taskId);
         this._startSessionMemoryRefresh();
     }
 

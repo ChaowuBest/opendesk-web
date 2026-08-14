@@ -36,6 +36,8 @@ import {
     OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL
 } from '@bitclub.ai/opendesk-office/host-events';
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
+import type { AgentInputRequest } from '../input/agentInputRequest.js';
+import { createSlidesSelectionInputRequest } from '../applications/office/slidesSelectionInput.js';
 
 const t = createRendererTranslator();
 
@@ -1121,11 +1123,17 @@ export class FileExplorer {
     private _previewFullscreen = false;
     private _officeClosePending = false;
     private _officeCloseApproved = false;
+    private _taskId: string | null = null;
 
     /** 在浏览器中打开文件的回调（由宿主组件设置） */
     onOpenInBrowser: ((filePath: string) => void) | null = null;
     /** 聚焦内容的工作区布局变化回调（由 task-artifacts 协调外层布局） */
     onWorkspaceFocusLayoutChange: ((state: WorkspaceFocusLayoutState) => void) | null = null;
+    onAgentInputRequest: ((request: AgentInputRequest) => void) | null = null;
+
+    setTaskId(taskId: string): void {
+        this._taskId = taskId;
+    }
 
     /**
      * 将文件浏览器渲染到指定容器中。
@@ -2618,23 +2626,46 @@ export class FileExplorer {
             return;
         }
 
-        const editorUrl = `./${editorConfig.rendererPage}?mode=tab&file=${encodeURIComponent(filePath)}`;
+        const editorParams = new URLSearchParams({ mode: 'tab', file: filePath });
+        if (editorConfig.kind === 'slides') {
+            editorParams.set('extensionGroupLabel', t('renderer.fileExplorer.pptx.ai.groupLabel'));
+            editorParams.set('selectionActionLabel', t('renderer.fileExplorer.pptx.ai.selectionAction'));
+            editorParams.set('selectionActionTitle', t('renderer.fileExplorer.pptx.ai.selectionActionTitle'));
+        }
+        const editorUrl = `./${editorConfig.rendererPage}?${editorParams.toString()}`;
         const webview = document.createElement('webview');
         webview.className = 'ws-office-editor-frame ws-office-editor-frame--loading';
         webview.setAttribute('src', editorUrl);
         webview.setAttribute('title', t(editorConfig.titleKey));
+        let editorReadyHandled = false;
         const handleEditorMessage = (event: Event): void => {
-            const ipcEvent = event as Event & { channel?: string };
+            const ipcEvent = event as Event & { channel?: string; args?: unknown[] };
+            if (ipcEvent.channel === 'opendesk-office:extension-action') {
+                const payload = ipcEvent.args?.[0] as { action?: { id?: string }; context?: unknown } | undefined;
+                if (payload?.action?.id === 'opendesk-ai-selection') {
+                    this.onAgentInputRequest?.(createSlidesSelectionInputRequest(payload.context, t));
+                }
+                return;
+            }
             if (
                 ipcEvent.channel !== OPENDESK_OFFICE_EDITOR_VISIBLE_CHANNEL &&
                 ipcEvent.channel !== OPENDESK_OFFICE_DOCUMENT_READY_CHANNEL
             ) {
                 return;
             }
-            webview.removeEventListener('ipc-message', handleEditorMessage);
+            if (editorReadyHandled) return;
+            editorReadyHandled = true;
             host.classList.remove('ws-office-editor-loading');
             host.querySelector('.ws-office-editor-loading-indicator')?.remove();
             webview.classList.remove('ws-office-editor-frame--loading');
+            if (editorConfig.kind === 'slides' && this._taskId && window.officeHostAPI?.bindSlidesTask) {
+                const webContentsId = (
+                    webview as HTMLElement & { getWebContentsId?: () => number }
+                ).getWebContentsId?.();
+                if (webContentsId) {
+                    void window.officeHostAPI.bindSlidesTask(this._taskId, filePath, webContentsId);
+                }
+            }
         };
         webview.addEventListener('ipc-message', handleEditorMessage);
         host.classList.add('ws-office-editor-loading');

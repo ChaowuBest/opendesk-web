@@ -28,6 +28,9 @@ import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
 import type { PlatformFetchOptions } from './base.js';
 import crypto from 'crypto';
 import path from 'path';
+import { SlidesApplication } from '../main/applications/slides/app.js';
+import { configureSlidesCapabilityProvider } from '../main/applications/slides/provider.js';
+import { executeOpenDeskSlidesCapability, getOpenDeskSlidesCapabilities } from '../main/office/openDeskOfficeHost.js';
 
 interface ElectronFetchSessionOptions {
     proxyUrl?: string | null;
@@ -139,10 +142,18 @@ export class ElectronPlatform extends WorkerPlatform {
     constructor(electronApp: Electron.App | undefined = undefined) {
         super();
         this.electronApp = electronApp;
+        configureSlidesCapabilityProvider({
+            getCapabilities: getOpenDeskSlidesCapabilities,
+            execute: executeOpenDeskSlidesCapability
+        });
     }
 
     getName(): string {
         return 'electron';
+    }
+
+    getApplicationClasses() {
+        return [...super.getApplicationClasses(), SlidesApplication];
     }
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {

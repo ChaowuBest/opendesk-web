@@ -100,7 +100,9 @@ describe('file explorer', () => {
         explorer._rootNode = container;
         explorer._workspaceRoot = '/workspace';
         const onWorkspaceFocusLayoutChange = jest.fn();
+        const onAgentInputRequest = jest.fn();
         (explorer as any).onWorkspaceFocusLayoutChange = onWorkspaceFocusLayoutChange;
+        explorer.onAgentInputRequest = onAgentInputRequest;
         explorer._renderPanel();
 
         explorer.selectFile('/workspace/deck.pptx');
@@ -109,12 +111,37 @@ describe('file explorer', () => {
         const editor = container.querySelector<HTMLIFrameElement>('.ws-office-editor-frame');
         expect(prepare).toHaveBeenCalledWith('slides');
         expect(editor).not.toBeNull();
-        expect(editor?.getAttribute('src')).toBe('./slides_editor.html?mode=tab&file=%2Fworkspace%2Fdeck.pptx');
+        const editorUrl = new URL(editor?.getAttribute('src') || '', 'http://localhost');
+        expect(editorUrl.pathname).toBe('/slides_editor.html');
+        expect(editorUrl.searchParams.get('mode')).toBe('tab');
+        expect(editorUrl.searchParams.get('file')).toBe('/workspace/deck.pptx');
+        expect(editorUrl.searchParams.get('extensionGroupLabel')).toBeTruthy();
+        expect(editorUrl.searchParams.get('selectionActionLabel')).toBeTruthy();
+        expect(editorUrl.searchParams.get('selectionActionTitle')).toBeTruthy();
         expect(editor?.getAttribute('title')).toBeTruthy();
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
         expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
         expect(onWorkspaceFocusLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
+
+        const extensionActionEvent = new window.Event('ipc-message');
+        Object.assign(extensionActionEvent, {
+            channel: 'opendesk-office:extension-action',
+            args: [
+                {
+                    action: { id: 'opendesk-ai-selection' },
+                    context: { slideIndex: 0, selectedElements: [{ type: 'text', text: 'Title' }] }
+                }
+            ]
+        });
+        editor?.dispatchEvent(extensionActionEvent);
+        expect(onAgentInputRequest).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'insert-text',
+                placement: 'append',
+                focus: true
+            })
+        );
         explorer.closeEditor();
     });
 
