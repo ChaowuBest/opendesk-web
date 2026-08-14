@@ -40,6 +40,39 @@ export const enUs: Record<string, string> = {
     'workspace.mismatch.message':
         'Current task is bound to ${workspace}, which differs from the global workspace. Global workspace not changed.',
 
+    // Renderer - Workspace Picker
+    'renderer.workspacePicker.defaultTitle': 'Select workspace',
+    'renderer.workspacePicker.titleWithName': 'Select workspace for ${name}',
+    'renderer.workspacePicker.taskNameFallback': 'Task',
+    'renderer.workspacePicker.current': 'Current:',
+    'renderer.workspacePicker.unset': 'Not set',
+    'renderer.workspacePicker.editPath': 'Click to edit path',
+    'renderer.workspacePicker.pathPlaceholder': 'Enter workspace path…',
+    'renderer.workspacePicker.pickInSystemHint': 'Choose in system file manager',
+    'renderer.workspacePicker.pickInSystem': 'Choose in system window',
+    'renderer.workspacePicker.recent': 'Recent',
+    'renderer.workspacePicker.recentEmpty': 'No recent workspaces',
+    'renderer.workspacePicker.removeRecent': 'Remove this entry',
+    'renderer.workspacePicker.browse': 'Browse directories',
+    'renderer.workspacePicker.showHidden': 'Show hidden files',
+    'renderer.workspacePicker.cancel': 'Cancel',
+    'renderer.workspacePicker.confirm': 'Select',
+    'renderer.workspacePicker.close': 'Close',
+    'renderer.workspacePicker.deleteTitle': 'Delete confirmation',
+    'renderer.workspacePicker.deleteMessage': 'Are you sure you want to delete <b>${name}</b>? This cannot be undone.',
+    'renderer.workspacePicker.delete': 'Delete',
+    'renderer.workspacePicker.home': 'Home',
+    'renderer.workspacePicker.sandbox': 'App sandbox',
+
+    // Renderer - File Selector (used by workspace picker)
+    'renderer.fileSelector.emptyDrive': 'No drives detected',
+    'renderer.fileSelector.emptyDir': 'Empty',
+    'renderer.fileSelector.rename': 'Rename',
+    'renderer.fileSelector.newFolder': 'New Folder',
+    'renderer.fileSelector.newFolderInside': 'New Folder (inside ${name})',
+    'renderer.fileSelector.newFolderSibling': 'New Folder (next to ${name})',
+    'renderer.fileSelector.delete': 'Delete',
+
     // Homepage
     'homepage.greeting.earlyMorning': 'Late night',
     'homepage.greeting.morning': 'Good morning',
@@ -1291,6 +1324,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.recording.stopTitle': 'Recording, click to stop',
     'renderer.agentInput.recording.endTitle': 'Recording, click to finish',
     'renderer.agentInput.recording.listening': 'Listening, recognized text will appear in the input box…',
+    'renderer.agentInput.stop': 'Stop',
     'renderer.messageQueue.title': 'Message Queue (${count})',
     'renderer.messageQueue.empty': '(empty message)',
     'renderer.messageQueue.sendNow': 'Send now',
@@ -1728,6 +1762,11 @@ export const enUs: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
     'renderer.developer.reviewNotTriggeredDetail': 'The task review request could not be accepted',
     'renderer.developer.triggerFailed': 'Trigger Failed',
+
+    // Main - Native File Dialogs
+    'main.dialog.openFile': 'Select Attachment',
+    'main.dialog.openDirectory': 'Select Directory',
+    'main.dialog.selectWorkspaceDirectory': 'Select Workspace Directory',
 
     // Main - Log Export
     'main.log.export.title': 'Export Logs',

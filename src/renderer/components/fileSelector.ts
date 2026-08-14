@@ -22,6 +22,8 @@
  *   selector.setRoot('/Users/liyi');
  */
 
+import { createRendererTranslator } from '../locale.ts';
+
 export interface FSEntry {
     name: string;
     path: string;
@@ -51,6 +53,10 @@ export interface FileSelectorOptions {
     deleteEntry?: (entryPath: string) => Promise<void>;
     /** 删除确认弹窗（可选，提供后删除前会先弹窗确认） */
     confirmDelete?: (name: string) => Promise<boolean>;
+    /** 右键菜单挂载容器（默认 document.body，弹窗场景传入弹窗 overlay） */
+    menuContainer?: HTMLElement;
+    /** 可选的翻译器（已携带 locale 设置）。缺省时按浏览器语言自动检测。 */
+    t?: (key: string, params?: Record<string, string | number>) => string;
 }
 
 interface Column {
@@ -63,6 +69,7 @@ const COLUMN_SLIDE_MS = 220;
 
 export class FileSelector {
     readonly element: HTMLDivElement;
+    private readonly _t: (key: string, params?: Record<string, string | number>) => string;
     private _columns: Column[] = [];
     private _selectedPath: string | null = null;
     private _opts: FileSelectorOptions;
@@ -76,6 +83,7 @@ export class FileSelector {
     private _rootPath = '';
 
     constructor(opts: FileSelectorOptions) {
+        this._t = opts.t ?? createRendererTranslator();
         this._opts = opts;
         this.element = document.createElement('div');
         this.element.className = 'od-fsel';
@@ -395,7 +403,10 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
             colEl.dataset.colIdx = String(colIdx);
 
             if (col.entries.length === 0) {
-                const emptyText = col.parentPath === '{DRIVE_ROOT}' ? '未检测到磁盘' : '空目录';
+                const emptyText =
+                    col.parentPath === '{DRIVE_ROOT}'
+                        ? this._t('renderer.fileSelector.emptyDrive')
+                        : this._t('renderer.fileSelector.emptyDir');
                 colEl.innerHTML = `<div class="od-fscol-empty">${emptyText}</div>`;
             } else {
                 for (const entry of col.entries) {
@@ -558,24 +569,39 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         const menu = this._createMenu(e.clientX, e.clientY);
 
         if (this._opts.renameEntry) {
-            this._addMenuItem(menu, 'fa-pen', '重命名', () => {
+            this._addMenuItem(menu, 'fa-pen', this._t('renderer.fileSelector.rename'), () => {
                 this._dismissMenu();
                 this._startRename(entry, colIdx);
             });
         }
 
         if (entry.isDirectory && this._opts.createDirectory) {
-            this._addMenuItem(menu, 'fa-folder-plus', '新建文件夹', () => {
-                this._dismissMenu();
-                this._startNewFolder(colIdx, entry.path);
-            });
+            const name = this._truncateMiddle(entry.name, 16);
+            this._addMenuItem(
+                menu,
+                'fa-folder-plus',
+                this._t('renderer.fileSelector.newFolderInside', { name }),
+                () => {
+                    this._dismissMenu();
+                    this._startNewFolder(colIdx, entry.path);
+                }
+            );
+            this._addMenuItem(
+                menu,
+                'fa-folder-tree',
+                this._t('renderer.fileSelector.newFolderSibling', { name }),
+                () => {
+                    this._dismissMenu();
+                    this._startNewFolder(colIdx, this._columns[colIdx].parentPath);
+                }
+            );
         }
 
         if (this._opts.deleteEntry) {
             this._addMenuItem(
                 menu,
                 'fa-trash',
-                '删除',
+                this._t('renderer.fileSelector.delete'),
                 async () => {
                     this._dismissMenu();
                     await this._deleteEntry(entry, colIdx);
@@ -596,7 +622,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         if (!this._opts.createDirectory) return;
 
         const menu = this._createMenu(e.clientX, e.clientY);
-        this._addMenuItem(menu, 'fa-folder-plus', '新建文件夹', () => {
+        this._addMenuItem(menu, 'fa-folder-plus', this._t('renderer.fileSelector.newFolder'), () => {
             this._dismissMenu();
             this._startNewFolder(colIdx, parentPath);
         });
@@ -609,7 +635,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         menu.style.minWidth = '140px';
         menu.style.left = `${x}px`;
         menu.style.top = `${y}px`;
-        document.body.appendChild(menu);
+        (this._opts.menuContainer ?? document.body).appendChild(menu);
 
         // 边界修正
         requestAnimationFrame(() => {
@@ -629,6 +655,14 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
             action();
         });
         menu.appendChild(btn);
+    }
+
+    /** 超长目录名中间截断，避免菜单项被撑爆（如 "很长…的目录"） */
+    private _truncateMiddle(name: string, maxLen = 16): string {
+        if (name.length <= maxLen) return name;
+        const head = Math.ceil((maxLen - 1) / 2);
+        const tail = maxLen - 1 - head;
+        return `${name.slice(0, head)}…${name.slice(-tail)}`;
     }
 
     /* ───────── delete ───────── */
@@ -760,7 +794,7 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         const input = document.createElement('input');
         input.className = 'od-fsitem-edit';
         input.value = '';
-        input.placeholder = '新建文件夹';
+        input.placeholder = this._t('renderer.fileSelector.newFolder');
         placeholder.innerHTML = '<i class="fa-solid fa-folder od-fsitem-icon" style="color:#f59e0b"></i>';
         placeholder.appendChild(input);
         colEl.appendChild(placeholder);
