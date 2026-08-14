@@ -228,7 +228,11 @@ const GUIConfigSchema = z.object({
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
-        .describe('关闭主窗口时的行为: quit=退出应用, minimize=最小化, 未设置时每次询问')
+        .describe('关闭主窗口时的行为: quit=退出应用, minimize=最小化, 未设置时每次询问'),
+    floating_window_mode: z
+        .enum(['pill', 'card'])
+        .optional()
+        .describe('悬浮窗显示模式: pill=单行胶囊, card=完整卡片, 未设置=关闭')
 });
 
 export const DEFAULT_SHORTCUTS = {
@@ -410,7 +414,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             ctrl_enter_send: false,
             window_bounds: null,
             sidebar_width: 320,
-            gui_reason_display: 'inline'
+            gui_reason_display: 'inline',
+            floating_window_mode: 'pill'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {

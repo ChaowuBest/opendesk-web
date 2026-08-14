@@ -1412,6 +1412,20 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    // 任务状态浮窗 API：主窗口不在前台时右上角常驻小窗（胶囊/卡片）使用。
+    safeExposeInMainWorld('taskStatusWidgetAPI', {
+        getSummary: () => ipcRenderer.invoke('taskStatusWidget:getSummary'),
+        restoreMainWindow: () => ipcRenderer.invoke('taskStatusWidget:restoreMainWindow'),
+        setCollapsed: (collapsed) => ipcRenderer.invoke('taskStatusWidget:setCollapsed', collapsed),
+        openTask: (taskId) => ipcRenderer.invoke('taskStatusWidget:openTask', taskId),
+        notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
+        onSummaryUpdate: (callback) => {
+            const listener = (_event, summary) => callback(summary);
+            ipcRenderer.on('taskStatusWidget:summaryUpdate', listener);
+            return () => ipcRenderer.removeListener('taskStatusWidget:summaryUpdate', listener);
+        }
+    });
+
     // permission 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤。
     // 请求需要在 preload 层保留，避免 task-view 重渲染时丢失已经发出的队首权限请求。
     const permissionStore = new PermissionPendingStore();

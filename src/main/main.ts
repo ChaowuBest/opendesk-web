@@ -119,6 +119,11 @@ import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { switchTaskMode } from './aikernel/task/mode.js';
+import {
+    initTaskStatusWidget,
+    setMainWindowHidden,
+    setMainWindowFocused
+} from './windows/task-status-widget-window.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
 function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
@@ -645,6 +650,10 @@ const createWindow = () => {
     mainWindow.on('hide', forceExitMagicPointer);
     mainWindow.on('minimize', forceExitMagicPointer);
 
+    // 悬浮窗（pill/card 模式）依赖主窗口是否处于前台的焦点状态。
+    mainWindow.on('blur', () => setMainWindowFocused(false));
+    mainWindow.on('focus', () => setMainWindowFocused(true));
+
     // 全屏状态变化时更新 tray 菜单文案
     mainWindow.on('enter-full-screen', () => {
         globalTray?.setContextMenu(buildTrayMenu());
@@ -897,6 +906,7 @@ const createWindow = () => {
 
     // 窗口隐藏/最小化时通知 renderer 降低刷新率，节省 CPU 和电量
     mainWindow.on('hide', () => {
+        setMainWindowHidden(true);
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('show', () => {
@@ -905,9 +915,11 @@ const createWindow = () => {
             restoreHuaweiLoginForWorkbenchWindow('workbench show');
             return;
         }
+        setMainWindowHidden(false);
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
     mainWindow.on('minimize', () => {
+        setMainWindowHidden(true);
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('restore', () => {
@@ -916,6 +928,7 @@ const createWindow = () => {
             restoreHuaweiLoginForWorkbenchWindow('workbench restore');
             return;
         }
+        setMainWindowHidden(false);
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
 
@@ -3201,6 +3214,25 @@ async function startApplication(): Promise<void> {
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
         registerTaskManagerAPIHandlers();
+        initTaskStatusWidget({
+            getPreloadPath: getRendererPreloadPath,
+            getMainWindow: () => globalMainWindow,
+            getTaskList: () => GlobalState.getInstance().taskManagerState.getTaskList(),
+            addTaskListSubscriber: (subscriber) => GlobalState.getInstance().taskManagerState.addSubscriber(subscriber),
+            loadWidgetPage: (win) => {
+                if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+                    const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+                    void win.loadURL(new URL('task_status_widget.html', baseUrl).toString());
+                } else {
+                    void win.loadFile(path.join(__dirname, '..', 'renderer', 'task_status_widget.html'));
+                }
+            },
+            getFloatingWindowMode: () => {
+                const raw = (Setting.getInstance().getData().gui_config as Record<string, unknown>)
+                    ?.floating_window_mode;
+                return raw === 'pill' || raw === 'card' ? raw : undefined;
+            }
+        });
         AgentRegistry.initBuiltinAgents();
         startMemoryCleanupScheduler(() =>
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
