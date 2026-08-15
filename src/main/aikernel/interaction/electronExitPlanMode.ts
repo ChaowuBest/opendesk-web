@@ -25,7 +25,7 @@
 
 import type { ExitPlanModeProvider, ExitPlanModeResponse, ExitPlanModeAction } from './exitPlanMode.js';
 import { logger } from '../../utils/logger.js';
-import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
 interface PendingRequest {
@@ -78,15 +78,12 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
             _pendingByTaskId.delete(pending.taskId);
         }
         try {
-            const { ipcMain, BrowserWindow } = electron();
+            const { ipcMain } = electron();
             if (pending.handler) {
                 ipcMain.removeListener('exitPlanMode:response', pending.handler);
             }
             if (dismiss) {
-                const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-                if (win) {
-                    safeSendToWebContents(win.webContents, 'exitPlanMode:dismiss', pending.requestId);
-                }
+                broadcastToAllWindows('exitPlanMode:dismiss', pending.requestId);
             }
         } catch (err) {
             logger.warn(`ElectronExitPlanModeProvider.settle failed: ${err}`);
@@ -124,11 +121,13 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
 
             const { BrowserWindow, ipcMain, Notification } = electron();
 
-            const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-            if (!win) {
+            const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+            if (windows.length === 0) {
                 logger.warn('ElectronExitPlanModeProvider: no window available, returning continue-editing');
                 return { action: 'continue-editing' };
             }
+            // 仅用于系统通知点击时聚焦窗口，面板请求本身走广播
+            const win = windows[0];
 
             if (Notification.isSupported()) {
                 const notification = new Notification({
@@ -181,7 +180,7 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
 
                 ipcMain.on('exitPlanMode:response', handler);
 
-                safeSendToWebContents(win.webContents, 'exitPlanMode:request', requestId, {
+                broadcastToAllWindows('exitPlanMode:request', requestId, {
                     planContent,
                     planFilePath
                 });

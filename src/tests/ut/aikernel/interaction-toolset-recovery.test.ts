@@ -256,6 +256,21 @@ describe('交互工具挂载场景（standard / solo / unlimited / plan）', () 
         expect(toolNames(toolsets)).not.toContain('exitPlanMode');
     });
 
+    test('老任务（无 activeModeId/agentId、未注入 interactionToolset）interactive turn 应挂载 askUser', async () => {
+        const task = await makeTask(null);
+        // 模拟磁盘恢复的老任务：旧版本创建，JSON 中无 activeModeId/agentId，
+        // 运行时 interactionToolset 不持久化为 null，依赖 buildToolsets 的 platform fallback
+        task.agentId = undefined;
+        task.activeModeId = undefined as any;
+        task.interactionToolset = null;
+        (task as any)._currentTurnInteractive = true;
+
+        const toolsets = await task.buildToolsets();
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).toContain('exitPlanMode');
+    });
+
     test('standard → solo 切换：交互工具从 chat_context 移除并取消待处理提示', async () => {
         const askProvider = { cancelCurrent: jest.fn() };
         const exitProvider = { cancelCurrent: jest.fn() };

@@ -1136,7 +1136,8 @@ export class TaskState {
             if (attachedFilePaths.length > 0) {
                 await this.attachFiles(attachedFilePaths);
             }
-            await this.submitUserMessage(messageText, { imageDataUris });
+            // 回退重发由用户在 GUI/TUI 主动触发，属于交互式 turn，需挂载 askUser 等交互工具
+            await this.submitUserMessage(messageText, { imageDataUris, interactive: true });
         }
 
         return { removedCount, resubmitted: options.resubmit === true, userMessageText: messageText };

@@ -268,6 +268,7 @@ describe('OpenCode config permission runtime', () => {
             getWorkspace: () => '/workspace',
             buildSystemPrompt: jest.fn(async () => 'new system prompt'),
             installBuiltSystemPrompt: jest.fn(),
+            refreshBaseToolsets: jest.fn(async () => undefined),
             task_manager_state: {
                 clearLazyTaskSystemPromptRefresh: jest.fn()
             }

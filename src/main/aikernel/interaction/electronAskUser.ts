@@ -18,7 +18,7 @@
 
 import type { AskUserRequest, AskUserResponse, AskUserProvider } from './tools.js';
 import { logger } from '../../utils/logger.js';
-import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
 interface PendingPrompt {
@@ -53,15 +53,13 @@ export class ElectronAskUserProvider implements AskUserProvider {
             this.pending = null;
         }
         try {
-            const { ipcMain, BrowserWindow } = electron();
+            const { ipcMain } = electron();
             if (pending.handler) {
                 ipcMain.removeListener('askUser:response', pending.handler);
             }
             if (dismiss) {
-                const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-                if (win) {
-                    safeSendToWebContents(win.webContents, 'askUser:dismiss', pending.requestId);
-                }
+                // 广播到所有窗口：主窗口不一定是 getAllWindows() 的第一个（常驻悬浮窗可能排在前面）
+                broadcastToAllWindows('askUser:dismiss', pending.requestId);
             }
         } catch (err) {
             logger.warn(`ElectronAskUserProvider.settle failed: ${err}`);
@@ -72,11 +70,13 @@ export class ElectronAskUserProvider implements AskUserProvider {
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         try {
             const { BrowserWindow, ipcMain, Notification } = electron();
-            const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-            if (!win) {
+            const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+            if (windows.length === 0) {
                 logger.warn('ElectronAskUserProvider: no window available, returning cancelled');
                 return { answers: {}, cancelled: true };
             }
+            // 仅用于系统通知点击时聚焦窗口，面板请求本身走广播
+            const win = windows[0];
 
             if (Notification.isSupported()) {
                 const notification = new Notification({
@@ -121,7 +121,9 @@ export class ElectronAskUserProvider implements AskUserProvider {
 
                 ipcMain.on('askUser:response', handler);
 
-                safeSendToWebContents(win.webContents, 'askUser:request', request.requestId, {
+                // 事件广播模式：请求发给所有窗口，由挂载了 ask-user-prompt 组件的窗口展示；
+                // requestId 匹配保证多窗口响应幂等，未加载组件的窗口（如任务状态浮窗）不受影响。
+                broadcastToAllWindows('askUser:request', request.requestId, {
                     questions: request.questions,
                     taskId: request.taskId,
                     taskName: request.taskName
