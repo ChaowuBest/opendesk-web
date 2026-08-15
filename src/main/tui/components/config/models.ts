@@ -27,6 +27,7 @@ interface ModelData {
     reasoning_effort?: string;
     context_length?: number;
     max_output_tokens?: number;
+    vision?: boolean;
     auto_parse_think_tags?: boolean;
     custom_headers?: Record<string, string>;
 }
@@ -209,6 +210,20 @@ export class ModelConfigPage implements Component {
         });
 
         fields.push({
+            type: 'select',
+            key: 'vision',
+            label: t('config.model.field.vision'),
+            value: model.vision === undefined ? '' : String(model.vision),
+            options: ['', 'true', 'false'],
+            optionLabels: {
+                '': t('config.model.vision.auto'),
+                true: t('config.model.vision.supported'),
+                false: t('config.model.vision.unsupported')
+            },
+            visible: !isEmbedding
+        });
+
+        fields.push({
             type: 'boolean',
             key: 'auto_parse_think_tags',
             label: t('config.model.field.auto_parse_think_tags'),
@@ -306,6 +321,7 @@ export class ModelConfigPage implements Component {
             reasoning_effort: values.reasoning_effort ?? '',
             context_length: values.context_length ? parseInt(values.context_length, 10) : undefined,
             max_output_tokens: values.max_output_tokens ? parseInt(values.max_output_tokens, 10) : undefined,
+            vision: values.vision === 'true' ? true : values.vision === 'false' ? false : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false
         };
         this.savedFormValues = undefined;
@@ -439,6 +455,10 @@ export class ModelConfigPage implements Component {
             max_output_tokens:
                 values.model_type !== 'embedding' && parsedMaxOutputTokens !== undefined && parsedMaxOutputTokens > 0
                     ? parsedMaxOutputTokens
+                    : undefined,
+            vision:
+                values.model_type !== 'embedding' && (values.vision === 'true' || values.vision === 'false')
+                    ? values.vision === 'true'
                     : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false,
             custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined

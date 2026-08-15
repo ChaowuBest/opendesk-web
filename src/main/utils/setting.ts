@@ -139,7 +139,8 @@ const ChatModelSchema = ModelBaseSchema.extend({
         .int()
         .nonnegative()
         .optional()
-        .describe('模型最大输出 token 数(0 或不填则由系统自动估算)')
+        .describe('模型最大输出 token 数(0 或不填则由系统自动估算)'),
+    vision: z.boolean().optional().describe('是否支持视觉/图像输入；不填(undefined)则由系统自动识别')
 });
 
 const EmbeddingModelSchema = ModelBaseSchema.extend({
@@ -466,6 +467,7 @@ export class ModelInstance {
     reasoning_effort: ReasoningEffort;
     context_length?: number;
     max_output_tokens?: number;
+    vision?: boolean;
     auto_parse_think_tags: boolean;
     custom_headers?: Record<string, string>;
     provider_type: ProviderType;
@@ -481,6 +483,7 @@ export class ModelInstance {
      * @param reasoning_effort 模型默认推理模式
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
      * @param max_output_tokens 用户配置的最大输出 token 数（>0 时覆盖系统估算）
+     * @param vision 用户手动配置的视觉支持（undefined 表示由系统自动识别）
      * @param auto_parse_think_tags 是否自动解析流式响应中的 think 标签
      * @param custom_headers 自定义 HTTP 请求头
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
@@ -496,6 +499,7 @@ export class ModelInstance {
         reasoning_effort: ReasoningEffort = '',
         context_length?: number,
         max_output_tokens?: number,
+        vision?: boolean,
         auto_parse_think_tags: boolean = false,
         custom_headers?: Record<string, string>,
         provider_type: ProviderType | '' | undefined = 'openai',
@@ -510,6 +514,7 @@ export class ModelInstance {
         this.reasoning_effort = reasoning_effort;
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
         this.max_output_tokens = max_output_tokens && max_output_tokens > 0 ? max_output_tokens : undefined;
+        this.vision = vision;
         this.auto_parse_think_tags = auto_parse_think_tags;
         this.custom_headers = custom_headers;
         this.provider_type = normalizeProviderType(provider_type);
@@ -743,6 +748,7 @@ export class Setting {
             isChatModel(modelRef) ? modelRef.reasoning_effort : '',
             isChatModel(modelRef) ? modelRef.context_length : undefined,
             isChatModel(modelRef) ? modelRef.max_output_tokens : undefined,
+            isChatModel(modelRef) ? modelRef.vision : undefined,
             modelRef.auto_parse_think_tags ?? false,
             modelRef.custom_headers,
             provider.provider_type,

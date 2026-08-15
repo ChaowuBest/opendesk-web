@@ -830,3 +830,17 @@ export function lookupKnownMaxOutputTokens(rawModelName: string): number {
 export function lookupKnownVisionSupport(rawModelName: string): boolean | undefined {
     return lookupModelInfo(rawModelName)?.vision;
 }
+
+/**
+ * 解析模型的视觉支持配置。
+ *
+ * 优先使用用户手动配置的 `vision`（true/false）；当其为 undefined 时，
+ * 回退到内置表自动识别（即 lookupKnownVisionSupport）。
+ * 返回 undefined 表示既没有手动配置，内置表也无法确定。
+ */
+export function resolveModelVisionSupport(model: { model_name: string; vision?: boolean }): boolean | undefined {
+    if (typeof model.vision === 'boolean') {
+        return model.vision;
+    }
+    return lookupKnownVisionSupport(model.model_name);
+}

@@ -73,7 +73,19 @@ describe('ModelConfigPage', () => {
         expect(stripAnsi(page.render(100).join('\n'))).toContain('Max Output Tokens (leave empty for auto)');
     });
 
-    test('hides context length and max output tokens fields for embedding models', () => {
+    test('renders the vision support field for chat models with three options', () => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        const items = getFormItems(page);
+        const visionField = items.find((item) => item.key === 'vision');
+
+        expect(visionField).toBeDefined();
+        expect(visionField.type).toBe('select');
+        expect(visionField.options).toEqual(['', 'true', 'false']);
+        expect(stripAnsi(page.render(100).join('\n'))).toContain('Vision Support');
+    });
+
+    test('hides context length, max output tokens, and vision fields for embedding models', () => {
         const page = openEditForm({
             alias: '',
             provider_name: 'provider-a',
@@ -84,6 +96,7 @@ describe('ModelConfigPage', () => {
         const items = getFormItems(page);
         expect(items.find((item) => item.key === 'context_length')?.visible).toBe(false);
         expect(items.find((item) => item.key === 'max_output_tokens')?.visible).toBe(false);
+        expect(items.find((item) => item.key === 'vision')?.visible).toBe(false);
     });
 
     test('saves max_output_tokens together with the model', () => {
@@ -188,5 +201,29 @@ describe('ModelConfigPage', () => {
         const data = Setting.getInstance().getData() as any;
         expect(data.models[0].context_length).toBeUndefined();
         expect(data.models[0].max_output_tokens).toBeUndefined();
+    });
+
+    test.each([
+        ['true', true],
+        ['false', false],
+        ['', undefined]
+    ])('saves vision value "%s" as %s', (raw, expected) => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'vision-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '',
+            max_output_tokens: '',
+            vision: raw,
+            auto_parse_think_tags: false
+        });
+
+        const data = Setting.getInstance().getData() as any;
+        expect(data.models).toHaveLength(1);
+        expect(data.models[0].vision).toBe(expected);
     });
 });

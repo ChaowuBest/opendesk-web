@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as net from 'net';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
-import { fetchVisionSupportFromAPI } from '../../../main/utils/model-context.js';
+import { fetchVisionSupportFromAPI, resolveModelVisionSupport } from '../../../main/utils/model-context.js';
 import { fetchModelUrl } from '../../../main/utils/model-network.js';
 import { Setting, isLogRawLlmRequestEnabled, DebugModeSchema } from '../../../main/utils/setting.js';
 import { logger } from '../../../main/utils/logger.js';
@@ -109,6 +109,30 @@ function jsonResponse(body: object): Response {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
     });
+}
+
+/**
+ * 用于验证「无法确认视觉能力时悲观默认 false」的平台：
+ * /models 端点返回不带任何视觉能力字段的模型元数据。
+ */
+class NoVisionPlatform extends AbstractPlatform {
+    getName(): string {
+        return 'no-vision-test';
+    }
+
+    getEffectiveWorkspace(): string {
+        return process.cwd();
+    }
+
+    async initPlatformHarness(): Promise<void> {}
+
+    async fetch(input: string | URL): Promise<Response> {
+        const url = input instanceof URL ? input.href : input;
+        if (url.includes('/models')) {
+            return jsonResponse({ id: decodeURIComponent(url.split('/').pop() ?? 'unknown-model') });
+        }
+        return jsonResponse({});
+    }
 }
 
 function streamResponse(chunks: object[]): Response {
@@ -402,6 +426,56 @@ describe('model network configuration', () => {
             skipTlsVerification: true
         });
         expect(process.env.NO_PROXY).toBe('existing.local');
+    });
+
+    test('resolveModelVisionSupport prefers manual vision config over the builtin table', () => {
+        expect(resolveModelVisionSupport({ model_name: 'gpt-4o', vision: false })).toBe(false);
+        expect(resolveModelVisionSupport({ model_name: 'gpt-4o', vision: true })).toBe(true);
+        expect(resolveModelVisionSupport({ model_name: 'gpt-4o' })).toBe(true);
+        expect(resolveModelVisionSupport({ model_name: 'some-unknown-model' })).toBeUndefined();
+        expect(resolveModelVisionSupport({ model_name: 'some-unknown-model', vision: true })).toBe(true);
+    });
+
+    test('supportsVision uses manually configured vision without querying the API', async () => {
+        const platform = new RecordingPlatform();
+        setPlatform(platform);
+        configureSettings(true, true);
+
+        const data = Setting.getInstance().getData() as any;
+        data.models.find((m: any) => m.alias === 'chat').vision = false;
+        Setting.updateInstanceData(data);
+
+        const supports = await LLM.supportsVision('chat');
+
+        expect(supports).toBe(false);
+        expect(platform.records.filter((record) => record.url.includes('/models'))).toHaveLength(0);
+    });
+
+    test('supportsVision returns manual true even when the builtin table disagrees', async () => {
+        const platform = new RecordingPlatform();
+        setPlatform(platform);
+        configureSettings(true, true);
+
+        const data = Setting.getInstance().getData() as any;
+        const chat = data.models.find((m: any) => m.alias === 'chat');
+        chat.model_name = 'gpt-4';
+        chat.vision = true;
+        Setting.updateInstanceData(data);
+
+        const supports = await LLM.supportsVision('chat');
+
+        expect(supports).toBe(true);
+        expect(platform.records.filter((record) => record.url.includes('/models'))).toHaveLength(0);
+    });
+
+    test('supportsVision pessimistically defaults to false when vision cannot be determined', async () => {
+        const platform = new NoVisionPlatform();
+        setPlatform(platform);
+        configureSettings(true, true, 'openai', 'https://model.local/v1', 'some-custom-model-not-in-table');
+
+        const supports = await LLM.supportsVision('chat');
+
+        expect(supports).toBe(false);
     });
 
     test('CLI OpenAI-compatible localhost model requests do not probe an auto-discovered proxy', async () => {

@@ -103,7 +103,7 @@ import { marked } from './aikernel/messages.js';
 import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
-    lookupKnownVisionSupport,
+    resolveModelVisionSupport,
     fetchContextSizeFromAPI
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -2123,11 +2123,11 @@ const registerSettingAPIHandlers = () => {
         const result: Record<string, boolean> = {};
         for (const m of models) {
             if (m.alias && m.model_name) {
-                const vision = lookupKnownVisionSupport(m.model_name);
+                const vision = resolveModelVisionSupport(m);
                 if (vision !== undefined) {
                     result[m.alias] = vision;
                 }
-                // 如果内置表查不到，默认悲观认为不支持视觉
+                // 如果既无手动配置、内置表也查不到，默认悲观认为不支持视觉
             }
         }
         return result;
@@ -2261,6 +2261,7 @@ const registerSettingAPIHandlers = () => {
                     !!no_proxy,
                     !!no_ssl,
                     '',
+                    undefined,
                     undefined,
                     undefined,
                     false,

@@ -3026,6 +3026,14 @@ class SettingPanel extends HTMLElement {
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
                         <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
                     </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
+                        <select id="model-vision-input" class="od-sp-fi">
+                            <option value="" ${model.vision === undefined ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.auto'))}</option>
+                            <option value="true" ${model.vision === true ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.supported'))}</option>
+                            <option value="false" ${model.vision === false ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.unsupported'))}</option>
+                        </select>
+                    </div>
                     <div class="chat-model-field od-sp-fc">
                         <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''}>
                         <label for="model-auto-parse-think-input">${this.escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</label>
@@ -3376,6 +3384,8 @@ class SettingPanel extends HTMLElement {
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
         const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
+        const visionRaw = this.querySelector('#model-vision-input')?.value;
+        const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
@@ -3447,6 +3457,9 @@ class SettingPanel extends HTMLElement {
         }
         if (model_type === 'chat' && maxOutputTokensNum && maxOutputTokensNum > 0) {
             model.max_output_tokens = maxOutputTokensNum;
+        }
+        if (model_type === 'chat' && vision !== undefined) {
+            model.vision = vision;
         }
         if (Object.keys(custom_headers).length > 0) {
             model.custom_headers = custom_headers;

@@ -111,11 +111,19 @@ class LLM {
 
     /**
      * 检测模型是否支持视觉/图像输入。
-     * 优先使用内置查找表，其次尝试 API 查询，结果缓存。
-     * 如果无法确定，默认返回 true（乐观策略：大多数现代模型支持视觉）。
+     * 若用户手动配置了 vision（true/false），直接以该配置为准；
+     * 否则优先使用内置查找表，其次尝试 API 查询，结果缓存。
+     * 如果无法确定，默认返回 false（悲观策略：无法确认视觉能力的模型
+     * 不挂载/不执行图片读取工具，避免非多模态模型误读图片导致会话中断）。
      */
     static async supportsVision(model: ModelParam = undefined): Promise<boolean> {
         const modelInstance = this.__getModelInstance(model);
+
+        // 用户手动配置的 vision 优先级最高，不参与自动识别缓存
+        if (typeof modelInstance.vision === 'boolean') {
+            return modelInstance.vision;
+        }
+
         const cacheKey = [
             modelInstance.getProviderType(),
             modelInstance.base_url,
@@ -146,9 +154,9 @@ class LLM {
             /* API 查询失败 */
         }
 
-        this.__visionCache.set(cacheKey, true);
-        logger.info(`vision support for ${modelInstance.model_name}: true (default optimistic)`);
-        return true;
+        this.__visionCache.set(cacheKey, false);
+        logger.info(`vision support for ${modelInstance.model_name}: false (default pessimistic)`);
+        return false;
     }
 
     /**
