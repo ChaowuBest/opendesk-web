@@ -3,7 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import { showConfirmModal, renderIcon } from '../../../../renderer/components/confirmModal';
+import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { showDuplicateInstallModal } from './duplicateInstallModal.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
@@ -3018,13 +3018,14 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (overlay._miDelegated) return;
         overlay._miDelegated = true;
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                if (this.metaImport.phase === 'complete') {
-                    this._closeMetaImportModal();
-                }
-                return;
+        bindOverlayDismiss(overlay, () => {
+            if (this.metaImport.phase === 'complete') {
+                this._closeMetaImportModal();
             }
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) return;
             const btn = e.target.closest('button');
             if (!btn) return;
             const id = btn.id;
@@ -3062,14 +3063,14 @@ class SkillMgrEntryWidget extends HTMLElement {
         // 事件委托：只在 dialog 上绑定一次，通过 e.target 判断点击了哪个按钮
         if (!overlay._biDelegated) {
             overlay._biDelegated = true;
-            overlay.addEventListener('click', (e) => {
+            bindOverlayDismiss(overlay, () => {
                 // 蒙层点击
-                if (e.target === overlay) {
-                    if (this.batchImport.phase === 'scanning' || this.batchImport.phase === 'results') {
-                        this._closeBatchImportModal();
-                    }
-                    return;
+                if (this.batchImport.phase === 'scanning' || this.batchImport.phase === 'results') {
+                    this._closeBatchImportModal();
                 }
+            });
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) return;
                 // 按钮点击
                 const btn = e.target.closest('button');
                 if (!btn) return;
@@ -4126,9 +4127,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             setTimeout(() => $('#url-dialog-input')?.focus(), 50);
         });
         $('#url-dialog-cancel')?.addEventListener('click', () => $('#url-dialog-overlay')?.classList.remove('visible'));
-        $('#url-dialog-overlay')?.addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) e.currentTarget.classList.remove('visible');
-        });
+        const urlDialogOverlay = $('#url-dialog-overlay');
+        if (urlDialogOverlay) {
+            // URL 输入弹窗属于表单类，禁用遮罩关闭防止误关丢失输入
+            bindOverlayDismiss(urlDialogOverlay, () => urlDialogOverlay.classList.remove('visible'), undefined, false);
+        }
         const urlInput = $('#url-dialog-input');
         if (urlInput) {
             urlInput.addEventListener('input', (e) => {
@@ -4664,11 +4667,10 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // Modal close
         $('#analyze-modal-close')?.addEventListener('click', () => this._closeAnalyzeModal());
-        $('#analyze-modal-overlay')?.addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) {
-                this._closeAnalyzeModal();
-            }
-        });
+        const analyzeModalOverlay = $('#analyze-modal-overlay');
+        if (analyzeModalOverlay) {
+            bindOverlayDismiss(analyzeModalOverlay, () => this._closeAnalyzeModal());
+        }
 
         // Modal footer buttons
         $('[data-modal-cancel]')?.addEventListener('click', () => this._closeAnalyzeModal());

@@ -8,7 +8,7 @@
  * 在会话结束时自动弹出，展示疑似恶意技能列表，让用户选择是否加入黑名单。
  */
 
-import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from './confirmModal.ts';
+import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
 
 interface BlacklistSkillItem {
     bundleName: string;
@@ -186,11 +186,7 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
     };
     document.addEventListener('keydown', escHandler);
 
-    overlay.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement) === overlay) {
-            close();
-        }
-    });
+    bindOverlayDismiss(overlay, close);
 
     // 折叠详情切换
     overlay.querySelectorAll('.od-bl-detail-toggle').forEach((toggle) => {

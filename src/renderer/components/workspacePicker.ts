@@ -10,7 +10,7 @@
  */
 
 import { FileSelector } from './fileSelector.ts';
-import { showConfirmModal, renderIcon, detectDarkMode } from './confirmModal.ts';
+import { showConfirmModal, renderIcon, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 
@@ -394,11 +394,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         }
 
         function bindEvents() {
-            overlay.addEventListener('click', (e) => {
-                if ((e.target as HTMLElement).classList.contains('od-ws-picker-overlay')) {
-                    close(null);
-                }
-            });
+            // 工作空间选择器包含路径编辑/搜索输入框，禁用遮罩关闭，防止误关丢失输入
+            bindOverlayDismiss(overlay, () => close(null), undefined, false);
             overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="cancel"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="confirm"]')?.addEventListener('click', () => {

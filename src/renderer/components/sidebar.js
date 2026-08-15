@@ -11,7 +11,7 @@
 
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
-import { showConfirmModal } from './confirmModal.ts';
+import { showConfirmModal, bindOverlayDismiss } from './confirmModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import {
@@ -1183,11 +1183,7 @@ class SideBar extends HTMLElement {
         };
         document.addEventListener('keydown', escHandler);
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target.classList.contains('od-taskinfo-overlay')) {
-                close();
-            }
-        });
+        bindOverlayDismiss(overlay, close, (t) => !!(t && t.classList && t.classList.contains('od-taskinfo-overlay')));
 
         overlay.querySelector('[data-action="close"]').addEventListener('click', close);
 
