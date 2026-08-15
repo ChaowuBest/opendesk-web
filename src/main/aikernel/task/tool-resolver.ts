@@ -18,26 +18,50 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from '../task/tools.js';
 import type { TaskState } from '../states/tasks.js';
-import type { TaskAwareTool } from './types.js';
+
+/**
+ * 克隆工具集（浅拷贝：新 Map，复用同一批 tool 实例）。
+ * 过滤逻辑会就地删除 tools 中的条目，为避免污染共享的单例工具集
+ * （如 task.interactionToolset / entryToolset / skill 工具集），
+ * 过滤前统一克隆，使被过滤掉的工具在后续 build 中仍能重新出现。
+ */
+function cloneToolset(toolset: BaseToolset): BaseToolset {
+    const clone = new BaseToolset(toolset.name);
+    for (const tool of toolset.tools.values()) {
+        clone.addTool(tool);
+    }
+    return clone;
+}
 
 /**
  * 构建当前任务所需的全部 toolsets。
  * 主任务和子任务共享应用工具集与 skill 工具集，
  * 但 planning 工具集和 task-info 工具集仅主任务拥有。
  */
-export async function buildToolsetsForTask(task: TaskState): Promise<BaseToolset[]> {
+export async function buildToolsetsForTask(
+    task: TaskState,
+    interactionToolset?: BaseToolset | null
+): Promise<BaseToolset[]> {
     const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets();
     const skillToolset = SkillRegistry.getInstance().getToolset();
     const memoryToolset = createMemoryToolset();
     const planningToolset = task.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
 
-    const all = [...appToolsets, skillToolset, memoryToolset, planningToolset];
+    const base = [...appToolsets, skillToolset, memoryToolset, planningToolset];
     if (task.parent_id === null) {
-        all.push(createTaskInfoToolset(task.task_manager_state));
-        if (task.interactionToolset) {
-            all.push(task.interactionToolset);
-        }
+        base.push(createTaskInfoToolset(task.task_manager_state));
     }
+    // 入口注入的额外工具集（workflow 完成协议、opencode/ACP 交互工具）始终挂载。
+    if (task.entryToolset) {
+        base.push(task.entryToolset);
+    }
+    // 交互工具集（askUser/exitPlanMode）仅在当前 turn 由用户交互发起时挂载。
+    if (interactionToolset) {
+        base.push(interactionToolset);
+    }
+
+    // 过滤会就地修改工具集，这里统一克隆，避免污染共享单例。
+    const all = base.map(cloneToolset);
 
     await applyToolAvailabilityFilters(task, all);
     applyAgentToolExposureFilter(task, all);
@@ -87,12 +111,9 @@ async function applyToolAvailabilityFilters(task: TaskState, toolsets: BaseTools
     for (let i = toolsets.length - 1; i >= 0; i--) {
         const toolset = toolsets[i];
         for (const [name, tool] of [...toolset.tools.entries()]) {
-            const isAvailable = (tool as TaskAwareTool).isAvailable;
-            if (typeof isAvailable === 'function') {
-                const available = await Promise.resolve(isAvailable.call(tool, task));
-                if (!available) {
-                    toolset.tools.delete(name);
-                }
+            const available = await Promise.resolve(tool.isAvailable(task));
+            if (!available) {
+                toolset.tools.delete(name);
             }
         }
         if (toolset.tools.size === 0) {

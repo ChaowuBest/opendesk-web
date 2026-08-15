@@ -224,7 +224,7 @@ export class WorkflowAgentRunner {
             request.outputSchema,
             options.configureTask !== undefined
         );
-        task.interactionToolset = completion.toolset;
+        task.entryToolset = completion.toolset;
         options.configureTask?.(task, completion.control);
         return completion;
     }

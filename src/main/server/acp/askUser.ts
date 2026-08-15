@@ -174,16 +174,51 @@ async function promptViaPermission(
  * 2. 失败时 fallback 到 requestPermission（ACP 稳定 API，所有客户端都支持）
  */
 export class AcpAskUserProvider implements AskUserProvider {
+    private pendingResolve: ((response: AskUserResponse) => void) | null = null;
+
     constructor(
         private readonly connection: AgentSideConnection,
         private readonly sessionId: string
     ) {}
+
+    isPrompting(): boolean {
+        return this.pendingResolve !== null;
+    }
+
+    cancelCurrent(): void {
+        const resolve = this.pendingResolve;
+        if (!resolve) return;
+        this.pendingResolve = null;
+        // ACP 协议无标准取消 API，只能本地 resolve cancelled 让工具继续；
+        // 客户端面板会保持到其自行响应或超时。
+        resolve({ cancelled: true, answers: {} });
+    }
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         if (request.questions.length === 0) {
             return { answers: {} };
         }
 
+        return new Promise<AskUserResponse>((resolve) => {
+            this.pendingResolve = resolve;
+            this.doPrompt(request).then(
+                (response) => {
+                    if (this.pendingResolve === resolve) {
+                        this.pendingResolve = null;
+                        resolve(response);
+                    }
+                },
+                () => {
+                    if (this.pendingResolve === resolve) {
+                        this.pendingResolve = null;
+                        resolve({ cancelled: true, answers: {} });
+                    }
+                }
+            );
+        });
+    }
+
+    private async doPrompt(request: AskUserRequest): Promise<AskUserResponse> {
         // 策略1：尝试 unstable_createElicitation
         try {
             return await tryElicitation(this.connection, this.sessionId, request);

@@ -2099,6 +2099,10 @@ export class OpenDeskTUI {
             task.disabledTools = taskMode.disabledTools;
             task.installBuiltSystemPrompt(systemPrompt);
             this.taskManagerState.clearLazyTaskSystemPromptRefresh(task);
+            await task.refreshBaseToolsets();
+            if (taskMode.interactive === false) {
+                task.cancelInteractionPrompts();
+            }
             for (const child of inheritedChildren) {
                 child.harnessContext.permission = context.permission;
                 child.activeModeId = taskMode.id;

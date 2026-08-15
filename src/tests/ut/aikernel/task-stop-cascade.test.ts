@@ -192,7 +192,7 @@ describe('TaskState.stop() child task cascade', () => {
         expect(submitSpy).toHaveBeenCalledWith(expect.any(String), { modelRequestOptions });
     });
 
-    test('notifies the parent after a child task is configured and inherits interaction handling', async () => {
+    test('notifies the parent after a child task is configured', async () => {
         const manager = new TaskManagerState();
         manager.save = jest.fn();
         manager.publishTaskListUpdate = jest.fn();
@@ -201,7 +201,6 @@ describe('TaskState.stop() child task cascade', () => {
         parent.task_id = 'task-parent';
         parent.task_status = 'running';
         parent.model = 'parent-model';
-        parent.interactionToolset = {} as any;
         manager.tasks.push(parent);
         jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
 
@@ -226,8 +225,7 @@ describe('TaskState.stop() child task cascade', () => {
         expect(listener).toHaveBeenCalledWith(
             expect.objectContaining({
                 task_name: 'configured child',
-                model: 'parent-model',
-                interactionToolset: parent.interactionToolset
+                model: 'parent-model'
             })
         );
     });

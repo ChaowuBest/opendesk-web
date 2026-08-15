@@ -17,6 +17,7 @@ import {
     detectDarkMode,
     bindOverlayDismiss
 } from './confirmModal.ts';
+import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -1234,6 +1235,9 @@ class SettingPanel extends HTMLElement {
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
         const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
+        const rawFloatingWindowMode = this.currentData?.gui_config?.floating_window_mode;
+        const floatingWindowMode =
+            rawFloatingWindowMode === 'card' ? 'card' : rawFloatingWindowMode === 'pill' ? 'pill' : 'off';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -1329,6 +1333,14 @@ class SettingPanel extends HTMLElement {
                         <option value="ask"${!onMainWindowClose ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.ask')}</option>
                         <option value="quit"${onMainWindowClose === 'quit' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.quit')}</option>
                         <option value="minimize"${onMainWindowClose === 'minimize' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.minimize')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.floatingWindow')}</label>
+                    <select id="floating-window-mode-select" class="sp-form-input">
+                        <option value="pill"${floatingWindowMode === 'pill' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.pill')}</option>
+                        <option value="card"${floatingWindowMode === 'card' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.card')}</option>
+                        <option value="off"${floatingWindowMode === 'off' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.off')}</option>
                     </select>
                 </div>
             </div>
@@ -2170,7 +2182,6 @@ class SettingPanel extends HTMLElement {
                 try {
                     const result = await window.themeAPI.setPreference(pref);
                     if (result.status === 'ok' && result.data) {
-                        const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
                         applyResolvedTheme(result.data);
                         window.broadcastThemeSettings?.(result.data);
                     }
@@ -2202,6 +2213,17 @@ class SettingPanel extends HTMLElement {
                 delete this.currentData.gui_config.on_mainwindow_close;
             } else {
                 this.currentData.gui_config.on_mainwindow_close = val;
+            }
+            this.saveImmediately();
+        });
+
+        this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            const value = e.target.value;
+            if (value === 'off') {
+                delete this.currentData.gui_config.floating_window_mode;
+            } else {
+                this.currentData.gui_config.floating_window_mode = value;
             }
             this.saveImmediately();
         });
@@ -3534,7 +3556,6 @@ class SettingPanel extends HTMLElement {
                     try {
                         const result = await window.themeAPI.setPreference(pref);
                         if (result.status === 'ok' && result.data) {
-                            const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
                             applyResolvedTheme(result.data);
                             window.broadcastThemeSettings?.(result.data);
                         }
@@ -3557,6 +3578,16 @@ class SettingPanel extends HTMLElement {
                     delete this.currentData.gui_config.on_mainwindow_close;
                 } else {
                     this.currentData.gui_config.on_mainwindow_close = val;
+                }
+                this.saveImmediately();
+            });
+            this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                const value = e.target.value;
+                if (value === 'off') {
+                    delete this.currentData.gui_config.floating_window_mode;
+                } else {
+                    this.currentData.gui_config.floating_window_mode = value;
                 }
                 this.saveImmediately();
             });

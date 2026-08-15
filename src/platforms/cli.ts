@@ -16,6 +16,7 @@ import type { PermissionPromptProvider } from '../main/aikernel/security/permiss
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
+import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import type { PlatformFetchOptions } from './base.js';
 import { Setting } from '../main/utils/setting.js';
@@ -116,12 +117,12 @@ export class CliPlatform extends AbstractPlatform {
 
     async initPlatformHarness(task: TaskState): Promise<void> {
         task.harnessContext.permissionPrompt = this._permissionPromptProvider;
-        if (this._askUserProvider) {
-            task.interactionToolset = createInteractionToolset(
-                this._askUserProvider,
-                this._exitPlanModeProvider ?? undefined
-            );
-        }
+        task.interactionToolset = this.createInteractionToolset(task);
+    }
+
+    createInteractionToolset(_task: TaskState): InteractiveToolset | null {
+        if (!this._askUserProvider) return null;
+        return createInteractionToolset(this._askUserProvider, this._exitPlanModeProvider ?? undefined);
     }
 
     getApplicationClasses(): (typeof BaseApplication)[] {

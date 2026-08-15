@@ -77,7 +77,6 @@ export const MAIN_AGENT_READONLY_MODE: ModeDecl = {
         'createSubTask',
         'attachToSubTask',
         'waitSubTask',
-        'exitPlanMode',
         'addMemory',
         'removeMemory',
         'updateUserPortrait',

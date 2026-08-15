@@ -546,6 +546,7 @@ describe('opencode session routes', () => {
 
         expect(response.status).toBe(200);
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', {
+            interactive: true,
             modelRequestOptions: {
                 extraHeaders: {
                     cookie: 'sid=abc',
@@ -593,6 +594,7 @@ describe('opencode session routes', () => {
 
         expect(response.status).toBe(200);
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers', {
+            interactive: true,
             modelRequestOptions: {
                 extraHeaders: {
                     cookie: 'sid=abc'

@@ -672,6 +672,11 @@ export class TaskManagerState {
 
     /**
      * 将 prompt 分发给指定 Agent 执行：创建任务、初始化 harness、提交消息。
+     *
+     * 注意：此入口提交消息时不带 `interactive` 标记，因此不会挂载交互工具集
+     * （askUser / exitPlanMode）。仅适用于后台/自动化场景（如定时任务）；
+     * 需要阻塞式用户交互的任务应通过 GUI/TUI 的 submitUserMessage 入口发起。
+     *
      * @param agent Agent 声明，或供 AIKernel 内部使用的规范 agentId
      * @param modeName 使用的 Mode 名称，undefined 则使用 Agent 的默认 Mode
      * @param prompt 要提交的用户消息

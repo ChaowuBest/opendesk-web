@@ -450,8 +450,8 @@ function exposeTaskManagerAPI() {
         respondExitPlanMode: (requestId, response) => {
             ipcRenderer.send('exitPlanMode:response', requestId, response);
         },
-        getPendingRequest: async () => {
-            const result = await ipcRenderer.invoke('exitPlanMode:getPending');
+        getPendingRequest: async (taskId) => {
+            const result = await ipcRenderer.invoke('exitPlanMode:getPending', taskId);
             if (result.status === 'ok') return result.data;
             return null;
         }
@@ -1409,6 +1409,20 @@ if (shouldExposeMainWindowAPIs()) {
             ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
                 callback(...args);
             });
+        }
+    });
+
+    // 任务状态浮窗 API：主窗口不在前台时右上角常驻小窗（胶囊/卡片）使用。
+    safeExposeInMainWorld('taskStatusWidgetAPI', {
+        getSummary: () => ipcRenderer.invoke('taskStatusWidget:getSummary'),
+        restoreMainWindow: () => ipcRenderer.invoke('taskStatusWidget:restoreMainWindow'),
+        setCollapsed: (collapsed) => ipcRenderer.invoke('taskStatusWidget:setCollapsed', collapsed),
+        openTask: (taskId) => ipcRenderer.invoke('taskStatusWidget:openTask', taskId),
+        notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
+        onSummaryUpdate: (callback) => {
+            const listener = (_event, summary) => callback(summary);
+            ipcRenderer.on('taskStatusWidget:summaryUpdate', listener);
+            return () => ipcRenderer.removeListener('taskStatusWidget:summaryUpdate', listener);
         }
     });
 

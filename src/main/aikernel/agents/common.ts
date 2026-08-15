@@ -70,6 +70,11 @@ export interface ModeDecl {
      */
     disabledTools?: string[];
     /**
+     * 该模式是否允许阻塞式用户交互工具（askUser / exitPlanMode）。
+     * 无人值守模式（solo / unlimited）设为 false；默认 true。
+     */
+    interactive?: boolean;
+    /**
      * 进入该模式时的钩子函数。
      * 由框架在模式切换生效后调用，可用于初始化模式所需资源（如创建目录等）。
      */
