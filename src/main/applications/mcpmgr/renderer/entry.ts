@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
-import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 
 interface McpServerState {
     id: string;
@@ -1265,6 +1265,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         body: string;
         footer: string;
         onBind?: (overlay: HTMLElement) => void;
+        /** 是否允许点击遮罩关闭；带表单填写的弹窗应传 false 防止误关丢失输入 */
+        dismissOnOverlay?: boolean;
     }) {
         this.removeDetailDialog();
         const overlay = document.createElement('div');
@@ -1283,9 +1285,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             <div class="detail-body">${options.body}</div>
             <div class="detail-footer">${options.footer}</div>
         </div>`;
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) this.removeDetailDialog();
-        });
+        bindOverlayDismiss(overlay, () => this.removeDetailDialog(), undefined, options.dismissOnOverlay !== false);
         overlay.querySelector('#detail-close')?.addEventListener('click', () => this.removeDetailDialog());
         overlay.querySelector('#detail-close-secondary')?.addEventListener('click', () => this.removeDetailDialog());
         this.shadowRoot!.appendChild(overlay);
@@ -1359,6 +1359,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             iconName: server?.name || 'MCP',
             body,
             footer,
+            // 服务器编辑弹窗包含表单输入，禁用遮罩关闭防止误关丢失输入
+            dismissOnOverlay: false,
             onBind: (overlay) => {
                 overlay.querySelectorAll('input[name="transport"]').forEach((radio) => {
                     radio.addEventListener('change', () => {
@@ -1435,6 +1437,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             iconName: 'MCP',
             body,
             footer,
+            // 导入弹窗包含 textarea 表单输入，禁用遮罩关闭防止误关丢失输入
+            dismissOnOverlay: false,
             onBind: (overlay) => {
                 overlay.querySelector('#import-form')?.addEventListener('submit', async (event) => {
                     event.preventDefault();

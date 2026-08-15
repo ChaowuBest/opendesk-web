@@ -11,7 +11,12 @@
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { getSkillInitial, getSkillPastel } from '../../../../renderer/components/skills/skill-detail-card.ts';
-import { MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from '../../../../renderer/components/confirmModal.ts';
+import {
+    MODAL_CSS,
+    MODAL_ANIM_DURATION_OUT,
+    detectDarkMode,
+    bindOverlayDismiss
+} from '../../../../renderer/components/confirmModal.ts';
 
 export interface DuplicateInstallResult {
     action: 'overwrite' | 'install-new' | 'cancel';
@@ -105,11 +110,8 @@ export function showDuplicateInstallModal(options: {
         };
         document.addEventListener('keydown', escHandler);
 
-        overlay.addEventListener('click', (e) => {
-            if ((e.target as HTMLElement).classList.contains('od-confirm-modal-overlay')) {
-                close({ action: 'cancel' });
-            }
-        });
+        // 重复安装弹窗包含重命名输入框，禁用遮罩关闭防止误关丢失输入
+        bindOverlayDismiss(overlay, () => close({ action: 'cancel' }), undefined, false);
 
         const inputSection = overlay.querySelector('#od-dup-input-section') as HTMLElement;
         const input = overlay.querySelector('#od-dup-input') as HTMLInputElement;

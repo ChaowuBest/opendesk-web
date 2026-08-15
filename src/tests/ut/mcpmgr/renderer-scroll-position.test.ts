@@ -33,7 +33,8 @@ describe('MCP manager installed list scroll position', () => {
             syncShadowHostTheme: jest.fn()
         }));
         await jest.unstable_mockModule('../../../renderer/components/confirmModal', () => ({
-            showConfirmModal: jest.fn()
+            showConfirmModal: jest.fn(),
+            bindOverlayDismiss: jest.fn()
         }));
 
         await import('../../../main/applications/mcpmgr/renderer/entry.js');

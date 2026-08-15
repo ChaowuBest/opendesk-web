@@ -10,7 +10,13 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
-import { showConfirmModal, MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from './confirmModal.ts';
+import {
+    showConfirmModal,
+    MODAL_CSS,
+    MODAL_ANIM_DURATION_OUT,
+    detectDarkMode,
+    bindOverlayDismiss
+} from './confirmModal.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -3932,7 +3938,9 @@ class SettingPanel extends HTMLElement {
     }
 
     // --- 模态框工具方法 ---
-    showModal(content) {
+    showModal(content, options = {}) {
+        const hasFormControls = /<input\b|<textarea\b|<select\b/i.test(content);
+        const { dismissOnOverlay = !hasFormControls } = options;
         if (this._modalOverlay) {
             this._modalOverlay.remove();
             this._modalOverlay = null;
@@ -3945,11 +3953,14 @@ class SettingPanel extends HTMLElement {
         }
         overlay.innerHTML = `<style>${MODAL_CSS}${SP_MODAL_EXTRA_CSS}</style>${content}`;
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
+        bindOverlayDismiss(
+            overlay,
+            () => {
                 this.closeModal();
-            }
-        });
+            },
+            undefined,
+            dismissOnOverlay
+        );
 
         this.appendChild(overlay);
         this._modalOverlay = overlay;
