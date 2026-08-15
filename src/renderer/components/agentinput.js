@@ -2014,8 +2014,12 @@ class AgentInput extends HTMLElement {
      */
     async loadFileCompletions(query, textarea) {
         try {
-            if (!this._workspacePath && window.workspaceAPI?.getEffectiveWorkspace) {
-                this._workspacePath = (await window.workspaceAPI.getEffectiveWorkspace()).replace(/\\/g, '/');
+            // 每次触发补全都重新读取当前有效工作空间，避免切换工作空间后补全范围仍停留在旧目录
+            if (window.workspaceAPI?.getEffectiveWorkspace) {
+                const effective = await window.workspaceAPI.getEffectiveWorkspace();
+                if (effective) {
+                    this._workspacePath = effective.replace(/\\/g, '/');
+                }
             }
             if (!this._workspacePath) return;
 
