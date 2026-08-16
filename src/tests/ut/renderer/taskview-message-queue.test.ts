@@ -2247,6 +2247,78 @@ describe('task-view message queue', () => {
         expect(historyContainer.textContent?.match(/编辑后的目标/g)).toHaveLength(1);
     });
 
+    test('coalesces rapid reasoning streaming updates to one per animation frame', () => {
+        const originalRaf = globalThis.requestAnimationFrame;
+        const originalCaf = globalThis.cancelAnimationFrame;
+        const rafCallbacks = new Map<number, FrameRequestCallback>();
+        let nextRafId = 1;
+        globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+            const id = nextRafId;
+            nextRafId += 1;
+            rafCallbacks.set(id, cb);
+            return id;
+        };
+        globalThis.cancelAnimationFrame = (id: number) => {
+            rafCallbacks.delete(id);
+        };
+
+        try {
+            const TaskViewClass = customElements.get('task-view') as any;
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            };
+            taskView.task_id = 'task-1';
+            taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+            const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+            // Stream several reasoning tokens in quick succession (the "thinking" phase).
+            for (let i = 1; i <= 5; i += 1) {
+                taskView._renderAssistantProgress(
+                    {
+                        task_status: 'running',
+                        message_id: 'assistant-1',
+                        last_part_index: 0,
+                        last_part: { type: 'reasoning', rendered: `reasoning token ${i} ` }
+                    },
+                    historyContainer
+                );
+            }
+
+            const reasoningContent = taskView.querySelector('.reasoning-content');
+            expect(reasoningContent).not.toBeNull();
+            // No frame has fired yet, so the DOM must not have been written once per token.
+            expect(reasoningContent?.textContent).toBe('');
+            // All five tokens were coalesced into a single pending animation frame.
+            expect(rafCallbacks.size).toBe(1);
+
+            // Flush the frame: only the latest text is applied, once.
+            Array.from(rafCallbacks.values()).forEach((cb) => cb(0));
+            rafCallbacks.clear();
+            expect(reasoningContent?.textContent).toBe('reasoning token 5 ');
+
+            // Finalizing flushes a pending update synchronously (no frame required).
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-1',
+                    last_part_index: 0,
+                    last_part: { type: 'reasoning', rendered: 'reasoning token 6 ' }
+                },
+                historyContainer
+            );
+            expect(rafCallbacks.size).toBe(1);
+
+            const block = taskView.querySelector('.reasoning-block-od') as HTMLElement;
+            TaskViewClass.finalizeReasoningBlock(block);
+            expect(rafCallbacks.size).toBe(0);
+            expect(reasoningContent?.textContent).toBe('reasoning token 6 ');
+        } finally {
+            globalThis.requestAnimationFrame = originalRaf;
+            globalThis.cancelAnimationFrame = originalCaf;
+        }
+    });
+
     test('browser app events force the right sidebar to the browser tab', () => {
         const TaskViewClass = customElements.get('task-view') as any;
         TaskViewClass.rightSidebarExpanded = true;

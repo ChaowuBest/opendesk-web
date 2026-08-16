@@ -1451,7 +1451,8 @@ main-sidebar .sb-full-wrapper {
     overflow: hidden;
     background: var(--od-bg);
     color: var(--od-text);
-    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    /* 与 taskview 的 .markdown-body 使用同一字体变量，避免硬编码字体栈导致侧边栏与任务区默认字体不一致 */
+    font-family: var(--font-sans);
     line-height: normal;
     -webkit-font-smoothing: antialiased;
 }
