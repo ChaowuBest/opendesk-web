@@ -16,7 +16,8 @@ import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import { InfoOverlay } from '../notice.js';
 import type { OpenDeskTUI } from '../../entry.js';
 import chalk from 'chalk';
-import { getReasoningEffortLabels, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
+import { getReasoningEffortLabels } from '../../../../common/reasoning-effort.js';
+import { resolveModelReasoningEfforts } from '../../../utils/model-context.js';
 import { t } from '../../../../locale/index.js';
 
 interface ModelData {
@@ -189,7 +190,8 @@ export class ModelConfigPage implements Component {
             key: 'reasoning_effort',
             label: t('config.model.field.reasoning_effort'),
             value: model.reasoning_effort || '',
-            options: REASONING_EFFORT_SELECT_VALUES,
+            // 按 model-context 中该模型支持的档位过滤；未匹配时沿用系统全部档位
+            options: resolveModelReasoningEfforts({ model_name: model.model_name || '' }),
             optionLabels: getReasoningEffortLabels(t)
         });
 

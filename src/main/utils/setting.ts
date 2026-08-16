@@ -107,7 +107,7 @@ const ModelTypeSchema = z.preprocess(
 );
 
 const ReasoningEffortSchema = z
-    .enum(['', 'none', 'low', 'medium', 'high'])
+    .enum(['', 'none', 'low', 'medium', 'high', 'max'])
     .default('')
     .describe('模型默认推理模式(空字符串表示默认)');
 
@@ -162,7 +162,7 @@ const ModelSchema = z.preprocess(
 );
 
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
-type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high' | 'max';
 type ModelType = z.infer<typeof ModelTypeSchema>;
 type ChatModel = z.infer<typeof ChatModelSchema>;
 type EmbeddingModel = z.infer<typeof EmbeddingModelSchema>;

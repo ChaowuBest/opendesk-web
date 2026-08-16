@@ -456,7 +456,8 @@ export const zhCn: Record<string, string> = {
     'debug.developer.status': '当前开发者模式状态: ${status}',
 
     // Commands - Reason
-    'reason.description': '调整思考强度，用法: /reason effort [default|none|low|medium|high] | display [full|partial]',
+    'reason.description':
+        '调整思考强度，用法: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': '设置推理深度',
     'reason.display.description': '设置思考显示模式',
     'reason.display.full': '完整显示',
@@ -473,9 +474,9 @@ export const zhCn: Record<string, string> = {
     'reason.display.already': '显示模式',
     'reason.display.already.message': '思考显示模式已是: ${mode}',
     'reason.error.no.model': '未设置默认模型。请先在设置中配置模型。',
-    'reason.error.invalid.effort': '无效的推理深度: ${value}\n有效值: default, none, low, medium, high',
+    'reason.error.invalid.effort': '无效的推理深度: ${value}\n有效值: default, none, low, medium, high, max',
     'reason.error.invalid.display': '无效的显示模式: ${value}\n有效值: full, partial',
-    'reason.error.specify.effort': '请指定推理深度: /reason effort [default|none|low|medium|high]',
+    'reason.error.specify.effort': '请指定推理深度: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': '请指定显示模式: /reason display [full|partial]',
     'reason.error.unknown': '未知子命令: ${subcmd}\n可用: effort, display',
 
@@ -903,6 +904,7 @@ export const zhCn: Record<string, string> = {
     'reasoning.effort.low': '简洁推理',
     'reasoning.effort.medium': '推理适中',
     'reasoning.effort.high': '推理深入',
+    'reasoning.effort.max': '推理最大化',
 
     // Tool Call Status
     'toolcall.status.pending': '等待中',
@@ -1272,6 +1274,7 @@ export const zhCn: Record<string, string> = {
     'sp.model.effort.low': '低',
     'sp.model.effort.medium': '中',
     'sp.model.effort.high': '高',
+    'sp.model.effort.max': '推理最大化',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',

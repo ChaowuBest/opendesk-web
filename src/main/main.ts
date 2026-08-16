@@ -105,6 +105,7 @@ import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
     resolveModelVisionSupport,
+    resolveModelReasoningEfforts,
     fetchContextSizeFromAPI
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -2079,6 +2080,20 @@ const registerSettingAPIHandlers = () => {
                     result[m.alias] = vision;
                 }
                 // 如果既无手动配置、内置表也查不到，默认悲观认为不支持视觉
+            }
+        }
+        return result;
+    });
+
+    // 查询每个模型的可用推理档位（alias → 存储值列表，含 '' 默认项）
+    ipcMain.handle('model:checkReasoningEfforts', (_event, models) => {
+        if (!Array.isArray(models)) {
+            return {};
+        }
+        const result: Record<string, string[]> = {};
+        for (const m of models) {
+            if (m.alias && m.model_name) {
+                result[m.alias] = resolveModelReasoningEfforts(m);
             }
         }
         return result;

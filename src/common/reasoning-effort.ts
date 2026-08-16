@@ -19,9 +19,14 @@
  */
 
 /** 写入设置/API 的值（空字符串 = 模型默认） */
-export const REASONING_EFFORT_STORAGE_VALUES = ['', 'none', 'low', 'medium', 'high'] as const;
+export const REASONING_EFFORT_STORAGE_VALUES = ['', 'none', 'low', 'medium', 'high', 'max'] as const;
 
 export type ReasoningEffortStorageValue = (typeof REASONING_EFFORT_STORAGE_VALUES)[number];
+
+/** 非默认（''）档位值，用于 model-context 等场景描述「模型支持的推理档位」 */
+export const REASONING_EFFORT_LEVELS = ['none', 'low', 'medium', 'high', 'max'] as const;
+
+export type ReasoningEffortLevel = (typeof REASONING_EFFORT_LEVELS)[number];
 
 /** storage value → locale key，供 TUI 侧 t() 查找 */
 export const REASONING_EFFORT_LABEL_KEYS: Record<string, string> = {
@@ -29,7 +34,8 @@ export const REASONING_EFFORT_LABEL_KEYS: Record<string, string> = {
     none: 'reasoning.effort.none',
     low: 'reasoning.effort.low',
     medium: 'reasoning.effort.medium',
-    high: 'reasoning.effort.high'
+    high: 'reasoning.effort.high',
+    max: 'reasoning.effort.max'
 };
 
 /** 默认中文标签（renderer 等无 i18n 环境使用） */
@@ -38,11 +44,27 @@ const REASONING_EFFORT_DEFAULT_LABELS: Record<string, string> = {
     none: '无推理',
     low: '简洁推理',
     medium: '推理适中',
-    high: '推理深入'
+    high: '推理深入',
+    max: '推理最大化'
 };
 
 /** Select / 表单 options 用的值列表，顺序与 UI 一致 */
 export const REASONING_EFFORT_SELECT_VALUES: string[] = [...REASONING_EFFORT_STORAGE_VALUES];
+
+/**
+ * 根据模型支持的档位列表构建 UI 值列表（始终以 '' 默认项开头）。
+ * - 未提供 levels 时返回系统全部档位；
+ * - 提供的档位必须是系统档位的子集，非法值会被忽略。
+ */
+export function buildSupportedEffortValues(levels: readonly string[] | undefined): string[] {
+    const result: string[] = [''];
+    for (const level of REASONING_EFFORT_LEVELS) {
+        if (!levels || levels.includes(level)) {
+            result.push(level);
+        }
+    }
+    return result;
+}
 
 /** 渲染层下拉等：{ value, label }（不带 i18n，renderer 使用） */
 export const REASONING_EFFORT_UI_OPTIONS: { value: string; label: string }[] = REASONING_EFFORT_STORAGE_VALUES.map(
@@ -53,14 +75,15 @@ export const REASONING_EFFORT_UI_OPTIONS: { value: string; label: string }[] = R
 );
 
 /** `/reason effort` 使用的 token（与存储值对应，default → ''） */
-export const REASONING_EFFORT_CLI_TOKENS = ['default', 'none', 'low', 'medium', 'high'] as const;
+export const REASONING_EFFORT_CLI_TOKENS = ['default', 'none', 'low', 'medium', 'high', 'max'] as const;
 
 export const REASONING_EFFORT_CLI_TO_STORAGE: Record<string, string> = {
     default: '',
     none: 'none',
     low: 'low',
     medium: 'medium',
-    high: 'high'
+    high: 'high',
+    max: 'max'
 };
 
 /**

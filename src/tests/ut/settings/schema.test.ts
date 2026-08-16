@@ -175,6 +175,30 @@ describe('设置 schema', () => {
         expect(setting.models[0]).not.toHaveProperty('context_length');
     });
 
+    test('对话模型推理档位支持 max', () => {
+        const setting = Setting.getSettingSchema().parse({
+            models: [
+                {
+                    alias: 'chat',
+                    provider_name: 'p',
+                    model_name: 'm',
+                    model_type: 'chat',
+                    reasoning_effort: 'max'
+                }
+            ]
+        });
+
+        expect(setting.models[0].reasoning_effort).toBe('max');
+    });
+
+    test('对话模型推理档位缺省为空字符串', () => {
+        const setting = Setting.getSettingSchema().parse({
+            models: [{ alias: 'chat', provider_name: 'p', model_name: 'm', model_type: 'chat' }]
+        });
+
+        expect(setting.models[0].reasoning_effort).toBe('');
+    });
+
     test('默认嵌入模型只接受 embedding 类型', () => {
         Setting.clearCache();
         Setting.updateInstanceData({

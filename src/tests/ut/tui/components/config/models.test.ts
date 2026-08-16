@@ -166,6 +166,34 @@ describe('ModelConfigPage', () => {
         expect(data.models).toHaveLength(0);
     });
 
+    test('renders the reasoning effort field for chat models', () => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        const items = getFormItems(page);
+        const effortField = items.find((item) => item.key === 'reasoning_effort');
+
+        expect(effortField).toBeDefined();
+        expect(effortField.type).toBe('select');
+        // 未匹配到 model-context 时沿用系统全部档位
+        expect(effortField.options).toEqual(['', 'none', 'low', 'medium', 'high', 'max']);
+    });
+
+    test('filters reasoning effort options by the model-context table', () => {
+        // gpt-5 在 model-context 中限制为 none/low/medium/high（无 max）
+        const page = openEditForm({
+            alias: '',
+            provider_name: 'provider-a',
+            model_name: 'gpt-5',
+            model_type: 'chat'
+        });
+
+        const items = getFormItems(page);
+        const effortField = items.find((item) => item.key === 'reasoning_effort');
+
+        expect(effortField.options).toEqual(['', 'none', 'low', 'medium', 'high']);
+        expect(effortField.options).not.toContain('max');
+    });
+
     test.each(['1.5', '16k', '9007199254740992'])('rejects non-integer max_output_tokens %s', (value) => {
         const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
 
