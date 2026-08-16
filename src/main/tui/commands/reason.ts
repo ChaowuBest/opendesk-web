@@ -19,6 +19,7 @@ import {
     REASONING_EFFORT_CLI_TOKENS,
     labelForStoredReasoningEffort
 } from '../../../common/reasoning-effort.js';
+import { resolveModelReasoningEfforts } from '../../utils/model-context.js';
 import { t } from '../../../locale/index.js';
 
 const DISPLAY_OPTIONS = ['full', 'partial'];
@@ -26,6 +27,18 @@ const DISPLAY_LABELS: Record<string, string> = {
     full: t('reason.display.full'),
     partial: t('reason.display.partial')
 };
+
+/** effort 子命令可用的 token：按默认模型支持的档位过滤，未匹配模型时返回全部 */
+function getSupportedEffortTokens(): string[] {
+    const setting = Setting.getInstance();
+    const alias = setting.data.default_model;
+    const model = setting.data.models.find((m) => m.alias === alias);
+    if (!model) {
+        return [...REASONING_EFFORT_CLI_TOKENS];
+    }
+    const supportedValues = resolveModelReasoningEfforts(model);
+    return REASONING_EFFORT_CLI_TOKENS.filter((opt) => supportedValues.includes(REASONING_EFFORT_CLI_TO_STORAGE[opt]!));
+}
 
 export function registerReasonCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
@@ -52,15 +65,17 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
             // 子命令已确定，补全子参数
             if (hasTrailingSpace || parts.length >= 2) {
-                // effort 子命令：补全 effort 值
+                // effort 子命令：补全 effort 值（按默认模型支持的档位过滤）
                 // pi-tui 会用 item.value 替换「第一个空格后的整段 argumentText」，
                 // 不能只返回第二段 token，否则 `/reason display on` 会变成 `/reason on`。
                 if (subCommand === 'effort') {
-                    return REASONING_EFFORT_CLI_TOKENS.filter((opt) => opt.startsWith(subArg)).map((opt) => ({
-                        value: `effort ${opt}`,
-                        label: opt,
-                        description: labelForStoredReasoningEffort(REASONING_EFFORT_CLI_TO_STORAGE[opt]!, t)
-                    }));
+                    return getSupportedEffortTokens()
+                        .filter((opt) => opt.startsWith(subArg))
+                        .map((opt) => ({
+                            value: `effort ${opt}`,
+                            label: opt,
+                            description: labelForStoredReasoningEffort(REASONING_EFFORT_CLI_TO_STORAGE[opt]!, t)
+                        }));
                 }
 
                 if (subCommand === 'display') {
@@ -100,7 +115,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 }
                 lines.push('');
                 lines.push(chalk.dim(t('reason.usage.title') + ':'));
-                lines.push(chalk.dim('  /reason effort [default|none|low|medium|high]'));
+                lines.push(chalk.dim('  /reason effort [default|none|low|medium|high|max]'));
                 lines.push(chalk.dim('  /reason display [full|partial]'));
 
                 const info = new InfoOverlay(tui, {
@@ -166,7 +181,8 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     | 'none'
                     | 'low'
                     | 'medium'
-                    | 'high';
+                    | 'high'
+                    | 'max';
                 setting.save();
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue, t);

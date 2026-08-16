@@ -466,7 +466,7 @@ export const enUs: Record<string, string> = {
 
     // Commands - Reason
     'reason.description':
-        'Adjust reasoning effort, usage: /reason effort [default|none|low|medium|high] | display [full|partial]',
+        'Adjust reasoning effort, usage: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': 'Set reasoning depth',
     'reason.display.description': 'Set thinking display mode',
     'reason.display.full': 'Full Display',
@@ -483,9 +483,10 @@ export const enUs: Record<string, string> = {
     'reason.display.already': 'Display Mode',
     'reason.display.already.message': 'Thinking display mode is already: ${mode}',
     'reason.error.no.model': 'No default model set. Please configure a model in settings first.',
-    'reason.error.invalid.effort': 'Invalid reasoning depth: ${value}\nValid values: default, none, low, medium, high',
+    'reason.error.invalid.effort':
+        'Invalid reasoning depth: ${value}\nValid values: default, none, low, medium, high, max',
     'reason.error.invalid.display': 'Invalid display mode: ${value}\nValid values: full, partial',
-    'reason.error.specify.effort': 'Please specify reasoning depth: /reason effort [default|none|low|medium|high]',
+    'reason.error.specify.effort': 'Please specify reasoning depth: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': 'Please specify display mode: /reason display [full|partial]',
     'reason.error.unknown': 'Unknown subcommand: ${subcmd}\nAvailable: effort, display',
 
@@ -674,6 +675,10 @@ export const enUs: Record<string, string> = {
     'config.model.field.context_length.placeholder': 'Leave empty to estimate automatically',
     'config.model.field.max_output_tokens': 'Max Output Tokens (leave empty for auto)',
     'config.model.field.max_output_tokens.placeholder': 'Leave empty to estimate automatically',
+    'config.model.field.vision': 'Vision Support',
+    'config.model.vision.auto': 'Auto-detect',
+    'config.model.vision.supported': 'Supported',
+    'config.model.vision.unsupported': 'Not Supported',
     'config.model.field.auto_parse_think_tags': 'Auto-parse Think Tags',
     'config.model.field.custom_headers': 'Custom Headers',
     'config.model.field.custom_headers_hint': 'Custom HTTP headers sent to the model server',
@@ -921,6 +926,7 @@ export const enUs: Record<string, string> = {
     'reasoning.effort.low': 'Low Reasoning',
     'reasoning.effort.medium': 'Medium Reasoning',
     'reasoning.effort.high': 'Deep Reasoning',
+    'reasoning.effort.max': 'Maximum Reasoning',
 
     // Tool Call Status
     'toolcall.status.pending': 'Pending',
@@ -1299,6 +1305,7 @@ export const enUs: Record<string, string> = {
     'sp.model.effort.low': 'Low',
     'sp.model.effort.medium': 'Medium',
     'sp.model.effort.high': 'High',
+    'sp.model.effort.max': 'Maximum',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',

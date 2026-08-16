@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
 import {
     showConfirmModal,
     MODAL_CSS,
@@ -3011,11 +3012,7 @@ class SettingPanel extends HTMLElement {
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
                         <select id="model-effort-input" class="od-sp-fi">
-                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.option.default'))}</option>
-                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
-                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
-                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
-                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
+                            ${this.buildEffortOptionHtml(this.getAllEffortValues(), model.reasoning_effort)}
                         </select>
                     </div>
                     <div class="chat-model-field od-sp-fg">
@@ -3025,6 +3022,14 @@ class SettingPanel extends HTMLElement {
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
                         <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                    </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
+                        <select id="model-vision-input" class="od-sp-fi">
+                            <option value="" ${model.vision === undefined ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.auto'))}</option>
+                            <option value="true" ${model.vision === true ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.supported'))}</option>
+                            <option value="false" ${model.vision === false ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.unsupported'))}</option>
+                        </select>
                     </div>
                     <div class="chat-model-field od-sp-fc">
                         <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''}>
@@ -3155,12 +3160,14 @@ class SettingPanel extends HTMLElement {
             _estimateTimer = setTimeout(() => {
                 updateContextPlaceholder(nameInput.value);
                 updateMaxOutputTokensPlaceholder(nameInput.value);
+                this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
             }, 250);
         });
         // 初始加载时立即估算
         if (nameInput?.value?.trim()) {
             updateContextPlaceholder(nameInput.value);
             updateMaxOutputTokensPlaceholder(nameInput.value);
+            this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
         }
 
         const syncModelTypeFields = () => {
@@ -3200,6 +3207,7 @@ class SettingPanel extends HTMLElement {
                     nameInput.value = opt.dataset.value;
                     dropdown.classList.add('hidden');
                     updateContextPlaceholder(nameInput.value);
+                    this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
                 });
             });
         };
@@ -3376,6 +3384,8 @@ class SettingPanel extends HTMLElement {
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
         const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
+        const visionRaw = this.querySelector('#model-vision-input')?.value;
+        const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
@@ -3447,6 +3457,9 @@ class SettingPanel extends HTMLElement {
         }
         if (model_type === 'chat' && maxOutputTokensNum && maxOutputTokensNum > 0) {
             model.max_output_tokens = maxOutputTokensNum;
+        }
+        if (model_type === 'chat' && vision !== undefined) {
+            model.vision = vision;
         }
         if (Object.keys(custom_headers).length > 0) {
             model.custom_headers = custom_headers;
@@ -4037,9 +4050,58 @@ class SettingPanel extends HTMLElement {
             none: this._t('sp.model.effort.none'),
             low: this._t('sp.model.effort.low'),
             medium: this._t('sp.model.effort.medium'),
-            high: this._t('sp.model.effort.high')
+            high: this._t('sp.model.effort.high'),
+            max: this._t('sp.model.effort.max')
         };
         return labels[effort] || '';
+    }
+
+    /** 系统全部推理档位值（含 '' 默认项） */
+    getAllEffortValues() {
+        return ['', ...REASONING_EFFORT_LEVELS];
+    }
+
+    /** 生成推理档位 <option> HTML，标签使用本地化文案 */
+    buildEffortOptionHtml(values, currentValue) {
+        return values
+            .map((value) => {
+                const label =
+                    value === ''
+                        ? this._t('config.model.option.default')
+                        : this._t(`sp.model.effort.${value}`) || value;
+                return `<option value="${value}" ${currentValue === value ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+            })
+            .join('');
+    }
+
+    /**
+     * 查询指定模型名支持的推理档位值（含 '' 默认项）。
+     * model-context 未匹配时回退到系统全部档位。
+     */
+    async fetchModelEffortValues(modelName) {
+        const trimmed = (modelName || '').trim();
+        if (!trimmed || !window.settingAPI?.checkReasoningEfforts) {
+            return this.getAllEffortValues();
+        }
+        try {
+            const map = await window.settingAPI.checkReasoningEfforts([{ alias: '__edit__', model_name: trimmed }]);
+            if (Array.isArray(map.__edit__) && map.__edit__.length > 0) {
+                return map.__edit__;
+            }
+        } catch {
+            /* 忽略查询失败，回退到系统全部档位 */
+        }
+        return this.getAllEffortValues();
+    }
+
+    /** 按模型名刷新推理档位下拉框选项（保留当前选中值） */
+    async refreshEffortOptions(modelName, selectEl) {
+        if (!selectEl) return;
+        const currentValue = selectEl.value;
+        const values = await this.fetchModelEffortValues(modelName);
+        if (!selectEl.isConnected) return;
+        const stillCurrent = values.includes(currentValue) ? currentValue : '';
+        selectEl.innerHTML = this.buildEffortOptionHtml(values, stillCurrent);
     }
 
     escapeHtml(text) {

@@ -11,7 +11,7 @@
 
 import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { Setting } from '../../../utils/setting.js';
-import { lookupKnownVisionSupport } from '../../../utils/model-context.js';
+import { resolveModelVisionSupport } from '../../../utils/model-context.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
@@ -58,7 +58,7 @@ export class DefaultModelConfigPage implements Component {
             const current: string = data[f.key] ?? '';
             const aliases: string[] = models
                 .filter((m: any) => modelTypeOf(m) === f.modelType)
-                .filter((m: any) => !('visionOnly' in f) || lookupKnownVisionSupport(m.model_name) === true)
+                .filter((m: any) => !('visionOnly' in f) || resolveModelVisionSupport(m) === true)
                 .map((m: any) => m.alias);
             const optionsWithEmpty = ['', ...aliases];
             if (optionsWithEmpty.length > 1 || 'visionOnly' in f) {

@@ -11,9 +11,14 @@
 
 import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
+import {
+    REASONING_EFFORT_LEVELS,
+    type ReasoningEffortLevel,
+    type ReasoningEffortStorageValue
+} from '../../common/reasoning-effort.js';
 
 /**
- * 已知模型的信息记录，合并了上下文窗口大小、最大输出 token 和视觉支持。
+ * 已知模型的信息记录，合并了上下文窗口大小、最大输出 token、视觉支持和推理档位。
  * 当 API 无法返回模型信息时用作兜底。
  *
  * key 统一为小写，分隔符用 `-`（即 `.` `_` 都被替换为 `-`）。
@@ -26,6 +31,11 @@ interface ModelInfo {
     maxOutputTokens: number;
     /** 是否支持视觉/图像输入，undefined 表示未知，false 表示明确不支持 */
     vision?: boolean;
+    /**
+     * 支持的推理档位（系统档位的子集），undefined 表示沿用系统全部档位。
+     * 注意：''（模型默认）恒可用，不在此列。
+     */
+    reasoningEfforts?: ReasoningEffortLevel[];
 }
 
 /**
@@ -36,25 +46,121 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // OpenAI / GPT
     // ═══════════════════════════════════════════════
-    'gpt-5-2': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-1': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-mini': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-pro': { contextSize: 400000, maxOutputTokens: 272000, vision: true },
-    'gpt-5-thinking': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-5': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-5-pro': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-5-instant': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-6': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-6-sol': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-6-terra': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-6-luna': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-4': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-4-pro': { contextSize: 1050000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-4-mini': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-4-nano': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-3': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
-    'gpt-5-3-codex': { contextSize: 400000, maxOutputTokens: 128000, vision: true },
+    // GPT-5 / o 系列官方 reasoning_effort 仅支持 minimal/low/medium/high，无 max 档位
+    'gpt-5-2': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-1': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-mini': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-pro': {
+        contextSize: 400000,
+        maxOutputTokens: 272000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-thinking': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-5': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-5-pro': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-5-instant': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-6': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-6-sol': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-6-terra': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-6-luna': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-4': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-4-pro': {
+        contextSize: 1050000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-4-mini': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-4-nano': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-3': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'gpt-5-3-codex': {
+        contextSize: 400000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
     'gpt-4-1': { contextSize: 1047576, maxOutputTokens: 32768, vision: true },
     'gpt-4-1-mini': { contextSize: 1047576, maxOutputTokens: 32768, vision: true },
     'gpt-4-1-nano': { contextSize: 1047576, maxOutputTokens: 32768, vision: true },
@@ -65,49 +171,230 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     'gpt-4-32k': { contextSize: 32768, maxOutputTokens: 4096, vision: false },
     'gpt-3-5-turbo': { contextSize: 16385, maxOutputTokens: 4096, vision: false },
     'gpt-3-5-turbo-16k': { contextSize: 16384, maxOutputTokens: 4096, vision: false },
-    o1: { contextSize: 200000, maxOutputTokens: 100000, vision: true },
-    'o1-mini': { contextSize: 128000, maxOutputTokens: 65536, vision: false },
-    'o1-pro': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
-    o3: { contextSize: 200000, maxOutputTokens: 100000, vision: true },
-    'o3-mini': { contextSize: 200000, maxOutputTokens: 100000, vision: false },
-    'o4-mini': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
+    o1: {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'o1-mini': {
+        contextSize: 128000,
+        maxOutputTokens: 65536,
+        vision: false,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'o1-pro': {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    o3: {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'o3-mini': {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: false,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'o4-mini': {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
 
     // ═══════════════════════════════════════════════
     // Claude / Anthropic
     // ═══════════════════════════════════════════════
     // 4.x/5.x 同时保留两种命名：`claude-{版本}-{型号}`（既有）与 `claude-{型号}-{版本}`（Anthropic API 实际返回格式）
-    'claude-4-8-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-opus-4-8': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-4-7-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-opus-4-7': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
+    // Anthropic 无 max 档位，限制为 none/low/medium/high
+    'claude-4-8-opus': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-4-8': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-7-opus': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-4-7': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
     // 4.6 系列 1M 上下文需要 anthropic-beta: max-tokens-sampling-2025-06-15 header
-    'claude-4-6-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-opus-4-6': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-4-6-sonnet': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
-    'claude-sonnet-4-6': { contextSize: 1000000, maxOutputTokens: 64000, vision: true },
-    'claude-4-5-opus': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-opus-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-4-5-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-sonnet-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-4-5-haiku': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-haiku-4-5': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-4-opus': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-opus-4': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-4-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-sonnet-4': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
+    'claude-4-6-opus': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-4-6': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-6-sonnet': {
+        contextSize: 1000000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-sonnet-4-6': {
+        contextSize: 1000000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-5-opus': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-4-5': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-5-sonnet': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-sonnet-4-5': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-5-haiku': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-haiku-4-5': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-opus': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-4': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-4-sonnet': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-sonnet-4': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
     // Claude 5 系列，opencode.ai 数据：1M 上下文 / 128K 输出，支持图像与 PDF 输入
-    'claude-5-opus': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-opus-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-5-sonnet': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-sonnet-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-5-fable': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-fable-5': { contextSize: 1000000, maxOutputTokens: 128000, vision: true },
-    'claude-3-7-sonnet': { contextSize: 200000, maxOutputTokens: 64000, vision: true },
-    'claude-3-5-sonnet': { contextSize: 200000, maxOutputTokens: 8192, vision: true },
-    'claude-3-5-haiku': { contextSize: 200000, maxOutputTokens: 8192, vision: true },
-    'claude-3-opus': { contextSize: 200000, maxOutputTokens: 4096, vision: true },
-    'claude-3-sonnet': { contextSize: 200000, maxOutputTokens: 4096, vision: true },
-    'claude-3-haiku': { contextSize: 200000, maxOutputTokens: 4096, vision: true },
+    'claude-5-opus': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-opus-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-5-sonnet': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-sonnet-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-5-fable': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-fable-5': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-7-sonnet': {
+        contextSize: 200000,
+        maxOutputTokens: 64000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-5-sonnet': {
+        contextSize: 200000,
+        maxOutputTokens: 8192,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-5-haiku': {
+        contextSize: 200000,
+        maxOutputTokens: 8192,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-opus': {
+        contextSize: 200000,
+        maxOutputTokens: 4096,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-sonnet': {
+        contextSize: 200000,
+        maxOutputTokens: 4096,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
+    'claude-3-haiku': {
+        contextSize: 200000,
+        maxOutputTokens: 4096,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
 
     // ═══════════════════════════════════════════════
     // Gemini / Google
@@ -213,6 +500,12 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // GLM / Zhipu
     // ═══════════════════════════════════════════════
+    'glm-5-3': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: false,
+        reasoningEfforts: ['low', 'high', 'max']
+    },
     'glm-5-2': { contextSize: 1000000, maxOutputTokens: 128000, vision: false },
     'glm-5-1': { contextSize: 200000, maxOutputTokens: 128000, vision: false },
     'glm-5': { contextSize: 204800, maxOutputTokens: 128000, vision: false },
@@ -432,7 +725,12 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     'gpt-oss-20b': { contextSize: 131072, maxOutputTokens: 32768, vision: false },
     'gpt-oss-120b': { contextSize: 131072, maxOutputTokens: 32768, vision: false },
-    'o3-pro': { contextSize: 200000, maxOutputTokens: 100000, vision: true },
+    'o3-pro': {
+        contextSize: 200000,
+        maxOutputTokens: 100000,
+        vision: true,
+        reasoningEfforts: ['none', 'low', 'medium', 'high']
+    },
 
     // ═══════════════════════════════════════════════
     // MiMo V2 / Xiaomi
@@ -829,4 +1127,45 @@ export function lookupKnownMaxOutputTokens(rawModelName: string): number {
  */
 export function lookupKnownVisionSupport(rawModelName: string): boolean | undefined {
     return lookupModelInfo(rawModelName)?.vision;
+}
+
+/**
+ * 解析模型的视觉支持配置。
+ *
+ * 优先使用用户手动配置的 `vision`（true/false）；当其为 undefined 时，
+ * 回退到内置表自动识别（即 lookupKnownVisionSupport）。
+ * 返回 undefined 表示既没有手动配置，内置表也无法确定。
+ */
+export function resolveModelVisionSupport(model: { model_name: string; vision?: boolean }): boolean | undefined {
+    if (typeof model.vision === 'boolean') {
+        return model.vision;
+    }
+    return lookupKnownVisionSupport(model.model_name);
+}
+
+/**
+ * 在 KNOWN_MODELS 表中查找模型支持的推理档位（不含 '' 默认项）。
+ * 匹配策略与 lookupModelInfo 保持一致；查不到时返回 undefined。
+ */
+export function lookupKnownReasoningEfforts(rawModelName: string): ReasoningEffortLevel[] | undefined {
+    return lookupModelInfo(rawModelName)?.reasoningEfforts;
+}
+
+/**
+ * 解析模型支持的推理档位值列表（始终以 '' 默认项开头）。
+ *
+ * 匹配顺序：
+ *   1. model-context 内置表中该模型配置的 reasoningEfforts（系统档位的子集）；
+ *   2. 未匹配到时沿用系统全部档位。
+ * 返回的列表可直接用于 TUI/GUI 的推理档位选择器。
+ */
+export function resolveModelReasoningEfforts(model: { model_name: string }): ReasoningEffortStorageValue[] {
+    const levels = lookupKnownReasoningEfforts(model.model_name);
+    const result: ReasoningEffortStorageValue[] = [''];
+    for (const level of REASONING_EFFORT_LEVELS) {
+        if (!levels || levels.includes(level)) {
+            result.push(level);
+        }
+    }
+    return result;
 }

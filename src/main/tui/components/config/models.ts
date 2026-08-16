@@ -16,7 +16,8 @@ import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import { InfoOverlay } from '../notice.js';
 import type { OpenDeskTUI } from '../../entry.js';
 import chalk from 'chalk';
-import { getReasoningEffortLabels, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
+import { getReasoningEffortLabels } from '../../../../common/reasoning-effort.js';
+import { resolveModelReasoningEfforts } from '../../../utils/model-context.js';
 import { t } from '../../../../locale/index.js';
 
 interface ModelData {
@@ -27,6 +28,7 @@ interface ModelData {
     reasoning_effort?: string;
     context_length?: number;
     max_output_tokens?: number;
+    vision?: boolean;
     auto_parse_think_tags?: boolean;
     custom_headers?: Record<string, string>;
 }
@@ -188,7 +190,8 @@ export class ModelConfigPage implements Component {
             key: 'reasoning_effort',
             label: t('config.model.field.reasoning_effort'),
             value: model.reasoning_effort || '',
-            options: REASONING_EFFORT_SELECT_VALUES,
+            // 按 model-context 中该模型支持的档位过滤；未匹配时沿用系统全部档位
+            options: resolveModelReasoningEfforts({ model_name: model.model_name || '' }),
             optionLabels: getReasoningEffortLabels(t)
         });
 
@@ -205,6 +208,20 @@ export class ModelConfigPage implements Component {
             key: 'max_output_tokens',
             label: t('config.model.field.max_output_tokens'),
             value: model.max_output_tokens ? String(model.max_output_tokens) : '',
+            visible: !isEmbedding
+        });
+
+        fields.push({
+            type: 'select',
+            key: 'vision',
+            label: t('config.model.field.vision'),
+            value: model.vision === undefined ? '' : String(model.vision),
+            options: ['', 'true', 'false'],
+            optionLabels: {
+                '': t('config.model.vision.auto'),
+                true: t('config.model.vision.supported'),
+                false: t('config.model.vision.unsupported')
+            },
             visible: !isEmbedding
         });
 
@@ -306,6 +323,7 @@ export class ModelConfigPage implements Component {
             reasoning_effort: values.reasoning_effort ?? '',
             context_length: values.context_length ? parseInt(values.context_length, 10) : undefined,
             max_output_tokens: values.max_output_tokens ? parseInt(values.max_output_tokens, 10) : undefined,
+            vision: values.vision === 'true' ? true : values.vision === 'false' ? false : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false
         };
         this.savedFormValues = undefined;
@@ -439,6 +457,10 @@ export class ModelConfigPage implements Component {
             max_output_tokens:
                 values.model_type !== 'embedding' && parsedMaxOutputTokens !== undefined && parsedMaxOutputTokens > 0
                     ? parsedMaxOutputTokens
+                    : undefined,
+            vision:
+                values.model_type !== 'embedding' && (values.vision === 'true' || values.vision === 'false')
+                    ? values.vision === 'true'
                     : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false,
             custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined

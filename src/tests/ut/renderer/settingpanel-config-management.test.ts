@@ -215,6 +215,47 @@ describe('setting-panel config management', () => {
         expect(panel.saveImmediately).not.toHaveBeenCalled();
     });
 
+    test('model edit modal renders a vision support dropdown with three options', () => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.currentData.models = [{ alias: 'm1', provider_name: 'p1', model_name: 'gpt-4o', model_type: 'chat' }];
+        panel.render();
+        panel.showModelEditModal(0);
+
+        const select = panel.querySelector('#model-vision-input') as HTMLSelectElement;
+        const options = Array.from(select.options).map((option: HTMLOptionElement) => option.value);
+
+        expect(options).toEqual(['', 'true', 'false']);
+        expect(select.value).toBe('');
+    });
+
+    test.each([
+        ['true', true],
+        ['false', false],
+        ['', undefined]
+    ])('saving model vision dropdown value "%s" persists %s', async (raw, expected) => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.currentData.models = [{ alias: 'm1', provider_name: 'p1', model_name: 'gpt-4o', model_type: 'chat' }];
+        panel.render();
+        panel.showModelEditModal(0);
+        const select = panel.querySelector('#model-vision-input') as HTMLSelectElement;
+        const target = Array.from(select.options).find((option) => option.value === raw) as HTMLOptionElement;
+        if (target) {
+            target.selected = true;
+        }
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        await panel.saveModel();
+
+        expect((panel.currentData.models[0] as any).vision).toBe(expected);
+        expect(panel.scheduleSave).toHaveBeenCalledTimes(1);
+    });
+
     test('exports current settings as json and omits runtime locale field', async () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();

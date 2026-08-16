@@ -1097,6 +1097,10 @@ if (shouldExposeMainWindowAPIs()) {
         checkVisionSupport: async (models) => {
             const result = await ipcRenderer.invoke('model:checkVisionSupport', models);
             return result;
+        },
+        checkReasoningEfforts: async (models) => {
+            const result = await ipcRenderer.invoke('model:checkReasoningEfforts', models);
+            return result;
         }
     });
 
