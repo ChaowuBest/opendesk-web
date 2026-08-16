@@ -51,6 +51,8 @@ export interface ConfirmModalOptions {
     challengeHint?: string;
     /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
     mountTarget?: HTMLElement;
+    /** 是否允许按回车默认触发"确认"（默认 false，仅个别弹窗显式开启） */
+    enterToConfirm?: boolean;
 }
 
 const ANIM_DURATION_IN = 250;
@@ -464,6 +466,28 @@ export function bindOverlayDismiss(
     });
 }
 
+/**
+ * 判断弹窗内按下回车时是否应由弹窗默认触发"确认"。
+ *
+ * 规则：
+ *  - challenge 未匹配（确认按钮禁用）时不触发；
+ *  - 焦点在可交互元素（输入框 / 按钮 / 链接 / 可编辑富文本）上时不拦截，
+ *    回车交给原生行为（例如 challenge 输入框由自身处理器负责）。
+ */
+export function shouldConfirmOnEnter(
+    target: EventTarget | null,
+    hasChallenge: boolean,
+    confirmDisabled: boolean
+): boolean {
+    if (hasChallenge && confirmDisabled) return false;
+    if (!target) return true;
+    const el = target as HTMLElement;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A') return false;
+    if (el.isContentEditable) return false;
+    return true;
+}
+
 export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean> {
     return new Promise((resolve) => {
         const {
@@ -477,6 +501,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             danger = false,
             challenge,
             challengeHint,
+            enterToConfirm = false,
             mountTarget = document.body
         } = options;
 
@@ -521,6 +546,8 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
 </div>`;
 
         let resolved = false;
+        // 仅当调用方显式开启 enterToConfirm 时才会注册，用于在关闭时同步移除
+        let enterHandler: ((e: KeyboardEvent) => void) | undefined;
         const close = (result: boolean) => {
             if (resolved) return;
             resolved = true;
@@ -530,6 +557,9 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
                 resolve(result);
             }, ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
+            if (enterHandler) {
+                document.removeEventListener('keydown', enterHandler);
+            }
         };
 
         const escHandler = (e: KeyboardEvent) => {
@@ -560,6 +590,21 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             if (hasChallenge && confirmBtn.disabled) return;
             close(true);
         });
+
+        // 回车默认触发"确认"（例如"确认编辑消息"弹窗中回车=继续对话）。
+        // 仅当调用方显式开启 enterToConfirm 时才生效，不影响其他确认弹窗。
+        // 焦点在可交互元素上时由 shouldConfirmOnEnter 放行给原生行为。
+        if (enterToConfirm) {
+            enterHandler = (e: KeyboardEvent) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+                if (e.isComposing) return;
+                if (!shouldConfirmOnEnter(e.target, hasChallenge, confirmBtn.disabled)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                close(true);
+            };
+            document.addEventListener('keydown', enterHandler);
+        }
 
         if (hasChallenge && challenge) {
             const challengeInput = overlay.querySelector('[data-action="challenge-input"]')! as HTMLInputElement;

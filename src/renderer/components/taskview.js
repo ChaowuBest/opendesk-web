@@ -3474,7 +3474,9 @@ class TaskView extends HTMLElement {
                     title: taskViewT('renderer.taskview.edit.title'),
                     message: taskViewT('renderer.taskview.edit.message'),
                     confirmText: taskViewT('renderer.taskview.edit.confirm'),
-                    cancelText: taskViewT('renderer.taskview.edit.cancel')
+                    cancelText: taskViewT('renderer.taskview.edit.cancel'),
+                    // 编辑消息场景：回车默认触发"继续对话"
+                    enterToConfirm: true
                 });
                 submitting = false;
                 if (!confirmed) {
