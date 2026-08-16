@@ -1358,7 +1358,8 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
         const message = new UserMessage(question);
         message.appendImageURL(image.dataUrl);
         return await LLM.ask(message, visionModel, {
-            reasoningEffort: 'none',
+            // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
+            reasoningEffort: LLM.getMinimalReasoningEffort(visionModel),
             ...taskState?.createUsageTelemetryRequestOptions()
         });
     }

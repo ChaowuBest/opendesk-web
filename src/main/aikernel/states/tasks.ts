@@ -2216,7 +2216,9 @@ export class TaskState {
                 `;
 
             const output = await LLM.ask(prompt.trim(), model, {
-                reasoningEffort: 'none',
+                // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
+                // （glm-5.3 等模型不支持关闭思考，'none' 会导致任务命名失败）
+                reasoningEffort: LLM.getMinimalReasoningEffort(model),
                 ...modelRequestOptions
             }).catch((err) => {
                 logger.error(err);

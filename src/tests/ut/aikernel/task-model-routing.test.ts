@@ -46,6 +46,30 @@ describe('task model routing', () => {
         expect(task.task_name).toBe('任务名');
     });
 
+    test('generateTaskName 对不支持关闭思考的模型（glm-5.3）使用最低档位 low', async () => {
+        Setting.updateInstanceData({
+            default_model: 'glm53',
+            providers: [
+                {
+                    name: 'p',
+                    provider_type: 'openai',
+                    base_url: 'https://mock.local/v1',
+                    api_key: 'test-key',
+                    no_proxy: true
+                }
+            ],
+            models: [{ alias: 'glm53', provider_name: 'p', model_name: 'glm-5.3' }]
+        });
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const task = new TaskState(new TaskManagerState());
+        task.model = 'glm53';
+
+        await task.generateTaskName('hello');
+
+        expect(ask).toHaveBeenCalledWith(expect.stringContaining('hello'), 'glm53', { reasoningEffort: 'low' });
+        expect(task.task_name).toBe('任务名');
+    });
+
     test('checkTermination uses task model instead of default model', async () => {
         const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
         const task = new TaskState(new TaskManagerState());

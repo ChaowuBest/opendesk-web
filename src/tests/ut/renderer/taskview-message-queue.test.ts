@@ -1,6 +1,26 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
+/**
+ * 与 goal.test.ts 保持一致的处理：
+ * 部分 Node + Jest ESM 组合下，jest.useRealTimers() 恢复后会把计时器全局变量
+ * 置为 undefined（表现为后续用例 ReferenceError: setInterval is not defined），
+ * 因此在模块加载时保存真实计时器引用，恢复时显式写回 globalThis。
+ */
+const realTimerGlobals = {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+    setImmediate: globalThis.setImmediate,
+    clearImmediate: globalThis.clearImmediate
+};
+
+function restoreRealTimerGlobals(): void {
+    jest.useRealTimers();
+    Object.assign(globalThis, realTimerGlobals);
+}
+
 describe('task-view message queue', () => {
     let submitMessage: jest.Mock;
 
@@ -1883,7 +1903,7 @@ describe('task-view message queue', () => {
             jest.runOnlyPendingTimers();
         } finally {
             (window.HTMLElement.prototype as any).scrollIntoView = originalScrollIntoView;
-            jest.useRealTimers();
+            restoreRealTimerGlobals();
         }
     });
 
@@ -2154,7 +2174,7 @@ describe('task-view message queue', () => {
             expect((target.querySelector('.od-user-msg') as HTMLElement).style.outline).toContain('124, 77, 255');
             jest.runOnlyPendingTimers();
         } finally {
-            jest.useRealTimers();
+            restoreRealTimerGlobals();
         }
     });
 
@@ -2190,7 +2210,7 @@ describe('task-view message queue', () => {
             expect(content.style.outline).toContain('124, 77, 255');
             jest.runOnlyPendingTimers();
         } finally {
-            jest.useRealTimers();
+            restoreRealTimerGlobals();
         }
     });
 
@@ -2248,6 +2268,9 @@ describe('task-view message queue', () => {
     });
 
     test('coalesces rapid reasoning streaming updates to one per animation frame', () => {
+        // updateReasoningPreview 会启动每秒一次的 setInterval 计时器，
+        // 与文件中其他用例一致使用 fake timers，不依赖环境是否暴露真实计时器全局变量
+        jest.useFakeTimers();
         const originalRaf = globalThis.requestAnimationFrame;
         const originalCaf = globalThis.cancelAnimationFrame;
         const rafCallbacks = new Map<number, FrameRequestCallback>();
@@ -2316,6 +2339,7 @@ describe('task-view message queue', () => {
         } finally {
             globalThis.requestAnimationFrame = originalRaf;
             globalThis.cancelAnimationFrame = originalCaf;
+            restoreRealTimerGlobals();
         }
     });
 

@@ -100,7 +100,9 @@ export async function checkTerminationFromMessages(
         rawResult = await Promise.race([
             LLM.ask(userMessage, modelParam, {
                 ...modelRequestOptions,
-                reasoningEffort: 'none'
+                // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
+                // （glm-5.3 等模型不支持关闭思考，'none' 会导致请求失败）
+                reasoningEffort: LLM.getMinimalReasoningEffort(modelParam)
             }),
             new Promise<never>((_, reject) => {
                 timeout = setTimeout(

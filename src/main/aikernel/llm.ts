@@ -21,7 +21,11 @@ import {
 import { Setting, ModelInstance, ReasoningEffort, type ModelType } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
-import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
+import {
+    lookupKnownVisionSupport,
+    fetchVisionSupportFromAPI,
+    resolveModelReasoningEfforts
+} from '../utils/model-context.js';
 import { OpenAIAdapter } from './adapters/openai.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
 import type { AdapterMessageBuildOptions } from './adapters/context.js';
@@ -157,6 +161,51 @@ class LLM {
         this.__visionCache.set(cacheKey, false);
         logger.info(`vision support for ${modelInstance.model_name}: false (default pessimistic)`);
         return false;
+    }
+
+    /**
+     * 获取指定模型支持的最低推理档位（即“尽可能少思考”）。
+     *
+     * 任务命名、终止性检查、技能归因等轻量场景原先硬编码
+     * `reasoningEffort: 'none'` 强制关闭思考，但像 glm-5.3 这类不支持
+     * 关闭思考的模型会直接报错。此接口返回该模型实际支持的最低档位
+     * （如 glm-5.3 返回 'low'）；未匹配到 model-context 时回退 'none'。
+     *
+     * @param model 模型别名、ModelInstance 或 undefined（使用默认模型）
+     */
+    static getMinimalReasoningEffort(model: ModelParam = undefined): ReasoningEffort {
+        return LLM.__resolveReasoningEffortBound(model, 'min');
+    }
+
+    /**
+     * 获取指定模型支持的最高推理档位（即“最大限度思考”）。
+     * 未匹配到 model-context 时回退 'max'。
+     *
+     * @param model 模型别名、ModelInstance 或 undefined（使用默认模型）
+     */
+    static getMaximalReasoningEffort(model: ModelParam = undefined): ReasoningEffort {
+        return LLM.__resolveReasoningEffortBound(model, 'max');
+    }
+
+    /**
+     * 解析模型在 model-context 中配置的推理档位边界。
+     * 档位列表按系统顺序（none < low < medium < high < max）排列，
+     * 因此首元素即最低档位、末元素即最高档位。
+     * 模型未配置或别名无效等异常场景回退到系统默认边界（none / max）。
+     */
+    private static __resolveReasoningEffortBound(model: ModelParam, bound: 'min' | 'max'): ReasoningEffort {
+        try {
+            const modelInstance = LLM.__getModelInstance(model, 'chat');
+            const levels = resolveModelReasoningEfforts({ model_name: modelInstance.model_name }).filter(
+                (value): value is ReasoningEffort => value !== ''
+            );
+            if (bound === 'min') {
+                return levels[0] ?? 'none';
+            }
+            return levels[levels.length - 1] ?? 'max';
+        } catch {
+            return bound === 'min' ? 'none' : 'max';
+        }
     }
 
     /**
