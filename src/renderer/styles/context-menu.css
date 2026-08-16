@@ -38,7 +38,8 @@
 
 html[data-theme='dark'],
 .ctx-menu-dark {
-    --ctx-bg: rgba(37, 37, 38, 0.94);
+    /* 不透明实底：与浅色一致，避免半透明背景在部分设备上影响菜单可读性 */
+    --ctx-bg: #252526;
     --ctx-bg-soft: rgba(255, 255, 255, 0.06);
     --ctx-border: rgba(255, 255, 255, 0.14);
     --ctx-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
