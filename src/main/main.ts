@@ -45,6 +45,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
+import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import {
@@ -662,68 +663,18 @@ const createWindow = () => {
         globalTray?.setContextMenu(buildTrayMenu());
     });
 
-    let isCloseDialogShowing = false;
-    mainWindow.on('close', (event) => {
-        if (isAppQuitting) {
-            // 应用退出时保存窗口 normal bounds，下次启动恢复
-            try {
-                const bounds = mainWindow.getNormalBounds();
-                const setting = Setting.getInstance();
-                const data = setting.getData() as Record<string, unknown>;
-                const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
-                guiConfig.window_bounds = {
-                    x: bounds.x,
-                    y: bounds.y,
-                    width: bounds.width,
-                    height: bounds.height
-                };
-                setting.setData(data);
-            } catch {
-                /* best-effort */
-            }
-            return;
-        }
-
-        event.preventDefault();
-
-        const setting = Setting.getInstance();
-        const data = setting.getData() as Record<string, unknown>;
-        const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
-        const closeAction = guiConfig.on_mainwindow_close as string | undefined;
-
-        if (closeAction === 'quit') {
-            app.quit();
-        } else if (closeAction === 'minimize') {
-            mainWindow.hide();
-        } else {
-            // undefined — 询问用户退出还是最小化
-            if (isCloseDialogShowing) return;
-            isCloseDialogShowing = true;
-            const requestId = `close-${Date.now()}`;
-            const responseChannel = 'closeWindow:response';
-            const handler = (_e: Electron.IpcMainEvent, respRequestId: string, response: unknown) => {
-                if (respRequestId !== requestId) return;
-                ipcMain.removeListener(responseChannel, handler);
-                const result = response as { action: string; dontAsk: boolean };
-                if (result.action === 'cancel') {
-                    isCloseDialogShowing = false;
-                    return;
-                }
-                if (result.dontAsk) {
-                    guiConfig.on_mainwindow_close = result.action === 'quit' ? 'quit' : 'minimize';
-                    setting.setData(data);
-                }
-                if (result.action === 'quit') {
-                    app.quit();
-                } else {
-                    mainWindow.hide();
-                }
-                isCloseDialogShowing = false;
-            };
-            ipcMain.on(responseChannel, handler);
-            safeSendToWebContents(mainWindow.webContents, 'closeWindow:request', requestId);
-        }
-    });
+    mainWindow.on(
+        'close',
+        createMainWindowCloseHandler({
+            isAppQuitting: () => isAppQuitting,
+            window: mainWindow,
+            getSettingData: () => Setting.getInstance().getData() as Record<string, unknown>,
+            saveSettingData: (data) => Setting.getInstance().setData(data),
+            ipcMain,
+            quit: () => app.quit(),
+            sendToRenderer: (channel, ...args) => safeSendToWebContents(mainWindow.webContents, channel, ...args)
+        })
+    );
 
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
     const inAppSchemePrefixes = Array.from(
