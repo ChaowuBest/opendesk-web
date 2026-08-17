@@ -1278,8 +1278,10 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',
-    'renderer.agentInput.placeholder.enter': '在这里输入消息，或者将文件拖拽到此处，按回车发送',
-    'renderer.agentInput.placeholder.ctrlEnter': '在这里输入消息，或者将文件拖拽到此处，按 Ctrl+Enter 发送',
+    'renderer.agentInput.placeholder.enter':
+        '输入消息 · 拖拽文件 · 按 {iconEnter}Enter 发送 · {iconShift}Shift + {iconEnter}Enter 换行',
+    'renderer.agentInput.placeholder.ctrlEnter':
+        '输入消息 · 拖拽文件 · 按 {iconCtrl}Ctrl + {iconEnter}Enter 发送 · {iconShift}Shift + {iconEnter}Enter 换行',
     'renderer.agentInput.modelRequired': '请先选择模型才能开始对话',
     'renderer.agentInput.model.visionTag': '视觉',
     'renderer.agentInput.submit.sendLabel': '发送',
@@ -1984,7 +1986,10 @@ export const zhCn: Record<string, string> = {
     'agentoffice.noStaffHint': '新建一位员工，或从 zip 数字员工包导入。',
     'agentoffice.selectStaff': '请选择一位员工',
     'agentoffice.noMessages': '开始与这位数字员工对话吧',
-    'agentoffice.messagePlaceholder': '输入消息，Enter 发送，Shift+Enter 换行',
+    'agentoffice.messagePlaceholder':
+        '输入消息 · 拖拽文件 · 按 {iconEnter}Enter 发送 · {iconShift}Shift + {iconEnter}Enter 换行',
+    'agentoffice.messagePlaceholder.ctrlEnter':
+        '输入消息 · 拖拽文件 · 按 {iconCtrl}Ctrl + {iconEnter}Enter 发送 · {iconShift}Shift + {iconEnter}Enter 换行',
     'agentoffice.send': '发送',
     'agentoffice.attach': '添加附件',
     'agentoffice.ctrlEnterSend': '按 Ctrl+Enter 发送',

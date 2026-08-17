@@ -1309,8 +1309,10 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',
-    'renderer.agentInput.placeholder.enter': 'Type a message, or drag files here, press Enter to send',
-    'renderer.agentInput.placeholder.ctrlEnter': 'Type a message, or drag files here, press Ctrl+Enter to send',
+    'renderer.agentInput.placeholder.enter':
+        'Type a message · Drag files · Press {iconEnter}Enter to send · {iconShift}Shift + {iconEnter}Enter for new line',
+    'renderer.agentInput.placeholder.ctrlEnter':
+        'Type a message · Drag files · Press {iconCtrl}Ctrl + {iconEnter}Enter to send · {iconShift}Shift + {iconEnter}Enter for new line',
     'renderer.agentInput.modelRequired': 'Please choose a model before chatting',
     'renderer.agentInput.model.visionTag': 'vision',
     'renderer.agentInput.submit.sendLabel': 'Send',
@@ -2037,7 +2039,10 @@ export const enUs: Record<string, string> = {
     'agentoffice.noStaffHint': 'Create a staff member or import a digital staff zip package.',
     'agentoffice.selectStaff': 'Select a staff member',
     'agentoffice.noMessages': 'Start a conversation with this digital staff member',
-    'agentoffice.messagePlaceholder': 'Message; Enter to send, Shift+Enter for a new line',
+    'agentoffice.messagePlaceholder':
+        'Type a message · Drag files · Press {iconEnter}Enter to send · {iconShift}Shift + {iconEnter}Enter for new line',
+    'agentoffice.messagePlaceholder.ctrlEnter':
+        'Type a message · Drag files · Press {iconCtrl}Ctrl + {iconEnter}Enter to send · {iconShift}Shift + {iconEnter}Enter for new line',
     'agentoffice.send': 'Send',
     'agentoffice.attach': 'Add attachment',
     'agentoffice.ctrlEnterSend': 'Press Ctrl+Enter to send',

@@ -10,6 +10,7 @@
  */
 
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
+import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../common/utils/keys.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -309,6 +310,8 @@ class AgentInput extends HTMLElement {
         // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
         this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.(async (newData) => {
             this._t = createRendererTranslator(newData);
+            // 发送快捷键设置变化时实时同步 placeholder 与提交按钮提示
+            this.applySendShortcutSetting(newData);
             const newModels = filterChatModels(newData.models);
             this.availableModels = newModels;
             this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
@@ -460,6 +463,18 @@ class AgentInput extends HTMLElement {
         } catch (err) {
             console.warn('Failed to save ctrl_enter_send setting:', err);
         }
+        this.updateSubmitTooltip();
+        this.updatePlaceholder();
+    }
+
+    /**
+     * 应用设置变更中的发送快捷键配置（设置面板切换时实时同步已有组件）。
+     * @param {object} newData 设置对象
+     */
+    applySendShortcutSetting(newData) {
+        const newCtrlEnterSend = !!newData?.gui_config?.ctrl_enter_send;
+        if (this.ctrlEnterSend === newCtrlEnterSend) return;
+        this.ctrlEnterSend = newCtrlEnterSend;
         this.updateSubmitTooltip();
         this.updatePlaceholder();
     }
@@ -933,13 +948,20 @@ class AgentInput extends HTMLElement {
         if (textarea) {
             // 判断是否需要禁用：仅对话输入依赖对话模型，文件搜索不依赖。
             const shouldDisable = this.isModelNotSelected && !this.searchMode;
+            const overlay = this.querySelector('#agent-input-placeholder');
             if (shouldDisable) {
                 textarea.disabled = true;
                 textarea.classList.add('opacity-50', 'cursor-not-allowed');
-                textarea.placeholder = this.t('renderer.agentInput.modelRequired');
+                const requiredText = this.t('renderer.agentInput.modelRequired');
+                textarea.placeholder = requiredText;
+                if (overlay) {
+                    overlay.textContent = requiredText;
+                    overlay.classList.add('is-muted');
+                }
             } else {
                 textarea.disabled = false;
                 textarea.classList.remove('opacity-50', 'cursor-not-allowed');
+                overlay?.classList.remove('is-muted');
                 this.updatePlaceholder();
             }
         }
@@ -986,8 +1008,26 @@ class AgentInput extends HTMLElement {
 
     updatePlaceholder() {
         const textarea = this.querySelector('#agent-input-textarea');
+        const overlay = this.querySelector('#agent-input-placeholder');
         if (!textarea || this.isDisabled || (this.isModelNotSelected && !this.searchMode)) return;
-        textarea.placeholder = this.getInputPlaceholder();
+        const text = this.getInputPlaceholder();
+        textarea.placeholder = text;
+        if (overlay) overlay.innerHTML = this.buildPlaceholderHTML();
+    }
+
+    /**
+     * 生成富文本 placeholder：对话输入在「{iconEnter}」「{iconShift}」占位处插入对应键图标，
+     * 其余场景（搜索/禁用/录音等）回退为纯文本。
+     * @returns {string}
+     */
+    buildPlaceholderHTML() {
+        const tpl = this._placeholderTemplate();
+        if (this.searchMode) return escapeHtml(tpl);
+        // 先整体转义模板文本，再替换键名占位符为对应图标 HTML
+        return escapeHtml(tpl)
+            .replaceAll('{iconEnter}', `<span class="agent-input-ph-key">${ENTER_KEY_ICON_SVG}</span>`)
+            .replaceAll('{iconShift}', `<span class="agent-input-ph-key">${SHIFT_KEY_ICON_SVG}</span>`)
+            .replaceAll('{iconCtrl}', `<span class="agent-input-ph-key">${CTRL_KEY_ICON_SVG}</span>`);
     }
 
     t(key, params) {
@@ -995,6 +1035,13 @@ class AgentInput extends HTMLElement {
     }
 
     getInputPlaceholder() {
+        return this._placeholderTemplate()
+            .replaceAll('{iconEnter}', '')
+            .replaceAll('{iconShift}', '')
+            .replaceAll('{iconCtrl}', '');
+    }
+
+    _placeholderTemplate() {
         if (this.searchMode) {
             return this.t('renderer.agentInput.placeholder.search');
         }
@@ -1018,6 +1065,20 @@ class AgentInput extends HTMLElement {
         if (submitBtn) {
             submitBtn.title = this.getSubmitTitle();
         }
+    }
+
+    /**
+     * 在 textarea 光标处插入换行并保持焦点
+     * （用于 Enter 发送模式下 Ctrl+Enter / Ctrl+Shift+Enter 换行）。
+     * @param {HTMLTextAreaElement} textarea
+     */
+    insertNewlineAtCursor(textarea) {
+        if (!textarea) return;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        textarea.setRangeText('\n', start, end, 'end');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
     }
 
     updateSendButtonState() {
@@ -1131,6 +1192,7 @@ class AgentInput extends HTMLElement {
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
         const currentNodeLabel = this.selectedExecutionNodeLabel || 'Local';
         const inputPlaceholder = this.getInputPlaceholder();
+        const inputPlaceholderHTML = this.buildPlaceholderHTML();
         const submitTitle = this.getSubmitTitle();
         const submitIcon = 'fa-arrow-up';
         const submitLabel = this.getSubmitLabel();
@@ -1175,11 +1237,15 @@ class AgentInput extends HTMLElement {
                 <!-- 主要输入区域 -->
                 <div class="px-3.5 pt-2.5 pb-1">
                     ${this.attachedFilePaths.length > 0 ? `<div class="agent-input-file-tags">${fileTags}</div>` : ''}
-                    <textarea
-                        id="agent-input-textarea"
-                        placeholder="${inputPlaceholder}"
-                        class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
-                    ></textarea>
+                    <div class="relative">
+                        <textarea
+                            id="agent-input-textarea"
+                            placeholder="${inputPlaceholder}"
+                            aria-label="${inputPlaceholder}"
+                            class="w-full h-14 resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
+                        ></textarea>
+                        <div id="agent-input-placeholder" class="agent-input-placeholder" aria-hidden="true">${inputPlaceholderHTML}</div>
+                    </div>
                 </div>
 
                 <!-- 工具栏 -->
@@ -2790,6 +2856,10 @@ class AgentInput extends HTMLElement {
                 if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                     e.preventDefault();
                     void handleSubmit();
+                } else if (e.key === 'Enter' && e.ctrlKey) {
+                    // Ctrl+Enter（含 Ctrl+Shift+Enter）换行：textarea 默认仅 Enter/Shift+Enter 换行
+                    e.preventDefault();
+                    this.insertNewlineAtCursor(textarea);
                 }
             }
         });
@@ -2898,7 +2968,10 @@ class AgentInput extends HTMLElement {
             /* ignore */
         }
         try {
-            textarea.placeholder = idlePlaceholder || this.getInputPlaceholder();
+            const ph = idlePlaceholder || this.getInputPlaceholder();
+            textarea.placeholder = ph;
+            const overlay = this.querySelector('#agent-input-placeholder');
+            if (overlay) overlay.innerHTML = this.buildPlaceholderHTML();
         } catch {
             /* ignore */
         }
@@ -3002,7 +3075,10 @@ class AgentInput extends HTMLElement {
             this._speechBaseText = textarea.value;
             speechBtn?.classList.add('speech-recording');
             speechBtn.title = this.t('renderer.agentInput.recording.stopTitle');
-            textarea.placeholder = recordingPlaceholder || this.t('renderer.agentInput.recording.listening');
+            const recordingText = recordingPlaceholder || this.t('renderer.agentInput.recording.listening');
+            textarea.placeholder = recordingText;
+            const overlay = this.querySelector('#agent-input-placeholder');
+            if (overlay) overlay.textContent = recordingText;
             textarea.classList.add('speech-interim');
             this.updateInputState();
             this.startSpeechPreviewPolling(textarea, speechBtn, options);

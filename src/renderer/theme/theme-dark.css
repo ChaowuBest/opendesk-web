@@ -609,10 +609,19 @@ html[data-theme='dark'] agent-input #agent-input-textarea {
     background: transparent !important;
 }
 
-html[data-theme='dark'] agent-input #agent-input-textarea::placeholder,
+html[data-theme='dark'] agent-input #agent-input-textarea::placeholder {
+    /* 视觉由富文本覆盖层承担，原生 placeholder 文本透明 */
+    color: transparent !important;
+    opacity: 1;
+}
+
 html[data-theme='dark'] agent-input [class*='placeholder-gray']::placeholder {
     color: var(--od-text-muted) !important;
     opacity: 1;
+}
+
+html[data-theme='dark'] agent-input .agent-input-placeholder {
+    color: var(--od-text-muted) !important;
 }
 
 html[data-theme='dark'] agent-input .agent-input-toolbar {
