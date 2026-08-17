@@ -16,6 +16,7 @@ import os from 'os';
 import { createRequire } from 'module';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
+import type { ReasoningEffort } from '../aikernel/types/reasoning.js';
 
 const require = createRequire(import.meta.url);
 
@@ -161,8 +162,6 @@ const ModelSchema = z.preprocess(
     z.discriminatedUnion('model_type', [ChatModelSchema, EmbeddingModelSchema])
 );
 
-/** 控制模型推理深度，空字符串表示使用模型默认值 */
-type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high' | 'max';
 type ModelType = z.infer<typeof ModelTypeSchema>;
 type ChatModel = z.infer<typeof ChatModelSchema>;
 type EmbeddingModel = z.infer<typeof EmbeddingModelSchema>;
