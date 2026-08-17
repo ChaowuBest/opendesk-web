@@ -35,7 +35,6 @@ import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 import { registerServeCommand } from './tui/subcommands/serve.js';
@@ -146,7 +145,6 @@ function parseCommandLineArgs() {
     );
     prog.option('-v, --version', 'print the version');
 
-    registerPluginsCommand(prog);
     registerToolsCommand(prog);
     registerQuickpassCommand(prog);
     registerServeCommand(prog);

@@ -1,823 +1,583 @@
-# OpenDesk Plugin 系统
+# OpenDesk 插件开发指南
 
-本文档详细说明 OpenDesk 的插件管理系统，包括插件的安装、加载机制以及 Channel 消息通信的完整执行流程。
+OpenDesk 插件由独立应用 `pluginmgr` 负责发现、安装、启停、校验和加载：
 
-## 目录
+- 插件管理实现位于 `src/main/applications/pluginmgr/`。
+- 插件可以扩展 OpenDesk 的 AI 运行时。
 
-1. [系统架构概览](#系统架构概览)
-2. [插件管理](#插件管理)
-    - [安装流程](#安装流程)
-    - [卸载流程](#卸载流程)
-    - [启用/禁用](#启用禁用)
-3. [插件加载机制](#插件加载机制)
-    - [入口点解析](#入口点解析)
-    - [TypeScript 编译](#typescript-编译)
-    - [插件注册](#插件注册)
-4. [OpenClaw 兼容层](#openclaw-兼容层)
-5. [Channel 消息通信](#channel-消息通信)
-    - [消息插件结构](#消息插件结构)
-    - [消息流转流程](#消息流转流程)
-    - [会话管理](#会话管理)
-6. [核心类型定义](#核心类型定义)
-7. [扩展开发指南](#扩展开发指南)
+插件在 OpenDesk 主进程内作为受信任的 Node.js 代码执行。能力声明、授权和完整性检查用于
+约束 OpenDesk contribution 的加载，不是操作系统级沙箱。安装第三方插件前仍应审查来源。
 
----
+## 插件目录
 
-## 系统架构概览
+`pluginmgr` 使用 OpenDesk 配置目录下的 `plugins` 作为全局插件目录，与 `extensions` 目录同级：
 
-OpenDesk 的插件系统采用与 OpenClaw 兼容的设计，支持通过 npm 安装第三方消息插件。整体架构如下：
+- Windows：`%APPDATA%\opendesk\plugins`
+- Linux/macOS：`~/.opendesk/plugins`
+- 使用 `--config-directory <dir>` 或 `OPENDESK_CONFIG_DIRECTORY` 后：`<dir>/plugins`
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        OpenDesk 主程序                           │
-├─────────────────────────────────────────────────────────────────┤
-│  CLI 入口 (cli.ts)  │  TUI 界面  │  Applications 注册表          │
-├─────────────────────────────────────────────────────────────────┤
-│                    ChannelsApplication                          │
-│              (消息插件管理应用)                                    │
-├──────────────────────────┬──────────────────────────────────────┤
-│   Plugin Manager         │      ChannelMessageRouter            │
-│   (插件管理器)            │      (消息路由器)                     │
-├──────────────────────────┴──────────────────────────────────────┤
-│                    OpenClaw 兼容层 (Shim)                        │
-├─────────────────────────────────────────────────────────────────┤
-│                    消息插件 (Channel Plugins)                    │
-│         例如: @ynhcj/xiaoyi, discord-plugin, slack-plugin       │
-└─────────────────────────────────────────────────────────────────┘
+目录结构如下：
+
+```text
+plugins/
+├── review-helper/                       # 手工放入的本地插件
+├── standalone.mjs                       # 手工放入的单文件插件
+├── managed-plugin-id/                   # pluginmgr 管理的安装容器
+│   └── node_modules/
+│       └── opendesk-plugin-example/
+└── .pluginmgr/
+    ├── registry.json                    # 安装、启用、配置和授权记录
+    ├── staging/                         # 安装暂存目录
+    ├── cache/
+    └── trash/                           # 被替换或卸载的托管插件
 ```
 
-**核心文件：**
-
-| 文件路径                                                                                      | 职责                       |
-| --------------------------------------------------------------------------------------------- | -------------------------- |
-| [`src/main/plugins/manager.ts`](../src/main/plugins/manager.ts)                               | 插件安装、卸载、加载管理   |
-| [`src/main/plugins/types.ts`](../src/main/plugins/types.ts)                                   | 插件类型定义               |
-| [`src/main/applications/channelmgr/app.ts`](../src/main/applications/channelmgr/app.ts)       | 消息插件应用，管理生命周期 |
-| [`src/main/applications/channelmgr/router.ts`](../src/main/applications/channelmgr/router.ts) | 消息路由，对接 AI Agent    |
-| [`src/main/cli.ts`](../src/main/cli.ts)                                                       | CLI 命令入口               |
-
----
-
-## 插件管理
-
-### 安装流程
-
-插件通过 npm 安装到 OpenDesk 的扩展目录中。安装流程如下：
-
-```
-用户执行: opendesk plugins install @ynhcj/xiaoyi@latest
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. 确保扩展目录存在                                          │
-│     ~/.opendesk/extensions/                                  │
-│     └── package.json (npm 初始化)                            │
-├─────────────────────────────────────────────────────────────┤
-│  2. 执行 npm install                                         │
-│     npm install @ynhcj/xiaoyi@latest --ignore-scripts --save │
-│     (使用 --ignore-scripts 确保安全性)                        │
-├─────────────────────────────────────────────────────────────┤
-│  3. 生成 OpenClaw 兼容层                                      │
-│     node_modules/openclaw/                                   │
-│     ├── package.json                                         │
-│     ├── index.js                                             │
-│     └── plugin-sdk/                                          │
-│         ├── index.js (SDK 函数 shim)                         │
-│         ├── account-id.js                                    │
-│         └── keyed-async-queue.js                             │
-├─────────────────────────────────────────────────────────────┤
-│  4. 读取插件清单                                              │
-│     openclaw.plugin.json 或 package.json                     │
-├─────────────────────────────────────────────────────────────┤
-│  5. 保存安装记录                                              │
-│     plugins.json:                                            │
-│     [{                                                       │
-│       id: "xiaoyi",                                          │
-│       npmSpec: "@ynhcj/xiaoyi@latest",                       │
-│       installedAt: "2026-03-07T...",                         │
-│       enabled: true,                                         │
-│       source: "npm"                                          │
-│     }]                                                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**关键代码：**
-
-```typescript
-// src/main/plugins/manager.ts
-export async function installPlugin(npmSpec: string): Promise<{ success: boolean; id?: string; error?: string }> {
-    const extensionsDir = getExtensionsDir();
-    ensureExtensionPackageJson();
-
-    // 执行 npm 安装
-    execSync(`npm install ${npmSpec} --ignore-scripts --save`, {
-        cwd: extensionsDir,
-        stdio: 'pipe',
-        timeout: 120000
-    });
-
-    // 确保兼容层存在
-    ensureOpenClawShim();
-
-    // 读取清单并保存记录
-    const manifest = loadManifest(pkgName);
-    saveInstallRecord(manifest);
-}
-```
-
-**目录结构：**
-
-```
-~/.opendesk/
-├── setting.json              # OpenDesk 配置
-└── extensions/
-    ├── package.json          # npm 依赖管理
-    ├── plugins.json          # 插件安装记录
-    └── node_modules/
-        ├── openclaw/         # 兼容层 shim
-        └── @ynhcj/
-            └── xiaoyi/       # 安装的插件
-                ├── package.json
-                ├── openclaw.plugin.json
-                └── index.ts
-```
-
-### 卸载流程
-
-```
-用户执行: opendesk plugins uninstall xiaoyi
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. 查找安装记录                                              │
-│     从 plugins.json 中查找匹配的插件                           │
-├─────────────────────────────────────────────────────────────┤
-│  2. 执行 npm uninstall                                       │
-│     npm uninstall @ynhcj/xiaoyi                              │
-├─────────────────────────────────────────────────────────────┤
-│  3. 更新安装记录                                              │
-│     从 plugins.json 中移除对应条目                            │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 启用/禁用
-
-插件可以通过修改安装记录中的 `enabled` 字段来控制是否加载：
-
-```typescript
-export function setPluginEnabled(pluginId: string, enabled: boolean): boolean {
-    const records = loadInstallRecords();
-    const record = records.find((r) => r.id === pluginId);
-    if (!record) return false;
-    record.enabled = enabled;
-    saveInstallRecords(records);
-    return true;
-}
-```
-
-**CLI 命令：**
-
-```bash
-opendesk plugins list              # 列出所有已安装插件
-opendesk plugins enable <id>       # 启用插件
-opendesk plugins disable <id>      # 禁用插件
-```
-
----
-
-## 插件加载机制
-
-### 入口点解析
-
-插件加载时，系统按以下优先级查找入口文件：
-
-```
-1. package.json → openclaw.extensions[0]
-   例如: "openclaw": { "extensions": ["./index.ts"] }
-
-2. package.json → exports["."].import / exports["."].default
-
-3. package.json → module 字段
-
-4. package.json → main 字段
-
-5. 默认文件: index.ts 或 index.js
-```
-
-**解析代码：**
-
-```typescript
-function resolvePluginEntryPoint(pluginDir: string): string | null {
-    const pkgJson = loadPackageJson(pluginDir);
-
-    // 1. openclaw.extensions 字段
-    const extensions = pkgJson?.openclaw?.extensions;
-    if (Array.isArray(extensions) && extensions.length > 0) {
-        const entry = path.join(pluginDir, extensions[0]);
-        if (fs.existsSync(entry)) return entry;
-    }
-
-    // 2. exports 字段
-    if (pkgJson.exports) {
-        const root = pkgJson.exports['.']?.import || pkgJson.exports['.']?.default;
-        if (root) return path.join(pluginDir, root);
-    }
-
-    // 3. module / main 字段
-    for (const field of ['module', 'main']) {
-        if (pkgJson[field]) return path.join(pluginDir, pkgJson[field]);
-    }
-
-    // 4. 默认入口
-    for (const name of ['index.ts', 'index.js']) {
-        const entry = path.join(pluginDir, name);
-        if (fs.existsSync(entry)) return entry;
-    }
-
-    return null;
-}
-```
-
-### TypeScript 编译
-
-对于 TypeScript 插件，系统使用 esbuild 进行即时编译：
-
-```
-插件入口: index.ts
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. 检查缓存                                                  │
-│     .opendesk-compiled.mjs                                   │
-│     如果已编译且源文件未修改，直接使用缓存                       │
-├─────────────────────────────────────────────────────────────┤
-│  2. 收集外部依赖                                              │
-│     从 package.json 的 dependencies/peerDependencies 中提取   │
-├─────────────────────────────────────────────────────────────┤
-│  3. esbuild 编译                                              │
-│     esbuild.build({                                          │
-│       entryPoints: [entryPoint],                             │
-│       outfile: compiledPath,                                 │
-│       bundle: true,                                          │
-│       format: 'esm',                                         │
-│       platform: 'node',                                      │
-│       target: 'node20',                                      │
-│       external: externalPackages                             │
-│     })                                                       │
-├─────────────────────────────────────────────────────────────┤
-│  4. 动态导入                                                  │
-│     import('file://' + compiledPath)                         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**编译代码：**
-
-```typescript
-async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): Promise<string | null> {
-    const compiledPath = path.join(pluginDir, '.opendesk-compiled.mjs');
-
-    // 缓存检查
-    if (fs.existsSync(compiledPath)) {
-        const compiledMtime = fs.statSync(compiledPath).mtimeMs;
-        const sourceMtime = fs.statSync(entryPoint).mtimeMs;
-        if (compiledMtime > sourceMtime) return compiledPath;
-    }
-
-    // 收集外部依赖
-    const externalPackages = collectExternalPackages(pluginDir);
-
-    // esbuild 编译
-    const esbuild = await import('esbuild');
-    await esbuild.build({
-        entryPoints: [entryPoint],
-        outfile: compiledPath,
-        bundle: true,
-        format: 'esm',
-        platform: 'node',
-        target: 'node20',
-        external: externalPackages
-    });
-
-    return compiledPath;
-}
-```
-
-### 插件注册
-
-加载插件模块后，系统调用插件的注册函数并传入 API 对象：
-
-```typescript
-async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntry | null> {
-    // 1. 解析入口点
-    const entryPoint = resolvePluginEntryPoint(pluginDir);
-
-    // 2. 加载模块（TypeScript 需编译）
-    let pluginModule;
-    if (entryPoint?.endsWith('.ts')) {
-        const compiledPath = await compileTypeScriptPlugin(entryPoint, pluginDir);
-        pluginModule = await import('file://' + compiledPath);
-    } else {
-        pluginModule = require(pkgName);
-    }
-
-    // 3. 创建 API 对象
-    let channelPlugin: ChannelPlugin | null = null;
-    const api = createPluginApi(entry, (cp: ChannelPlugin) => {
-        channelPlugin = cp; // 回调捕获注册的 ChannelPlugin
-    });
-
-    // 4. 调用注册函数
-    if (typeof pluginModule === 'function') {
-        await pluginModule(api); // 导出为函数
-    } else if (typeof pluginModule?.register === 'function') {
-        await pluginModule.register(api); // 导出为 { register } 对象
-    }
-
-    // 5. 保存结果
-    if (channelPlugin) {
-        entry.channelPlugin = channelPlugin;
-    }
-
-    return entry;
-}
-```
-
----
-
-## OpenClaw 兼容层
-
-OpenDesk 实现了 OpenClaw 插件 SDK 的兼容层（Shim），使 OpenClaw 生态的插件可以直接在 OpenDesk 中运行。
-
-### Shim 结构
-
-```
-~/.opendesk/extensions/node_modules/openclaw/
-├── package.json           # 模块定义和导出映射
-├── index.js               # 主入口（空导出）
-└── plugin-sdk/
-    ├── index.js           # SDK 主模块（包含所有辅助函数）
-    ├── account-id.js      # 账户 ID 处理
-    └── keyed-async-queue.js  # 异步队列
-```
-
-### 提供的 SDK 函数
-
-兼容层提供了以下 OpenClaw SDK 函数：
-
-| 类别         | 函数                                    | 说明                 |
-| ------------ | --------------------------------------- | -------------------- |
-| **账户管理** | `createAccountListHelpers()`            | 创建账户列表辅助函数 |
-|              | `normalizeAccountId()`                  | 规范化账户 ID        |
-|              | `isDefaultAccountId()`                  | 判断是否默认账户     |
-| **配置解析** | `resolveChannelAccountConfigBasePath()` | 解析配置路径         |
-|              | `resolveThreadSessionKeys()`            | 解析会话键           |
-| **消息处理** | `createNormalizedOutboundDeliverer()`   | 创建消息发送器       |
-|              | `buildMediaPayload()`                   | 构建媒体消息         |
-| **状态管理** | `buildBaseChannelStatusSummary()`       | 构建状态摘要         |
-|              | `createDefaultChannelRuntimeState()`    | 创建运行状态         |
-| **安全验证** | `normalizeAllowFrom()`                  | 规范化允许列表       |
-|              | `isAllowedParsedChatSender()`           | 检查发送者权限       |
-| **工具函数** | `acquireFileLock()`                     | 文件锁               |
-|              | `createDedupeCache()`                   | 去重缓存             |
-|              | `createFixedWindowRateLimiter()`        | 速率限制             |
-
-### API 对象
-
-插件注册时接收的 API 对象：
-
-```typescript
-interface OpenClawPluginApi {
-    id: string; // 插件 ID
-    name: string; // 插件名称
-    version?: string; // 版本
-    description?: string; // 描述
-    source: string; // 来源
-    config: any; // 配置
-    logger: PluginLogger; // 日志器
-
-    // 注册方法
-    registerChannel: (registration: any) => void; // 注册消息插件
-    registerTool: (tool: any, opts?: any) => void;
-    registerHook: (events: string | string[], handler: any, opts?: any) => void;
-    registerHttpHandler: (handler: any) => void;
-    registerHttpRoute: (params: { path: string; handler: any }) => void;
-    registerGatewayMethod: (method: string, handler: any) => void;
-    registerCli: (registrar: any, opts?: any) => void;
-    registerService: (service: any) => void;
-    registerProvider: (provider: any) => void;
-    registerCommand: (command: any) => void;
-
-    // 其他
-    resolvePath: (input: string) => string;
-    on: (hookName: string, handler: any, opts?: any) => void;
-}
-```
-
----
-
-## Channel 消息通信
-
-### 消息插件结构
-
-一个完整的消息插件（ChannelPlugin）包含以下组件：
-
-```typescript
-interface ChannelPlugin {
-    id: ChannelId; // 插件唯一标识
-    meta: ChannelMeta; // 元信息（标签、描述等）
-    capabilities: ChannelCapabilities; // 能力声明
-
-    // 配置适配器
-    config: ChannelConfigAdapter;
-
-    // 出站消息适配器（发送消息）
-    outbound?: ChannelOutboundAdapter;
-
-    // 网关适配器（接收消息）
-    gateway?: ChannelGatewayAdapter;
-
-    // 状态适配器
-    status?: ChannelStatusAdapter;
-
-    // 其他可选组件
-    auth?: any; // 认证
-    threading?: any; // 线程支持
-    messaging?: ChannelMessagingAdapter;
-    agentPrompt?: any; // Agent 提示词
-    agentTools?: any; // Agent 工具
-}
-```
-
-**核心适配器说明：**
-
-| 适配器     | 职责     | 关键方法                                     |
-| ---------- | -------- | -------------------------------------------- |
-| `config`   | 配置管理 | `listAccountIds()`, `resolveAccount()`       |
-| `outbound` | 发送消息 | `sendText()`, `sendPayload()`, `sendMedia()` |
-| `gateway`  | 接收消息 | `startAccount()`, `stopAccount()`            |
-| `status`   | 状态监控 | `buildChannelSummary()`                      |
-
-### 消息流转流程
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           消息接收流程                                    │
-└──────────────────────────────────────────────────────────────────────────┘
-
-外部消息平台 (微信/Discord/Slack等)
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  1. 插件 Gateway 接收消息                                                 │
-│     gateway.startAccount(ctx) 启动时注册的消息监听器                       │
-│     调用 ctx.dispatch(message)                                           │
-├─────────────────────────────────────────────────────────────────────────┤
-│  2. ChannelsApplication.handleInboundMessage()                          │
-│     - 记录日志                                                            │
-│     - 发送事件通知 (channel:message)                                      │
-│     - 调用 router.routeInboundMessage()                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│  3. ChannelMessageRouter.routeInboundMessage()                          │
-│     - 生成会话键: channelId:accountId:senderId                           │
-│     - 查找或创建任务 (Task)                                               │
-│     - 触发 onTaskResolved 回调：                                         │
-│       · 自动将用户前台切换到该任务                                        │
-│       · 发送通知告知用户收到新消息                                        │
-│     - 格式化消息                                                          │
-│     - 提交给 AI Agent 处理                                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│  4. AI Agent 处理                                                        │
-│     - 加载工具集 (Toolsets)                                               │
-│     - 执行 LLM 推理                                                       │
-│     - 生成回复                                                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│  5. 返回回复                                                              │
-│     router 返回回复文本                                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│  6. 发送回复                                                              │
-│     outbound.sendText({ to, text, ... })                                │
-└─────────────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-外部消息平台（回复送达用户）
-```
-
-**详细代码流程：**
-
-```typescript
-// 1. Gateway 接收消息
-// 插件内部调用 ctx.dispatch()
-ctx.dispatch({
-    channelId: 'xiaoyi',
-    accountId: 'default',
-    senderId: 'user123',
-    senderName: '张三',
-    text: '你好',
-    chatType: 'direct',
-    messageId: 'msg-001'
-});
-
-// 2. ChannelsApplication 处理
-private async handleInboundMessage(cp: ChannelPlugin, accountId: string, message: InboundChannelMessage) {
-    this.emitEvent('channel:message', { channelId, accountId, senderId, text });
-    const reply = await this.router.routeInboundMessage(message);
-    if (reply && cp.outbound?.sendText) {
-        await cp.outbound.sendText({
-            channelId: cp.id,
-            accountId,
-            to: message.senderId,
-            text: reply,
-            replyToMessageId: message.messageId
-        });
-    }
-}
-
-// 3. Router 路由消息
-async routeInboundMessage(message: InboundChannelMessage): Promise<string | null> {
-    const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
-    const task = this.findActiveTask(sessionKey) ?? await this.createSessionTask(sessionKey, message);
-
-    // 通知前端：自动切换到该任务并发送通知
-    this.onTaskResolved?.(task, message);
-
-    const reply = await this.submitAndWaitForReply(task, message.text);
-    return reply;
-}
-```
-
-### 会话管理
-
-系统使用任务键（taskKey）来关联同一发送者的多条消息，实现上下文连续对话：
-
-```
-任务键格式:
-  - 群组消息: {channelId}:{accountId}:{groupId}
-  - 私信: {channelId}:{accountId}:{senderId}
-
-示例: xiaoyi:default:user123 (私信)
-示例: xiaoyi:default:group456 (群组)
-
-taskMap: Map<taskKey, TaskEntry>
-```
-
-**任务创建流程：**
-
-```typescript
-private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
-    // 1. 创建新任务
-    const task = this.taskManagerState.createTask(this.model);
-
-    // 2. 生成系统提示词（包含 Channel 上下文）
-    const systemPrompt = await this.agentDecl.createSystemPrompt();
-    const channelContext = [
-        systemPrompt,
-        '--- Channel Context ---',
-        `Channel: ${message.channelId}`,
-        `Sender: ${message.senderName || message.senderId}`,
-        message.chatType === 'group' ? `Group: ${message.groupName}` : '',
-        'Please respond concisely and naturally...'
-    ].join('\n');
-
-    await task.setSystemPrompt(channelContext);
-
-    // 3. 记录任务映射
-    task.task_name = `消息: ${message.senderName || message.senderId}`;
-    taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
-
-    return task;
-}
-```
-
-**消息处理流程：**
-
-```typescript
-private async submitAndWaitForReply(task: TaskState, userText: string): Promise<string | null> {
-    // 1. 创建用户消息
-    const userMessage = new UserMessage(userText);
-    const assistantMessage = new AssistantMessage();
-    task.chat_context.appendMessage(userMessage);
-    task.chat_context.appendMessage(assistantMessage);
-
-    // 2. 加载工具集
-    const toolsets = await ApplicationRegistry.listAvailableToolsets();
-    const skillToolset = SkillRegistry.getInstance().getToolset();
-    const memoryToolset = createMemoryToolset();
-    task.chat_context.attachToolsets(...toolsets, skillToolset, memoryToolset);
-
-    // 3. 执行任务
-    task.processTaskTurn();
-    await task.waitUntilFinished();
-
-    // 4. 提取回复
-    const lastMsg = task.chat_context.lastMessage();
-    if (lastMsg instanceof AssistantMessage) {
-        return extractTextFromMessage(lastMsg);
-    }
-    return null;
-}
-```
-
----
-
-## 核心类型定义
-
-### 插件安装记录
-
-```typescript
-interface PluginInstallRecord {
-    id: string; // 插件 ID
-    npmSpec: string; // npm 规格字符串
-    installedAt: string; // 安装时间 (ISO 8601)
-    enabled: boolean; // 是否启用
-    source: 'npm' | 'local'; // 安装来源
-    path?: string; // 本地路径
-}
-```
-
-### 插件入口
-
-```typescript
-interface PluginEntry {
-    id: string; // 插件 ID
-    manifest: PluginManifest; // 清单信息
-    installRecord: PluginInstallRecord;
-    module?: any; // 加载的模块
-    channelPlugin?: ChannelPlugin; // 解析出的消息插件
-}
-```
-
-### 入站消息
-
-```typescript
-interface InboundChannelMessage {
-    channelId: string; // 渠道 ID
-    accountId: string; // 账户 ID
-    senderId: string; // 发送者 ID
-    senderName?: string; // 发送者名称
-    text: string; // 消息文本
-    chatType: 'direct' | 'group'; // 聊天类型
-    groupId?: string; // 群组 ID（群聊）
-    groupName?: string; // 群组名称
-    threadId?: string; // 线程 ID
-    messageId?: string; // 消息 ID
-    replyToMessageId?: string; // 回复的消息 ID
-    media?: any[]; // 媒体附件
-    raw?: any; // 原始数据
-}
-```
-
-### Gateway 上下文
-
-```typescript
-interface ChannelGatewayContext<ResolvedAccount = any> {
-    accountId: string;
-    account: ResolvedAccount;
-    cfg: any;
-    logger: PluginLogger;
-    log?: PluginLogger; // 兼容别名
-    runtime?: {
-        log?: (...args: any[]) => void;
-        error?: (...args: any[]) => void;
-        warn?: (...args: any[]) => void;
-        platform: string;
-    };
-    abortSignal?: AbortSignal;
-    dispatch: ChannelDispatchFn; // 消息分发函数
-    setStatus: (status: ChannelAccountStatus) => void;
-}
-```
-
----
-
-## 扩展开发指南
-
-### 创建消息插件
-
-1. **创建项目结构**
-
-```
-my-channel-plugin/
-├── package.json
-├── openclaw.plugin.json
-├── index.ts
-└── tsconfig.json
-```
-
-2. **package.json 配置**
-
-```json
-{
-    "name": "my-channel-plugin",
-    "version": "1.0.0",
-    "type": "module",
-    "main": "index.js",
-    "openclaw": {
-        "extensions": ["./index.ts"]
-    },
-    "peerDependencies": {
-        "openclaw": ">=2024.0.0"
-    }
-}
-```
-
-3. **插件清单 (openclaw.plugin.json)**
-
-```json
-{
-    "id": "my-channel",
-    "name": "My Channel Plugin",
-    "description": "A custom channel plugin",
-    "version": "1.0.0",
-    "kind": "channel"
-}
-```
-
-4. **实现插件 (index.ts)**
-
-```typescript
-import type { OpenClawPluginApi, ChannelPlugin } from 'openclaw/plugin-sdk';
-
-export default async function register(api: OpenClawPluginApi) {
-    const plugin: ChannelPlugin = {
-        id: 'my-channel',
-        meta: {
-            label: 'My Channel',
-            description: '自定义消息渠道'
-        },
-        capabilities: {
-            chatTypes: ['direct', 'group'],
-            media: true,
-            threading: true
-        },
-        config: {
-            listAccountIds: (cfg) => ['default'],
-            resolveAccount: (cfg, id) => cfg?.accounts?.[id || 'default'] || {},
-            defaultAccountId: () => 'default'
-        },
-        outbound: {
-            deliveryMode: 'gateway',
-            sendText: async (ctx) => {
-                // 实现发送文本消息
-                api.logger.info(`Sending to ${ctx.to}: ${ctx.text}`);
-                return { delivered: true };
-            }
-        },
-        gateway: {
-            startAccount: async (ctx) => {
-                api.logger.info(`Starting account: ${ctx.accountId}`);
-                // 启动消息监听
-                // 收到消息时调用 ctx.dispatch(message)
-            },
-            stopAccount: async (ctx) => {
-                api.logger.info(`Stopping account: ${ctx.accountId}`);
-            }
-        }
-    };
-
-    api.registerChannel({ plugin });
-}
-```
-
-### 发布插件
-
-```bash
-# 发布到 npm
-npm publish --access public
-
-# 在 OpenDesk 中安装
-opendesk plugins install my-channel-plugin@latest
-```
-
-### 配置插件
-
-在 `~/.opendesk/setting.json` 中配置：
+直接把插件目录或 `.js`、`.mjs`、`.cjs` 文件放进 `plugins/`，重启 OpenDesk
+即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；
+本地插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
+
+还可以在 `setting.json` 中配置不复制到全局目录的外部插件路径：
 
 ```json
 {
     "applications": {
-        "channels": {
-            "my-channel": {
-                "accounts": {
-                    "default": {
-                        "token": "your-token",
-                        "webhookUrl": "https://..."
-                    }
-                }
-            }
+        "pluginmgr": {
+            "externalPaths": ["D:/projects/my-plugin", "./external-plugins"]
         }
     }
 }
 ```
 
----
+相对的 `externalPaths` 以 OpenDesk 配置目录为基准。
 
-## 总结
+启动 TUI 时也可以临时指定一个额外的插件集合目录：
 
-OpenDesk 的插件系统通过以下机制实现了灵活的消息渠道扩展：
+```bash
+opendesk --plugins-directory ./plugins
+```
 
-1. **标准化安装流程**：通过 npm 安装，自动生成兼容层
-2. **动态加载机制**：支持 TypeScript 即时编译，灵活的入口点解析
-3. **OpenClaw 兼容**：完整的 SDK Shim，复用现有生态
-4. **消息路由架构**：清晰的职责分离，支持会话管理和 AI Agent 集成
+OpenDesk 会扫描该目录的一级子目录和 `.js`、`.mjs`、`.cjs` 单文件插件，并在 TUI
+启动前完成注册。相对路径以当前工作目录为基准；该参数只对本次进程生效，不修改全局插件目录或
+`setting.json`。
 
-开发者可以按照本指南开发自定义消息插件，扩展 OpenDesk 的消息渠道能力。
+## 内置插件
+
+OpenDesk 可以在仓库的 `resources/plugins` 中维护随应用发布的内置插件源码。每个一级子目录是一个
+独立插件，并且必须包含 `opendesk.plugin.json` 和其中声明的主入口：
+
+```text
+resources/plugins/
+└── builtin-review/
+    ├── opendesk.plugin.json
+    ├── index.mjs
+    └── helper.mjs
+```
+
+执行 `npm run build:plugins`、`npm run build` 或 `npm run build-cli` 时，OpenDesk 会将每个内置插件
+复制到只读运行时目录：
+
+```text
+dist/plugins/
+└── builtin-review/
+    ├── opendesk.plugin.json
+    └── index.mjs
+```
+
+内置插件入口必须是可直接运行的 `.js`、`.mjs` 或 `.cjs` 文件；构建流程不会编译 TypeScript。
+当前内置插件构建流程只负责复制插件目录；内置 Skill 和 MCP 的独立构建规则尚未纳入该流程。
+
+Electron 打包时，`dist/plugins` 会作为只读资源复制到 `process.resourcesPath/plugins`；独立
+CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发环境也加载 `dist/plugins`，
+因此修改内置插件源码后需要重新执行插件构建或重启开发命令。
+
+内置插件在 pluginmgr 中的来源为 `builtin`，默认启用且不允许卸载。启停、权限和 options
+只作为用户策略写入 pluginmgr 注册表，不会修改内置插件文件。内置插件 ID 具有最高优先级；
+用户目录、托管安装或外部路径中的同 ID 插件不会覆盖内置插件。
+
+## 最小 Tool 插件
+
+插件入口默认导出由 `definePlugin` 创建的对象：
+
+```ts
+import { definePlugin, tool } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'hello',
+    capabilities: ['tool'],
+    setup(ctx) {
+        ctx.tools.register(
+            tool({
+                name: 'greet',
+                description: 'Generate a greeting',
+                args: {
+                    name: tool.schema.string()
+                },
+                async execute(args, context, result) {
+                    result.attachResult(`Preparing greeting for ${args.name}`);
+                    return {
+                        output: `Hello ${args.name}`,
+                        resultObject: {
+                            workspace: context.workspace
+                        }
+                    };
+                }
+            })
+        );
+    }
+});
+```
+
+工具会以 `hello-greet` 的名字进入 OpenDesk 工具注册表。`setup` 可以返回清理函数或
+`PluginRegistration`；插件停用、重载或宿主退出时会释放注册项。
+
+## 其他能力的最小入口
+
+上一节已经给出 Tool 插件。以下示例分别是其余五种 capability 的独立最小 `index.mjs`；实际插件可以在
+同一 `setup` 中组合多种 capability。若使用 TypeScript 编写，请先将源码编译为 manifest 指向的
+`.js`、`.mjs` 或 `.cjs` 文件。
+
+### Hook 插件
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'request-header-example',
+    capabilities: ['hook'],
+    setup(ctx) {
+        ctx.hooks.on('chat.headers', (_input, output) => {
+            output.headers['x-example-plugin'] = 'enabled';
+        });
+    }
+});
+```
+
+### Skill 插件
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'review-skill-example',
+    capabilities: ['skill'],
+    setup(ctx) {
+        ctx.skills.register({
+            name: 'review-code',
+            description: 'Review code changes and report actionable findings.',
+            body: '# Review Code\n\nInspect the requested change and report findings.',
+            userInvocable: true,
+            modelInvocable: true
+        });
+    }
+});
+```
+
+### MCP 插件
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'project-mcp-example',
+    capabilities: ['mcp'],
+    setup(ctx) {
+        ctx.mcps.registerServer({
+            name: 'project-files',
+            transport: 'stdio',
+            command: process.execPath,
+            args: ['./mcp-server.mjs'],
+            cwd: ctx.pluginDir
+        });
+    }
+});
+```
+
+`mcp-server.mjs` 必须位于插件目录中并实现对应的 MCP Server；也可以改用 `sse` 或
+`streamableHttp` 并提供远程 `url`。
+
+### Command 插件
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'command-example',
+    capabilities: ['command'],
+    setup(ctx) {
+        ctx.commands.register({
+            name: 'plugin-status',
+            description: 'Show the current plugin workspace.',
+            execute(_args, context) {
+                return {
+                    title: 'Plugin status',
+                    output: `Workspace: ${context.workspace ?? '<none>'}`
+                };
+            }
+        });
+    }
+});
+```
+
+### Event 插件
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'event-audit-example',
+    capabilities: ['event'],
+    setup(ctx) {
+        ctx.events.onApplication({}, (event) => {
+            console.info('[event-audit-example]', event.application, event.event, event.args);
+        });
+    }
+});
+```
+
+传入空过滤器会订阅所有 Application 事件；可通过
+`{ application: 'bundle-name', event: 'event-name' }` 限制到一个应用或事件名称，具体名称由对应
+Application 定义。
+
+## 使用 opendesk.plugin.json
+
+推荐的本地插件结构：
+
+```text
+review-helper/
+├── opendesk.plugin.json
+├── index.js
+├── skills/
+│   └── review-code/
+│       └── SKILL.md
+└── mcps/
+    └── project-files.js
+```
+
+`opendesk.plugin.json` 示例：
+
+```json
+{
+    "schemaVersion": 1,
+    "id": "review-helper",
+    "displayName": "Review Helper",
+    "entry": "./index.js",
+    "apiVersion": 1,
+    "capabilities": ["skill", "mcp"],
+    "contributions": {
+        "skills": ["./skills/review-code"],
+        "mcpServers": [
+            {
+                "name": "project-files",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./mcps/project-files.js"],
+                "cwd": "."
+            }
+        ]
+    }
+}
+```
+
+即使插件只有静态 Skill 或 MCP 声明，仍需要一个入口。最小的 `index.js` 可以只包含：
+
+```js
+export default {
+    id: 'review-helper',
+    setup() {}
+};
+```
+
+manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities` 可使用：
+`hook`、`tool`、`skill`、`mcp`、`command`、`event`。声明静态 Skill 或 MCP 时，
+必须同时声明对应的 `skill` 或 `mcp` capability。
+
+### Skill 路径
+
+`contributions.skills` 中每一项都必须是插件根目录内的目录，不能直接指向
+`SKILL.md` 文件：
+
+- `SKILL.md` 就在插件根目录：`"skills": ["."]`
+- 文件位于 `skill/SKILL.md`：`"skills": ["./skill"]`
+- `skills/` 下有多个各自包含 `SKILL.md` 的一级子目录：`"skills": ["./skills"]`
+
+扫描某个父目录时只读取它的一级 Skill 子目录，不会递归搜索更深层级。
+
+### MCP 声明
+
+支持 `stdio`、`sse` 和 `streamableHttp` transport。相对的 `command` 与 `cwd` 必须留在
+插件根目录内；上例通过将 `cwd` 设为 `"."`，让 Node 从插件根目录解析相对参数。
+
+插件贡献的 MCP 会出现在 GUI 的 MCP 管理器中，来源优先显示插件的
+`displayName`，未声明时回退到插件 ID。
+这类配置由插件拥有，因此在 MCP 管理器中只读；应通过插件中心启停插件或修改插件配置。
+
+## 使用 package.json#opendesk
+
+npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `opendesk.plugin.json`，
+也可以把同样的声明放在 `package.json` 的 `opendesk` 字段：
+
+```json
+{
+    "name": "opendesk-plugin-review-helper",
+    "version": "1.0.0",
+    "type": "module",
+    "opendesk": {
+        "plugin": "./dist/plugin.js",
+        "schemaVersion": 1,
+        "id": "review-helper",
+        "displayName": "Review Helper",
+        "apiVersion": 1,
+        "capabilities": ["skill", "mcp"],
+        "contributions": {
+            "skills": ["./skills/review-code"],
+            "mcpServers": [
+                {
+                    "name": "project-files",
+                    "transport": "stdio",
+                    "command": "node",
+                    "args": ["./mcps/project-files.js"],
+                    "cwd": "."
+                }
+            ]
+        }
+    },
+    "dependencies": {
+        "@bitclub.ai/opendesk-plugin-sdk": "^0.1.0"
+    }
+}
+```
+
+两种文件分工不同：
+
+- `package.json` 是 npm/Node.js 的包元数据和依赖清单。
+- `opendesk.plugin.json` 是 OpenDesk 插件协议，可用于没有 npm 包元数据的本地插件。
+
+如果两处同时声明，入口和 id 必须一致。托管安装要求包中存在有效 `package.json`，并且具有
+`opendesk.plugin.json` 或 `package.json#opendesk` 声明；仅有
+`package.json#exports["./opendesk"]` 不能通过托管安装校验。
+
+发布前可校验包结构：
+
+```bash
+opendesk-plugin validate ./opendesk-plugin-review-helper
+```
+
+## 在 setup 中动态注册 Skill 和 MCP
+
+不使用静态 contributions 时，也可以完全在 `setup` 中注册：
+
+```ts
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'review-helper',
+    capabilities: ['skill', 'mcp'],
+    setup(ctx) {
+        ctx.skills.register({
+            name: 'review-code',
+            description: 'Review code changes and report actionable findings.',
+            body: [
+                '# Review Code',
+                '',
+                'Inspect the requested change, prioritize correctness and security,',
+                'and report findings with concrete file locations.'
+            ].join('\n'),
+            userInvocable: true,
+            modelInvocable: true
+        });
+
+        ctx.mcps.registerServer({
+            name: 'project-files',
+            transport: 'stdio',
+            command: 'node',
+            args: [`${ctx.pluginDir}/mcps/project-files.js`],
+            cwd: ctx.pluginDir
+        });
+    }
+});
+```
+
+这种方式适合根据 `ctx.options`、操作系统或运行环境动态决定 contribution。静态 manifest
+更适合可在执行插件代码之前校验的固定资源；两种方式可以同时使用。
+
+## 无 manifest 的本地插件
+
+手工放入 `plugins/` 的单个 `.js`、`.mjs`、`.cjs` 文件不要求 manifest。
+目录插件没有声明入口时，会依次查找：
+
+```text
+index.js
+index.mjs
+index.cjs
+```
+
+这类插件只能通过入口的 `setup` 动态注册 contribution，`pluginmgr` 不会根据约定自动扫描
+旁边的 `skills/` 或 `mcps/`。如果要声明静态资源，可为目录增加
+`opendesk.plugin.json`；单文件 `hello.mjs` 也可以使用同目录下的
+`hello.opendesk.plugin.json` sidecar manifest。
+
+OpenDesk 不会编译 TypeScript 插件入口。第三方依赖仍需要插件自己的 `node_modules`，入口必须是
+Node.js 可以直接运行的 `.js`、`.mjs` 或 `.cjs` 文件。
+
+## 安装和管理
+
+通过 GUI“插件中心”或 CLI 显式安装时，`pluginmgr` 会把插件安装到隔离的托管容器；npm spec
+由 npm 安装，ZIP 和 TGZ 则只在声明了运行时依赖时调用 npm：
+
+```bash
+opendesk plugins install opendesk-plugin-review-helper@latest
+opendesk plugins list
+opendesk plugins disable review-helper
+opendesk plugins enable review-helper
+opendesk plugins uninstall review-helper
+```
+
+安装源可以是 npm spec、本地路径、ZIP、tarball 或 URL。GUI 中的 npm、目录、ZIP、TGZ 和 URL
+入口都属于托管安装，安装内容会复制到全局 `plugins` 目录并写入 `managed` 注册记录，因此可以通过
+GUI 或 CLI 卸载。`externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
+
+CLI 安装命令接收的本地目录仍按托管安装处理：直接校验并复制包含 `opendesk.plugin.json` 或
+`package.json#opendesk` 声明的插件目录，不要求 `package.json`，也不会执行 npm；目录插件依赖的
+第三方包需要已经位于该目录的 `node_modules` 中。目录内容会直接复制到 `plugins/<插件ID>/`，
+不会增加额外的 `plugin/` 中间层。ZIP 和 TGZ 位于同一归档层：统一下载、解压和校验；如果根目录
+`package.json` 声明了 `dependencies` 或 `peerDependencies`，再安装这些运行时依赖，无运行时依赖的
+归档不要求 npm。
+所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
+可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载只适用于托管插件，手工插件应从
+`plugins/` 删除，外部目录插件应从 `externalPaths` 移除。
+
+其他常用 CLI：
+
+```bash
+opendesk plugins status
+opendesk plugins reload
+opendesk plugins commands
+opendesk plugins tools
+opendesk plugins config review-helper '{"strict":true}'
+opendesk plugins permissions review-helper
+opendesk plugins grant review-helper skill mcp
+opendesk plugins revoke review-helper mcp
+opendesk plugins verify review-helper
+opendesk plugins doctor
+```
+
+需要机器可读输出的 `status`、`reload`、`verify` 和 `doctor` 支持 `--json`。
+
+GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设置 → 插件中心”查看、重新加载、
+启停和卸载。`opendesk plugins` CLI、GUI、TUI、headless CLI 和 serve 模式共用同一套
+`pluginmgr` 注册表和插件宿主。
+
+`pluginmgr` Application 还会向 Agent 提供 `manage-plugins` Skill，其中包含
+`listPlugins`、`getPluginDetails`、`installPlugin`、`uninstallPlugin`、
+`setPluginEnabled` 和 `reloadPlugins` 工具。插件列表和详情读取默认允许；安装、卸载、
+启停和重新加载会通过 `plugin` 权限资源请求用户确认。Agent 安装仍遵循上述 OpenDesk
+插件校验、托管目录和 `--ignore-scripts` 规则。
+
+## 生命周期和安全边界
+
+插件按以下流程加载：
+
+```text
+discover
+  -> resolve entry
+  -> validate path containment and managed integrity
+  -> read manifest and static contributions
+  -> verify the entry is directly runnable
+  -> import plugin
+  -> validate API version, capability grants and options
+  -> register static contributions
+  -> setup(context)
+```
+
+`setup` 失败会释放本次激活已创建的注册项。插件停用或宿主重载时，Hook、工具、Skill、MCP、
+命令和事件监听都会随所属插件释放。
+
+Hook 按插件激活顺序串行执行。默认 `failureMode: 'open'` 会记录失败并继续主流程；
+安全或认证场景可以在注册 Hook 时指定 `failureMode: 'closed'`，让异常阻止对应操作。
+托管插件在 import 前检查安装内容完整性；手工和外部插件会标记为 unmanaged，不进行内容锁定。
+
+## Runtime Hooks
+
+### Skill Hooks
+
+`skill.load.before` 和 `skill.load.after` 的输入只描述被加载的 Skill：`bundleName`、`skillName`、
+`skillDirectory`、`source` 和 `frontmatter`。它们不暴露 `taskId`、`workspace`、`agentId` 或 Skill 正文；
+`skill.load.after` 仅表示具体 Skill 已成功加载。
+
+`skill.load.before` 的输出结构如下。`message` 和 `metadata` 对 `allow`、`deny` 使用同一组顶层字段；
+只有 `operation: 'deny'` 会阻止加载，`allow` 携带的消息仅供插件链中的后续 Hook 观察。
+
+```ts
+{
+    operation: 'allow' | 'deny';
+    message?: string;
+    metadata?: Record<string, unknown>;
+}
+```
+
+`skill.install.before` 在单个用户 Skill 写入前触发，可通过同样的输出结构拒绝安装；
+`skill.install.after` 仅在安装成功后触发，并在输入中增加最终的 `skillName`。安装上下文通过 `source`
+区分 `directory`、`zip`、`url` 和 `registry`，并按来源提供 `path`、`url`、`skillRelPath`、`force`
+或 `customName`。
+
+GUI 单项安装使用以下调用链，实际下载、解压、状态更新和 Registry 同步仍由既有 Worker 完成：
+
+```text
+GUI callMainWorld
+  -> SkillMgrApplication
+  -> skill.install.before
+  -> SkillMgr Worker
+  -> skill.install.after
+```
+
+插件 Hook 定义在 `packages/plugin` 的 `PluginHookMap` 中，并在 `setup(context)` 内注册。Aikernel 只依赖通用
+`hooks.ts`，PluginManager 在启动时注册插件桥接，因此 Aikernel 不需要直接感知插件运行时。
+
+当前运行时 Hook 包括：
+
+- `chat.headers`：为当前模型请求追加 HTTP Header。
+- `chat.params`：调整推理强度和最大输出 token。
+- `chat.message`：变换发送给模型的单条文本消息。
+- `chat.messages.transform`：变换当前请求的完整消息列表。
+- `skill.load.before`：在 Agent 明确加载某个 Skill 时触发，可通过 `output.operation = 'deny'` 拒绝本次加载。
+- `skill.load.after`：某个 Skill 成功加载并生成完整正文后触发，仅用于观测和审计。
+- `tool.definition`：调整工具在模型侧可见的描述和参数 Schema。
+- `tool.execute.before`：在权限检查前修改工具参数或拒绝本次执行。
+- `tool.execute.after`：在工具完成后修改状态、文本结果或结构化结果。
+- `permission.ask`：对权限请求返回 `ask`、`allow` 或 `deny`。
+- `shell.env`：为终端 Shell 请求调整环境变量。
+
+`chat.messages.transform` 接收到的是当前模型请求的临时视图，不是任务持久化历史。该视图已经包含上下文压缩、partial
+assistant 裁剪、request-time tool result override 和本次请求 tail；插件可以修改它，但修改只影响当前模型请求，
+不会写回任务的原始 `ChatContext`。工具集会保留在变换后的上下文中。
+
+`skill.load.before` 和 `skill.load.after` 只对应一次具体的 Skill 加载请求，例如 Agent 调用 `LoadSkill` 或用户通过
+`/skill-name` 预加载。Skill 列举、目录扫描、registry refresh，以及 `CallSkillTool` 调用已加载 Skill 的内部工具，
+都不会触发这组 Hook。`before` 拒绝时不会执行 Skill 的环境变量合并，也不会触发 `after`；插件异常是否阻止加载仍由
+插件注册时的 `failureMode` 决定。
+
+工具调用顺序如下：
+
+```text
+解析并校验模型参数
+  -> tool.execute.before（可修改参数或拒绝）
+  -> 使用修改后的参数重新校验
+  -> 权限检查
+  -> beforeToolCall 安全门禁
+  -> 执行工具
+  -> tool.execute.after
+```
+
+`failureMode` 是插件运行时的错误策略：`open` 会记录错误并继续后续插件，`closed` 会抛出插件 Hook 错误并停止当前
+插件 Hook 链。插件可以在单个 Hook 注册时覆盖默认值：
+
+```ts
+ctx.hooks.on('permission.ask', callback, { failureMode: 'closed' });
+```
+
+`failureMode` 与 Aikernel `HookOptions.onError` 不同。前者由 PluginHost 决定插件回调失败后是否抛错，后者是宿主内部
+通用 Hook 的调度策略，控制 Aikernel 桥接回调失败后继续还是抛出；插件作者只需要配置 `failureMode`。
+
+通过 `ctx.hooks.on`、`ctx.tools.register`、`ctx.skills.register`、`ctx.mcps.registerServer`、`ctx.commands.register`
+和 `ctx.events.onApplication` 创建的注册项，都会在插件停用、重载或宿主退出时按逆序释放。
+`setup` 返回的清理函数也会在同一生命周期执行。插件自行注册到进程或第三方库的监听器必须在该清理函数中主动移除。

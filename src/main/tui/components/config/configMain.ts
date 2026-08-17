@@ -25,6 +25,7 @@ import { EnvironConfigPage } from './environConfig.js';
 import { GatewayConfigPage } from './gatewayConfig.js';
 import { DebugConfigPage } from './debugConfig.js';
 import { TelemetryConfigPage } from './telemetryConfig.js';
+import { PluginConfigPage } from './pluginConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 import { OpenDeskTUI } from '../../entry.js';
@@ -95,6 +96,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         hintKey: 'config.telemetry.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) =>
             new TelemetryConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'plugins',
+        icon: '🔌',
+        titleKey: 'config.plugin.title',
+        hintKey: 'config.plugin.title.hint',
+        create: (openDeskTUI, onBack) => new PluginConfigPage(openDeskTUI, onBack)
     },
     {
         value: 'search',

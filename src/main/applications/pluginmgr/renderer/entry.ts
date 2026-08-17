@@ -1,0 +1,1077 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { escapeHtml } from '../../../../common/utils/escape.js';
+import { createRendererTranslator } from '../../../../renderer/locale.js';
+import {
+    getSkillInitial,
+    getSkillPastel,
+    type SkillDetailCard,
+    type SkillDetailCardModel
+} from '../../../../renderer/components/skills/skill-detail-card.ts';
+import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
+import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
+
+interface PluginRuntimeEntry {
+    id: string;
+    displayName?: string;
+    version?: string;
+    status: 'active' | 'error' | 'disabled';
+    origin: string;
+    apiVersion: number;
+    capabilities: string[];
+    diagnostics: Array<{ stage: string; code: string; detail?: string }>;
+}
+
+interface PluginListEntry {
+    id: string;
+    source: 'builtin' | 'managed' | 'local' | 'external';
+    path?: string;
+    managed: boolean;
+    enabled: boolean;
+    installedAt?: string;
+    spec?: string;
+    verification?: {
+        integrityStatus: string;
+        allowed: boolean;
+    };
+    runtime?: PluginRuntimeEntry;
+    manifest?: {
+        displayName?: string;
+        version?: string;
+        apiVersion?: number;
+        capabilities?: string[];
+    };
+    skills?: Array<{
+        name: string;
+        description: string;
+        directory?: string;
+        userInvocable?: boolean;
+        modelInvocable?: boolean;
+    }>;
+    mcpServers?: Array<{
+        name: string;
+        transport: 'stdio' | 'sse' | 'streamableHttp';
+        command?: string;
+        cwd?: string;
+        url?: string;
+    }>;
+}
+
+type InstallDialogMode = 'npm' | 'url';
+type ManagedInstallSource = InstallDialogMode | 'directory' | 'package';
+
+interface InstallProgressState {
+    source: ManagedInstallSource;
+    spec: string;
+}
+
+interface PluginFileSystemAPI {
+    getFilePath?: (file: File) => string | Promise<string>;
+    selectDirectory?: () => Promise<string | null>;
+}
+
+const STYLE = `
+:host {
+    display: block;
+    height: 100%;
+    overflow: hidden;
+    color: #1d1d1f;
+    background: #fff;
+    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+button, input { font: inherit; }
+.shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.header-area {
+    position: relative;
+    z-index: 10;
+    flex: none;
+    padding: 20px 24px 16px;
+    background: rgba(255, 255, 255, .88);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border-bottom: .5px solid rgba(0, 0, 0, .06);
+}
+.header-title { margin-bottom: 14px; font-size: 22px; font-weight: 700; letter-spacing: -.03em; }
+.seg-row { display: flex; align-items: center; gap: 8px; }
+.seg-control {
+    display: inline-flex;
+    flex: 1;
+    min-width: 0;
+    padding: 3px;
+    gap: 2px;
+    overflow-x: auto;
+    background: rgba(0, 0, 0, .04);
+    border-radius: 10px;
+    scrollbar-width: none;
+}
+.seg-control::-webkit-scrollbar { display: none; }
+.seg-item {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: 5px;
+    padding: 7px 13px;
+    color: rgba(0, 0, 0, .45);
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all .18s ease;
+}
+.seg-item.active {
+    color: #1d1d1f;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 .5px 1px rgba(0, 0, 0, .03);
+}
+.seg-icon { font-size: 13px; }
+.seg-badge {
+    padding: 1px 7px;
+    color: #5b8def;
+    background: rgba(90, 140, 240, .12);
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 650;
+}
+.header-actions { display: flex; gap: 6px; flex: none; }
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    color: #444;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, .08);
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 17px;
+}
+.action-btn:hover { background: #f8f8f8; }
+.action-btn:disabled, button:disabled { cursor: default; opacity: .45; }
+.add-dropdown-anchor { position: relative; }
+.add-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    width: 270px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, .06);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px -8px rgba(0, 0, 0, .14), 0 2px 8px -1px rgba(0, 0, 0, .04);
+    animation: dropdown-in .16s ease-out;
+}
+.add-dropdown.visible { display: flex; flex-direction: column; }
+@keyframes dropdown-in {
+    from { opacity: 0; transform: translateY(-4px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.add-dropdown-section { padding: 3px; }
+.add-dropdown-section + .add-dropdown-section { border-top: 1px solid rgba(0, 0, 0, .04); }
+.add-dropdown-item {
+    display: flex;
+    width: 100%;
+    padding: 8px 10px;
+    align-items: center;
+    gap: 10px;
+    color: #1d1d1f;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+}
+.add-dropdown-item:hover { background: #f5f5f5; }
+.add-dropdown-item .icon {
+    display: flex;
+    width: 30px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+}
+.add-dropdown-item .icon.npm { color: #c43d3d; background: #fdecec; }
+.add-dropdown-item .icon.folder { color: #5b8def; background: #ebf3fe; }
+.add-dropdown-item .icon.archive { color: #e8935a; background: #fef1e6; }
+.add-dropdown-item .icon.url { color: #4caf6e; background: #e7f6ea; }
+.item-info { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.item-name { color: #1d1d1f; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.item-hint { color: #999da5; font-size: 11px; line-height: 1.35; }
+.notice {
+    flex: none;
+    margin: 12px 24px 0;
+    padding: 10px 12px;
+    color: #285b9c;
+    background: #edf4ff;
+    border-radius: 9px;
+}
+.notice.error { color: #b0372c; background: #fff0ee; }
+.content { flex: 1; min-height: 0; overflow: hidden; }
+.tab-panel { height: 100%; overflow-y: auto; }
+.installed-panel { min-height: 100%; padding: 20px 24px 60px; }
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .18);
+    backdrop-filter: blur(6px);
+    animation: fade-in .15s ease;
+}
+.modal-overlay.visible { display: flex; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.modal-dialog {
+    width: 480px;
+    max-width: 90%;
+    padding: 24px;
+    overflow-y: auto;
+    color: #1d1d1f;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 24px 80px -16px rgba(0, 0, 0, .2);
+    animation: dialog-in .2s ease-out;
+}
+@keyframes dialog-in {
+    from { opacity: 0; transform: scale(.95) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.modal-dialog h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.modal-dialog .hint { margin-bottom: 14px; color: #888d96; font-size: 12px; }
+.modal-dialog input {
+    width: 100%;
+    padding: 10px 12px;
+    color: inherit;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, .1);
+    border-radius: 10px;
+    outline: none;
+}
+.modal-dialog input:focus {
+    border-color: #8bb8f0;
+    box-shadow: 0 0 0 3px rgba(90, 140, 240, .1);
+}
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.install-progress-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(248, 249, 252, .84);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    animation: fade-in .18s ease-out;
+}
+.install-progress-card {
+    width: 420px;
+    max-width: 100%;
+    padding: 32px;
+    text-align: center;
+    background: rgba(255, 255, 255, .94);
+    border: 1px solid rgba(0, 0, 0, .06);
+    border-radius: 20px;
+    box-shadow: 0 24px 80px -20px rgba(31, 48, 80, .24);
+    animation: dialog-in .24s cubic-bezier(.23, 1, .32, 1);
+}
+.install-progress-icon {
+    position: relative;
+    display: grid;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 20px;
+    place-items: center;
+    color: #5b8def;
+    background: #edf4ff;
+    border-radius: 18px;
+    font-size: 26px;
+    font-weight: 700;
+}
+.install-progress-icon::after {
+    position: absolute;
+    inset: -6px;
+    border: 2px solid rgba(91, 141, 239, .22);
+    border-top-color: #5b8def;
+    border-radius: 22px;
+    content: '';
+    animation: install-spin 1.1s linear infinite;
+}
+.install-progress-title { color: #1d1d1f; font-size: 17px; font-weight: 700; }
+.install-progress-description { margin-top: 8px; color: #74777f; font-size: 13px; line-height: 1.55; }
+.install-progress-spec {
+    margin-top: 14px;
+    overflow: hidden;
+    padding: 9px 12px;
+    color: #555a64;
+    background: #f6f7f9;
+    border-radius: 9px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.install-progress-track {
+    height: 3px;
+    margin-top: 20px;
+    overflow: hidden;
+    background: #e8edf5;
+    border-radius: 999px;
+}
+.install-progress-bar {
+    width: 42%;
+    height: 100%;
+    background: linear-gradient(90deg, #5b8def, #8bb8f0);
+    border-radius: inherit;
+    animation: install-progress 1.25s ease-in-out infinite;
+}
+@keyframes install-spin { to { transform: rotate(360deg); } }
+@keyframes install-progress {
+    from { transform: translateX(-110%); }
+    to { transform: translateX(340%); }
+}
+button {
+    padding: 8px 13px;
+    color: #303238;
+    background: #fff;
+    border: 1px solid #d9dce2;
+    border-radius: 8px;
+    cursor: pointer;
+}
+button:hover { background: #f4f5f7; }
+.primary { flex: none; padding-inline: 18px; color: #fff; background: #6ba3ef; border-color: #6ba3ef; }
+.primary:hover { background: #7db0f3; }
+.danger { color: #c94d4d; }
+.empty {
+    margin: 0 auto;
+    padding: 44px 24px;
+    color: #74777f;
+    background: linear-gradient(180deg, #fbfcfe, #f7f8fa);
+    border: 1px dashed #d9dce2;
+    border-radius: 14px;
+    text-align: center;
+}
+.empty-icon { margin-bottom: 10px; font-size: 30px; }
+.empty-title { color: #3b3e45; font-size: 15px; font-weight: 650; }
+.empty-hint { margin-top: 6px; color: #8a8d95; font-size: 12px; line-height: 1.5; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.card {
+    display: flex;
+    min-width: 0;
+    padding: 16px 18px;
+    flex-direction: column;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, .05);
+    border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .03);
+    cursor: pointer;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.card:hover, .card:focus-visible {
+    border-color: rgba(91, 141, 239, .28);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .05);
+    transform: translateY(-1px);
+}
+.card-head { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
+.card-icon {
+    display: flex;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: 11px;
+    font-size: 17px;
+    font-weight: 700;
+}
+.card-info { min-width: 0; flex: 1; }
+.name {
+    overflow: hidden;
+    color: #1d1d1f;
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.plugin-id { margin-top: 2px; overflow: hidden; color: #999; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.meta, .diagnostic { color: #70737b; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.diagnostic { color: #b0372c; }
+.contributions { display: flex; flex-wrap: wrap; gap: 6px; }
+.contribution-pill { padding: 3px 9px; color: #5b8def; background: #ebf3fe; border-radius: 12px; font-size: 11px; font-weight: 550; }
+.contribution-pill.mcp { color: #4a9b63; background: #e7f6ea; }
+.card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+.source { min-width: 0; overflow: hidden; color: #999; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.card-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.card-actions button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
+.plugin-toggle {
+    position: relative;
+    width: 40px;
+    height: 24px;
+    flex: none;
+}
+.plugin-toggle input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+}
+.plugin-toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: #d1d1d6;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .25s ease;
+}
+.plugin-toggle-slider::after {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+    content: '';
+    transition: transform .25s ease;
+}
+.plugin-toggle input:checked + .plugin-toggle-slider { background: #34c759; }
+.plugin-toggle input:checked + .plugin-toggle-slider::after { transform: translateX(16px); }
+.plugin-toggle input:focus-visible + .plugin-toggle-slider { outline: 2px solid #5b8def; outline-offset: 2px; }
+.plugin-toggle input:disabled + .plugin-toggle-slider { cursor: default; opacity: .45; }
+.badge { flex: none; padding: 3px 8px; color: #666a73; background: #eceef2; border-radius: 999px; font-size: 11px; }
+.badge.active { color: #287a40; background: #e6f6eb; }
+.badge.error { color: #b0372c; background: #fff0ee; }
+:host([data-theme="dark"]) { color: #ddd; background: #1e1e1e; color-scheme: dark; }
+:host([data-theme="dark"]) .header-area { background: rgba(37, 37, 38, .95); border-color: rgba(255, 255, 255, .1); }
+:host([data-theme="dark"]) .seg-control { background: #333; }
+:host([data-theme="dark"]) .seg-item { color: rgba(255, 255, 255, .58); }
+:host([data-theme="dark"]) .seg-item.active { color: #fff; background: #252526; box-shadow: none; }
+:host([data-theme="dark"]) .action-btn, :host([data-theme="dark"]) button,
+:host([data-theme="dark"]) .card, :host([data-theme="dark"]) .add-dropdown,
+:host([data-theme="dark"]) .modal-dialog {
+    color: #ddd;
+    background: #252526;
+    border-color: rgba(255, 255, 255, .12);
+}
+:host([data-theme="dark"]) button:hover, :host([data-theme="dark"]) .action-btn:hover { background: #303033; }
+:host([data-theme="dark"]) .primary { color: #fff; background: #5b8def; border-color: #5b8def; }
+:host([data-theme="dark"]) .modal-dialog input {
+    color: #ddd;
+    background: #252526;
+    border-color: rgba(255, 255, 255, .14);
+}
+:host([data-theme="dark"]) .install-progress-overlay { background: rgba(24, 24, 25, .84); }
+:host([data-theme="dark"]) .install-progress-card {
+    background: rgba(37, 37, 38, .96);
+    border-color: rgba(255, 255, 255, .1);
+    box-shadow: 0 24px 80px -20px rgba(0, 0, 0, .6);
+}
+:host([data-theme="dark"]) .install-progress-title { color: #f3f3f3; }
+:host([data-theme="dark"]) .install-progress-description { color: #a4a7ad; }
+:host([data-theme="dark"]) .install-progress-spec { color: #c8cad0; background: #303033; }
+:host([data-theme="dark"]) .install-progress-track { background: #3a3d44; }
+:host([data-theme="dark"]) .add-dropdown-item { color: #ddd; }
+:host([data-theme="dark"]) .add-dropdown-item:hover { background: rgba(255, 255, 255, .08); }
+:host([data-theme="dark"]) .add-dropdown-section + .add-dropdown-section { border-top-color: rgba(255, 255, 255, .1); }
+:host([data-theme="dark"]) .item-name { color: #e5e7eb; }
+:host([data-theme="dark"]) .item-hint { color: #858990; }
+:host([data-theme="dark"]) .empty {
+    color: #a4a7ad;
+    background: #242426;
+    border-color: rgba(255, 255, 255, .14);
+}
+:host([data-theme="dark"]) .empty-title { color: #ddd; }
+:host([data-theme="dark"]) .name { color: #e5e7eb; }
+:host([data-theme="dark"]) .meta, :host([data-theme="dark"]) .source, :host([data-theme="dark"]) .plugin-id,
+:host([data-theme="dark"]) .modal-dialog .hint { color: #a4a7ad; }
+@media (max-width: 700px) {
+    .header-area, .installed-panel { padding-left: 16px; padding-right: 16px; }
+}
+`;
+
+function getAPI() {
+    return window.applicationAPI;
+}
+
+export class PluginMgrEntryWidget extends HTMLElement {
+    private entries: PluginListEntry[] = [];
+    private loading = true;
+    private busy = false;
+    private addMenuOpen = false;
+    private installDialogMode?: InstallDialogMode;
+    private installSpec = '';
+    private installProgress?: InstallProgressState;
+    private selectedPluginId?: string;
+    private notice?: { text: string; error: boolean };
+    private t = createRendererTranslator();
+    private readonly onPluginsChanged = () => void this.load();
+    private readonly onThemeChanged = (event: Event) => {
+        const theme = (event as CustomEvent).detail?.effective;
+        syncShadowHostTheme(this, theme);
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (detail && theme) detail.dataset.theme = theme;
+    };
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+    }
+
+    connectedCallback(): void {
+        void this.initialize();
+    }
+
+    disconnectedCallback(): void {
+        getAPI().unsubscribe('pluginsChanged', this.onPluginsChanged);
+        document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
+    }
+
+    private async initialize(): Promise<void> {
+        try {
+            const settings = await window.top?.settingAPI?.loadSettingObject?.();
+            this.t = createRendererTranslator(settings);
+        } catch {
+            this.t = createRendererTranslator();
+        }
+        document.addEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
+        getAPI().subscribe('pluginsChanged', this.onPluginsChanged);
+        await this.load();
+    }
+
+    private async load(preserveNotice = false): Promise<void> {
+        try {
+            this.entries = (await getAPI().callMainWorld('list')) as PluginListEntry[];
+            if (this.selectedPluginId && !this.entries.some((entry) => entry.id === this.selectedPluginId)) {
+                this.selectedPluginId = undefined;
+            }
+            if (!preserveNotice) this.notice = undefined;
+        } catch (error) {
+            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
+        } finally {
+            this.loading = false;
+            this.render();
+        }
+    }
+
+    private async run(
+        operation: () => Promise<unknown>,
+        successKey: string,
+        onSuccess?: () => void,
+        preserveRenderedState = false
+    ): Promise<void> {
+        if (this.busy) return;
+        this.busy = true;
+        if (preserveRenderedState) {
+            this.shadowRoot
+                ?.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')
+                .forEach((control) => {
+                    control.disabled = true;
+                });
+        } else {
+            this.render();
+        }
+        try {
+            await operation();
+            onSuccess?.();
+            this.notice = { text: this.t(successKey), error: false };
+            await this.load(true);
+        } catch (error) {
+            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
+        } finally {
+            this.busy = false;
+            this.render();
+        }
+    }
+
+    private openInstallDialog(mode: InstallDialogMode): void {
+        this.addMenuOpen = false;
+        this.installDialogMode = mode;
+        this.installSpec = '';
+        this.render();
+        const focusInput = () => this.shadowRoot?.querySelector<HTMLInputElement>('input[name="spec"]')?.focus();
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(focusInput);
+        } else {
+            setTimeout(focusInput, 0);
+        }
+    }
+
+    private closeInstallDialog(): void {
+        if (this.busy) return;
+        this.installDialogMode = undefined;
+        this.installSpec = '';
+        this.render();
+    }
+
+    private install(spec: string, successKey = 'plugin.install.success', source?: ManagedInstallSource): void {
+        const normalizedSpec = spec.trim();
+        if (!normalizedSpec) return;
+        const startedAt = Date.now();
+        if (source) {
+            this.installProgress = { source, spec: normalizedSpec };
+            this.installDialogMode = undefined;
+            this.installSpec = '';
+        }
+        const operation = this.run(
+            async () => {
+                try {
+                    return await getAPI().callMainWorld('install', normalizedSpec);
+                } finally {
+                    if (source) {
+                        const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+                        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+                    }
+                }
+            },
+            successKey,
+            () => {
+                this.installDialogMode = undefined;
+                this.installSpec = '';
+            }
+        );
+        if (source) {
+            void operation.finally(() => {
+                this.installProgress = undefined;
+                this.render();
+            });
+        }
+    }
+
+    private async installFromDirectory(): Promise<void> {
+        this.addMenuOpen = false;
+        this.render();
+        const directory = await (window as unknown as { fsAPI?: PluginFileSystemAPI }).fsAPI?.selectDirectory?.();
+        if (directory) this.install(directory, 'plugin.install.success', 'directory');
+    }
+
+    private async installFromFile(file?: File): Promise<void> {
+        if (!file) return;
+        try {
+            const filePath = await (window as unknown as { fsAPI?: PluginFileSystemAPI }).fsAPI?.getFilePath?.(file);
+            if (!filePath) {
+                this.notice = { text: this.t('plugin.center.filePathUnavailable'), error: true };
+                this.render();
+                return;
+            }
+            this.addMenuOpen = false;
+            this.install(filePath, 'plugin.install.success', 'package');
+        } catch (error) {
+            this.notice = { text: error instanceof Error ? error.message : String(error), error: true };
+            this.render();
+        }
+    }
+
+    private async confirmAndUninstall(id: string, onSuccess?: () => void): Promise<void> {
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: this.t('plugin.center.uninstallTitle'),
+            message: escapeHtml(this.t('plugin.center.uninstallConfirm', { id })),
+            confirmText: this.t('plugin.center.uninstall'),
+            cancelText: this.t('plugin.center.cancel'),
+            danger: true,
+            mountTarget: this.shadowRoot!
+        });
+        if (!confirmed) return;
+        void this.run(() => getAPI().callMainWorld('uninstall', id), 'plugin.uninstall.success', onSuccess);
+    }
+
+    private statusOf(entry: PluginListEntry): string {
+        if (!entry.enabled) return 'disabled';
+        return entry.runtime?.status ?? 'disabled';
+    }
+
+    private renderCard(entry: PluginListEntry): string {
+        const status = this.statusOf(entry);
+        const diagnostics = entry.runtime?.diagnostics ?? [];
+        const name = entry.runtime?.displayName || entry.manifest?.displayName || entry.id;
+        const color = getSkillPastel(name);
+        return `<article class="card" data-plugin-id="${escapeHtml(entry.id)}" role="button" tabindex="0">
+            <div class="card-head">
+                <div class="card-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(getSkillInitial(name))}</div>
+                <div class="card-info">
+                    <div class="name">${escapeHtml(name)}</div>
+                    <div class="plugin-id">${escapeHtml(entry.id)}</div>
+                </div>
+                <span class="badge ${status}">${escapeHtml(this.t(`plugin.runtime.status.${status}`))}</span>
+            </div>
+            <div class="contributions">
+                <span class="contribution-pill">${escapeHtml(
+                    this.t('plugin.center.skillCount', { count: entry.skills?.length ?? 0 })
+                )}</span>
+                <span class="contribution-pill mcp">${escapeHtml(
+                    this.t('plugin.center.mcpCount', { count: entry.mcpServers?.length ?? 0 })
+                )}</span>
+            </div>
+            ${diagnostics
+                .map(
+                    (item) =>
+                        `<div class="diagnostic">${escapeHtml(`${item.stage}/${item.code}${item.detail ? `: ${item.detail}` : ''}`)}</div>`
+                )
+                .join('')}
+            <div class="card-footer">
+                <div class="source">${escapeHtml(this.t(`plugin.center.source.${entry.source}`))}</div>
+                <div class="card-actions">
+                    <label class="plugin-toggle" title="${escapeHtml(
+                        this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
+                    )}">
+                        <input type="checkbox" data-action="toggle" data-id="${escapeHtml(entry.id)}"
+                            aria-label="${escapeHtml(
+                                this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
+                            )}"
+                            ${entry.enabled ? 'checked' : ''} ${this.busy ? 'disabled' : ''}>
+                        <span class="plugin-toggle-slider"></span>
+                    </label>
+                    ${
+                        entry.managed
+                            ? `<button class="danger" data-action="uninstall" data-id="${escapeHtml(entry.id)}" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.uninstall'))}</button>`
+                            : ''
+                    }
+                </div>
+            </div>
+        </article>`;
+    }
+
+    private renderContributionDetails(entry: PluginListEntry): string {
+        const skills = entry.skills ?? [];
+        const mcpServers = entry.mcpServers ?? [];
+        const skillItems = skills.length
+            ? skills
+                  .map(
+                      (skill) => `<div class="detail-tool-item">
+                        <div class="detail-tool-name">${escapeHtml(skill.name)}</div>
+                        <div class="detail-tool-desc">${escapeHtml(skill.description)}</div>
+                    </div>`
+                  )
+                  .join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noSkills'))}</div>`;
+        const mcpItems = mcpServers.length
+            ? mcpServers
+                  .map((server) => {
+                      const endpoint = server.command || server.url;
+                      return `<div class="detail-tool-item">
+                        <div class="detail-tool-name">${escapeHtml(server.name)}</div>
+                        <div class="detail-tool-desc">${escapeHtml(
+                            this.t('plugin.center.detail.transport', { transport: server.transport })
+                        )}${endpoint ? ` · ${escapeHtml(endpoint)}` : ''}</div>
+                    </div>`;
+                  })
+                  .join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noMcps'))}</div>`;
+        return `<section class="detail-section">
+            <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.skills'))}</div>
+            <div class="detail-tools-list">${skillItems}</div>
+        </section>
+        <section class="detail-section">
+            <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.mcps'))}</div>
+            <div class="detail-tools-list">${mcpItems}</div>
+        </section>`;
+    }
+
+    private renderPluginDetail(): void {
+        if (!this.selectedPluginId) return;
+        const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (!entry || !detail) return;
+        const status = this.statusOf(entry);
+        const capabilities = entry.runtime?.capabilities.length
+            ? entry.runtime.capabilities
+            : (entry.manifest?.capabilities ?? []);
+        const model: SkillDetailCardModel = {
+            id: entry.id,
+            name: entry.runtime?.displayName || entry.manifest?.displayName || entry.id,
+            closeLabel: this.t('plugin.center.detail.close'),
+            metadataLabel: this.t('plugin.center.detail.basicInfo'),
+            metadata: [
+                { label: this.t('plugin.center.detail.status'), value: this.t(`plugin.runtime.status.${status}`) },
+                {
+                    label: this.t('plugin.center.detail.version'),
+                    value: entry.runtime?.version || entry.manifest?.version || '-'
+                },
+                {
+                    label: this.t('plugin.center.detail.apiVersion'),
+                    value: String(entry.runtime?.apiVersion ?? entry.manifest?.apiVersion ?? '-')
+                },
+                { label: this.t('plugin.center.source'), value: this.t(`plugin.center.source.${entry.source}`) },
+                {
+                    label: this.t('plugin.center.detail.path'),
+                    value: entry.path || entry.runtime?.origin || '-'
+                },
+                {
+                    label: this.t('plugin.settings.capabilities'),
+                    value: capabilities.join(', ') || '-'
+                }
+            ],
+            headerExtraHtml: `<span class="tag-pill tag-download">${escapeHtml(
+                this.t(`plugin.runtime.status.${status}`)
+            )}</span>`,
+            extraSectionsHtml: this.renderContributionDetails(entry),
+            actions: [
+                {
+                    id: 'toggle',
+                    label: this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable'),
+                    variant: entry.enabled ? 'default' : 'primary'
+                },
+                ...(entry.managed
+                    ? [
+                          {
+                              id: 'uninstall',
+                              label: this.t('plugin.center.uninstall'),
+                              variant: 'danger' as const
+                          }
+                      ]
+                    : [])
+            ]
+        };
+        detail.model = model;
+        const theme =
+            this.dataset.theme ||
+            document.documentElement.dataset.theme ||
+            this.closest('[data-theme]')?.getAttribute('data-theme');
+        if (theme) detail.dataset.theme = theme;
+        detail.addEventListener('skill-detail-action', (event) => {
+            const action = (event as CustomEvent<{ id: string }>).detail.id;
+            if (action === 'close') {
+                this.selectedPluginId = undefined;
+                this.render();
+            } else if (action === 'toggle') {
+                void this.run(
+                    () => getAPI().callMainWorld('setEnabled', entry.id, !entry.enabled),
+                    entry.enabled ? 'plugin.disable.success' : 'plugin.enable.success'
+                );
+            } else if (action === 'uninstall') {
+                void this.confirmAndUninstall(entry.id, () => {
+                    this.selectedPluginId = undefined;
+                });
+            }
+        });
+    }
+
+    private renderInstalledPanel(): string {
+        if (this.loading) {
+            return `<section class="installed-panel"><div class="empty">${escapeHtml(this.t('plugin.center.loading'))}</div></section>`;
+        }
+        if (this.entries.length === 0) {
+            return `<section class="installed-panel"><div class="empty">
+                <div class="empty-icon">📦</div>
+                <div class="empty-title">${escapeHtml(this.t('plugin.center.empty'))}</div>
+                <div class="empty-hint">${escapeHtml(this.t('plugin.center.emptyHint'))}</div>
+            </div></section>`;
+        }
+        return `<section class="installed-panel"><div class="grid">${this.entries.map((entry) => this.renderCard(entry)).join('')}</div></section>`;
+    }
+
+    private renderInstallProgress(): string {
+        const progress = this.installProgress;
+        if (!progress) return '';
+        const source = this.t(`plugin.center.installProgress.source.${progress.source}`);
+        return `<div class="install-progress-overlay" data-install-progress data-install-source="${progress.source}">
+            <div class="install-progress-card" role="status" aria-live="polite">
+                <div class="install-progress-icon" aria-hidden="true">↓</div>
+                <div class="install-progress-title">${escapeHtml(this.t('plugin.center.installProgress.title'))}</div>
+                <div class="install-progress-description">${escapeHtml(
+                    this.t('plugin.center.installProgress.description', { source })
+                )}</div>
+                <div class="install-progress-spec" title="${escapeHtml(progress.spec)}">${escapeHtml(progress.spec)}</div>
+                <div class="install-progress-track"><div class="install-progress-bar"></div></div>
+            </div>
+        </div>`;
+    }
+
+    private renderInstallDialog(): string {
+        const mode = this.installDialogMode;
+        if (!mode) return '<div class="modal-overlay" data-install-dialog></div>';
+        const titleKey = mode === 'npm' ? 'plugin.center.installNpmTitle' : 'plugin.center.installUrlTitle';
+        const hintKey = mode === 'npm' ? 'plugin.center.installNpmHint' : 'plugin.center.installUrlHint';
+        const placeholderKey =
+            mode === 'npm' ? 'plugin.center.installNpmPlaceholder' : 'plugin.center.installUrlPlaceholder';
+        return `<div class="modal-overlay visible" data-install-dialog>
+            <form class="modal-dialog" data-install-form>
+                <h3>${escapeHtml(this.t(titleKey))}</h3>
+                <div class="hint">${escapeHtml(this.t(hintKey))}</div>
+                <input name="spec" type="${mode === 'url' ? 'url' : 'text'}"
+                    aria-label="${escapeHtml(this.t(titleKey))}"
+                    placeholder="${escapeHtml(this.t(placeholderKey))}"
+                    value="${escapeHtml(this.installSpec)}"
+                    ${this.busy ? 'disabled' : ''}>
+                <div class="dialog-actions">
+                    <button type="button" data-action="cancel-install" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.cancel'))}</button>
+                    <button class="primary" type="submit" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t(this.busy ? 'plugin.center.installing' : 'plugin.center.install'))}</button>
+                </div>
+            </form>
+        </div>`;
+    }
+
+    private render(): void {
+        syncShadowHostTheme(
+            this,
+            this.dataset.theme ||
+                document.documentElement.dataset.theme ||
+                this.closest('[data-theme]')?.getAttribute('data-theme')
+        );
+        const installedCount = this.entries.length;
+        this.shadowRoot!.innerHTML = `<style>${STYLE}</style>
+            <div class="shell">
+                <header class="header-area">
+                    <div class="header-title">${escapeHtml(this.t('plugin.app.name'))}</div>
+                    <div class="seg-row">
+                        <div class="seg-control">
+                            <button type="button" class="seg-item active" data-tab="installed">
+                                <span class="seg-icon">📦</span>${escapeHtml(this.t('plugin.center.installed'))}
+                                ${installedCount ? `<span class="seg-badge">${installedCount}</span>` : ''}
+                            </button>
+                        </div>
+                        <div class="header-actions">
+                            <button type="button" class="action-btn" data-action="reload" title="${escapeHtml(this.t('plugin.settings.reload'))}" aria-label="${escapeHtml(this.t('plugin.settings.reload'))}" ${this.busy ? 'disabled' : ''}>↻</button>
+                            <div class="add-dropdown-anchor">
+                                <button type="button" class="action-btn" data-action="add" title="${escapeHtml(this.t('plugin.center.add'))}" aria-label="${escapeHtml(this.t('plugin.center.add'))}" ${this.busy ? 'disabled' : ''}>+</button>
+                                <div class="add-dropdown ${this.addMenuOpen ? 'visible' : ''}">
+                                    <div class="add-dropdown-section">
+                                        <button type="button" class="add-dropdown-item" data-install-source="npm">
+                                            <span class="icon npm">N</span>
+                                            <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromNpm'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromNpmHint'))}</span></span>
+                                        </button>
+                                        <button type="button" class="add-dropdown-item" data-install-source="directory">
+                                            <span class="icon folder">📁</span>
+                                            <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromDirectory'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromDirectoryHint'))}</span></span>
+                                        </button>
+                                        <label class="add-dropdown-item">
+                                            <input type="file" data-install-file accept=".tgz,.zip,application/gzip,application/zip" hidden>
+                                            <span class="icon archive">📦</span>
+                                            <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromPackage'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromPackageHint'))}</span></span>
+                                        </label>
+                                    </div>
+                                    <div class="add-dropdown-section">
+                                        <button type="button" class="add-dropdown-item" data-install-source="url">
+                                            <span class="icon url">🔗</span>
+                                            <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromUrl'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromUrlHint'))}</span></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+                ${this.notice ? `<div class="notice ${this.notice.error ? 'error' : ''}">${escapeHtml(this.notice.text)}</div>` : ''}
+                <div class="content">
+                    <div class="tab-panel" data-panel="installed">${this.renderInstalledPanel()}</div>
+                </div>
+                ${this.renderInstallDialog()}
+                ${this.renderInstallProgress()}
+            </div>
+            ${this.selectedPluginId ? '<skill-detail-card id="plugin-detail-card"></skill-detail-card>' : ''}`;
+        this.bindEvents();
+        this.renderPluginDetail();
+    }
+
+    private bindEvents(): void {
+        this.shadowRoot?.querySelector('[data-action="add"]')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.addMenuOpen = !this.addMenuOpen;
+            this.render();
+        });
+        this.shadowRoot?.querySelector('[data-install-source="npm"]')?.addEventListener('click', () => {
+            this.openInstallDialog('npm');
+        });
+        this.shadowRoot?.querySelector('[data-install-source="url"]')?.addEventListener('click', () => {
+            this.openInstallDialog('url');
+        });
+        this.shadowRoot?.querySelector('[data-install-source="directory"]')?.addEventListener('click', () => {
+            void this.installFromDirectory();
+        });
+        this.shadowRoot?.querySelector<HTMLInputElement>('[data-install-file]')?.addEventListener('change', (event) => {
+            const input = event.currentTarget as HTMLInputElement;
+            void this.installFromFile(input.files?.[0]);
+            input.value = '';
+        });
+        this.shadowRoot?.querySelector<HTMLInputElement>('input[name="spec"]')?.addEventListener('input', (event) => {
+            this.installSpec = (event.currentTarget as HTMLInputElement).value;
+        });
+        this.shadowRoot?.querySelector('[data-install-form]')?.addEventListener('submit', (event) => {
+            event.preventDefault();
+            this.install(this.installSpec, 'plugin.install.success', this.installDialogMode);
+        });
+        this.shadowRoot?.querySelector('[data-action="cancel-install"]')?.addEventListener('click', () => {
+            this.closeInstallDialog();
+        });
+        this.shadowRoot?.querySelector('[data-install-dialog]')?.addEventListener('click', (event) => {
+            if (event.target === event.currentTarget) this.closeInstallDialog();
+        });
+        this.shadowRoot?.querySelector('.shell')?.addEventListener('click', (event) => {
+            if (this.addMenuOpen && !(event.target as Element).closest('.add-dropdown-anchor')) {
+                this.addMenuOpen = false;
+                this.render();
+            }
+        });
+        this.shadowRoot?.querySelector('[data-action="reload"]')?.addEventListener('click', () => {
+            void this.run(() => getAPI().callMainWorld('reload'), 'plugin.runtime.reload.success');
+        });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-plugin-id]').forEach((card) => {
+            const open = (event: Event) => {
+                if ((event.target as Element).closest('button, input, label')) return;
+                const id = card.dataset.pluginId;
+                if (!id) return;
+                this.selectedPluginId = id;
+                this.render();
+            };
+            card.addEventListener('click', open);
+            card.addEventListener('keydown', (event) => {
+                const keyboardEvent = event as KeyboardEvent;
+                if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+                keyboardEvent.preventDefault();
+                open(event);
+            });
+        });
+        this.shadowRoot?.querySelectorAll<HTMLInputElement>('[data-action="toggle"]').forEach((toggle) => {
+            toggle.addEventListener('change', () => {
+                const id = toggle.dataset.id;
+                const entry = this.entries.find((candidate) => candidate.id === id);
+                if (id && entry) {
+                    void this.run(
+                        () => getAPI().callMainWorld('setEnabled', id, toggle.checked),
+                        toggle.checked ? 'plugin.enable.success' : 'plugin.disable.success',
+                        undefined,
+                        true
+                    );
+                }
+            });
+        });
+        this.shadowRoot?.querySelectorAll<HTMLElement>('[data-action="uninstall"]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = button.dataset.id;
+                if (id) void this.confirmAndUninstall(id);
+            });
+        });
+    }
+}
+
+if (!customElements.get('pluginmgr-entry-widget')) {
+    customElements.define('pluginmgr-entry-widget', PluginMgrEntryWidget);
+}
