@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolCall } from '../../../main/aikernel/messages.js';
-import { parseNestedToolArgs } from '../../../main/aikernel/skill.js';
 import {
+    parseEvidenceToolCallArgs,
     resolveEvidenceToolInvocation,
     resolveEvidenceToolSemantics
 } from '../../../main/aikernel/evidencecard/tool-semantics.js';
@@ -91,12 +91,11 @@ test('skill wrapper resolves its real tool identity and repaired nested argument
     assert.equal(semantics.phase, 'act');
 });
 
-test('nested argument parser accepts objects, JSON strings, repaired JSON, and rejects scalar data', () => {
-    assert.deepEqual(parseNestedToolArgs({ z: 1 }), { z: 1 });
-    assert.deepEqual(parseNestedToolArgs('{"z":1}'), { z: 1 });
-    assert.deepEqual(parseNestedToolArgs("{'z':1,}"), { z: 1 });
-    assert.deepEqual(parseNestedToolArgs(undefined), {});
-    assert.throws(() => parseNestedToolArgs('42'), /无法解析/);
+test('evidence argument parsing accepts typed and repaired object arguments and ignores scalar data', () => {
+    assert.deepEqual(parseEvidenceToolCallArgs(makeToolCall('test', { z: 1 })), { z: 1 });
+    assert.deepEqual(parseEvidenceToolCallArgs(makeToolCall('test', {}, { argsString: '{"z":1}' })), { z: 1 });
+    assert.deepEqual(parseEvidenceToolCallArgs(makeToolCall('test', {}, { argsString: "{'z':1,}" })), { z: 1 });
+    assert.deepEqual(parseEvidenceToolCallArgs(makeToolCall('test', {}, { argsString: '42' })), {});
 });
 
 test('skill observation uses result snapshot identity when the arguments do not contain it', () => {

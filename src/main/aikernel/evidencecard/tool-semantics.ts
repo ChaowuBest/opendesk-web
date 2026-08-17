@@ -12,8 +12,8 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { jsonrepair } from 'jsonrepair';
 import type { ToolCall } from '../messages.js';
-import { parseNestedToolArgs } from '../skill.js';
 
 export type EvidenceCardPhase =
     | 'plan'
@@ -143,6 +143,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function parseEvidenceObject(value: unknown): Record<string, unknown> {
+    if (value === undefined || value === null) return {};
+    if (isRecord(value)) return value;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return {};
+        const parsed = JSON.parse(jsonrepair(trimmed)) as unknown;
+        if (parsed === null) return {};
+        if (isRecord(parsed)) return parsed;
+    }
+    throw new Error('证据工具参数无法解析为对象');
+}
+
 function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
     for (const key of keys) {
         const value = record[key];
@@ -239,7 +252,7 @@ export function parseEvidenceToolCallArgs(toolCall: EvidenceToolCall): Record<st
     }
     if (!toolCall.args_string) return {};
     try {
-        return parseNestedToolArgs(toolCall.args_string);
+        return parseEvidenceObject(toolCall.args_string);
     } catch {
         return {};
     }
@@ -281,7 +294,7 @@ function resolveQualifiedName(toolCall: EvidenceToolCall, registry?: EvidenceToo
 
 function parseNestedOrDigest(value: unknown): Record<string, unknown> {
     try {
-        return parseNestedToolArgs(value);
+        return parseEvidenceObject(value);
     } catch {
         return { __unparsedArgsDigest: digestEvidenceValue(value) };
     }
@@ -380,7 +393,7 @@ function parseResultObject(toolCall: EvidenceToolCall): Record<string, unknown> 
     if (isRecord(toolCall.result_object)) return toolCall.result_object;
     if (!toolCall.result) return undefined;
     try {
-        return parseNestedToolArgs(toolCall.result);
+        return parseEvidenceObject(toolCall.result);
     } catch {
         return undefined;
     }
