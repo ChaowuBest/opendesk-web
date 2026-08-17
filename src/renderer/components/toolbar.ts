@@ -71,6 +71,45 @@ export class ElasticToolbarWidget extends HTMLElement {
         });
     }
 
+    /**
+     * 为指定按钮设置状态角标（不触发完整重渲染）。
+     * @param badgeId 按钮 id
+     * @param status 'ok' | 'warn' | 'err' | null（null 清除角标）
+     * @param title 可选的状态说明；提供时同步更新按钮悬停提示，清除角标时恢复原始 label
+     */
+    setButtonBadge(badgeId: string, status: 'ok' | 'warn' | 'err' | null, title?: string) {
+        const btnEl = this.querySelector(`#${badgeId}-${this.uid}`);
+        if (!btnEl) return;
+        // 记录按钮原始悬停提示（渲染时的 label），清除角标时恢复
+        if (!btnEl.dataset.baseTitle) {
+            btnEl.dataset.baseTitle = btnEl.getAttribute('title') || '';
+        }
+        btnEl.setAttribute('title', title || btnEl.dataset.baseTitle || '');
+        // 查找图标包裹元素，挂载角标
+        let badge = btnEl.querySelector('.elastic-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'elastic-badge';
+            const iconWrap = btnEl.querySelector('.elastic-icon-wrap');
+            if (iconWrap) {
+                iconWrap.appendChild(badge);
+            } else {
+                btnEl.appendChild(badge);
+            }
+        }
+        if (!status) {
+            badge.remove();
+            return;
+        }
+        badge.className = `elastic-badge elastic-badge--${status}`;
+        badge.innerHTML =
+            status === 'err'
+                ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="10.5" y="3" width="3" height="11" rx="1.5"/><circle cx="12" cy="18.5" r="2"/></svg>'
+                : status === 'warn'
+                  ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="12" height="14" rx="2"/><path d="M10 9h4M10 13h4" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>'
+                  : `<span class="elastic-badge-dot"></span>`;
+    }
+
     setToolbarTitle(toolbarTitle: string) {
         this.toolbarTitle = toolbarTitle;
         const titleEl = this.querySelector(`#toolbar-title-${this.uid}`);

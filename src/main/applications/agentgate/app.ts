@@ -71,7 +71,7 @@ class AgentGateApplication extends BaseApplication {
                 .describe('存储类型：sqlite 或 json（鸿蒙默认 json）'),
             dbPath: z.string().default('').describe('SQLite 数据库路径（空则使用默认值）'),
             jsonDataDir: z.string().default('').describe('JSON 文件存储目录（空则使用默认值）'),
-            floatingWindowEnabled: z.boolean().default(true).describe('浮窗显示开关'),
+            floatingWindowEnabled: z.boolean().default(false).describe('浮窗显示开关'),
             floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度'),
             maliciousSkillDetection: z
                 .boolean()
@@ -425,6 +425,13 @@ class AgentGateApplication extends BaseApplication {
         return typeof t === 'number' && t >= 10 ? t : 300;
     }
 
+    /** 一次性设置 LLM 模型 + 超时（合并为一次配置更新，避免多次触发重启） */
+    setLLMConfig(model: string, timeout?: number): void {
+        const patch: Record<string, unknown> = { llmModel: model || '' };
+        if (typeof timeout === 'number' && timeout >= 10 && timeout <= 600) patch.llmTimeout = timeout;
+        this._updateAppConfig(patch);
+    }
+
     /** 设置 LLM 超时 */
     setLLMTimeout(timeout: number): void {
         this._updateAppConfig({ llmTimeout: timeout });
@@ -432,7 +439,9 @@ class AgentGateApplication extends BaseApplication {
 
     private _updateAppConfig(patch: Record<string, any>): void {
         const setting = Setting.getInstance();
-        const data = setting.getData() as any;
+        // 深拷贝，避免通过 getData() 返回的引用直接修改 this.data，
+        // 否则 setData 里 oldConfig 已是改后的值，detect 不到变化，onConfigChanged 不触发。
+        const data = JSON.parse(JSON.stringify(setting.getData())) as any;
         const apps = data.applications || {};
         apps[this.bundleName] = { ...(apps[this.bundleName] || {}), ...patch };
         setting.setData({ ...data, applications: apps });
