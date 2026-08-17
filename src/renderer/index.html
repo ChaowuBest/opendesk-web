@@ -744,6 +744,65 @@
             window.settingAPI.registerCommandCallback('openTask', function (taskId) {
                 return openTask(taskId);
             });
+            window.settingAPI.registerCommandCallback('openSettingEditor', function (payload) {
+                window.globalControlAPI.openSettingEditor();
+                if (payload && payload.highlightFloatingWindowMode) {
+                    openSettingsAndHighlightFloatingWindow();
+                }
+            });
+
+            /**
+             * 打开「通用设置」标签页并高亮悬浮窗模式下拉框，引导用户将悬浮窗关闭。
+             * 设置面板为异步渲染，采用轮询等待面板就绪。
+             *
+             * 注意：面板初次 render() 会一次性渲染所有标签页内容（未激活的标签只是
+             * 用 hidden 类隐藏），因此下拉框在 DOM 中始终存在——必须先切换到「通用」
+             * 标签页，再对下拉框做高亮，否则高亮作用在不可见的元素上。
+             */
+            function openSettingsAndHighlightFloatingWindow() {
+                var attempts = 0;
+                (function tryHighlight() {
+                    var panel = document.querySelector('setting-panel');
+                    if (!panel) {
+                        if (attempts++ < 40) {
+                            setTimeout(tryHighlight, 100);
+                        }
+                        return;
+                    }
+                    // 确保「通用」标签页处于激活状态（已在通用页时点击为无操作）。
+                    var generalTab = panel.querySelector('.sp-nav-item[data-tab="general"]');
+                    if (generalTab) {
+                        generalTab.click();
+                    }
+                    var select = panel.querySelector('#floating-window-mode-select');
+                    if (select) {
+                        ensureFloatingWindowHighlightStyle();
+                        select.classList.add('sp-floating-window-highlight');
+                        select.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                        setTimeout(function () {
+                            select.classList.remove('sp-floating-window-highlight');
+                        }, 8000);
+                        return;
+                    }
+                    if (attempts++ < 40) {
+                        setTimeout(tryHighlight, 100);
+                    }
+                })();
+            }
+
+            function ensureFloatingWindowHighlightStyle() {
+                if (document.getElementById('floating-window-highlight-style')) return;
+                var style = document.createElement('style');
+                style.id = 'floating-window-highlight-style';
+                style.textContent =
+                    '@keyframes sp-floating-window-pulse{' +
+                    '0%,100%{box-shadow:0 0 0 2px var(--sp-color-primary,#DF4436);border-color:var(--sp-color-primary,#DF4436)}' +
+                    '50%{box-shadow:0 0 0 5px rgba(223,68,54,.28);border-color:var(--sp-color-primary,#DF4436)}' +
+                    '}' +
+                    '.sp-floating-window-highlight{animation:sp-floating-window-pulse 1.2s ease-in-out 3!important;' +
+                    'border-color:var(--sp-color-primary,#DF4436)!important}';
+                document.head.appendChild(style);
+            }
 
             async function updateMaximizeIcon() {
                 const isMaximized = await window.settingAPI.isMaximized();

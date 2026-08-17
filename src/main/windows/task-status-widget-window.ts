@@ -11,16 +11,24 @@
 
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { BaseTaskManagerUpdateSubscriber } from '../aikernel/task/manager.js';
+import { errorToMessage, type TaskUpdateChunk } from '../aikernel/task/types.js';
+import { BaseTaskUpdateSubscriber } from '../aikernel/states/tasks.js';
+import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import {
     buildTaskStatusSummary,
     computeTriggerActive,
+    isWidgetTriggerEffective,
+    mergeTaskLiveUsage,
     updateTaskSnapshot,
     type FloatingWindowMode,
     type TaskStatusListEntry,
     type TaskStatusWidgetSummary,
-    type TaskStatusWidgetTask
+    type TaskStatusWidgetTask,
+    type TaskUsageTrackedState,
+    type WidgetSuppressionState
 } from './task-status-widget.js';
+import type { TaskUsageSnapshot } from '../aikernel/task/types.js';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos.js';
 import { Setting } from '../utils/setting.js';
 
@@ -46,6 +54,10 @@ export interface TaskStatusWidgetHost {
     addTaskListSubscriber(subscriber: BaseTaskManagerUpdateSubscriber): string;
     loadWidgetPage(win: BrowserWindow): void;
     getFloatingWindowMode(): FloatingWindowMode;
+    /** 获取任务的 usage 快照（累计 usage_summary + 在途消息实时 usage）。 */
+    getTaskUsageSnapshot?(taskId: string): TaskUsageSnapshot | undefined;
+    /** 订阅任务的实时更新（流式 chunk），返回取消订阅函数。 */
+    subscribeTaskUpdate?(taskId: string, subscriber: BaseTaskUpdateSubscriber): (() => void) | undefined;
 }
 
 let host: TaskStatusWidgetHost | null = null;
@@ -68,21 +80,127 @@ let isCollapsed = true;
 let lastTriggerActive = false;
 /** 上一次的显示模式，用于检测设置变更。 */
 let lastMode: FloatingWindowMode = undefined;
+/**
+ * 用户通过关闭菜单设置的抑制状态：
+ * - dismissed：本次触发周期内不再显示（主窗口回到前台后自动恢复）；
+ * - sessionDisabled：本次会话内不再显示（「下次启动恢复」，随应用退出重置）。
+ */
+const suppression: WidgetSuppressionState = {};
+
+/**
+ * 每个任务的 usage 合并跟踪状态（key = task_id）。
+ * 跨「任务列表更新 / 流式 chunk 推送」保持，避免在途消息请求提交后重复计数。
+ */
+const usageTrackedByTask = new Map<string, TaskUsageTrackedState>();
+/** 活跃任务的状态更新订阅（key = task_id，value = 取消订阅函数）。 */
+const taskUpdateUnsubscribers = new Map<string, () => void>();
+/** 流式 chunk 推送的节流定时器（普通文本 chunk 不逐个推送）。 */
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+const PUSH_THROTTLE_MS = 5000;
+
+function schedulePushSummary(): void {
+    if (pushTimer !== null) {
+        return;
+    }
+    pushTimer = setTimeout(() => {
+        pushTimer = null;
+        pushSummary();
+    }, PUSH_THROTTLE_MS);
+}
+
+function cancelScheduledPush(): void {
+    if (pushTimer !== null) {
+        clearTimeout(pushTimer);
+        pushTimer = null;
+    }
+}
+
+function chunkCarriesUsage(chunk: TaskUpdateChunk): boolean {
+    return (
+        (chunk.type === 'assistant' || chunk.type === 'assistant_replace' || chunk.type === 'user') &&
+        chunk.usage !== undefined &&
+        chunk.usage !== null
+    );
+}
+
+function handleTaskUpdateChunk(chunk: TaskUpdateChunk): void {
+    if (chunkCarriesUsage(chunk)) {
+        // 携带 usage 的 chunk（请求结束/消息边界的最终 usage）是 token 数真正变化的时刻：
+        // 立即同步推送，保证最终数值及时送达；同时在请求提交进 usage_summary 之前完成
+        // 合并，避免 live 值已被吸收后重复计数。
+        cancelScheduledPush();
+        pushSummary();
+        return;
+    }
+    // 普通流式 chunk：5s 节流推送即可。
+    schedulePushSummary();
+}
+
+/**
+ * 让浮窗订阅快照中的活跃任务（running/waiting）以接收流式更新，并取消
+ * 已不再活跃任务的订阅。在快照变化后调用。
+ */
+function syncTaskUpdateSubscriptions(): void {
+    if (!host) {
+        return;
+    }
+    const activeIds = new Set(snapshot.filter((task) => task.task_status !== 'completed').map((task) => task.task_id));
+
+    for (const [taskId, unsubscribe] of taskUpdateUnsubscribers) {
+        if (activeIds.has(taskId)) {
+            continue;
+        }
+        try {
+            unsubscribe();
+        } catch (err) {
+            logger.warn(`failed to unsubscribe task ${taskId} update subscription: ${errorToMessage(err)}`);
+        }
+        taskUpdateUnsubscribers.delete(taskId);
+        usageTrackedByTask.delete(taskId);
+    }
+
+    for (const taskId of activeIds) {
+        if (taskUpdateUnsubscribers.has(taskId)) {
+            continue;
+        }
+        const subscriber = new (class extends BaseTaskUpdateSubscriber {
+            send(chunk: TaskUpdateChunk): void {
+                handleTaskUpdateChunk(chunk);
+            }
+        })();
+        const unsubscribe = host.subscribeTaskUpdate?.(taskId, subscriber);
+        if (typeof unsubscribe === 'function') {
+            taskUpdateUnsubscribers.set(taskId, unsubscribe);
+        }
+    }
+}
 
 function reevaluate(): void {
     if (!host) {
         return;
     }
     const mode = host.getFloatingWindowMode();
-    const triggerActive = computeTriggerActive(mode, {
+    const state = {
         hidden: isWindowHidden,
         focused: isWindowFocused
-    });
+    };
+    const triggerActive = computeTriggerActive(mode, state);
+    const effectiveActive = isWidgetTriggerEffective(mode, state, suppression);
 
     if (!triggerActive) {
-        // 触发条件失效：清空本次打开周期内的快照。
+        // 触发条件失效（主窗口回到前台等）：恢复「关闭一次」的抑制标记，
+        // 清空本次打开周期内的快照。
+        suppression.dismissed = false;
         lastTriggerActive = false;
         snapshot = [];
+        // 同步取消所有任务订阅，避免任务结束后仍持续接收流式 chunk。
+        syncTaskUpdateSubscriptions();
+        hideWidget();
+        return;
+    }
+
+    if (!effectiveActive) {
+        // 触发条件激活但用户已通过关闭菜单抑制显示（本次触发周期 / 本次会话）。
         hideWidget();
         return;
     }
@@ -94,6 +212,7 @@ function reevaluate(): void {
     }
 
     snapshot = updateTaskSnapshot(snapshot, taskList);
+    syncTaskUpdateSubscriptions();
     if (snapshot.length > 0) {
         showWidget();
     } else {
@@ -168,8 +287,22 @@ function positionWidget(win: BrowserWindow): void {
 }
 
 function buildSummary(): TaskStatusWidgetSummary {
+    const mergedTasks = snapshot.map((task) => {
+        const usageSnapshot = host?.getTaskUsageSnapshot?.(task.task_id);
+        if (!usageSnapshot) {
+            // 主进程无法提供 usage 快照（host 未实现或任务已不在管理器）时，保留快照中的原值。
+            return task;
+        }
+        const merged = mergeTaskLiveUsage(
+            usageSnapshot.usage_summary,
+            usageSnapshot.live,
+            usageTrackedByTask.get(task.task_id)
+        );
+        usageTrackedByTask.set(task.task_id, merged.tracked);
+        return { ...task, usage: merged.usage };
+    });
     return buildTaskStatusSummary(
-        snapshot,
+        mergedTasks,
         waitingTaskIds,
         taskList.length,
         (taskId) => getTaskTodosForDisplay(taskId),
@@ -196,10 +329,29 @@ function showWidget(): void {
         // 首次显示时定位；已显示时保留用户拖拽后的位置，仅刷新内容。
         positionWidget(win);
         pushSummary();
-        // 被动状态窗不抢占焦点，避免打断用户当前操作。
-        win.showInactive();
+        if (win.webContents.isLoading()) {
+            // 首次加载：等页面完成首帧渲染（加载视图）后再显示，避免出现空白窗口闪烁；
+            // 异步回调执行前重新校验触发条件，防止期间主窗口回到前台导致误显示。
+            win.once('ready-to-show', () => showWidgetInactiveIfStillWanted(win));
+            // 兜底：防止 ready-to-show 在监听注册前已触发导致窗口迟迟不显示。
+            setTimeout(() => showWidgetInactiveIfStillWanted(win), 2000);
+        } else {
+            // 被动状态窗不抢占焦点，避免打断用户当前操作。
+            win.showInactive();
+        }
     } else {
         pushSummary();
+    }
+}
+
+/** 仅在触发条件仍然有效且未被用户抑制时显示浮窗（用于异步展示路径）。 */
+function showWidgetInactiveIfStillWanted(win: BrowserWindow): void {
+    if (win.isDestroyed() || win.isVisible()) {
+        return;
+    }
+    const mode = host?.getFloatingWindowMode();
+    if (isWidgetTriggerEffective(mode, { hidden: isWindowHidden, focused: isWindowFocused }, suppression)) {
+        win.showInactive();
     }
 }
 
@@ -315,6 +467,34 @@ export function initTaskStatusWidget(nextHost: TaskStatusWidgetHost): void {
     });
     ipcMain.handle('taskStatusWidget:openTask', (_event, taskId: unknown) => {
         openTaskInMainWindow(typeof taskId === 'string' ? taskId : '');
+    });
+    // 关闭菜单 · 关闭一次：本次触发周期内不再显示（主窗口回到前台后恢复）。
+    ipcMain.handle('taskStatusWidget:hide', () => {
+        suppression.dismissed = true;
+        hideWidget();
+    });
+    // 关闭菜单 · 下次启动恢复：本次会话内不再显示（随应用退出重置）。
+    ipcMain.handle('taskStatusWidget:disableSession', () => {
+        suppression.sessionDisabled = true;
+        suppression.dismissed = false;
+        snapshot = [];
+        syncTaskUpdateSubscriptions();
+        hideWidget();
+    });
+    // 关闭菜单 · 永久：恢复主窗口并打开系统设置，高亮悬浮窗模式下拉框引导用户关闭。
+    ipcMain.handle('taskStatusWidget:closePermanently', () => {
+        const main = host?.getMainWindow();
+        if (main && !main.isDestroyed()) {
+            activateMainWindow(main);
+            // 主窗口从最小化/隐藏恢复是异步的；延迟到恢复后再发送，避免 IPC 在窗口恢复
+            // 期间被丢弃。
+            setTimeout(() => {
+                safeSendToWebContents(main.webContents, 'command:openSettingEditor', {
+                    highlightFloatingWindowMode: true
+                });
+            }, 150);
+        }
+        hideWidget();
     });
     ipcMain.on('taskStatusWidget:notifyWaiting', (_event, taskId: unknown, waiting: unknown) => {
         notifyTaskWaitingForInput(typeof taskId === 'string' ? taskId : '', waiting === true);

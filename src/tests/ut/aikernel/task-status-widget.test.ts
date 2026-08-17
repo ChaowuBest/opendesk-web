@@ -5,9 +5,14 @@ import {
     computeTriggerActive,
     isActiveTask,
     isInternalTask,
+    isWidgetTriggerEffective,
+    mergeTaskLiveUsage,
+    normalizeTaskUsageWidget,
     updateTaskSnapshot,
+    type TaskLiveUsageSnapshot,
     type TaskStatusListEntry,
-    type TaskStatusWidgetTask
+    type TaskStatusWidgetTask,
+    type TaskUsageTrackedState
 } from '../../../main/windows/task-status-widget.js';
 
 function task(overrides: Partial<TaskStatusListEntry> = {}): TaskStatusListEntry {
@@ -72,6 +77,39 @@ describe('task-status-widget 纯逻辑', () => {
             expect(computeTriggerActive('card', { hidden: true, focused: true })).toBe(true);
             expect(computeTriggerActive('card', { hidden: false, focused: false })).toBe(true);
             expect(computeTriggerActive('card', { hidden: false, focused: true })).toBe(false);
+        });
+    });
+
+    describe('isWidgetTriggerEffective', () => {
+        test('无抑制状态时与常规触发条件一致', () => {
+            expect(isWidgetTriggerEffective('card', { hidden: true, focused: true })).toBe(true);
+            expect(isWidgetTriggerEffective('card', { hidden: false, focused: false })).toBe(true);
+            expect(isWidgetTriggerEffective('card', { hidden: false, focused: true })).toBe(false);
+            expect(isWidgetTriggerEffective(undefined, { hidden: true, focused: false })).toBe(false);
+        });
+
+        test('dismissed（关闭一次）：本次触发周期内不再显示', () => {
+            expect(isWidgetTriggerEffective('card', { hidden: true, focused: true }, { dismissed: true })).toBe(false);
+            expect(isWidgetTriggerEffective('card', { hidden: false, focused: true }, { dismissed: true })).toBe(false);
+        });
+
+        test('sessionDisabled（下次启动恢复）：本次会话内不再显示', () => {
+            expect(isWidgetTriggerEffective('card', { hidden: true, focused: true }, { sessionDisabled: true })).toBe(
+                false
+            );
+            expect(isWidgetTriggerEffective('card', { hidden: false, focused: false }, { sessionDisabled: true })).toBe(
+                false
+            );
+        });
+
+        test('sessionDisabled 优先级高于 dismissed', () => {
+            expect(
+                isWidgetTriggerEffective(
+                    'card',
+                    { hidden: true, focused: true },
+                    { dismissed: true, sessionDisabled: true }
+                )
+            ).toBe(false);
         });
     });
 
@@ -245,6 +283,262 @@ describe('task-status-widget 纯逻辑', () => {
 
             expect(snapshot[0].usage).toEqual({ total_tokens: 120, input_tokens: 80, output_tokens: 40 });
             expect(snapshot[0].subtask_progress).toEqual({ completed: 1, total: 1, percent: 100 });
+        });
+    });
+
+    describe('normalizeTaskUsageWidget', () => {
+        test('input/output 优先，缺失时回退 prompt/completion', () => {
+            expect(normalizeTaskUsageWidget({ total_tokens: 8, input_tokens: 5, output_tokens: 3 })).toEqual({
+                total_tokens: 8,
+                input_tokens: 5,
+                output_tokens: 3
+            });
+            expect(normalizeTaskUsageWidget({ prompt_tokens: 5, completion_tokens: 3 })).toEqual({
+                total_tokens: 8,
+                input_tokens: 5,
+                output_tokens: 3
+            });
+            expect(normalizeTaskUsageWidget(undefined)).toEqual({ total_tokens: 0, input_tokens: 0, output_tokens: 0 });
+        });
+    });
+
+    describe('mergeTaskLiveUsage', () => {
+        // 消息创建时刻（毫秒时间戳）与 usage_summary.updated_at（ISO）保持一致的时间轴。
+        const MSG_TIME = 1767225605000; // 2026-01-01T00:00:05.000Z
+        const BEFORE_MSG = new Date(MSG_TIME - 60_000).toISOString();
+        const AFTER_MSG = new Date(MSG_TIME + 60_000).toISOString();
+
+        const live = (overrides: Partial<TaskLiveUsageSnapshot> = {}): TaskLiveUsageSnapshot => ({
+            message_id: 'm1',
+            message_timestamp: MSG_TIME,
+            usage: { total_tokens: 15, input_tokens: 10, output_tokens: 5 },
+            ...overrides
+        });
+
+        const trackedWith = (overrides: Partial<TaskUsageTrackedState> = {}): TaskUsageTrackedState => ({
+            message_id: 'm1',
+            request_count_at_message_start: 0,
+            last_live_total: { total: 15, input: 10, output: 5 },
+            ...overrides
+        });
+
+        test('无在途消息：仅展示累计值', () => {
+            const summary = {
+                total_tokens: 100,
+                input_tokens: 60,
+                output_tokens: 40,
+                request_count: 2,
+                updated_at: AFTER_MSG
+            };
+            const { usage, tracked } = mergeTaskLiveUsage(summary, undefined, undefined);
+
+            expect(usage).toEqual({ total_tokens: 100, input_tokens: 60, output_tokens: 40 });
+            expect(tracked.request_count_at_message_start).toBe(2);
+            expect(tracked.last_live_total).toBeUndefined();
+        });
+
+        test('同一消息、值未变化、请求未提交（最终 chunk 送达、提交前瞬间）：累计 + 实时', () => {
+            const summary = {
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                request_count: 0,
+                updated_at: BEFORE_MSG
+            };
+            // live 值与 tracked.last_live_total 完全一致（{15,10,5}），且 request_count 未推进。
+            const current = live();
+            const { usage, tracked } = mergeTaskLiveUsage(summary, current, trackedWith());
+
+            expect(usage).toEqual({ total_tokens: 15, input_tokens: 10, output_tokens: 5 });
+            expect(tracked.request_count_at_message_start).toBe(0);
+        });
+
+        test('同一消息、值未变化、请求已提交（request_count 推进）：仅累计值，避免重复计数', () => {
+            const summary = {
+                total_tokens: 150,
+                input_tokens: 100,
+                output_tokens: 50,
+                request_count: 1,
+                updated_at: AFTER_MSG
+            };
+            const current = live({ usage: { total_tokens: 150, input_tokens: 100, output_tokens: 50 } });
+            const { usage, tracked } = mergeTaskLiveUsage(
+                summary,
+                current,
+                trackedWith({ last_live_total: { total: 150, input: 100, output: 50 } })
+            );
+
+            expect(usage).toEqual({ total_tokens: 150, input_tokens: 100, output_tokens: 50 });
+            expect(tracked.request_count_at_message_start).toBe(1);
+        });
+
+        test('同一消息、live 值变化（新请求轮次）：累计 + 实时', () => {
+            const summary = {
+                total_tokens: 150,
+                input_tokens: 100,
+                output_tokens: 50,
+                request_count: 1,
+                updated_at: AFTER_MSG
+            };
+            const current = live({ usage: { total_tokens: 600, input_tokens: 200, output_tokens: 400 } });
+            const { usage, tracked } = mergeTaskLiveUsage(summary, current, trackedWith());
+
+            expect(usage).toEqual({ total_tokens: 750, input_tokens: 300, output_tokens: 450 });
+            expect(tracked).toEqual({
+                message_id: 'm1',
+                request_count_at_message_start: 1,
+                last_live_total: { total: 600, input: 200, output: 400 }
+            });
+        });
+
+        test('新消息且请求未提交：累计 + 实时', () => {
+            const summary = {
+                total_tokens: 150,
+                input_tokens: 100,
+                output_tokens: 50,
+                request_count: 1,
+                updated_at: BEFORE_MSG
+            };
+            const current = live({
+                message_id: 'm2',
+                usage: { total_tokens: 40, input_tokens: 30, output_tokens: 10 }
+            });
+            const { usage, tracked } = mergeTaskLiveUsage(summary, current, trackedWith({ message_id: 'm1' }));
+
+            expect(usage).toEqual({ total_tokens: 190, input_tokens: 130, output_tokens: 60 });
+            expect(tracked).toEqual({
+                message_id: 'm2',
+                request_count_at_message_start: 1,
+                last_live_total: { total: 40, input: 30, output: 10 }
+            });
+        });
+
+        test('新消息但请求已在浮窗看到前提交（updated_at 不早于消息创建）：仅累计值，避免重复计数', () => {
+            const summary = {
+                total_tokens: 150,
+                input_tokens: 100,
+                output_tokens: 50,
+                request_count: 2,
+                updated_at: AFTER_MSG
+            };
+            const current = live({
+                message_id: 'm2',
+                usage: { total_tokens: 40, input_tokens: 30, output_tokens: 10 }
+            });
+            const { usage } = mergeTaskLiveUsage(summary, current, trackedWith({ message_id: 'm1' }));
+
+            expect(usage).toEqual({ total_tokens: 150, input_tokens: 100, output_tokens: 50 });
+        });
+
+        test('实时 usage 缺失 input/output 时回退 prompt/completion', () => {
+            const summary = {
+                total_tokens: 500,
+                input_tokens: 200,
+                output_tokens: 300,
+                request_count: 1,
+                updated_at: BEFORE_MSG
+            };
+            const current = live({
+                message_id: 'm2',
+                usage: { total_tokens: 15, prompt_tokens: 10, completion_tokens: 5 }
+            });
+            const { usage } = mergeTaskLiveUsage(summary, current, undefined);
+
+            expect(usage).toEqual({ total_tokens: 515, input_tokens: 210, output_tokens: 305 });
+        });
+
+        test('Anthropic 风格流式增长：live 值逐步变化，展示 累计 + 实时增长', () => {
+            const summary = {
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                request_count: 0,
+                updated_at: BEFORE_MSG
+            };
+            let tracked: TaskUsageTrackedState | undefined;
+            let lastUsage;
+            for (const output of [10, 100, 500]) {
+                const current = live({
+                    usage: { total_tokens: 50 + output, input_tokens: 50, output_tokens: output }
+                });
+                const merged = mergeTaskLiveUsage(summary, current, tracked);
+                tracked = merged.tracked;
+                lastUsage = merged.usage;
+            }
+
+            expect(lastUsage).toEqual({ total_tokens: 550, input_tokens: 50, output_tokens: 500 });
+            expect(tracked).toEqual({
+                message_id: 'm1',
+                request_count_at_message_start: 0,
+                last_live_total: { total: 550, input: 50, output: 500 }
+            });
+        });
+
+        test('OpenAI 风格完整多轮场景：全程展示累积值，提交后不重复计数', () => {
+            const messageTime = MSG_TIME;
+            let summary = {
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                request_count: 0,
+                updated_at: BEFORE_MSG
+            };
+            let tracked: TaskUsageTrackedState | undefined;
+
+            // round1 最终 chunk（携带 usage）：累计 + 实时 = round1
+            let current = live({
+                message_id: 'm1',
+                message_timestamp: messageTime,
+                usage: { total_tokens: 120, input_tokens: 100, output_tokens: 20 }
+            });
+            let merged = mergeTaskLiveUsage(summary, current, tracked);
+            tracked = merged.tracked;
+            expect(merged.usage).toEqual({ total_tokens: 120, input_tokens: 100, output_tokens: 20 });
+
+            // round1 提交进 usage_summary
+            summary = {
+                total_tokens: 120,
+                input_tokens: 100,
+                output_tokens: 20,
+                request_count: 1,
+                updated_at: AFTER_MSG
+            };
+
+            // round2 流式中间（OpenAI 不携带 usage，live 停留 round1 结果）：仅累计，不重复
+            current = live({
+                message_id: 'm1',
+                message_timestamp: messageTime,
+                usage: { total_tokens: 120, input_tokens: 100, output_tokens: 20 }
+            });
+            merged = mergeTaskLiveUsage(summary, current, tracked);
+            tracked = merged.tracked;
+            expect(merged.usage).toEqual({ total_tokens: 120, input_tokens: 100, output_tokens: 20 });
+
+            // round2 最终 chunk（usage 变为 round2）：累计 + 实时
+            current = live({
+                message_id: 'm1',
+                message_timestamp: messageTime,
+                usage: { total_tokens: 600, input_tokens: 200, output_tokens: 400 }
+            });
+            merged = mergeTaskLiveUsage(summary, current, tracked);
+            tracked = merged.tracked;
+            expect(merged.usage).toEqual({ total_tokens: 720, input_tokens: 300, output_tokens: 420 });
+
+            // round2 提交：仅累计
+            summary = {
+                total_tokens: 720,
+                input_tokens: 300,
+                output_tokens: 420,
+                request_count: 2,
+                updated_at: AFTER_MSG
+            };
+            current = live({
+                message_id: 'm1',
+                message_timestamp: messageTime,
+                usage: { total_tokens: 600, input_tokens: 200, output_tokens: 400 }
+            });
+            merged = mergeTaskLiveUsage(summary, current, tracked);
+            expect(merged.usage).toEqual({ total_tokens: 720, input_tokens: 300, output_tokens: 420 });
         });
     });
 });

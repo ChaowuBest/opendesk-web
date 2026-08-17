@@ -30,6 +30,10 @@ const CLOCK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const UP_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>`;
 const DOWN_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>`;
 const DONE_CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8 12.5 11 15.5 16 9.5"/></svg>`;
+// 关闭菜单图标（feather 线性风格，与浮窗内其它图标一致）。
+const EYE_OFF_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+const RESTART_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
+const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
 
 const WIDGET_CSS = `
 :host {
@@ -621,6 +625,151 @@ const WIDGET_CSS = `
 .btn-p:hover {
     background: var(--accent-hover);
 }
+
+/* ── 关闭菜单（样式参考 taskview 右键上下文菜单，字号适配浮窗） ── */
+.w-close-menu {
+    position: fixed;
+    z-index: 100;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 4px;
+    min-width: 200px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16), 0 10px 28px rgba(0, 0, 0, 0.22);
+    display: flex;
+    flex-direction: column;
+    -webkit-app-region: no-drag;
+    animation: w-close-menu-in 0.16s ease-out;
+}
+
+@keyframes w-close-menu-in {
+    from {
+        opacity: 0;
+        transform: scale(0.97) translateY(-3px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.w-close-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    border-radius: 6px;
+    color: var(--ink2);
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.w-close-item:hover {
+    background: var(--card-hover);
+    color: var(--ink);
+}
+
+.w-close-item .w-close-item-icon {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink3);
+}
+
+.w-close-item .w-close-item-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+.w-close-item:hover .w-close-item-icon {
+    color: var(--ink2);
+}
+
+.w-close-item .w-close-item-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.w-close-sep {
+    height: 1px;
+    background: var(--line-soft);
+    margin: 3px 6px;
+}
+
+/* ── 首屏加载视图（波浪条样式参考主界面 content-loading-view） ── */
+.loading-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    flex: 1;
+    min-height: 0;
+    padding: 24px 16px;
+}
+
+.loading-bars {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 34px;
+}
+
+.loading-bars .loading-bar {
+    width: 4px;
+    border-radius: 999px;
+    background: var(--accent);
+    animation: w-loading-wave 1s ease-in-out infinite;
+}
+
+.loading-bars .loading-bar:nth-child(2) {
+    animation-delay: 0.12s;
+}
+
+.loading-bars .loading-bar:nth-child(3) {
+    animation-delay: 0.24s;
+}
+
+.loading-bars .loading-bar:nth-child(4) {
+    animation-delay: 0.36s;
+}
+
+@keyframes w-loading-wave {
+    0%,
+    100% {
+        height: 8px;
+        opacity: 0.45;
+    }
+    50% {
+        height: 30px;
+        opacity: 1;
+    }
+}
+
+.loading-msg {
+    font-size: 11px;
+    color: var(--ink3);
+    letter-spacing: 0.14em;
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .loading-bars .loading-bar {
+        animation-duration: 0.01ms;
+    }
+}
 `;
 
 function formatElapsed(ms) {
@@ -746,6 +895,11 @@ export class TaskStatusWidget extends HTMLElement {
         this._mode = 'pill';
         this._collapsed = true;
         this._elapsedEls = [];
+        this._closeMenuEl = null;
+        this._closeMenuDismiss = null;
+        /** 是否已收到首份摘要数据（在此之前展示加载视图）。 */
+        this._dataReady = false;
+        this._listSignature = '';
         this._buildDOM();
     }
 
@@ -772,6 +926,7 @@ export class TaskStatusWidget extends HTMLElement {
             this._unsubscribeTodo = null;
         }
         this._stopTicker();
+        this._closeCloseMenu();
         window.removeEventListener('focus', this._onWindowFocus);
         window.removeEventListener('blur', this._onWindowBlur);
     }
@@ -829,6 +984,7 @@ export class TaskStatusWidget extends HTMLElement {
 
     _applySummary(summary) {
         this._summary = summary || { count: 0, total: 0, tasks: [], mode: 'pill' };
+        this._dataReady = true;
         const mode = this._summary.mode ?? 'pill';
         if (mode !== this._mode) {
             this._mode = mode;
@@ -861,16 +1017,39 @@ export class TaskStatusWidget extends HTMLElement {
         this._listView = this._buildListView();
         this._detailView = this._buildDetailView();
         this._collapsedView = this._buildCollapsedView();
+        this._loadingView = this._buildLoadingView();
 
         this._container.appendChild(this._listView);
         this._container.appendChild(this._detailView);
         this._container.appendChild(this._collapsedView);
+        this._container.appendChild(this._loadingView);
 
         this.shadowRoot.appendChild(style);
         this.shadowRoot.appendChild(this._container);
 
         this._updateLogo();
         this._render();
+    }
+
+    _buildLoadingView() {
+        const view = document.createElement('div');
+        view.className = 'loading-view';
+
+        const bars = document.createElement('div');
+        bars.className = 'loading-bars';
+        for (let i = 0; i < 4; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'loading-bar';
+            bars.appendChild(bar);
+        }
+
+        const msg = document.createElement('div');
+        msg.className = 'loading-msg';
+        msg.textContent = t('renderer.taskStatusWidget.loading');
+
+        view.appendChild(bars);
+        view.appendChild(msg);
+        return view;
     }
 
     _buildCollapsedView() {
@@ -914,12 +1093,16 @@ export class TaskStatusWidget extends HTMLElement {
 
         const collapseBtn = document.createElement('button');
         collapseBtn.className = 'icon-btn';
-        collapseBtn.title = t('renderer.taskStatusWidget.collapse');
-        collapseBtn.setAttribute('aria-label', t('renderer.taskStatusWidget.collapse'));
+        collapseBtn.title = t('renderer.taskStatusWidget.closeMenu');
+        collapseBtn.setAttribute('aria-label', t('renderer.taskStatusWidget.closeMenu'));
         collapseBtn.innerHTML = CLOSE_SVG;
         collapseBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this._collapse();
+            if (this._closeMenuEl) {
+                this._closeCloseMenu();
+            } else {
+                this._openCloseMenu(collapseBtn);
+            }
         });
 
         head.appendChild(this._logo);
@@ -1060,6 +1243,110 @@ export class TaskStatusWidget extends HTMLElement {
         this._animateViewIn('list');
     }
 
+    /**
+     * 打开「关闭任务浮窗」菜单（位于按钮左侧，样式参考 taskview 右键上下文菜单）。
+     */
+    _openCloseMenu(anchorEl) {
+        this._closeCloseMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'w-close-menu';
+        menu.setAttribute('role', 'menu');
+
+        const buildItem = (label, iconSvg, action) => {
+            const btn = document.createElement('button');
+            btn.className = 'w-close-item';
+            btn.setAttribute('role', 'menuitem');
+            const icon = document.createElement('span');
+            icon.className = 'w-close-item-icon';
+            icon.innerHTML = iconSvg;
+            const labelEl = document.createElement('span');
+            labelEl.className = 'w-close-item-label';
+            labelEl.textContent = label;
+            btn.appendChild(icon);
+            btn.appendChild(labelEl);
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._closeCloseMenu();
+                action();
+            });
+            return btn;
+        };
+
+        menu.appendChild(
+            buildItem(t('renderer.taskStatusWidget.closeMenu.hide'), EYE_OFF_SVG, () => {
+                window.taskStatusWidgetAPI?.hideWidget?.();
+            })
+        );
+        const sep = document.createElement('div');
+        sep.className = 'w-close-sep';
+        menu.appendChild(sep);
+        menu.appendChild(
+            buildItem(t('renderer.taskStatusWidget.closeMenu.hideSession'), RESTART_SVG, () => {
+                window.taskStatusWidgetAPI?.disableForSession?.();
+            })
+        );
+        menu.appendChild(
+            buildItem(t('renderer.taskStatusWidget.closeMenu.hidePermanent'), GEAR_SVG, () => {
+                window.taskStatusWidgetAPI?.closePermanently?.();
+            })
+        );
+
+        this.shadowRoot.appendChild(menu);
+
+        // 先给出初始估算位置，待渲染完成后按实际尺寸校正并限制在窗口内。
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const MENU_GAP = 6;
+        menu.style.left = `${Math.max(8, anchorRect.left - 206)}px`;
+        menu.style.top = `${anchorRect.top}px`;
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            const margin = 8;
+            const left = Math.max(
+                margin,
+                Math.min(anchorRect.left - rect.width - MENU_GAP, window.innerWidth - rect.width - margin)
+            );
+            const top = Math.max(margin, Math.min(anchorRect.top, window.innerHeight - rect.height - margin));
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+
+        this._closeMenuEl = menu;
+        this._closeMenuDismiss = (ev) => {
+            // 菜单位于 shadow DOM 内：document 级监听会被事件重定向（target 变成宿主元素），
+            // 必须用 composedPath() 判断点击是否落在菜单内部，避免 mousedown 阶段误关菜单
+            // 导致菜单项 click 永远无法触发。
+            const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
+            if (path.includes(menu)) {
+                return;
+            }
+            this._closeCloseMenu();
+        };
+        this.shadowRoot.addEventListener('mousedown', this._closeMenuDismiss, true);
+        document.addEventListener('keydown', this._closeMenuKeydown);
+        window.addEventListener('blur', this._closeMenuDismiss);
+    }
+
+    _closeMenuKeydown = (ev) => {
+        if (ev.key === 'Escape') {
+            this._closeCloseMenu();
+        }
+    };
+
+    _closeCloseMenu() {
+        if (this._closeMenuEl) {
+            this._closeMenuEl.remove();
+            this._closeMenuEl = null;
+        }
+        if (this._closeMenuDismiss) {
+            this.shadowRoot.removeEventListener('mousedown', this._closeMenuDismiss, true);
+            document.removeEventListener('keydown', this._closeMenuKeydown);
+            window.removeEventListener('blur', this._closeMenuDismiss);
+            this._closeMenuDismiss = null;
+        }
+    }
+
     _animateCollapsedIn() {
         const el = this._collapsedView;
         if (!el || typeof el.animate !== 'function') {
@@ -1096,9 +1383,18 @@ export class TaskStatusWidget extends HTMLElement {
 
     _render() {
         if (!this._list) return;
-        this._elapsedEls = [];
 
         this._container.classList.toggle('is-collapsed', this._collapsed);
+
+        // 首份摘要到达前展示加载视图，避免出现空白卡片。
+        if (!this._dataReady) {
+            this._listView.style.display = 'none';
+            this._detailView.style.display = 'none';
+            this._collapsedView.style.display = 'none';
+            this._loadingView.style.display = 'flex';
+            return;
+        }
+        this._loadingView.style.display = 'none';
 
         if (this._collapsed) {
             this._listView.style.display = 'none';
@@ -1150,8 +1446,38 @@ export class TaskStatusWidget extends HTMLElement {
         this._collapsedView.appendChild(summary);
     }
 
+    /**
+     * 计算任务列表的渲染签名：仅与列表展示相关的字段变化时才会重建列表。
+     * token 用量等不参与列表展示的字段变化不会触发重建，避免 spinner 动画重启
+     * 与 hover 状态丢失（usage 推送频率远高于任务状态变化）。
+     */
+    _listSignatureOf(tasks) {
+        return tasks
+            .map((task) =>
+                [
+                    task.task_id,
+                    task.task_status,
+                    task.waiting_for_input ? 1 : 0,
+                    task.task_name,
+                    task.started_at ?? '',
+                    task.finished_at ?? '',
+                    task.todo_progress?.completed ?? 0,
+                    task.todo_progress?.total ?? 0,
+                    task.subtask_progress?.percent ?? 0
+                ].join('|')
+            )
+            .join('\n');
+    }
+
     _renderList() {
         const tasks = this._summary.tasks || [];
+        const signature = this._listSignatureOf(tasks);
+        if (signature === this._listSignature && this._list.children.length > 0) {
+            // 列表无实质变化（如仅 token 用量推送）：跳过重建，保持 spinner/hover 状态。
+            return;
+        }
+        this._listSignature = signature;
+        this._elapsedEls = [];
         this._list.textContent = '';
 
         const activeCount = tasks.filter(
@@ -1270,6 +1596,7 @@ export class TaskStatusWidget extends HTMLElement {
             this._showList();
             return;
         }
+        this._elapsedEls = [];
 
         const meta = statusMeta(task.task_status, task.waiting_for_input);
         const elapsedMs = elapsedMsOf(task);

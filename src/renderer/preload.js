@@ -1422,6 +1422,12 @@ if (shouldExposeMainWindowAPIs()) {
         restoreMainWindow: () => ipcRenderer.invoke('taskStatusWidget:restoreMainWindow'),
         setCollapsed: (collapsed) => ipcRenderer.invoke('taskStatusWidget:setCollapsed', collapsed),
         openTask: (taskId) => ipcRenderer.invoke('taskStatusWidget:openTask', taskId),
+        // 关闭菜单 · 关闭一次：本次触发周期内不再显示。
+        hideWidget: () => ipcRenderer.invoke('taskStatusWidget:hide'),
+        // 关闭菜单 · 下次启动恢复：本次会话内不再显示。
+        disableForSession: () => ipcRenderer.invoke('taskStatusWidget:disableSession'),
+        // 关闭菜单 · 永久：恢复主窗口并打开系统设置引导用户关闭。
+        closePermanently: () => ipcRenderer.invoke('taskStatusWidget:closePermanently'),
         notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
         onSummaryUpdate: (callback) => {
             const listener = (_event, summary) => callback(summary);

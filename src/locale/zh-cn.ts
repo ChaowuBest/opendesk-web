@@ -1169,7 +1169,7 @@ export const zhCn: Record<string, string> = {
     'sp.general.closeWindowBehavior.quit': '退出应用',
     'sp.general.closeWindowBehavior.minimize': '最小化',
     'sp.general.floatingWindow': '悬浮窗',
-    'sp.general.floatingWindow.pill': '单行胶囊',
+    'sp.general.floatingWindow.pill': '单行胶囊（实验性）',
     'sp.general.floatingWindow.card': '完整卡片',
     'sp.general.floatingWindow.off': '关闭',
     'main.closeDialog.title': '关闭窗口',
@@ -1733,6 +1733,7 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Task Status Widget
     'renderer.taskStatusWidget.title': 'OpenDesk 智能体任务',
+    'renderer.taskStatusWidget.loading': '正在加载任务…',
     'renderer.taskStatusWidget.activeCount': '${count} 个任务进行中',
     'renderer.taskStatusWidget.viewAll': '查看全部任务',
     'renderer.taskStatusWidget.collapse': '收起悬浮窗',
@@ -1754,6 +1755,10 @@ export const zhCn: Record<string, string> = {
     'renderer.taskStatusWidget.outputTokens': '下行（输出）',
     'renderer.taskStatusWidget.backToList': '返回列表',
     'renderer.taskStatusWidget.openSession': '打开会话',
+    'renderer.taskStatusWidget.closeMenu': '关闭任务浮窗',
+    'renderer.taskStatusWidget.closeMenu.hide': '关闭任务浮窗',
+    'renderer.taskStatusWidget.closeMenu.hideSession': '关闭任务浮窗（下次启动恢复）',
+    'renderer.taskStatusWidget.closeMenu.hidePermanent': '关闭任务浮窗（永久）',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',

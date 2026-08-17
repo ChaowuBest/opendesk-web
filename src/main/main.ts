@@ -3198,6 +3198,16 @@ async function startApplication(): Promise<void> {
                 const raw = (Setting.getInstance().getData().gui_config as Record<string, unknown>)
                     ?.floating_window_mode;
                 return raw === 'pill' || raw === 'card' ? raw : undefined;
+            },
+            getTaskUsageSnapshot: (taskId) =>
+                GlobalState.getInstance().taskManagerState.getTask(taskId)?.getUsageSnapshot(),
+            subscribeTaskUpdate: (taskId, subscriber) => {
+                const task = GlobalState.getInstance().taskManagerState.getTask(taskId);
+                if (!task) {
+                    return undefined;
+                }
+                task.addSubscriber(subscriber);
+                return () => task.removeSubscriber(subscriber.subscription_id);
             }
         });
         AgentRegistry.initBuiltinAgents();

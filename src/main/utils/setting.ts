@@ -416,7 +416,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             window_bounds: null,
             sidebar_width: 320,
             gui_reason_display: 'inline',
-            floating_window_mode: 'pill'
+            floating_window_mode: 'card'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {

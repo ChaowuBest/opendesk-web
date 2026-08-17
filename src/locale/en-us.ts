@@ -1198,7 +1198,7 @@ export const enUs: Record<string, string> = {
     'sp.general.closeWindowBehavior.quit': 'Quit Application',
     'sp.general.closeWindowBehavior.minimize': 'Minimize',
     'sp.general.floatingWindow': 'Floating Window',
-    'sp.general.floatingWindow.pill': 'Pill',
+    'sp.general.floatingWindow.pill': 'Pill (Experimental)',
     'sp.general.floatingWindow.card': 'Card',
     'sp.general.floatingWindow.off': 'Off',
     'main.closeDialog.title': 'Close Window',
@@ -1772,6 +1772,7 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Task Status Widget
     'renderer.taskStatusWidget.title': 'OpenDesk Agent Tasks',
+    'renderer.taskStatusWidget.loading': 'Loading tasks…',
     'renderer.taskStatusWidget.activeCount': '${count} tasks in progress',
     'renderer.taskStatusWidget.viewAll': 'View all tasks',
     'renderer.taskStatusWidget.collapse': 'Collapse',
@@ -1793,6 +1794,10 @@ export const enUs: Record<string, string> = {
     'renderer.taskStatusWidget.outputTokens': 'Down (output)',
     'renderer.taskStatusWidget.backToList': 'Back to list',
     'renderer.taskStatusWidget.openSession': 'Open session',
+    'renderer.taskStatusWidget.closeMenu': 'Close task widget',
+    'renderer.taskStatusWidget.closeMenu.hide': 'Close task widget',
+    'renderer.taskStatusWidget.closeMenu.hideSession': 'Close task widget (restore on next launch)',
+    'renderer.taskStatusWidget.closeMenu.hidePermanent': 'Close task widget (permanent)',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
