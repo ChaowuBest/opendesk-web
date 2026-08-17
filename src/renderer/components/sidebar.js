@@ -18,6 +18,7 @@ import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
     buildSidebarSearchResults,
+    getSidebarRecentTasks,
     getSidebarRunningTasks,
     isSidebarTaskVisible,
     normalizeWorkspace
@@ -98,6 +99,8 @@ class SideBar extends HTMLElement {
             if (collapsed !== this._collapsed) {
                 this._collapsed = collapsed;
                 this._updateBannerForTheme();
+                // 收起/展开状态切换时关闭最近任务菜单
+                this._dismissRecentTasksMenu();
             }
         }
     }
@@ -238,6 +241,11 @@ class SideBar extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._dismissRecentTasksMenu();
+        if (this._chatBadgeTimer) {
+            clearTimeout(this._chatBadgeTimer);
+            this._chatBadgeTimer = null;
+        }
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
         }
@@ -576,6 +584,10 @@ class SideBar extends HTMLElement {
                 <button id="sb-collapsed-new-task" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.newTask')}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 3.5l8 7V20a1 1 0 0 1-1 1h-4v-6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v6H5a1 1 0 0 1-1-1z"/></svg>
                 </button>
+                <button id="sb-collapsed-chat" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.chat')}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 11h.01M12 11h.01M16 11h.01"/></svg>
+                    <span class="sb-chat-badge"></span>
+                </button>
                 <button id="sb-collapsed-apps" class="sb-collapsed-btn" title="${this._t('renderer.sidebar.apps')}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg>
                 </button>
@@ -774,6 +786,11 @@ class SideBar extends HTMLElement {
             window.globalControlAPI.openHomePage();
         });
 
+        this.querySelector('#sb-collapsed-chat')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._toggleRecentTasksMenu();
+        });
+
         this.querySelector('#sb-collapsed-apps')?.addEventListener('click', (e) => {
             e.stopPropagation();
             const popover = this.querySelector('#app-popover');
@@ -798,6 +815,208 @@ class SideBar extends HTMLElement {
         this.querySelector('#sb-collapsed-personal')?.addEventListener('click', () => {
             window.globalControlAPI.openPersonalCenter();
         });
+    }
+
+    /** 取最近更新的可见任务（按 updated_at 降序，最多 limit 个） */
+    _getRecentTasks(limit) {
+        return getSidebarRecentTasks(this.taskList, limit);
+    }
+
+    /**
+     * 更新对话图标右上角角标状态：
+     * - 有运行中的顶层任务：显示任务数
+     * - 任务刚结束、仍在最近完成窗口内：显示 ✓，避免结束后失去视觉反馈
+     * - 最近任务也消失后：隐藏角标
+     */
+    _updateChatBadge() {
+        const badge = this.querySelector('#sb-collapsed-chat .sb-chat-badge');
+        if (!badge) return;
+        const runningZone = getSidebarRunningTasks(this.taskList);
+        const runningCount = runningZone.filter((item) => !item.recentlyCompleted).length;
+        const recentCompleted = runningZone.filter((item) => item.recentlyCompleted);
+
+        if (runningCount > 0) {
+            this._setChatBadge(badge, runningCount > 99 ? '99+' : String(runningCount));
+        } else if (recentCompleted.length > 0) {
+            this._setChatBadge(badge, '✓');
+        } else {
+            this._hideChatBadge(badge);
+        }
+        this._scheduleChatBadgeRefresh(recentCompleted);
+    }
+
+    _setChatBadge(badge, text) {
+        badge.classList.toggle('sb-chat-badge-check', text === '✓');
+        const wasVisible = badge.classList.contains('sb-chat-badge-show');
+        const contentChanged = badge.textContent !== text;
+        badge.textContent = text;
+        if (!wasVisible) {
+            badge.classList.add('sb-chat-badge-show');
+        } else if (contentChanged) {
+            // 内容变化（如数字↔对号）：强制重播从左下角展开的动画
+            badge.classList.remove('sb-chat-badge-show');
+            void badge.offsetWidth;
+            badge.classList.add('sb-chat-badge-show');
+        }
+    }
+
+    _hideChatBadge(badge) {
+        badge.classList.remove('sb-chat-badge-show');
+    }
+
+    /** 最近完成窗口到期后重新计算角标（任务列表无更新时也要让 ✓ 自动消失） */
+    _scheduleChatBadgeRefresh(recentCompleted) {
+        if (this._chatBadgeTimer) {
+            clearTimeout(this._chatBadgeTimer);
+            this._chatBadgeTimer = null;
+        }
+        if (recentCompleted.length === 0) return;
+        const WINDOW_MS = 5 * 60 * 1000;
+        const now = Date.now();
+        let remaining = WINDOW_MS;
+        for (const item of recentCompleted) {
+            const finishedAt = new Date(item.task.finished_at || 0).getTime();
+            remaining = Math.min(remaining, WINDOW_MS - (now - finishedAt));
+        }
+        this._chatBadgeTimer = setTimeout(
+            () => {
+                this._chatBadgeTimer = null;
+                // 窗口隐藏时遵循省电设计：只标记待刷新，由窗口恢复可见事件触发更新
+                if (!window.__isWindowVisible) {
+                    this._needsTaskListRefresh = true;
+                    return;
+                }
+                this._updateChatBadge();
+            },
+            Math.max(0, remaining)
+        );
+    }
+
+    _toggleRecentTasksMenu() {
+        const chatBtn = this.querySelector('#sb-collapsed-chat');
+        if (!chatBtn) return;
+        if (this.querySelector('#recent-tasks-menu')) {
+            this._dismissRecentTasksMenu();
+        } else {
+            this._showRecentTasksMenu(chatBtn);
+        }
+    }
+
+    _showRecentTasksMenu(anchorBtn) {
+        this._dismissRecentTasksMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'recent-tasks-menu';
+        menu.className = 'ctx-menu';
+        menu.style.minWidth = '220px';
+
+        const recentTasks = this._getRecentTasks(10);
+        // 与菜单列表口径一致：排除自动化（internal）任务
+        const totalCount = this.taskList.filter((task) => task.internal !== true && this._isTaskVisible(task)).length;
+
+        if (recentTasks.length === 0) {
+            menu.innerHTML = `<div class="ctx-empty">${this._t('renderer.sidebar.noTasks')}</div>`;
+        } else {
+            const rows = recentTasks
+                .map((task) => {
+                    const isRunning = task.task_status === 'running';
+                    const failed = task.task_status === 'failed' || ['fail', 'ask'].includes(task.completion_status);
+                    // 状态图标与完整侧边栏任务列表中的单个任务保持一致
+                    const resultIcon = isRunning
+                        ? '<span class="sb-running-spinner" aria-hidden="true"></span>'
+                        : `<span class="sb-task-result${failed ? ' is-failed' : ''}" aria-hidden="true">${
+                              failed ? '×' : '✓'
+                          }</span>`;
+                    const name = SideBar.escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
+                    return `<button class="ctx-item" data-task-id="${SideBar.escapeHtml(task.task_id)}">
+                        <span class="ctx-icon-sm">${resultIcon}</span>
+                        <span class="ctx-label">${name}</span>
+                    </button>`;
+                })
+                .join('');
+
+            const viewMore =
+                totalCount > 10
+                    ? `<div class="ctx-divider"></div>
+                       <button class="ctx-item" data-action="view-more">
+                           <span class="ctx-icon-sm"><i class="fa-solid fa-angles-right"></i></span>
+                           <span class="ctx-label">${this._t('renderer.sidebar.viewMoreTasks')}</span>
+                       </button>`
+                    : '';
+
+            // 任务列表放入可滚动区域：窗口变矮时菜单内容在区域内滚动，不超出视口
+            menu.innerHTML = `<div class="ctx-menu-list">${rows}</div>${viewMore}`;
+        }
+
+        this.appendChild(menu);
+
+        // 定位：菜单左边越过分割线（侧边栏面板右边缘）一小段距离，使菜单主体不落在侧边栏区域内
+        requestAnimationFrame(() => {
+            const btnRect = anchorBtn.getBoundingClientRect();
+            const panelEl = this.parentElement;
+            const dividerX = panelEl ? panelEl.getBoundingClientRect().right : btnRect.right;
+            let left = dividerX + 8;
+            if (left + menu.offsetWidth > window.innerWidth) {
+                left = Math.max(8, window.innerWidth - menu.offsetWidth - 8);
+            }
+            // 限制菜单最大高度：任务列表需要时出现滚动条，保证下边缘不超出窗口
+            menu.style.maxHeight = `${Math.max(120, window.innerHeight - 16)}px`;
+            let top = btnRect.top;
+            if (top + menu.offsetHeight > window.innerHeight - 8) {
+                top = window.innerHeight - menu.offsetHeight - 8;
+            }
+            if (top < 8) top = 8;
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+
+        // 点击任务：直接切换到指定任务，不展开侧边栏
+        menu.querySelectorAll('[data-task-id]').forEach((item) => {
+            item.addEventListener('click', () => {
+                const taskId = item.dataset.taskId;
+                window.globalControlAPI.openTask(taskId);
+                this.currentTaskId = taskId;
+                this._updateTaskHighlight();
+                this._dismissRecentTasksMenu();
+            });
+        });
+
+        // 查看更多任务：展开侧边栏
+        menu.querySelector('[data-action="view-more"]')?.addEventListener('click', () => {
+            this._dismissRecentTasksMenu();
+            this.dispatchEvent(
+                new CustomEvent('sidebar-collapse-request', { detail: { collapsed: false }, bubbles: true })
+            );
+        });
+
+        // 点击菜单外部关闭（排除按钮自身，按钮负责开关）
+        this._recentTasksMenuDismissHandler = (e) => {
+            const path = e.composedPath();
+            const chatBtn = this.querySelector('#sb-collapsed-chat');
+            if (!path.includes(menu) && !(chatBtn && path.includes(chatBtn))) {
+                this._dismissRecentTasksMenu();
+            }
+        };
+        setTimeout(() => document.addEventListener('click', this._recentTasksMenuDismissHandler, true), 0);
+
+        // Escape 关闭
+        this._recentTasksMenuEscHandler = (e) => {
+            if (e.key === 'Escape') this._dismissRecentTasksMenu();
+        };
+        document.addEventListener('keydown', this._recentTasksMenuEscHandler);
+    }
+
+    _dismissRecentTasksMenu() {
+        const menu = this.querySelector('#recent-tasks-menu');
+        if (menu) menu.remove();
+        if (this._recentTasksMenuDismissHandler) {
+            document.removeEventListener('click', this._recentTasksMenuDismissHandler, true);
+            this._recentTasksMenuDismissHandler = null;
+        }
+        if (this._recentTasksMenuEscHandler) {
+            document.removeEventListener('keydown', this._recentTasksMenuEscHandler);
+            this._recentTasksMenuEscHandler = null;
+        }
     }
 
     _updateLocalizedChrome() {
@@ -2354,6 +2573,7 @@ class SideBar extends HTMLElement {
 
         this._bindTaskItemEvents(taskListContainer);
         this._bindSidebarTaskControls(taskListContainer);
+        this._updateChatBadge();
         restoreSidebarScrollState(taskListContainer, scrollState);
         if (typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => {

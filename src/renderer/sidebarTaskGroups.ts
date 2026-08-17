@@ -45,6 +45,14 @@ export function isSidebarTaskVisible(task: SidebarTask | null | undefined): task
     );
 }
 
+/**
+ * 取最近活跃的可见任务（按活动时间降序，最多 limit 个）。
+ * 排除自动化任务（internal），供收起态侧边栏的对话快捷菜单等场景使用。
+ */
+export function getSidebarRecentTasks(tasks: SidebarTask[], limit: number): SidebarTask[] {
+    return sortTasks(tasks.filter((task) => task.internal !== true && isSidebarTaskVisible(task))).slice(0, limit);
+}
+
 function timestamp(value?: string): number {
     if (!value) return 0;
     const parsed = Date.parse(value);
