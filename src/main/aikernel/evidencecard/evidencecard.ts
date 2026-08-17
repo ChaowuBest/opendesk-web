@@ -16,19 +16,19 @@ import {
     ToolCall,
     UserMessage,
     type UsageFields
-} from '../aikernel/messages.js';
-import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
-import type { TaskState } from '../aikernel/states/tasks.js';
+} from '../messages.js';
+import type { ToolResultPreviewOptions } from '../compaction/tool-results.js';
+import type { TaskState } from '../states/tasks.js';
 import {
     parseEvidenceToolCallArgs,
     resolveEvidenceToolSemantics,
     type EvidenceCardEvidenceKind,
     type EvidenceCardPhase,
     type EvidenceToolRegistry
-} from './evidencecard-tool-semantics.js';
-import { Setting } from './setting.js';
+} from './tool-semantics.js';
+import { Setting } from '../../utils/setting.js';
 
-export type { EvidenceCardEvidenceKind, EvidenceCardPhase } from './evidencecard-tool-semantics.js';
+export type { EvidenceCardEvidenceKind, EvidenceCardPhase } from './tool-semantics.js';
 
 export type EvidenceCardLedgerSource = 'tool' | 'llm';
 export type EvidenceCardDecision = 'collect' | 'reuse' | 'compress' | 'stop' | 'replan';

@@ -52,7 +52,7 @@ import {
     recordEvidenceCardToolCall,
     syncEvidenceCardTaskState,
     type EvidenceCardState
-} from '../../utils/evidencecard.js';
+} from '../evidencecard/evidencecard.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { jsonrepair } from 'jsonrepair';

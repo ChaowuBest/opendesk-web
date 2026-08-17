@@ -26,6 +26,7 @@
 import path from 'path';
 import fs from 'fs';
 import { parse as parseYaml } from 'yaml';
+import { jsonrepair } from 'jsonrepair';
 import { BaseToolset, BaseTool, ToolResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
@@ -41,11 +42,33 @@ import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { GlobalHooks } from './hooks';
-import { parseNestedToolArgs } from '../utils/tool-args.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
 const COMPATIBILITY_MAX_LEN = 500;
+
+export function parseNestedToolArgs(value: unknown): Record<string, unknown> {
+    if (value === undefined || value === null) {
+        return {};
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.length === 0) {
+            return {};
+        }
+        const parsed = JSON.parse(jsonrepair(trimmed)) as unknown;
+        if (parsed === null) {
+            return {};
+        }
+        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+    }
+    throw new Error('嵌套工具参数无法解析为对象');
+}
 
 const SKILL_FRONTMATTER_XML = `
 <skill>

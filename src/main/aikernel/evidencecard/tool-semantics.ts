@@ -12,8 +12,8 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { ToolCall } from '../aikernel/messages.js';
-import { parseNestedToolArgs } from './tool-args.js';
+import type { ToolCall } from '../messages.js';
+import { parseNestedToolArgs } from '../skill.js';
 
 export type EvidenceCardPhase =
     | 'plan'

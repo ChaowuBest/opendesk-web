@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolCall } from '../../../main/aikernel/messages.js';
-import { parseNestedToolArgs } from '../../../main/utils/tool-args.js';
+import { parseNestedToolArgs } from '../../../main/aikernel/skill.js';
 import {
     resolveEvidenceToolInvocation,
     resolveEvidenceToolSemantics
-} from '../../../main/utils/evidencecard-tool-semantics.js';
+} from '../../../main/aikernel/evidencecard/tool-semantics.js';
 
 function makeToolCall(
     toolName: string,
