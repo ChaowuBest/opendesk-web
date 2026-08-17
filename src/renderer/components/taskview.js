@@ -574,6 +574,14 @@ class TaskView extends HTMLElement {
         tool_call: ''
     };
 
+    /**
+     * 流式 reasoning 内容更新的兜底节流间隔。
+     * RAF 在页面不可见/窗口后台时（Electron backgroundThrottling）会暂停触发，
+     * 若只依赖 RAF，思考内容会在后台长时间冻结（标题栏秒数/字数却仍在走）。
+     * 兜底定时器以该间隔强制推进内容，保证「已思考字数在涨、渲染内容不动」不再发生。
+     */
+    static REASONING_UPDATE_FALLBACK_MS = 250;
+
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
     static normalizeUsageToken(value) {
@@ -777,7 +785,12 @@ class TaskView extends HTMLElement {
                     const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
                     const timeEl = el.querySelector('.reasoning-time');
                     if (timeEl) {
-                        timeEl.textContent = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
+                        const nextText = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
+                        // 只在文案变化时写入，避免每秒 setInterval 与每帧内容更新
+                        // 反复设置相同文本，触发无谓的 DOM 写入与布局。
+                        if (timeEl.textContent !== nextText) {
+                            timeEl.textContent = nextText;
+                        }
                     }
                 }
             };
@@ -803,12 +816,16 @@ class TaskView extends HTMLElement {
             return;
         }
 
-        // Inline mode: update preview content.
-        // The preview area is clipped (overflow: hidden), so there is no scrollable
-        // region; skip the scrollHeight read to avoid forcing layout on every flush.
+        // Inline mode: update preview content and keep it pinned to the newest
+        // reasoning text so the user can watch the thinking progress live instead
+        // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
             previewContent.textContent = text;
+            const previewArea = el.querySelector('.reasoning-preview-area');
+            if (previewArea) {
+                previewArea.scrollTop = previewArea.scrollHeight;
+            }
         }
 
         const fullContent = el.querySelector('.reasoning-content');
@@ -826,18 +843,38 @@ class TaskView extends HTMLElement {
      * stuck while the model is "thinking". Coalescing to one update per animation
      * frame caps the per-frame cost regardless of token rate; the final text is
      * flushed when the block is finalized.
+     *
+     * RAF alone is not enough: Chromium suspends `requestAnimationFrame` while the
+     * page is hidden / the window is backgrounded (Electron backgroundThrottling),
+     * which would freeze the preview even though the elapsed-time counter (driven by
+     * setInterval) keeps ticking. A fallback timer therefore guarantees the preview
+     * keeps advancing at a bounded rate regardless of visibility.
      */
     static scheduleReasoningPreviewUpdate(el, text) {
         if (!el) return;
         el._pendingReasoningText = text;
-        if (el._reasoningPreviewRaf !== undefined) return;
-        el._reasoningPreviewRaf = requestAnimationFrame(() => {
-            el._reasoningPreviewRaf = undefined;
+        // 已有一个排队的更新（RAF 或兜底定时器）则合并，避免每个 token 一次 DOM 写入。
+        if (el._reasoningPreviewRaf !== undefined || el._reasoningFallbackTimer !== undefined) return;
+
+        const apply = () => {
+            if (el._reasoningPreviewRaf !== undefined) {
+                cancelAnimationFrame(el._reasoningPreviewRaf);
+                el._reasoningPreviewRaf = undefined;
+            }
+            if (el._reasoningFallbackTimer !== undefined) {
+                clearTimeout(el._reasoningFallbackTimer);
+                el._reasoningFallbackTimer = undefined;
+            }
             const pending = el._pendingReasoningText;
             if (pending === undefined) return;
             el._pendingReasoningText = undefined;
             TaskView.updateReasoningPreview(el, pending);
-        });
+        };
+
+        // RAF：前台高频合并，每动画帧最多一次。
+        el._reasoningPreviewRaf = requestAnimationFrame(apply);
+        // 兜底：RAF 被挂起（后台/不可见）时仍保证内容推进；与 RAF 竞争，先到先执行。
+        el._reasoningFallbackTimer = setTimeout(apply, TaskView.REASONING_UPDATE_FALLBACK_MS);
     }
 
     /**
@@ -850,6 +887,10 @@ class TaskView extends HTMLElement {
         if (el._reasoningPreviewRaf !== undefined) {
             cancelAnimationFrame(el._reasoningPreviewRaf);
             el._reasoningPreviewRaf = undefined;
+        }
+        if (el._reasoningFallbackTimer !== undefined) {
+            clearTimeout(el._reasoningFallbackTimer);
+            el._reasoningFallbackTimer = undefined;
         }
         const pending = el._pendingReasoningText;
         if (pending !== undefined) {
