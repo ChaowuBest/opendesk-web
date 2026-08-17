@@ -13,8 +13,8 @@ import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 import {
     REASONING_EFFORT_LEVELS,
-    type ReasoningEffortLevel,
-    type ReasoningEffortStorageValue
+    type ReasoningEffort,
+    type ReasoningEffortLevel
 } from '../../common/reasoning-effort.js';
 
 /**
@@ -1159,9 +1159,9 @@ export function lookupKnownReasoningEfforts(rawModelName: string): ReasoningEffo
  *   2. 未匹配到时沿用系统全部档位。
  * 返回的列表可直接用于 TUI/GUI 的推理档位选择器。
  */
-export function resolveModelReasoningEfforts(model: { model_name: string }): ReasoningEffortStorageValue[] {
+export function resolveModelReasoningEfforts(model: { model_name: string }): ReasoningEffort[] {
     const levels = lookupKnownReasoningEfforts(model.model_name);
-    const result: ReasoningEffortStorageValue[] = [''];
+    const result: ReasoningEffort[] = [''];
     for (const level of REASONING_EFFORT_LEVELS) {
         if (!levels || levels.includes(level)) {
             result.push(level);

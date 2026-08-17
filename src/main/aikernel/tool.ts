@@ -16,6 +16,7 @@ import type { PermissionRequest } from './security/permission';
 import { zhCn } from '../../locale/zh-cn.js';
 import { enUs } from '../../locale/en-us.js';
 import { resolvePreferredLocale } from '../../common/locale.js';
+import type { ToolResultWriter } from './types/index.js';
 
 const validationTranslations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
@@ -121,7 +122,7 @@ export type ToolArgsValidationResult<T extends z.ZodType> =
           error: string;
       };
 
-export class ToolResult {
+export class ToolResult implements ToolResultWriter {
     status: 'running' | 'success' | 'error' = 'running';
     result: string = '';
     result_object?: object;
