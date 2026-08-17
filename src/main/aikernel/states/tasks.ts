@@ -131,6 +131,7 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
+import type { TaskUsageSnapshot } from '../task/types.js';
 import {
     ATTEMPT_COMPLETION_TOOL_NAME,
     getLLMRetryDelayMs,
@@ -609,6 +610,27 @@ export class TaskState {
             usage,
             timestamp: recordedAt
         });
+    }
+
+    /**
+     * 返回任务在浮窗等 UI 中展示所需的 token 用量快照：
+     * - usage_summary：任务级累计用量（随请求完成叠加，与个人中心任务统计同源）；
+     * - live：当前在途/最后一条 assistant 消息的实时用量（随流式逐 chunk 更新，
+     *   与主界面消息级展示同源）。
+     */
+    getUsageSnapshot(): TaskUsageSnapshot | undefined {
+        const snapshot: TaskUsageSnapshot = { usage_summary: this.usage_summary };
+        if (this._fullyLoaded) {
+            const last = this.chat_context.lastMessage();
+            if (last instanceof AssistantMessage && last.usage) {
+                snapshot.live = {
+                    message_id: last.message_id,
+                    message_timestamp: last.timestamp,
+                    usage: last.usage
+                };
+            }
+        }
+        return snapshot;
     }
 
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
