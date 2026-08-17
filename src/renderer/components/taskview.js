@@ -394,6 +394,12 @@ class TaskView extends HTMLElement {
 
     _programmaticScrolling = false;
 
+    /** @type {number} 最近一次用户主动滚动输入的时间戳，用于区分缩放等引起的被动 scroll。 */
+    _lastUserScrollTs = 0;
+
+    /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
+    _historyScrollKeydownHandler = null;
+
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollControls = this.querySelector('#taskview-scroll-controls');
@@ -402,6 +408,16 @@ class TaskView extends HTMLElement {
         } else {
             scrollControls?.classList.remove('hidden');
         }
+    }
+
+    /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
+    _markUserScrollIntent() {
+        this._lastUserScrollTs = Date.now();
+    }
+
+    /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
+    _hasRecentUserScrollIntent() {
+        return Date.now() - this._lastUserScrollTs < 300;
     }
 
     getHistoryContainer() {
@@ -573,6 +589,14 @@ class TaskView extends HTMLElement {
         reasoning: '',
         tool_call: ''
     };
+
+    /**
+     * 流式 reasoning 内容更新的兜底节流间隔。
+     * RAF 在页面不可见/窗口后台时（Electron backgroundThrottling）会暂停触发，
+     * 若只依赖 RAF，思考内容会在后台长时间冻结（标题栏秒数/字数却仍在走）。
+     * 兜底定时器以该间隔强制推进内容，保证「已思考字数在涨、渲染内容不动」不再发生。
+     */
+    static REASONING_UPDATE_FALLBACK_MS = 250;
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
@@ -777,7 +801,12 @@ class TaskView extends HTMLElement {
                     const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
                     const timeEl = el.querySelector('.reasoning-time');
                     if (timeEl) {
-                        timeEl.textContent = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
+                        const nextText = `（${formatReasoningElapsedTime(elapsed, el._reasoningTextLength || 0)}）`;
+                        // 只在文案变化时写入，避免每秒 setInterval 与每帧内容更新
+                        // 反复设置相同文本，触发无谓的 DOM 写入与布局。
+                        if (timeEl.textContent !== nextText) {
+                            timeEl.textContent = nextText;
+                        }
                     }
                 }
             };
@@ -803,12 +832,16 @@ class TaskView extends HTMLElement {
             return;
         }
 
-        // Inline mode: update preview content.
-        // The preview area is clipped (overflow: hidden), so there is no scrollable
-        // region; skip the scrollHeight read to avoid forcing layout on every flush.
+        // Inline mode: update preview content and keep it pinned to the newest
+        // reasoning text so the user can watch the thinking progress live instead
+        // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
             previewContent.textContent = text;
+            const previewArea = el.querySelector('.reasoning-preview-area');
+            if (previewArea) {
+                previewArea.scrollTop = previewArea.scrollHeight;
+            }
         }
 
         const fullContent = el.querySelector('.reasoning-content');
@@ -826,18 +859,38 @@ class TaskView extends HTMLElement {
      * stuck while the model is "thinking". Coalescing to one update per animation
      * frame caps the per-frame cost regardless of token rate; the final text is
      * flushed when the block is finalized.
+     *
+     * RAF alone is not enough: Chromium suspends `requestAnimationFrame` while the
+     * page is hidden / the window is backgrounded (Electron backgroundThrottling),
+     * which would freeze the preview even though the elapsed-time counter (driven by
+     * setInterval) keeps ticking. A fallback timer therefore guarantees the preview
+     * keeps advancing at a bounded rate regardless of visibility.
      */
     static scheduleReasoningPreviewUpdate(el, text) {
         if (!el) return;
         el._pendingReasoningText = text;
-        if (el._reasoningPreviewRaf !== undefined) return;
-        el._reasoningPreviewRaf = requestAnimationFrame(() => {
-            el._reasoningPreviewRaf = undefined;
+        // 已有一个排队的更新（RAF 或兜底定时器）则合并，避免每个 token 一次 DOM 写入。
+        if (el._reasoningPreviewRaf !== undefined || el._reasoningFallbackTimer !== undefined) return;
+
+        const apply = () => {
+            if (el._reasoningPreviewRaf !== undefined) {
+                cancelAnimationFrame(el._reasoningPreviewRaf);
+                el._reasoningPreviewRaf = undefined;
+            }
+            if (el._reasoningFallbackTimer !== undefined) {
+                clearTimeout(el._reasoningFallbackTimer);
+                el._reasoningFallbackTimer = undefined;
+            }
             const pending = el._pendingReasoningText;
             if (pending === undefined) return;
             el._pendingReasoningText = undefined;
             TaskView.updateReasoningPreview(el, pending);
-        });
+        };
+
+        // RAF：前台高频合并，每动画帧最多一次。
+        el._reasoningPreviewRaf = requestAnimationFrame(apply);
+        // 兜底：RAF 被挂起（后台/不可见）时仍保证内容推进；与 RAF 竞争，先到先执行。
+        el._reasoningFallbackTimer = setTimeout(apply, TaskView.REASONING_UPDATE_FALLBACK_MS);
     }
 
     /**
@@ -850,6 +903,10 @@ class TaskView extends HTMLElement {
         if (el._reasoningPreviewRaf !== undefined) {
             cancelAnimationFrame(el._reasoningPreviewRaf);
             el._reasoningPreviewRaf = undefined;
+        }
+        if (el._reasoningFallbackTimer !== undefined) {
+            clearTimeout(el._reasoningFallbackTimer);
+            el._reasoningFallbackTimer = undefined;
         }
         const pending = el._pendingReasoningText;
         if (pending !== undefined) {
@@ -3923,6 +3980,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
         }
+        if (this._historyScrollKeydownHandler) {
+            document.removeEventListener('keydown', this._historyScrollKeydownHandler);
+            this._historyScrollKeydownHandler = null;
+        }
         if (this._poolSegObserver) {
             this._poolSegObserver.disconnect();
             this._poolSegObserver = null;
@@ -4239,7 +4300,9 @@ class TaskView extends HTMLElement {
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
                 }
-            } else {
+            } else if (this._hasRecentUserScrollIntent()) {
+                // 仅在用户主动滚动（滚轮/触控板/触摸）时解除锁定，避免缩放等引起的
+                // 被动 scroll（页面 zoom 会调整 scrollTop）被误判为手动离开底部
                 if (this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(false);
                 }
@@ -4252,6 +4315,12 @@ class TaskView extends HTMLElement {
         chatHistory.addEventListener(
             'wheel',
             (e) => {
+                // 忽略浏览器缩放/捏合手势（Ctrl/⌘ + 滚轮、触控板捏合），
+                // 缩放不应改变“锁定底部自动更新”的状态
+                if (e.ctrlKey || e.metaKey) return;
+                if (e.deltaY !== 0) {
+                    this._markUserScrollIntent();
+                }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
                     const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
@@ -4270,6 +4339,46 @@ class TaskView extends HTMLElement {
             },
             { passive: true }
         );
+        // 触摸滚动视为用户主动滚动；仅在真实移动（touchmove）时标记，
+        // 避免纯点击（touchstart 无位移）留下滚动意图痕迹
+        chatHistory.addEventListener('touchmove', () => this._markUserScrollIntent(), { passive: true });
+        // 命中右侧滚动条区域的拖拽（鼠标）视为滚动意图，覆盖滚动条拖动场景
+        chatHistory.addEventListener('pointerdown', (e) => {
+            // 触控笔（pen）在内容区按下基本为绘制/拖动，且可能不派发 touchmove，直接视为滚动意图
+            if (e.pointerType === 'pen') {
+                this._markUserScrollIntent();
+                return;
+            }
+            const rect = chatHistory.getBoundingClientRect();
+            if (e.clientX - rect.left >= chatHistory.clientWidth) {
+                this._markUserScrollIntent();
+            }
+        });
+        // 键盘滚动（PageUp/PageDown/方向键/Home/End/空格）同样视为用户主动滚动；
+        // 挂到 document 以覆盖聊天区无焦点时的滚动，输入区域（textarea/input/可编辑）内除外
+        // 防御性清理：setUpEventListeners 可能被重复调用（如实例重挂载），避免 document 监听累积
+        if (this._historyScrollKeydownHandler) {
+            document.removeEventListener('keydown', this._historyScrollKeydownHandler);
+        }
+        this._historyScrollKeydownHandler = (e) => {
+            if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
+            const target = e.target;
+            if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
+                return;
+            }
+            const key = e.key;
+            if (
+                key === 'PageUp' ||
+                key === 'PageDown' ||
+                key === 'Home' ||
+                key === 'End' ||
+                key === ' ' ||
+                key.startsWith('Arrow')
+            ) {
+                this._markUserScrollIntent();
+            }
+        };
+        document.addEventListener('keydown', this._historyScrollKeydownHandler);
 
         this._poolSegRaf = null;
         const initPoolSegIndicators = () => {

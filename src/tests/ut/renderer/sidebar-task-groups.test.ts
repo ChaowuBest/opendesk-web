@@ -2,6 +2,7 @@ import {
     buildSidebarFavoritesResults,
     buildSidebarSearchResults,
     buildSidebarTaskGroups,
+    getSidebarRecentTasks,
     getSidebarRunningTasks,
     isSidebarTaskVisible,
     type SidebarTask
@@ -338,5 +339,49 @@ describe('sidebar favorites results', () => {
         const results = buildSidebarFavoritesResults(tasks);
 
         expect(results.map((item) => item.task.task_id)).toEqual(['running-2', 'running-1']);
+    });
+});
+
+describe('sidebar recent tasks (chat quick menu)', () => {
+    test('returns visible tasks sorted by activity timestamp and caps the count', () => {
+        const tasks = [
+            task('old', '2026-07-28T10:00:00', { updated_at: '2026-07-28T10:00:00' }),
+            task('newest', '2026-07-29T10:00:00', { updated_at: '2026-07-29T10:00:00' }),
+            task('middle', '2026-07-29T09:00:00', { updated_at: '2026-07-29T09:30:00' }),
+            task('hidden', '2026-07-29T11:00:00', { task_name: null })
+        ];
+
+        const recent = getSidebarRecentTasks(tasks, 2);
+
+        expect(recent.map((t) => t.task_id)).toEqual(['newest', 'middle']);
+    });
+
+    test('falls back to finished_at / created_at when updated_at is absent', () => {
+        const tasks = [
+            task('created', '2026-07-29T08:00:00'),
+            task('finished', '2026-07-29T07:00:00', { finished_at: '2026-07-29T09:00:00' }),
+            task('updated', '2026-07-29T06:00:00', { updated_at: '2026-07-29T05:00:00' })
+        ];
+
+        const recent = getSidebarRecentTasks(tasks, 10);
+
+        expect(recent.map((t) => t.task_id)).toEqual(['finished', 'created', 'updated']);
+    });
+
+    test('returns empty array when no visible tasks exist', () => {
+        const tasks = [task('hidden-1', '2026-07-29T10:00:00', { task_name: null })];
+
+        expect(getSidebarRecentTasks(tasks, 10)).toEqual([]);
+    });
+
+    test('excludes automatic (internal) tasks', () => {
+        const tasks = [
+            task('automatic', '2026-07-29T12:00:00', { internal: true }),
+            task('regular', '2026-07-29T10:00:00')
+        ];
+
+        const recent = getSidebarRecentTasks(tasks, 10);
+
+        expect(recent.map((t) => t.task_id)).toEqual(['regular']);
     });
 });

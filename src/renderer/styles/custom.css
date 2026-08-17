@@ -1000,6 +1000,53 @@ pre.terminal-tool-output {
 }
 
 /* =========================================
+   Agent input 富文本 placeholder（回车键图标 + 快捷键提示）
+   ========================================= */
+.agent-input-placeholder {
+    position: absolute;
+    /* 顶部对齐 textarea 默认 padding，使提示与输入文本位置一致 */
+    top: 2px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    pointer-events: none;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #9ca3af;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+.agent-input-placeholder.is-muted {
+    opacity: 0.5;
+}
+/* 输入内容后隐藏覆盖层提示（原生 placeholder 属性保持非空以支持 :placeholder-shown 判定） */
+#agent-input-textarea:not(:placeholder-shown) ~ .agent-input-placeholder {
+    opacity: 0;
+}
+/* 视觉由覆盖层承担，原生 placeholder 文本透明（保留属性用于无障碍与显隐判定） */
+#agent-input-textarea::placeholder {
+    color: transparent !important;
+}
+.agent-input-ph-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: inherit;
+}
+.agent-input-ph-key svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* =========================================
    Agent input toolbar
    ========================================= */
 .agent-input-toolbar {
@@ -1521,6 +1568,51 @@ main-sidebar[data-collapsed] .sb-collapsed-wrapper {
     height: 32px;
     border-radius: 8px;
     display: block;
+}
+
+/* 对话图标右上角运行中任务角标 */
+#sb-collapsed-chat {
+    position: relative;
+}
+.sb-chat-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    /* 浅色模式：主题色底 + 白字，与选中任务高亮一致 */
+    background: #c94c40;
+    color: #fff;
+    pointer-events: none;
+    /* 默认隐藏；出现/切换/消失均从左下角向右上方展开与收起 */
+    opacity: 0;
+    transform: scale(0.3);
+    transform-origin: left bottom;
+    transition:
+        opacity 0.16s ease,
+        transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.sb-chat-badge-show {
+    opacity: 1;
+    transform: scale(1);
+}
+/* 完成态对号：浅色模式用绿色背景 + 白色对号（小尺寸下保证对比度） */
+html:not([data-theme='dark']) .sb-chat-badge-check {
+    background: #15803d;
+    color: #fff;
+}
+/* 深色模式：白底 + 深色文字 */
+html[data-theme='dark'] .sb-chat-badge {
+    background: #fff;
+    color: #1c1917;
 }
 
 .sb-collapsed-top {
@@ -4286,4 +4378,69 @@ html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
 
 .setting-switch-on .setting-switch-knob {
     transform: translateX(20px);
+}
+
+/* ── Goal evaluation cards (taskview) ─────────────────────────
+   taskview 中 goal 评估卡片的颜色通过 CSS 变量自适应主题。
+   evaluation.js 只引用 var()，浅色默认值在此定义，
+   深色由 html[data-theme='dark'] 覆盖。 */
+.od-goal-eval-container {
+    --od-goal-eval-border: #f0e3dd;
+    --od-goal-eval-accent: #de4433;
+    --od-goal-eval-bg: #fbedea;
+    --od-goal-eval-title: #26262b;
+    --od-goal-eval-text: #3a3a3f;
+    --od-goal-eval-meta: #a5a5aa;
+}
+.od-goal-eval-kind-success {
+    --od-goal-eval-border: #d9eee1;
+    --od-goal-eval-accent: #43a26a;
+    --od-goal-eval-bg: linear-gradient(180deg, #f2faf5, #eff8f2);
+    --od-goal-eval-title: #1f7a4d;
+}
+.od-goal-eval-kind-warning,
+.od-goal-eval-kind-neutral {
+    --od-goal-eval-border: #fef3c7;
+    --od-goal-eval-accent: #f59e0b;
+    --od-goal-eval-bg: #fffbeb;
+    --od-goal-eval-title: #854d0e;
+}
+.od-goal-eval-kind-danger {
+    --od-goal-eval-border: #fecaca;
+    --od-goal-eval-accent: #ef4444;
+    --od-goal-eval-bg: #fef2f2;
+    --od-goal-eval-title: #c62828;
+}
+
+html[data-theme='dark'] .od-goal-eval-container {
+    --od-goal-eval-border: rgba(222, 68, 51, 0.2);
+    --od-goal-eval-accent: #ff6b5a;
+    --od-goal-eval-bg: rgba(222, 68, 51, 0.1);
+    --od-goal-eval-title: #e4e4e4;
+    --od-goal-eval-text: #ababab;
+    --od-goal-eval-meta: #787878;
+}
+html[data-theme='dark'] .od-goal-eval-kind-success {
+    --od-goal-eval-border: rgba(67, 162, 106, 0.2);
+    --od-goal-eval-accent: #6bc68e;
+    --od-goal-eval-bg: linear-gradient(180deg, rgba(67, 162, 106, 0.08), rgba(67, 162, 106, 0.04));
+    --od-goal-eval-title: #6bc68e;
+}
+html[data-theme='dark'] .od-goal-eval-kind-warning {
+    --od-goal-eval-border: rgba(245, 158, 11, 0.25);
+    --od-goal-eval-accent: #fbbf24;
+    --od-goal-eval-bg: rgba(245, 158, 11, 0.08);
+    --od-goal-eval-title: #fbbf24;
+}
+html[data-theme='dark'] .od-goal-eval-kind-danger {
+    --od-goal-eval-border: rgba(239, 68, 68, 0.25);
+    --od-goal-eval-accent: #f87171;
+    --od-goal-eval-bg: rgba(239, 68, 68, 0.08);
+    --od-goal-eval-title: #f87171;
+}
+html[data-theme='dark'] .od-goal-eval-kind-neutral {
+    --od-goal-eval-border: rgba(255, 255, 255, 0.12);
+    --od-goal-eval-accent: #9c9c9c;
+    --od-goal-eval-bg: rgba(255, 255, 255, 0.04);
+    --od-goal-eval-title: #e4e4e4;
 }

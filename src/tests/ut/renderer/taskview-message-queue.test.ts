@@ -2343,6 +2343,76 @@ describe('task-view message queue', () => {
         }
     });
 
+    test('reasoning preview keeps advancing when animation frames are suspended (background throttling)', () => {
+        // 复现：窗口最小化/后台时 requestAnimationFrame 暂停触发，但 setInterval 仍在走，
+        // 导致标题栏字数在变、内容预览却冻结。内容更新必须有独立于 RAF 的兜底节流。
+        jest.useFakeTimers();
+        const originalRaf = globalThis.requestAnimationFrame;
+        const originalCaf = globalThis.cancelAnimationFrame;
+        // RAF 挂起：回调只排队、从不执行（模拟 Electron backgroundThrottling）。
+        const rafCallbacks = new Map<number, FrameRequestCallback>();
+        let nextRafId = 1;
+        globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+            const id = nextRafId;
+            nextRafId += 1;
+            rafCallbacks.set(id, cb);
+            return id;
+        };
+        globalThis.cancelAnimationFrame = (id: number) => {
+            rafCallbacks.delete(id);
+        };
+
+        try {
+            const TaskViewClass = customElements.get('task-view') as any;
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            };
+            taskView.task_id = 'task-1';
+            taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+            const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-1',
+                    last_part_index: 0,
+                    last_part: { type: 'reasoning', rendered: 'reasoning v1 ' }
+                },
+                historyContainer
+            );
+
+            const reasoningContent = taskView.querySelector('.reasoning-content') as HTMLElement;
+            expect(reasoningContent).not.toBeNull();
+            // RAF 全程挂起：未到兜底时间前不更新。
+            expect(reasoningContent.textContent).toBe('');
+
+            // 推进兜底定时器：即使 RAF 从不触发，内容也必须推进。
+            jest.advanceTimersByTime(1000);
+            expect(reasoningContent.textContent).toBe('reasoning v1 ');
+
+            // 持续流式更新，RAF 仍挂起：内容应继续推进，而不是冻结在旧状态。
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-1',
+                    last_part_index: 0,
+                    last_part: { type: 'reasoning', rendered: 'reasoning v1 reasoning v2 ' }
+                },
+                historyContainer
+            );
+            jest.advanceTimersByTime(1000);
+            expect(reasoningContent.textContent).toBe('reasoning v1 reasoning v2 ');
+
+            // 挂起的 RAF 回调应当已被取消，不会在恢复后重复写 DOM。
+            expect(rafCallbacks.size).toBe(0);
+        } finally {
+            globalThis.requestAnimationFrame = originalRaf;
+            globalThis.cancelAnimationFrame = originalCaf;
+            restoreRealTimerGlobals();
+        }
+    });
+
     test('browser app events force the right sidebar to the browser tab', () => {
         const TaskViewClass = customElements.get('task-view') as any;
         TaskViewClass.rightSidebarExpanded = true;

@@ -11,6 +11,7 @@
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { ENTER_KEY_ICON_SVG, SHIFT_KEY_ICON_SVG, CTRL_KEY_ICON_SVG } from '../../../../common/utils/keys.ts';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import { renderSafeMarkdown } from '../../../../renderer/utils/markdown.js';
@@ -158,6 +159,30 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
 
     private tr(key: string): string {
         return this.strings[key] ?? key;
+    }
+
+    /** 发送快捷键模式对应的 placeholder 模板（含 {iconEnter}/{iconShift} 图标占位） */
+    private placeholderTemplate(): string {
+        return this.ctrlEnterSend
+            ? this.tr('agentoffice.messagePlaceholder.ctrlEnter')
+            : this.tr('agentoffice.messagePlaceholder');
+    }
+
+    /** 纯文本 placeholder（移除图标占位符，用于原生 placeholder 属性与无障碍） */
+    private getInputPlaceholder(): string {
+        return this.placeholderTemplate()
+            .replaceAll('{iconEnter}', '')
+            .replaceAll('{iconShift}', '')
+            .replaceAll('{iconCtrl}', '');
+    }
+
+    /** 富文本 placeholder（在键名占位处插入对应键图标） */
+    private getPlaceholderHTML(): string {
+        const tpl = this.placeholderTemplate();
+        return escapeHtml(tpl)
+            .replaceAll('{iconEnter}', `<span class="composer-placeholder-icon">${ENTER_KEY_ICON_SVG}</span>`)
+            .replaceAll('{iconShift}', `<span class="composer-placeholder-icon">${SHIFT_KEY_ICON_SVG}</span>`)
+            .replaceAll('{iconCtrl}', `<span class="composer-placeholder-icon">${CTRL_KEY_ICON_SVG}</span>`);
     }
 
     private formatText(key: string, values: Record<string, string | number>): string {
@@ -312,7 +337,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
                     <div class="composer-outer" id="composer-outer">
                         <div class="composer-card">
                             ${this.imageDataUris.length ? `<div class="composer-image-previews">${this.imageDataUris.map((img, index) => `<div class="composer-image-thumb"><img src="${img.dataUrl}" alt="${escapeHtml(img.name)}" data-image-preview="${index}"><button class="composer-image-thumb-remove" data-remove-image="${index}"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}</div>` : ''}
-                            <div class="composer-textarea-wrap"><textarea id="message-input" class="composer-textarea" placeholder="${escapeHtml(this.tr('agentoffice.messagePlaceholder'))}" ${staff.enabled ? '' : 'disabled'}></textarea></div>
+                            <div class="composer-textarea-wrap"><div class="composer-placeholder-wrap"><textarea id="message-input" class="composer-textarea" placeholder="${escapeHtml(this.getInputPlaceholder())}" ${staff.enabled ? '' : 'disabled'}></textarea><div id="composer-placeholder" class="composer-placeholder" aria-hidden="true">${this.getPlaceholderHTML()}</div></div></div>
                             <div class="composer-toolbar">
                                 <div class="composer-toolbar-left">
                                     <button class="composer-toolbar-control" data-action="attach" title="${escapeHtml(this.tr('agentoffice.attach'))}"><i class="fa-solid fa-paperclip"></i></button>
@@ -660,16 +685,18 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         });
         this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input')?.addEventListener('keydown', (event) => {
             if (event.isComposing) return;
-            if (event.key === 'Enter' && !event.shiftKey) {
-                if (this.ctrlEnterSend) {
-                    if (event.ctrlKey) {
-                        event.preventDefault();
-                        void this.sendMessage();
-                    }
-                } else {
+            if (this.ctrlEnterSend) {
+                if (event.key === 'Enter' && event.ctrlKey) {
                     event.preventDefault();
                     void this.sendMessage();
                 }
+            } else if (event.key === 'Enter' && !event.ctrlKey && !event.shiftKey) {
+                event.preventDefault();
+                void this.sendMessage();
+            } else if (event.key === 'Enter' && event.ctrlKey) {
+                // Ctrl+Enter（含 Ctrl+Shift+Enter）换行：textarea 默认仅 Enter/Shift+Enter 换行
+                event.preventDefault();
+                this.insertNewline(event.target as HTMLTextAreaElement);
             }
         });
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-remove-attachment]').forEach((element) =>
@@ -1126,6 +1153,23 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
+    /** 在光标处插入换行（用于 Enter 发送模式下 Ctrl+Enter / Ctrl+Shift+Enter 换行） */
+    private insertNewline(textarea: HTMLTextAreaElement): void {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        textarea.setRangeText('\n', start, end, 'end');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
+    }
+
+    /** 同步输入框原生 placeholder 与富文本覆盖层（发送快捷键模式切换后调用） */
+    private updateComposerPlaceholder(): void {
+        const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('#message-input');
+        const overlay = this.shadowRoot?.querySelector<HTMLElement>('#composer-placeholder');
+        if (textarea) textarea.placeholder = this.getInputPlaceholder();
+        if (overlay) overlay.innerHTML = this.getPlaceholderHTML();
+    }
+
     private showSendMenu(): void {
         this.closeSendMenu();
         const groupEl = this.shadowRoot?.querySelector<HTMLElement>('.composer-send-group');
@@ -1144,6 +1188,7 @@ export class AgentOfficeEntryWidget extends AgentOperableHTMLElement {
             this.ctrlEnterSend = !this.ctrlEnterSend;
             const input = menu.querySelector<HTMLInputElement>('input[type="checkbox"]');
             if (input) input.checked = this.ctrlEnterSend;
+            this.updateComposerPlaceholder();
         });
         setTimeout(() => window.addEventListener('mousedown', this.closeSendMenuHandler), 0);
     }

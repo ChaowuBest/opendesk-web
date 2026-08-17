@@ -525,7 +525,46 @@ button {
     background: transparent;
 }
 .composer-textarea::placeholder {
+    color: transparent;
+}
+.composer-placeholder-wrap {
+    position: relative;
+}
+.composer-placeholder {
+    position: absolute;
+    /* 顶部对齐 textarea 默认 padding，使提示与输入文本位置一致 */
+    top: 2px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    pointer-events: none;
+    font-size: var(--fs-base);
+    line-height: 1.625;
     color: #9ca3af;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+/* 输入内容后隐藏覆盖层提示（原生 placeholder 属性保持非空以支持 :placeholder-shown 判定） */
+.composer-textarea:not(:placeholder-shown) ~ .composer-placeholder {
+    opacity: 0;
+}
+.composer-placeholder-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: inherit;
+}
+.composer-placeholder-icon svg {
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 .composer-toolbar {
     display: flex;
@@ -1642,6 +1681,9 @@ button {
     color: var(--text);
 }
 :host([data-theme='dark']) .composer-textarea::placeholder {
+    color: transparent;
+}
+:host([data-theme='dark']) .composer-placeholder {
     color: var(--muted);
 }
 :host([data-theme='dark']) .composer-toolbar-control {
