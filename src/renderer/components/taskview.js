@@ -394,6 +394,12 @@ class TaskView extends HTMLElement {
 
     _programmaticScrolling = false;
 
+    /** @type {number} 最近一次用户主动滚动输入的时间戳，用于区分缩放等引起的被动 scroll。 */
+    _lastUserScrollTs = 0;
+
+    /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
+    _historyScrollKeydownHandler = null;
+
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollControls = this.querySelector('#taskview-scroll-controls');
@@ -402,6 +408,16 @@ class TaskView extends HTMLElement {
         } else {
             scrollControls?.classList.remove('hidden');
         }
+    }
+
+    /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
+    _markUserScrollIntent() {
+        this._lastUserScrollTs = Date.now();
+    }
+
+    /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
+    _hasRecentUserScrollIntent() {
+        return Date.now() - this._lastUserScrollTs < 300;
     }
 
     getHistoryContainer() {
@@ -3964,6 +3980,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
         }
+        if (this._historyScrollKeydownHandler) {
+            document.removeEventListener('keydown', this._historyScrollKeydownHandler);
+            this._historyScrollKeydownHandler = null;
+        }
         if (this._poolSegObserver) {
             this._poolSegObserver.disconnect();
             this._poolSegObserver = null;
@@ -4280,7 +4300,9 @@ class TaskView extends HTMLElement {
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
                 }
-            } else {
+            } else if (this._hasRecentUserScrollIntent()) {
+                // 仅在用户主动滚动（滚轮/触控板/触摸）时解除锁定，避免缩放等引起的
+                // 被动 scroll（页面 zoom 会调整 scrollTop）被误判为手动离开底部
                 if (this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(false);
                 }
@@ -4293,6 +4315,12 @@ class TaskView extends HTMLElement {
         chatHistory.addEventListener(
             'wheel',
             (e) => {
+                // 忽略浏览器缩放/捏合手势（Ctrl/⌘ + 滚轮、触控板捏合），
+                // 缩放不应改变“锁定底部自动更新”的状态
+                if (e.ctrlKey || e.metaKey) return;
+                if (e.deltaY !== 0) {
+                    this._markUserScrollIntent();
+                }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
                     const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
@@ -4311,6 +4339,46 @@ class TaskView extends HTMLElement {
             },
             { passive: true }
         );
+        // 触摸滚动视为用户主动滚动；仅在真实移动（touchmove）时标记，
+        // 避免纯点击（touchstart 无位移）留下滚动意图痕迹
+        chatHistory.addEventListener('touchmove', () => this._markUserScrollIntent(), { passive: true });
+        // 命中右侧滚动条区域的拖拽（鼠标）视为滚动意图，覆盖滚动条拖动场景
+        chatHistory.addEventListener('pointerdown', (e) => {
+            // 触控笔（pen）在内容区按下基本为绘制/拖动，且可能不派发 touchmove，直接视为滚动意图
+            if (e.pointerType === 'pen') {
+                this._markUserScrollIntent();
+                return;
+            }
+            const rect = chatHistory.getBoundingClientRect();
+            if (e.clientX - rect.left >= chatHistory.clientWidth) {
+                this._markUserScrollIntent();
+            }
+        });
+        // 键盘滚动（PageUp/PageDown/方向键/Home/End/空格）同样视为用户主动滚动；
+        // 挂到 document 以覆盖聊天区无焦点时的滚动，输入区域（textarea/input/可编辑）内除外
+        // 防御性清理：setUpEventListeners 可能被重复调用（如实例重挂载），避免 document 监听累积
+        if (this._historyScrollKeydownHandler) {
+            document.removeEventListener('keydown', this._historyScrollKeydownHandler);
+        }
+        this._historyScrollKeydownHandler = (e) => {
+            if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
+            const target = e.target;
+            if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
+                return;
+            }
+            const key = e.key;
+            if (
+                key === 'PageUp' ||
+                key === 'PageDown' ||
+                key === 'Home' ||
+                key === 'End' ||
+                key === ' ' ||
+                key.startsWith('Arrow')
+            ) {
+                this._markUserScrollIntent();
+            }
+        };
+        document.addEventListener('keydown', this._historyScrollKeydownHandler);
 
         this._poolSegRaf = null;
         const initPoolSegIndicators = () => {
