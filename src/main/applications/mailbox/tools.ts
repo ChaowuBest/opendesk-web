@@ -151,7 +151,7 @@ const MAIL_PROVIDER_PRESETS: MailProviderPreset[] = [
     {
         name: '华为邮箱',
         domains: ['huawei.com'],
-        imap: { host: 'imap.huawei.com', port: 993, tls: true },
+        imap: { host: 'imail.huawei.com', port: 143, tls: false },
         pop3: { host: 'popscn.huawei.com', port: 110, tls: false },
         smtp: { host: 'smtpscn.huawei.com', port: 25, tls: false },
         requireAuthUsername: true,
