@@ -80,25 +80,22 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
     }
 
     const kind = getGoalEvaluationDisplayKind(evaluation);
-    const palette = {
-        running: { border: '#F0E3DD', accent: '#DE4433', bg: '#FBEDEA', titleColor: '#26262B' },
-        success: {
-            border: '#D9EEE1',
-            accent: '#43A26A',
-            bg: 'linear-gradient(180deg,#F2FAF5,#EFF8F2)',
-            titleColor: '#1F7A4D'
-        },
-        warning: { border: '#FEF3C7', accent: '#F59E0B', bg: '#FFFBEB', titleColor: '#854d0e' },
-        danger: { border: '#FECACA', accent: '#EF4444', bg: '#FEF2F2', titleColor: '#C62828' }
+    // 颜色全部由主题 CSS 变量（custom.css 中的 .od-goal-eval-kind-*）决定，JS 不感知主题。
+    const colors = {
+        border: 'var(--od-goal-eval-border)',
+        accent: 'var(--od-goal-eval-accent)',
+        bg: 'var(--od-goal-eval-bg)',
+        titleColor: 'var(--od-goal-eval-title)',
+        textColor: 'var(--od-goal-eval-text)',
+        metaColor: 'var(--od-goal-eval-meta)'
     };
-    const colors = palette[kind] || palette.warning;
 
     const metaHtml =
         metaItems.length > 0
-            ? `<span class="od-goal-eval-meta" style="margin-left:auto;font-size:10px;color:#A5A5AA;font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;white-space:nowrap;">${escapeHtml(metaItems.join(' · '))}</span>`
+            ? `<span class="od-goal-eval-meta" style="margin-left:auto;font-size:10px;color:${colors.metaColor};font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;white-space:nowrap;">${escapeHtml(metaItems.join(' · '))}</span>`
             : '';
     const messageHtml = message
-        ? `<div class="od-goal-eval-message" style="font-size:11px;color:#3A3A3F;line-height:1.6;">${escapeHtml(message)}</div>`
+        ? `<div class="od-goal-eval-message" style="font-size:11px;color:${colors.textColor};line-height:1.6;">${escapeHtml(message)}</div>`
         : '';
     const evidenceHtml =
         evidence.length > 0
@@ -107,7 +104,7 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
             <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px;">${evidence
                 .map(
                     (item) =>
-                        `<li style="font-size:10px;line-height:1.6;color:#4A4A4F;display:flex;gap:6px;"><span style="flex:none;width:4px;height:4px;border-radius:50%;background:${colors.accent};margin-top:6px;"></span>${escapeHtml(item)}</li>`
+                        `<li style="font-size:10px;line-height:1.6;color:${colors.textColor};display:flex;gap:6px;"><span style="flex:none;width:4px;height:4px;border-radius:50%;background:${colors.accent};margin-top:6px;"></span>${escapeHtml(item)}</li>`
                 )
                 .join('')}</ul>
         </div>`
@@ -118,6 +115,8 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
             escapeHtml(phase) +
             ' od-goal-eval-status-' +
             escapeHtml(status || 'running') +
+            ' od-goal-eval-kind-' +
+            escapeHtml(kind) +
             '"',
         progress?.goalId ? `data-goal-id="${escapeHtml(progress.goalId)}"` : '',
         progress?.evaluationId ? `data-evaluation-id="${escapeHtml(progress.evaluationId)}"` : '',

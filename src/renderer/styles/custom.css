@@ -1000,6 +1000,53 @@ pre.terminal-tool-output {
 }
 
 /* =========================================
+   Agent input 富文本 placeholder（回车键图标 + 快捷键提示）
+   ========================================= */
+.agent-input-placeholder {
+    position: absolute;
+    /* 顶部对齐 textarea 默认 padding，使提示与输入文本位置一致 */
+    top: 2px;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    pointer-events: none;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #9ca3af;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+.agent-input-placeholder.is-muted {
+    opacity: 0.5;
+}
+/* 输入内容后隐藏覆盖层提示（原生 placeholder 属性保持非空以支持 :placeholder-shown 判定） */
+#agent-input-textarea:not(:placeholder-shown) ~ .agent-input-placeholder {
+    opacity: 0;
+}
+/* 视觉由覆盖层承担，原生 placeholder 文本透明（保留属性用于无障碍与显隐判定） */
+#agent-input-textarea::placeholder {
+    color: transparent !important;
+}
+.agent-input-ph-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: inherit;
+}
+.agent-input-ph-key svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* =========================================
    Agent input toolbar
    ========================================= */
 .agent-input-toolbar {
@@ -4286,4 +4333,69 @@ html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
 
 .setting-switch-on .setting-switch-knob {
     transform: translateX(20px);
+}
+
+/* ── Goal evaluation cards (taskview) ─────────────────────────
+   taskview 中 goal 评估卡片的颜色通过 CSS 变量自适应主题。
+   evaluation.js 只引用 var()，浅色默认值在此定义，
+   深色由 html[data-theme='dark'] 覆盖。 */
+.od-goal-eval-container {
+    --od-goal-eval-border: #f0e3dd;
+    --od-goal-eval-accent: #de4433;
+    --od-goal-eval-bg: #fbedea;
+    --od-goal-eval-title: #26262b;
+    --od-goal-eval-text: #3a3a3f;
+    --od-goal-eval-meta: #a5a5aa;
+}
+.od-goal-eval-kind-success {
+    --od-goal-eval-border: #d9eee1;
+    --od-goal-eval-accent: #43a26a;
+    --od-goal-eval-bg: linear-gradient(180deg, #f2faf5, #eff8f2);
+    --od-goal-eval-title: #1f7a4d;
+}
+.od-goal-eval-kind-warning,
+.od-goal-eval-kind-neutral {
+    --od-goal-eval-border: #fef3c7;
+    --od-goal-eval-accent: #f59e0b;
+    --od-goal-eval-bg: #fffbeb;
+    --od-goal-eval-title: #854d0e;
+}
+.od-goal-eval-kind-danger {
+    --od-goal-eval-border: #fecaca;
+    --od-goal-eval-accent: #ef4444;
+    --od-goal-eval-bg: #fef2f2;
+    --od-goal-eval-title: #c62828;
+}
+
+html[data-theme='dark'] .od-goal-eval-container {
+    --od-goal-eval-border: rgba(222, 68, 51, 0.2);
+    --od-goal-eval-accent: #ff6b5a;
+    --od-goal-eval-bg: rgba(222, 68, 51, 0.1);
+    --od-goal-eval-title: #e4e4e4;
+    --od-goal-eval-text: #ababab;
+    --od-goal-eval-meta: #787878;
+}
+html[data-theme='dark'] .od-goal-eval-kind-success {
+    --od-goal-eval-border: rgba(67, 162, 106, 0.2);
+    --od-goal-eval-accent: #6bc68e;
+    --od-goal-eval-bg: linear-gradient(180deg, rgba(67, 162, 106, 0.08), rgba(67, 162, 106, 0.04));
+    --od-goal-eval-title: #6bc68e;
+}
+html[data-theme='dark'] .od-goal-eval-kind-warning {
+    --od-goal-eval-border: rgba(245, 158, 11, 0.25);
+    --od-goal-eval-accent: #fbbf24;
+    --od-goal-eval-bg: rgba(245, 158, 11, 0.08);
+    --od-goal-eval-title: #fbbf24;
+}
+html[data-theme='dark'] .od-goal-eval-kind-danger {
+    --od-goal-eval-border: rgba(239, 68, 68, 0.25);
+    --od-goal-eval-accent: #f87171;
+    --od-goal-eval-bg: rgba(239, 68, 68, 0.08);
+    --od-goal-eval-title: #f87171;
+}
+html[data-theme='dark'] .od-goal-eval-kind-neutral {
+    --od-goal-eval-border: rgba(255, 255, 255, 0.12);
+    --od-goal-eval-accent: #9c9c9c;
+    --od-goal-eval-bg: rgba(255, 255, 255, 0.04);
+    --od-goal-eval-title: #e4e4e4;
 }
