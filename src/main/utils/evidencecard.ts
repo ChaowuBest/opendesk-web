@@ -19,23 +19,16 @@ import {
 } from '../aikernel/messages.js';
 import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
+import {
+    parseEvidenceToolCallArgs,
+    resolveEvidenceToolSemantics,
+    type EvidenceCardEvidenceKind,
+    type EvidenceCardPhase,
+    type EvidenceToolRegistry
+} from './evidencecard-tool-semantics.js';
 import { Setting } from './setting.js';
 
-export type EvidenceCardPhase = 'plan' | 'localize' | 'inspect' | 'patch' | 'verify' | 'replan' | 'answer' | 'other';
-
-export type EvidenceCardEvidenceKind =
-    | 'repo_map'
-    | 'symbol_signature'
-    | 'function_body'
-    | 'caller_callee'
-    | 'failing_test'
-    | 'error_trace'
-    | 'config_block'
-    | 'edit_region'
-    | 'full_file'
-    | 'multi_file_context'
-    | 'llm_context'
-    | 'tool_observation';
+export type { EvidenceCardEvidenceKind, EvidenceCardPhase } from './evidencecard-tool-semantics.js';
 
 export type EvidenceCardLedgerSource = 'tool' | 'llm';
 export type EvidenceCardDecision = 'collect' | 'reuse' | 'compress' | 'stop' | 'replan';
@@ -111,6 +104,7 @@ const ALLOWED_PHASES: EvidenceCardPhase[] = [
     'plan',
     'localize',
     'inspect',
+    'act',
     'patch',
     'verify',
     'replan',
@@ -130,6 +124,16 @@ const ALLOWED_EVIDENCE_KINDS: EvidenceCardEvidenceKind[] = [
     'full_file',
     'multi_file_context',
     'llm_context',
+    'skill_definition',
+    'search_result',
+    'knowledge_result',
+    'ui_snapshot',
+    'ui_element',
+    'ui_action',
+    'visual_assertion',
+    'task_state',
+    'user_input',
+    'external_state',
     'tool_observation'
 ];
 
@@ -459,23 +463,6 @@ function truncateText(text: string, maxChars: number): string {
     return normalized.slice(0, Math.max(0, maxChars - 3)) + '...';
 }
 
-function parseArgsObject(toolCall: ToolCall): Record<string, unknown> {
-    if (toolCall.args_object && typeof toolCall.args_object === 'object') {
-        const argsObject = toolCall.args_object as Record<string, unknown>;
-        if (Object.keys(argsObject).length > 0 || !toolCall.args_string) {
-            return argsObject;
-        }
-    }
-    if (!toolCall.args_string) {
-        return {};
-    }
-    try {
-        return JSON.parse(toolCall.args_string) as Record<string, unknown>;
-    } catch {
-        return {};
-    }
-}
-
 function getCommand(args: Record<string, unknown>): string {
     const command = args.command;
     return typeof command === 'string' ? command : '';
@@ -499,109 +486,6 @@ function isLikelyAnswerArtifactCommand(command: string): boolean {
         /answer\.(json|txt|md|yaml|yml)/.test(normalized) &&
         /(cat\s*>|set-content|out-file|write-output|echo\s+)/.test(normalized)
     );
-}
-
-function classifyEvidenceKind(args: Record<string, unknown>, resultText: string): EvidenceCardEvidenceKind {
-    const command = getCommand(args).toLowerCase();
-    const result = resultText.toLowerCase();
-
-    if (/git\s+diff|apply_patch|patch\s+-p|diff\s+-u/.test(command)) {
-        return 'edit_region';
-    }
-    if (
-        /\b(pytest|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|test\.sh)\b/.test(
-            command
-        )
-    ) {
-        return /traceback|assertionerror|\berror\b|\bfailed\b|\bfailing\b|exception/.test(result)
-            ? 'error_trace'
-            : 'failing_test';
-    }
-    if (/traceback|assertionerror|\berror\b|\bfailed\b|\bfailing\b|exception/.test(result)) {
-        return 'error_trace';
-    }
-    if (/rg\s+--files|git\s+ls-files|get-childitem|\bls\b|\bfind\b/.test(command)) {
-        return 'repo_map';
-    }
-    if (/\brg\b|grep|select-string|ripgrep/.test(command)) {
-        if (/caller|callee|references|usages|call sites|callers/.test(command)) {
-            return 'caller_callee';
-        }
-        return 'symbol_signature';
-    }
-    if (/package\.json|pyproject\.toml|dockerfile|compose\.ya?ml|\.ya?ml|\.toml|\.ini|\.cfg|\.conf/.test(command)) {
-        return 'config_block';
-    }
-    if (/get-content|\bcat\b|\bsed\b|\bnl\b|\btype\b|\bhead\b|\btail\b/.test(command)) {
-        if (/head|tail|select-object|-totalcount|-first|-last|sed\s+-n|nl\s+-ba/.test(command)) {
-            return 'function_body';
-        }
-        return 'full_file';
-    }
-    return 'tool_observation';
-}
-
-function classifyPhase(
-    evidenceKind: EvidenceCardEvidenceKind,
-    args: Record<string, unknown>,
-    resultText: string
-): EvidenceCardPhase {
-    const command = getCommand(args).toLowerCase();
-    const result = resultText.toLowerCase();
-    if (evidenceKind === 'edit_region' || /git\s+diff|apply_patch|patch\s+-p/.test(command)) {
-        return 'patch';
-    }
-    if (
-        evidenceKind === 'failing_test' ||
-        evidenceKind === 'error_trace' ||
-        /\b(pytest|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|test\.sh)\b/.test(
-            command
-        )
-    ) {
-        return /pass|passed|success/.test(result) && !/fail|failed|error/.test(result) ? 'verify' : 'localize';
-    }
-    if (evidenceKind === 'repo_map' || evidenceKind === 'symbol_signature') {
-        return 'localize';
-    }
-    if (
-        evidenceKind === 'function_body' ||
-        evidenceKind === 'caller_callee' ||
-        evidenceKind === 'config_block' ||
-        evidenceKind === 'full_file'
-    ) {
-        return 'inspect';
-    }
-    return 'other';
-}
-
-function extractPathLikeTarget(command: string): string | undefined {
-    const patterns = [
-        /(?:Get-Content|cat|type|nl\s+-ba)\s+(?:-Path\s+|-LiteralPath\s+)?['"]?([^\s'"]+)/i,
-        /(?:head|tail)\s+(?:-n\s+\d+\s+|-\d+\s+)?['"]?([^\s'"]+)/i,
-        /sed\s+-n\s+['"]?[^\s'"]+['"]?\s+['"]?([^\s'"]+)/i,
-        /(?:rg|grep|Select-String).*?\s+['"]?([^\s'"]+\.(?:ts|tsx|js|jsx|py|java|go|rs|cpp|c|h|hpp|cs|rb|php|json|ya?ml|toml|ini|cfg|conf))['"]?/i,
-        /find\s+['"]?([^\s'"]+)['"]?\s+/i
-    ];
-    for (const pattern of patterns) {
-        const match = command.match(pattern);
-        if (match?.[1] && !/^[-\d]+$/.test(match[1])) {
-            return match[1];
-        }
-    }
-    return undefined;
-}
-
-function extractTarget(args: Record<string, unknown>, evidenceKind: EvidenceCardEvidenceKind): string {
-    const command = getCommand(args);
-    const workingDirectory = typeof args.workingDirectory === 'string' ? args.workingDirectory : '';
-    const pathTarget = extractPathLikeTarget(command);
-    if (pathTarget) {
-        return pathTarget;
-    }
-    if (evidenceKind === 'repo_map' && workingDirectory) {
-        return workingDirectory;
-    }
-    return truncateText(command || workingDirectory || 'unknown', 180);
 }
 
 function estimatePlannedBudget(phase: EvidenceCardPhase, evidenceKind: EvidenceCardEvidenceKind): number {
@@ -752,7 +636,11 @@ function appendLedgerEntry(
 }
 
 export function recordEvidenceCardToolCall(
-    task: { evidencecard_state?: EvidenceCardState; enableEvidenceCard?: boolean },
+    task: {
+        evidencecard_state?: EvidenceCardState;
+        enableEvidenceCard?: boolean;
+        chat_context?: EvidenceToolRegistry;
+    },
     toolCall: ToolCall
 ): void {
     if (!isTaskEvidenceCardEnabled(task)) {
@@ -762,16 +650,17 @@ export function recordEvidenceCardToolCall(
     const state = ensureEvidenceCardState(task);
     state.enabled = true;
 
-    const args = parseArgsObject(toolCall);
+    const args = parseEvidenceToolCallArgs(toolCall);
     const command = getCommand(args);
     if (isLikelyAnswerArtifactCommand(command)) {
         return;
     }
 
     const resultText = typeof toolCall.result === 'string' ? toolCall.result : '';
-    const evidenceKind = classifyEvidenceKind(args, resultText);
-    const phase = classifyPhase(evidenceKind, args, resultText);
-    const target = extractTarget(args, evidenceKind);
+    const semantics = resolveEvidenceToolSemantics(toolCall, task.chat_context);
+    const evidenceKind = semantics.evidenceKind;
+    const phase = semantics.phase;
+    const target = semantics.target;
     const previousTargetCount = state.target_counts[target] ?? 0;
     const argsSummary = summarizeArgs(args);
     const originalChars = toolCall.result_storage?.original_chars ?? resultText.length;

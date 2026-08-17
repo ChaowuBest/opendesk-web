@@ -98,6 +98,43 @@ test('EvidenceCard ledger records tool calls only when evidence_card is enabled'
     assert.equal(task.evidencecard_state.ledger[0]?.source, 'tool');
 });
 
+test('EvidenceCard ledger records the effective tool inside a Skill wrapper', () => {
+    Setting.updateInstanceData({
+        task_config: {
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true,
+            evidence_card: true
+        }
+    });
+    const task = {
+        enableEvidenceCard: true,
+        evidencecard_state: createEvidenceCardState(true)
+    };
+    const toolCall = {
+        id: 'call-skill-click',
+        tool_name: 'skill-manager-CallSkillTool',
+        status: 'success',
+        args_object: {
+            bundleName: 'builtin',
+            skillName: 'use-harmony',
+            toolName: 'clickRef',
+            toolArgs: '{"snapshotId":"s12","ref":"e5","position":"center"}'
+        },
+        args_string:
+            '{"bundleName":"builtin","skillName":"use-harmony","toolName":"clickRef","toolArgs":"{\\"snapshotId\\":\\"s12\\",\\"ref\\":\\"e5\\",\\"position\\":\\"center\\"}"}',
+        result: 'ok'
+    } as any;
+
+    recordEvidenceCardToolCall(task, toolCall);
+
+    assert.equal(task.evidencecard_state.ledger.length, 1);
+    assert.equal(task.evidencecard_state.ledger[0]?.target, 'ui:clickRef:s12/e5:center');
+    assert.equal(task.evidencecard_state.ledger[0]?.evidence_kind, 'ui_action');
+    assert.equal(task.evidencecard_state.ledger[0]?.phase, 'act');
+    assert.equal(task.evidencecard_state.ledger[0]?.repeated_evidence, false);
+});
+
 test('EvidenceCard state is not serialized into task JSON', () => {
     Setting.updateInstanceData({
         task_config: {

@@ -30,7 +30,6 @@ import { BaseToolset, BaseTool, ToolResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import dotenv from 'dotenv';
-import { jsonrepair } from 'jsonrepair';
 import format from 'string-template';
 import { ToolCall } from './messages';
 import chalk from 'chalk';
@@ -42,6 +41,7 @@ import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { GlobalHooks } from './hooks';
+import { parseNestedToolArgs } from './tool-args.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -504,29 +504,6 @@ function createInnerToolCall(
     return innerToolCall;
 }
 
-function parseCallSkillToolArgs(toolArgs: unknown): object {
-    if (toolArgs === undefined || toolArgs === null) {
-        return {};
-    }
-    if (typeof toolArgs === 'object') {
-        return toolArgs;
-    }
-    if (typeof toolArgs === 'string') {
-        const trimmed = toolArgs.trim();
-        if (trimmed.length === 0) {
-            return {};
-        }
-        const parsed = JSON.parse(jsonrepair(trimmed));
-        if (parsed === null) {
-            return {};
-        }
-        if (typeof parsed === 'object') {
-            return parsed;
-        }
-    }
-    throw new Error('toolArgs的类型无法解析');
-}
-
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
         super(
@@ -545,7 +522,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             if (innerTool) {
                 let parsedToolArgs: object;
                 try {
-                    parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
+                    parsedToolArgs = parseNestedToolArgs(args.toolArgs);
                 } catch {
                     parsedToolArgs = {};
                 }
@@ -644,7 +621,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
         let parsedToolArgs: object;
         try {
-            parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
+            parsedToolArgs = parseNestedToolArgs(args.toolArgs);
         } catch {
             parsedToolArgs = {};
         }
@@ -721,7 +698,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         }
 
         try {
-            const toolArgs = parseCallSkillToolArgs(args.toolArgs);
+            const toolArgs = parseNestedToolArgs(args.toolArgs);
 
             logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
 
