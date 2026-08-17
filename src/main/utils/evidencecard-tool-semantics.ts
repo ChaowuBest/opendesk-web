@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { ToolCall } from '../aikernel/messages.js';
-import { parseNestedToolArgs } from '../aikernel/tool-args.js';
+import { parseNestedToolArgs } from './tool-args.js';
 
 export type EvidenceCardPhase =
     | 'plan'

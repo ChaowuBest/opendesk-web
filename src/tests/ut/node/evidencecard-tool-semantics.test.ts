@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolCall } from '../../../main/aikernel/messages.js';
-import { parseNestedToolArgs } from '../../../main/aikernel/tool-args.js';
+import { parseNestedToolArgs } from '../../../main/utils/tool-args.js';
 import {
     resolveEvidenceToolInvocation,
     resolveEvidenceToolSemantics

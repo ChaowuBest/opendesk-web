@@ -41,7 +41,7 @@ import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { GlobalHooks } from './hooks';
-import { parseNestedToolArgs } from './tool-args.js';
+import { parseNestedToolArgs } from '../utils/tool-args.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
