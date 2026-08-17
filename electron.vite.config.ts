@@ -74,7 +74,8 @@ export default defineConfig(({ mode }) => {
                             warn(warning);
                             return;
                         }
-                        const safeWarnings = ['CIRCULAR_DEPENDENCY'];
+                        // MODULE_LEVEL_DIRECTIVE: node_modules 中 React 组件库的 "use client" RSC 指令，打包时被忽略，属无害警告
+                        const safeWarnings = ['CIRCULAR_DEPENDENCY', 'MODULE_LEVEL_DIRECTIVE'];
                         if (safeWarnings.includes(warning.code)) {
                             warn(warning);
                             return;
@@ -106,6 +107,10 @@ export default defineConfig(({ mode }) => {
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告
                         if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
+                        // 忽略 node_modules 中 "use client" 指令（React 组件库 RSC 标记）警告
+                        if (warning.code === 'MODULE_LEVEL_DIRECTIVE') {
                             return;
                         }
                         warn(warning);
@@ -140,6 +145,7 @@ export default defineConfig(({ mode }) => {
                         application_window: path.join(__dirname, 'src', 'renderer', 'application_window.html'),
                         logview_window: path.join(__dirname, 'src', 'renderer', 'logview_window.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html'),
+                        task_status_widget: path.join(__dirname, 'src', 'renderer', 'task_status_widget.html'),
                         slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html'),
                         word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html'),
                         sheets_editor: path.join(__dirname, 'src', 'renderer', 'sheets_editor.html')
@@ -147,6 +153,10 @@ export default defineConfig(({ mode }) => {
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告
                         if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
+                        // 忽略 node_modules 中 "use client" 指令（React 组件库 RSC 标记）警告
+                        if (warning.code === 'MODULE_LEVEL_DIRECTIVE') {
                             return;
                         }
                         warn(warning);

@@ -18,15 +18,15 @@
  */
 
 import { normalizePath } from '../../../utils/path.js';
+import type {
+    PermissionAction,
+    PermissionEffect,
+    PermissionRequest,
+    PermissionResourceType,
+    PermissionRule
+} from '../types/permissions.js';
 
-/** 权限判定结果 */
-export type PermissionEffect = 'allow' | 'deny' | 'ask';
-
-/** 权限资源类别，'*' 表示匹配所有资源类型 */
-export type PermissionResourceType = 'file' | 'network' | 'skill' | '*';
-
-/** 权限操作类型，'*' 表示匹配所有操作 */
-export type PermissionAction = 'read' | 'write' | 'execute' | 'access' | '*';
+export type { PermissionAction, PermissionEffect, PermissionRequest, PermissionResourceType, PermissionRule };
 
 // ─── ResourcePath：统一的权限客体路径抽象 ────────────────────────
 
@@ -214,25 +214,6 @@ function parentDir(p: string): string {
     return p.slice(0, lastSlash);
 }
 
-// ─── 权限请求与规则 ────────────────────────────────────────────
-
-/**
- * 描述一条具体的权限声明——某个主体对某类资源的某个操作
- *
- * 示例：
- *   { resourceType: 'file', action: 'read', resourcePath: '/home/user/docs/readme.md' }
- *   { resourceType: 'file', action: 'write', resourcePath: '/home/user/project/src/index.ts' }
- *   { resourceType: 'network', action: 'access', resourcePath: 'https://api.example.com' }
- *   { resourceType: 'skill', action: 'read', resourcePath: 'my-skill-name' }
- *   { resourceType: 'skill', action: 'write', resourcePath: 'my-skill-name' }
- */
-export interface PermissionRequest {
-    resourceType: PermissionResourceType;
-    action: PermissionAction;
-    /** 具体的资源路径（文件路径或 URL） */
-    resourcePath: string;
-}
-
 /**
  * 权限检查结果
  */
@@ -250,23 +231,6 @@ export interface PermissionToolCallContext {
     toolName: string;
     args: Record<string, unknown>;
     workspace?: string;
-}
-
-/**
- * 一条权限规则定义（用于初始化和动态添加规则）
- *
- * pathPattern 支持 glob 风格匹配：
- *   - "/workspace/**" 匹配 workspace 下所有路径
- *   - "/tmp/*" 匹配 /tmp 下的直接子路径
- *   - "*" 匹配任意路径
- */
-export interface PermissionRule {
-    resourceType: PermissionResourceType;
-    action: PermissionAction;
-    /** glob 风格的资源路径模式 */
-    pathPattern: string;
-    /** 该规则的判定结果 */
-    effect: PermissionEffect;
 }
 
 /**

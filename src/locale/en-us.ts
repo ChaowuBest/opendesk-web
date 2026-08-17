@@ -40,6 +40,39 @@ export const enUs: Record<string, string> = {
     'workspace.mismatch.message':
         'Current task is bound to ${workspace}, which differs from the global workspace. Global workspace not changed.',
 
+    // Renderer - Workspace Picker
+    'renderer.workspacePicker.defaultTitle': 'Select workspace',
+    'renderer.workspacePicker.titleWithName': 'Select workspace for ${name}',
+    'renderer.workspacePicker.taskNameFallback': 'Task',
+    'renderer.workspacePicker.current': 'Current:',
+    'renderer.workspacePicker.unset': 'Not set',
+    'renderer.workspacePicker.editPath': 'Click to edit path',
+    'renderer.workspacePicker.pathPlaceholder': 'Enter workspace path…',
+    'renderer.workspacePicker.pickInSystemHint': 'Choose in system file manager',
+    'renderer.workspacePicker.pickInSystem': 'Choose in system window',
+    'renderer.workspacePicker.recent': 'Recent',
+    'renderer.workspacePicker.recentEmpty': 'No recent workspaces',
+    'renderer.workspacePicker.removeRecent': 'Remove this entry',
+    'renderer.workspacePicker.browse': 'Browse directories',
+    'renderer.workspacePicker.showHidden': 'Show hidden files',
+    'renderer.workspacePicker.cancel': 'Cancel',
+    'renderer.workspacePicker.confirm': 'Select',
+    'renderer.workspacePicker.close': 'Close',
+    'renderer.workspacePicker.deleteTitle': 'Delete confirmation',
+    'renderer.workspacePicker.deleteMessage': 'Are you sure you want to delete <b>${name}</b>? This cannot be undone.',
+    'renderer.workspacePicker.delete': 'Delete',
+    'renderer.workspacePicker.home': 'Home',
+    'renderer.workspacePicker.sandbox': 'App sandbox',
+
+    // Renderer - File Selector (used by workspace picker)
+    'renderer.fileSelector.emptyDrive': 'No drives detected',
+    'renderer.fileSelector.emptyDir': 'Empty',
+    'renderer.fileSelector.rename': 'Rename',
+    'renderer.fileSelector.newFolder': 'New Folder',
+    'renderer.fileSelector.newFolderInside': 'New Folder (inside ${name})',
+    'renderer.fileSelector.newFolderSibling': 'New Folder (next to ${name})',
+    'renderer.fileSelector.delete': 'Delete',
+
     // Homepage
     'homepage.greeting.earlyMorning': 'Late night',
     'homepage.greeting.morning': 'Good morning',
@@ -433,7 +466,7 @@ export const enUs: Record<string, string> = {
 
     // Commands - Reason
     'reason.description':
-        'Adjust reasoning effort, usage: /reason effort [default|none|low|medium|high] | display [full|partial]',
+        'Adjust reasoning effort, usage: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': 'Set reasoning depth',
     'reason.display.description': 'Set thinking display mode',
     'reason.display.full': 'Full Display',
@@ -450,9 +483,10 @@ export const enUs: Record<string, string> = {
     'reason.display.already': 'Display Mode',
     'reason.display.already.message': 'Thinking display mode is already: ${mode}',
     'reason.error.no.model': 'No default model set. Please configure a model in settings first.',
-    'reason.error.invalid.effort': 'Invalid reasoning depth: ${value}\nValid values: default, none, low, medium, high',
+    'reason.error.invalid.effort':
+        'Invalid reasoning depth: ${value}\nValid values: default, none, low, medium, high, max',
     'reason.error.invalid.display': 'Invalid display mode: ${value}\nValid values: full, partial',
-    'reason.error.specify.effort': 'Please specify reasoning depth: /reason effort [default|none|low|medium|high]',
+    'reason.error.specify.effort': 'Please specify reasoning depth: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': 'Please specify display mode: /reason display [full|partial]',
     'reason.error.unknown': 'Unknown subcommand: ${subcmd}\nAvailable: effort, display',
 
@@ -641,6 +675,10 @@ export const enUs: Record<string, string> = {
     'config.model.field.context_length.placeholder': 'Leave empty to estimate automatically',
     'config.model.field.max_output_tokens': 'Max Output Tokens (leave empty for auto)',
     'config.model.field.max_output_tokens.placeholder': 'Leave empty to estimate automatically',
+    'config.model.field.vision': 'Vision Support',
+    'config.model.vision.auto': 'Auto-detect',
+    'config.model.vision.supported': 'Supported',
+    'config.model.vision.unsupported': 'Not Supported',
     'config.model.field.auto_parse_think_tags': 'Auto-parse Think Tags',
     'config.model.field.custom_headers': 'Custom Headers',
     'config.model.field.custom_headers_hint': 'Custom HTTP headers sent to the model server',
@@ -888,6 +926,7 @@ export const enUs: Record<string, string> = {
     'reasoning.effort.low': 'Low Reasoning',
     'reasoning.effort.medium': 'Medium Reasoning',
     'reasoning.effort.high': 'Deep Reasoning',
+    'reasoning.effort.max': 'Maximum Reasoning',
 
     // Tool Call Status
     'toolcall.status.pending': 'Pending',
@@ -1158,6 +1197,10 @@ export const enUs: Record<string, string> = {
     'sp.general.closeWindowBehavior.ask': 'Ask Every Time',
     'sp.general.closeWindowBehavior.quit': 'Quit Application',
     'sp.general.closeWindowBehavior.minimize': 'Minimize',
+    'sp.general.floatingWindow': 'Floating Window',
+    'sp.general.floatingWindow.pill': 'Pill (Experimental)',
+    'sp.general.floatingWindow.card': 'Card',
+    'sp.general.floatingWindow.off': 'Off',
     'main.closeDialog.title': 'Close Window',
     'main.closeDialog.message': 'Do you want to quit OpenDesk or minimize to system tray?',
     'main.closeDialog.cancel': 'Cancel',
@@ -1262,6 +1305,7 @@ export const enUs: Record<string, string> = {
     'sp.model.effort.low': 'Low',
     'sp.model.effort.medium': 'Medium',
     'sp.model.effort.high': 'High',
+    'sp.model.effort.max': 'Maximum',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',
@@ -1291,6 +1335,7 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.recording.stopTitle': 'Recording, click to stop',
     'renderer.agentInput.recording.endTitle': 'Recording, click to finish',
     'renderer.agentInput.recording.listening': 'Listening, recognized text will appear in the input box…',
+    'renderer.agentInput.stop': 'Stop',
     'renderer.messageQueue.title': 'Message Queue (${count})',
     'renderer.messageQueue.empty': '(empty message)',
     'renderer.messageQueue.sendNow': 'Send now',
@@ -1415,6 +1460,10 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.logs': 'Logs',
     'renderer.toolbar.openConfigDir': 'Open Config Directory',
     'renderer.toolbar.personalCenter': 'Profile',
+    'renderer.toolbar.securityGateway': 'Security Gateway',
+    'renderer.toolbar.securityGateway.ok': 'Security Gateway is running normally',
+    'renderer.toolbar.securityGateway.warn': 'Security Gateway is on, AgentMoss service unreachable',
+    'renderer.toolbar.securityGateway.err': 'Security Gateway unreachable',
 
     // Renderer - Personal Center
     'renderer.personal.title': 'Profile',
@@ -1654,6 +1703,10 @@ export const enUs: Record<string, string> = {
     'renderer.fileExplorer.preview.binaryHint': 'The previewer only supports text files',
     'renderer.fileExplorer.pptx.editor': 'PowerPoint editor',
     'renderer.fileExplorer.pptx.unavailable': 'The PowerPoint editor is unavailable',
+    'renderer.fileExplorer.pptx.ai.groupLabel': 'OpenDesk AI',
+    'renderer.fileExplorer.pptx.ai.selectionAction': 'Edit with OpenDesk AI',
+    'renderer.fileExplorer.pptx.ai.selectionActionTitle': 'Send the selected slide elements to the current task',
+    'renderer.fileExplorer.pptx.ai.selectionPrompt': 'Edit the selected elements on slide ${page} of the current PPT:',
     'renderer.fileExplorer.word.editor': 'Word editor',
     'renderer.fileExplorer.word.unavailable': 'The Word editor is unavailable',
     'renderer.fileExplorer.xlsx.editor': 'Excel editor',
@@ -1678,6 +1731,8 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.skillTag.metadata': 'Metadata',
     'renderer.taskview.skillTag.bundle': 'Application',
     'renderer.taskview.skillTag.directory': 'Directory',
+    'office.slides.error.noTaskSession': 'No PPT is open in the current task',
+    'office.slides.error.capabilityUnavailable': 'The current Office package does not support PPT automation',
     'renderer.taskview.edit.title': 'Confirm Edit Message',
     'renderer.taskview.edit.message':
         'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',
@@ -1719,6 +1774,35 @@ export const enUs: Record<string, string> = {
     'renderer.browserPip.title': 'Browser',
     'renderer.browserPip.tabCount': '${count} tabs',
 
+    // Renderer - Task Status Widget
+    'renderer.taskStatusWidget.title': 'OpenDesk Agent Tasks',
+    'renderer.taskStatusWidget.loading': 'Loading tasks…',
+    'renderer.taskStatusWidget.activeCount': '${count} tasks in progress',
+    'renderer.taskStatusWidget.viewAll': 'View all tasks',
+    'renderer.taskStatusWidget.collapse': 'Collapse',
+    'renderer.taskStatusWidget.collapsedRunning': 'Running ${count} tasks',
+    'renderer.taskStatusWidget.collapsedCompleted': '${count} completed',
+    'renderer.taskStatusWidget.running': 'Running',
+    'renderer.taskStatusWidget.waiting': 'Waiting',
+    'renderer.taskStatusWidget.completed': 'Completed',
+    'renderer.taskStatusWidget.actionRequired': 'Needs Action',
+    'renderer.taskStatusWidget.empty': 'No running tasks',
+    'renderer.taskStatusWidget.todo': 'Todo',
+    'renderer.taskStatusWidget.todoDone': '${completed} / ${total} completed',
+    'renderer.taskStatusWidget.subtask': 'Subtasks',
+    'renderer.taskStatusWidget.subtaskStat': '${total} · ${completed} finished',
+    'renderer.taskStatusWidget.elapsed': 'Elapsed time',
+    'renderer.taskStatusWidget.startedAt': 'started at ${time}',
+    'renderer.taskStatusWidget.totalTokens': 'TOTAL TOKENS',
+    'renderer.taskStatusWidget.inputTokens': 'Up (input)',
+    'renderer.taskStatusWidget.outputTokens': 'Down (output)',
+    'renderer.taskStatusWidget.backToList': 'Back to list',
+    'renderer.taskStatusWidget.openSession': 'Open session',
+    'renderer.taskStatusWidget.closeMenu': 'Close task widget',
+    'renderer.taskStatusWidget.closeMenu.hide': 'Close task widget',
+    'renderer.taskStatusWidget.closeMenu.hideSession': 'Close task widget (restore on next launch)',
+    'renderer.taskStatusWidget.closeMenu.hidePermanent': 'Close task widget (permanent)',
+
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
     'renderer.developer.viewTaskInfo': 'View Task Info',
@@ -1728,6 +1812,11 @@ export const enUs: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
     'renderer.developer.reviewNotTriggeredDetail': 'The task review request could not be accepted',
     'renderer.developer.triggerFailed': 'Trigger Failed',
+
+    // Main - Native File Dialogs
+    'main.dialog.openFile': 'Select Attachment',
+    'main.dialog.openDirectory': 'Select Directory',
+    'main.dialog.selectWorkspaceDirectory': 'Select Workspace Directory',
 
     // Main - Log Export
     'main.log.export.title': 'Export Logs',

@@ -10,7 +10,15 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
-import { showConfirmModal, MODAL_CSS, MODAL_ANIM_DURATION_OUT, detectDarkMode } from './confirmModal.ts';
+import { REASONING_EFFORT_LEVELS } from '../../common/reasoning-effort.ts';
+import {
+    showConfirmModal,
+    MODAL_CSS,
+    MODAL_ANIM_DURATION_OUT,
+    detectDarkMode,
+    bindOverlayDismiss
+} from './confirmModal.ts';
+import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -1228,6 +1236,9 @@ class SettingPanel extends HTMLElement {
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
         const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
+        const rawFloatingWindowMode = this.currentData?.gui_config?.floating_window_mode;
+        const floatingWindowMode =
+            rawFloatingWindowMode === 'card' ? 'card' : rawFloatingWindowMode === 'pill' ? 'pill' : 'off';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -1323,6 +1334,14 @@ class SettingPanel extends HTMLElement {
                         <option value="ask"${!onMainWindowClose ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.ask')}</option>
                         <option value="quit"${onMainWindowClose === 'quit' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.quit')}</option>
                         <option value="minimize"${onMainWindowClose === 'minimize' ? ' selected' : ''}>${this._t('sp.general.closeWindowBehavior.minimize')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.floatingWindow')}</label>
+                    <select id="floating-window-mode-select" class="sp-form-input">
+                        <option value="pill"${floatingWindowMode === 'pill' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.pill')}</option>
+                        <option value="card"${floatingWindowMode === 'card' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.card')}</option>
+                        <option value="off"${floatingWindowMode === 'off' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.off')}</option>
                     </select>
                 </div>
             </div>
@@ -2164,7 +2183,6 @@ class SettingPanel extends HTMLElement {
                 try {
                     const result = await window.themeAPI.setPreference(pref);
                     if (result.status === 'ok' && result.data) {
-                        const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
                         applyResolvedTheme(result.data);
                         window.broadcastThemeSettings?.(result.data);
                     }
@@ -2196,6 +2214,17 @@ class SettingPanel extends HTMLElement {
                 delete this.currentData.gui_config.on_mainwindow_close;
             } else {
                 this.currentData.gui_config.on_mainwindow_close = val;
+            }
+            this.saveImmediately();
+        });
+
+        this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            const value = e.target.value;
+            if (value === 'off') {
+                delete this.currentData.gui_config.floating_window_mode;
+            } else {
+                this.currentData.gui_config.floating_window_mode = value;
             }
             this.saveImmediately();
         });
@@ -2983,11 +3012,7 @@ class SettingPanel extends HTMLElement {
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
                         <select id="model-effort-input" class="od-sp-fi">
-                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.option.default'))}</option>
-                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
-                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
-                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
-                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
+                            ${this.buildEffortOptionHtml(this.getAllEffortValues(), model.reasoning_effort)}
                         </select>
                     </div>
                     <div class="chat-model-field od-sp-fg">
@@ -2997,6 +3022,14 @@ class SettingPanel extends HTMLElement {
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
                         <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                    </div>
+                    <div class="chat-model-field od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
+                        <select id="model-vision-input" class="od-sp-fi">
+                            <option value="" ${model.vision === undefined ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.auto'))}</option>
+                            <option value="true" ${model.vision === true ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.supported'))}</option>
+                            <option value="false" ${model.vision === false ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.vision.unsupported'))}</option>
+                        </select>
                     </div>
                     <div class="chat-model-field od-sp-fc">
                         <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''}>
@@ -3127,12 +3160,14 @@ class SettingPanel extends HTMLElement {
             _estimateTimer = setTimeout(() => {
                 updateContextPlaceholder(nameInput.value);
                 updateMaxOutputTokensPlaceholder(nameInput.value);
+                this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
             }, 250);
         });
         // 初始加载时立即估算
         if (nameInput?.value?.trim()) {
             updateContextPlaceholder(nameInput.value);
             updateMaxOutputTokensPlaceholder(nameInput.value);
+            this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
         }
 
         const syncModelTypeFields = () => {
@@ -3172,6 +3207,7 @@ class SettingPanel extends HTMLElement {
                     nameInput.value = opt.dataset.value;
                     dropdown.classList.add('hidden');
                     updateContextPlaceholder(nameInput.value);
+                    this.refreshEffortOptions(nameInput.value, this.querySelector('#model-effort-input'));
                 });
             });
         };
@@ -3348,6 +3384,8 @@ class SettingPanel extends HTMLElement {
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
         const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
+        const visionRaw = this.querySelector('#model-vision-input')?.value;
+        const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
@@ -3419,6 +3457,9 @@ class SettingPanel extends HTMLElement {
         }
         if (model_type === 'chat' && maxOutputTokensNum && maxOutputTokensNum > 0) {
             model.max_output_tokens = maxOutputTokensNum;
+        }
+        if (model_type === 'chat' && vision !== undefined) {
+            model.vision = vision;
         }
         if (Object.keys(custom_headers).length > 0) {
             model.custom_headers = custom_headers;
@@ -3528,7 +3569,6 @@ class SettingPanel extends HTMLElement {
                     try {
                         const result = await window.themeAPI.setPreference(pref);
                         if (result.status === 'ok' && result.data) {
-                            const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
                             applyResolvedTheme(result.data);
                             window.broadcastThemeSettings?.(result.data);
                         }
@@ -3551,6 +3591,16 @@ class SettingPanel extends HTMLElement {
                     delete this.currentData.gui_config.on_mainwindow_close;
                 } else {
                     this.currentData.gui_config.on_mainwindow_close = val;
+                }
+                this.saveImmediately();
+            });
+            this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                const value = e.target.value;
+                if (value === 'off') {
+                    delete this.currentData.gui_config.floating_window_mode;
+                } else {
+                    this.currentData.gui_config.floating_window_mode = value;
                 }
                 this.saveImmediately();
             });
@@ -3932,7 +3982,9 @@ class SettingPanel extends HTMLElement {
     }
 
     // --- 模态框工具方法 ---
-    showModal(content) {
+    showModal(content, options = {}) {
+        const hasFormControls = /<input\b|<textarea\b|<select\b/i.test(content);
+        const { dismissOnOverlay = !hasFormControls } = options;
         if (this._modalOverlay) {
             this._modalOverlay.remove();
             this._modalOverlay = null;
@@ -3945,11 +3997,14 @@ class SettingPanel extends HTMLElement {
         }
         overlay.innerHTML = `<style>${MODAL_CSS}${SP_MODAL_EXTRA_CSS}</style>${content}`;
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
+        bindOverlayDismiss(
+            overlay,
+            () => {
                 this.closeModal();
-            }
-        });
+            },
+            undefined,
+            dismissOnOverlay
+        );
 
         this.appendChild(overlay);
         this._modalOverlay = overlay;
@@ -3995,9 +4050,58 @@ class SettingPanel extends HTMLElement {
             none: this._t('sp.model.effort.none'),
             low: this._t('sp.model.effort.low'),
             medium: this._t('sp.model.effort.medium'),
-            high: this._t('sp.model.effort.high')
+            high: this._t('sp.model.effort.high'),
+            max: this._t('sp.model.effort.max')
         };
         return labels[effort] || '';
+    }
+
+    /** 系统全部推理档位值（含 '' 默认项） */
+    getAllEffortValues() {
+        return ['', ...REASONING_EFFORT_LEVELS];
+    }
+
+    /** 生成推理档位 <option> HTML，标签使用本地化文案 */
+    buildEffortOptionHtml(values, currentValue) {
+        return values
+            .map((value) => {
+                const label =
+                    value === ''
+                        ? this._t('config.model.option.default')
+                        : this._t(`sp.model.effort.${value}`) || value;
+                return `<option value="${value}" ${currentValue === value ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+            })
+            .join('');
+    }
+
+    /**
+     * 查询指定模型名支持的推理档位值（含 '' 默认项）。
+     * model-context 未匹配时回退到系统全部档位。
+     */
+    async fetchModelEffortValues(modelName) {
+        const trimmed = (modelName || '').trim();
+        if (!trimmed || !window.settingAPI?.checkReasoningEfforts) {
+            return this.getAllEffortValues();
+        }
+        try {
+            const map = await window.settingAPI.checkReasoningEfforts([{ alias: '__edit__', model_name: trimmed }]);
+            if (Array.isArray(map.__edit__) && map.__edit__.length > 0) {
+                return map.__edit__;
+            }
+        } catch {
+            /* 忽略查询失败，回退到系统全部档位 */
+        }
+        return this.getAllEffortValues();
+    }
+
+    /** 按模型名刷新推理档位下拉框选项（保留当前选中值） */
+    async refreshEffortOptions(modelName, selectEl) {
+        if (!selectEl) return;
+        const currentValue = selectEl.value;
+        const values = await this.fetchModelEffortValues(modelName);
+        if (!selectEl.isConnected) return;
+        const stillCurrent = values.includes(currentValue) ? currentValue : '';
+        selectEl.innerHTML = this.buildEffortOptionHtml(values, stillCurrent);
     }
 
     escapeHtml(text) {

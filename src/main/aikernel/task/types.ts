@@ -11,12 +11,31 @@
 
 import type { UserMessagePart, AssistantMessagePart, Usage, RuntimeMetadata } from '../messages.js';
 import type { LLMRequestOptions } from '../llm.js';
-import type { BaseTool } from '../tool.js';
-import type { TaskState } from '../states/tasks.js';
 import type { TaskTurnInstrumentationExternalContext } from '../../telemetry/agent-execution.js';
+import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
 
 export type TaskStatus = 'waiting' | 'running' | 'stopped';
 export type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+
+/**
+ * 任务当前「在途/最后一条 assistant 消息」的实时 token 用量。
+ * 与主界面（taskview）的消息级展示同源（last_message.usage），随流式逐 chunk 更新；
+ * 而 usage_summary 仅在请求完成时叠加。
+ */
+export interface TaskLiveUsageSnapshot {
+    message_id: string;
+    /** 消息创建时间（毫秒时间戳），用于判断该消息的请求是否已提交进 usage_summary。 */
+    message_timestamp?: number;
+    usage: Usage;
+}
+
+/** 任务 token 用量快照：累计（usage_summary）+ 在途消息实时用量。 */
+export interface TaskUsageSnapshot {
+    /** 任务级累计 token 用量（随请求完成更新，与个人中心任务统计同源）。 */
+    usage_summary?: TaskUsageSummary;
+    /** 当前在途/最后一条 assistant 消息的实时用量。 */
+    live?: TaskLiveUsageSnapshot;
+}
 
 export interface TaskRuntimeInterrupt {
     requested: boolean;
@@ -33,6 +52,11 @@ export interface SubmitUserMessageOptions {
     imageDataUris?: string[];
     modelRequestOptions?: TaskModelRequestOptions;
     instrumentationContext?: TaskTurnInstrumentationExternalContext;
+    /**
+     * 本次 turn 是否由用户交互发起，决定是否挂载交互工具集（askUser / exitPlanMode）。
+     * 内部/自动化流程（子任务、agentoffice、headless、channel 等）应保持默认 false。
+     */
+    interactive?: boolean;
 }
 
 export interface ProcessTaskTurnOptions {
@@ -40,10 +64,6 @@ export interface ProcessTaskTurnOptions {
     modelRequestOptions?: TaskModelRequestOptions;
     instrumentationContext?: TaskTurnInstrumentationExternalContext;
 }
-
-export type TaskAwareTool = BaseTool<any> & {
-    isAvailable?: (taskState?: TaskState) => boolean | Promise<boolean>;
-};
 
 export interface StartInternalTurnOptions {
     prompt: string;

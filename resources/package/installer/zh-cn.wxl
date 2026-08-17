@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (c) 2026 The OpenDesk Team
+OpenDesk is licensed under Mulan PSL v2.
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+See the Mulan PSL v2 for more details.
+-->
+<WixLocalization Culture="zh-cn" Codepage="936" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+    <String Id="WixUIBack">上一步(&amp;B)</String>
+    <String Id="WixUINext">继续(&amp;N)</String>
+    <String Id="WixUICancel">取消</String>
+    <String Id="WixUIFinish">完成(&amp;F)</String>
+    <String Id="WelcomeDlg_Title">OpenDesk 安装程序</String>
+    <String Id="WelcomeDlgTitle">{\WixUI_Font_Bigger}欢迎使用 OpenDesk 安装程序</String>
+    <String Id="WelcomeDlgDescription">安装程序将安装或更新 OpenDesk。继续前请保存正在进行的工作。</String>
+    <String Id="CustomizeDlg_Title">OpenDesk 安装程序</String>
+    <String Id="CustomizeDlgTitle">{\WixUI_Font_Title}选择安装选项</String>
+    <String Id="CustomizeDlgDescription">选择安装位置和需要的组件。</String>
+    <String Id="CustomizeDlgText">确认安装目录后，单击“继续”。</String>
+    <String Id="InstallDirDlg_Title">OpenDesk 安装程序</String>
+    <String Id="InstallDirDlgTitle">{\WixUI_Font_Title}选择安装位置</String>
+    <String Id="InstallDirDlgDescription">可直接输入任意本地磁盘路径，例如 E:\OpenDesk。</String>
+    <String Id="InstallDirDlgFolderLabel">安装到：</String>
+    <String Id="InstallDirDlgChange">浏览(&amp;R)...</String>
+    <String Id="BrowseDlg_Title">选择安装文件夹</String>
+    <String Id="BrowseDlgTitle">{\WixUI_Font_Title}选择安装文件夹</String>
+    <String Id="BrowseDlgDescription">选择一个文件夹，然后单击“确定”。</String>
+    <String Id="VerifyReadyDlgInstall">安装(&amp;I)</String>
+    <String Id="VerifyReadyDlgInstallTitle">{\WixUI_Font_Title}已准备好安装 OpenDesk</String>
+    <String Id="VerifyReadyDlgInstallText">单击“安装”开始安装。你仍可返回检查安装设置。</String>
+    <String Id="UpgradeReadyDlg_Title">OpenDesk 更新程序</String>
+    <String Id="UpgradeReadyDlgTitle">{\WixUI_Font_Title}已准备好更新 OpenDesk</String>
+    <String Id="UpgradeReadyDlgDescription">检测到已安装的旧版本。确认当前安装位置，然后单击“更新”。</String>
+    <String Id="UpgradeReadyDlgUpdate">更新(&amp;U)</String>
+    <String Id="ProgressDlgTitleInstalling">{\WixUI_Font_Title}正在安装 OpenDesk</String>
+    <String Id="ProgressDlgTextInstalling">正在准备你的工作空间，请保持安装程序运行。</String>
+    <String Id="ProgressDlgTitleUpdating">{\WixUI_Font_Title}正在更新 OpenDesk</String>
+    <String Id="ProgressDlgTextUpdating">正在更新 OpenDesk，请保持安装程序运行。</String>
+    <String Id="ExitDialog_Title">OpenDesk 安装程序</String>
+    <String Id="ExitDialogTitle">{\WixUI_Font_Bigger}OpenDesk 已准备就绪</String>
+    <String Id="ExitDialogDescription">OpenDesk 已成功安装到这台电脑。单击“完成”退出安装程序。</String>
+</WixLocalization>

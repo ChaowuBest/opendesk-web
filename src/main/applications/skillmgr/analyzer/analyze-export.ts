@@ -272,7 +272,7 @@ var modalOverlay=document.getElementById('modalOverlay'),modalTitle=document.get
 function openModal(t,c){modalTitle.textContent=t;modalBody.innerHTML=c;modalOverlay.classList.add('visible');modalBody.querySelectorAll('[data-accordion-toggle]').forEach(function(h){h.onclick=function(e){e.stopPropagation();var idx=h.getAttribute('data-accordion-toggle');var b=modalBody.querySelector('[data-accordion-body="'+idx+'"]');var a=h.querySelector('.accordion-arrow');if(b){var o=b.style.display!=='none';b.style.display=o?'none':'block';if(a)a.style.transform=o?'rotate(0deg)':'rotate(90deg)'}}})}
 function closeModal(){modalOverlay.classList.remove('visible')}
 document.getElementById('modalClose').addEventListener('click',closeModal)
-modalOverlay.addEventListener('click',function(e){if(e.target===modalOverlay)closeModal()})
+var _modalDown=false;modalOverlay.addEventListener('mousedown',function(e){_modalDown=e.target===modalOverlay});modalOverlay.addEventListener('mouseup',function(e){if(_modalDown&&e.target===modalOverlay)closeModal();_modalDown=false})
 
 function showDepsModal(sid){var sr=results[sid];if(!sr||!sr.dependencies)return;var d=sr.dependencies,sk=allSkills.find(function(s){return s.id===sid}),sn=(sk&&sk.name)||sid,h='<div class="analyze-modal-section"><div class="analyze-modal-section-title">'+escHtml(sn)+' 的依赖项</div>';
 if(d.envVars&&d.envVars.length){h+='<div class="analyze-modal-subsection"><div class="analyze-modal-subsection-title">环境变量</div><table class="analyze-modal-table"><thead><tr><th>名称</th><th>必需</th><th>说明</th></tr></thead><tbody>';d.envVars.forEach(function(ev){h+='<tr><td><code>'+escHtml(ev.name)+'</code></td><td>'+(ev.required?'✅':'❌')+'</td><td>'+escHtml(ev.description||'—')+'</td></tr>'});h+='</tbody></table></div>'}
@@ -308,7 +308,7 @@ detailBody.innerHTML=h;detailOverlay.classList.add('visible');
 }
 function closeDetail(){detailOverlay.classList.remove('visible')}
 document.getElementById('detailClose').addEventListener('click',closeDetail)
-detailOverlay.addEventListener('click',function(e){if(e.target===detailOverlay)closeDetail()})
+var _detailDown=false;detailOverlay.addEventListener('mousedown',function(e){_detailDown=e.target===detailOverlay});detailOverlay.addEventListener('mouseup',function(e){if(_detailDown&&e.target===detailOverlay)closeDetail();_detailDown=false})
 detailBody.addEventListener('click',function(e){var deps=e.target.closest('[data-detail-deps]'),tests=e.target.closest('[data-detail-tests]');if(deps){showDepsModal(deps.getAttribute('data-detail-deps'));return}if(tests){showTestCasesModal(tests.getAttribute('data-detail-tests'))}})
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(modalOverlay.classList.contains('visible'))closeModal();else if(detailOverlay.classList.contains('visible'))closeDetail()}})
 

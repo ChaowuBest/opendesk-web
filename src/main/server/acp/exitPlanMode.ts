@@ -26,6 +26,7 @@ import { logger } from '../../utils/logger.js';
  */
 export class AcpExitPlanModeProvider implements ExitPlanModeProvider {
     private modeSwitcher: ((modeId: string) => Promise<void>) | null = null;
+    private pendingResolve: ((response: ExitPlanModeResponse) => void) | null = null;
 
     constructor(
         private readonly connection: AgentSideConnection,
@@ -36,17 +37,45 @@ export class AcpExitPlanModeProvider implements ExitPlanModeProvider {
         this.modeSwitcher = fn;
     }
 
+    isPrompting(): boolean {
+        return this.pendingResolve !== null;
+    }
+
+    cancelCurrent(): void {
+        const resolve = this.pendingResolve;
+        if (!resolve) return;
+        this.pendingResolve = null;
+        resolve({ action: 'continue-editing' });
+    }
+
     async promptAndSwitch(
         planContent: string,
         planFilePath: string,
         _taskId?: string,
         _taskName?: string
     ): Promise<ExitPlanModeResponse> {
+        return new Promise<ExitPlanModeResponse>((resolve) => {
+            this.pendingResolve = resolve;
+            this.doPrompt(planContent, planFilePath).then(
+                async (response) => {
+                    if (this.pendingResolve !== resolve) return;
+                    this.pendingResolve = null;
+                    await this.switchModeIfNeeded(response.action);
+                    resolve(response);
+                },
+                () => {
+                    if (this.pendingResolve !== resolve) return;
+                    this.pendingResolve = null;
+                    resolve({ action: 'continue-editing' });
+                }
+            );
+        });
+    }
+
+    private async doPrompt(planContent: string, planFilePath: string): Promise<ExitPlanModeResponse> {
         // 策略1：尝试 unstable_createElicitation
         try {
-            const response = await this.tryElicitation(planContent, planFilePath);
-            await this.switchModeIfNeeded(response.action);
-            return response;
+            return await this.tryElicitation(planContent, planFilePath);
         } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.debug(
@@ -56,9 +85,7 @@ export class AcpExitPlanModeProvider implements ExitPlanModeProvider {
 
         // 策略2：fallback 到 requestPermission
         try {
-            const response = await this.promptViaPermission(planContent, planFilePath);
-            await this.switchModeIfNeeded(response.action);
-            return response;
+            return await this.promptViaPermission(planContent, planFilePath);
         } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.warn(`AcpExitPlanModeProvider: requestPermission fallback also failed: ${reason}`);

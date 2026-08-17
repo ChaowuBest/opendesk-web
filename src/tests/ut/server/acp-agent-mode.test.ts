@@ -20,7 +20,10 @@ describe('OpenDesk ACP task modes', () => {
                 task.allowedTools = mode.allowedTools;
                 task.disabledTools = mode.disabledTools;
             }),
-            clearLazyTaskSystemPromptRefresh: jest.fn()
+            clearLazyTaskSystemPromptRefresh: jest.fn(),
+            toolsetProvider: {
+                listAvailableToolsets: jest.fn(async () => [])
+            }
         };
         jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState } as any);
 

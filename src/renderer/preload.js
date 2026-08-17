@@ -450,8 +450,8 @@ function exposeTaskManagerAPI() {
         respondExitPlanMode: (requestId, response) => {
             ipcRenderer.send('exitPlanMode:response', requestId, response);
         },
-        getPendingRequest: async () => {
-            const result = await ipcRenderer.invoke('exitPlanMode:getPending');
+        getPendingRequest: async (taskId) => {
+            const result = await ipcRenderer.invoke('exitPlanMode:getPending', taskId);
             if (result.status === 'ok') return result.data;
             return null;
         }
@@ -680,6 +680,10 @@ function exposeOfficeHostAPI() {
         requestClose: (kind, webContentsId) => {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);
+        },
+        bindSlidesTask: (taskId, filePath, webContentsId) => {
+            if (!taskId || !filePath || !Number.isInteger(webContentsId)) return Promise.resolve(false);
+            return ipcRenderer.invoke('office-host:slides:bind-task', taskId, filePath, webContentsId);
         }
     });
 }
@@ -1093,6 +1097,10 @@ if (shouldExposeMainWindowAPIs()) {
         checkVisionSupport: async (models) => {
             const result = await ipcRenderer.invoke('model:checkVisionSupport', models);
             return result;
+        },
+        checkReasoningEfforts: async (models) => {
+            const result = await ipcRenderer.invoke('model:checkReasoningEfforts', models);
+            return result;
         }
     });
 
@@ -1405,6 +1413,26 @@ if (shouldExposeMainWindowAPIs()) {
             ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
                 callback(...args);
             });
+        }
+    });
+
+    // 任务状态浮窗 API：主窗口不在前台时右上角常驻小窗（胶囊/卡片）使用。
+    safeExposeInMainWorld('taskStatusWidgetAPI', {
+        getSummary: () => ipcRenderer.invoke('taskStatusWidget:getSummary'),
+        restoreMainWindow: () => ipcRenderer.invoke('taskStatusWidget:restoreMainWindow'),
+        setCollapsed: (collapsed) => ipcRenderer.invoke('taskStatusWidget:setCollapsed', collapsed),
+        openTask: (taskId) => ipcRenderer.invoke('taskStatusWidget:openTask', taskId),
+        // 关闭菜单 · 关闭一次：本次触发周期内不再显示。
+        hideWidget: () => ipcRenderer.invoke('taskStatusWidget:hide'),
+        // 关闭菜单 · 下次启动恢复：本次会话内不再显示。
+        disableForSession: () => ipcRenderer.invoke('taskStatusWidget:disableSession'),
+        // 关闭菜单 · 永久：恢复主窗口并打开系统设置引导用户关闭。
+        closePermanently: () => ipcRenderer.invoke('taskStatusWidget:closePermanently'),
+        notifyWaitingForInput: (taskId, waiting) => ipcRenderer.send('taskStatusWidget:notifyWaiting', taskId, waiting),
+        onSummaryUpdate: (callback) => {
+            const listener = (_event, summary) => callback(summary);
+            ipcRenderer.on('taskStatusWidget:summaryUpdate', listener);
+            return () => ipcRenderer.removeListener('taskStatusWidget:summaryUpdate', listener);
         }
     });
 

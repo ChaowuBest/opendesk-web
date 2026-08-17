@@ -16,6 +16,7 @@ import type { PermissionRequest } from './security/permission';
 import { zhCn } from '../../locale/zh-cn.js';
 import { enUs } from '../../locale/en-us.js';
 import { resolvePreferredLocale } from '../../common/locale.js';
+import type { ToolResultWriter } from './types/index.js';
 
 const validationTranslations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
@@ -121,7 +122,7 @@ export type ToolArgsValidationResult<T extends z.ZodType> =
           error: string;
       };
 
-export class ToolResult {
+export class ToolResult implements ToolResultWriter {
     status: 'running' | 'success' | 'error' = 'running';
     result: string = '';
     result_object?: object;
@@ -233,6 +234,16 @@ export class BaseTool<T extends z.ZodType> {
     }
 
     /**
+     * 判断工具在当前任务上下文中是否可用。
+     * 默认始终可用；子类可重写以实现按任务/模式动态屏蔽（如 exitPlanMode 仅在 Plan 模式可用）。
+     *
+     * @param taskState 当前任务状态（可为 undefined）
+     */
+    isAvailable(_taskState?: TaskState): boolean | Promise<boolean> {
+        return true;
+    }
+
+    /**
      * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用
      */
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -331,9 +342,9 @@ export class BaseTool<T extends z.ZodType> {
     }
 }
 
-export class BaseToolset {
+export class BaseToolset<T extends BaseTool<any> = BaseTool<any>> {
     name: string;
-    tools: Map<string, BaseTool<any>> = new Map();
+    tools: Map<string, T> = new Map();
 
     constructor(name: string) {
         this.name = name;
@@ -342,7 +353,7 @@ export class BaseToolset {
     /**
      * Add multiple tools to the toolset
      */
-    addTools(...tools: BaseTool<any>[]) {
+    addTools(...tools: T[]) {
         for (const tool of tools) {
             this.addTool(tool);
         }
@@ -351,11 +362,11 @@ export class BaseToolset {
     /**
      * Add a tool to the toolset
      */
-    addTool(tool: BaseTool<any>) {
+    addTool(tool: T) {
         this.tools.set(tool.name, tool);
     }
 
-    getTools(): Map<string, BaseTool<z.ZodType>> {
+    getTools(): Map<string, T> {
         return this.tools;
     }
 
@@ -366,7 +377,7 @@ export class BaseToolset {
     /**
      * Get a tool by name
      */
-    getTool(name: string): BaseTool<any> | undefined {
+    getTool(name: string): T | undefined {
         return this.tools.get(name);
     }
 
@@ -393,6 +404,32 @@ export class BaseToolset {
             toolset.addTool(BaseTool.fromJSON(tool));
         }
         return toolset;
+    }
+}
+
+/**
+ * 可主动取消的交互工具基类。
+ * askUser / exitPlanMode 等阻塞式交互工具在等待用户操作时可被主动取消，
+ * 因此必须实现 cancelCurrent。
+ */
+export abstract class InteractiveTool<T extends z.ZodType> extends BaseTool<T> {
+    /** 取消当前等待中的交互提示。 */
+    abstract cancelCurrent(): void;
+}
+
+/**
+ * 交互工具集：其包含的工具均为 InteractiveTool，保证可统一调用 cancelCurrent。
+ */
+export class InteractiveToolset extends BaseToolset<InteractiveTool<any>> {
+    constructor(name: string) {
+        super(name);
+    }
+
+    /** 取消当前等待中的所有交互提示（askUser / exitPlanMode）。 */
+    cancelAll(): void {
+        for (const tool of this.tools.values()) {
+            tool.cancelCurrent();
+        }
     }
 }
 

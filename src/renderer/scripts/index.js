@@ -283,6 +283,14 @@ if (window.skillBlacklistAPI) {
     });
 }
 
+// 转发「等待用户输入」状态到主进程，供任务状态悬浮窗显示「需要操作」提示。
+document.addEventListener('task-waiting-state', (event) => {
+    const { taskId, waiting } = event.detail || {};
+    if (taskId) {
+        window.taskStatusWidgetAPI?.notifyWaitingForInput(taskId, !!waiting);
+    }
+});
+
 // 监听主窗口关闭确认请求，显示自定义模态弹窗
 if (window.closeWindowAPI) {
     window.closeWindowAPI.onCloseWindowRequest(async (requestId) => {

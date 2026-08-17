@@ -73,6 +73,7 @@ import {
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } from './workspaceFocusLayout.js';
+import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -802,14 +803,12 @@ class TaskView extends HTMLElement {
             return;
         }
 
-        // Inline mode: update preview content
+        // Inline mode: update preview content.
+        // The preview area is clipped (overflow: hidden), so there is no scrollable
+        // region; skip the scrollHeight read to avoid forcing layout on every flush.
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
             previewContent.textContent = text;
-            const previewArea = el.querySelector('.reasoning-preview-area');
-            if (previewArea) {
-                previewArea.scrollTop = previewArea.scrollHeight;
-            }
         }
 
         const fullContent = el.querySelector('.reasoning-content');
@@ -819,11 +818,55 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * Schedule a deferred update of a streaming reasoning block.
+     *
+     * Reasoning models stream tokens far faster than the renderer can meaningfully
+     * repaint. Updating the DOM synchronously on every token floods the main thread
+     * (full-text textContent writes + layout reads), which is what makes the UI feel
+     * stuck while the model is "thinking". Coalescing to one update per animation
+     * frame caps the per-frame cost regardless of token rate; the final text is
+     * flushed when the block is finalized.
+     */
+    static scheduleReasoningPreviewUpdate(el, text) {
+        if (!el) return;
+        el._pendingReasoningText = text;
+        if (el._reasoningPreviewRaf !== undefined) return;
+        el._reasoningPreviewRaf = requestAnimationFrame(() => {
+            el._reasoningPreviewRaf = undefined;
+            const pending = el._pendingReasoningText;
+            if (pending === undefined) return;
+            el._pendingReasoningText = undefined;
+            TaskView.updateReasoningPreview(el, pending);
+        });
+    }
+
+    /**
+     * Immediately apply any deferred reasoning text and cancel the pending frame.
+     * Called when a reasoning block is finalized so its collapsed/full content is
+     * complete even if the last token arrived without a subsequent animation frame.
+     */
+    static flushReasoningPreview(el) {
+        if (!el) return;
+        if (el._reasoningPreviewRaf !== undefined) {
+            cancelAnimationFrame(el._reasoningPreviewRaf);
+            el._reasoningPreviewRaf = undefined;
+        }
+        const pending = el._pendingReasoningText;
+        if (pending !== undefined) {
+            el._pendingReasoningText = undefined;
+            TaskView.updateReasoningPreview(el, pending);
+        }
+    }
+
+    /**
      * Transition a reasoning block from active (streaming) to completed state.
      * Calculates elapsed time, hides preview, shows toggle button.
      */
     static finalizeReasoningBlock(el) {
         if (!el || el.classList.contains('reasoning-completed')) return;
+
+        // Flush any deferred streaming text so the finalized block is complete.
+        TaskView.flushReasoningPreview(el);
 
         // Clear the per-second time interval
         if (el._reasoningTimeInterval) {
@@ -1414,7 +1457,7 @@ class TaskView extends HTMLElement {
         if (!last_part_element) return false;
 
         if (progress.last_part.type === 'reasoning') {
-            TaskView.updateReasoningPreview(last_part_element, progress.last_part.rendered || '');
+            TaskView.scheduleReasoningPreviewUpdate(last_part_element, progress.last_part.rendered || '');
         } else if (progress.last_part.type === 'tool_call') {
             TaskView.morphDomChildren(last_part_element, progress.last_part.rendered || '');
         } else {
@@ -3180,7 +3223,8 @@ class TaskView extends HTMLElement {
         try {
             const wsClickHandler = async () => {
                 const selected = await showWorkspacePicker({
-                    title: this._buildWorkspacePickerTitle()
+                    title: this._buildWorkspacePickerTitle(),
+                    t: taskViewT
                 });
                 if (selected) {
                     await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
@@ -3211,7 +3255,8 @@ class TaskView extends HTMLElement {
             return;
         }
         const selected = await showWorkspacePicker({
-            title: this._buildWorkspacePickerTitle()
+            title: this._buildWorkspacePickerTitle(),
+            t: taskViewT
         });
         if (selected) {
             await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
@@ -3429,7 +3474,9 @@ class TaskView extends HTMLElement {
                     title: taskViewT('renderer.taskview.edit.title'),
                     message: taskViewT('renderer.taskview.edit.message'),
                     confirmText: taskViewT('renderer.taskview.edit.confirm'),
-                    cancelText: taskViewT('renderer.taskview.edit.cancel')
+                    cancelText: taskViewT('renderer.taskview.edit.cancel'),
+                    // 编辑消息场景：回车默认触发"继续对话"
+                    enterToConfirm: true
                 });
                 submitting = false;
                 if (!confirmed) {
@@ -3526,6 +3573,11 @@ class TaskView extends HTMLElement {
 
         this._initToolbarWorkspace();
         this.setUpEventListeners();
+
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = listenForAgentInputRequests(this, () =>
+            this.querySelector(`#task-${this.task_id}-input`)
+        );
 
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
@@ -3809,6 +3861,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this._disconnectAgentInputRequests?.();
+        this._disconnectAgentInputRequests = null;
         this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
         this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()

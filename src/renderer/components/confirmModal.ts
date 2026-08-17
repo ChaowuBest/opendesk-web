@@ -51,6 +51,8 @@ export interface ConfirmModalOptions {
     challengeHint?: string;
     /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
     mountTarget?: HTMLElement;
+    /** 是否允许按回车默认触发"确认"（默认 false，仅个别弹窗显式开启） */
+    enterToConfirm?: boolean;
 }
 
 const ANIM_DURATION_IN = 250;
@@ -431,6 +433,61 @@ export const MODAL_CSS = `
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
+/**
+ * 绑定"点击遮罩关闭"逻辑。
+ *
+ * 注意：不能直接监听 overlay 的 click 事件并判断 e.target 是否为遮罩，
+ * 因为 click 事件的目标是 mousedown 与 mouseup 目标的最近公共祖先——
+ * 当鼠标在弹窗内按下、在遮罩上松开时（例如全选表单文本拖出弹窗），
+ * click 会在公共祖先（遮罩）上触发，导致误关闭。
+ * 这里要求 mousedown 与 mouseup 都发生在遮罩本身上才触发关闭。
+ *
+ * @param overlay 遮罩元素
+ * @param onDismiss 遮罩点击确认后触发的关闭回调
+ * @param isTarget 判断事件目标是否为"遮罩本身"（默认 e.target === overlay）
+ * @param enabled 是否允许点击遮罩关闭；带表单填写的弹窗应传 false，防止误关丢失输入
+ */
+export function bindOverlayDismiss(
+    overlay: HTMLElement,
+    onDismiss: () => void,
+    isTarget: (target: EventTarget | null) => boolean = (t) => t === overlay,
+    enabled = true
+): void {
+    if (!enabled) return;
+    let downOnOverlay = false;
+    overlay.addEventListener('mousedown', (e) => {
+        downOnOverlay = isTarget(e.target);
+    });
+    overlay.addEventListener('mouseup', (e) => {
+        if (downOnOverlay && isTarget(e.target)) {
+            onDismiss();
+        }
+        downOnOverlay = false;
+    });
+}
+
+/**
+ * 判断弹窗内按下回车时是否应由弹窗默认触发"确认"。
+ *
+ * 规则：
+ *  - challenge 未匹配（确认按钮禁用）时不触发；
+ *  - 焦点在可交互元素（输入框 / 按钮 / 链接 / 可编辑富文本）上时不拦截，
+ *    回车交给原生行为（例如 challenge 输入框由自身处理器负责）。
+ */
+export function shouldConfirmOnEnter(
+    target: EventTarget | null,
+    hasChallenge: boolean,
+    confirmDisabled: boolean
+): boolean {
+    if (hasChallenge && confirmDisabled) return false;
+    if (!target) return true;
+    const el = target as HTMLElement;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A') return false;
+    if (el.isContentEditable) return false;
+    return true;
+}
+
 export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean> {
     return new Promise((resolve) => {
         const {
@@ -444,6 +501,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             danger = false,
             challenge,
             challengeHint,
+            enterToConfirm = false,
             mountTarget = document.body
         } = options;
 
@@ -488,6 +546,8 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
 </div>`;
 
         let resolved = false;
+        // 仅当调用方显式开启 enterToConfirm 时才会注册，用于在关闭时同步移除
+        let enterHandler: ((e: KeyboardEvent) => void) | undefined;
         const close = (result: boolean) => {
             if (resolved) return;
             resolved = true;
@@ -497,6 +557,9 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
                 resolve(result);
             }, ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
+            if (enterHandler) {
+                document.removeEventListener('keydown', enterHandler);
+            }
         };
 
         const escHandler = (e: KeyboardEvent) => {
@@ -507,11 +570,14 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         };
         document.addEventListener('keydown', escHandler);
 
-        overlay.addEventListener('click', (e) => {
-            if ((e.target as HTMLElement).classList.contains('od-confirm-modal-overlay')) {
+        bindOverlayDismiss(
+            overlay,
+            () => {
                 if (cancelText) close(false);
-            }
-        });
+            },
+            (t) => !!(t as HTMLElement | null)?.classList?.contains?.('od-confirm-modal-overlay'),
+            !hasChallenge
+        );
 
         overlay.querySelector('[data-action="close"]')!.addEventListener('click', () => close(false));
         const cancelBtn = overlay.querySelector('[data-action="cancel"]');
@@ -524,6 +590,21 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             if (hasChallenge && confirmBtn.disabled) return;
             close(true);
         });
+
+        // 回车默认触发"确认"（例如"确认编辑消息"弹窗中回车=继续对话）。
+        // 仅当调用方显式开启 enterToConfirm 时才生效，不影响其他确认弹窗。
+        // 焦点在可交互元素上时由 shouldConfirmOnEnter 放行给原生行为。
+        if (enterToConfirm) {
+            enterHandler = (e: KeyboardEvent) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+                if (e.isComposing) return;
+                if (!shouldConfirmOnEnter(e.target, hasChallenge, confirmBtn.disabled)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                close(true);
+            };
+            document.addEventListener('keydown', enterHandler);
+        }
 
         if (hasChallenge && challenge) {
             const challengeInput = overlay.querySelector('[data-action="challenge-input"]')! as HTMLInputElement;
@@ -650,11 +731,11 @@ export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialo
         document.addEventListener('keydown', escHandler);
 
         // 点击遮罩 = 取消（不关闭窗口）
-        overlay.addEventListener('click', (e) => {
-            if ((e.target as HTMLElement).classList.contains('od-confirm-modal-overlay')) {
-                finish({ action: 'cancel', dontAsk: false });
-            }
-        });
+        bindOverlayDismiss(
+            overlay,
+            () => finish({ action: 'cancel', dontAsk: false }),
+            (t) => !!(t as HTMLElement | null)?.classList?.contains?.('od-confirm-modal-overlay')
+        );
 
         const getDontAsk = () =>
             (overlay.querySelector('[data-action="dontask"]') as HTMLInputElement)?.checked ?? false;

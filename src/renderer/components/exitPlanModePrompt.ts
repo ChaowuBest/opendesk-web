@@ -32,7 +32,9 @@ declare global {
             onExitPlanModeDismiss: (callback: (requestId: string) => void) => void;
             offExitPlanModeDismiss: (callback: (requestId: string) => void) => void;
             respondExitPlanMode: (requestId: string, response: Record<string, unknown>) => void;
-            getPendingRequest: () => Promise<{ requestId: string; planContent: string; planFilePath: string } | null>;
+            getPendingRequest: (
+                taskId?: string
+            ) => Promise<{ requestId: string; planContent: string; planFilePath: string } | null>;
         };
     }
 }
@@ -68,7 +70,7 @@ class ExitPlanModePrompt extends HTMLElement {
 
     private async _checkPendingRequest(): Promise<void> {
         try {
-            const pending = await window.exitPlanModeAPI?.getPendingRequest?.();
+            const pending = await window.exitPlanModeAPI?.getPendingRequest?.(this._ownTaskId);
             if (pending && !this._visible) {
                 this.showPrompt(pending.requestId, {
                     planContent: pending.planContent,

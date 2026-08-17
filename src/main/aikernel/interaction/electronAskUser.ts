@@ -18,22 +18,65 @@
 
 import type { AskUserRequest, AskUserResponse, AskUserProvider } from './tools.js';
 import { logger } from '../../utils/logger.js';
-import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { broadcastToAllWindows } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
+interface PendingPrompt {
+    requestId: string;
+    resolve: (response: AskUserResponse) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+    handler: ((event: unknown, respRequestId: string, response: unknown) => void) | null;
+    settled: boolean;
+}
+
 export class ElectronAskUserProvider implements AskUserProvider {
-    isPrompting?(): boolean {
-        return false;
+    private pending: PendingPrompt | null = null;
+
+    isPrompting(): boolean {
+        return this.pending !== null;
+    }
+
+    cancelCurrent(): void {
+        if (!this.pending) return;
+        this.settle(this.pending, { answers: {}, cancelled: true }, true);
+    }
+
+    /**
+     * 结束一次提问：清理定时器与监听器并 resolve。
+     * 使用 removeListener（而非 removeAllListeners）保证并发的多个任务互不影响。
+     */
+    private settle(pending: PendingPrompt, response: AskUserResponse, dismiss: boolean): void {
+        if (pending.settled) return;
+        pending.settled = true;
+        if (pending.timer) clearTimeout(pending.timer);
+        if (this.pending === pending) {
+            this.pending = null;
+        }
+        try {
+            const { ipcMain } = electron();
+            if (pending.handler) {
+                ipcMain.removeListener('askUser:response', pending.handler);
+            }
+            if (dismiss) {
+                // 广播到所有窗口：主窗口不一定是 getAllWindows() 的第一个（常驻悬浮窗可能排在前面）
+                broadcastToAllWindows('askUser:dismiss', pending.requestId);
+            }
+        } catch (err) {
+            logger.warn(`ElectronAskUserProvider.settle failed: ${err}`);
+        }
+        pending.resolve(response);
     }
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         try {
             const { BrowserWindow, ipcMain, Notification } = electron();
-            const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-            if (!win) {
+            const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+            if (windows.length === 0) {
                 logger.warn('ElectronAskUserProvider: no window available, returning cancelled');
                 return { answers: {}, cancelled: true };
             }
+            // 仅用于系统通知点击时聚焦窗口，面板请求本身走广播
+            const win = windows[0];
 
             if (Notification.isSupported()) {
                 const notification = new Notification({
@@ -51,40 +94,36 @@ export class ElectronAskUserProvider implements AskUserProvider {
             }
 
             return new Promise<AskUserResponse>((resolve) => {
-                const timeoutMs = 600_000; // 10 分钟
-                let settled = false;
-
-                const cleanup = () => {
-                    ipcMain.removeAllListeners('askUser:response');
+                const pending: PendingPrompt = {
+                    requestId: request.requestId,
+                    resolve,
+                    timer: null,
+                    handler: null,
+                    settled: false
                 };
 
                 const timer = setTimeout(() => {
-                    if (!settled) {
-                        settled = true;
-                        cleanup();
-                        if (!win.isDestroyed()) {
-                            safeSendToWebContents(win.webContents, 'askUser:dismiss', request.requestId);
-                        }
-                        logger.warn(`AskUser prompt timed out for request ${request.requestId}`);
-                        resolve({ answers: {}, cancelled: true });
-                    }
-                }, timeoutMs);
+                    if (pending.settled) return;
+                    logger.warn(`AskUser prompt timed out for request ${request.requestId}`);
+                    this.settle(pending, { answers: {}, cancelled: true }, true);
+                }, 600_000); // 10 分钟
 
-                const handler = (_event: any, respRequestId: string, response: any) => {
+                const handler = (_event: unknown, respRequestId: string, response: unknown) => {
                     if (respRequestId !== request.requestId) return;
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    cleanup();
-                    resolve({
-                        answers: response.answers ?? {},
-                        cancelled: response.cancelled ?? false
-                    });
+                    if (pending.settled) return;
+                    const data = (response ?? {}) as { answers?: Record<string, string[]>; cancelled?: boolean };
+                    this.settle(pending, { answers: data.answers ?? {}, cancelled: data.cancelled ?? false }, false);
                 };
+
+                pending.timer = timer;
+                pending.handler = handler;
+                this.pending = pending;
 
                 ipcMain.on('askUser:response', handler);
 
-                safeSendToWebContents(win.webContents, 'askUser:request', request.requestId, {
+                // 事件广播模式：请求发给所有窗口，由挂载了 ask-user-prompt 组件的窗口展示；
+                // requestId 匹配保证多窗口响应幂等，未加载组件的窗口（如任务状态浮窗）不受影响。
+                broadcastToAllWindows('askUser:request', request.requestId, {
                     questions: request.questions,
                     taskId: request.taskId,
                     taskName: request.taskName

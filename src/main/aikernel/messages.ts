@@ -20,35 +20,40 @@ import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension, renderFilePillFromText } from './marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
+import type {
+    BaseAssistantMessage,
+    ChatContextSnapshot,
+    BaseChatToolCall,
+    CompactBoundaryMetadata,
+    CompactBoundaryStrategy,
+    CompactBoundaryTrigger,
+    BaseCompactSeparatorMessage,
+    CompactSummarizedRange,
+    BaseErrorMessagePart,
+    BaseFileMessagePart,
+    BaseImageMessagePart,
+    BaseReasoningMessagePart,
+    RuntimeMetadata,
+    BaseSystemMessage,
+    BaseTextMessagePart,
+    BaseToolCallMessagePart,
+    ToolCallMicrocompactMetadata,
+    ToolResultStorageMetadata,
+    BaseUsage,
+    BaseUserMessage
+} from './types/messages.js';
 
-export interface RuntimeMetadata {
-    /** 运行域：标记消息属于普通任务、goal 生命周期还是全局后台流程。 */
-    scope?: 'task' | 'goal' | 'global';
-    /** 来源信息：说明这条消息或工具调用由谁产生、为什么产生。 */
-    origin?: {
-        /** 来源类型：用户输入、内部调度、hook、压缩、工具或系统流程等。 */
-        source: 'user' | 'internal' | 'hook' | 'scheduler' | 'compact' | 'tool' | 'system';
-        /** 来源原因：对 source 的细分说明，如 goal_create、goal_edit、goal_supplement。 */
-        reason?: string;
-    };
-    /** 执行信息：把消息、assistant 输出和工具调用关联到具体运行轮次/控制器。 */
-    execution?: {
-        /** 单轮执行的稳定 ID；预留给跨消息、跨工具调用追踪同一 turn。 */
-        turnId?: string;
-        /** TaskState 内部递增的运行代次，用于区分旧 turn 与新 turn。 */
-        generation?: number;
-        /** 控制器类型：普通任务、goal、子任务或系统流程。 */
-        controller?: 'normal' | 'goal' | 'subtask' | 'system';
-        /** 控制器实例 ID；goal 场景下对应 goal.id。 */
-        controllerId?: string;
-        /** 控制器版本；goal 场景下对应 goal.revision，用于跳过过期工具调用。 */
-        controllerRevision?: number;
-        /** continuation 实例 ID；用于追踪由 goal continuation 触发的内部 turn。 */
-        continuationId?: string;
-        /** 本条内部消息消费的 goal supplement ID 列表。 */
-        supplementIds?: string[];
-    };
-}
+export type {
+    ChatContextSnapshot,
+    CompactBoundaryMetadata,
+    CompactBoundaryStrategy,
+    CompactBoundaryTrigger,
+    CompactSummarizedRange,
+    RuntimeMetadata,
+    ToolCallMicrocompactMetadata,
+    ToolResultStorageMetadata,
+    BaseUsage as UsageFields
+};
 
 /**
  * 检查工具调用的 args_string 是否为合法 JSON。
@@ -243,7 +248,7 @@ marked.use(cjkAutolinkFix);
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
  */
-export class ReasoningMessagePart {
+export class ReasoningMessagePart implements BaseReasoningMessagePart {
     type: 'reasoning' = 'reasoning';
     content: string;
     /** 来源：'reasoning_content' 表示来自 API 的 reasoning_content 字段，'think_tag' 表示从 <think> 标签解析 */
@@ -320,27 +325,7 @@ const LARGE_ARGS_THRESHOLD = 500;
 export const TOOL_RESULT_STORAGE_VERSION = 1;
 export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
 
-export interface ToolResultStorageMetadata {
-    result_id: string;
-    storage_version: number;
-    relative_path?: string;
-    original_chars?: number;
-    original_lines?: number;
-    persisted_at?: string;
-    replacement_text?: string;
-}
-
-export interface ToolCallMicrocompactMetadata {
-    version: number;
-    strategy: 'local_clear';
-    cleared_at: string;
-    original_chars?: number;
-    original_lines?: number;
-    replacement_text?: string;
-    artifact_path_hint?: string;
-}
-
-export class ToolCall {
+export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
     tool_name: string;
@@ -686,7 +671,7 @@ export class ToolCall {
     }
 }
 
-export class ToolCallMessagePart {
+export class ToolCallMessagePart implements BaseToolCallMessagePart {
     type: 'tool_call' = 'tool_call';
     toolcalls: ToolCall[] = [];
     rendered?: string;
@@ -805,7 +790,7 @@ export class ToolCallMessagePart {
     }
 }
 
-export class FileMessagePart {
+export class FileMessagePart implements BaseFileMessagePart {
     type: 'file' = 'file';
     path: string;
     rendered?: string;
@@ -976,7 +961,7 @@ export class FileMessagePart {
     }
 }
 
-export class TextMessagePart {
+export class TextMessagePart implements BaseTextMessagePart {
     type: 'text' = 'text';
     text: string;
     rendered?: string;
@@ -1028,7 +1013,7 @@ export class TextMessagePart {
     }
 }
 
-export class ErrorMessagePart {
+export class ErrorMessagePart implements BaseErrorMessagePart {
     type: 'error' = 'error';
     title: string;
     message: string;
@@ -1071,7 +1056,7 @@ export class ErrorMessagePart {
     }
 }
 
-export class ImageMessagePart {
+export class ImageMessagePart implements BaseImageMessagePart {
     type: 'image_url' = 'image_url';
     image_url: { url: string };
     rendered?: string;
@@ -1240,17 +1225,7 @@ export function imageToDataUri(imagePath: string): string {
 /**
  * @class Usage
  */
-export interface UsageFields {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-}
-
-export class Usage {
+export class Usage implements BaseUsage {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
@@ -1263,7 +1238,7 @@ export class Usage {
         prompt_tokens?: number,
         completion_tokens?: number,
         total_tokens?: number,
-        extra: Omit<UsageFields, 'prompt_tokens' | 'completion_tokens' | 'total_tokens'> = {}
+        extra: Omit<BaseUsage, 'prompt_tokens' | 'completion_tokens' | 'total_tokens'> = {}
     ) {
         this.prompt_tokens = Usage.normalizeOptionalTokenCount(prompt_tokens);
         this.completion_tokens = Usage.normalizeOptionalTokenCount(completion_tokens);
@@ -1338,7 +1313,7 @@ export class Usage {
 /**
  * @class SystemMessage
  */
-export class SystemMessage {
+export class SystemMessage implements BaseSystemMessage {
     role: 'system' = 'system';
     content: string;
 
@@ -1361,7 +1336,7 @@ export class SystemMessage {
 
 export type UserMessagePart = TextMessagePart | ImageMessagePart | FileMessagePart;
 
-export class UserMessage {
+export class UserMessage implements BaseUserMessage {
     role: 'user' = 'user';
     message_id: string = crypto.randomUUID();
     content: Array<UserMessagePart> = [];
@@ -1491,7 +1466,7 @@ export class UserMessage {
 
 export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart;
 
-export class AssistantMessage {
+export class AssistantMessage implements BaseAssistantMessage {
     role: 'assistant' = 'assistant';
     message_id: string = crypto.randomUUID();
     content: Array<AssistantMessagePart> = [];
@@ -2353,38 +2328,9 @@ export class AssistantResponse {
  * 消息历史中最多出现一次，其前面的消息在构建 OpenAI 上下文时会被跳过，
  * 由 summary 字段中的结构化快照替代。
  */
-export interface CompactSummarizedRange {
-    start_index: number;
-    end_index_exclusive: number;
-    message_count: number;
-    user_messages: number;
-    assistant_messages: number;
-    tool_calls: number;
-}
-
-export type CompactBoundaryTrigger = 'manual' | 'auto';
-export type CompactBoundaryStrategy = 'tail_preserving_full_compact' | 'session_memory_compact';
-
-export interface CompactBoundaryMetadata {
-    boundary_id: string;
-    summary_version: number;
-    created_at: string;
-    summarized_range?: CompactSummarizedRange;
-    previous_boundary_id?: string;
-    trigger?: CompactBoundaryTrigger;
-    strategy?: CompactBoundaryStrategy;
-    kept_range?: CompactSummarizedRange;
-    kept_messages?: number;
-    summarized_messages?: number;
-    kept_anchor_message_id?: string;
-    kept_anchor_message_index?: number;
-    kept_anchor_round_index?: number;
-    kept_anchor_start_part_index?: number;
-}
-
 export const COMPACT_SUMMARY_VERSION = 1;
 
-export class CompactSeparatorMessage {
+export class CompactSeparatorMessage implements BaseCompactSeparatorMessage {
     role: 'compact_separator' = 'compact_separator';
     summary: string;
     metadata: CompactBoundaryMetadata;
@@ -2641,7 +2587,7 @@ export class ChatContext {
         return tools;
     }
 
-    toJSON(): object {
+    toJSON(): ChatContextSnapshot {
         return {
             system_prompt: this.system_prompt,
             messages: this.messages

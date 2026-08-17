@@ -170,14 +170,31 @@ function getModelIconTile(hasVision) {
 const SKILL_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>';
 
-// --- Reasoning effort SVG icons (scheme 1: energy bars) ---
+// --- Reasoning effort SVG icons (scheme 1: energy bars, 4 cells) ---
+// 四格能量条：none=全灰+斜线、low=1 格、medium=2 格、high=3 格、max=4 格，
+// 默认('')=4 格淡色。
+
+const EFFORT_BAR_X = [1.125, 4.875, 8.625, 12.375];
+const EFFORT_BAR_GREEN = '#1F9D66';
+const EFFORT_BAR_GREY = '#E7E5E2';
+
+function effortBarRects(filledCount) {
+    return EFFORT_BAR_X.map(
+        (x, i) =>
+            `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${i < filledCount ? EFFORT_BAR_GREEN : EFFORT_BAR_GREY}"/>`
+    ).join('');
+}
 
 const EFFORT_BAR_SVG = {
-    '': '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66" opacity=".35"/>',
-    none: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><path d="M2.5 13.5 13.5 2.5" stroke="#8A8580" stroke-width="1.4" stroke-linecap="round"/>',
-    low: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/>',
-    medium: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#E7E5E2"/>',
-    high: '<rect x="3" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="6.75" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/><rect x="10.5" y="2.5" width="2.5" height="11" rx=".5" fill="#1F9D66"/>'
+    '': EFFORT_BAR_X.map(
+        (x) => `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${EFFORT_BAR_GREEN}" opacity=".35"/>`
+    ).join(''),
+    none:
+        effortBarRects(0) + '<path d="M1.5 13.5 14.5 2.5" stroke="#8A8580" stroke-width="1.4" stroke-linecap="round"/>',
+    low: effortBarRects(1),
+    medium: effortBarRects(2),
+    high: effortBarRects(3),
+    max: effortBarRects(4)
 };
 
 function getEffortIconSVG(effortValue) {
@@ -207,6 +224,8 @@ class AgentInput extends HTMLElement {
         this.availableModels = [];
         /** @type {Record<string, boolean>} alias → 是否支持视觉 */
         this.visionMap = {};
+        /** @type {Record<string, string[]>} alias → 支持的推理档位（存储值列表，含 '' 默认项） */
+        this.modelEffortsMap = {};
         this.selectedModel = '';
         this.selectedReasoningEffort = '';
         this.defaultModelAlias = '';
@@ -265,7 +284,10 @@ class AgentInput extends HTMLElement {
         this.addEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         // 先立即渲染基础 UI，避免等待异步数据加载导致长时间白屏
         this.render();
-        // 后台异步加载数据，完成后重新渲染以更新下拉列表等内容
+        // 后台异步加载数据，完成后重新渲染以更新下拉列表等内容。
+        // 注意：推理档位映射（loadReasoningEffortSupport）不在此并发列表里，
+        // 它依赖 availableModels 已就绪，必须在 loadSettings 完成模型列表后加载，
+        // 否则会在模型列表尚未填充时提前退出，导致启动后菜单显示全部档位。
         Promise.all([
             this.loadSettings(),
             this.loadModes(),
@@ -299,6 +321,7 @@ class AgentInput extends HTMLElement {
             this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             await this.loadModes();
             await this.loadVisionSupport();
+            await this.loadReasoningEffortSupport();
             this.render();
         });
 
@@ -336,6 +359,9 @@ class AgentInput extends HTMLElement {
             this.ctrlEnterSend = !!settingObj.gui_config?.ctrl_enter_send;
             // 加载视觉能力映射
             await this.loadVisionSupport();
+            // 模型列表已就绪后再加载各模型支持的推理档位（修复：并发加载时
+            // 模型列表未填充会导致该映射为空，推理档位菜单显示全部选项）
+            await this.loadReasoningEffortSupport();
         } catch (err) {
             console.warn('Failed to load settings for agent-input:', err);
         }
@@ -348,6 +374,34 @@ class AgentInput extends HTMLElement {
         } catch {
             this.visionMap = {};
         }
+    }
+
+    /**
+     * 加载每个模型支持的推理档位（alias → 存储值列表，含 '' 默认项）。
+     * 查不到时保持为空，由消费方回退到系统全部档位。
+     */
+    async loadReasoningEffortSupport() {
+        if (!this.availableModels.length || !window.settingAPI?.checkReasoningEfforts) return;
+        try {
+            this.modelEffortsMap = await window.settingAPI.checkReasoningEfforts(this.availableModels);
+        } catch {
+            this.modelEffortsMap = {};
+        }
+    }
+
+    /**
+     * 获取指定模型的可用推理档位值列表（含 '' 默认项）。
+     * model-context 未匹配到时回退到系统全部档位。
+     */
+    getSupportedEffortValues(modelAlias) {
+        const model = this.availableModels.find((m) => m.alias === modelAlias);
+        if (!model) return REASONING_EFFORT_OPTIONS.map((o) => o.value);
+        const supported = this.modelEffortsMap[modelAlias];
+        if (Array.isArray(supported) && supported.length > 0) {
+            return supported;
+        }
+        // 回退：系统全部档位
+        return REASONING_EFFORT_OPTIONS.map((o) => o.value);
     }
 
     async loadCtrlEnterSend() {
@@ -1241,7 +1295,7 @@ class AgentInput extends HTMLElement {
                         </div>
                         <button id="agent-input-stop-btn" class="agent-stop-btn" style="display:none;">
                             <span class="agent-stop-icon"><i class="fas fa-stop"></i></span>
-                            <span>停止</span>
+                            <span>${this.t('renderer.agentInput.stop')}</span>
                         </button>
                     </div>
                 </div>
@@ -1375,7 +1429,9 @@ class AgentInput extends HTMLElement {
                 const span = document.createElement('span');
                 span.className = 'agent-effort-icon';
                 span.innerHTML = svg;
-                const labelSpan = btn.querySelector('> span:last-child');
+                // 注意：必须使用 `:scope >` 形式，裸的 `> span` 在 Chromium 的
+                // querySelector 中会抛 SyntaxError，导致图标无法插入
+                const labelSpan = btn.querySelector(':scope > span:last-child');
                 if (labelSpan) btn.insertBefore(span, labelSpan);
             }
         } else if (existing) {
@@ -1615,18 +1671,31 @@ class AgentInput extends HTMLElement {
         // 记录当前 hover 的模型别名，供子菜单交互时使用
         this._hoveredModelAlias = modelAlias;
 
-        // 生成子菜单内容
-        submenuList.innerHTML = REASONING_EFFORT_OPTIONS.map((o) => {
-            const isActive =
-                modelAlias === this.selectedModel && o.value === this.selectedReasoningEffort ? 'active' : '';
-            const checkMark = isActive ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
-            const effortIcon = getEffortIconSVG(o.value);
-            return `<button class="ctx-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
+        // 生成子菜单内容：按该模型支持的档位过滤；若当前选中值不在支持列表中
+        // （如旧配置残留），仍插入展示以保留激活态
+        const supportedValues = this.getSupportedEffortValues(modelAlias);
+        const effortOptions = REASONING_EFFORT_OPTIONS.filter((o) => supportedValues.includes(o.value));
+        if (
+            modelAlias === this.selectedModel &&
+            this.selectedReasoningEffort &&
+            !supportedValues.includes(this.selectedReasoningEffort)
+        ) {
+            const activeOption = REASONING_EFFORT_OPTIONS.find((o) => o.value === this.selectedReasoningEffort);
+            if (activeOption) effortOptions.splice(1, 0, activeOption);
+        }
+        submenuList.innerHTML = effortOptions
+            .map((o) => {
+                const isActive =
+                    modelAlias === this.selectedModel && o.value === this.selectedReasoningEffort ? 'active' : '';
+                const checkMark = isActive ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
+                const effortIcon = getEffortIconSVG(o.value);
+                return `<button class="ctx-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
                 ${effortIcon}
                 <span class="ctx-label">${o.label}</span>
                 ${checkMark}
             </button>`;
-        }).join('');
+            })
+            .join('');
 
         // 定位：对齐到当前模型项的右侧，并确保不溢出窗口
         const modelPanel = this.querySelector('#agent-input-model-panel');
@@ -2014,8 +2083,12 @@ class AgentInput extends HTMLElement {
      */
     async loadFileCompletions(query, textarea) {
         try {
-            if (!this._workspacePath && window.workspaceAPI?.getEffectiveWorkspace) {
-                this._workspacePath = (await window.workspaceAPI.getEffectiveWorkspace()).replace(/\\/g, '/');
+            // 每次触发补全都重新读取当前有效工作空间，避免切换工作空间后补全范围仍停留在旧目录
+            if (window.workspaceAPI?.getEffectiveWorkspace) {
+                const effective = await window.workspaceAPI.getEffectiveWorkspace();
+                if (effective) {
+                    this._workspacePath = effective.replace(/\\/g, '/');
+                }
             }
             if (!this._workspacePath) return;
 

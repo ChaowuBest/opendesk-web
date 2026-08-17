@@ -1038,6 +1038,8 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._updateGateSwitch();
                 this._updateMalSwitch();
                 this._updateHeader();
+                // 总开关状态可能变化：重渲染记录列表（关闭时不显示历史记录）
+                this._renderRecords();
                 // Locale 变化时重新同步翻译（locale='auto' 时取 resolved_locale，与 resolveFloatingLocale 一致）
                 let newLocale = data?.locale;
                 if (!newLocale || newLocale === 'auto') newLocale = data?.resolved_locale;
@@ -1255,6 +1257,8 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._globalEnabled = this._globalEnabledBase && next;
             this._updateGateSwitch();
             this._updateHeader();
+            // 总开关状态变化：立即重渲染记录列表（关闭时不显示历史记录）
+            this._renderRecords();
             // 抑制后续一段时间内的自动展开/折叠，避免服务启停或事件轮询带来的状态扰动
             this._gateActionUntil = Date.now() + 2500;
             try {
@@ -1267,6 +1271,7 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
                 this._updateGateSwitch();
                 this._updateHeader();
+                this._renderRecords();
             } finally {
                 this._gateToggling = false;
             }
@@ -1596,6 +1601,11 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     // ── Render Records ────────────────────────────────────────────────
     _renderRecords() {
+        // 安全网关总开关关闭时，不显示历史拦截/放行记录（与实时状态、策略控制台一致）
+        if (this._gateEnabled === false) {
+            this._recordsEl.innerHTML = `<div class="floating-empty">${t('floatingWindowNoRecords')}</div>`;
+            return;
+        }
         if (this._events.length === 0) {
             this._recordsEl.innerHTML = `<div class="floating-empty">${
                 this._loading ? t('floatingWindowLoading') : t('floatingWindowNoRecords')
@@ -1811,7 +1821,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         const fwWidth = 320; // 浮窗宽度
         const rightPanel = document.getElementById('rightPanel');
         // 距 opendesk 窗口最上方偏移：原 96 的一半
-        const topOffset = 46;
+        const topOffset = 40;
         if (rightPanel) {
             const rect = rightPanel.getBoundingClientRect();
             // 水平居中于右侧面板

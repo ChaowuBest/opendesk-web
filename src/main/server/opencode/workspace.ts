@@ -44,7 +44,9 @@ export function getRequestWorkspace(c: Context): string {
 export function getTaskWorkspace(
     task: { workspace?: string; harnessContext?: { workspace?: string } } | undefined
 ): string {
-    return task?.workspace || task?.harnessContext?.workspace || getServerDefaultWorkspace();
+    const workspace = task?.workspace || task?.harnessContext?.workspace || getServerDefaultWorkspace();
+    // 与 getRequestWorkspace 保持一致，统一规范化，避免 Windows 上路径形式不同导致比较不相等
+    return normalizeWorkspace(workspace);
 }
 
 export function getRequestOrTaskWorkspace(

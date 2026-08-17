@@ -95,6 +95,30 @@ describe('DefaultModelConfigPage', () => {
         });
     });
 
+    test('lists models with manually configured vision support even when the builtin table is unknown', () => {
+        Setting.updateInstanceData({
+            ...Setting.getInstance().getData(),
+            default_vision_model: '',
+            models: [
+                {
+                    alias: 'custom-vision',
+                    model_name: 'my-custom-vl-model',
+                    model_type: 'chat',
+                    vision: true
+                }
+            ]
+        });
+
+        const page = new DefaultModelConfigPage(createTuiMock(), jest.fn());
+        const form = (page as unknown as { form: { items: Array<Record<string, unknown>> } }).form;
+        const visionField = form.items.find((item) => item.key === 'default_vision_model');
+
+        expect(visionField).toMatchObject({
+            type: 'select',
+            options: ['', 'custom-vision']
+        });
+    });
+
     test('saves the default vision model together with the existing default model settings', () => {
         const onClose = jest.fn();
         const onConfigChange = jest.fn();

@@ -70,11 +70,191 @@ const extraResources = process.platform === 'darwin' ? undefined : [path.join(__
 // in-place during electron-forge package (requires the cert + keychain profile
 // configured locally).
 const SIGN_LOCALLY = process.env.OPENDESK_SIGN_LOCAL === '1';
+const wixInstallerAssets = path.join(__dirname, 'resources', 'package', 'installer');
+const wixInstallPathRegistryKey = 'SOFTWARE\\OpenDesk\\Installer';
+const wixLegacyInstallPathRegistryKey =
+    'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{834BCECA-F10C-41E6-9ECF-CB3877565C04}.msq';
+const wixPublicUninstallComponentIds = new Set([
+    'UninstallDisplayName',
+    'UninstallPublisher',
+    'UninstallDisplayVersion',
+    'UninstallModifyString',
+    'UninstallString',
+    'UninstallDisplayIcon'
+]);
+const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR;
+const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
+
+function preserveWixInstallDirectory(creator) {
+    const installPathProperty = / {4}<Property Id="INSTALLPATH">[\s\S]*? {4}<\/Property>/;
+    const startMenuShortcutComponent =
+        /<Component Id="ApplicationShortcut" Guid="\{\{ApplicationShortcutGuid\}\}" Win64="\{\{Win64YesNo\}\}">/;
+    const desktopShortcutComponent = /<Component Id="DesktopShortcut" Guid="\{\{DesktopShortcutGuid\}\}"\s*>/;
+    const recursiveRootCleanup =
+        / {4}<DirectoryRef Id="APPLICATIONROOTDIRECTORY">\s*<Component Id="PurgeOnUninstall"[\s\S]*?<\/DirectoryRef>/;
+    const recursiveRootCleanupRef = / {8}<ComponentRef Id="PurgeOnUninstall" \/>/;
+
+    if (
+        !installPathProperty.test(creator.wixTemplate) ||
+        !startMenuShortcutComponent.test(creator.wixTemplate) ||
+        !desktopShortcutComponent.test(creator.wixTemplate) ||
+        !recursiveRootCleanup.test(creator.wixTemplate) ||
+        !recursiveRootCleanupRef.test(creator.wixTemplate) ||
+        typeof creator.getRegistryKeys !== 'function' ||
+        typeof creator.getRegistryComponent !== 'function'
+    ) {
+        throw new Error('electron-wix-msi template no longer exposes the expected install path entries');
+    }
+
+    creator.wixTemplate = creator.wixTemplate.replace(
+        installPathProperty,
+        `    <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes" Value="1" />
+    <Property Id="CREATE_START_MENU_SHORTCUT" Secure="yes" Value="1" />
+    <Property Id="INSTALL_PATH_CUSTOMIZED" Secure="yes" Value="1" />
+    <Property Id="OPENDESK_BUNDLE_INSTALL" Secure="yes">
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="BUNDLE_INSTALL_REGSEARCH_HKLM"
+                      Name="BundleInstall"
+                      Win64="{{Win64YesNo}}"/>
+    </Property>
+    <Property Id="INSTALLPATH">
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKCU"
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKCU"
+                      Name="InstallPath"
+                      Win64="{{Win64YesNo}}"/>
+      <RegistrySearch Key="${wixInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKLM"
+                      Name="InstallPath"
+                      Win64="{{Win64YesNo}}"/>
+      <RegistrySearch Key="${wixLegacyInstallPathRegistryKey}"
+                      Root="HKCU"
+                      Type="raw"
+                      Id="INSTALLPATH_LEGACY_033_REGSEARCH_HKCU"
+                      Name="InstallPath"
+                      Win64="no"/>
+      <RegistrySearch Key="${wixLegacyInstallPathRegistryKey}"
+                      Root="HKLM"
+                      Type="raw"
+                      Id="INSTALLPATH_LEGACY_033_REGSEARCH_HKLM"
+                      Name="InstallPath"
+                      Win64="no"/>
+    </Property>
+    <SetProperty Action="RestoreInstallDirectory"
+                 Id="APPLICATIONROOTDIRECTORY"
+                 Sequence="first"
+                 Before="CostFinalize"
+                 Value="[INSTALLPATH]">
+      <![CDATA[INSTALLPATH AND NOT APPLICATIONROOTDIRECTORY]]>
+    </SetProperty>`
+    );
+    creator.wixTemplate = creator.wixTemplate
+        .replace(
+            startMenuShortcutComponent,
+            '<Component Id="ApplicationShortcut" Guid="{{ApplicationShortcutGuid}}" Win64="{{Win64YesNo}}" Transitive="yes">\n        <Condition>CREATE_START_MENU_SHORTCUT = "1"</Condition>'
+        )
+        .replace(
+            desktopShortcutComponent,
+            '<Component Id="DesktopShortcut" Guid="{{DesktopShortcutGuid}}" Transitive="yes">\n          <Condition>CREATE_DESKTOP_SHORTCUT = "1"</Condition>'
+        )
+        .replace(
+            recursiveRootCleanup,
+            '    <!-- Recursive cleanup of the selected install root is intentionally disabled. -->'
+        )
+        .replace(
+            recursiveRootCleanupRef,
+            '        <!-- Untracked files in the selected install root are preserved. -->'
+        );
+
+    const getRegistryKeys = creator.getRegistryKeys.bind(creator);
+    creator.getRegistryKeys = () => {
+        const registryKeys = getRegistryKeys().map((entry) =>
+            entry.id === 'RegistryInstallPath' ? { ...entry, key: wixInstallPathRegistryKey } : entry
+        );
+        const installPathIndex = registryKeys.findIndex((entry) => entry.id === 'RegistryInstallPath');
+        registryKeys.splice(
+            installPathIndex + 1,
+            0,
+            {
+                id: 'RegistryInstallLayoutVersion',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'LayoutVersion',
+                type: 'integer',
+                value: '2',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
+                id: 'RegistryBundleInstallMode',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'BundleInstall',
+                type: 'integer',
+                value: '1',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
+                id: 'RegistryInstallPathCustomized',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'InstallPathCustomized',
+                type: 'integer',
+                value: '[INSTALL_PATH_CUSTOMIZED]',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
+                id: 'RegistryDesktopShortcutPreference',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'CreateDesktopShortcut',
+                type: 'integer',
+                value: '[CREATE_DESKTOP_SHORTCUT]',
+                forceDeleteOnUninstall: 'yes'
+            },
+            {
+                id: 'RegistryStartMenuShortcutPreference',
+                root: 'HKLM',
+                key: wixInstallPathRegistryKey,
+                name: 'CreateStartMenuShortcut',
+                type: 'integer',
+                value: '[CREATE_START_MENU_SHORTCUT]',
+                forceDeleteOnUninstall: 'yes'
+            }
+        );
+        return registryKeys;
+    };
+
+    const getRegistryComponent = creator.getRegistryComponent.bind(creator);
+    creator.getRegistryComponent = (registry, indent) => {
+        const component = getRegistryComponent(registry, indent);
+        const condition = wixPublicUninstallComponentIds.has(registry.id)
+            ? 'OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"'
+            : registry.id === 'RegistryBundleInstallMode'
+              ? 'OPENDESK_BUNDLE_INSTALL = "1"'
+              : null;
+        if (!condition) {
+            return component;
+        }
+
+        component.xml = component.xml
+            .replace(new RegExp(`(<Component Id="${registry.id}"[^>]*)(>)`), '$1 Transitive="yes"$2')
+            .replace(/(\r?\n)(\s*)<RegistryKey/, `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`);
+        return component;
+    };
+}
 
 module.exports = {
+    ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
+        ignore: [/^[/\\]out(?:[/\\]|-)/],
         appBundleId: 'com.intellios.opendesk',
         ...(SIGN_LOCALLY && {
             osxSign: {
@@ -102,6 +282,7 @@ module.exports = {
         asar: {
             unpack: '**/node_modules/{sharp,@img}/**/*'
         },
+        ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         ...(extraResources ? { extraResource: extraResources } : {}),
         afterPrune: [pruneDarwinAppNativePrebuilds],
         afterCopyExtraResources: [pruneDarwinExtraResources]
@@ -117,13 +298,21 @@ module.exports = {
                 manufacturer: 'OpenDesk Team, Openharmony',
                 description: 'An All-in-One AI Office Suite for Productivity Scenarios',
                 shortcutFolderName: 'OpenDesk',
-                language: 1033,
+                programFilesFolderName: 'opendesk',
+                language: 2052,
+                cultures: 'zh-cn',
+                arch: 'x64',
                 upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
+                beforeCreate: preserveWixInstallDirectory,
                 icon: path.join(__dirname, 'resources', 'package', 'icons', 'icon_round.ico'),
-                // electron-wix-msi defaults ui to false (no wizard). Enable WixUI with directory picker,
-                // progress dialog, and finish screen (ExitDialog).
                 ui: {
-                    chooseDirectory: true
+                    chooseDirectory: true,
+                    template: fs.readFileSync(path.join(wixInstallerAssets, 'ui.xml'), 'utf8'),
+                    localizations: [path.join(wixInstallerAssets, 'zh-cn.wxl')],
+                    images: {
+                        background: path.join(wixInstallerAssets, 'dialog.jpg'),
+                        banner: path.join(wixInstallerAssets, 'banner.jpg')
+                    }
                 }
             }
         },

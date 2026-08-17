@@ -358,6 +358,8 @@ export class TUIAskUserProvider implements AskUserProvider {
     private isShowing = false;
     /** 阻塞状态下请求已入队但未处理 */
     private isPending = false;
+    /** 当前显示中的请求的 resolve（用于 cancelCurrent 主动取消） */
+    private _activeResolve: ((response: AskUserResponse) => void) | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -366,6 +368,24 @@ export class TUIAskUserProvider implements AskUserProvider {
     isPrompting(): boolean {
         // 有请求在队列中（无论是正在显示还是等待显示）都应该抑制 taskview 渲染
         return this.isShowing || this.isPending || this.queue.length > 0;
+    }
+
+    cancelCurrent(): void {
+        // 清空排队中的请求，resolve 为 cancelled
+        for (const item of this.queue.splice(0)) {
+            item.resolve({ answers: {}, cancelled: true });
+        }
+        this.isPending = false;
+        // 关闭当前显示中的 widget 并 resolve 当前请求
+        if (this.isShowing && this._activeResolve) {
+            const resolve = this._activeResolve;
+            this._activeResolve = null;
+            this.openDeskTUI.inputArea.hidePromptWidget();
+            this.isShowing = false;
+            resolve({ answers: {}, cancelled: true });
+            this.openDeskTUI.focusInputAreaIfAvailable();
+            this.openDeskTUI.tui.requestRender();
+        }
     }
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
@@ -400,6 +420,7 @@ export class TUIAskUserProvider implements AskUserProvider {
         this.isShowing = true;
         this.isPending = false;
         const item = this.queue.shift()!;
+        this._activeResolve = item.resolve;
         this.promptSequential(item.request, item.resolve);
     }
 
@@ -451,6 +472,7 @@ export class TUIAskUserProvider implements AskUserProvider {
     private finishPrompt(resolve: (response: AskUserResponse) => void, response: AskUserResponse): void {
         this.openDeskTUI.inputArea.hidePromptWidget();
         this.isShowing = false;
+        this._activeResolve = null;
         resolve(response);
 
         if (this.queue.length > 0) {

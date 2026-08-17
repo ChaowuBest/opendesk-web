@@ -7,11 +7,16 @@
  * 5. error → body 显示红色错误
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 
 // 延迟加载，因为模块顶层有副作用
 const { AskUserTool } = await import('../../../main/aikernel/interaction/tools.js');
+const { setRuntimeLocale } = await import('../../../locale/index.js');
+
+// 固定测试语言，避免断言依赖运行时系统语言
+before(() => setRuntimeLocale('zh-CN'));
+after(() => setRuntimeLocale(null));
 
 const mockQuestions = [
     {
@@ -40,7 +45,7 @@ function makeToolCall(overrides: Record<string, unknown>) {
 }
 
 describe('AskUserTool renderToolCall (GUI)', () => {
-    it('running + prompting → 展示等待提示而非问题详情', async () => {
+    it('running → 展示行内等待提示，不展开问题详情', async () => {
         const tool = new AskUserTool();
         // 模拟 provider 正在 prompting
         tool.setProvider({ isPrompting: () => true } as any);
@@ -50,12 +55,11 @@ describe('AskUserTool renderToolCall (GUI)', () => {
 
         assert.ok(html, '应返回 HTML');
         assert.ok(!html.includes('你想用哪个方案？'), '不应包含问题文本');
-        assert.ok(html.includes('请在下方面板中回答'), '应包含等待提示');
-        assert.ok(html.includes('ask-user-tool'), '应包含语义类');
-        assert.ok(html.includes('等待回答'), '应包含等待状态徽章');
+        assert.ok(html.includes('od-inline-toolcall-container'), '应包含行内容器');
+        assert.ok(html.includes('向用户提问'), '应包含提问计数摘要');
     });
 
-    it('running + !prompting → 展示问题详情（防御分支）', async () => {
+    it('running + !prompting → 同样展示行内等待提示', async () => {
         const tool = new AskUserTool();
         tool.setProvider({ isPrompting: () => false } as any);
 
@@ -63,9 +67,8 @@ describe('AskUserTool renderToolCall (GUI)', () => {
         const html = await tool.renderToolCall(tc);
 
         assert.ok(html, '应返回 HTML');
-        assert.ok(html.includes('你想用哪个方案？'), '应包含问题文本');
-        assert.ok(html.includes('方案A'), '应包含选项A');
-        assert.ok(html.includes('方案B'), '应包含选项B');
+        assert.ok(!html.includes('你想用哪个方案？'), 'running 阶段不应展开问题详情');
+        assert.ok(html.includes('od-inline-toolcall-container'), '应包含行内容器');
     });
 
     it('success → 展示回答结果', async () => {
@@ -95,7 +98,7 @@ describe('AskUserTool renderToolCall (GUI)', () => {
 
         assert.ok(html, '应返回 HTML');
         assert.ok(html.includes('用户取消了本次询问'), '应包含取消文案');
-        assert.ok(!html.includes('bg-emerald-50'), '不应包含成功徽章');
+        assert.ok(!html.includes('方案A'), 'cancelled 不应渲染答案徽章');
     });
 
     it('error → 显示红色错误', async () => {

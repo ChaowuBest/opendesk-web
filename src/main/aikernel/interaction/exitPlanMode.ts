@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod';
-import { BaseTool, ToolResult } from '../tool.js';
+import { InteractiveTool, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
@@ -52,6 +52,8 @@ export interface ExitPlanModeProvider {
         taskName?: string
     ): Promise<ExitPlanModeResponse>;
     isPrompting?(): boolean;
+    /** 主动取消当前等待中的审批（模式切换为不交互模式时调用），resolve 为 continue-editing。 */
+    cancelCurrent?(): void;
 }
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -63,7 +65,7 @@ const ExitPlanModeArgsSchema = z.object({
 
 // ─── Tool ─────────────────────────────────────────────────────────────────────
 
-export class ExitPlanModeTool extends BaseTool<typeof ExitPlanModeArgsSchema> {
+export class ExitPlanModeTool extends InteractiveTool<typeof ExitPlanModeArgsSchema> {
     private provider: ExitPlanModeProvider | null = null;
 
     constructor() {
@@ -79,6 +81,15 @@ export class ExitPlanModeTool extends BaseTool<typeof ExitPlanModeArgsSchema> {
 
     setProvider(provider: ExitPlanModeProvider): void {
         this.provider = provider;
+    }
+
+    cancelCurrent(): void {
+        this.provider?.cancelCurrent?.();
+    }
+
+    isAvailable(taskState?: TaskState): boolean {
+        if (!taskState) return false;
+        return taskState.getAgent().agentId === 'main' && taskState.getAgentMode().id === 'plan';
     }
 
     private isProviderPrompting(): boolean {
@@ -194,15 +205,6 @@ export class ExitPlanModeTool extends BaseTool<typeof ExitPlanModeArgsSchema> {
         toolResult: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        // 校验当前是否处于 Plan Mode
-        if (taskState && taskState.activeModeId !== 'plan') {
-            toolResult.result = JSON.stringify({
-                error: 'not_in_plan_mode',
-                message: '你当前不在 Plan Mode 中。此工具仅在 Plan Mode 下可用。如果计划已被审批，请直接开始实施。'
-            });
-            throw new Error('exitPlanMode: 当前不在 Plan Mode 中');
-        }
-
         if (!this.provider) {
             toolResult.result = JSON.stringify({
                 error: 'no_provider',

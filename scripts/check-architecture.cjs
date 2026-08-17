@@ -71,6 +71,17 @@ function extractImports(filePath) {
     return imports;
 }
 
+function extractAikernelTypeImports(filePath) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const imports = [];
+    const staticImportRegex = /(?:import|export)\s+(?:type\s+)?[\s\S]*?\s+from\s+['"](.+?)['"]/g;
+    let match;
+    while ((match = staticImportRegex.exec(content)) !== null) {
+        imports.push(match[1]);
+    }
+    return imports;
+}
+
 function getLayer(filePath) {
     const mainIndex = filePath.indexOf(path.join('src', 'main') + path.sep);
     if (mainIndex === -1) return null;
@@ -108,6 +119,22 @@ function checkFile(filePath) {
     const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
     const fileExceptions = FILE_EXCEPTIONS[relativePath] || [];
     const forbiddenImports = FILE_FORBIDDEN_IMPORTS[relativePath] || [];
+
+    const aikernelTypesRoot = path.resolve(process.cwd(), 'src', 'main', 'aikernel', 'types');
+    if (filePath.startsWith(aikernelTypesRoot + path.sep)) {
+        for (const importPath of extractAikernelTypeImports(filePath)) {
+            if (!importPath.startsWith('.')) continue;
+            const resolved = path.resolve(path.dirname(filePath), importPath);
+            if (resolved !== aikernelTypesRoot && !resolved.startsWith(aikernelTypesRoot + path.sep)) {
+                violations.push({
+                    file: filePath,
+                    from: 'aikernel/types',
+                    to: 'aikernel-outside-types',
+                    import: importPath
+                });
+            }
+        }
+    }
 
     for (const importPath of imports) {
         if (forbiddenImports.some((pattern) => pattern.test(importPath))) {

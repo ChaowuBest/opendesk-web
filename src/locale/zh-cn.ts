@@ -39,6 +39,39 @@ export const zhCn: Record<string, string> = {
     'workspace.mismatch.title': '任务工作空间',
     'workspace.mismatch.message': '当前任务绑定在 ${workspace}，与全局工作空间不同。全局工作空间未切换。',
 
+    // Renderer - 工作空间选择器
+    'renderer.workspacePicker.defaultTitle': '选择工作空间',
+    'renderer.workspacePicker.titleWithName': '选择 ${name} 的工作空间',
+    'renderer.workspacePicker.taskNameFallback': '任务',
+    'renderer.workspacePicker.current': '当前：',
+    'renderer.workspacePicker.unset': '未设置',
+    'renderer.workspacePicker.editPath': '点击编辑路径',
+    'renderer.workspacePicker.pathPlaceholder': '输入工作空间路径…',
+    'renderer.workspacePicker.pickInSystemHint': '在系统文件管理器中选择',
+    'renderer.workspacePicker.pickInSystem': '在系统窗口中选择',
+    'renderer.workspacePicker.recent': '最近使用',
+    'renderer.workspacePicker.recentEmpty': '暂无最近使用的工作空间',
+    'renderer.workspacePicker.removeRecent': '移除此记录',
+    'renderer.workspacePicker.browse': '浏览目录',
+    'renderer.workspacePicker.showHidden': '显示隐藏文件',
+    'renderer.workspacePicker.cancel': '取消',
+    'renderer.workspacePicker.confirm': '选择',
+    'renderer.workspacePicker.close': '关闭',
+    'renderer.workspacePicker.deleteTitle': '删除确认',
+    'renderer.workspacePicker.deleteMessage': '确定要删除 <b>${name}</b> 吗？此操作无法撤销。',
+    'renderer.workspacePicker.delete': '删除',
+    'renderer.workspacePicker.home': '家目录',
+    'renderer.workspacePicker.sandbox': '应用沙箱',
+
+    // Renderer - 文件选择器（工作空间选择器内部使用）
+    'renderer.fileSelector.emptyDrive': '未检测到磁盘',
+    'renderer.fileSelector.emptyDir': '空目录',
+    'renderer.fileSelector.rename': '重命名',
+    'renderer.fileSelector.newFolder': '新建文件夹',
+    'renderer.fileSelector.newFolderInside': '新建文件夹（在 ${name} 内）',
+    'renderer.fileSelector.newFolderSibling': '新建文件夹（与 ${name} 同级）',
+    'renderer.fileSelector.delete': '删除',
+
     // Homepage
     'homepage.greeting.earlyMorning': '夜深了',
     'homepage.greeting.morning': '早上好',
@@ -423,7 +456,8 @@ export const zhCn: Record<string, string> = {
     'debug.developer.status': '当前开发者模式状态: ${status}',
 
     // Commands - Reason
-    'reason.description': '调整思考强度，用法: /reason effort [default|none|low|medium|high] | display [full|partial]',
+    'reason.description':
+        '调整思考强度，用法: /reason effort [default|none|low|medium|high|max] | display [full|partial]',
     'reason.effort.description': '设置推理深度',
     'reason.display.description': '设置思考显示模式',
     'reason.display.full': '完整显示',
@@ -440,9 +474,9 @@ export const zhCn: Record<string, string> = {
     'reason.display.already': '显示模式',
     'reason.display.already.message': '思考显示模式已是: ${mode}',
     'reason.error.no.model': '未设置默认模型。请先在设置中配置模型。',
-    'reason.error.invalid.effort': '无效的推理深度: ${value}\n有效值: default, none, low, medium, high',
+    'reason.error.invalid.effort': '无效的推理深度: ${value}\n有效值: default, none, low, medium, high, max',
     'reason.error.invalid.display': '无效的显示模式: ${value}\n有效值: full, partial',
-    'reason.error.specify.effort': '请指定推理深度: /reason effort [default|none|low|medium|high]',
+    'reason.error.specify.effort': '请指定推理深度: /reason effort [default|none|low|medium|high|max]',
     'reason.error.specify.display': '请指定显示模式: /reason display [full|partial]',
     'reason.error.unknown': '未知子命令: ${subcmd}\n可用: effort, display',
 
@@ -626,6 +660,10 @@ export const zhCn: Record<string, string> = {
     'config.model.field.context_length.placeholder': '留空则自动估算',
     'config.model.field.max_output_tokens': '最大补全长度 (留空自动估算)',
     'config.model.field.max_output_tokens.placeholder': '留空则自动估算',
+    'config.model.field.vision': '视觉支持',
+    'config.model.vision.auto': '系统自动识别',
+    'config.model.vision.supported': '支持',
+    'config.model.vision.unsupported': '不支持',
     'config.model.field.auto_parse_think_tags': '自动解析 think 标签',
     'config.model.field.custom_headers': '自定义 Headers',
     'config.model.field.custom_headers_hint': '在向模型服务器发送请求时携带的自定义 HTTP 头',
@@ -866,6 +904,7 @@ export const zhCn: Record<string, string> = {
     'reasoning.effort.low': '简洁推理',
     'reasoning.effort.medium': '推理适中',
     'reasoning.effort.high': '推理深入',
+    'reasoning.effort.max': '推理最大化',
 
     // Tool Call Status
     'toolcall.status.pending': '等待中',
@@ -1129,6 +1168,10 @@ export const zhCn: Record<string, string> = {
     'sp.general.closeWindowBehavior.ask': '每次询问',
     'sp.general.closeWindowBehavior.quit': '退出应用',
     'sp.general.closeWindowBehavior.minimize': '最小化',
+    'sp.general.floatingWindow': '悬浮窗',
+    'sp.general.floatingWindow.pill': '单行胶囊（实验性）',
+    'sp.general.floatingWindow.card': '完整卡片',
+    'sp.general.floatingWindow.off': '关闭',
     'main.closeDialog.title': '关闭窗口',
     'main.closeDialog.message': '您想要退出 OpenDesk 还是最小化到系统托盘？',
     'main.closeDialog.cancel': '取消',
@@ -1231,6 +1274,7 @@ export const zhCn: Record<string, string> = {
     'sp.model.effort.low': '低',
     'sp.model.effort.medium': '中',
     'sp.model.effort.high': '高',
+    'sp.model.effort.max': '推理最大化',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',
@@ -1260,6 +1304,7 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.recording.stopTitle': '正在录音，点击停止',
     'renderer.agentInput.recording.endTitle': '正在录音，点击结束',
     'renderer.agentInput.recording.listening': '正在聆听，识别文字将显示在输入框…',
+    'renderer.agentInput.stop': '停止',
     'renderer.messageQueue.title': '消息队列 (${count})',
     'renderer.messageQueue.empty': '(空消息)',
     'renderer.messageQueue.sendNow': '立即发送',
@@ -1379,6 +1424,10 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.logs': '日志',
     'renderer.toolbar.openConfigDir': '打开配置目录',
     'renderer.toolbar.personalCenter': '个人中心',
+    'renderer.toolbar.securityGateway': '安全网关',
+    'renderer.toolbar.securityGateway.ok': '安全网关运行正常',
+    'renderer.toolbar.securityGateway.warn': '安全网关已开启，AgentMoss 服务不可达',
+    'renderer.toolbar.securityGateway.err': '安全网关不可达',
 
     // Renderer - Personal Center
     'renderer.personal.title': '个人中心',
@@ -1616,6 +1665,10 @@ export const zhCn: Record<string, string> = {
     'renderer.fileExplorer.preview.binaryHint': '当前预览器仅支持文本文件',
     'renderer.fileExplorer.pptx.editor': 'PowerPoint 编辑器',
     'renderer.fileExplorer.pptx.unavailable': 'PowerPoint 编辑器当前不可用',
+    'renderer.fileExplorer.pptx.ai.groupLabel': 'OpenDesk AI',
+    'renderer.fileExplorer.pptx.ai.selectionAction': '使用 OpenDesk AI 编辑',
+    'renderer.fileExplorer.pptx.ai.selectionActionTitle': '将选中的幻灯片元素发送到当前任务',
+    'renderer.fileExplorer.pptx.ai.selectionPrompt': '请编辑当前 PPT 第 ${page} 页中选中的元素：',
     'renderer.fileExplorer.word.editor': 'Word 编辑器',
     'renderer.fileExplorer.word.unavailable': 'Word 编辑器当前不可用',
     'renderer.fileExplorer.xlsx.editor': 'Excel 编辑器',
@@ -1640,6 +1693,8 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.skillTag.metadata': '元信息',
     'renderer.taskview.skillTag.bundle': '所属应用',
     'renderer.taskview.skillTag.directory': '目录',
+    'office.slides.error.noTaskSession': '当前任务没有打开的 PPT',
+    'office.slides.error.capabilityUnavailable': '当前 Office 包不支持 PPT 自动化能力',
     'renderer.taskview.edit.title': '确认编辑消息',
     'renderer.taskview.edit.message': '是否要用编辑后的消息继续对话？<b>后续的所有对话历史将会丢失。</b>',
     'renderer.taskview.edit.confirm': '继续对话',
@@ -1680,6 +1735,35 @@ export const zhCn: Record<string, string> = {
     'renderer.browserPip.title': '浏览器',
     'renderer.browserPip.tabCount': '${count} 个标签页',
 
+    // Renderer - Task Status Widget
+    'renderer.taskStatusWidget.title': 'OpenDesk 智能体任务',
+    'renderer.taskStatusWidget.loading': '正在加载任务…',
+    'renderer.taskStatusWidget.activeCount': '${count} 个任务进行中',
+    'renderer.taskStatusWidget.viewAll': '查看全部任务',
+    'renderer.taskStatusWidget.collapse': '收起悬浮窗',
+    'renderer.taskStatusWidget.collapsedRunning': '正在运行 ${count} 个任务',
+    'renderer.taskStatusWidget.collapsedCompleted': '${count} 个已完成',
+    'renderer.taskStatusWidget.running': '运行中',
+    'renderer.taskStatusWidget.waiting': '等待中',
+    'renderer.taskStatusWidget.completed': '已完成',
+    'renderer.taskStatusWidget.actionRequired': '需要操作',
+    'renderer.taskStatusWidget.empty': '暂无运行中任务',
+    'renderer.taskStatusWidget.todo': '待办事项',
+    'renderer.taskStatusWidget.todoDone': '${completed} / ${total} 条已完成',
+    'renderer.taskStatusWidget.subtask': '子任务',
+    'renderer.taskStatusWidget.subtaskStat': '${total} 个 · ${completed} 个已结束',
+    'renderer.taskStatusWidget.elapsed': '已运行时间',
+    'renderer.taskStatusWidget.startedAt': '启动于 ${time}',
+    'renderer.taskStatusWidget.totalTokens': '总 TOKENS',
+    'renderer.taskStatusWidget.inputTokens': '上行（输入）',
+    'renderer.taskStatusWidget.outputTokens': '下行（输出）',
+    'renderer.taskStatusWidget.backToList': '返回列表',
+    'renderer.taskStatusWidget.openSession': '打开会话',
+    'renderer.taskStatusWidget.closeMenu': '关闭任务浮窗',
+    'renderer.taskStatusWidget.closeMenu.hide': '关闭任务浮窗',
+    'renderer.taskStatusWidget.closeMenu.hideSession': '关闭任务浮窗（下次启动恢复）',
+    'renderer.taskStatusWidget.closeMenu.hidePermanent': '关闭任务浮窗（永久）',
+
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',
     'renderer.developer.viewTaskInfo': '查看任务信息',
@@ -1689,6 +1773,11 @@ export const zhCn: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': '未触发任务回顾',
     'renderer.developer.reviewNotTriggeredDetail': '任务回顾请求无法接受',
     'renderer.developer.triggerFailed': '触发失败',
+
+    // Main - Native File Dialogs
+    'main.dialog.openFile': '选择附件',
+    'main.dialog.openDirectory': '选择目录',
+    'main.dialog.selectWorkspaceDirectory': '选择工作空间目录',
 
     // Main - Log Export
     'main.log.export.title': '导出日志',

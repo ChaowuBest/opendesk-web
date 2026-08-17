@@ -11,6 +11,7 @@
 
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
+import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import type { NativeBridge } from './native/constants.js';
 
 export interface PlatformFetchOptions {
@@ -34,6 +35,17 @@ export abstract class AbstractPlatform {
      * 仅处理跨平台存在差异的部分，与 mode/harness 无关的通用逻辑由 TaskManagerState.initHarness 完成。
      */
     abstract initPlatformHarness(task: TaskState): Promise<void>;
+
+    /**
+     * 按需构建交互工具集（askUser / exitPlanMode）。
+     * 仅在支持阻塞式用户交互 UI 的平台（Electron / CLI-TUI）返回非空；
+     * Worker、headless 等无人值守平台返回 null。
+     * 由 TaskState.buildToolsets() 在 turn 为交互时调用，用于补充「内部任务被手动打开」等
+     * 未在任务创建时注入交互工具集的场景。
+     */
+    createInteractionToolset(_task: TaskState): InteractiveToolset | null {
+        return null;
+    }
 
     /**
      * 发起 HTTP 请求，自动继承系统代理配置。

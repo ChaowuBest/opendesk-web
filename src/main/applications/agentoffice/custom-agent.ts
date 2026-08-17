@@ -47,8 +47,7 @@ const CUSTOM_AGENT_DEFAULT_MODE: ModeDecl = {
     description: '自定义 agent 默认模式，继承父任务权限级别',
     icon: '🤖',
     color: '#7E57C2',
-    permissionFactory: (workspace) => createDefaultPermissionRules(workspace),
-    disabledTools: ['exitPlanMode']
+    permissionFactory: (workspace) => createDefaultPermissionRules(workspace)
 };
 
 // ─── CustomAgentSkillProvider ─────────────────────────────────

@@ -219,7 +219,12 @@ export async function mutateOpendeskMeta(metaPath: string, mutation: OpendeskMet
             await fs.promises.rename(tempPath, resolvedMetaPath);
             const directoryHandle = await fs.promises.open(directory, 'r');
             try {
-                await directoryHandle.sync();
+                // Windows 不支持对目录句柄执行 fsync，忽略平台性错误（目录 fsync 仅对 POSIX 落盘语义有意义）
+                await directoryHandle.sync().catch((error: NodeJS.ErrnoException) => {
+                    if (error.code !== 'EPERM' && error.code !== 'ENOTSUP' && error.code !== 'EINVAL') {
+                        throw error;
+                    }
+                });
             } finally {
                 await directoryHandle.close();
             }

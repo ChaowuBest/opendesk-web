@@ -49,13 +49,19 @@ const FALLBACK_MOSS_PORT = 9090;
 /** 缓存最近一次从 bridge 拿到的 moss 端口（供同步路径使用） */
 let _cachedMossPort: number | null = null;
 
-/** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090） */
+/** 根据当前 locale 追加 ?lang= 参数（英文传给 AgentMoss console i18n，非英文不传走默认中文） */
+function consoleLangQuery(): string {
+    return isZh() ? '' : '?lang=en';
+}
+
+/** 同步版：用缓存的 moss 端口拼 URL（端口未知时兜底 9090）；英文 locale 时追加 ?lang=en */
 function mossConsoleUrlSync(): string {
+    const lang = consoleLangQuery();
     if (typeof process !== 'undefined' && process.env?.AGENT_MOSS_CONSOLE_URL) {
-        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console';
+        return process.env.AGENT_MOSS_CONSOLE_URL.replace(/\/+$/, '') + '/console' + lang;
     }
-    if (_cachedMossPort && _cachedMossPort > 0) return `http://127.0.0.1:${_cachedMossPort}/console`;
-    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console`;
+    if (_cachedMossPort && _cachedMossPort > 0) return `http://127.0.0.1:${_cachedMossPort}/console${lang}`;
+    return `http://127.0.0.1:${FALLBACK_MOSS_PORT}/console${lang}`;
 }
 
 // ── Theme & Locale Helpers ───────────────────────────────────────────────────
@@ -154,6 +160,27 @@ const T: Record<string, { zh: string; en: string }> = {
     llmModelDefault: { zh: '默认模型', en: 'Default Model' },
     llmTimeout: { zh: '超时', en: 'Timeout' },
     llmTimeoutUnit: { zh: '秒', en: 's' },
+    llmDisableConfirmTitle: { zh: '关闭 LLM 深度分析', en: 'Disable LLM Deep Analysis' },
+    llmDisableConfirmMsg: {
+        zh: '关闭 LLM 深度分析将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Disabling LLM deep analysis will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
+    llmDisableConfirmBtn: { zh: '关闭并重启', en: 'Disable & Restart' },
+    llmEnableConfirmTitle: { zh: '启用 LLM 深度分析', en: 'Enable LLM Deep Analysis' },
+    llmEnableConfirmMsg: {
+        zh: '启用 LLM 深度分析将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Enabling LLM deep analysis will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
+    llmEnableConfirmBtn: { zh: '启用并重启', en: 'Enable & Restart' },
+    llmApplyBtn: { zh: '确认修改并重启', en: 'Apply & Restart' },
+    llmApplyHint: {
+        zh: '修改后需重启 AgentMoss 服务生效，可能短暂中断数秒。',
+        en: 'Changes take effect after restarting the AgentMoss service, which may briefly interrupt for a few seconds.'
+    },
+    llmApplyConfirmMsg: {
+        zh: '保存模型与超时设置将重启 AgentMoss 服务以生效，可能短暂中断数秒。确认继续吗？',
+        en: 'Saving model and timeout settings will restart the AgentMoss service to take effect, which may briefly interrupt for a few seconds. Continue?'
+    },
     maliciousSkillTitle: { zh: '恶意技能检测', en: 'Malicious Skill Detection' },
     maliciousSkillEnable: {
         zh: '启用恶意技能检测',
@@ -183,9 +210,6 @@ const T: Record<string, { zh: string; en: string }> = {
         zh: '所有 deny 一律直接拦截，不提供 override。适用于严格安全环境。',
         en: 'All denies are blocked with no override option.'
     },
-    rulesTitle: { zh: '自定义安全规则', en: 'Custom Security Rules' },
-    rulesAdd: { zh: '+ 添加规则', en: '+ Add Rule' },
-    rulesPatternPlaceholder: { zh: '正则匹配模式, 如 rm -rf /', en: 'Regex pattern, e.g. rm -rf /' },
     confirm: { zh: '确认', en: 'Confirm' },
     cancel: { zh: '取消', en: 'Cancel' },
     sectionGate: { zh: '数据网关服务', en: 'Data Gateway Service' },
@@ -458,29 +482,12 @@ const STYLE = `
 .ag-btn-muted:hover { background: rgba(0,0,0,.04); }
 .ag-btn-sm { padding: 4px 10px; font-size: var(--fs-sm); border-radius: 6px; }
 
-/* Rules List */
-.ag-rule-item {
-    display: flex; align-items: center; gap: 8px; padding: 8px 0;
-    border-bottom: 1px solid var(--ag-divider); font-size: var(--fs-base);
-}
-.ag-rule-item:last-child { border-bottom: none; }
-.ag-rule-pattern {
-    flex: 1; background: var(--ag-code-bg); padding: 3px 6px; border-radius: 5px;
-    font-family: 'SF Mono', monospace; font-size: var(--fs-sm); color: var(--ag-text);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .ag-badge {
     display: inline-block; min-width: 48px; text-align: center;
     padding: 2px 6px; border-radius: 8px; font-size: var(--fs-xs); font-weight: 600;
 }
 .ag-badge-deny { background: var(--ag-badge-deny-bg); color: var(--ag-red); }
 .ag-badge-allow { background: var(--ag-badge-allow-bg); color: var(--ag-green); }
-.ag-rule-form {
-    margin-top: 12px; padding: 12px; background: var(--ag-card-bg);
-    border-radius: 10px; border: 1px solid var(--ag-divider);
-}
-.ag-rule-form-row { display: flex; gap: 8px; margin-top: 8px; }
-.ag-rule-form-row:first-child { margin-top: 0; }
 
 /* Status */
 .ag-status-row {
@@ -1400,6 +1407,10 @@ function configHTML(): string {
             <input id="ag-llm-timeout" type="number" min="10" max="600" value="300" class="ag-input">
         </div>
     </div>
+    <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('llmApplyHint')}</div>
+    <div style="margin-top:10px;text-align:right;">
+        <button id="ag-llm-apply" class="ag-btn ag-btn-primary ag-btn-sm">${tr('llmApplyBtn')}</button>
+    </div>
 </div>
 
 <div class="ag-card">
@@ -1424,27 +1435,6 @@ function configHTML(): string {
         </select>
     </div>
     <div id="ag-sec-desc" style="font-size: var(--fs-md);color:var(--ag-text-secondary);line-height:1.5;"></div>
-</div>
-
-<div class="ag-card">
-    <h3 class="ag-section-title" style="margin-top:0;">${tr('rulesTitle')}</h3>
-    <div id="ag-rules"></div>
-    <div style="margin-top:10px;">
-        <button id="ag-add-rule" class="ag-btn ag-btn-ghost ag-btn-sm">${tr('rulesAdd')}</button>
-    </div>
-    <div id="ag-rule-form" class="ag-rule-form" style="display:none;">
-        <div class="ag-rule-form-row">
-            <input id="ag-rule-pat" class="ag-input" placeholder="${tr('rulesPatternPlaceholder')}" style="flex:1;">
-        </div>
-        <div class="ag-rule-form-row">
-            <select id="ag-rule-act" class="ag-select" style="flex:1;"><option value="Deny">Deny</option><option value="Allow">Allow</option></select>
-            <select id="ag-rule-sev" class="ag-select" style="flex:1;">
-                <option value="critical">Critical</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option>
-            </select>
-            <button id="ag-rule-save" class="ag-btn ag-btn-primary ag-btn-sm">${tr('confirm')}</button>
-            <button id="ag-rule-cancel" class="ag-btn ag-btn-muted ag-btn-sm">${tr('cancel')}</button>
-        </div>
-    </div>
 </div>
 
 <hr class="ag-divider">
@@ -1688,7 +1678,18 @@ class AgentGateEntryWidget extends HTMLElement {
         const panel = this.shadow.querySelector('#ag-console') as HTMLElement;
         if (!panel) return;
 
-        // 先检测 moss 服务连通性，连通才注入 iframe，否则显示不可用 + 重新加载
+        // 先检查总开关状态：关闭时与实时状态一致地提示开启总开关，
+        // 而不是显示"策略控制台不可用"（那是总开关开启但连不上时的内容）。
+        let enabled = true;
+        try {
+            enabled = await (window as any).applicationAPI?.callMainWorld('getEnabled');
+        } catch {}
+        if (enabled === false) {
+            panel.innerHTML = emptyDashboardHTML();
+            return;
+        }
+
+        // 总开关已开启，再检测 moss 服务连通性，连通才注入 iframe，否则显示不可用 + 重新加载
         let url: string | null = null;
         let port = 0;
         try {
@@ -2890,14 +2891,39 @@ class AgentGateEntryWidget extends HTMLElement {
 
         // LLM toggle（初始化从后端读真实状态，避免硬编码默认）
         const llm = this.shadow.querySelector('#ag-llm-toggle') as HTMLElement;
+        // 记录 LLM 开关最新状态，用于 LLM 关闭时禁用模型/超时/确认按钮
+        let llmOn = true;
+        /** 根据 LLM 开关状态，禁用/启用模型、超时、确认修改按钮（LLM 关闭时这些设置无意义） */
+        const _setLLMConfigEnabled = (enabled: boolean) => {
+            const select = this.shadow.querySelector('#ag-llm-model') as HTMLSelectElement;
+            const input = this.shadow.querySelector('#ag-llm-timeout') as HTMLInputElement;
+            const btn = this.shadow.querySelector('#ag-llm-apply') as HTMLButtonElement;
+            if (select) select.disabled = !enabled;
+            if (input) input.disabled = !enabled;
+            if (btn) btn.disabled = !enabled;
+        };
         if (llm) {
             try {
-                const llmOn = await (window as any).applicationAPI?.callMainWorld('getEnableLLM');
-                _tog(llm, llmOn !== false);
+                const llmInit = await (window as any).applicationAPI?.callMainWorld('getEnableLLM');
+                llmOn = llmInit !== false;
+                _tog(llm, llmOn);
+                _setLLMConfigEnabled(llmOn);
             } catch {}
-            llm.addEventListener('click', () => {
+            llm.addEventListener('click', async () => {
                 const on = !llm.classList.contains('on');
+                // 启用/关闭 LLM 深度分析都会重启 AgentMoss 服务，弹窗提醒用户可能短暂中断
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-microchip',
+                    title: on ? tr('llmEnableConfirmTitle') : tr('llmDisableConfirmTitle'),
+                    message: on ? tr('llmEnableConfirmMsg') : tr('llmDisableConfirmMsg'),
+                    confirmText: on ? tr('llmEnableConfirmBtn') : tr('llmDisableConfirmBtn'),
+                    cancelText: tr('cancel'),
+                    variant: on ? 'info' : 'danger'
+                });
+                if (!confirmed) return; // 取消则保持原状态
                 _tog(llm, on);
+                llmOn = on;
+                _setLLMConfigEnabled(on); // LLM 关闭时禁用模型/超时/确认按钮
                 try {
                     (window as any).applicationAPI?.callMainWorld('setEnableLLM', on);
                 } catch {}
@@ -2920,29 +2946,41 @@ class AgentGateEntryWidget extends HTMLElement {
             });
         }
 
-        // LLM model 下拉（选中已在 _loadModels 完成，这里挂 change 监听）
+        // LLM model 下拉（选中已在 _loadModels 完成）。修改不立即保存，点「确认修改并重启」才生效。
         const lm = this.shadow.querySelector('#ag-llm-model') as HTMLSelectElement;
-        if (lm) {
-            lm.addEventListener('change', () => {
-                try {
-                    (window as any).applicationAPI?.callMainWorld('setLLMModel', lm.value || '');
-                } catch {}
-            });
-        }
-
-        // LLM timeout（初始化从后端读真实值，避免硬编码默认 300）
         const to = this.shadow.querySelector('#ag-llm-timeout') as HTMLInputElement;
+        const applyBtn = this.shadow.querySelector('#ag-llm-apply') as HTMLButtonElement;
+        // LLM timeout 初始化从后端读真实值
         if (to) {
             try {
                 const tv = await (window as any).applicationAPI?.callMainWorld('getLLMTimeout');
                 if (tv && tv >= 10 && tv <= 600) to.value = String(tv);
             } catch {}
-            to.addEventListener('blur', () => {
-                const v = parseInt(to.value, 10);
-                if (v >= 10 && v <= 600)
-                    try {
-                        (window as any).applicationAPI?.callMainWorld('setLLMTimeout', v);
-                    } catch {}
+        }
+        // 「确认修改并重启」：先确认，再一次性保存模型 + 超时（触发重启生效）
+        if (applyBtn) {
+            applyBtn.addEventListener('click', async () => {
+                if (!llmOn) return; // LLM 关闭时不应保存
+                // 弹窗告知用户即将重启
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-microchip',
+                    title: tr('llmApplyBtn'),
+                    message: tr('llmApplyConfirmMsg'),
+                    confirmText: tr('confirm'),
+                    cancelText: tr('cancel'),
+                    variant: 'info'
+                });
+                if (!confirmed) return;
+                // 合并保存模型 + 超时，触发一次重启
+                const modelVal = lm ? lm.value || '' : '';
+                const timeoutVal = to ? parseInt(to.value, 10) : NaN;
+                try {
+                    await (window as any).applicationAPI?.callMainWorld(
+                        'setLLMConfig',
+                        modelVal,
+                        timeoutVal >= 10 && timeoutVal <= 600 ? timeoutVal : undefined
+                    );
+                } catch {}
             });
         }
 
@@ -3226,35 +3264,6 @@ class AgentGateEntryWidget extends HTMLElement {
                 }
                 exitJson();
             });
-
-        // Rules
-        const addBtn = this.shadow.querySelector('#ag-add-rule');
-        const form = this.shadow.querySelector('#ag-rule-form') as HTMLElement;
-        if (addBtn && form) {
-            addBtn.addEventListener('click', () => {
-                form.style.display = form.style.display === 'none' ? '' : 'none';
-            });
-        }
-        const cancelBtn = this.shadow.querySelector('#ag-rule-cancel');
-        if (cancelBtn && form)
-            cancelBtn.addEventListener('click', () => {
-                form.style.display = 'none';
-            });
-
-        const saveBtn = this.shadow.querySelector('#ag-rule-save');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
-                const pat = (this.shadow.querySelector('#ag-rule-pat') as HTMLInputElement)?.value;
-                const act = (this.shadow.querySelector('#ag-rule-act') as HTMLSelectElement)?.value;
-                const sev = (this.shadow.querySelector('#ag-rule-sev') as HTMLSelectElement)?.value;
-                if (!pat) return;
-                this._addRule(pat, act, sev);
-                if (form) form.style.display = 'none';
-                (this.shadow.querySelector('#ag-rule-pat') as HTMLInputElement).value = '';
-            });
-        }
-
-        this._renderRules();
     }
 
     /** 查询主进程 Bridge 状态并更新配置页的服务状态指示器 */
@@ -3331,58 +3340,6 @@ class AgentGateEntryWidget extends HTMLElement {
                 if (chosen) sel.value = chosen;
             } catch {}
         } catch {}
-    }
-
-    async _addRule(pat: string, act: string, sev: string) {
-        const r = await this._getRules();
-        r.push({ pattern: pat, action: act, severity: sev });
-        await this._saveRules(r);
-        this._renderRules(r);
-    }
-    async _removeRule(i: number) {
-        const r = await this._getRules();
-        r.splice(i, 1);
-        await this._saveRules(r);
-        this._renderRules(r);
-    }
-    async _getRules() {
-        try {
-            return (await (window as any).applicationAPI?.callMainWorld('getCustomRules')) || [];
-        } catch {}
-        try {
-            return JSON.parse(localStorage.getItem('ag_rules') || '[]');
-        } catch {
-            return [];
-        }
-    }
-    async _saveRules(r: any[]) {
-        try {
-            await (window as any).applicationAPI?.callMainWorld('saveCustomRules', r);
-            return;
-        } catch {}
-        localStorage.setItem('ag_rules', JSON.stringify(r));
-    }
-    async _renderRules(r?: any[]) {
-        const el = this.shadow.querySelector('#ag-rules');
-        if (!el) return;
-        if (!r) r = await this._getRules();
-        if (!r.length) {
-            el.innerHTML = `<div style="font-size: var(--fs-md);color:var(--ag-text-secondary);padding:8px 0;">${isZh() ? '暂无自定义规则' : 'No custom rules'}</div>`;
-            return;
-        }
-        el.innerHTML = r
-            .map(
-                (x: any, i: number) => `
-            <div class="ag-rule-item">
-                <code class="ag-rule-pattern">${x.pattern}</code>
-                <span class="ag-badge ${x.action === 'Deny' ? 'ag-badge-deny' : 'ag-badge-allow'}">${x.action}</span>
-                <span style="font-size: var(--fs-xs);color:var(--ag-orange);min-width:48px;text-align:center;">${x.severity}</span>
-                <button class="ag-btn ag-btn-muted ag-btn-sm" style="padding:2px 6px;font-size: var(--fs-md);">✕</button>
-            </div>
-        `
-            )
-            .join('');
-        el.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => this._removeRule(i)));
     }
 
     disconnectedCallback() {

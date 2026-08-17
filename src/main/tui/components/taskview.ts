@@ -1197,7 +1197,7 @@ export class TaskView implements Component {
         }
 
         if (stopIfTaskChanged()) return;
-        const submitResult = await taskState.submitUserMessage(text);
+        const submitResult = await taskState.submitUserMessage(text, { interactive: true });
         if (stopIfTaskChanged()) return;
         if (submitResult.status === 'error') {
             this.messageLayout.removeChild(userView);

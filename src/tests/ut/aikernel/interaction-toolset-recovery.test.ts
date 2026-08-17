@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { BaseTool, BaseToolset, ToolResult } from '../../../main/aikernel/tool.js';
+import { BaseTool, BaseToolset, InteractiveToolset, ToolResult } from '../../../main/aikernel/tool.js';
 import { z } from 'zod';
 
 function createMockInteractionToolset(): BaseToolset {
@@ -38,19 +38,14 @@ function createMockInteractionToolset(): BaseToolset {
     return toolset;
 }
 
-const mockInteractionToolset = createMockInteractionToolset();
-
-// 使用共享的 mock 函数，确保 getPlatform 返回同一个 mock 对象
-const sharedInitPlatformHarness = jest.fn().mockImplementation((task: any) => {
-    task.interactionToolset = mockInteractionToolset;
-});
-
-const mockPlatform = {
-    initPlatformHarness: sharedInitPlatformHarness
-};
+const sharedCreateInteractionToolset = jest.fn().mockReturnValue(createMockInteractionToolset());
 
 jest.unstable_mockModule('../../../platforms/base.js', () => ({
-    getPlatform: () => mockPlatform,
+    getPlatform: () => ({
+        getName: () => 'test',
+        initPlatformHarness: jest.fn(),
+        createInteractionToolset: sharedCreateInteractionToolset
+    }),
     setPlatform: () => {},
     AbstractPlatform: class {}
 }));
@@ -61,100 +56,239 @@ jest.unstable_mockModule('../../../main/aikernel/planning/tools.js', () => ({
     startSubTask: jest.fn()
 }));
 
-beforeEach(() => {
-    jest.restoreAllMocks();
-    sharedInitPlatformHarness.mockClear();
+function toolNames(toolsets: BaseToolset[]): string[] {
+    return toolsets.flatMap((ts) => Array.from(ts.tools.keys()));
+}
+
+async function makeTask(parentId: string | null) {
+    const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
+    const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
+    const manager = new TaskManagerState();
+    manager.save = jest.fn();
+    manager.publishTaskListUpdate = jest.fn();
+    manager.moveTaskToEnd = jest.fn();
+    const task = new TaskState(manager, null);
+    task.task_id = 'test-task';
+    task.task_status = 'running';
+    task.model = 'test-model';
+    task.parent_id = parentId;
+    return task;
+}
+
+async function makeTaskWithMode(modeId: string) {
+    const task = await makeTask(null);
+    task.activeModeId = modeId;
+    return task;
+}
+
+/** 用真实 AskUserTool / ExitPlanModeTool 构建交互工具集，使 isAvailable 逻辑真正生效。 */
+async function makeRealInteractionToolset(askProvider?: unknown, exitProvider?: unknown) {
+    const { createInteractionToolset } = await import('../../../main/aikernel/interaction/tools.js');
+    return createInteractionToolset(
+        (askProvider ?? { cancelCurrent: jest.fn() }) as any,
+        (exitProvider ?? { cancelCurrent: jest.fn() }) as any
+    );
+}
+
+describe('交互工具集挂载语义（interactive 决定）', () => {
+    test('interactive 时挂载交互工具集', async () => {
+        const { buildToolsetsForTask } = await import('../../../main/aikernel/task/tool-resolver.js');
+        const task = await makeTask(null);
+        const interaction = createMockInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).toContain('exitPlanMode');
+    });
+
+    test('非 interactive 时不挂载交互工具集', async () => {
+        const { buildToolsetsForTask } = await import('../../../main/aikernel/task/tool-resolver.js');
+        const task = await makeTask(null);
+
+        const toolsets = await buildToolsetsForTask(task, null);
+
+        expect(toolNames(toolsets)).not.toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
+    });
+
+    test('entryToolset 始终挂载（无论 interactive）', async () => {
+        const { buildToolsetsForTask } = await import('../../../main/aikernel/task/tool-resolver.js');
+        const task = await makeTask(null);
+        task.entryToolset = createMockInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, null);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).toContain('exitPlanMode');
+    });
+
+    test('disabledTools 通用过滤机制（保留）', async () => {
+        const { buildToolsetsForTask } = await import('../../../main/aikernel/task/tool-resolver.js');
+        const task = await makeTask(null);
+        const interaction = createMockInteractionToolset();
+        task.disabledTools = ['exitPlanMode'];
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
+    });
+
+    test('interactive 且 interactionToolset 为空时从 platform 懒注入', async () => {
+        const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
+        const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const task = new TaskState(manager, null);
+        task.task_id = 'test-lazy-inject';
+        task.task_status = 'running';
+        task.model = 'test-model';
+        task.parent_id = null;
+        task.interactionToolset = null;
+        (task as any)._currentTurnInteractive = true;
+
+        sharedCreateInteractionToolset.mockClear();
+
+        const toolsets = await task.buildToolsets();
+
+        expect(sharedCreateInteractionToolset).toHaveBeenCalledWith(task);
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(task.interactionToolset).not.toBeNull();
+    });
 });
 
-describe('interactionToolset 恢复', () => {
-    test('从磁盘恢复的主任务 buildToolsets 时应自动注入 interactionToolset', async () => {
-        const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
-        const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
+describe('cancelInteractionPrompts', () => {
+    test('以正确的 this 绑定调用工具的 cancelCurrent（不抛 TypeError）', async () => {
+        const { AskUserTool } = await import('../../../main/aikernel/interaction/tools.js');
+        const task = await makeTask(null);
 
-        const manager = new TaskManagerState();
-        manager.save = jest.fn();
-        manager.publishTaskListUpdate = jest.fn();
-        manager.moveTaskToEnd = jest.fn();
+        const provider = { cancelCurrent: jest.fn() };
+        const tool = new AskUserTool();
+        tool.setProvider(provider as any);
 
-        const task = new TaskState(manager, null);
-        task.task_id = 'test-recovery-task';
-        task.task_status = 'running';
-        task.model = 'test-model';
-        task.parent_id = null;
-        task.interactionToolset = null;
+        const toolset = new InteractiveToolset('interaction');
+        toolset.addTool(tool);
+        task.interactionToolset = toolset;
+
+        expect(() => task.cancelInteractionPrompts()).not.toThrow();
+        expect(provider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('交互工具挂载场景（standard / solo / unlimited / plan）', () => {
+    const getBuilder = async () => {
+        const { buildToolsetsForTask } = await import('../../../main/aikernel/task/tool-resolver.js');
+        return buildToolsetsForTask;
+    };
+
+    test('standard 模式：挂载 askUser，但不挂载 exitPlanMode', async () => {
+        const buildToolsetsForTask = await getBuilder();
+        const task = await makeTaskWithMode('standard');
+        const interaction = await makeRealInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
+    });
+
+    test('readonly 模式：挂载 askUser，但不挂载 exitPlanMode', async () => {
+        const buildToolsetsForTask = await getBuilder();
+        const task = await makeTaskWithMode('readonly');
+        const interaction = await makeRealInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
+    });
+
+    test('plan 模式：挂载 askUser 和 exitPlanMode', async () => {
+        const buildToolsetsForTask = await getBuilder();
+        const task = await makeTaskWithMode('plan');
+        const interaction = await makeRealInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).toContain('exitPlanMode');
+    });
+
+    test.each(['solo', 'unlimited'])('%s 模式：不挂载 askUser / exitPlanMode', async (modeId) => {
+        const buildToolsetsForTask = await getBuilder();
+        const task = await makeTaskWithMode(modeId);
+        const interaction = await makeRealInteractionToolset();
+
+        const toolsets = await buildToolsetsForTask(task, interaction);
+
+        expect(toolNames(toolsets)).not.toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
+    });
+
+    test('solo → standard 切换：askUser 重新挂载（过滤不污染原始工具集）', async () => {
+        const buildToolsetsForTask = await getBuilder();
+        const task = await makeTaskWithMode('solo');
+        const interaction = await makeRealInteractionToolset();
+
+        // solo 模式先 build 一次，askUser 被 isAvailable 过滤
+        const soloToolsets = await buildToolsetsForTask(task, interaction);
+        expect(toolNames(soloToolsets)).not.toContain('askUser');
+        // 原始交互工具集未被就地删除
+        expect(Array.from(interaction.tools.keys())).toEqual(expect.arrayContaining(['askUser', 'exitPlanMode']));
+
+        // 切到 standard，重新 build
+        task.activeModeId = 'standard';
+        const stdToolsets = await buildToolsetsForTask(task, interaction);
+        expect(toolNames(stdToolsets)).toContain('askUser');
+    });
+
+    test('非 interactive turn（agentoffice / channel 入口）：不挂载交互工具', async () => {
+        const task = await makeTaskWithMode('standard');
+        task.interactionToolset = await makeRealInteractionToolset();
+        (task as any)._currentTurnInteractive = false;
 
         const toolsets = await task.buildToolsets();
 
-        expect(sharedInitPlatformHarness).toHaveBeenCalledWith(task);
-        expect(task.interactionToolset).not.toBeNull();
-
-        const allToolNames = toolsets.flatMap((ts) => Array.from(ts.tools.keys()));
-        expect(allToolNames).toContain('askUser');
-        expect(allToolNames).toContain('exitPlanMode');
+        expect(toolNames(toolsets)).not.toContain('askUser');
+        expect(toolNames(toolsets)).not.toContain('exitPlanMode');
     });
 
-    test('已有 interactionToolset 的主任务不会重复调用 initPlatformHarness', async () => {
-        const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
-        const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
-
-        const manager = new TaskManagerState();
-        manager.save = jest.fn();
-        manager.publishTaskListUpdate = jest.fn();
-        manager.moveTaskToEnd = jest.fn();
-
-        const task = new TaskState(manager, null);
-        task.task_id = 'test-existing-task';
-        task.task_status = 'running';
-        task.model = 'test-model';
-        task.parent_id = null;
-        task.interactionToolset = mockInteractionToolset;
-
-        await task.buildToolsets();
-
-        expect(sharedInitPlatformHarness).not.toHaveBeenCalled();
-    });
-
-    test('子任务不需要 interactionToolset', async () => {
-        const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
-        const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
-
-        const manager = new TaskManagerState();
-        manager.save = jest.fn();
-        manager.publishTaskListUpdate = jest.fn();
-        manager.moveTaskToEnd = jest.fn();
-
-        const task = new TaskState(manager, null);
-        task.task_id = 'test-subtask';
-        task.task_status = 'running';
-        task.model = 'test-model';
-        task.parent_id = 'parent-task-id';
+    test('老任务（无 activeModeId/agentId、未注入 interactionToolset）interactive turn 应挂载 askUser', async () => {
+        const task = await makeTask(null);
+        // 模拟磁盘恢复的老任务：旧版本创建，JSON 中无 activeModeId/agentId，
+        // 运行时 interactionToolset 不持久化为 null，依赖 buildToolsets 的 platform fallback
+        task.agentId = undefined;
+        task.activeModeId = undefined as any;
         task.interactionToolset = null;
-
-        await task.buildToolsets();
-
-        expect(sharedInitPlatformHarness).not.toHaveBeenCalled();
-    });
-
-    test('initPlatformHarness 失败时不应阻断 buildToolsets', async () => {
-        const { TaskState } = await import('../../../main/aikernel/states/tasks.js');
-        const { TaskManagerState } = await import('../../../main/aikernel/task/manager.js');
-
-        const manager = new TaskManagerState();
-        manager.save = jest.fn();
-        manager.publishTaskListUpdate = jest.fn();
-        manager.moveTaskToEnd = jest.fn();
-
-        const task = new TaskState(manager, null);
-        task.task_id = 'test-error-task';
-        task.task_status = 'running';
-        task.model = 'test-model';
-        task.parent_id = null;
-        task.interactionToolset = null;
-
-        // 让 initPlatformHarness 抛错
-        sharedInitPlatformHarness.mockRejectedValueOnce(new Error('platform not available'));
+        (task as any)._currentTurnInteractive = true;
 
         const toolsets = await task.buildToolsets();
-        expect(Array.isArray(toolsets)).toBe(true);
+
+        expect(toolNames(toolsets)).toContain('askUser');
+        expect(toolNames(toolsets)).toContain('exitPlanMode');
+    });
+
+    test('standard → solo 切换：交互工具从 chat_context 移除并取消待处理提示', async () => {
+        const askProvider = { cancelCurrent: jest.fn() };
+        const exitProvider = { cancelCurrent: jest.fn() };
+        const task = await makeTaskWithMode('standard');
+        task.interactionToolset = await makeRealInteractionToolset(askProvider, exitProvider);
+        (task as any)._currentTurnInteractive = true;
+
+        // standard 模式挂载交互工具
+        await task.refreshBaseToolsets();
+        expect(task.chat_context.getTool('askUser')).toBeDefined();
+
+        // 切到 solo：refreshBaseToolsets 重建（askUser 被过滤），cancelInteractionPrompts 取消 pending
+        task.activeModeId = 'solo';
+        await task.refreshBaseToolsets();
+        task.cancelInteractionPrompts();
+
+        expect(task.chat_context.getTool('askUser')).toBeUndefined();
+        expect(askProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
     });
 });

@@ -21,7 +21,6 @@ const TERMINATION_SYSTEM_PROMPT = `你是一个专业的对话终止状态判断
 判断标准:
 
 interrupted — 满足以下任一条件即判定为 interrupted:
-- 回复中提到了"接下来""下一步""继续""正在处理"等词语，暗示后续还有操作要做但尚未完成;
 - 回复中列出了多个步骤/计划，但明显只完成了部分;
 - 回复以一个动作的开头结束（如"首先搜索...""让我先..."），没有给出该动作的结果;
 - 回复看起来像是被截断的，缺少结论或总结。
@@ -29,7 +28,7 @@ interrupted — 满足以下任一条件即判定为 interrupted:
 question — 满足以下任一条件即判定为 question:
 - 回复中包含向用户提出的问题(如"请问...""你希望...""能否提供..."等疑问句);
 - 回复明确表示需要用户提供更多信息才能继续；
-- 任务本身包含多个步骤，但回复中说明了要往下继续需要用户来确认或者手动执行一些步骤的情况;
+- 已经基本完成了用户的任务，但是需要用户确认或补充新的信息或者给出建议等;
 
 finished — 仅当以下条件都满足时才判定为 finished:
 - 回复已经完整回答了用户的问题，或者已经完成了用户请求的任务;
@@ -101,7 +100,9 @@ export async function checkTerminationFromMessages(
         rawResult = await Promise.race([
             LLM.ask(userMessage, modelParam, {
                 ...modelRequestOptions,
-                reasoningEffort: 'none'
+                // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
+                // （glm-5.3 等模型不支持关闭思考，'none' 会导致请求失败）
+                reasoningEffort: LLM.getMinimalReasoningEffort(modelParam)
             }),
             new Promise<never>((_, reject) => {
                 timeout = setTimeout(

@@ -26,7 +26,7 @@ import { createInteractionToolset } from '../../aikernel/interaction/tools.js';
 import { logger } from '../../utils/logger.js';
 import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
-import { replaceTaskHarnessForMode } from '../../aikernel/task/mode.js';
+import { switchTaskMode } from '../../aikernel/task/mode.js';
 
 interface AcpSessionState {
     sessionId: string;
@@ -362,20 +362,11 @@ export class OpenDeskAcpAgent implements acp.Agent {
         );
         const exitPlanModeProvider = new AcpExitPlanModeProvider(this.connection, session.sessionId);
         exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
-            const modes = this.agentDecl.supportedModes();
-            const targetMode = modes.find((m) => m.id === targetModeId);
-            if (!targetMode) return;
-            const ws = session.cwd;
-            const oldId = session.task.activeModeId || this.agentDecl.getDefaultMode().id;
-            if (oldId !== targetModeId) {
-                const oldMode = modes.find((m) => m.id === oldId);
-                await oldMode?.onExitMode?.(ws);
-                await targetMode.onEnterMode?.(ws);
-            }
-            await replaceTaskHarnessForMode(session.task, ws, targetMode, () => {
+            const switched = await switchTaskMode(session.task, targetModeId, () => {
                 return new AcpPermissionPromptProvider(this.connection, session.sessionId);
             });
-            session.mode = targetMode;
+            if (!switched) return;
+            session.mode = session.task.getAgentMode();
 
             await this.safeSessionUpdate(
                 {
@@ -398,7 +389,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
     private async runPrompt(session: AcpSessionState, text: string): Promise<void> {
         try {
             let updateChain = Promise.resolve();
-            await session.task.submitUserMessage(text);
+            await session.task.submitUserMessage(text, { interactive: true });
             await session.task.waitUntilFinished((chunk) => {
                 updateChain = updateChain
                     .then(() => session.updates.publish(this.connection, session.sessionId, chunk))

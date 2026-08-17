@@ -175,7 +175,8 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         expect(result).toEqual({ removedCount: 2, resubmitted: true, userMessageText: '/skill original prompt' });
         expect(task.chat_context.messages).toHaveLength(0);
-        expect(submit).toHaveBeenCalledWith('/skill original prompt', { imageDataUris: [] });
+        // 回退重发是用户在 GUI/TUI 主动触发的交互式 turn，需挂载 askUser 等交互工具
+        expect(submit).toHaveBeenCalledWith('/skill original prompt', { imageDataUris: [], interactive: true });
     });
 
     test('clears file read state cache so re-reads are not skipped after rewind', async () => {

@@ -10,8 +10,9 @@
  */
 
 import { FileSelector } from './fileSelector.ts';
-import { showConfirmModal, renderIcon, detectDarkMode } from './confirmModal.ts';
+import { showConfirmModal, renderIcon, detectDarkMode, bindOverlayDismiss } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { createRendererTranslator } from '../locale.ts';
 
 declare const window: Window & {
     workspaceAPI: {
@@ -36,6 +37,8 @@ const ANIM_DURATION_OUT = 180;
 
 interface WorkspacePickerOptions {
     title?: string;
+    /** 可选的翻译器（已携带 locale 设置）。缺省时按浏览器语言自动检测。 */
+    t?: (key: string, params?: Record<string, string | number>) => string;
 }
 
 /**
@@ -45,6 +48,7 @@ interface WorkspacePickerOptions {
  * 返回 Promise<string | null>：用户选择的路径，取消时为 null。
  */
 export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promise<string | null> {
+    const t = options.t ?? createRendererTranslator();
     return new Promise((resolve) => {
         let resolved = false;
         let recentWorkspaces: string[] = [];
@@ -89,7 +93,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 
         function buildRecentItems(): string {
             if (recentWorkspaces.length === 0) {
-                return '<div class="od-ws-recent-empty">暂无最近使用的工作空间</div>';
+                return `<div class="od-ws-recent-empty">${t('renderer.workspacePicker.recentEmpty')}</div>`;
             }
             return recentWorkspaces
                 .map((p) => {
@@ -98,7 +102,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                         <i class="fa-solid fa-clock-rotate-left od-ws-recent-item-icon"></i>
                         <span class="od-ws-recent-item-name">${dirName}</span>
                         <span class="od-ws-recent-item-path">${p}</span>
-                        <button class="od-ws-recent-remove" data-action="remove-recent" data-path="${p}" title="移除此记录">
+                        <button class="od-ws-recent-remove" data-action="remove-recent" data-path="${p}" title="${t('renderer.workspacePicker.removeRecent')}">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
                     </div>`;
@@ -275,29 +279,29 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 <div class="od-ws-picker-panel">
     <div class="od-ws-header">
         <div class="od-ws-header-icon">${renderIcon('fa-folder-open')}</div>
-        <div class="od-ws-header-title">${escapeHtml(options.title || '选择工作空间')}</div>
-        <button class="od-ws-close-btn" data-action="close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <div class="od-ws-header-title">${escapeHtml(options.title || t('renderer.workspacePicker.defaultTitle'))}</div>
+        <button class="od-ws-close-btn" data-action="close" title="${t('renderer.workspacePicker.close')}" aria-label="${t('renderer.workspacePicker.close')}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="od-ws-current">
         <i class="fa-solid fa-folder-open" style="font-size: var(--fs-sm);flex-shrink:0"></i>
-        <span style="flex-shrink:0">当前：</span>
-        <span class="od-ws-current-path" data-action="edit-current" title="点击编辑路径">${currentWorkspace || '未设置'}</span>
-        <button class="od-ws-pick-btn" data-action="pick-directory" title="在系统文件管理器中选择">
-            <i class="fa-solid fa-folder-tree"></i>在系统窗口中选择
+        <span style="flex-shrink:0">${t('renderer.workspacePicker.current')}</span>
+        <span class="od-ws-current-path" data-action="edit-current" title="${t('renderer.workspacePicker.editPath')}">${currentWorkspace || t('renderer.workspacePicker.unset')}</span>
+        <button class="od-ws-pick-btn" data-action="pick-directory" title="${t('renderer.workspacePicker.pickInSystemHint')}">
+            <i class="fa-solid fa-folder-tree"></i>${t('renderer.workspacePicker.pickInSystem')}
         </button>
     </div>
     <div class="od-ws-body">
         <div class="od-ws-recent">
-            <div class="od-ws-recent-title">最近使用</div>
+            <div class="od-ws-recent-title">${t('renderer.workspacePicker.recent')}</div>
             <div class="od-ws-recent-list" id="od-ws-recent-list">${buildRecentItems()}</div>
         </div>
         <div class="od-ws-divider"></div>
         <div class="od-ws-browser-section">
             <div class="od-ws-browser-title">
-                <span>浏览目录</span>
+                <span>${t('renderer.workspacePicker.browse')}</span>
                 <label class="od-ws-show-hidden">
                     <input type="checkbox" id="od-ws-show-hidden-check">
-                    显示隐藏文件
+                    ${t('renderer.workspacePicker.showHidden')}
                 </label>
             </div>
             <div class="od-ws-browser-wrap" id="od-ws-browser-wrap"></div>
@@ -305,8 +309,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
     </div>
     <div class="od-ws-footer">
         <div class="od-ws-footer-btns">
-            <button class="od-ws-btn od-ws-btn-cancel" data-action="cancel">取消</button>
-            <button class="od-ws-btn od-ws-btn-confirm" data-action="confirm" disabled>选择</button>
+            <button class="od-ws-btn od-ws-btn-cancel" data-action="cancel">${t('renderer.workspacePicker.cancel')}</button>
+            <button class="od-ws-btn od-ws-btn-confirm" data-action="confirm" disabled>${t('renderer.workspacePicker.confirm')}</button>
         </div>
     </div>
 </div>`;
@@ -323,7 +327,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         function syncBrowserToPath(path: string) {
             currentWorkspace = path;
             const pathEl = overlay.querySelector('.od-ws-current-path');
-            if (pathEl) pathEl.textContent = path || '未设置';
+            if (pathEl) pathEl.textContent = path || t('renderer.workspacePicker.unset');
             updateConfirmBtn();
             const homeDir = _getHomeDirFromWorkspace(path);
             dirSelector?.navigateToPath(path, homeDir);
@@ -333,7 +337,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         function updateCurrentPath(path: string) {
             currentWorkspace = path;
             const pathEl = overlay.querySelector('.od-ws-current-path');
-            if (pathEl) pathEl.textContent = path || '未设置';
+            if (pathEl) pathEl.textContent = path || t('renderer.workspacePicker.unset');
             updateConfirmBtn();
         }
 
@@ -347,7 +351,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
             input.className = 'od-ws-current-edit';
             input.type = 'text';
             input.value = originalPath;
-            input.placeholder = '输入工作空间路径…';
+            input.placeholder = t('renderer.workspacePicker.pathPlaceholder');
             pathEl.replaceWith(input);
             input.focus();
             input.select();
@@ -356,8 +360,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                 const span = document.createElement('span');
                 span.className = 'od-ws-current-path';
                 span.dataset.action = 'edit-current';
-                span.title = '点击编辑路径';
-                span.textContent = text || '未设置';
+                span.title = t('renderer.workspacePicker.editPath');
+                span.textContent = text || t('renderer.workspacePicker.unset');
                 input.replaceWith(span);
                 span.addEventListener('click', () => startInlineEditCurrent());
             };
@@ -390,11 +394,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
         }
 
         function bindEvents() {
-            overlay.addEventListener('click', (e) => {
-                if ((e.target as HTMLElement).classList.contains('od-ws-picker-overlay')) {
-                    close(null);
-                }
-            });
+            // 工作空间选择器包含路径编辑/搜索输入框，禁用遮罩关闭，防止误关丢失输入
+            bindOverlayDismiss(overlay, () => close(null), undefined, false);
             overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="cancel"]')?.addEventListener('click', () => close(null));
             overlay.querySelector('[data-action="confirm"]')?.addEventListener('click', () => {
@@ -443,7 +444,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                     // 如果列表已空，显示空状态
                     if (recentWorkspaces.length === 0) {
                         const list = overlay.querySelector('#od-ws-recent-list');
-                        if (list) list.innerHTML = '<div class="od-ws-recent-empty">暂无最近使用的工作空间</div>';
+                        if (list)
+                            list.innerHTML = `<div class="od-ws-recent-empty">${t('renderer.workspacePicker.recentEmpty')}</div>`;
                     }
 
                     // 持久化删除
@@ -473,6 +475,7 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 
             // 创建目录选择器组件并挂载
             dirSelector = new FileSelector({
+                t,
                 listDirectory: async (p, opts) => {
                     // 处理虚拟根目录：Windows 盘符浏览
                     if (p === '{DRIVE_ROOT}') {
@@ -483,12 +486,12 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                     if (p === '{OH_ROOT}') {
                         return [
                             {
-                                name: '家目录',
+                                name: t('renderer.workspacePicker.home'),
                                 path: '/storage/Users/currentUser',
                                 isDirectory: true
                             },
                             {
-                                name: '应用沙箱',
+                                name: t('renderer.workspacePicker.sandbox'),
                                 path: '/data/storage/el2/base/files',
                                 isDirectory: true
                             }
@@ -509,12 +512,13 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                         icon: 'fa-trash',
                         iconBg: '#FEF2F2',
                         iconColor: '#DC2626',
-                        title: '删除确认',
-                        message: `确定要删除 <b>${name}</b> 吗？此操作无法撤销。`,
-                        confirmText: '删除',
-                        cancelText: '取消',
+                        title: t('renderer.workspacePicker.deleteTitle'),
+                        message: t('renderer.workspacePicker.deleteMessage', { name }),
+                        confirmText: t('renderer.workspacePicker.delete'),
+                        cancelText: t('renderer.workspacePicker.cancel'),
                         danger: true
-                    })
+                    }),
+                menuContainer: overlay
             });
 
             // 显示隐藏文件复选框事件
