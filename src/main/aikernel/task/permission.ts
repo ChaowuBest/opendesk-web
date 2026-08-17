@@ -203,6 +203,17 @@ export async function promptPermissionBatchForTask(
     prefixOptions: { label: string; pattern: string }[],
     toolCall?: ToolCall
 ): Promise<PermissionUserResponse> {
+    const pluginDecision = await task.hooks.askPermission(task, {
+        tool: toolName,
+        callId: toolCall?.id,
+        requests
+    });
+    if (pluginDecision === 'allow') {
+        return { decision: 'allow', rememberScope: 'none' };
+    }
+    if (pluginDecision === 'deny') {
+        return { decision: 'deny', rememberScope: 'none', denyReason: 'user_denied' };
+    }
     const promptProvider = task.harnessContext.permissionPrompt;
     if (!promptProvider) {
         logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);

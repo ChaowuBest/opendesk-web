@@ -13,7 +13,11 @@ import type { TaskState } from './states/tasks.js';
 import type { ToolCall, AssistantMessage, ChatContext } from './messages.js';
 import type { LLMRequestOptions } from './llm.js';
 import type { ActiveContextView } from './compaction/types.js';
+
+import type { BaseToolset } from './tool.js';
+
 import { logger } from '../utils/logger.js';
+import type { PermissionRequest, ReasoningEffort } from './types/index.js';
 
 /******************************************************************************
  * Finish Turn Callbacks
@@ -79,6 +83,91 @@ type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; messa
 type BeforeToolcallCreatedFeedback = { operation: 'accept' } | { operation: 'reject'; message: string };
 
 type ParseToolcallFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
+
+export interface ChatHeadersInput {
+    taskId?: string;
+    workspace?: string;
+    modelAlias?: string;
+}
+
+export interface ChatHeadersOutput {
+    headers: Record<string, string>;
+}
+
+type ChatHeadersCallback = (input: ChatHeadersInput, output: ChatHeadersOutput) => void | Promise<void>;
+
+export interface ChatParamsOutput {
+    reasoningEffort?: ReasoningEffort;
+    maxCompletionTokens?: number;
+}
+
+type ChatParamsCallback = (input: ChatHeadersInput, output: ChatParamsOutput) => void | Promise<void>;
+
+export interface ChatMessageInput extends ChatHeadersInput {
+    internal: boolean;
+}
+
+export interface ChatMessageOutput {
+    text: string;
+}
+
+type ChatMessageCallback = (input: ChatMessageInput, output: ChatMessageOutput) => void | Promise<void>;
+
+type ChatMessagesTransformCallback = (
+    input: ChatHeadersInput,
+    context: ChatContext
+) => ChatContext | void | Promise<ChatContext | void>;
+
+export interface ToolCallInterceptionFeedback {
+    operation: 'allow' | 'deny';
+    args: unknown;
+    message?: string;
+    metadata?: Record<string, unknown>;
+}
+
+export interface SkillLoadContext {
+    bundleName: string;
+    skillName: string;
+    skillDirectory?: string;
+    source?: 'installed' | 'config' | 'mounted' | 'builtin' | 'plugin';
+    frontmatter: Record<string, unknown>;
+}
+
+export interface BeforeSkillLoadFeedback {
+    operation: 'allow' | 'deny';
+    message?: string;
+    metadata?: Record<string, unknown>;
+}
+
+type BeforeSkillLoadCallback = (
+    context: SkillLoadContext
+) => BeforeSkillLoadFeedback | Promise<BeforeSkillLoadFeedback>;
+
+type AfterSkillLoadCallback = (context: SkillLoadContext) => void | Promise<void>;
+
+type ToolCallInterceptor = (
+    task: TaskState,
+    toolCall: ToolCall,
+    args: unknown
+) => ToolCallInterceptionFeedback | Promise<ToolCallInterceptionFeedback>;
+
+type ToolDefinitionsCallback = (toolsets: BaseToolset[], task: TaskState) => void | Promise<void>;
+
+export interface PermissionAskInput {
+    tool: string;
+    callId?: string;
+    requests: PermissionRequest[];
+}
+
+export interface PermissionAskOutput {
+    decision: 'ask' | 'allow' | 'deny';
+}
+
+type PermissionAskCallback = (
+    task: TaskState,
+    input: PermissionAskInput,
+    output: PermissionAskOutput
+) => void | Promise<void>;
 
 export type BeforeToolCallFeedback =
     | { operation: 'allow'; extra?: Record<string, unknown> }
@@ -215,6 +304,7 @@ function composeTailcards(sections: Array<{ id: string; content: string }>): str
 /** 钩子注册选项；priority 范围 [0, 65535]，缺省为 0；priority 越小越先执行 */
 export interface HookOptions {
     priority?: number;
+    onError?: 'continue' | 'throw';
 }
 
 /** 钩子条目：包含 callback 与解析后的 options */
@@ -223,7 +313,7 @@ export interface Hook<CallbackTy> {
     options: Required<HookOptions>;
 }
 
-const MAX_HOOK_PRIORITY = 65535;
+export const MAX_HOOK_PRIORITY = 65535;
 
 /** 解析 HookOptions，做范围校验；越界时截断到 [0, 65535] 并记录警告 */
 function resolveHookOptions(options?: HookOptions): Required<HookOptions> {
@@ -237,7 +327,7 @@ function resolveHookOptions(options?: HookOptions): Required<HookOptions> {
             priority = Math.max(0, Math.min(MAX_HOOK_PRIORITY, priority));
         }
     }
-    return { priority };
+    return { priority, onError: options?.onError ?? 'continue' };
 }
 
 /** 将钩子数组按 priority 升序排序（稳定排序：相同 priority 保持注册顺序） */
@@ -269,6 +359,15 @@ export class Hooks {
     beforeTurnStartHooks: Hook<BeforeTurnStartCallback>[] = [];
     afterProcessCompletionHooks: Hook<AfterProcessCompletionCallback>[] = [];
     beforeToolcallCreatedHooks: Hook<BeforeToolcallCreatedCallback>[] = [];
+    chatHeadersHooks: Hook<ChatHeadersCallback>[] = [];
+    chatParamsHooks: Hook<ChatParamsCallback>[] = [];
+    chatMessageHooks: Hook<ChatMessageCallback>[] = [];
+    chatMessagesTransformHooks: Hook<ChatMessagesTransformCallback>[] = [];
+    toolCallInterceptors: Hook<ToolCallInterceptor>[] = [];
+    toolDefinitionsHooks: Hook<ToolDefinitionsCallback>[] = [];
+    permissionAskHooks: Hook<PermissionAskCallback>[] = [];
+    beforeSkillLoadHooks: Hook<BeforeSkillLoadCallback>[] = [];
+    afterSkillLoadHooks: Hook<AfterSkillLoadCallback>[] = [];
     tailcardRegistrations: TailcardRegistration[] = [];
 
     private constructor(parent?: Hooks) {
@@ -387,11 +486,12 @@ export class Hooks {
      * 回调签名：`(task: TaskState, tool_call: ToolCall) => void | Promise<void>`
      * 此时 `tool_call.status`、`tool_call.result`、`tool_call.result_object` 均已就绪，
      * 钩子可以读取或改写它们（如将超长结果落盘并替换为摘要）。
+     * 返回注销函数，用于移除当前注册项。
      *
      * 典型用途：结果后处理（摘要、索引）、观测（性能埋点）、循环检测（readFile unchanged 计数）。
      */
-    afterToolCall(callback: AfterToolCallCallback, options?: HookOptions): void {
-        this.afterToolCallHooks.push({ callback, options: resolveHookOptions(options) });
+    afterToolCall(callback: AfterToolCallCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.afterToolCallHooks, callback, options);
     }
 
     /** 按裸工具名或带 bundle 前缀的工具名注册钩子。 */
@@ -468,6 +568,201 @@ export class Hooks {
      */
     beforeToolcallCreated(callback: BeforeToolcallCreatedCallback, options?: HookOptions): void {
         this.beforeToolcallCreatedHooks.push({ callback, options: resolveHookOptions(options) });
+    }
+
+    registerChatHeaders(callback: ChatHeadersCallback, options?: HookOptions): () => void {
+        const hook = { callback, options: resolveHookOptions(options) };
+        this.chatHeadersHooks.push(hook);
+        return () => {
+            const index = this.chatHeadersHooks.indexOf(hook);
+            if (index !== -1) {
+                this.chatHeadersHooks.splice(index, 1);
+            }
+        };
+    }
+
+    async applyChatHeaders(
+        input: ChatHeadersInput,
+        headers: Record<string, string> = {}
+    ): Promise<Record<string, string>> {
+        const output: ChatHeadersOutput = { headers: { ...headers } };
+        for (const hook of sortHooks(this.chatHeadersHooks)) {
+            try {
+                await hook.callback(input, output);
+            } catch (err) {
+                logger.error('Hooks.applyChatHeaders: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) {
+            return await this.parent.applyChatHeaders(input, output.headers);
+        }
+        return output.headers;
+    }
+
+    registerChatParams(callback: ChatParamsCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.chatParamsHooks, callback, options);
+    }
+
+    async applyChatParams(input: ChatHeadersInput, params: ChatParamsOutput = {}): Promise<ChatParamsOutput> {
+        const output = { ...params };
+        for (const hook of sortHooks(this.chatParamsHooks)) {
+            try {
+                await hook.callback(input, output);
+            } catch (err) {
+                logger.error('Hooks.applyChatParams: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) return await this.parent.applyChatParams(input, output);
+        return output;
+    }
+
+    registerChatMessage(callback: ChatMessageCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.chatMessageHooks, callback, options);
+    }
+
+    async applyChatMessage(input: ChatMessageInput, text: string): Promise<string> {
+        const output = { text };
+        for (const hook of sortHooks(this.chatMessageHooks)) {
+            try {
+                await hook.callback(input, output);
+            } catch (err) {
+                logger.error('Hooks.applyChatMessage: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) return await this.parent.applyChatMessage(input, output.text);
+        return output.text;
+    }
+
+    registerChatMessagesTransform(callback: ChatMessagesTransformCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.chatMessagesTransformHooks, callback, options);
+    }
+
+    async transformChatMessages(input: ChatHeadersInput, context: ChatContext): Promise<ChatContext> {
+        let current = context;
+        for (const hook of sortHooks(this.chatMessagesTransformHooks)) {
+            try {
+                current = (await hook.callback(input, current)) ?? current;
+            } catch (err) {
+                logger.error('Hooks.transformChatMessages: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) return await this.parent.transformChatMessages(input, current);
+        return current;
+    }
+
+    registerToolCallInterceptor(callback: ToolCallInterceptor, options?: HookOptions): () => void {
+        return this.registerHook(this.toolCallInterceptors, callback, options);
+    }
+
+    async interceptToolCall(task: TaskState, toolCall: ToolCall, args: unknown): Promise<ToolCallInterceptionFeedback> {
+        let current: ToolCallInterceptionFeedback = { operation: 'allow', args };
+        for (const hook of sortHooks(this.toolCallInterceptors)) {
+            try {
+                const feedback = await hook.callback(task, toolCall, current.args);
+                if (feedback.operation === 'deny') return feedback;
+                current = { ...current, ...feedback, operation: 'allow' };
+            } catch (err) {
+                logger.error('Hooks.interceptToolCall: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) return await this.parent.interceptToolCall(task, toolCall, current.args);
+        return current;
+    }
+
+    registerToolDefinitions(callback: ToolDefinitionsCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.toolDefinitionsHooks, callback, options);
+    }
+
+    async applyToolDefinitions(toolsets: BaseToolset[], task: TaskState): Promise<void> {
+        for (const hook of sortHooks(this.toolDefinitionsHooks)) {
+            try {
+                await hook.callback(toolsets, task);
+            } catch (err) {
+                logger.error('Hooks.applyToolDefinitions: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) await this.parent.applyToolDefinitions(toolsets, task);
+    }
+
+    registerPermissionAsk(callback: PermissionAskCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.permissionAskHooks, callback, options);
+    }
+
+    async askPermission(
+        task: TaskState,
+        input: PermissionAskInput,
+        decision: PermissionAskOutput['decision'] = 'ask'
+    ): Promise<PermissionAskOutput['decision']> {
+        const output: PermissionAskOutput = { decision };
+        for (const hook of sortHooks(this.permissionAskHooks)) {
+            try {
+                await hook.callback(task, input, output);
+            } catch (err) {
+                logger.error('Hooks.askPermission: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) return await this.parent.askPermission(task, input, output.decision);
+        return output.decision;
+    }
+
+    registerBeforeSkillLoad(callback: BeforeSkillLoadCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.beforeSkillLoadHooks, callback, options);
+    }
+
+    async checkBeforeSkillLoad(context: SkillLoadContext): Promise<BeforeSkillLoadFeedback> {
+        let current: BeforeSkillLoadFeedback = { operation: 'allow' };
+        for (const hook of sortHooks(this.beforeSkillLoadHooks)) {
+            try {
+                const feedback = await hook.callback(context);
+                if (feedback.operation === 'deny') return feedback;
+                current = { ...current, ...feedback, operation: 'allow' };
+            } catch (err) {
+                logger.error('Hooks.checkBeforeSkillLoad: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) {
+            const parentFeedback = await this.parent.checkBeforeSkillLoad(context);
+            if (parentFeedback.operation === 'deny') return parentFeedback;
+            current = { ...current, ...parentFeedback, operation: 'allow' };
+        }
+        return current;
+    }
+
+    registerAfterSkillLoad(callback: AfterSkillLoadCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.afterSkillLoadHooks, callback, options);
+    }
+
+    async noticeAfterSkillLoad(context: SkillLoadContext): Promise<void> {
+        for (const hook of sortHooks(this.afterSkillLoadHooks)) {
+            try {
+                await hook.callback(context);
+            } catch (err) {
+                logger.error('Hooks.noticeAfterSkillLoad: callback error', err);
+                if (hook.options.onError === 'throw') throw err;
+            }
+        }
+        if (this.parent) await this.parent.noticeAfterSkillLoad(context);
+    }
+
+    private registerHook<CallbackType>(
+        hooks: Hook<CallbackType>[],
+        callback: CallbackType,
+        options?: HookOptions
+    ): () => void {
+        const hook = { callback, options: resolveHookOptions(options) };
+        hooks.push(hook);
+        return () => {
+            const index = hooks.indexOf(hook);
+            if (index !== -1) hooks.splice(index, 1);
+        };
     }
 
     /**

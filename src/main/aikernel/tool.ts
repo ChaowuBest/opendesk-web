@@ -438,7 +438,7 @@ export class InteractiveToolset extends BaseToolset<InteractiveTool<any>> {
  * 用于解耦 aikernel 与 applications 层，由外部实现具体的工具集提供逻辑
  */
 export interface ToolsetProvider {
-    listAvailableToolsets(): Promise<BaseToolset[]>;
+    listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]>;
 }
 
 export class EmptyToolsetProvider implements ToolsetProvider {

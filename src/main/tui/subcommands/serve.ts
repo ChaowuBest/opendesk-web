@@ -96,6 +96,8 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     const { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } =
         await import('../../applications/registry.js');
     const { initializeHarnesses } = await import('../../aikernel/harnesses/index.js');
+    const { PluginToolsetProvider, combineToolsetProviders, initializePluginHost } =
+        await import('../../applications/pluginmgr/index.js');
 
     setPlatform(new CliPlatform());
     useCliTransport();
@@ -111,15 +113,19 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
 
     GlobalState.initialize();
     GlobalState.getInstance().setServerMode(true);
+    await initializePluginHost();
     AgentRegistry.initBuiltinAgents();
     initializeHarnesses();
 
     initializeRegistry();
     initializeRegistryWorker();
     await ApplicationRegistry.ensureFullyLoaded();
-    GlobalState.getInstance().taskManagerState.toolsetProvider = {
-        listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
-    };
+    GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
+        {
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+        },
+        new PluginToolsetProvider()
+    );
 }
 
 async function startAcpServerMode(_opts: ServeOptions) {

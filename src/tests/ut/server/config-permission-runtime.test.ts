@@ -5,6 +5,7 @@ import type {
     PermissionRequest,
     PermissionRule
 } from '../../../main/aikernel/security/permission.js';
+import { Hooks } from '../../../main/aikernel/hooks.js';
 import { ConfigPermissionRuntime } from '../../../main/server/opencode/config-permission-runtime.js';
 import { handleToolPermissionsForTask } from '../../../main/aikernel/task/permission.js';
 import { replaceTaskHarnessForMode } from '../../../main/aikernel/task/mode.js';
@@ -211,6 +212,7 @@ describe('OpenCode config permission runtime', () => {
                 permission: enforcer,
                 permissionPrompt: { prompt }
             },
+            hooks: Hooks.createGlobal(),
             getWorkspace: () => '/workspace',
             chat_context: { messages: [] }
         } as any;

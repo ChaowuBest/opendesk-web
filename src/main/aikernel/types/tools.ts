@@ -67,7 +67,7 @@ export interface ToolRenderers {
 }
 
 /**
- * Public tool contract shared by OpenDesk runtime and external integrations.
+ * Public tool contract shared by OpenDesk and external plugins.
  * Runtime-only state such as TaskState remains behind the host adapter.
  */
 export interface ToolDefinition<T extends z.ZodType = z.ZodType> {

@@ -35,7 +35,7 @@ import {
     partitionMcpToolsForContext
 } from './mcp-gateway-tools.js';
 import { Skill } from '../../aikernel/skill.js';
-import type { McpServerConfig, McpToolInfo } from './common.js';
+import type { McpServerConfig, McpServerState, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
 import { jsonrepair } from 'jsonrepair';
@@ -49,6 +49,7 @@ import {
 } from './registry/index.js';
 import { createHash } from 'crypto';
 import { logger } from '../../utils/logger.js';
+import { getProvidedMcpServers, onMcpServerProvidersChanged } from './provider.js';
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
@@ -113,8 +114,13 @@ export interface AgentMcpRegistration {
 }
 
 export class McpMgrApplication extends BaseApplication {
+    private readonly disposeProviderListener: () => void;
+
     constructor() {
         super('mcpmgr');
+        this.disposeProviderListener = onMcpServerProvidersChanged(() => {
+            this.sendEventToSubscribers('serversUpdated');
+        });
     }
 
     getName(): string {
@@ -132,6 +138,17 @@ export class McpMgrApplication extends BaseApplication {
     public getServersFromConfig(): McpServerConfig[] {
         const config = this.getConfig() as z.output<typeof McpMgrConfigSchema>;
         return JSON.parse(JSON.stringify(config?.servers || []));
+    }
+
+    async getServersForUI(): Promise<McpServerState[]> {
+        let configured: McpServerState[] = [];
+        try {
+            const result = await this.callWorker('getServers');
+            if (result.status === 'ok') configured = result.data as McpServerState[];
+        } catch {
+            configured = [];
+        }
+        return [...configured, ...(await getProvidedMcpServers())];
     }
 
     private saveServersToConfig(servers: McpServerConfig[]): void {
@@ -520,5 +537,9 @@ export class McpMgrApplication extends BaseApplication {
                 eventDescription: 'MCP 列表更新事件，当添加、删除、修改配置或连接状态变化时触发'
             }
         ];
+    }
+
+    async beforeExit(): Promise<void> {
+        this.disposeProviderListener();
     }
 }

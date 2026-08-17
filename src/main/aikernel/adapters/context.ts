@@ -45,6 +45,63 @@ export interface AdapterToolDefinition {
     parameters: object;
 }
 
+/**
+ * Materialize the model-visible request projection as an isolated ChatContext.
+ *
+ * The returned context is intentionally detached from the task context. It is
+ * suitable for request-scoped hooks such as chat.messages.transform and keeps
+ * the adapter-only replay/override rules out of the plugin contract.
+ */
+export function buildRequestChatContext(
+    chatContext: ChatContext,
+    options: AdapterMessageBuildOptions = {}
+): ChatContext {
+    const projection = buildContextProjection(chatContext, options);
+    const serialized = JSON.parse(
+        JSON.stringify({
+            system_prompt: projection.systemPrompt,
+            messages: projection.messages
+        })
+    ) as {
+        system_prompt?: unknown;
+        messages: Array<Record<string, any>>;
+    };
+
+    for (const message of serialized.messages) {
+        if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+
+        const replayInstruction = projection.assistantReplayByMessageId.get(message.message_id);
+        const roundRef = replayInstruction?.roundRef;
+        if (roundRef && roundRef.assistantMessageId !== message.message_id) {
+            throw new Error(
+                `assistant replay roundRef message mismatch: expected ${message.message_id}, got ${roundRef.assistantMessageId}`
+            );
+        }
+        const startPartIndex = roundRef?.startPartIndex ?? replayInstruction?.startPartIndex;
+        if (startPartIndex !== undefined) {
+            if (!Number.isInteger(startPartIndex) || startPartIndex < 0) {
+                throw new Error(`invalid assistant replay startPartIndex: ${startPartIndex}`);
+            }
+            message.content = message.content.slice(startPartIndex);
+        }
+
+        for (const part of message.content) {
+            if (part?.type !== 'tool_call' || !Array.isArray(part.toolcalls)) continue;
+            for (const toolCall of part.toolcalls) {
+                const resultId = toolCall?.result_storage?.result_id;
+                const override = typeof resultId === 'string' ? options.toolResultOverrides?.get(resultId) : undefined;
+                if (typeof override === 'string' && override.length > 0) {
+                    toolCall.result = override;
+                }
+            }
+        }
+    }
+
+    const requestContext = ChatContext.assign(serialized);
+    requestContext.attachToolsets(...chatContext.toolsets.values());
+    return requestContext;
+}
+
 export function buildContextProjection(
     chatContext: ChatContext,
     options: AdapterMessageBuildOptions = {}

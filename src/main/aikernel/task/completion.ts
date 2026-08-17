@@ -30,7 +30,7 @@ import {
     recordEvidenceCardLLMUsage
 } from '../../utils/evidencecard.js';
 import { AssistantMessage, AssistantMessagePart, ToolCall, AssistantResponse } from '../messages.js';
-import type { BaseRuntimeMetadata as RuntimeMetadata } from '../types/index.js';
+import { buildRequestChatContext } from '../adapters/context.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import {
     collectToolCalls,
@@ -229,6 +229,7 @@ export async function processTaskCompletion(
               activeContext?: ActiveContextView;
           }
         | undefined = undefined;
+    let requestActiveContext: ActiveContextView | undefined;
     let dynamicMaxCompletionTokens: number | undefined = undefined;
     let requestTailText: string | undefined = undefined;
     let preparedContextTokens = 0;
@@ -477,9 +478,14 @@ export async function processTaskCompletion(
             activeContext: preparation.activeContext,
             toolResultOverrides: preparation.toolResultOverrides
         };
+        requestActiveContext = preparation.activeContext;
         preparedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
     } catch (err: unknown) {
         logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
+        requestActiveContext = {
+            startIndex: 0,
+            messages: task.chat_context.messages
+        };
     }
 
     if (!isCurrentTurn()) return false;
@@ -552,10 +558,6 @@ export async function processTaskCompletion(
         },
         disableInternalRetry: true
     };
-    const llmMessageOptions = {
-        ...(streamOptions ?? {}),
-        ...(requestTailText ? { requestTailText } : {})
-    };
     let retryAttempt = 0;
     let lastRetryState:
         | {
@@ -581,11 +583,33 @@ export async function processTaskCompletion(
                         `autoParseThinkTags=${autoParseThinkTags}`
                 );
                 assistant_message.beginCompletionRound(autoParseThinkTags);
+                const pluginInput = {
+                    taskId: task.task_id,
+                    workspace: task.getWorkspace() || undefined,
+                    modelAlias: requestModel
+                };
+                const requestChatContext = buildRequestChatContext(task.chat_context, {
+                    activeContext: requestActiveContext,
+                    ...(streamOptions ?? {}),
+                    ...(requestTailText ? { requestTailText } : {})
+                });
+                const pluginChatContext = await task.hooks.transformChatMessages(pluginInput, requestChatContext);
+                const pluginMessageOptions = {
+                    activeContext: {
+                        startIndex: 0,
+                        messages: pluginChatContext.messages
+                    },
+                    ...(requestTailText ? { requestTailText } : {})
+                };
+                const pluginParams = await task.hooks.applyChatParams(pluginInput, {
+                    reasoningEffort: requestOptions.reasoningEffort,
+                    maxCompletionTokens: requestOptions.maxCompletionTokens
+                });
                 await AgentExecutionInstrumentationRegistry.aroundModelRequest(
                     {
                         taskId: task.task_id,
-                        chatContext: task.chat_context,
-                        messageOptions: llmMessageOptions,
+                        chatContext: pluginChatContext,
+                        messageOptions: pluginMessageOptions,
                         assistantMessage: assistant_message,
                         model: requestModel,
                         metadata: {
@@ -594,20 +618,17 @@ export async function processTaskCompletion(
                         getUsage: () => assistant_message.usage
                     },
                     async (instrumentationHeaders) => {
-                        const tracedRequestOptions = instrumentationHeaders
-                            ? {
-                                  ...requestOptions,
-                                  extraHeaders: {
-                                      ...requestOptions.extraHeaders,
-                                      ...instrumentationHeaders
-                                  }
-                              }
-                            : requestOptions;
+                        const pluginRequestOptions: LLMRequestOptions = {
+                            ...requestOptions,
+                            ...pluginParams,
+                            hookContext: pluginInput,
+                            extraHeaderOverrides: instrumentationHeaders
+                        };
                         for await (const chunk_resp of LLM.streamComplete(
-                            task.chat_context,
+                            pluginChatContext,
                             requestModel,
-                            llmMessageOptions,
-                            tracedRequestOptions
+                            pluginMessageOptions,
+                            pluginRequestOptions
                         )) {
                             const responseError = getAssistantResponseError(chunk_resp);
                             if (responseError) {

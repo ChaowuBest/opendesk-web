@@ -41,7 +41,7 @@ import type { PermissionRequest } from './security/permission';
 import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
-import { GlobalHooks } from './hooks';
+import { GlobalHooks, type Hooks, type SkillLoadContext } from './hooks.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -134,6 +134,11 @@ export interface SkillFrontmatter {
     [key: string]: unknown;
 }
 
+export interface SkillAttribution {
+    sourceId: string;
+    sourceName: string;
+}
+
 /**
  * Skill 类表示一个 Agent Skill
  */
@@ -142,6 +147,10 @@ export class Skill {
     body: string;
     directory?: string;
     toolsets?: BaseToolset[];
+    /** 由外部生命周期管理器提供，只允许宿主展示和调用。 */
+    readOnly = false;
+    /** 由宿主贡献的 Skill 的来源标识，不写入 SKILL.md frontmatter。 */
+    attribution?: SkillAttribution;
     /**
      * 限定 Skill 仅向指定 Agent 暴露。
      * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
@@ -444,14 +453,16 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     }
 
     private async loadSkill(args: z.output<typeof LoadSkillSchema>, taskState?: TaskState): Promise<string> {
-        const skill = await SkillRegistry.getInstance().getSkillForAgent(
+        const loaded = await SkillRegistry.getInstance().loadSkillForAgent(
             args.bundleName,
             args.skillName,
-            taskState?.agentId
+            taskState?.agentId,
+            taskState?.hooks
         );
-        if (!skill) {
+        if (!loaded) {
             return '未找到该Skill';
         } else {
+            const { skill, content } = loaded;
             // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
             if (taskState && skill.env && Object.keys(skill.env).length > 0) {
                 Object.assign(taskState.harnessContext.environ, skill.env);
@@ -464,9 +475,8 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
             // 安全网关拦截归因改由 TaskState.getLoadedSkillsFromContext() 从
             // chat_context 的 LoadSkill ToolCall 实时反推，覆盖更全且随回退自动同步。
 
-            const fullContent = skill.getFullContent();
-            logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + fullContent);
-            return fullContent;
+            logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + content);
+            return content;
         }
     }
 }
@@ -773,8 +783,27 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 }
 
-interface SkillProvider {
+export interface SkillProvider {
     getSkills(): Promise<Skill[]>;
+}
+
+export interface LoadedSkillResult {
+    skill: Skill;
+    content: string;
+}
+
+export class SkillLoadBlockedError extends Error {
+    readonly code = 'skill.load.blocked';
+
+    constructor(
+        readonly bundleName: string,
+        readonly skillName: string,
+        message?: string,
+        readonly metadata?: Record<string, unknown>
+    ) {
+        super(message || `Skill load blocked: ${bundleName}/${skillName}`);
+        this.name = 'SkillLoadBlockedError';
+    }
 }
 
 export class SkillRegistry {
@@ -1014,6 +1043,45 @@ export class SkillRegistry {
     async getSkillForAgent(bundleName: string, skillName: string, agentId?: string): Promise<Skill | undefined> {
         const skill = await this.getSkill(bundleName, skillName);
         return skill && isSkillExposedToAgent(skill, agentId) ? skill : undefined;
+    }
+
+    async loadSkillForAgent(
+        bundleName: string,
+        skillName: string,
+        agentId?: string,
+        hooks: Hooks = GlobalHooks
+    ): Promise<LoadedSkillResult | undefined> {
+        const skill = await this.getSkillForAgent(bundleName, skillName, agentId);
+        if (!skill) return undefined;
+
+        const context: SkillLoadContext = {
+            bundleName,
+            skillName,
+            skillDirectory: skill.directory,
+            source: skill.attribution ? 'plugin' : skill.directory ? 'installed' : 'builtin',
+            frontmatter: { ...skill.frontmatter }
+        };
+        try {
+            const decision = await hooks.checkBeforeSkillLoad(context);
+            if (decision.operation === 'deny') {
+                throw new SkillLoadBlockedError(bundleName, skillName, decision.message, decision.metadata);
+            }
+        } catch (error) {
+            if (error instanceof SkillLoadBlockedError) throw error;
+            throw new SkillLoadBlockedError(
+                bundleName,
+                skillName,
+                error instanceof Error ? error.message : String(error)
+            );
+        }
+
+        const content = skill.getFullContent();
+        try {
+            await hooks.noticeAfterSkillLoad(context);
+        } catch (error) {
+            logger.error(`Hooks.noticeAfterSkillLoad failed: ${bundleName}/${skillName}`, error);
+        }
+        return { skill, content };
     }
 
     getToolset(): BaseToolset {

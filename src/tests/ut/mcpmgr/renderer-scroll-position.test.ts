@@ -44,11 +44,11 @@ describe('MCP manager installed list scroll position', () => {
         document.body.innerHTML = '';
         getServers = jest.fn();
         window.applicationAPI = {
-            call: (method: string) => {
-                if (method === 'getServers') return getServers();
+            call: jest.fn(),
+            callMainWorld: (method: string) => {
+                if (method === 'getServersForUI') return getServers();
                 return undefined;
             },
-            callMainWorld: jest.fn(),
             subscribe: jest.fn(),
             unsubscribe: jest.fn()
         };
@@ -137,5 +137,23 @@ describe('MCP manager installed list scroll position', () => {
         expect(widget.shadowRoot.querySelector('#detail-edit')).toBeNull();
         expect(widget.shadowRoot.querySelector('#detail-delete')).toBeNull();
         expect(widget.shadowRoot.querySelector('#detail-reconnect')).not.toBeNull();
+    });
+
+    test('renders provider-owned MCP servers without mutable controls', () => {
+        const widget = createWidget();
+        widget.servers[0].readOnly = true;
+        widget.servers[0].source = 'Review Helper';
+        widget.servers[0].providerId = 'pluginMgr';
+        widget.render();
+
+        const card = widget.shadowRoot.querySelector('[data-server-id="server-1"]');
+        expect(card.querySelector('[data-toggle-id]')).toBeNull();
+        expect(card.innerHTML).toContain('Review Helper');
+        expect(card.innerHTML).not.toContain('plugin:review-helper');
+
+        card.dispatchEvent(new window.Event('click'));
+        expect(widget.shadowRoot.querySelector('#detail-edit')).toBeNull();
+        expect(widget.shadowRoot.querySelector('#detail-delete')).toBeNull();
+        expect(widget.shadowRoot.querySelector('#detail-reconnect')).toBeNull();
     });
 });

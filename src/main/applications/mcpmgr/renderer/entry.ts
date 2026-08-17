@@ -28,6 +28,8 @@ interface McpServerState {
     env?: Record<string, string>;
     headers?: Record<string, string>;
     source?: string;
+    readOnly?: boolean;
+    providerId?: string;
     registryId?: string;
     registryMcpId?: string;
     agentIds?: string[];
@@ -668,7 +670,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     async loadServers() {
         this.serverError = '';
         try {
-            this.servers = await getAPI().call<McpServerState[]>('getServers');
+            this.servers = await getAPI().callMainWorld<McpServerState[]>('getServersForUI');
         } catch (err: any) {
             this.servers = [];
             this.serverError = err.message || '加载 MCP 失败';
@@ -954,10 +956,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             : server.enabled
               ? '已启用，点击禁用'
               : '已禁用，点击启用';
-        const scopeControl =
-            server.agentIds !== undefined
-                ? '<span class="tag-pill tag-gray">Agent</span>'
-                : `<label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
+        const scopeControl = server.readOnly
+            ? `<span class="tag-pill tag-gray">${escapeHtml(server.source || server.providerId || '')}</span>`
+            : server.agentIds !== undefined
+              ? '<span class="tag-pill tag-gray">Agent</span>'
+              : `<label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
                     <input type="checkbox" data-toggle-id="${escapeHtml(server.id)}" ${server.enabled ? 'checked' : ''}>
                     <span class="mcp-toggle-slider"></span>
                 </label>`;
@@ -1209,10 +1212,12 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             server.agentIds === undefined
                 ? '<button type="button" class="btn btn-sm" id="detail-edit">编辑</button><button type="button" class="btn btn-danger btn-sm" id="detail-delete">删除</button>'
                 : '';
-        const footer = `
-            ${server.status === 'connected' || server.status === 'error' ? '<button type="button" class="btn btn-sm" id="detail-reconnect">重新连接</button>' : ''}
-            ${mutableActions}
-            <button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>`;
+        const footer = server.readOnly
+            ? '<button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>'
+            : `
+                ${server.status === 'connected' || server.status === 'error' ? '<button type="button" class="btn btn-sm" id="detail-reconnect">重新连接</button>' : ''}
+                ${mutableActions}
+                <button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>`;
 
         this.showDetailDialog({
             title: server.name,

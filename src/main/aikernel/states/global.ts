@@ -94,6 +94,10 @@ class GlobalState {
         return GlobalState.instance;
     }
 
+    static getCurrentInstance(): GlobalState | undefined {
+        return GlobalState.instance ?? undefined;
+    }
+
     static load(): GlobalState | null {
         const taskManagerState = TaskManagerState.load();
         if (taskManagerState === null) {

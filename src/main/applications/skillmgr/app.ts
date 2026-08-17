@@ -49,8 +49,59 @@ import fs from 'fs';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
+import { runPluginAfterSkillInstall, runPluginBeforeSkillInstall } from '../pluginmgr/runtime/hooks.js';
+import type { PluginSkillInstallContext } from '../../../../packages/plugin/src/index.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
+
+interface SkillWorkerResponse<T> {
+    status: 'ok' | 'error';
+    data?: T;
+    message?: string;
+}
+
+export interface SkillInstallResult {
+    success: boolean;
+    name?: string;
+    error?: string;
+}
+
+export async function installSkillInMain<T extends SkillInstallResult>(
+    context: PluginSkillInstallContext,
+    install: () => Promise<T>
+): Promise<T> {
+    const decision = await runPluginBeforeSkillInstall(context);
+    if (decision.operation === 'deny') {
+        throw new Error(decision.message || t('skill.install.denied'));
+    }
+
+    const result = await install();
+    if (result.success) {
+        await runPluginAfterSkillInstall({ ...context, skillName: result.name ?? '' });
+    }
+    return result;
+}
+
+async function installSkillThroughWorker(
+    application: Pick<BaseApplication, 'callWorker'>,
+    context: PluginSkillInstallContext,
+    methodName: string,
+    ...args: unknown[]
+): Promise<{ name: string }> {
+    const decision = await runPluginBeforeSkillInstall(context);
+    if (decision.operation === 'deny') {
+        throw new Error(decision.message || t('skill.install.denied'));
+    }
+
+    const response = (await application.callWorker(methodName, ...args)) as SkillWorkerResponse<{ name?: string }>;
+    if (response.status !== 'ok') {
+        throw new Error(response.message || t('skill.install.failed'));
+    }
+
+    const name = response.data?.name ?? '';
+    await runPluginAfterSkillInstall({ ...context, skillName: name });
+    return { name };
+}
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -84,6 +135,11 @@ export class SkillMgrApplication extends BaseApplication {
     static notifySkillsChanged(bundleName: string = 'skillmgr'): void {
         AISkillRegistry.getInstance().clearCache(bundleName);
         SkillMgrApplication.notifyRefreshListeners();
+    }
+
+    notifyExternalSkillsChanged(bundleName: string): void {
+        SkillMgrApplication.notifySkillsChanged(bundleName);
+        this.sendEventToSubscribers('skillsChanged');
     }
 
     constructor() {
@@ -154,10 +210,16 @@ export class SkillMgrApplication extends BaseApplication {
                     const stat = fs.statSync(resolved);
                     if (stat.isDirectory()) {
                         console.log(`正在从本地目录安装技能: ${resolved}`);
-                        result = await skillInstallManager.installFromDirectory(resolved, { force });
+                        result = await installSkillInMain(
+                            { source: 'directory', path: resolved, force },
+                            async () => await skillInstallManager.installFromDirectory(resolved, { force })
+                        );
                     } else if (stat.isFile() && resolved.toLowerCase().endsWith('.zip')) {
                         console.log(`正在从本地 zip 文件安装技能: ${resolved}`);
-                        result = await skillInstallManager.installFromLocalZip(resolved, undefined, { force });
+                        result = await installSkillInMain(
+                            { source: 'zip', path: resolved, force },
+                            async () => await skillInstallManager.installFromLocalZip(resolved, undefined, { force })
+                        );
                     } else {
                         console.error('✗ 本地文件必须是目录或 .zip 格式');
                         process.exit(1);
@@ -165,7 +227,10 @@ export class SkillMgrApplication extends BaseApplication {
                     }
                 } else if (source.startsWith('http://') || source.startsWith('https://')) {
                     console.log(`正在从 URL 下载并安装技能: ${source}`);
-                    result = await skillInstallManager.installFromUrl(source, { force });
+                    result = await installSkillInMain(
+                        { source: 'url', url: source, force },
+                        async () => await skillInstallManager.installFromUrl(source, { force })
+                    );
                 } else {
                     console.error(`✗ 无法识别来源: ${source}`);
                     console.error('  支持: 本地目录、本地 .zip 文件、http(s):// URL');
@@ -501,6 +566,8 @@ export class SkillMgrApplication extends BaseApplication {
             name: string;
             description: string;
             bundleName: string;
+            pluginId?: string;
+            pluginName?: string;
             tools: Array<{
                 name: string;
                 description: string;
@@ -509,6 +576,7 @@ export class SkillMgrApplication extends BaseApplication {
             directory?: string;
             license?: string;
             compatibility?: string;
+            readOnly: boolean;
         }> = [];
         for (const [bundleName, skills] of allSkills) {
             for (const skill of skills) {
@@ -564,10 +632,13 @@ export class SkillMgrApplication extends BaseApplication {
                     name: skill.frontmatter.name,
                     description: skill.frontmatter.description || '',
                     bundleName,
+                    pluginId: skill.attribution?.sourceId,
+                    pluginName: skill.attribution?.sourceName,
                     tools,
                     directory: skill.directory || undefined,
                     license: skill.frontmatter.license || undefined,
                     compatibility: skill.frontmatter.compatibility || undefined,
+                    readOnly: skill.readOnly,
                     enabled: getSkillStatus(skillId) && !blacklisted,
                     blacklisted,
                     blacklistEvidence: blacklistData?.evidence || '',
@@ -582,8 +653,11 @@ export class SkillMgrApplication extends BaseApplication {
     /**
      * 从 zip 文件路径安装技能，供渲染进程调用
      */
-    async installSkillFromZip(zipPath: string) {
-        const result = await skillInstallManager.installFromLocalZip(zipPath);
+    async installSkillFromZip(zipPath: string, skillRelPath?: string) {
+        const result = await installSkillInMain(
+            { source: 'zip', path: zipPath, skillRelPath },
+            async () => await skillInstallManager.installFromLocalZip(zipPath, skillRelPath)
+        );
         if (result.success) {
             skillRegistry.refresh();
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
@@ -591,21 +665,49 @@ export class SkillMgrApplication extends BaseApplication {
         return result;
     }
 
+    async addFromZip(zipPath: string, skillRelPath?: string) {
+        return await installSkillThroughWorker(
+            this,
+            { source: 'zip', path: zipPath, skillRelPath },
+            'addFromZip',
+            zipPath,
+            skillRelPath
+        );
+    }
+
     async addSkillFromDirectory(sourceDirectory: string) {
-        const result = await skillInstallManager.installFromDirectory(sourceDirectory);
+        const result = await installSkillInMain(
+            { source: 'directory', path: sourceDirectory },
+            async () => await skillInstallManager.installFromDirectory(sourceDirectory)
+        );
         if (result.success) {
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
         return result;
     }
 
-    addSkillFromUrl(url: string) {
-        return skillInstallManager.installFromUrl(url).then((result) => {
-            if (result.success) {
-                SkillMgrApplication.notifySkillsChanged(this.bundleName);
-            }
-            return result;
-        });
+    async addFromDirectory(sourceDirectory: string) {
+        return await installSkillThroughWorker(
+            this,
+            { source: 'directory', path: sourceDirectory },
+            'addFromDirectory',
+            sourceDirectory
+        );
+    }
+
+    async addSkillFromUrl(url: string) {
+        const result = await installSkillInMain(
+            { source: 'url', url },
+            async () => await skillInstallManager.installFromUrl(url)
+        );
+        if (result.success) {
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
+        }
+        return result;
+    }
+
+    async addFromUrl(url: string) {
+        return await installSkillThroughWorker(this, { source: 'url', url }, 'addFromUrl', url);
     }
 
     async searchSkillFromRegistry(keyword: string) {
@@ -618,10 +720,14 @@ export class SkillMgrApplication extends BaseApplication {
 
     async addSkillFromRegistry(skillName: string, registryName: string, force: boolean = false) {
         const config = this.getConfig() as { skillsmp_api_key?: string } | undefined;
-        const result = await skillInstallManager.installSkillFromRegistryByName(registryName, skillName, {
-            force,
-            skillsmpApiKey: config?.skillsmp_api_key
-        });
+        const result = await installSkillInMain(
+            { source: 'registry', url: `${registryName}:${skillName}`, force },
+            async () =>
+                await skillInstallManager.installSkillFromRegistryByName(registryName, skillName, {
+                    force,
+                    skillsmpApiKey: config?.skillsmp_api_key
+                })
+        );
         if (result.success) {
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
@@ -629,12 +735,14 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async installFromRegistry(installUrl: string, force: boolean = false, customName?: string) {
-        const result = await skillInstallManager.installFromRegistryInstallUrl(installUrl, { force, customName });
-        if (!result.success) {
-            throw new Error(result.error);
-        }
-        SkillMgrApplication.notifySkillsChanged(this.bundleName);
-        return { name: result.name ?? '' };
+        return await installSkillThroughWorker(
+            this,
+            { source: 'registry', url: installUrl, force, customName },
+            'installFromRegistry',
+            installUrl,
+            force,
+            customName
+        );
     }
 
     deleteSkill(skillId: string) {

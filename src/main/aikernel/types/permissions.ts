@@ -13,7 +13,7 @@
 export type PermissionEffect = 'allow' | 'deny' | 'ask';
 
 /** Permission resource category. `*` matches every resource type. */
-export type PermissionResourceType = 'file' | 'network' | 'skill' | '*';
+export type PermissionResourceType = 'file' | 'network' | 'skill' | 'plugin' | '*';
 
 /** Permission action. `*` matches every action. */
 export type PermissionAction = 'read' | 'write' | 'execute' | 'access' | '*';

@@ -26,6 +26,7 @@ import fs from 'fs';
 import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
+import { runPluginShellEnv } from '../pluginmgr/runtime/hooks.js';
 import { Setting } from '../../utils/setting.js';
 import {
     BackgroundProcessManager,
@@ -225,7 +226,8 @@ async function executeShellCommand(opts: {
         isKilledByStop
     } = opts;
 
-    const env = buildChildProcessEnv(taskState?.harnessContext.environ);
+    const baseEnv = buildChildProcessEnv(taskState?.harnessContext.environ);
+    const env = await runPluginShellEnv(taskState, { shell: shellPath, command }, baseEnv);
     const startTime = Date.now();
     const proc = spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });
     proc.stdin?.end();

@@ -50,6 +50,7 @@ export type {
     PluginStatus,
     RecordPluginErrorOptions
 } from './runtime/host.js';
+export { initializePluginHost, disposePluginHost, reloadPluginHost } from './runtime/bootstrap.js';
 export { getRuntimePluginDirectories, setRuntimePluginDirectories } from './management/config.js';
 export { getPluginRuntimeEntry, setPluginOptions, setPluginGrantedCapabilities } from './management/policy.js';
 export { discoverPlugins, verifyPluginRecord } from './discovery/discovery.js';
@@ -75,4 +76,20 @@ export type {
     PluginVerification
 } from './discovery/discovery.js';
 export type { PluginRegistryData, PluginRegistryRecord, PluginSourceKind } from './management/registry.js';
+export {
+    runPluginChatHeaders,
+    runPluginChatMessage,
+    runPluginChatMessagesTransform,
+    runPluginChatParams,
+    runPluginBeforeSkillInstall,
+    runPluginAfterSkillInstall
+} from './runtime/hooks.js';
+export { runPluginPermissionAsk, runPluginShellEnv } from './runtime/hooks.js';
+export {
+    applyPluginToolDefinitions,
+    CompositeToolsetProvider,
+    PluginToolsetProvider,
+    combineToolsetProviders
+} from './runtime/tool-provider.js';
+export { syncPluginTuiCommands } from './runtime/commands.js';
 export { formatPluginInstallError } from './management/errors.js';

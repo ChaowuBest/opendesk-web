@@ -349,6 +349,10 @@ async function ensureServerTaskHarness(
     registerServerSubTaskLifecycle(task, permissionRuntime);
     await ensureMcpWorkspace(workspace);
 
+    if (workspaceChanged) {
+        await task.refreshToolsets?.();
+    }
+
     if (agentChanged || workspaceChanged || !task.chat_context?.system_prompt) {
         await task.rebuildSystemPrompt();
     }

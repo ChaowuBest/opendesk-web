@@ -40,6 +40,8 @@ export interface McpToolInfo {
 }
 
 export interface McpServerState extends McpServerConfig {
+    readOnly?: boolean;
+    providerId?: string;
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     error?: string;
     tools: { name: string; description: string; inputSchema?: object }[];

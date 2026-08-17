@@ -189,7 +189,7 @@ export interface BaseCompactSeparatorMessage {
 }
 
 /**
- * A mutable, JSON-serializable message snapshot exposed to request-time integrations.
+ * The mutable, JSON-serializable message snapshot exposed to request-time plugin hooks.
  * It intentionally excludes ChatContext methods, toolsets and other Aikernel runtime state.
  */
 export type ChatMessage = BaseUserMessage | BaseAssistantMessage | BaseCompactSeparatorMessage;
