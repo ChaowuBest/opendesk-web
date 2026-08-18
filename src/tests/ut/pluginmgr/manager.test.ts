@@ -1,0 +1,660 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import AdmZip from 'adm-zip';
+import { jest } from '@jest/globals';
+import { create as createTar } from 'tar';
+import {
+    installPlugin,
+    listInstalledPlugins,
+    resolveNpmInvocation,
+    setPluginEnabled,
+    uninstallPlugin,
+    verifyInstalledPlugin
+} from '../../../main/applications/pluginmgr/management/manager.js';
+import { discoverPlugins } from '../../../main/applications/pluginmgr/discovery/discovery.js';
+import { getPluginsDirectory, getPluginTrashDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
+import { getPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
+
+async function writePluginTgz(archivePath: string, pluginDirectory: string): Promise<void> {
+    await createTar(
+        {
+            cwd: path.dirname(pluginDirectory),
+            file: archivePath,
+            gzip: true
+        },
+        [path.basename(pluginDirectory)]
+    );
+}
+
+describe('pluginmgr managed installation', () => {
+    let configDirectory: string;
+    let npmArgs: string[];
+
+    beforeEach(() => {
+        configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-install-'));
+        npmArgs = [];
+    });
+
+    afterEach(() => {
+        fs.rmSync(configDirectory, { recursive: true, force: true });
+    });
+
+    const simulateNpmInstall = async (args: string[], stagingDirectory: string): Promise<void> => {
+        npmArgs = args;
+        const packageName = '@example/review-helper';
+        const pluginDirectory = path.join(stagingDirectory, 'node_modules', '@example', 'review-helper');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(stagingDirectory, 'package.json'),
+            JSON.stringify({
+                name: 'opendesk-plugin-staging',
+                private: true,
+                version: '1.0.0',
+                dependencies: {
+                    [packageName]: '1.0.0'
+                }
+            })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'package.json'),
+            JSON.stringify({
+                name: packageName,
+                version: '1.0.0'
+            })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'review-helper',
+                entry: './index.js',
+                apiVersion: 1,
+                capabilities: ['tool']
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.js'), `export default { id: 'review-helper', setup() {} };`);
+    };
+
+    test('在隔离前缀中安装并写入注册表', async () => {
+        const result = await installPlugin('@example/review-helper@1.0.0', {
+            configDirectory,
+            runNpm: simulateNpmInstall
+        });
+
+        expect(result).toEqual({ success: true, id: 'review-helper' });
+        expect(npmArgs).toContain('--ignore-scripts');
+        expect(npmArgs).toContain('--install-links=true');
+        expect(listInstalledPlugins(configDirectory)).toEqual([
+            expect.objectContaining({
+                id: 'review-helper',
+                source: 'managed',
+                path: path.join('review-helper', 'node_modules', '@example', 'review-helper'),
+                enabled: true
+            })
+        ]);
+        expect(
+            fs.existsSync(
+                path.join(
+                    getPluginsDirectory(configDirectory),
+                    'review-helper',
+                    'node_modules',
+                    '@example',
+                    'review-helper'
+                )
+            )
+        ).toBe(true);
+        expect(verifyInstalledPlugin('review-helper', configDirectory)).toMatchObject({
+            integrityStatus: 'verified',
+            allowed: true
+        });
+    });
+
+    test('直接安装仅包含 manifest 的插件目录而不调用 npm', async () => {
+        const sourceDirectory = path.join(configDirectory, 'external-plugin');
+        const skillDirectory = path.join(sourceDirectory, 'skills', 'review');
+        let npmCalled = false;
+        const runNpm = async () => {
+            npmCalled = true;
+            throw new Error('npm should not run for a plugin directory');
+        };
+        fs.mkdirSync(skillDirectory, { recursive: true });
+        fs.writeFileSync(path.join(sourceDirectory, 'index.mjs'), 'export default {};');
+        fs.writeFileSync(path.join(skillDirectory, 'SKILL.md'), '# Review');
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'test-external-plugin',
+                version: '1.0.0',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: ['skill'],
+                contributions: {
+                    skills: ['./skills/review']
+                }
+            })
+        );
+
+        const result = await installPlugin(sourceDirectory, {
+            configDirectory,
+            runNpm
+        });
+
+        expect(result).toEqual({ success: true, id: 'test-external-plugin' });
+        expect(npmCalled).toBe(false);
+        expect(getPluginRecord('test-external-plugin', configDirectory)).toMatchObject({
+            source: 'managed',
+            path: 'test-external-plugin',
+            spec: sourceDirectory
+        });
+        expect(
+            fs.existsSync(
+                path.join(getPluginsDirectory(configDirectory), 'test-external-plugin', 'skills', 'review', 'SKILL.md')
+            )
+        ).toBe(true);
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'test-external-plugin', 'plugin'))).toBe(
+            false
+        );
+    });
+
+    test('直接安装带 package.json 的插件目录仍不调用 npm', async () => {
+        const sourceDirectory = path.join(configDirectory, 'local-package-plugin');
+        let npmCalled = false;
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'package.json'),
+            JSON.stringify({
+                name: 'local-package-plugin',
+                version: '1.0.0',
+                dependencies: {
+                    'runtime-dependency': '1.0.0'
+                }
+            })
+        );
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'local-package-plugin',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(sourceDirectory, 'index.mjs'), 'export default {};');
+
+        const result = await installPlugin(sourceDirectory, {
+            configDirectory,
+            runNpm: async () => {
+                npmCalled = true;
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'local-package-plugin' });
+        expect(npmCalled).toBe(false);
+    });
+
+    test('从本地 ZIP 安装插件并去除压缩包根目录层级', async () => {
+        const zipPath = path.join(configDirectory, 'review-helper.zip');
+        const archive = new AdmZip();
+        archive.addFile(
+            'review-helper/package.json',
+            Buffer.from(
+                JSON.stringify({
+                    name: 'zip-review-helper',
+                    version: '1.0.0',
+                    dependencies: {
+                        'runtime-dependency': '1.0.0'
+                    }
+                })
+            )
+        );
+        archive.addFile(
+            'review-helper/opendesk.plugin.json',
+            Buffer.from(
+                JSON.stringify({
+                    schemaVersion: 1,
+                    id: 'zip-review-helper',
+                    entry: './index.mjs',
+                    apiVersion: 1,
+                    capabilities: []
+                })
+            )
+        );
+        archive.addFile(
+            'review-helper/index.mjs',
+            Buffer.from("export default { id: 'zip-review-helper', setup() {} };\n")
+        );
+        archive.writeZip(zipPath);
+
+        let installedZipDependencies = false;
+        const result = await installPlugin(zipPath, {
+            configDirectory,
+            runNpm: async (args) => {
+                installedZipDependencies = true;
+                npmArgs = args;
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'zip-review-helper' });
+        expect(installedZipDependencies).toBe(true);
+        expect(npmArgs).toEqual([
+            'install',
+            '--save-exact',
+            '--install-links=true',
+            '--no-bin-links',
+            '--omit=dev',
+            '--no-optional',
+            '--audit=false',
+            '--ignore-scripts',
+            '--package-lock=false'
+        ]);
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'zip-review-helper', 'index.mjs'))).toBe(
+            true
+        );
+        expect(
+            fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'zip-review-helper', 'review-helper'))
+        ).toBe(false);
+    });
+
+    test('从 URL ZIP 安装插件时安装运行时依赖', async () => {
+        const archive = new AdmZip();
+        archive.addFile(
+            'package.json',
+            Buffer.from(
+                JSON.stringify({
+                    name: 'url-zip-review-helper',
+                    version: '1.0.0',
+                    dependencies: {
+                        'runtime-dependency': '1.0.0'
+                    }
+                })
+            )
+        );
+        archive.addFile(
+            'opendesk.plugin.json',
+            Buffer.from(
+                JSON.stringify({
+                    schemaVersion: 1,
+                    id: 'url-zip-review-helper',
+                    entry: './index.mjs',
+                    apiVersion: 1,
+                    capabilities: []
+                })
+            )
+        );
+        archive.addFile('index.mjs', Buffer.from("export default { id: 'url-zip-review-helper', setup() {} };\n"));
+        let npmCalled = false;
+
+        const result = await installPlugin('https://example.com/url-review-helper.zip', {
+            configDirectory,
+            fetch: async () => new Response(archive.toBuffer(), { status: 200 }),
+            runNpm: async (args) => {
+                npmCalled = true;
+                expect(args).toContain('--omit=dev');
+                expect(args).toContain('--ignore-scripts');
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'url-zip-review-helper' });
+        expect(npmCalled).toBe(true);
+    });
+
+    test('无运行时依赖的 ZIP 不要求 npm', async () => {
+        const zipPath = path.join(configDirectory, 'no-dependencies.zip');
+        const archive = new AdmZip();
+        archive.addFile('package.json', Buffer.from(JSON.stringify({ name: 'zip-no-dependencies', version: '1.0.0' })));
+        archive.addFile(
+            'opendesk.plugin.json',
+            Buffer.from(
+                JSON.stringify({
+                    schemaVersion: 1,
+                    id: 'zip-no-dependencies',
+                    entry: './index.mjs',
+                    apiVersion: 1,
+                    capabilities: []
+                })
+            )
+        );
+        archive.addFile('index.mjs', Buffer.from("export default { id: 'zip-no-dependencies', setup() {} };\n"));
+        archive.writeZip(zipPath);
+
+        const result = await installPlugin(zipPath, {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm should not run for a ZIP without runtime dependencies');
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'zip-no-dependencies' });
+    });
+
+    test('带运行时依赖的本地 TGZ 与 ZIP 使用相同的依赖安装流程', async () => {
+        const sourceRoot = path.join(configDirectory, 'tgz-source');
+        const pluginDirectory = path.join(sourceRoot, 'package');
+        const tgzPath = path.join(configDirectory, 'review-helper.tgz');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'package.json'),
+            JSON.stringify({
+                name: 'tgz-review-helper',
+                version: '1.0.0',
+                dependencies: {
+                    'runtime-dependency': '1.0.0'
+                }
+            })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'tgz-review-helper',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), 'export default {};');
+        await writePluginTgz(tgzPath, pluginDirectory);
+
+        let dependencyInstallDirectory = '';
+        const result = await installPlugin(tgzPath, {
+            configDirectory,
+            runNpm: async (args, cwd) => {
+                npmArgs = args;
+                dependencyInstallDirectory = cwd;
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'tgz-review-helper' });
+        expect(npmArgs).toEqual([
+            'install',
+            '--save-exact',
+            '--install-links=true',
+            '--no-bin-links',
+            '--omit=dev',
+            '--no-optional',
+            '--audit=false',
+            '--ignore-scripts',
+            '--package-lock=false'
+        ]);
+        expect(path.basename(dependencyInstallDirectory)).toMatch(/^install-/);
+        expect(getPluginRecord('tgz-review-helper', configDirectory)).toMatchObject({
+            source: 'managed',
+            path: 'tgz-review-helper',
+            spec: tgzPath
+        });
+    });
+
+    test('无运行时依赖的 URL TGZ 不要求 npm', async () => {
+        const sourceRoot = path.join(configDirectory, 'url-tgz-source');
+        const pluginDirectory = path.join(sourceRoot, 'package');
+        const tgzPath = path.join(configDirectory, 'url-review-helper.tgz');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'package.json'),
+            JSON.stringify({ name: 'url-tgz-review-helper', version: '1.0.0' })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'url-tgz-review-helper',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), 'export default {};');
+        await writePluginTgz(tgzPath, pluginDirectory);
+        const result = await installPlugin('https://example.com/url-review-helper.tgz', {
+            configDirectory,
+            fetch: async () => new Response(fs.readFileSync(tgzPath), { status: 200 }),
+            runNpm: async () => {
+                throw new Error('npm should not run for a TGZ without runtime dependencies');
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'url-tgz-review-helper' });
+    });
+
+    test('Windows 通过 node.exe 启动 npm CLI 而不直接 spawn npm.cmd', () => {
+        const nodeDirectory = path.join(configDirectory, 'nodejs');
+        const nodeExecutable = path.join(nodeDirectory, 'node.exe');
+        const npmCli = path.join(nodeDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+        fs.mkdirSync(path.dirname(npmCli), { recursive: true });
+        fs.writeFileSync(nodeExecutable, '');
+        fs.writeFileSync(npmCli, '');
+
+        expect(
+            resolveNpmInvocation(['install', '@example/plugin'], 'win32', {
+                Path: nodeDirectory
+            })
+        ).toEqual({
+            executable: nodeExecutable,
+            args: [npmCli, 'install', '@example/plugin']
+        });
+    });
+
+    test.each(['darwin', 'openharmony'] as const)('%s 从 PATH 解析可执行的 npm', (platform) => {
+        const binDirectory = path.join(configDirectory, `${platform}-bin`);
+        const npmExecutable = path.join(binDirectory, 'npm');
+        fs.mkdirSync(binDirectory, { recursive: true });
+        fs.writeFileSync(npmExecutable, '');
+        fs.chmodSync(npmExecutable, 0o755);
+
+        expect(
+            resolveNpmInvocation(['install', '@example/plugin'], platform, {
+                PATH: binDirectory
+            })
+        ).toEqual({
+            executable: npmExecutable,
+            args: ['install', '@example/plugin']
+        });
+    });
+
+    test('将无法获取安装源归类为用户可理解的错误', async () => {
+        const result = await installPlugin('missing-package', {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm ERR! code E404');
+            }
+        });
+
+        expect(result).toMatchObject({
+            success: false,
+            errorCode: 'source_unavailable'
+        });
+        expect(result.error).toContain('E404');
+    });
+
+    test('识别缺少 OpenDesk 声明的普通 npm 包', async () => {
+        const result = await installPlugin('ordinary-package', {
+            configDirectory,
+            runNpm: async (_args, stagingDirectory) => {
+                const pluginDirectory = path.join(stagingDirectory, 'node_modules', 'ordinary-package');
+                fs.mkdirSync(pluginDirectory, { recursive: true });
+                fs.writeFileSync(
+                    path.join(stagingDirectory, 'package.json'),
+                    JSON.stringify({
+                        name: 'opendesk-plugin-staging',
+                        private: true,
+                        version: '1.0.0',
+                        dependencies: {
+                            'ordinary-package': '1.0.0'
+                        }
+                    })
+                );
+                fs.writeFileSync(
+                    path.join(pluginDirectory, 'package.json'),
+                    JSON.stringify({
+                        name: 'ordinary-package',
+                        version: '1.0.0'
+                    })
+                );
+            }
+        });
+
+        expect(result).toMatchObject({
+            success: false,
+            errorCode: 'not_opendesk_plugin'
+        });
+    });
+
+    test('识别不兼容的插件 API 版本', async () => {
+        const result = await installPlugin('future-plugin', {
+            configDirectory,
+            runNpm: async (_args, stagingDirectory) => {
+                const pluginDirectory = path.join(stagingDirectory, 'node_modules', 'future-plugin');
+                fs.mkdirSync(pluginDirectory, { recursive: true });
+                fs.writeFileSync(
+                    path.join(stagingDirectory, 'package.json'),
+                    JSON.stringify({
+                        name: 'opendesk-plugin-staging',
+                        private: true,
+                        version: '1.0.0',
+                        dependencies: {
+                            'future-plugin': '1.0.0'
+                        }
+                    })
+                );
+                fs.writeFileSync(
+                    path.join(pluginDirectory, 'package.json'),
+                    JSON.stringify({
+                        name: 'future-plugin',
+                        version: '1.0.0'
+                    })
+                );
+                fs.writeFileSync(
+                    path.join(pluginDirectory, 'opendesk.plugin.json'),
+                    JSON.stringify({
+                        schemaVersion: 1,
+                        entry: './index.js',
+                        apiVersion: 999,
+                        capabilities: []
+                    })
+                );
+                fs.writeFileSync(path.join(pluginDirectory, 'index.js'), 'export default {};');
+            }
+        });
+
+        expect(result).toMatchObject({
+            success: false,
+            errorCode: 'incompatible_api'
+        });
+    });
+
+    test('启停插件并将卸载内容移动到回收目录', async () => {
+        await installPlugin('@example/review-helper@1.0.0', {
+            configDirectory,
+            runNpm: simulateNpmInstall
+        });
+
+        expect(setPluginEnabled('review-helper', false, configDirectory)).toBe(true);
+        expect(listInstalledPlugins(configDirectory)[0]?.enabled).toBe(false);
+        await expect(uninstallPlugin('review-helper', configDirectory)).resolves.toEqual({ success: true });
+        expect(listInstalledPlugins(configDirectory)).toEqual([]);
+        expect(fs.readdirSync(getPluginTrashDirectory(configDirectory))).toHaveLength(1);
+    });
+
+    test('Windows 暂时锁定托管目录时重试移动到回收目录', async () => {
+        await installPlugin('@example/review-helper@1.0.0', {
+            configDirectory,
+            runNpm: simulateNpmInstall
+        });
+        const error = new Error('directory is temporarily locked') as NodeJS.ErrnoException;
+        error.code = 'EPERM';
+        const rename = jest.spyOn(fs.promises, 'rename').mockRejectedValueOnce(error);
+        let attempts = 0;
+
+        try {
+            await expect(uninstallPlugin('review-helper', configDirectory)).resolves.toEqual({ success: true });
+            attempts = rename.mock.calls.length;
+        } finally {
+            rename.mockRestore();
+        }
+
+        expect(attempts).toBe(2);
+        expect(listInstalledPlugins(configDirectory)).toEqual([]);
+    });
+
+    test('为自动发现的本地插件保存启停策略', () => {
+        const pluginDirectory = path.join(getPluginsDirectory(configDirectory), 'local-review');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'local-review',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), `export default { id: 'local-review', setup() {} };`);
+
+        expect(setPluginEnabled('local-review', false, configDirectory)).toBe(true);
+        expect(getPluginRecord('local-review', configDirectory)).toMatchObject({
+            id: 'local-review',
+            source: 'local',
+            path: 'local-review',
+            enabled: false
+        });
+        expect(discoverPlugins({ configDirectory }).candidates).toEqual([]);
+
+        expect(setPluginEnabled('local-review', true, configDirectory)).toBe(true);
+        expect(discoverPlugins({ configDirectory }).candidates).toEqual([
+            expect.objectContaining({
+                id: 'local-review',
+                source: 'local',
+                spec: pluginDirectory
+            })
+        ]);
+    });
+
+    test('为只读内置插件保存启停策略而不移动插件文件', () => {
+        const builtinDirectory = path.join(configDirectory, 'builtin');
+        const pluginDirectory = path.join(builtinDirectory, 'builtin-review');
+        const previous = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'builtin-review',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'index.mjs'),
+            `export default { id: 'builtin-review', setup() {} };`
+        );
+        process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = builtinDirectory;
+
+        try {
+            expect(setPluginEnabled('builtin-review', false, configDirectory)).toBe(true);
+            expect(getPluginRecord('builtin-review', configDirectory)).toMatchObject({
+                id: 'builtin-review',
+                source: 'builtin',
+                path: 'builtin-review',
+                enabled: false
+            });
+            expect(discoverPlugins({ configDirectory, builtinDirectory }).candidates).toEqual([]);
+            expect(fs.existsSync(pluginDirectory)).toBe(true);
+
+            expect(setPluginEnabled('builtin-review', true, configDirectory)).toBe(true);
+            expect(discoverPlugins({ configDirectory, builtinDirectory }).candidates).toEqual([
+                expect.objectContaining({
+                    id: 'builtin-review',
+                    source: 'builtin'
+                })
+            ]);
+        } finally {
+            if (previous === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+            else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previous;
+        }
+    });
+});

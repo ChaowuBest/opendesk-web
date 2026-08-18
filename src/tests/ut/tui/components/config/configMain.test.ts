@@ -38,4 +38,13 @@ describe('ConfigMainPage', () => {
         expect(text).toContain('Display Settings');
         expect(text.indexOf('Task Settings')).toBeLessThan(text.indexOf('Display Settings'));
     });
+
+    test('includes plugin runtime status entry', () => {
+        const page = new ConfigMainPage(createOpenDeskTuiMock(), jest.fn());
+
+        const text = page.render(100).join('\n');
+
+        expect(text).toContain('Plugin Center');
+        expect(text).toContain('View and manage discovered plugins');
+    });
 });

@@ -2,11 +2,15 @@
 
 set -e
 
-# Function to restore package.json if backup exists
+# Restore manifests changed for a nightly release.
 restore_package_json() {
   if [ -f "package.json.backup" ]; then
     echo "Restoring original package.json..."
     mv package.json.backup package.json
+  fi
+  if [ -f "packages/plugin/package.json.backup" ]; then
+    echo "Restoring original plugin package.json..."
+    mv packages/plugin/package.json.backup packages/plugin/package.json
   fi
 }
 
@@ -16,6 +20,19 @@ trap restore_package_json EXIT
 # Parse command line arguments
 RELEASE_TYPE=""
 USE_YESTERDAY=false
+PUBLISH=false
+DRY_RUN=false
+
+print_usage() {
+  echo "Usage: $0 --stable|--nightly [--yesterday] [--publish] [--dry-run]"
+  echo ""
+  echo "  --stable     Build stable CLI and plugin SDK release packages."
+  echo "  --nightly    Build nightly CLI and plugin SDK release packages."
+  echo "  --yesterday Use yesterday's date for a nightly release."
+  echo "  --publish    Publish the CLI first, then the plugin SDK."
+  echo "  --dry-run    Prepare both packages and run npm publish --dry-run; implies --publish."
+}
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     --stable)
@@ -30,9 +47,22 @@ while [[ $# -gt 0 ]]; do
       USE_YESTERDAY=true
       shift
       ;;
+    --publish)
+      PUBLISH=true
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      PUBLISH=true
+      shift
+      ;;
+    --help|-h)
+      print_usage
+      exit 0
+      ;;
     *)
       echo "ERROR: Unknown option $1"
-      echo "Usage: $0 --stable|--nightly [--yesterday]"
+      print_usage
       exit 1
       ;;
   esac
@@ -41,7 +71,7 @@ done
 # Validate that either --stable or --nightly is provided
 if [ -z "$RELEASE_TYPE" ]; then
   echo "ERROR: You must specify either --stable or --nightly"
-  echo "Usage: $0 --stable|--nightly [--yesterday]"
+  print_usage
   exit 1
 fi
 
@@ -54,8 +84,12 @@ fi
 # Set release directory
 if [ "$RELEASE_TYPE" = "nightly" ]; then
   RELEASE_DIR="dist/cli-release-nightly"
+  PLUGIN_RELEASE_DIR="dist/plugin-release-nightly"
+  NPM_TAG="nightly"
 else
   RELEASE_DIR="dist/cli-release"
+  PLUGIN_RELEASE_DIR="dist/plugin-release"
+  NPM_TAG="latest"
 fi
 
 echo "=== Building OpenDesk CLI $RELEASE_TYPE Release ==="
@@ -70,6 +104,19 @@ if [ -d "$RELEASE_DIR" ]; then
     rm -rf "$RELEASE_DIR"
   else
     echo "Aborting. Please manually delete $RELEASE_DIR and try again."
+    exit 1
+  fi
+fi
+
+if [ -d "$PLUGIN_RELEASE_DIR" ]; then
+  echo "WARNING: $PLUGIN_RELEASE_DIR directory already exists!"
+  read -p "Do you want to delete it and continue? (Y/n): " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Deleting existing $PLUGIN_RELEASE_DIR directory..."
+    rm -rf "$PLUGIN_RELEASE_DIR"
+  else
+    echo "Aborting. Please manually delete $PLUGIN_RELEASE_DIR and try again."
     exit 1
   fi
 fi
@@ -94,6 +141,14 @@ if [ "$RELEASE_TYPE" = "nightly" ]; then
   # Directly modify package.json instead of using npm version
   sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$NIGHTLY_VERSION\"/" package.json
   rm -f package.json.bak
+
+  cp packages/plugin/package.json packages/plugin/package.json.backup
+  PLUGIN_CURRENT_VERSION=$(grep '"version"' packages/plugin/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
+  PLUGIN_CLEAN_VERSION=$(echo "$PLUGIN_CURRENT_VERSION" | sed 's/-nightly-.*$//')
+  PLUGIN_NIGHTLY_VERSION="${PLUGIN_CLEAN_VERSION}-nightly-${DATE}"
+  echo "Setting plugin nightly version: $PLUGIN_NIGHTLY_VERSION"
+  sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_NIGHTLY_VERSION\"/" packages/plugin/package.json
+  rm -f packages/plugin/package.json.bak
 fi
 
 # Step 2: Build CLI
@@ -168,22 +223,26 @@ cat > "$RELEASE_DIR/package.json" << EOF
 }
 EOF
 
-# Step 5: Create .npmrc to ensure publishing to official npm registry
+# Step 5: Create .npmrc for an actual npm publish
 if [ "$RELEASE_TYPE" = "nightly" ]; then
   echo "Step 5: Creating .npmrc..."
 else
   echo "Step 4: Creating .npmrc..."
 fi
-if [ -z "$NPM_TOKEN" ]; then
+if [ "$DRY_RUN" = false ] && [ -z "$NPM_TOKEN" ]; then
   echo "ERROR: NPM_TOKEN environment variable is not set!"
-  echo "Please set NPM_TOKEN before running this script."
+  echo "Please set NPM_TOKEN before publishing. Use --dry-run for local release verification."
   exit 1
 fi
 
+if [ -n "$NPM_TOKEN" ]; then
 cat > "$RELEASE_DIR/.npmrc" << EOF
 registry=https://registry.npmjs.org/
 //registry.npmjs.org/:_authToken=$NPM_TOKEN
 EOF
+else
+  echo "Skipping .npmrc creation because NPM_TOKEN is not set."
+fi
 
 # Step 6: Copy README file
 if [ "$RELEASE_TYPE" = "nightly" ]; then
@@ -209,9 +268,73 @@ else
   fi
 fi
 
+echo "Preparing plugin SDK release..."
+mkdir -p "$PLUGIN_RELEASE_DIR"
+npm --prefix packages/plugin run build
+
+PLUGIN_PACK_RESULT=$(npm pack ./packages/plugin --pack-destination "$PLUGIN_RELEASE_DIR" --json --ignore-scripts)
+PLUGIN_TARBALL_NAME=$(node -e 'const [pack] = JSON.parse(process.argv[1]); process.stdout.write(pack.filename);' "$PLUGIN_PACK_RESULT")
+PLUGIN_TARBALL="$PLUGIN_RELEASE_DIR/$PLUGIN_TARBALL_NAME"
+if [ ! -f "$PLUGIN_TARBALL" ]; then
+  echo "ERROR: Plugin SDK tarball was not created: $PLUGIN_TARBALL"
+  exit 1
+fi
+if [ -n "$NPM_TOKEN" ]; then
+  cp "$RELEASE_DIR/.npmrc" "$PLUGIN_RELEASE_DIR/.npmrc"
+fi
+
+echo "Validating CLI release package..."
+npm pack "$RELEASE_DIR" --dry-run --json > /dev/null
+echo "Validating plugin SDK tarball..."
+npm pack "$PLUGIN_TARBALL" --dry-run --json > /dev/null
+
+if [ "$PUBLISH" = true ]; then
+
+  if [ "$DRY_RUN" = false ]; then
+    PLUGIN_VERSION=$(grep '"version"' packages/plugin/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
+
+    ensure_version_is_available() {
+      local package_name="$1"
+      local package_version="$2"
+      local lookup_result
+      if lookup_result=$(npm view "$package_name@$package_version" version --userconfig "$RELEASE_DIR/.npmrc" 2>&1); then
+        echo "ERROR: $package_name@$package_version already exists in npm."
+        exit 1
+      fi
+      if [[ "$lookup_result" != *"E404"* ]] && [[ "$lookup_result" != *"404 Not Found"* ]]; then
+        echo "ERROR: Unable to verify whether $package_name@$package_version is available."
+        echo "$lookup_result"
+        exit 1
+      fi
+    }
+
+    ensure_version_is_available "@bitclub.ai/opendesk-cli" "$VERSION"
+    ensure_version_is_available "@bitclub.ai/opendesk-plugin-sdk" "$PLUGIN_VERSION"
+  fi
+
+  PUBLISH_ARGS=(--access public --tag "$NPM_TAG")
+  if [ "$DRY_RUN" = true ]; then
+    PUBLISH_ARGS+=(--dry-run)
+  else
+    PUBLISH_ARGS+=(--userconfig "$RELEASE_DIR/.npmrc")
+  fi
+
+  echo "Publishing OpenDesk CLI..."
+  npm publish "$RELEASE_DIR" "${PUBLISH_ARGS[@]}"
+  echo "Publishing OpenDesk plugin SDK..."
+  npm publish "$PLUGIN_TARBALL" "${PUBLISH_ARGS[@]}"
+fi
+
 # Step 8: Cleanup and success message
+if [ "$PUBLISH" = true ] && [ "$DRY_RUN" = true ]; then
+  echo "=== CLI and Plugin SDK Release Dry Run Completed Successfully ==="
+elif [ "$PUBLISH" = true ]; then
+  echo "=== CLI and Plugin SDK Published Successfully ==="
+else
 echo "=== CLI Release Created Successfully ==="
+fi
 echo "Release location: $RELEASE_DIR"
+echo "Plugin SDK tarball: $PLUGIN_TARBALL"
 echo ""
 echo "To install locally:"
 echo "  cd $RELEASE_DIR && npm install"
@@ -220,9 +343,20 @@ echo "  For global access, use one of the following:"
 echo "    cd $RELEASE_DIR && npm link          # Create a global symlink (recommended for testing)"
 echo "    npm install -g ./$RELEASE_DIR        # Install globally from local directory"
 echo ""
-echo "To publish to npm:"
-if [ "$RELEASE_TYPE" = "nightly" ]; then
-  echo "  cd $RELEASE_DIR && npm publish --access public --tag nightly"
+if [ "$PUBLISH" = false ]; then
+  echo "To publish manually, publish the CLI first and then the plugin SDK:"
+  echo "  (cd $RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
+  echo "  (cd $PLUGIN_RELEASE_DIR && npm publish $PLUGIN_TARBALL_NAME --access public --tag $NPM_TAG)"
+  echo ""
+  echo "To publish both packages automatically:"
+  echo "  $0 --$RELEASE_TYPE --publish"
+  echo ""
+  echo "To validate the joint publish locally without an npm token:"
+  if [ "$RELEASE_TYPE" = "nightly" ]; then
+    echo "  $0 --nightly --dry-run"
+  else
+    echo "  $0 --stable --dry-run"
+  fi
 else
-  echo "  cd $RELEASE_DIR && npm publish --access public"
+  echo "CLI was published before the plugin SDK."
 fi

@@ -62,7 +62,10 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     }
 }
 
-const extraResources = process.platform === 'darwin' ? undefined : [path.join(__dirname, 'native')];
+const extraResources = [
+    path.join(__dirname, 'dist', 'plugins'),
+    ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
+];
 
 // Default: produce an unsigned .app so the same packaging step works on any
 // developer machine, then sign via scripts/remote-sign/ on a host that holds
@@ -254,7 +257,6 @@ module.exports = {
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
-        ignore: [/^[/\\]out(?:[/\\]|-)/],
         appBundleId: 'com.intellios.opendesk',
         ...(SIGN_LOCALLY && {
             osxSign: {
@@ -282,8 +284,13 @@ module.exports = {
         asar: {
             unpack: '**/node_modules/{sharp,@img}/**/*'
         },
+        ignore: [
+            /^[/\\]out(?:[/\\]|-)/,
+            /^[/\\]dist[/\\]plugins(?:[/\\]|$)/,
+            /^[/\\]resources[/\\]plugins(?:[/\\]|$)/
+        ],
         ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
-        ...(extraResources ? { extraResource: extraResources } : {}),
+        extraResource: extraResources,
         afterPrune: [pruneDarwinAppNativePrebuilds],
         afterCopyExtraResources: [pruneDarwinExtraResources]
     },
