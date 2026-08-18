@@ -21,7 +21,7 @@
  * AgentGate 地址可通过环境变量 AGENT_GATE_URL 配置，默认 http://127.0.0.1:9100
  */
 
-import { GlobalHooks, type BeforeToolCallFeedback } from '../../aikernel/hooks.js';
+import { GlobalHooks, type BeforeToolCallExecAction, type BeforeToolCallExecContext } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import { Setting } from '../../utils/setting.js';
@@ -270,7 +270,7 @@ const SKILL_LOAD_TOOLS = new Set(['CallSkillTool', 'LoadSkillTool', 'LoadSkill',
  * 但不同来源的 skill"——后者是合法的不同 skill（黑名单是本地实例级，与在线 registry 无关），
  * 若其内容也恶意，由实时网关在其执行具体危险操作（读凭据/外发）时拦截，不在 install 时按名拦。
  */
-function checkSkillBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCallFeedback | null {
+function checkSkillBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCallExecAction | null {
     // 恶意技能检测关闭时不拦截（与拦截归因开关一致）
     if (!isMaliciousSkillDetectionEnabled()) return null;
     if (!matchesAny(toolCall.tool_name, SKILL_LOAD_TOOLS)) return null;
@@ -284,10 +284,10 @@ function checkSkillBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCal
     // （agent 可能把 skill 名误当 bundleName，如 project-analysis/project-analysis，
     // 此时精确 key 查不到，但 skillName 仍能命中黑名单）
     if (isBlacklisted(bundleName, skillName) || isSkillNameBlacklisted(skillName)) {
+        toolCall.result_object = { blocked: true, reason: 'blacklisted_skill', bundleName, skillName };
         return {
             operation: 'deny',
-            message: `该 skill \`${bundleName}/${skillName}\` 是恶意 skill，已被加入黑名单，禁止加载。`,
-            extra: { blocked: true, reason: 'blacklisted_skill', bundleName, skillName }
+            message: `该 skill \`${bundleName}/${skillName}\` 是恶意 skill，已被加入黑名单，禁止加载。`
         };
     }
     return null;
@@ -319,7 +319,7 @@ function getBlacklistDirs(): string[] {
  * 仅拦"明确读黑名单 skill 目录内文件"（path 落在某黑名单目录之内），
  * 不拦列父目录（resources）这类可能含正常用途的操作，避免误伤。
  */
-function checkFileBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCallFeedback | null {
+function checkFileBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCallExecAction | null {
     if (!isMaliciousSkillDetectionEnabled()) return null;
     const dirs = getBlacklistDirs();
     if (dirs.length === 0) return null;
@@ -348,10 +348,10 @@ function checkFileBlacklist(task: TaskState, toolCall: ToolCall): BeforeToolCall
         for (const dir of dirs) {
             // path 落在黑名单 skill 目录之内（=== dir 或以 dir + 分隔符为前缀）
             if (resolved === dir || resolved.startsWith(dir + path.sep)) {
+                toolCall.result_object = { blocked: true, reason: 'blacklisted_skill_source', path: raw, dir };
                 return {
                     operation: 'deny',
-                    message: `该路径位于已拉黑的恶意 skill 源文件目录内（\`${dir}\`），禁止读取以绕过黑名单。`,
-                    extra: { blocked: true, reason: 'blacklisted_skill_source', path: raw, dir }
+                    message: `该路径位于已拉黑的恶意 skill 源文件目录内（\`${dir}\`），禁止读取以绕过黑名单。`
                 };
             }
         }
@@ -644,7 +644,7 @@ async function checkWithAgentGate(
 /**
  * beforeToolCall 回调: 在工具执行前送往 AgentGate 审查。
  */
-async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<BeforeToolCallFeedback> {
+async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): Promise<BeforeToolCallExecAction> {
     try {
         // 安全网关总开关关闭时跳过审查
         if (!isSecurityGatewayEnabled()) {
@@ -701,7 +701,8 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
 
             // 高级别：任何 deny 一律拦截
             if (securityLevel === 'high') {
-                const feedback: BeforeToolCallFeedback = {
+                toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+                const feedback: BeforeToolCallExecAction = {
                     operation: 'deny',
                     message: [
                         `🚫 **AgentGate 安全拦截（高安全模式）**`,
@@ -711,8 +712,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
                         `- **命令**: \`${command.slice(0, 200)}\``,
                         ``,
                         `请根据拦截原因采取适当行动，不要暂停，不要询问用户。`
-                    ].join('\n'),
-                    extra: { blocked: true, reason, riskLevel, securityLevel }
+                    ].join('\n')
                 };
                 // Fire-and-forget 拦截记录 + 归因
                 void recordInterception(task, toolCall, command, reason, riskLevel, riskType, securityLevel);
@@ -721,7 +721,8 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
 
             // 中级别（默认）：high/critical 直接拦截
             if (isHighRisk) {
-                const feedback: BeforeToolCallFeedback = {
+                toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+                const feedback: BeforeToolCallExecAction = {
                     operation: 'deny',
                     message: [
                         `🚫 **AgentGate 安全拦截（高风险操作）**`,
@@ -731,8 +732,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
                         `- **命令**: \`${command.slice(0, 200)}\``,
                         ``,
                         `请根据拦截原因采取适当行动，不要暂停，不要询问用户。`
-                    ].join('\n'),
-                    extra: { blocked: true, reason, riskLevel, securityLevel }
+                    ].join('\n')
                 };
                 // Fire-and-forget 拦截记录 + 归因
                 void recordInterception(task, toolCall, command, reason, riskLevel, riskType, securityLevel);
@@ -740,7 +740,8 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
             }
 
             // low / medium 风险在中级别：拦截并提示 override 方式
-            const feedback: BeforeToolCallFeedback = {
+            toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+            const feedback: BeforeToolCallExecAction = {
                 operation: 'deny',
                 message: [
                     `🚫 **AgentGate 安全拦截**`,
@@ -754,8 +755,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<Be
                     `2. 添加自定义 Allow 规则匹配此操作`,
                     ``,
                     `请根据拦截原因采取适当行动，不要暂停，不要询问用户。`
-                ].join('\n'),
-                extra: { blocked: true, reason, riskLevel, securityLevel }
+                ].join('\n')
             };
             // Fire-and-forget 拦截记录 + 归因
             void recordInterception(task, toolCall, command, reason, riskLevel, securityLevel);

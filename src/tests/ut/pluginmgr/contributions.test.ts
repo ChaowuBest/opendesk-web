@@ -9,7 +9,7 @@ import {
     PLUGIN_SKILL_BUNDLE
 } from '../../../main/applications/pluginmgr/runtime/contributions.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('plugin contributions', () => {
     afterEach(async () => {

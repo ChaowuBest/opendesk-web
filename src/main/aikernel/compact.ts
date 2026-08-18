@@ -11,7 +11,7 @@
 
 import { ChatContext, ToolCall } from './messages.js';
 import { logger } from '../utils/logger.js';
-import { GlobalHooks } from './hooks.js';
+import { GlobalHooks, type AfterToolCallExecContext } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { countNonBoundaryMessages } from './compaction/context-view.js';
 import { getAutoCompactDecision } from './compaction/auto-compact.js';
@@ -149,11 +149,11 @@ export async function shouldCompact(chatContext: ChatContext, model?: string, ta
 
 // ─── 全局 afterToolCall：超长工具结果落盘并替换为摘要 ─────────────────────────────
 
-function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall): void {
-    if (isToolResultCompressionExcluded(tool_call.tool_name)) {
+function afterToolCallLargeResultToArtifact({ task, toolCall }: AfterToolCallExecContext): void {
+    if (isToolResultCompressionExcluded(toolCall.tool_name)) {
         return;
     }
-    const result = tool_call.result;
+    const result = toolCall.result;
     if (result === undefined || typeof result !== 'string') {
         return;
     }
@@ -163,13 +163,13 @@ function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall
         return;
     }
 
-    const previousResultStorage = tool_call.result_storage ? { ...tool_call.result_storage } : undefined;
+    const previousResultStorage = toolCall.result_storage ? { ...toolCall.result_storage } : undefined;
     try {
-        const resultId = tool_call.ensureResultStorage().result_id;
+        const resultId = toolCall.ensureResultStorage().result_id;
         const fullPath = getToolResultArtifactPath(task.task_id, resultId, true);
         const replacementText = buildToolResultReplacementText(preview.previewText, fullPath);
-        const persisted = persistToolResultForToolCall(task.task_id, tool_call, result, replacementText);
-        tool_call.result = persisted.metadata.replacement_text ?? replacementText;
+        const persisted = persistToolResultForToolCall(task.task_id, toolCall, result, replacementText);
+        toolCall.result = persisted.metadata.replacement_text ?? replacementText;
 
         const sizeKB = (result.length / 1024).toFixed(1);
         const lineCount = result.split('\n').length;
@@ -178,9 +178,9 @@ function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall
             event: 'tool_result_persisted_to_artifact',
             message:
                 `[Compact] large tool result persisted (${sizeKB} KB, ${lineCount} lines): ${persisted.fullPath} ` +
-                `(tool=${tool_call.tool_name}, result_id=${persisted.metadata.result_id})`,
+                `(tool=${toolCall.tool_name}, result_id=${persisted.metadata.result_id})`,
             data: {
-                toolName: tool_call.tool_name,
+                toolName: toolCall.tool_name,
                 resultId: persisted.metadata.result_id,
                 artifactPath: persisted.fullPath,
                 sizeKB,
@@ -189,9 +189,9 @@ function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall
         });
     } catch (err) {
         if (previousResultStorage) {
-            tool_call.setResultStorage(previousResultStorage);
+            toolCall.setResultStorage(previousResultStorage);
         } else {
-            tool_call.clearResultStorage();
+            toolCall.clearResultStorage();
         }
         logger.error(`[Compact] 写入 artifact 失败: ${(err as Error)?.message ?? err}`);
         return;

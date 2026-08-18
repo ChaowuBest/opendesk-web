@@ -1950,8 +1950,6 @@ export const enUs: Record<string, string> = {
     'renderer.developer.triggerTaskReview': 'Trigger Task Review',
     'renderer.developer.reviewTriggered': 'Task Review Triggered',
     'renderer.developer.reviewTriggeredDetail': 'Task review has started or been queued in the background',
-    'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
-    'renderer.developer.reviewNotTriggeredDetail': 'The task review request could not be accepted',
     'renderer.developer.triggerFailed': 'Trigger Failed',
 
     // Main - Native File Dialogs

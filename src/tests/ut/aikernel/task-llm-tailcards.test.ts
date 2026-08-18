@@ -141,9 +141,7 @@ describe('task LLM request tail via onTailcardGenerate', () => {
         const { task, chunks } = createRunningTask();
         let tailBuildCount = 0;
         const requestTails: Array<string | undefined> = [];
-        task.hooks.onTailcardGenerate(() => ({ id: 'retry-tail', content: `tail snapshot ${++tailBuildCount}` }), {
-            id: 'retry-tail'
-        });
+        task.hooks.onTailcardGenerate(() => ({ id: 'retry-tail', content: `tail snapshot ${++tailBuildCount}` }));
         let requestCount = 0;
         jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (_chatContext, _model, options) {
             requestTails.push(options?.requestTailText);
@@ -170,29 +168,23 @@ describe('task LLM request tail via onTailcardGenerate', () => {
 
     test('does not add requestTailText for inactive callbacks and injects tails for child and internal tasks', async () => {
         const inactive = createRunningTask().task;
-        inactive.hooks.onTailcardGenerate(() => undefined, { id: 'inactive-tail' });
+        inactive.hooks.onTailcardGenerate(() => undefined);
 
         const child = createRunningTask().task;
         child.parent_id = 'parent-task';
         let childCallbackCount = 0;
-        child.hooks.onTailcardGenerate(
-            () => {
-                childCallbackCount++;
-                return { id: 'child-tail', content: 'child tail content' };
-            },
-            { id: 'child-tail' }
-        );
+        child.hooks.onTailcardGenerate(() => {
+            childCallbackCount++;
+            return { id: 'child-tail', content: 'child tail content' };
+        });
 
         const internal = createRunningTask().task;
         internal.internal = true;
         let internalCallbackCount = 0;
-        internal.hooks.onTailcardGenerate(
-            () => {
-                internalCallbackCount++;
-                return { id: 'internal-tail', content: 'internal tail content' };
-            },
-            { id: 'internal-tail' }
-        );
+        internal.hooks.onTailcardGenerate(() => {
+            internalCallbackCount++;
+            return { id: 'internal-tail', content: 'internal tail content' };
+        });
 
         const requestTails: Array<string | undefined> = [];
         const hasRequestTailOption: boolean[] = [];
@@ -301,13 +293,10 @@ describe('task LLM request tail via onTailcardGenerate', () => {
                   chatContext: Pick<ChatContext, 'messages'>;
               }
             | undefined;
-        task.hooks.onTailcardGenerate(
-            (_currentTask, context) => {
-                callbackContext = context;
-                return { id: 'fallback-tail', content: 'fallback tail content' };
-            },
-            { id: 'fallback-tail' }
-        );
+        task.hooks.onTailcardGenerate((ctx) => {
+            callbackContext = ctx;
+            return { id: 'fallback-tail', content: 'fallback tail content' };
+        });
         const requestTails: Array<string | undefined> = [];
         jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (_chatContext, _model, options) {
             requestTails.push(options?.requestTailText);

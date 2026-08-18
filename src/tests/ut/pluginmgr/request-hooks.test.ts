@@ -1,16 +1,13 @@
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import {
     runPluginChatHeaders,
-    runPluginChatMessage,
-    runPluginChatMessagesTransform,
     runPluginChatParams,
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
     runPluginAfterSkillInstall,
     runPluginBeforeSkillInstall
 } from '../../../main/applications/pluginmgr/runtime/hooks.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('OpenDesk plugin request hooks', () => {
     beforeEach(async () => {
@@ -129,82 +126,6 @@ describe('OpenDesk plugin request hooks', () => {
         });
     });
 
-    test('chat.message 按顺序变换进入任务的消息文本', async () => {
-        await getPluginHost().activate(
-            definePlugin({
-                id: 'message-prefix',
-                setup(ctx) {
-                    ctx.hooks.on('chat.message', (input, output) => {
-                        if (!input.internal) output.text = `[external] ${output.text}`;
-                    });
-                }
-            }),
-            { origin: 'test:message-prefix' }
-        );
-
-        await expect(runPluginChatMessage({ taskId: 'task-1', internal: false }, 'hello')).resolves.toBe(
-            '[external] hello'
-        );
-        await expect(runPluginChatMessage({ taskId: 'task-1', internal: true }, 'internal')).resolves.toBe('internal');
-    });
-
-    test('chat.messages.transform 只修改本轮模型视图，不污染持久化上下文', async () => {
-        await getPluginHost().activate(
-            definePlugin({
-                id: 'messages-transform',
-                setup(ctx) {
-                    ctx.hooks.on('chat.messages.transform', (_input, output) => {
-                        const message = output.messages.at(-1);
-                        if (!message || message.role === 'compact_separator') {
-                            throw new Error('expected a user or assistant message');
-                        }
-                        const part = message.content[0];
-                        if (!part || part.type !== 'text') {
-                            throw new Error('expected a text message part');
-                        }
-                        part.text = '[transformed]';
-                    });
-                }
-            }),
-            { origin: 'test:messages-transform' }
-        );
-        const context = new ChatContext();
-        context.appendMessage(new UserMessage('original'));
-
-        const transformed = await runPluginChatMessagesTransform({ taskId: 'task-1' }, context);
-
-        expect(transformed.lastUserMessage()?.getPlainText()).toBe('[transformed]');
-        expect(context.lastUserMessage()?.getPlainText()).toBe('original');
-    });
-
-    test('失败的 messages transform 会回滚嵌套修改', async () => {
-        await getPluginHost().activate(
-            definePlugin({
-                id: 'broken-messages-transform',
-                setup(ctx) {
-                    ctx.hooks.on('chat.messages.transform', (_input, output) => {
-                        const message = output.messages.at(-1);
-                        if (!message || message.role === 'compact_separator') {
-                            throw new Error('expected a user or assistant message');
-                        }
-                        const part = message.content[0];
-                        if (!part || part.type !== 'text') {
-                            throw new Error('expected a text message part');
-                        }
-                        part.text = 'must rollback';
-                        throw new Error('transform failed');
-                    });
-                }
-            }),
-            { origin: 'test:broken-messages-transform' }
-        );
-        const context = new ChatContext();
-        context.appendMessage(new UserMessage('original'));
-
-        const transformed = await runPluginChatMessagesTransform({}, context);
-
-        expect(transformed.lastUserMessage()?.getPlainText()).toBe('original');
-    });
     test('skill load hooks forward before decisions and after notifications', async () => {
         const calls: unknown[] = [];
         await getPluginHost().activate(

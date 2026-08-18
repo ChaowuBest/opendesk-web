@@ -921,20 +921,11 @@ export const buildEvidenceCardRuntimeTail = buildEvidenceCardRuntimePrompt;
  * 同一个 task 内重复注册会保留首次注册（由 Hooks 保证幂等）。
  */
 export function registerEvidenceCardTailcard(task: TaskState): void {
-    task.hooks.onTailcardGenerate(
-        (currentTask, context) => {
-            if (!currentTask.refreshEvidenceCardFeatureState()) {
-                return undefined;
-            }
-            const content = buildEvidenceCardRuntimeTail(
-                context.activeContext ?? context.chatContext,
-                currentTask.evidencecard_state
-            );
-            return content.trim().length > 0 ? { id: 'evidence-card', content } : undefined;
-        },
-        {
-            id: 'evidence-card',
-            maxChars: 8_000
+    task.hooks.onTailcardGenerate((ctx) => {
+        if (!ctx.task.refreshEvidenceCardFeatureState()) {
+            return undefined;
         }
-    );
+        const content = buildEvidenceCardRuntimeTail(ctx.activeContext ?? ctx.chatContext, ctx.task.evidencecard_state);
+        return content.trim().length > 0 ? { id: 'evidence-card', content, maxChars: 8_000 } : undefined;
+    });
 }

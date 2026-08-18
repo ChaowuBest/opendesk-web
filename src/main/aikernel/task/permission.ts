@@ -201,13 +201,9 @@ export async function promptPermissionBatchForTask(
     requests: PermissionRequest[],
     toolName: string,
     prefixOptions: { label: string; pattern: string }[],
-    toolCall?: ToolCall
+    toolCall: ToolCall
 ): Promise<PermissionUserResponse> {
-    const pluginDecision = await task.hooks.askPermission(task, {
-        tool: toolName,
-        callId: toolCall?.id,
-        requests
-    });
+    const pluginDecision = await task.hooks.checkBeforePermissionAsk(task, toolCall, requests);
     if (pluginDecision === 'allow') {
         return { decision: 'allow', rememberScope: 'none' };
     }
@@ -229,13 +225,11 @@ export async function promptPermissionBatchForTask(
         sourceTaskName: task.task_name,
         parentTaskId: parentTask?.task_id ?? null
     };
-    const promptContext: PermissionPromptContext | undefined = toolCall
-        ? {
-              toolCallId: toolCall.id,
-              messageId: findMessageIdForToolCallForTask(task, toolCall),
-              input: toolCall.args_object
-          }
-        : undefined;
+    const promptContext: PermissionPromptContext = {
+        toolCallId: toolCall.id,
+        messageId: findMessageIdForToolCallForTask(task, toolCall),
+        input: toolCall.args_object
+    };
 
     try {
         return await promptProvider.prompt(requests, toolName, prefixOptions, taskInfo, promptContext);

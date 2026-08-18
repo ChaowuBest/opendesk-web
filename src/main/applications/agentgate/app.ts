@@ -603,7 +603,7 @@ class AgentGateApplication extends BaseApplication {
      * @param notify  IPC 事件推送函数，由 main.ts 注入（持有 globalMainWindow）
      */
     registerGuiHooks(notify: (channel: string, payload: object) => void): void {
-        GlobalHooks.afterFinishTurn(async (task) => {
+        GlobalHooks.afterFinishTurn(async ({ task }) => {
             if (task.task_status !== 'stopped') return;
             await this.analyzeAndPromptMaliciousSkills(task, {
                 onAttributionStart: (taskId: string) => notify('agentgate:attributionStart', { taskId }),
@@ -618,7 +618,7 @@ class AgentGateApplication extends BaseApplication {
      * CLI 无 GUI 弹窗通道，仅做轻量级文本输出。
      */
     registerCliHooks(): void {
-        GlobalHooks.afterFinishTurn(async (task) => {
+        GlobalHooks.afterFinishTurn(async ({ task }) => {
             if (task.task_status !== 'stopped') return;
             const allRecords = readInterceptionRecords(task.task_id);
             if (allRecords.length === 0) return;

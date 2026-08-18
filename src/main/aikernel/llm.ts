@@ -33,7 +33,8 @@ import { t } from '../../locale/index.js';
 import { fetchModelUrl } from '../utils/model-network.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 import iconv from 'iconv-lite';
-import { GlobalHooks, type ChatHeadersInput } from './hooks.js';
+import { GlobalHooks } from './hooks.js';
+import type { TaskState } from './states/tasks.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -72,10 +73,8 @@ interface LLMRequestOptions {
     maxCompletionTokens?: number;
     /** 本次模型请求额外携带的运行时 HTTP headers，不落盘 */
     extraHeaders?: Record<string, string>;
-    /** 当前模型请求关联的插件上下文，不落盘。 */
-    hookContext?: ChatHeadersInput;
-    /** 宿主 instrumentation 等必须最终生效的 headers，不向插件暴露。 */
-    extraHeaderOverrides?: Record<string, string>;
+    /** 本次模型请求关联的任务，用于在 beforeChatModelRequest 钩子中提供 ctx.task；非任务相关请求可不传 */
+    task?: TaskState;
     /** 重试回调，供任务级 usage 统计使用 */
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
     /** 请求结束后上报 usage，供任务级 token 统计使用 */
@@ -520,7 +519,8 @@ class LLM {
             const wrappedRequestOptions = LLM.__wrapOnUsage(options.requestOptions, operation);
 
             while (finalResponse === undefined && numRetries < 5) {
-                const pluginRequestOptions = await LLM.__resolvePluginHeaders(
+                const pluginRequestOptions = await LLM.__resolvePluginRequestOptions(
+                    chatContext,
                     options.model,
                     modelInstance,
                     wrappedRequestOptions
@@ -607,26 +607,15 @@ class LLM {
         };
     }
 
-    private static async __resolvePluginHeaders(
+    private static async __resolvePluginRequestOptions(
+        chat: ChatContext,
         model: ModelParam,
         modelInstance: ModelInstance,
         requestOptions?: LLMRequestOptions
     ): Promise<LLMRequestOptions> {
-        const { extraHeaderOverrides, ...adapterOptions } = requestOptions ?? {};
-        const hookContext = requestOptions?.hookContext;
-        const input: ChatHeadersInput = {
-            ...hookContext,
-            modelAlias: hookContext?.modelAlias ?? (typeof model === 'string' ? model : modelInstance.model_name)
-        };
-        const hookHeaders = await GlobalHooks.applyChatHeaders(input, requestOptions?.extraHeaders);
-        const extraHeaders = {
-            ...hookHeaders,
-            ...extraHeaderOverrides
-        };
-        return {
-            ...adapterOptions,
-            extraHeaders: Object.keys(extraHeaders).length > 0 ? extraHeaders : undefined
-        };
+        const options: LLMRequestOptions = { ...requestOptions };
+        await GlobalHooks.applyBeforeChatModelRequest({ chat, model: modelInstance, options, task: options.task });
+        return options;
     }
 
     static async ask(
@@ -724,7 +713,12 @@ class LLM {
         });
         return TelemetryOperationRegistry.aroundOperation(operation, async () => {
             const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
-            const pluginRequestOptions = await LLM.__resolvePluginHeaders(model, modelInstance, wrappedOptions);
+            const pluginRequestOptions = await LLM.__resolvePluginRequestOptions(
+                chatContext,
+                model,
+                modelInstance,
+                wrappedOptions
+            );
             return await this.__getAdapter(modelInstance).complete(
                 chatContext,
                 visionSupported,
@@ -750,7 +744,12 @@ class LLM {
             'llm.request_type': 'streamComplete'
         });
         const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
-        const pluginRequestOptions = await LLM.__resolvePluginHeaders(model, modelInstance, wrappedOptions);
+        const pluginRequestOptions = await LLM.__resolvePluginRequestOptions(
+            chatContext,
+            model,
+            modelInstance,
+            wrappedOptions
+        );
         const streamGen = this.__getAdapter(modelInstance).streamComplete(
             chatContext,
             visionSupported,

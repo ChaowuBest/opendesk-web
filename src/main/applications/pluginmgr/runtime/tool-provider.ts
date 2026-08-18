@@ -182,7 +182,7 @@ export class PluginToolsetProvider implements ToolsetProvider {
 
 export async function applyPluginToolDefinitions(
     toolsets: BaseToolset[],
-    taskState: TaskState,
+    taskState?: TaskState,
     host: PluginHost = getPluginHost()
 ): Promise<void> {
     const owners = new Map(host.listTools().map((record) => [record.definition.name, record.pluginId]));
@@ -198,8 +198,8 @@ export async function applyPluginToolDefinitions(
                     {
                         tool: name,
                         pluginId: owners.get(name),
-                        taskId: taskState.task_id,
-                        workspace: taskState.getWorkspace() || undefined
+                        taskId: taskState?.task_id,
+                        workspace: taskState?.getWorkspace() || undefined
                     },
                     output
                 );

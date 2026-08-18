@@ -258,7 +258,7 @@ test('Workflow authoring keeps raw user intent through self-review without inven
                 const toolCall = new ToolCall(0, id, WORKFLOW_AGENT_COMPLETION_TOOL_NAME, JSON.stringify(completion));
                 toolCall.args_object = completion;
                 toolCall.status = 'success';
-                await task.hooks.noticeAfterToolCall(task, toolCall);
+                await task.hooks.noticeAfterToolCall({ task, toolCall });
                 return toolCall;
             };
 

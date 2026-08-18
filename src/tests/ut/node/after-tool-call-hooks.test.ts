@@ -30,14 +30,14 @@ test('afterToolCall supports unregistration without changing execution order or 
         callOrder.push('trailing');
     });
 
-    await hooks.noticeAfterToolCall(task, toolCall);
+    await hooks.noticeAfterToolCall({ task, toolCall });
 
     assert.equal(removableCalls, 1);
     assert.equal(trailingCalls, 1);
     assert.deepEqual(callOrder, ['removable', 'trailing', 'plugin']);
 
     unregister();
-    await hooks.noticeAfterToolCall(task, toolCall);
+    await hooks.noticeAfterToolCall({ task, toolCall });
 
     assert.equal(removableCalls, 1);
     assert.equal(trailingCalls, 2);

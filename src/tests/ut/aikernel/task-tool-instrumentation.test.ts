@@ -75,7 +75,7 @@ describe('TaskState tool instrumentation boundary', () => {
         toolset.addTools(tool);
         task.chat_context.attachToolsets(toolset);
 
-        task.hooks.afterToolCall((_task, toolCall) => {
+        task.hooks.afterToolCall(({ toolCall }) => {
             toolCall.result = `${toolCall.result}:after-hook`;
         });
 

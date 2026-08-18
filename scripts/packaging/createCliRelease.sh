@@ -8,9 +8,9 @@ restore_package_json() {
     echo "Restoring original package.json..."
     mv package.json.backup package.json
   fi
-  if [ -f "packages/plugin/package.json.backup" ]; then
+  if [ -f "packages/plugin-sdk/package.json.backup" ]; then
     echo "Restoring original plugin package.json..."
-    mv packages/plugin/package.json.backup packages/plugin/package.json
+    mv packages/plugin-sdk/package.json.backup packages/plugin-sdk/package.json
   fi
 }
 
@@ -142,13 +142,13 @@ if [ "$RELEASE_TYPE" = "nightly" ]; then
   sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$NIGHTLY_VERSION\"/" package.json
   rm -f package.json.bak
 
-  cp packages/plugin/package.json packages/plugin/package.json.backup
-  PLUGIN_CURRENT_VERSION=$(grep '"version"' packages/plugin/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
+  cp packages/plugin-sdk/package.json packages/plugin-sdk/package.json.backup
+  PLUGIN_CURRENT_VERSION=$(grep '"version"' packages/plugin-sdk/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
   PLUGIN_CLEAN_VERSION=$(echo "$PLUGIN_CURRENT_VERSION" | sed 's/-nightly-.*$//')
   PLUGIN_NIGHTLY_VERSION="${PLUGIN_CLEAN_VERSION}-nightly-${DATE}"
   echo "Setting plugin nightly version: $PLUGIN_NIGHTLY_VERSION"
-  sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_NIGHTLY_VERSION\"/" packages/plugin/package.json
-  rm -f packages/plugin/package.json.bak
+  sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_NIGHTLY_VERSION\"/" packages/plugin-sdk/package.json
+  rm -f packages/plugin-sdk/package.json.bak
 fi
 
 # Step 2: Build CLI
@@ -270,9 +270,9 @@ fi
 
 echo "Preparing plugin SDK release..."
 mkdir -p "$PLUGIN_RELEASE_DIR"
-npm --prefix packages/plugin run build
+npm --prefix packages/plugin-sdk run build
 
-PLUGIN_PACK_RESULT=$(npm pack ./packages/plugin --pack-destination "$PLUGIN_RELEASE_DIR" --json --ignore-scripts)
+PLUGIN_PACK_RESULT=$(npm pack ./packages/plugin-sdk --pack-destination "$PLUGIN_RELEASE_DIR" --json --ignore-scripts)
 PLUGIN_TARBALL_NAME=$(node -e 'const [pack] = JSON.parse(process.argv[1]); process.stdout.write(pack.filename);' "$PLUGIN_PACK_RESULT")
 PLUGIN_TARBALL="$PLUGIN_RELEASE_DIR/$PLUGIN_TARBALL_NAME"
 if [ ! -f "$PLUGIN_TARBALL" ]; then
@@ -291,7 +291,7 @@ npm pack "$PLUGIN_TARBALL" --dry-run --json > /dev/null
 if [ "$PUBLISH" = true ]; then
 
   if [ "$DRY_RUN" = false ]; then
-    PLUGIN_VERSION=$(grep '"version"' packages/plugin/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
+    PLUGIN_VERSION=$(grep '"version"' packages/plugin-sdk/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
 
     ensure_version_is_available() {
       local package_name="$1"

@@ -8,7 +8,7 @@ export {
     tool,
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES
-} from '../../../../packages/plugin/src/index.js';
+} from '../../../../packages/plugin-sdk/src/index.js';
 export type {
     OpenDeskPlugin,
     PluginApplicationEvent,
@@ -17,8 +17,6 @@ export type {
     PluginCapability,
     PluginChatHeadersInput,
     PluginChatHeadersOutput,
-    PluginChatMessageInput,
-    PluginChatMessageOutput,
     PluginChatParams,
     PluginSkillLoadContext,
     PluginSkillLoadBeforeOutput,
@@ -41,7 +39,7 @@ export type {
     PluginMcpRemoteServerDefinition,
     PluginMcpServerDefinition,
     PluginMcpStdioServerDefinition
-} from '../../../../packages/plugin/src/index.js';
+} from '../../../../packages/plugin-sdk/src/index.js';
 export { PluginHost, getPluginHost } from './runtime/host.js';
 export type {
     ActivatePluginOptions,
@@ -78,8 +76,6 @@ export type {
 export type { PluginRegistryData, PluginRegistryRecord, PluginSourceKind } from './management/registry.js';
 export {
     runPluginChatHeaders,
-    runPluginChatMessage,
-    runPluginChatMessagesTransform,
     runPluginChatParams,
     runPluginBeforeSkillInstall,
     runPluginAfterSkillInstall

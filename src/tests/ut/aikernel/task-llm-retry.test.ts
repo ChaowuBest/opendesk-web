@@ -379,7 +379,7 @@ describe('task LLM auto retry', () => {
 
     test('processCompletion does not merge a chunk when generation changes during an async hook', async () => {
         const { task } = createRunningTask(false);
-        task.hooks.beforeToolcallCreated(async () => {
+        task.hooks.beforeToolcallChunkMerge(async () => {
             (task as any)._turnGeneration++;
             return { operation: 'accept' };
         });

@@ -70,7 +70,7 @@ OpenDesk 应用是一个独立的功能模块，以 zip 包形式分发和安装
 
 ## 二、AppSDK 能力
 
-三方应用可以使用 \`@bitclub.ai/opendesk-appsdk\`（已内置在运行环境中）提供的能力。
+三方应用可以使用 \`@bitclub.ai/opendesk-app-sdk\`（已内置在运行环境中）提供的能力。
 
 ### 2.1 渲染进程 API
 
@@ -115,7 +115,7 @@ const unsubscribe = window.opendeskAppAPI.onThemeChanged((theme) => {
 使用 SDK 提供的 \`defineOpenDeskApp\` 注册自定义元素（自动去重）：
 
 \`\`\`js
-import { defineOpenDeskApp } from '@bitclub.ai/opendesk-appsdk/renderer';
+import { defineOpenDeskApp } from '@bitclub.ai/opendesk-app-sdk/renderer';
 
 class MyAppWidget extends HTMLElement {
     connectedCallback() {
@@ -139,7 +139,7 @@ const content = await window.fsAPI.readFile(filePath);
 
 - 三方应用运行在沙箱 iframe 中，**不能直接访问 Node.js API 或 Electron 主进程**
 - 所有系统能力必须通过上述 API 调用
-- 应用打包时不需要包含 \`@bitclub.ai/opendesk-appsdk\`，运行环境已内置
+- 应用打包时不需要包含 \`@bitclub.ai/opendesk-app-sdk\`，运行环境已内置
 
 ---
 

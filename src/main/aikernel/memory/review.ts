@@ -210,7 +210,7 @@ export async function startMemoryReviewTask(
             getGlobalMemoryFilePath()
         )
     );
-    await reviewTask.hooks.noticeBeforeTaskStart(reviewTask);
+    await reviewTask.hooks.noticeBeforeTaskStart({ task: reviewTask });
     await reviewTask.submitUserMessage(buildMemoryReviewPrompt(currentPortrait, memoryIndex, transcript));
     return reviewTask;
 }
@@ -309,5 +309,7 @@ export function registerMemoryReviewHook(options: RegisterMemoryReviewHookOption
     reviewHookRegistered = true;
 
     const reviewQueue = new MemoryReviewQueue(options);
-    GlobalHooks.onTaskReview((task, startMessageIndex) => reviewQueue.enqueue(task, startMessageIndex));
+    GlobalHooks.onTaskReview(({ task, startMessageIndex }) => {
+        reviewQueue.enqueue(task, startMessageIndex);
+    });
 }

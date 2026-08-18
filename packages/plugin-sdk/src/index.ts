@@ -111,14 +111,6 @@ export interface PluginChatParams {
     maxCompletionTokens?: number;
 }
 
-export interface PluginChatMessageInput extends PluginChatHeadersInput {
-    internal: boolean;
-}
-
-export interface PluginChatMessageOutput {
-    text: string;
-}
-
 export interface PluginSkillLoadContext {
     bundleName: string;
     skillName: string;
@@ -238,24 +230,6 @@ export interface PluginHookMap {
     'chat.params': {
         input: PluginChatHeadersInput;
         output: PluginChatParams;
-    };
-    'chat.message': {
-        input: PluginChatMessageInput;
-        output: PluginChatMessageOutput;
-    };
-    /**
-     * Transform the messages for the current model request.
-     *
-     * `output.messages` is the model-visible request snapshot after context
-     * compaction, assistant replay trimming, request-time tool-result
-     * overrides, and request-tail injection. Changes affect only this request;
-     * they are not written back to the task's persisted chat context.
-     */
-    'chat.messages.transform': {
-        input: PluginChatHeadersInput;
-        output: {
-            messages: ChatMessage[];
-        };
     };
     'skill.load.before': {
         input: PluginSkillLoadContext;

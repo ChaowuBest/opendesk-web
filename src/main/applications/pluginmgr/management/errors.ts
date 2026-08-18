@@ -6,7 +6,7 @@
 import {
     OpenDeskPluginPackageError,
     type OpenDeskPluginPackageErrorCode
-} from '../../../../../packages/plugin/src/package.js';
+} from '../../../../../packages/plugin-sdk/src/package.js';
 import { t } from '../../../../locale/index.js';
 
 export type PluginInstallErrorCode =

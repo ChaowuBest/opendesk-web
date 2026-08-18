@@ -11,7 +11,7 @@ import type {
     OpenDeskPlugin,
     PluginCapability,
     PluginStaticContributions
-} from '../../../../../packages/plugin/src/index.js';
+} from '../../../../../packages/plugin-sdk/src/index.js';
 import { applyPluginManifest, loadPluginContributions, readPluginManifest, type PluginManifest } from './manifest.js';
 
 const INDEX_FILES = ['index.js', 'index.mjs', 'index.cjs'];

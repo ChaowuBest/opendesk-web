@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { logger } from '../../../utils/logger.js';
-import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin/src/index.js';
+import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
 import { ensurePluginDirectories, getPluginRegistryPath } from './paths.js';
 
 export type PluginSourceKind = 'builtin' | 'managed' | 'local' | 'external';

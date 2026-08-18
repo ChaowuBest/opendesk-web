@@ -9,7 +9,7 @@ function resetHookRegistry(): void {
     GlobalHooks.beforeTaskStartHooks = [];
     GlobalHooks.onTaskReviewHooks = [];
     GlobalHooks.onTaskRevertHooks = [];
-    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.afterToolcallParseHooks = [];
     GlobalHooks.beforeToolCallHooks = [];
     GlobalHooks.afterToolCallHooks = [];
 }
@@ -37,12 +37,12 @@ describe('onTaskReview hook', () => {
         const receivedTasks: TaskState[] = [];
         const startIndexes: number[] = [];
 
-        task.hooks.onTaskReview(async (receivedTask, start_message_index) => {
+        task.hooks.onTaskReview(async ({ task: receivedTask, startMessageIndex: start_message_index }) => {
             calls.push('task');
             receivedTasks.push(receivedTask);
             startIndexes.push(start_message_index);
         });
-        GlobalHooks.onTaskReview((receivedTask, start_message_index) => {
+        GlobalHooks.onTaskReview(({ task: receivedTask, startMessageIndex: start_message_index }) => {
             calls.push('global');
             receivedTasks.push(receivedTask);
             startIndexes.push(start_message_index);
@@ -63,28 +63,28 @@ describe('onTaskReview hook', () => {
         expect(calls).toEqual(['task', 'global']);
     });
 
-    test('noticeTaskReview returns true only when a callback reports work started', async () => {
+    test('noticeOnTaskReview invokes all registered callbacks without short-circuit', async () => {
         const task = new TaskState(new TaskManagerState());
         const calls: string[] = [];
 
         task.hooks.onTaskReview(() => {
-            calls.push('task-noop');
+            calls.push('task');
         });
         GlobalHooks.onTaskReview(() => {
-            calls.push('global-started');
-            return true;
+            calls.push('global');
         });
 
-        await expect(task.hooks.noticeTaskReview(task, 0)).resolves.toBe(true);
-        expect(calls).toEqual(['task-noop', 'global-started']);
+        await task.hooks.noticeOnTaskReview({ task, startMessageIndex: 0 });
+        expect(calls).toEqual(['task', 'global']);
 
         resetHookRegistry();
         const noopTask = new TaskState(new TaskManagerState());
         noopTask.hooks.onTaskReview(() => {
-            calls.push('task-noop-again');
+            calls.push('task-again');
         });
 
-        await expect(noopTask.hooks.noticeTaskReview(noopTask, 0)).resolves.toBe(false);
+        await noopTask.hooks.noticeOnTaskReview({ task: noopTask, startMessageIndex: 0 });
+        expect(calls).toEqual(['task', 'global', 'task-again']);
     });
 
     test('preserves the earliest review start index across interactions in the same idle window', async () => {
@@ -108,7 +108,7 @@ describe('onTaskReview hook', () => {
 
         await jest.advanceTimersByTimeAsync(1);
         expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(task, 0);
+        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 0 });
     });
 
     test('resets the idle window when a new user or assistant message is appended', async () => {
@@ -127,13 +127,13 @@ describe('onTaskReview hook', () => {
 
         await jest.advanceTimersByTimeAsync(1);
         expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(task, 0);
+        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 0 });
 
         task.recordTaskInteraction();
         task.chat_context.appendMessage(new UserMessage('hello again'));
         await jest.advanceTimersByTimeAsync(100);
         expect(callback).toHaveBeenCalledTimes(2);
-        expect(callback).toHaveBeenLastCalledWith(task, 2);
+        expect(callback).toHaveBeenLastCalledWith({ task, startMessageIndex: 2 });
     });
 
     test('submitUserMessage activates review scheduling for an existing task', async () => {
@@ -164,7 +164,7 @@ describe('onTaskReview hook', () => {
 
         await jest.advanceTimersByTimeAsync(1);
         expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(task, 2);
+        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 2 });
     });
 
     test('continues observing messages after chat_context is replaced', async () => {
@@ -179,6 +179,6 @@ describe('onTaskReview hook', () => {
         await jest.advanceTimersByTimeAsync(100);
 
         expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(task, 0);
+        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 0 });
     });
 });

@@ -2,7 +2,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { packOpenDeskApp } from '../../../../packages/appsdk/src/pack';
+import { packOpenDeskApp } from '../../../../packages/app-sdk/src/pack';
 
 function makeTempDir(name: string): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), `opendesk-${name}-`));

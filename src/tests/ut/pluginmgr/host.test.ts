@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PluginHookError, PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('PluginHost', () => {
     test('按插件激活顺序执行 hook，并共享 output 修改', async () => {

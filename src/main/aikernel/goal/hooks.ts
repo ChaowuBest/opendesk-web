@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { GlobalHooks } from '../hooks.js';
+import { GlobalHooks, type BeforeFinishTurnAction, type BeforeFinishTurnContext } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
 import { GoalStates, type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
@@ -17,9 +17,7 @@ import { buildGoalRevisionNoticePrompt } from './prompts.js';
 import type { TaskStatus, TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
 
-let registeredCallback:
-    | ((task: any) => Promise<{ operation: 'finish' } | { operation: 'reject'; message: string }>)
-    | undefined;
+let registeredCallback: ((ctx: BeforeFinishTurnContext) => Promise<BeforeFinishTurnAction>) | undefined;
 
 function chunkFromEvaluationRecord(
     taskId: string,
@@ -138,7 +136,7 @@ export function registerGoalHooks(): void {
     ) {
         return;
     }
-    registeredCallback = async (task) => {
+    registeredCallback = async ({ task }) => {
         if (task.parent_id !== null || task.internal === true) return { operation: 'finish' };
         if (task.isGoalRuntimeInterrupted()) return { operation: 'finish' };
         const goal = task.goal_state;

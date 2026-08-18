@@ -26,7 +26,7 @@
 OpenDesk 中的每个功能模块都以"应用（Application）"的形式组织。应用分为两类：
 
 - **系统应用**：位于 `src/main/applications/`，随 OpenDesk 主体一起构建，权限较高，可以直接 import OpenDesk 内部模块。
-- **后装应用**：通过“应用管理”安装或创建，使用 `@bitclub.ai/opendesk-appsdk` 和 `opendesk-app.json` 清单与 OpenDesk 交互。v1 后装应用只加载静态渲染资源和声明式元数据，不执行第三方主进程 Node 代码。
+- **后装应用**：通过“应用管理”安装或创建，使用 `@bitclub.ai/opendesk-app-sdk` 和 `opendesk-app.json` 清单与 OpenDesk 交互。v1 后装应用只加载静态渲染资源和声明式元数据，不执行第三方主进程 Node 代码。
 
 系统应用由以下几个核心部分组成：
 
@@ -85,10 +85,10 @@ skills/
 后装应用可以用 AppSDK 打包：
 
 ```bash
-npx opendesk-appsdk pack ./my-app --out ./my-app.zip
+npx opendesk-app-sdk pack ./my-app --out ./my-app.zip
 ```
 
-OpenDesk 主体开发态通过本地目录依赖 `packages/appsdk`，第三方开发者可以从 npm 安装 `@bitclub.ai/opendesk-appsdk`。
+OpenDesk 主体开发态通过本地目录依赖 `packages/app-sdk`，第三方开发者可以从 npm 安装 `@bitclub.ai/opendesk-app-sdk`。
 
 ---
 
@@ -102,7 +102,7 @@ OpenDesk 主体开发态通过本地目录依赖 `packages/appsdk`，第三方�
 
 ```typescript
 // src/main/applications/<myapp>/app.ts
-// 系统应用可以继续通过宿主适配层引入；公共定义来自 packages/appsdk。
+// 系统应用可以继续通过宿主适配层引入；公共定义来自 packages/app-sdk。
 import { BaseApplication } from '../base.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';

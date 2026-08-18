@@ -222,7 +222,7 @@ export class AppMgrApplication extends BaseApplication {
             try {
                 await tm.initHarness(task, workspace, mode);
                 await task.rebuildSystemPrompt();
-                await task.hooks.noticeBeforeTaskStart(task);
+                await task.hooks.noticeBeforeTaskStart({ task });
                 await task.submitUserMessage(
                     this._buildModifyPrompt(bundleName, versionDisplayName, versionCodePath, requirements, true)
                 );

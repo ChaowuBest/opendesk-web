@@ -1,9 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { runPluginCli } from '../../../../packages/plugin/src/cli.js';
+import { runPluginCli } from '../../../../packages/plugin-sdk/src/cli.js';
 
-describe('opendesk-plugin CLI', () => {
+describe('opendesk-plugin-sdk CLI', () => {
     let root: string;
 
     beforeEach(() => {
@@ -54,6 +54,6 @@ describe('opendesk-plugin CLI', () => {
         });
 
         expect(exitCode).toBe(1);
-        expect(errors).toEqual(['Usage: opendesk-plugin validate <plugin-dir>']);
+        expect(errors).toEqual(['Usage: opendesk-plugin-sdk validate <plugin-dir>']);
     });
 });

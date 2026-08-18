@@ -748,7 +748,10 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             );
             innerToolCall.args_object = toolArgs;
             if (taskState?.hooks) {
-                const innerFeedback = await taskState.hooks.checkBeforeToolCall(taskState, innerToolCall);
+                const innerFeedback = await taskState.hooks.checkBeforeToolCall({
+                    task: taskState,
+                    toolCall: innerToolCall
+                });
                 if (innerFeedback?.operation === 'deny') {
                     const msg = innerFeedback.message || 'skill 内部工具被安全网关拦截';
                     parentResult.updateResult(`skill 内部工具 ${args.toolName} 被拦截: ${msg}`);
@@ -1054,7 +1057,7 @@ export class SkillRegistry {
         const skill = await this.getSkillForAgent(bundleName, skillName, agentId);
         if (!skill) return undefined;
 
-        const context: SkillLoadContext = {
+        const ctx: SkillLoadContext = {
             bundleName,
             skillName,
             skillDirectory: skill.directory,
@@ -1062,9 +1065,9 @@ export class SkillRegistry {
             frontmatter: { ...skill.frontmatter }
         };
         try {
-            const decision = await hooks.checkBeforeSkillLoad(context);
+            const decision = await hooks.checkBeforeSkillLoad(ctx);
             if (decision.operation === 'deny') {
-                throw new SkillLoadBlockedError(bundleName, skillName, decision.message, decision.metadata);
+                throw new SkillLoadBlockedError(bundleName, skillName, decision.message);
             }
         } catch (error) {
             if (error instanceof SkillLoadBlockedError) throw error;
@@ -1077,7 +1080,7 @@ export class SkillRegistry {
 
         const content = skill.getFullContent();
         try {
-            await hooks.noticeAfterSkillLoad(context);
+            await hooks.noticeAfterSkillLoad(ctx);
         } catch (error) {
             logger.error(`Hooks.noticeAfterSkillLoad failed: ${bundleName}/${skillName}`, error);
         }
@@ -1092,7 +1095,7 @@ export class SkillRegistry {
     }
 }
 
-// ─── afterParseToolcall 钩子注册 ──────────────────────────────────────────────
+// ─── afterToolcallParse 钩子注册 ──────────────────────────────────────────────
 
 function isArgsObjectEmpty(args: unknown): boolean {
     if (args === undefined || args === null || args === '') return true;
@@ -1101,15 +1104,15 @@ function isArgsObjectEmpty(args: unknown): boolean {
 }
 
 /**
- * 注册全局 afterParseToolcall 钩子：
+ * 注册全局 afterToolcallParse 钩子：
  * 1. 基础 JSON 合法性检查：args_string 非空但解析失败（args_object 为 undefined）时拒绝；
  * 2. CallSkillTool 专项：工具名后缀为 CallSkillTool 且 args_object 为空时拒绝，
  *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
  */
 function registerParseToolcallValidationHooks(): void {
-    GlobalHooks.afterParseToolcall(async (_task, tool_call) => {
-        const raw = tool_call.args_string || '';
-        if (raw.trim().length > 0 && tool_call.args_object === undefined) {
+    GlobalHooks.afterToolcallParse(async ({ toolCall }) => {
+        const raw = toolCall.args_string || '';
+        if (raw.trim().length > 0 && toolCall.args_object === undefined) {
             return {
                 operation: 'reject',
                 message: `args_string is not valid JSON: ${raw.substring(0, 200)}`
@@ -1118,14 +1121,14 @@ function registerParseToolcallValidationHooks(): void {
         return { operation: 'finish' };
     });
 
-    GlobalHooks.afterParseToolcall(async (_task, tool_call) => {
-        if (!tool_call.tool_name || !tool_call.tool_name.endsWith('CallSkillTool')) {
+    GlobalHooks.afterToolcallParse(async ({ toolCall }) => {
+        if (!toolCall.tool_name || !toolCall.tool_name.endsWith('CallSkillTool')) {
             return { operation: 'finish' };
         }
-        if (isArgsObjectEmpty(tool_call.args_object)) {
+        if (isArgsObjectEmpty(toolCall.args_object)) {
             return {
                 operation: 'reject',
-                message: `${tool_call.tool_name} has empty args`
+                message: `${toolCall.tool_name} has empty args`
             };
         }
         return { operation: 'finish' };

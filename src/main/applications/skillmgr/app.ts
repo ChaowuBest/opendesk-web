@@ -50,7 +50,7 @@ import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
 import { runPluginAfterSkillInstall, runPluginBeforeSkillInstall } from '../pluginmgr/runtime/hooks.js';
-import type { PluginSkillInstallContext } from '../../../../packages/plugin/src/index.js';
+import type { PluginSkillInstallContext } from '../../../../packages/plugin-sdk/src/index.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
 

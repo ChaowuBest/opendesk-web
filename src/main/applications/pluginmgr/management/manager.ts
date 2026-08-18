@@ -13,7 +13,7 @@ import {
     validateOpenDeskPluginDirectory,
     validateOpenDeskPluginPackage,
     type ValidatedOpenDeskPluginPackage
-} from '../../../../../packages/plugin/src/package.js';
+} from '../../../../../packages/plugin-sdk/src/package.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { buildChildProcessEnv } from '../../../utils/shellExec.js';

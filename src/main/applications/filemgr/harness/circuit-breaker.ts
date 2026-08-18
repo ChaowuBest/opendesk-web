@@ -12,9 +12,13 @@
  * 在 filemgr 应用启动时导入本模块即可自动注册。
  */
 
-import { GlobalHooks } from '../../../aikernel/hooks.js';
+import {
+    GlobalHooks,
+    type AfterToolCallExecContext,
+    type BeforeToolCallExecContext,
+    type BeforeTurnStartContext
+} from '../../../aikernel/hooks.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import type { ToolCall } from '../../../aikernel/messages.js';
 import { logger } from '../../../utils/logger.js';
 
 // ==================== 电路断路器（per-task） ====================
@@ -88,16 +92,16 @@ function getBreaker(task: TaskState): TurnCircuitBreaker {
 
 // --- beforeTurnStart：重置该任务的熔断器 ---
 
-GlobalHooks.beforeTurnStart((task: TaskState) => {
+GlobalHooks.beforeTurnStart(({ task }: BeforeTurnStartContext) => {
     getBreaker(task).reset();
 });
 
 // --- beforeToolCall：检测 editFile 重复 ---
 
-GlobalHooks.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
-    if (tool_call.tool_name !== 'filemgr-editFile') return { operation: 'allow' as const };
+GlobalHooks.beforeToolCall(({ task, toolCall }: BeforeToolCallExecContext) => {
+    if (toolCall.tool_name !== 'filemgr-editFile') return { operation: 'allow' as const };
 
-    const args = tool_call.args_object as { filePath?: string; oldString?: string } | undefined;
+    const args = toolCall.args_object as { filePath?: string; oldString?: string } | undefined;
     if (!args?.filePath || !args?.oldString) return { operation: 'allow' as const };
 
     const msg = getBreaker(task).checkEditFile(args.filePath, args.oldString);
@@ -111,23 +115,23 @@ GlobalHooks.beforeToolCall((task: TaskState, tool_call: ToolCall) => {
 
 // --- afterToolCall：检测 readFile file_unchanged 连续 ---
 
-GlobalHooks.afterToolCall((task: TaskState, tool_call: ToolCall) => {
-    if (tool_call.tool_name !== 'filemgr-readFile' || !tool_call.result) return;
+GlobalHooks.afterToolCall(({ task, toolCall }: AfterToolCallExecContext) => {
+    if (toolCall.tool_name !== 'filemgr-readFile' || !toolCall.result) return;
 
-    if (tool_call.status !== 'success') {
+    if (toolCall.status !== 'success') {
         getBreaker(task).noteReadFileChanged();
         return;
     }
 
     try {
-        const parsed = JSON.parse(tool_call.result);
+        const parsed = JSON.parse(toolCall.result);
         if (parsed.type !== 'text' && parsed.type !== 'file_unchanged') {
             getBreaker(task).noteReadFileChanged();
             return;
         }
 
         // 仅在文件确实读取成功后清除编辑历史，避免失败的 readFile 绕过重复编辑检测
-        const args = tool_call.args_object as { file_path?: string } | undefined;
+        const args = toolCall.args_object as { file_path?: string } | undefined;
         if (args?.file_path) {
             getBreaker(task).clearEditsForFile(args.file_path);
         }

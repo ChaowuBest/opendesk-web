@@ -1812,22 +1812,13 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="trigger-task-review"]')?.addEventListener('click', async () => {
             this._dismissContextMenu();
             try {
-                const result = await window.taskManagerAPI.triggerTaskReview(taskId);
-                if (result?.triggered) {
-                    window.notificationAPI?.sendNotification(
-                        'info',
-                        this._t('renderer.developer.menu'),
-                        this._t('renderer.developer.reviewTriggered'),
-                        this._t('renderer.developer.reviewTriggeredDetail')
-                    );
-                } else {
-                    window.notificationAPI?.sendNotification(
-                        'warning',
-                        this._t('renderer.developer.menu'),
-                        this._t('renderer.developer.reviewNotTriggered'),
-                        this._t('renderer.developer.reviewNotTriggeredDetail')
-                    );
-                }
+                await window.taskManagerAPI.triggerTaskReview(taskId);
+                window.notificationAPI?.sendNotification(
+                    'info',
+                    this._t('renderer.developer.menu'),
+                    this._t('renderer.developer.reviewTriggered'),
+                    this._t('renderer.developer.reviewTriggeredDetail')
+                );
             } catch (error) {
                 console.error('Failed to trigger task review:', error);
                 window.notificationAPI?.sendNotification(

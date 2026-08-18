@@ -65,7 +65,7 @@ export function createWorkflowAuthoringCompletion(
 
     return {
         configureTask: (authoringTask, completionControl) => {
-            authoringTask.hooks.afterToolCall(async (activeTask, toolCall) => {
+            authoringTask.hooks.afterToolCall(async ({ task: activeTask, toolCall }) => {
                 if (toolCall.tool_name !== completionControl.toolName) {
                     return;
                 }
