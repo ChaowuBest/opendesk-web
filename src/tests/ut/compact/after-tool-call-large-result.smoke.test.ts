@@ -36,7 +36,7 @@ describe('compact smoke: afterToolCall large result storage', () => {
         toolCall.status = 'success';
         toolCall.result = originalResult;
 
-        await GlobalHooks.noticeAfterToolCall(task, toolCall);
+        await GlobalHooks.noticeAfterToolCall({ task, toolCall });
 
         const resultId = toolCall.result_storage?.result_id;
         expect(resultId).toBeDefined();

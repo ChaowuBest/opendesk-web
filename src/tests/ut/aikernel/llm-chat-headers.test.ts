@@ -5,19 +5,18 @@ import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { ModelInstance } from '../../../main/utils/setting.js';
 
-describe('LLM chat.headers hook coverage', () => {
+describe('LLM beforeChatModelRequest hook coverage', () => {
     afterEach(() => {
         LLM.clearAdapterCache();
         jest.restoreAllMocks();
     });
 
-    test('LLM.ask resolves chat headers once for each completion request', async () => {
-        const chatHeaders = jest.fn(async (_input, headers: Record<string, string> = {}) => ({
-            ...headers,
-            'x-plugin': 'ask'
-        }));
-        const dispose = GlobalHooks.registerChatHeaders(async (input, output) => {
-            output.headers = await chatHeaders(input, output.headers);
+    test('LLM.ask applies hook-modified options once for each completion request', async () => {
+        const onRequest = jest.fn(async (options: LLMRequestOptions) => {
+            options.extraHeaders = { ...options.extraHeaders, 'x-plugin': 'ask' };
+        });
+        const dispose = GlobalHooks.beforeChatModelRequest(async (ctx) => {
+            await onRequest(ctx.options);
         });
         try {
             let adapterOptions: LLMRequestOptions | undefined;
@@ -33,8 +32,10 @@ describe('LLM chat.headers hook coverage', () => {
                 extraHeaders: { 'x-caller': 'yes' }
             });
 
-            expect(chatHeaders).toHaveBeenCalledTimes(1);
-            expect(chatHeaders).toHaveBeenCalledWith({ modelAlias: 'gpt-4o' }, { 'x-caller': 'yes' });
+            expect(onRequest).toHaveBeenCalledTimes(1);
+            expect(onRequest).toHaveBeenCalledWith(
+                expect.objectContaining({ extraHeaders: { 'x-caller': 'yes', 'x-plugin': 'ask' } })
+            );
             expect(adapterOptions?.extraHeaders).toEqual({
                 'x-caller': 'yes',
                 'x-plugin': 'ask'
@@ -44,14 +45,13 @@ describe('LLM chat.headers hook coverage', () => {
         }
     });
 
-    test('LLM.complete forwards task plugin context to chat.headers', async () => {
-        const chatHeaders = jest.fn(async (_input, headers: Record<string, string> = {}) => ({
-            ...headers,
-            'x-plugin': 'complete',
-            'x-instrumentation': 'plugin'
-        }));
-        const dispose = GlobalHooks.registerChatHeaders(async (input, output) => {
-            output.headers = await chatHeaders(input, output.headers);
+    test('LLM.complete forwards task and model to beforeChatModelRequest', async () => {
+        const received: Array<{ task?: unknown; modelName: string }> = [];
+        const task = { task_id: 'task-1' } as never;
+        const dispose = GlobalHooks.beforeChatModelRequest(async (ctx) => {
+            received.push({ task: ctx.task, modelName: ctx.model.model_name });
+            ctx.options.extraHeaders = { ...ctx.options.extraHeaders, 'x-plugin': 'complete' };
+            ctx.options.maxCompletionTokens = 123;
         });
         try {
             let adapterOptions: LLMRequestOptions | undefined;
@@ -65,42 +65,19 @@ describe('LLM chat.headers hook coverage', () => {
             context.appendMessage(new UserMessage('hello'));
             const model = new ModelInstance('gpt-4o', 'https://example.test/v1', 'key', true);
 
-            await LLM.complete(context, model, {}, {
-                hookContext: {
-                    taskId: 'task-1',
-                    workspace: '/workspace',
-                    modelAlias: 'model-alias'
-                },
-                extraHeaderOverrides: {
-                    'x-instrumentation': 'instrumentation'
-                }
-            } as LLMRequestOptions);
+            await LLM.complete(context, model, {}, { task } as LLMRequestOptions);
 
-            expect(chatHeaders).toHaveBeenCalledTimes(1);
-            expect(chatHeaders).toHaveBeenCalledWith(
-                {
-                    taskId: 'task-1',
-                    workspace: '/workspace',
-                    modelAlias: 'model-alias'
-                },
-                {}
-            );
-            expect(adapterOptions?.extraHeaders).toEqual({
-                'x-plugin': 'complete',
-                'x-instrumentation': 'instrumentation'
-            });
+            expect(received).toEqual([{ task, modelName: 'gpt-4o' }]);
+            expect(adapterOptions?.extraHeaders).toEqual({ 'x-plugin': 'complete' });
+            expect(adapterOptions?.maxCompletionTokens).toBe(123);
         } finally {
             dispose();
         }
     });
 
-    test('LLM.streamComplete resolves chat headers once before consuming the stream', async () => {
-        const chatHeaders = jest.fn(async (_input, headers: Record<string, string> = {}) => ({
-            ...headers,
-            'x-plugin': 'stream'
-        }));
-        const dispose = GlobalHooks.registerChatHeaders(async (input, output) => {
-            output.headers = await chatHeaders(input, output.headers);
+    test('LLM.streamComplete applies hook once before consuming the stream', async () => {
+        const dispose = GlobalHooks.beforeChatModelRequest(async (ctx) => {
+            ctx.options.extraHeaders = { 'x-plugin': 'stream' };
         });
         try {
             const observedHeaders: Array<Record<string, string> | undefined> = [];
@@ -119,7 +96,6 @@ describe('LLM chat.headers hook coverage', () => {
                 // Drain the mocked stream.
             }
 
-            expect(chatHeaders).toHaveBeenCalledTimes(1);
             expect(observedHeaders).toEqual([{ 'x-plugin': 'stream' }, { 'x-plugin': 'stream' }]);
         } finally {
             dispose();

@@ -34,13 +34,13 @@ describe('OpenDesk plugin core hooks', () => {
         await expect(
             runPluginPermissionAsk(task, {
                 tool: 'terminal',
-                requests: [{ resourceType: 'file', action: 'read', resourcePath: '/allowed' }]
+                permissions: [{ resourceType: 'file', action: 'read', resourcePath: '/allowed' }]
             })
         ).resolves.toBe('allow');
         await expect(
             runPluginPermissionAsk(task, {
                 tool: 'terminal',
-                requests: [{ resourceType: 'file', action: 'read', resourcePath: '/blocked' }]
+                permissions: [{ resourceType: 'file', action: 'read', resourcePath: '/blocked' }]
             })
         ).resolves.toBe('deny');
     });

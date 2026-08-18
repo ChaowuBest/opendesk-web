@@ -90,7 +90,7 @@ export async function buildToolsetsForTask(
         }
     }
 
-    await task.hooks.applyToolDefinitions(all, task);
+    await task.hooks.applyAfterToolsetBuild({ toolsets: all, chat: task.chat_context, task });
 
     return all;
 }

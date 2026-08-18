@@ -48,9 +48,8 @@ export interface AdapterToolDefinition {
 /**
  * Materialize the model-visible request projection as an isolated ChatContext.
  *
- * The returned context is intentionally detached from the task context. It is
- * suitable for request-scoped hooks such as chat.messages.transform and keeps
- * the adapter-only replay/override rules out of the plugin contract.
+ * The returned context is intentionally detached from the task context. It
+ * keeps the adapter-only replay/override rules out of the model request.
  */
 export function buildRequestChatContext(
     chatContext: ChatContext,

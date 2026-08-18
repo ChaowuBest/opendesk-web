@@ -162,8 +162,6 @@ function cloneHookOutput<Name extends PluginHookName>(
     } else if (name === 'tool.execute.after') {
         const after = output as PluginHookMap['tool.execute.after']['output'];
         candidate.resultObject = after.resultObject ? cloneValue(after.resultObject) : undefined;
-    } else if (name === 'chat.messages.transform') {
-        candidate.messages = cloneValue((output as PluginHookMap['chat.messages.transform']['output']).messages);
     } else if (name === 'skill.load.before') {
         const before = output as PluginHookMap['skill.load.before']['output'];
         candidate.metadata = before.metadata ? cloneValue(before.metadata) : undefined;
@@ -189,18 +187,9 @@ function commitHookOutput<Name extends PluginHookName>(
 }
 
 function validateHookOutput<Name extends PluginHookName>(name: Name, output: PluginHookMap[Name]['output']): void {
-    if (name === 'chat.message' && typeof (output as PluginHookMap['chat.message']['output']).text !== 'string') {
-        throw new Error('plugin.chat_message_invalid');
-    }
     if (name === 'skill.load.before' || name === 'skill.install.before') {
         const decision = (output as PluginHookMap['skill.load.before']['output']).operation;
         if (decision !== 'allow' && decision !== 'deny') throw new Error('plugin.skill_load_decision_invalid');
-    }
-    if (name === 'chat.messages.transform') {
-        const messages = (output as PluginHookMap['chat.messages.transform']['output']).messages;
-        if (!Array.isArray(messages) || messages.some((message) => !message || typeof message !== 'object')) {
-            throw new Error('plugin.chat_messages_invalid');
-        }
     }
     if (name === 'chat.params') {
         const params = output as PluginHookMap['chat.params']['output'];

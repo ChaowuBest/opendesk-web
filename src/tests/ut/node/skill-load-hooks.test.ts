@@ -3,13 +3,10 @@ import test from 'node:test';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { Skill, SkillLoadBlockedError, SkillRegistry } from '../../../main/aikernel/skill.js';
 
-test('Hooks.checkBeforeSkillLoad preserves allow messages and metadata', async () => {
+test('Hooks.checkBeforeSkillLoad returns allow when every callback allows', async () => {
     const hooks = GlobalHooks.createChildHooks();
-    hooks.registerBeforeSkillLoad(() => ({
-        operation: 'allow',
-        message: 'allowed by policy',
-        metadata: { policy: 'test' }
-    }));
+    hooks.beforeSkillLoad(() => ({ operation: 'allow' }));
+    hooks.beforeSkillLoad(() => ({ operation: 'allow' }));
 
     const decision = await hooks.checkBeforeSkillLoad({
         bundleName: 'bundle',
@@ -17,11 +14,7 @@ test('Hooks.checkBeforeSkillLoad preserves allow messages and metadata', async (
         frontmatter: { name: 'review' }
     });
 
-    assert.deepEqual(decision, {
-        operation: 'allow',
-        message: 'allowed by policy',
-        metadata: { policy: 'test' }
-    });
+    assert.deepEqual(decision, { operation: 'allow' });
 });
 
 test('SkillRegistry.loadSkillForAgent runs before and after hooks for an explicit load', async () => {
@@ -34,19 +27,19 @@ test('SkillRegistry.loadSkillForAgent runs before and after hooks for an explici
     };
     const hooks = GlobalHooks.createChildHooks();
     const events: string[] = [];
-    hooks.registerBeforeSkillLoad((context) => {
-        assert.deepEqual(Object.keys(context).sort(), [
+    hooks.beforeSkillLoad((ctx) => {
+        assert.deepEqual(Object.keys(ctx).sort(), [
             'bundleName',
             'frontmatter',
             'skillDirectory',
             'skillName',
             'source'
         ]);
-        events.push(`before:${context.bundleName}/${context.skillName}`);
+        events.push(`before:${ctx.bundleName}/${ctx.skillName}`);
         return { operation: 'allow', message: 'allowed' };
     });
-    hooks.registerAfterSkillLoad((context) => {
-        events.push(`after:${context.bundleName}/${context.skillName}`);
+    hooks.afterSkillLoad((ctx) => {
+        events.push(`after:${ctx.bundleName}/${ctx.skillName}`);
     });
 
     registry.registerSkillProvider(bundleName, provider);
@@ -70,8 +63,8 @@ test('SkillRegistry.loadSkillForAgent does not run after hooks when before denie
     };
     const hooks = GlobalHooks.createChildHooks();
     let afterCalled = false;
-    hooks.registerBeforeSkillLoad(() => ({ operation: 'deny', message: 'policy denied' }));
-    hooks.registerAfterSkillLoad(() => {
+    hooks.beforeSkillLoad(() => ({ operation: 'deny', message: 'policy denied' }));
+    hooks.afterSkillLoad(() => {
         afterCalled = true;
     });
 

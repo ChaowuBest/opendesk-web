@@ -22,7 +22,7 @@ export function registerDeadloopHarness(): void {
     if (registered) return;
     registered = true;
 
-    GlobalHooks.beforeToolcallCreated(async (task, _assistantMessage, chunkHasNewToolCall, requestToolCalls) => {
+    GlobalHooks.beforeToolcallChunkMerge(async ({ task, chunkHasNewToolCall, requestToolCalls }) => {
         // 1. 工具调用数量限制：当前已有 >= MAX 个，且即将追加新工具调用时拒绝
         if (chunkHasNewToolCall && requestToolCalls.length >= MAX_TOOLCALLS_PER_REQUEST) {
             logger.warn(

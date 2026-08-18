@@ -298,7 +298,7 @@ export class ChannelMgrApplication extends BaseApplication {
         try {
             // 注册全局钩子：任何带渠道绑定的任务在 turn 结束后，
             // 自动将用户消息和 assistant 回复（文本 + 媒体）发送回渠道。
-            GlobalHooks.afterFinishTurn(async (task) => {
+            GlobalHooks.afterFinishTurn(async ({ task }) => {
                 if (task.origin?.type !== 'channel') return;
 
                 const skipUserEcho = this.skipUserEchoTasks.has(task);

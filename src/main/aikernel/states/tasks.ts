@@ -131,7 +131,7 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
-import type { TaskUsageSnapshot } from '../task/types.js';
+import type { SubmitUserMessageOptions, TaskUsageSnapshot } from '../task/types.js';
 import {
     ATTEMPT_COMPLETION_TOOL_NAME,
     getLLMRetryDelayMs,
@@ -570,12 +570,7 @@ export class TaskState {
         const previousOnUsage = modelRequestOptions?.onUsage;
         return {
             ...modelRequestOptions,
-            hookContext: {
-                ...modelRequestOptions?.hookContext,
-                taskId: this.task_id,
-                workspace: this.getWorkspace() || undefined,
-                modelAlias: this.ensureValidModelOrFallback()
-            },
+            task: this,
             onUsage: async (usage, context) => {
                 if (previousOnUsage) {
                     try {
@@ -773,7 +768,7 @@ export class TaskState {
 
         this._taskReviewActive = false;
         this._taskReviewGeneration++;
-        await this.hooks.noticeTaskReview(this, this._taskReviewStartMessageIndex);
+        await this.hooks.noticeOnTaskReview({ task: this, startMessageIndex: this._taskReviewStartMessageIndex });
     }
 
     cancelPendingTaskReview(): void {
@@ -1066,15 +1061,6 @@ export class TaskState {
 
     async startInternalTurn(options: StartInternalTurnOptions): Promise<void> {
         await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
-        const pluginPrompt = await this.hooks.applyChatMessage(
-            {
-                taskId: this.task_id,
-                workspace: this.getWorkspace() || undefined,
-                modelAlias: this.ensureValidModelOrFallback(),
-                internal: true
-            },
-            options.prompt
-        );
         const generation = ++this._turnGeneration;
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
@@ -1090,9 +1076,9 @@ export class TaskState {
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
-        const userMessage = new UserMessage(pluginPrompt);
+        const userMessage = new UserMessage(options.prompt);
         userMessage.internal = true;
-        userMessage.rawText = options.rawText ?? (pluginPrompt !== options.prompt ? options.prompt : undefined);
+        userMessage.rawText = options.rawText;
         userMessage.metadata = metadata;
         this.chat_context.appendMessage(userMessage);
         for (let i = 0; i < userMessage.content.length; i++) {
@@ -1178,7 +1164,7 @@ export class TaskState {
         this.task_manager_state.publishTaskListUpdate();
 
         // 触发 onTaskRevert 钩子
-        await this.hooks.noticeTaskRevert(this);
+        await this.hooks.noticeOnTaskRevert({ task: this });
 
         if (options.resubmit) {
             if (attachedFilePaths.length > 0) {
@@ -1610,15 +1596,6 @@ export class TaskState {
         const extensionInputResult = await this.extensions.handleUserMessage(message, options.imageDataUris);
         if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();
-        const pluginMessage = await this.hooks.applyChatMessage(
-            {
-                taskId: this.task_id,
-                workspace: this.getWorkspace() || undefined,
-                modelAlias: model,
-                internal: false
-            },
-            message
-        );
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
         this._currentTurnInteractive = options.interactive === true;
         this.task_status = 'running';
@@ -1639,8 +1616,7 @@ export class TaskState {
 
         // 先构建用户消息并立即推送到前端，避免后续的 prepareContextForModel / replaceSlashSkills
         // 等耗时异步操作阻塞用户消息的显示
-        const user_message = new UserMessage(pluginMessage);
-        if (pluginMessage !== message) user_message.rawText = message;
+        const user_message = new UserMessage(message);
         // 标记本条用户消息所属的运行代次，与 startInternalTurn 路径一致（tasks.ts:781-782）。
         // generation 已在上方 1223 行递增，此处将其写入消息元数据，使下游
         // （安全网关 skill 归因等）能从 message 反查到 turn 归属。
@@ -1653,7 +1629,7 @@ export class TaskState {
             }
         };
 
-        const imagePaths = extractImagePaths(pluginMessage);
+        const imagePaths = extractImagePaths(message);
         for (const imgPath of imagePaths) {
             try {
                 const dataUri = imageToDataUri(imgPath);
@@ -1726,11 +1702,11 @@ export class TaskState {
         }
 
         // 检测用户消息中的 /skillname，替换文本（用户消息已经显示，如果有替换则更新显示）
-        const displayMessage = await this.replaceSlashSkillsInText(pluginMessage);
+        const displayMessage = await this.replaceSlashSkillsInText(message);
 
         // 如果文本被替换了，保留原始输入并更新显示文本，重新推送到前端
-        if (displayMessage !== pluginMessage) {
-            user_message.rawText ??= pluginMessage;
+        if (displayMessage !== message) {
+            user_message.rawText ??= message;
             const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
             if (textPart) {
                 textPart.text = displayMessage;
@@ -1771,7 +1747,7 @@ export class TaskState {
         this.chat_context.attachToolsets(...allToolsets);
 
         // 检测用户消息中的 /skillname 引用并预加载到 assistant message
-        await this.preloadSlashSkills(pluginMessage, assistant_message);
+        await this.preloadSlashSkills(message, assistant_message);
 
         // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
         for (let i = 0; i < assistant_message.content.length; i++) {
@@ -1785,13 +1761,13 @@ export class TaskState {
             this.name_pending = false;
             if (taskConfig?.generate_taskname !== false) {
                 this.task_name = '未命名任务';
-                this.generateTaskName(pluginMessage, telemetryRequestOptions).then(() => {
+                this.generateTaskName(message, telemetryRequestOptions).then(() => {
                     this.persistLater();
                     this.task_manager_state.publishTaskListUpdate();
                 });
             } else {
                 // 关闭自动生成时，使用用户 prompt 作为任务名（截断到 30 字符）
-                this.task_name = pluginMessage.length > 30 ? pluginMessage.substring(0, 30) + '...' : pluginMessage;
+                this.task_name = message.length > 30 ? message.substring(0, 30) + '...' : message;
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             }
@@ -2584,32 +2560,28 @@ export class TaskState {
             args = validation.data as Record<string, unknown>;
             tool_call.args_object = args;
 
-            const argsBeforeToolInterception = JSON.stringify(args);
-            const interception = await this.hooks.interceptToolCall(this, tool_call, args);
-            if (interception.operation === 'deny') {
+            /* beforeToolCallValidate：参数层审查，钩子可拒绝或就地修改
+             * tool_call.args_object 调整参数（重新校验见下） */
+            const validateFeedback = await this.hooks.checkBeforeToolCallValidate({ task: this, toolCall: tool_call });
+            if (validateFeedback.operation === 'deny') {
                 tool_call.status = 'error';
-                tool_call.result = interception.message;
-                if (interception.metadata) {
-                    tool_call.result_object = interception.metadata;
-                }
+                tool_call.result = validateFeedback.message;
                 return;
             }
 
-            const interceptedArgsValidation = tool.validateArgs(interception.args);
-            if (!interceptedArgsValidation.success) {
-                logger.error(
-                    `tool ${tool_call.tool_name} intercepted args validation failed: ${interceptedArgsValidation.error}`
-                );
-                tool_call.args_object = interception.args;
-                tool_call.status = 'error';
-                tool_call.result = interceptedArgsValidation.error;
-                return;
-            }
-            args = interceptedArgsValidation.data as Record<string, unknown>;
-            tool_call.args_object = args;
-            const argsAfterToolInterception = JSON.stringify(args);
-            if (argsAfterToolInterception !== argsBeforeToolInterception) {
-                tool_call.args_string = argsAfterToolInterception;
+            /* 钩子可能替换了 tool_call.args_object，重新校验并同步 */
+            if (tool_call.args_object !== args) {
+                const reValidation = tool.validateArgs(tool_call.args_object);
+                if (!reValidation.success) {
+                    logger.error(`tool ${tool_call.tool_name} args re-validation failed: ${reValidation.error}`);
+                    tool_call.args_object = reValidation.data as Record<string, unknown>;
+                    tool_call.status = 'error';
+                    tool_call.result = reValidation.error;
+                    return;
+                }
+                args = reValidation.data as Record<string, unknown>;
+                tool_call.args_object = args;
+                tool_call.args_string = JSON.stringify(args);
             }
             tool_call.status = 'running';
 
@@ -2635,7 +2607,7 @@ export class TaskState {
                 new TelemetryOperation('hook.before_tool_call', {
                     'tool.name': tool_call.tool_name
                 }),
-                () => this.hooks.checkBeforeToolCall(this, tool_call)
+                () => this.hooks.checkBeforeToolCall({ task: this, toolCall: tool_call })
             );
 
             // 检查 beforeToolCall hook 是否已阻止执行（如 AgentGate 安全拦截）
@@ -2643,9 +2615,6 @@ export class TaskState {
                 logger.error(`tool ${tool_call.tool_name} denied by hook: ${hookFeedback.message}`);
                 tool_call.status = 'error';
                 tool_call.result = hookFeedback.message;
-                if (hookFeedback.extra) {
-                    tool_call.result_object = hookFeedback.extra;
-                }
                 return;
             }
 
@@ -2681,7 +2650,7 @@ export class TaskState {
                     'tool.name': tool_call.tool_name,
                     'tool.status': tool_call.status
                 }),
-                () => this.hooks.noticeAfterToolCall(this, tool_call)
+                () => this.hooks.noticeAfterToolCall({ task: this, toolCall: tool_call })
             );
             try {
                 await AgentExecutionInstrumentationRegistry.recordToolCall({
@@ -2880,7 +2849,7 @@ export class TaskState {
                 let hookRejectCount = 0;
                 this._currentTurn = 0;
                 await TelemetryOperationRegistry.aroundOperation(new TelemetryOperation('hook.before_turn_start'), () =>
-                    this.hooks.noticeBeforeTurnStart(this)
+                    this.hooks.noticeBeforeTurnStart({ task: this })
                 );
                 let shouldScheduleSessionMemoryUpdate = false;
 
@@ -2895,18 +2864,6 @@ export class TaskState {
                             // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                             if (this.task_status === 'stopped') {
                                 break;
-                            }
-
-                            // 钩子：通知 afterProcessCompletion
-                            {
-                                const lastMsg = this.chat_context.lastMessage();
-                                if (lastMsg instanceof AssistantMessage) {
-                                    this.applyRuntimeMetadataToAssistant(lastMsg);
-                                    await TelemetryOperationRegistry.aroundOperation(
-                                        new TelemetryOperation('hook.after_completion'),
-                                        () => this.hooks.noticeAfterProcessCompletion(this, lastMsg)
-                                    );
-                                }
                             }
 
                             const materializedExtensionEvents = await this.extensions.checkpoint('after_completion', {
@@ -2977,7 +2934,7 @@ export class TaskState {
                             } else {
                                 const checkHooks = await TelemetryOperationRegistry.aroundOperation(
                                     new TelemetryOperation('hook.before_finish_turn'),
-                                    () => this.hooks.checkBeforeFinishTurn(this, modelRequestOptions)
+                                    () => this.hooks.checkBeforeFinishTurn({ task: this, modelRequestOptions })
                                 );
                                 if (this._turnGeneration !== myGeneration) return;
                                 const materializedExtensionEventsAfterHooks =
@@ -3066,7 +3023,7 @@ export class TaskState {
                     }
                     if (!skipInterruptedTurnHooks) {
                         try {
-                            await this.hooks.noticeAfterFinishTurn(this);
+                            await this.hooks.noticeAfterFinishTurn({ task: this });
                         } catch (err) {
                             logger.error(
                                 `task ${this.task_id}: noticeAfterFinishTurn failed: ${(err as Error)?.message || String(err)}`

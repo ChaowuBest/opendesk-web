@@ -8,6 +8,7 @@ import { GlobalState } from '../../../aikernel/states/global.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
+import type { PluginChatHeadersInput } from '../../../../../packages/plugin-sdk/src/index.js';
 import { loadPlugin, OPENDESK_RUNTIME_VERSION, type PluginCandidate } from '../discovery/loader.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
@@ -16,8 +17,6 @@ import {
     runPluginAfterToolCall,
     runPluginBeforeToolCall,
     runPluginChatHeaders,
-    runPluginChatMessage,
-    runPluginChatMessagesTransform,
     runPluginChatParams,
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
@@ -107,72 +106,58 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.forEach((dispose) => dispose());
     disposeAikernelHooks = [];
     disposeAikernelHooks.push(
-        GlobalHooks.registerChatHeaders(
-            async (input, output) => {
-                output.headers = await runPluginChatHeaders(input, output.headers);
+        GlobalHooks.beforeChatModelRequest(
+            async (ctx) => {
+                const input: PluginChatHeadersInput = {
+                    taskId: ctx.task?.task_id,
+                    workspace: ctx.task?.getWorkspace() || undefined,
+                    modelAlias: ctx.model.model_name
+                };
+                ctx.options.extraHeaders = await runPluginChatHeaders(input, ctx.options.extraHeaders);
+                Object.assign(ctx.options, await runPluginChatParams(input, ctx.options));
             },
             { onError: 'throw' }
         )
     );
     disposeAikernelHooks.push(
-        GlobalHooks.registerChatParams(
-            async (input, output) => {
-                Object.assign(output, await runPluginChatParams(input, output));
+        GlobalHooks.beforeSkillLoad(
+            async (ctx) => {
+                return await runPluginBeforeSkillLoad(ctx);
             },
             { onError: 'throw' }
         )
     );
     disposeAikernelHooks.push(
-        GlobalHooks.registerChatMessage(
-            async (input, output) => {
-                output.text = await runPluginChatMessage(input, output.text);
-            },
-            { onError: 'throw' }
-        )
-    );
-    disposeAikernelHooks.push(
-        GlobalHooks.registerChatMessagesTransform(
-            async (input, context) => {
-                return await runPluginChatMessagesTransform(input, context);
-            },
-            { onError: 'throw' }
-        )
-    );
-    disposeAikernelHooks.push(
-        GlobalHooks.registerBeforeSkillLoad(
-            async (context) => {
-                return await runPluginBeforeSkillLoad(context);
-            },
-            { onError: 'throw' }
-        )
-    );
-    disposeAikernelHooks.push(
-        GlobalHooks.registerAfterSkillLoad(async (context) => {
-            await runPluginAfterSkillLoad(context);
+        GlobalHooks.afterSkillLoad(async (ctx) => {
+            await runPluginAfterSkillLoad(ctx);
         })
     );
     disposeAikernelHooks.push(
-        GlobalHooks.registerToolCallInterceptor(async (task, toolCall, args) => {
-            return await runPluginBeforeToolCall(task, toolCall, args);
+        GlobalHooks.beforeToolCallValidate(async ({ task, toolCall }) => {
+            return await runPluginBeforeToolCall(task, toolCall);
         })
     );
     disposeAikernelHooks.push(
         GlobalHooks.afterToolCall(
-            async (task, toolCall) => {
+            async ({ task, toolCall }) => {
                 await runPluginAfterToolCall(task, toolCall);
             },
             { priority: MAX_HOOK_PRIORITY }
         )
     );
     disposeAikernelHooks.push(
-        GlobalHooks.registerToolDefinitions(async (toolsets, task) => {
+        GlobalHooks.afterToolsetBuild(async ({ toolsets, task }) => {
             await applyPluginToolDefinitions(toolsets, task);
         })
     );
     disposeAikernelHooks.push(
-        GlobalHooks.registerPermissionAsk(
-            async (task, input, output) => {
-                output.decision = await runPluginPermissionAsk(task, input);
+        GlobalHooks.beforePermissionAsk(
+            async ({ task, toolCall, permissions, action }) => {
+                action.decision = await runPluginPermissionAsk(task, {
+                    tool: toolCall.tool_name,
+                    callId: toolCall.id,
+                    permissions
+                });
             },
             { onError: 'throw' }
         )

@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
+import { ChatContext } from '../../../main/aikernel/messages.js';
 import { SkillRegistry } from '../../../main/aikernel/skill.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
@@ -12,11 +13,22 @@ import { PLUGIN_SKILL_BUNDLE } from '../../../main/applications/pluginmgr/runtim
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { installPlugin } from '../../../main/applications/pluginmgr/management/manager.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
-import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 describe('OpenDesk plugin bootstrap', () => {
     let configDirectory: string;
     let previousBuiltinPluginsDirectory: string | undefined;
+
+    /** 调度 beforeChatModelRequest 钩子并返回钩子改写后的 extraHeaders */
+    async function applyChatModelRequest(): Promise<Record<string, string> | undefined> {
+        const ctx = {
+            chat: new ChatContext(),
+            model: new ModelInstance('mock-model', 'https://example.test/v1', 'key', true),
+            options: {}
+        };
+        await GlobalHooks.applyBeforeChatModelRequest(ctx);
+        return ctx.options.extraHeaders;
+    }
 
     beforeEach(() => {
         configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-bootstrap-'));
@@ -189,7 +201,7 @@ Extract decisions and actions.
             status: 'active',
             origin: builtinDirectory
         });
-        await expect(GlobalHooks.applyChatHeaders({ taskId: 'task-1' })).resolves.toEqual({
+        await expect(applyChatModelRequest()).resolves.toEqual({
             'x-builtin-example': 'enabled'
         });
     });
@@ -246,7 +258,7 @@ Extract decisions and actions.
         await initializePluginHost();
 
         expect(getPluginHost().get('local-example')?.status).toBe('active');
-        await expect(GlobalHooks.applyChatHeaders({ taskId: 'task-1' })).resolves.toEqual({
+        await expect(applyChatModelRequest()).resolves.toEqual({
             'x-local-example': 'enabled'
         });
     });
@@ -380,7 +392,7 @@ Extract decisions and actions.
             status: 'active',
             origin: pluginsDirectory
         });
-        await expect(GlobalHooks.applyChatHeaders({ taskId: 'task-1' })).resolves.toEqual({
+        await expect(applyChatModelRequest()).resolves.toEqual({
             'x-runtime-example': 'enabled'
         });
     });
@@ -477,7 +489,7 @@ Review the current changes.`
             await initializePluginHost();
 
             expect(getPluginHost().get('workspace-example')).toBeUndefined();
-            await expect(GlobalHooks.applyChatHeaders({ taskId: 'task-1', workspace })).resolves.toEqual({});
+            await expect(applyChatModelRequest()).resolves.toEqual({});
         } finally {
             fs.rmSync(workspace, { recursive: true, force: true });
         }

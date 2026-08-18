@@ -64,7 +64,7 @@ async function runBeforeHook(
     const call = new ToolCall(0, 'before-call', 'terminal-executeBash', JSON.stringify({ command }));
     call.args_object = { command };
 
-    await onBeforeExecuteBash(task, call);
+    await onBeforeExecuteBash({ task, toolCall: call });
 
     return {
         meta: JSON.parse(fs.readFileSync(path.join(skillDir, 'opendesk_meta.json'), 'utf8')),

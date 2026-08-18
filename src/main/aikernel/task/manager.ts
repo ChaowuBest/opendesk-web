@@ -728,7 +728,7 @@ export class TaskManagerState {
         await task.rebuildSystemPrompt();
 
         // 触发 beforeTaskStart 钩子（在 system prompt 已设置但用户消息尚未提交时）
-        await task.hooks.noticeBeforeTaskStart(task);
+        await task.hooks.noticeBeforeTaskStart({ task });
 
         // 提交用户消息
         await task.submitUserMessage(prompt);

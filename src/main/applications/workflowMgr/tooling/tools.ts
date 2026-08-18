@@ -496,7 +496,7 @@ function resolveAuthoredWorkflowFromTask(hostTask: TaskState, reference: string)
 
 function stopHostTurnAfterLaunch(hostTask: TaskState, runId: string): void {
     let pending = true;
-    hostTask.hooks.afterToolCall((activeTask, toolCall) => {
+    hostTask.hooks.afterToolCall(({ task: activeTask, toolCall }) => {
         if (!pending || toolCall.tool_name !== 'workflow-RunWorkflow' || toolCall.status !== 'success') {
             return;
         }

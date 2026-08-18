@@ -18,7 +18,7 @@ describe('OpenDesk plugin tool hooks', () => {
         await getPluginHost().dispose();
     });
 
-    test('before hook 可以修改随后用于权限检查和执行的参数', async () => {
+    test('before hook 可以就地改写参数（写回 toolCall.args_object）', async () => {
         await getPluginHost().activate(
             definePlugin({
                 id: 'argument-normalizer',
@@ -31,14 +31,13 @@ describe('OpenDesk plugin tool hooks', () => {
             { origin: 'test:argument-normalizer' }
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{"value":1}');
+        call.args_object = { value: 1 };
 
-        await expect(runPluginBeforeToolCall(task, call, { value: 1 })).resolves.toEqual({
-            operation: 'allow',
-            args: { value: 2 }
-        });
+        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({ operation: 'allow' });
+        expect(call.args_object).toEqual({ value: 2 });
     });
 
-    test('普通 before hook 失败时回滚参数并继续工具执行', async () => {
+    test('普通 before hook 失败时保持原参数并继续工具执行', async () => {
         await getPluginHost().activate(
             definePlugin({
                 id: 'broken-before',
@@ -52,11 +51,10 @@ describe('OpenDesk plugin tool hooks', () => {
             { origin: 'test:broken-before' }
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{"value":1}');
+        call.args_object = { value: 1 };
 
-        await expect(runPluginBeforeToolCall(task, call, { value: 1 })).resolves.toEqual({
-            operation: 'allow',
-            args: { value: 1 }
-        });
+        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({ operation: 'allow' });
+        expect(call.args_object).toEqual({ value: 1 });
     });
 
     test('closed before hook 失败时阻止工具执行', async () => {
@@ -77,7 +75,7 @@ describe('OpenDesk plugin tool hooks', () => {
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{}');
 
-        await expect(runPluginBeforeToolCall(task, call, {})).resolves.toEqual({
+        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({
             operation: 'deny',
             message: expect.any(String)
         });
@@ -89,7 +87,7 @@ describe('OpenDesk plugin tool hooks', () => {
                 id: 'explicit-policy',
                 setup(ctx) {
                     ctx.hooks.on('tool.execute.before', (_input, output) => {
-                        output.deny = { message: 'blocked by policy' };
+                        output.deny = { message: 'blocked by policy', metadata: { blocked: true } };
                     });
                 }
             }),
@@ -97,11 +95,11 @@ describe('OpenDesk plugin tool hooks', () => {
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{}');
 
-        await expect(runPluginBeforeToolCall(task, call, {})).resolves.toEqual({
+        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({
             operation: 'deny',
-            message: 'blocked by policy',
-            metadata: undefined
+            message: 'blocked by policy'
         });
+        expect(call.result_object).toEqual({ blocked: true });
     });
 
     test('after hook 可以改写返回给模型的结果', async () => {

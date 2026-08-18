@@ -65,11 +65,10 @@ function resetHookRegistry(): void {
     GlobalHooks.beforeTaskStartHooks = [];
     GlobalHooks.onTaskReviewHooks = [];
     GlobalHooks.onTaskRevertHooks = [];
-    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.afterToolcallParseHooks = [];
     GlobalHooks.beforeToolCallHooks = [];
     GlobalHooks.afterToolCallHooks = [];
     GlobalHooks.beforeTurnStartHooks = [];
-    GlobalHooks.afterProcessCompletionHooks = [];
 }
 
 function createTask(): TaskState {
@@ -603,7 +602,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('reject');
         expect(task.goal_state?.revision).toBe(2);
@@ -697,7 +696,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('finish');
         expect(task.goal_state?.status).toBe('paused');
@@ -728,7 +727,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('finish');
         expect(task.goal_state?.status).toBe('cleared');
@@ -1694,7 +1693,7 @@ describe('goal controller and scheduler', () => {
             { priority: 100 }
         );
 
-        await task.hooks.checkBeforeFinishTurn(task);
+        await task.hooks.checkBeforeFinishTurn({ task });
 
         // task-level 始终先于 global-level，各自内部按 priority 升序
         expect(calls).toEqual(['task-late', 'global-early']);
@@ -1721,7 +1720,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('reject');
         expect(result.message).toBe('请继续完成 B 部分的工作');
@@ -1757,7 +1756,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe(expectedOperation);
         const endChunk = publishedChunks.find((chunk) => chunk.phase === 'end');
@@ -1789,7 +1788,7 @@ describe('goal controller and scheduler', () => {
         jest.spyOn(GoalEvaluator, 'evaluate').mockRejectedValue(new Error('evaluator crashed'));
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('finish');
         expect(task.goal_state?.status).toBe('blocked');
@@ -1831,7 +1830,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result.operation).toBe('finish');
         expect(task.goal_state?.objective).toBe('new goal');
@@ -1857,7 +1856,7 @@ describe('goal controller and scheduler', () => {
         });
         registerGoalHooks();
 
-        const result = await task.hooks.checkBeforeFinishTurn(task);
+        const result = await task.hooks.checkBeforeFinishTurn({ task });
 
         expect(result).toEqual({ operation: 'reject', message: 'todo incomplete' });
         expect(evaluateSpy).not.toHaveBeenCalled();

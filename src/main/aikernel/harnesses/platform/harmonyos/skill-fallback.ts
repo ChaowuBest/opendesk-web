@@ -16,7 +16,7 @@ import { randomUUID } from 'crypto';
 import { logger } from '../../../../utils/logger.js';
 import { FileLock } from '../../../../utils/file-lock.js';
 import { GlobalHooks } from '../../../hooks.js';
-import type { BeforeToolCallFeedback } from '../../../hooks.js';
+import type { BeforeToolCallExecAction, BeforeToolCallExecContext } from '../../../hooks.js';
 import type { TaskState } from '../../../states/tasks.js';
 import type { ToolCall } from '../../../messages.js';
 import { SkillRegistry } from '../../../skill.js';
@@ -219,7 +219,10 @@ async function resolveExternalSkills(
     return result;
 }
 
-export async function onBeforeExecuteBash(task: TaskState, toolCall: ToolCall): Promise<BeforeToolCallFeedback> {
+export async function onBeforeExecuteBash({
+    task,
+    toolCall
+}: BeforeToolCallExecContext): Promise<BeforeToolCallExecAction> {
     const command = toolCall.args_object?.command;
     if (typeof command !== 'string') return { operation: 'allow' };
 

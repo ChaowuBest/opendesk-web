@@ -29,21 +29,24 @@ test('a failed read does not reset the repeated-edit circuit breaker', async () 
         newString: 'after'
     };
 
-    assert.deepEqual(await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running')), {
+    assert.deepEqual(await beforeToolCall({ task, toolCall: makeToolCall('filemgr-editFile', editArgs, 'running') }), {
         operation: 'allow'
     });
 
-    await afterToolCall(
+    await afterToolCall({
         task,
-        makeToolCall(
+        toolCall: makeToolCall(
             'filemgr-readFile',
             { file_path: editArgs.filePath },
             'error',
             'permission denied while reading file'
         )
-    );
+    });
 
-    const repeatedEdit = await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'));
+    const repeatedEdit = await beforeToolCall({
+        task,
+        toolCall: makeToolCall('filemgr-editFile', editArgs, 'running')
+    });
     assert.equal(repeatedEdit.operation, 'deny');
 });
 
@@ -63,22 +66,22 @@ test('a successful read resets the repeated-edit circuit breaker for that file',
     const editArgs = { filePath, oldString: 'before', newString: 'after' };
 
     assert.equal(
-        (await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'))).operation,
+        (await beforeToolCall({ task, toolCall: makeToolCall('filemgr-editFile', editArgs, 'running') })).operation,
         'allow'
     );
 
-    await afterToolCall(
+    await afterToolCall({
         task,
-        makeToolCall(
+        toolCall: makeToolCall(
             'filemgr-readFile',
             { file_path: filePath },
             'success',
             JSON.stringify({ type: 'text', file: { filePath, content: 'after' } })
         )
-    );
+    });
 
     assert.equal(
-        (await beforeToolCall(task, makeToolCall('filemgr-editFile', editArgs, 'running'))).operation,
+        (await beforeToolCall({ task, toolCall: makeToolCall('filemgr-editFile', editArgs, 'running') })).operation,
         'allow'
     );
 });

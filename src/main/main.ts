@@ -1221,8 +1221,8 @@ const registerTaskManagerAPIHandlers = () => {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
             task.cancelPendingTaskReview();
-            const triggered = await task.hooks.noticeTaskReview(task, 0);
-            return { status: 'ok', data: { triggered } };
+            await task.hooks.noticeOnTaskReview({ task, startMessageIndex: 0 });
+            return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }

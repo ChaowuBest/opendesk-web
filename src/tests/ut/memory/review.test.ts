@@ -40,7 +40,7 @@ function resetHookRegistry(): void {
     GlobalHooks.afterFinishTurnHooks = [];
     GlobalHooks.beforeTaskStartHooks = [];
     GlobalHooks.onTaskReviewHooks = [];
-    GlobalHooks.afterParseToolcallHooks = [];
+    GlobalHooks.afterToolcallParseHooks = [];
     GlobalHooks.beforeToolCallHooks = [];
     GlobalHooks.afterToolCallHooks = [];
 }

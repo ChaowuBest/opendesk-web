@@ -17,8 +17,6 @@ export type {
     PluginCapability,
     PluginChatHeadersInput,
     PluginChatHeadersOutput,
-    PluginChatMessageInput,
-    PluginChatMessageOutput,
     PluginChatParams,
     PluginSkillLoadContext,
     PluginSkillLoadBeforeOutput,
@@ -78,8 +76,6 @@ export type {
 export type { PluginRegistryData, PluginRegistryRecord, PluginSourceKind } from './management/registry.js';
 export {
     runPluginChatHeaders,
-    runPluginChatMessage,
-    runPluginChatMessagesTransform,
     runPluginChatParams,
     runPluginBeforeSkillInstall,
     runPluginAfterSkillInstall

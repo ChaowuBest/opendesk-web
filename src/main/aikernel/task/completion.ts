@@ -493,7 +493,8 @@ export async function processTaskCompletion(
     // TailCards 由 onTailcardGenerate 钩子生成。上下文准备成功时回调可读取压缩后的
     // ActiveContextView；准备失败时保留旧行为，直接使用原始 chat context 回退，
     // 不在回退点重新构建或修改 active view。
-    requestTailText = await task.hooks.buildTailcards(task, {
+    requestTailText = await task.hooks.buildTailcards({
+        task,
         activeContext: streamOptions?.activeContext,
         chatContext: task.chat_context,
         model,
@@ -583,32 +584,22 @@ export async function processTaskCompletion(
                         `autoParseThinkTags=${autoParseThinkTags}`
                 );
                 assistant_message.beginCompletionRound(autoParseThinkTags);
-                const pluginInput = {
-                    taskId: task.task_id,
-                    workspace: task.getWorkspace() || undefined,
-                    modelAlias: requestModel
-                };
                 const requestChatContext = buildRequestChatContext(task.chat_context, {
                     activeContext: requestActiveContext,
                     ...(streamOptions ?? {}),
                     ...(requestTailText ? { requestTailText } : {})
                 });
-                const pluginChatContext = await task.hooks.transformChatMessages(pluginInput, requestChatContext);
                 const pluginMessageOptions = {
                     activeContext: {
                         startIndex: 0,
-                        messages: pluginChatContext.messages
+                        messages: requestChatContext.messages
                     },
                     ...(requestTailText ? { requestTailText } : {})
                 };
-                const pluginParams = await task.hooks.applyChatParams(pluginInput, {
-                    reasoningEffort: requestOptions.reasoningEffort,
-                    maxCompletionTokens: requestOptions.maxCompletionTokens
-                });
                 await AgentExecutionInstrumentationRegistry.aroundModelRequest(
                     {
                         taskId: task.task_id,
-                        chatContext: pluginChatContext,
+                        chatContext: requestChatContext,
                         messageOptions: pluginMessageOptions,
                         assistantMessage: assistant_message,
                         model: requestModel,
@@ -618,14 +609,16 @@ export async function processTaskCompletion(
                         getUsage: () => assistant_message.usage
                     },
                     async (instrumentationHeaders) => {
+                        // 宿主观测（如 Langfuse）的 headers 在请求钩子（LLM 层）之前合并，
+                        // 作为 extraHeaders 的一部分随请求下发
                         const pluginRequestOptions: LLMRequestOptions = {
                             ...requestOptions,
-                            ...pluginParams,
-                            hookContext: pluginInput,
-                            extraHeaderOverrides: instrumentationHeaders
+                            extraHeaders: instrumentationHeaders
+                                ? { ...requestOptions.extraHeaders, ...instrumentationHeaders }
+                                : requestOptions.extraHeaders
                         };
                         for await (const chunk_resp of LLM.streamComplete(
-                            pluginChatContext,
+                            requestChatContext,
                             requestModel,
                             pluginMessageOptions,
                             pluginRequestOptions
@@ -644,7 +637,7 @@ export async function processTaskCompletion(
                             }
 
                             // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
-                            // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
+                            // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterToolcallParse 钩子校验。
                             const chunkHasNewToolCall = chunkIntroducesNewToolCall(
                                 chunk_resp.content,
                                 assistant_message
@@ -654,7 +647,10 @@ export async function processTaskCompletion(
                                 const lastExisting = existingCalls[existingCalls.length - 1];
                                 if (lastExisting) {
                                     finalizeToolCallArgs(lastExisting);
-                                    const feedback = await task.hooks.checkAfterParseToolcall(task, lastExisting);
+                                    const feedback = await task.hooks.checkAfterToolcallParse({
+                                        task,
+                                        toolCall: lastExisting
+                                    });
                                     if (!isCurrentTurn()) return false;
                                     if (feedback.operation === 'reject') {
                                         removeToolCallsFrom(assistant_message, existingCalls.length - 1);
@@ -662,7 +658,7 @@ export async function processTaskCompletion(
                                             assistant_message.usage = chunk_resp.usage;
                                         }
                                         logger.warn(
-                                            `task ${task.task_id}: afterParseToolcall rejected ` +
+                                            `task ${task.task_id}: afterToolcallParse rejected ` +
                                                 `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
                                         );
                                         abortedByToolcallHook = true;
@@ -672,19 +668,19 @@ export async function processTaskCompletion(
                                 }
                             }
 
-                            // beforeToolcallCreated 钩子：在 merge 前检查是否应拒绝新的工具调用
+                            // beforeToolcallChunkMerge 钩子：在 merge 前检查是否应拒绝新的工具调用
                             {
                                 const requestToolCalls = getCurrentRequestToolCalls();
-                                const feedback = await task.hooks.checkBeforeToolcallCreated(
+                                const feedback = await task.hooks.checkBeforeToolcallChunkMerge({
                                     task,
-                                    assistant_message,
+                                    assistantMessage: assistant_message,
                                     chunkHasNewToolCall,
                                     requestToolCalls
-                                );
+                                });
                                 if (!isCurrentTurn()) return false;
                                 if (feedback.operation === 'reject') {
                                     logger.warn(
-                                        `task ${task.task_id}: beforeToolcallCreated rejected: ${feedback.message}`
+                                        `task ${task.task_id}: beforeToolcallChunkMerge rejected: ${feedback.message}`
                                     );
                                     if (chunk_resp.usage) {
                                         assistant_message.usage = chunk_resp.usage;
@@ -837,12 +833,12 @@ export async function processTaskCompletion(
             if (finalToolCalls.length > 0) {
                 const lastTc = finalToolCalls[finalToolCalls.length - 1];
                 finalizeToolCallArgs(lastTc);
-                const feedback = await task.hooks.checkAfterParseToolcall(task, lastTc);
+                const feedback = await task.hooks.checkAfterToolcallParse({ task, toolCall: lastTc });
                 if (!isCurrentTurn()) return false;
                 if (feedback.operation === 'reject') {
                     removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
                     logger.warn(
-                        `task ${task.task_id}: afterParseToolcall rejected last tool call ` +
+                        `task ${task.task_id}: afterToolcallParse rejected last tool call ` +
                             `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
                     );
                     abortedByToolcallHook = true;

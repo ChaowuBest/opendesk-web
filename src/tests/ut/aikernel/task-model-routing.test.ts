@@ -70,7 +70,7 @@ describe('task model routing', () => {
         expect(task.task_name).toBe('任务名');
     });
 
-    test('generateTaskName receives the task plugin context used by chat.headers', async () => {
+    test('generateTaskName forwards the task to the model request', async () => {
         const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
         const task = new TaskState(new TaskManagerState());
         task.task_id = 'task-name';
@@ -88,11 +88,7 @@ describe('task model routing', () => {
             expect.objectContaining({
                 reasoningEffort: 'none',
                 extraHeaders: { cookie: 'sid=abc' },
-                hookContext: {
-                    taskId: 'task-name',
-                    workspace: '/workspace',
-                    modelAlias: 'mock-b'
-                }
+                task
             })
         );
     });

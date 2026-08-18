@@ -4,53 +4,27 @@
  */
 
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import { ChatContext, type ToolCall } from '../../../aikernel/messages.js';
+import { type ToolCall } from '../../../aikernel/messages.js';
 import { t } from '../../../../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, PluginHookError } from './host.js';
 import type {
     PluginChatHeadersInput,
     PluginChatParams,
-    PluginChatMessageInput,
     PluginSkillInstallAfterContext,
     PluginSkillInstallBeforeOutput,
     PluginSkillInstallContext,
     PluginSkillLoadBeforeOutput,
     PluginSkillLoadContext
 } from '../../../../../packages/plugin-sdk/src/index.js';
-import type { ChatContextSnapshot, PermissionRequest } from '../../../aikernel/types/index.js';
-
-export type PluginBeforeToolResult =
-    | { operation: 'allow'; args: unknown }
-    | { operation: 'deny'; message: string; metadata?: Record<string, unknown> };
+import type { PermissionRequest } from '../../../aikernel/types/index.js';
+import type { BeforeToolCallValidateAction } from '../../../aikernel/hooks.js';
 
 export async function runPluginChatParams(
     input: PluginChatHeadersInput,
     params: PluginChatParams = {}
 ): Promise<PluginChatParams> {
     return await getPluginHost().trigger('chat.params', input, { ...params });
-}
-
-export async function runPluginChatMessage(input: PluginChatMessageInput, text: string): Promise<string> {
-    const output = await getPluginHost().trigger('chat.message', input, { text });
-    return output.text;
-}
-
-export async function runPluginChatMessagesTransform(
-    input: PluginChatHeadersInput,
-    context: ChatContext
-): Promise<ChatContext> {
-    const serialized = JSON.parse(JSON.stringify(context.toJSON())) as ChatContextSnapshot;
-    const output = await getPluginHost().trigger('chat.messages.transform', input, {
-        messages: serialized.messages
-    });
-    if (!Array.isArray(output.messages)) throw new Error('plugin.chat_messages_invalid');
-    const transformed = ChatContext.assign({
-        system_prompt: serialized.system_prompt,
-        messages: output.messages
-    });
-    transformed.attachToolsets(...context.toolsets.values());
-    return transformed;
 }
 
 export async function runPluginBeforeSkillLoad(input: PluginSkillLoadContext): Promise<PluginSkillLoadBeforeOutput> {
@@ -99,13 +73,12 @@ export async function runPluginChatHeaders(
 
 export async function runPluginBeforeToolCall(
     task: TaskState,
-    toolCall: ToolCall,
-    args: unknown
-): Promise<PluginBeforeToolResult> {
+    toolCall: ToolCall
+): Promise<BeforeToolCallValidateAction> {
     const output: {
         args: unknown;
         deny?: { message?: string; metadata?: Record<string, unknown> };
-    } = { args };
+    } = { args: toolCall.args_object };
     try {
         await getPluginHost().trigger(
             'tool.execute.before',
@@ -122,16 +95,22 @@ export async function runPluginBeforeToolCall(
             return { operation: 'deny', message: t('plugin.hook.beforeTool.failed') };
         }
         logger.error(`Plugin before-tool hook failed: ${toolCall.tool_name}`, error);
-        return { operation: 'allow', args };
+        return { operation: 'allow' };
     }
     if (output.deny) {
+        if (output.deny.metadata) {
+            toolCall.result_object = output.deny.metadata;
+        }
         return {
             operation: 'deny',
-            message: output.deny.message || t('plugin.hook.beforeTool.denied'),
-            metadata: output.deny.metadata
+            message: output.deny.message || t('plugin.hook.beforeTool.denied')
         };
     }
-    return { operation: 'allow', args: output.args };
+    /* 插件改写参数：就地写回 toolCall，供后续权限检查与执行使用 */
+    if (JSON.stringify(output.args) !== JSON.stringify(toolCall.args_object)) {
+        toolCall.args_object = output.args as Record<string, unknown>;
+    }
+    return { operation: 'allow' };
 }
 
 export async function runPluginAfterToolCall(task: TaskState, toolCall: ToolCall): Promise<void> {
@@ -164,7 +143,7 @@ export async function runPluginAfterToolCall(task: TaskState, toolCall: ToolCall
 
 export async function runPluginPermissionAsk(
     task: TaskState,
-    input: { tool: string; callId?: string; requests: PermissionRequest[] }
+    input: { tool: string; callId?: string; permissions: PermissionRequest[] }
 ): Promise<'ask' | 'allow' | 'deny'> {
     const output = await getPluginHost().trigger(
         'permission.ask',
@@ -173,7 +152,7 @@ export async function runPluginPermissionAsk(
             workspace: task.getWorkspace() || undefined,
             tool: input.tool,
             callId: input.callId,
-            requests: input.requests.map((request) => ({ ...request }))
+            requests: input.permissions.map((request) => ({ ...request }))
         },
         { decision: 'ask' }
     );

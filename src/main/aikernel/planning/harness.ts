@@ -232,7 +232,7 @@ async function appendSyntheticErrorAttemptCompletion(task: TaskState, errorPart:
  * 在 turn 结束前检查是否已调用 attemptCompletion，如果没有则拒绝结束并提示
  */
 export function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
-    subTask.hooks.beforeFinishTurn(async (task) => {
+    subTask.hooks.beforeFinishTurn(async ({ task }) => {
         if (hasAttemptCompletion(task)) {
             return { operation: 'finish' };
         }
@@ -247,7 +247,7 @@ export function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
         return { operation: 'reject', message: SUBTASK_ENFORCE_ATTEMPT_COMPLETION_MESSAGE };
     });
 
-    subTask.hooks.afterFinishTurn(async (task) => {
+    subTask.hooks.afterFinishTurn(async ({ task }) => {
         if (task.stop_requested_by_user && !hasAttemptCompletion(task)) {
             await appendSubTaskStopCompletion(task);
         }
@@ -260,7 +260,7 @@ export function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
  * - 检查待办事项是否都已完成
  */
 export function registerMainTaskTerminationHook(): void {
-    GlobalHooks.beforeFinishTurn(async (task, modelRequestOptions) => {
+    GlobalHooks.beforeFinishTurn(async ({ task, modelRequestOptions }) => {
         // 只处理主任务（没有 parent_id）
         if (task.parent_id !== null) {
             return { operation: 'finish' };

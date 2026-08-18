@@ -1907,8 +1907,6 @@ export const zhCn: Record<string, string> = {
     'renderer.developer.triggerTaskReview': '触发任务回顾',
     'renderer.developer.reviewTriggered': '已触发任务回顾',
     'renderer.developer.reviewTriggeredDetail': '任务回顾已在后台启动或加入等待队列',
-    'renderer.developer.reviewNotTriggered': '未触发任务回顾',
-    'renderer.developer.reviewNotTriggeredDetail': '任务回顾请求无法接受',
     'renderer.developer.triggerFailed': '触发失败',
 
     // Main - Native File Dialogs

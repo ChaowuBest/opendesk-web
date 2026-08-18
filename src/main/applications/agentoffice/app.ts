@@ -921,7 +921,7 @@ export class AgentOfficeApplication extends BaseApplication {
             })
         );
         await task.rebuildSystemPrompt();
-        await task.hooks.noticeBeforeTaskStart(task);
+        await task.hooks.noticeBeforeTaskStart({ task });
         return { expectedGeneration, memoryPath, recent, resourcesDirectory };
     }
 

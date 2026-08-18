@@ -803,7 +803,7 @@ export class SkillAnalyzer {
 
             await tm.initHarness(task, getPlatform().getEffectiveWorkspace(), mode);
             await task.rebuildSystemPrompt();
-            await task.hooks.noticeBeforeTaskStart(task);
+            await task.hooks.noticeBeforeTaskStart({ task });
 
             // 提交初始提示词
             await task.submitUserMessage(buildPrompt(skillDir, skillName));
@@ -1155,7 +1155,12 @@ ${preScanSection}`;
                 timeoutMs
             );
             await this._awaitTestPhase(task.rebuildSystemPrompt(), deadline, 'initialization', timeoutMs);
-            await this._awaitTestPhase(task.hooks.noticeBeforeTaskStart(task), deadline, 'initialization', timeoutMs);
+            await this._awaitTestPhase(
+                task.hooks.noticeBeforeTaskStart({ task }),
+                deadline,
+                'initialization',
+                timeoutMs
+            );
 
             // 第一步：发送测试执行 Prompt
             await this._awaitTestPhase(

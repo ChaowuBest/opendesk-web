@@ -103,7 +103,7 @@ export function registerHarmonyosBashFrictionHook(): void {
     GlobalHooks.registerToolHook('executeBash', {
         afterToolCall: createHarmonyosBashFrictionAfterToolCall(outcomesByTask)
     });
-    GlobalHooks.afterFinishTurn((task) => {
+    GlobalHooks.afterFinishTurn(({ task }) => {
         if (task.lastTerminationState === 'finished' || task.lastTerminationState === 'interrupted') {
             outcomesByTask.delete(task);
         }
