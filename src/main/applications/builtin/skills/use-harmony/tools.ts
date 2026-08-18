@@ -20,7 +20,8 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFile as readFileAsync, stat as statAsync } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, posix, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -42,13 +43,23 @@ function loadJimp(): Promise<JimpClass | null> {
     return jimpPromise;
 }
 
-async function runHdc(args: readonly string[], timeout = 15000): Promise<string> {
-    const { stdout } = await execFileAsync('hdc', args, {
-        encoding: 'utf-8',
-        timeout,
-        maxBuffer: 10 * 1024 * 1024
-    });
-    return stdout.trim();
+export async function runHdc(args: readonly string[], timeout = 15000, deviceId?: string): Promise<string> {
+    const fullArgs = deviceId ? ['-t', deviceId, ...args] : args;
+    try {
+        const { stdout } = await execFileAsync('hdc', fullArgs, {
+            encoding: 'utf-8',
+            timeout,
+            maxBuffer: 10 * 1024 * 1024
+        });
+        return stdout.trim();
+    } catch (error) {
+        if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new Error(
+                'hdc not found on PATH. Install the HarmonyOS device connector and ensure `hdc list targets` works.'
+            );
+        }
+        throw error;
+    }
 }
 
 function ok(data: Record<string, unknown>): string {
@@ -60,16 +71,118 @@ function fail(error: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Screen / lock state detection
+// ---------------------------------------------------------------------------
+
+export type ScreenState = 'locked' | 'on' | 'unknown';
+
+/**
+ * Queries the device screen / lock state via the PowerManagerService dump.
+ * Used when no app window can be found, to tell "the device may be locked"
+ * apart from "the target app has no visible window".
+ *
+ * The hidumper service id 3301 corresponds to PowerManagerService. Output
+ * formats vary across HarmonyOS versions, so we match loosely on well-known
+ * keywords and degrade to 'unknown' on any failure (command missing, device
+ * unresponsive, etc.).
+ */
+export async function detectScreenState(deviceId?: string): Promise<{ state: ScreenState; detail?: string }> {
+    let output: string;
+    try {
+        output = await runHdc(['shell', 'hidumper', '-s', '3301', '-a', '-a'], 10000, deviceId);
+    } catch {
+        return { state: 'unknown' };
+    }
+    // 单词边界避免误匹配 inactive / connection / office 等包含子串的无关文本
+    const lockedKeywords =
+        /(?:screen|display|power).{0,40}(?:\boff\b|关闭|灭|sleep|suspend)|keyguard|锁屏|已锁定|锁定时|isScreenOn\s*[:=]\s*false|screenOn\s*[:=]\s*false/i;
+    const onKeywords =
+        /(?:screen|display|power).{0,40}(?:\bon\b|亮|awake|wakeup)|isScreenOn\s*[:=]\s*true|screenOn\s*[:=]\s*true/i;
+    if (lockedKeywords.test(output)) {
+        const detail = output.match(/(?:screen|display|keyguard|isScreenOn|screenOn).{0,60}/i)?.[0]?.trim();
+        return { state: 'locked', detail };
+    }
+    if (onKeywords.test(output)) {
+        return { state: 'on' };
+    }
+    return { state: 'unknown' };
+}
+
+// ---------------------------------------------------------------------------
 // Device ID & listApps cache (in-memory, not persisted)
 // ---------------------------------------------------------------------------
 
-async function getDeviceId(): Promise<string> {
-    const output = await runHdc(['list', 'targets'], 5000);
-    const first = output
-        .split('\n')
-        .map((l) => l.trim())
-        .find((l) => l.length > 0 && l !== '[Empty]');
-    return first || 'default';
+export interface HdcDevice {
+    id: string;
+    status: string;
+    type: string;
+}
+
+/** Thrown when device resolution fails (no device / unknown device id). */
+export class DeviceResolutionError extends Error {}
+
+/**
+ * Queries connected devices via `hdc list targets -v`.
+ *
+ * Output rows look like:
+ *   `127.0.0.1:5555  Connected  HarmonyOS Device`
+ * Columns are whitespace separated (id / status / type). Rows without a
+ * parseable id are skipped, so `[Empty]` naturally yields an empty list.
+ */
+export async function listDevices(): Promise<HdcDevice[]> {
+    const output = await runHdc(['list', 'targets', '-v'], 5000);
+    const devices: HdcDevice[] = [];
+    for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === '[Empty]') continue;
+        const parts = trimmed.split(/\s+/);
+        const id = parts[0];
+        if (!id || !/^[0-9a-zA-Z._:-]+$/.test(id)) continue;
+        devices.push({
+            id,
+            status: parts[1] ?? 'unknown',
+            type: parts.slice(2).join(' ') || 'unknown'
+        });
+    }
+    return devices;
+}
+
+/**
+ * Resolves the target device id for an hdc invocation.
+ *
+ * - No explicit id → exactly one Connected device, or an error when nothing is connected / more than one is connected.
+ * - Explicit id → validated against the connected device list (unknown ids are rejected).
+ */
+export async function resolveDeviceId(explicitId?: string): Promise<string> {
+    const devices = await listDevices();
+    if (explicitId) {
+        if (!devices.some((d) => d.id === explicitId)) {
+            const available = devices.length > 0 ? devices.map((d) => d.id).join(', ') : 'none';
+            throw new DeviceResolutionError(
+                `Device '${explicitId}' not found or not connected. Available devices: ${available}`
+            );
+        }
+        return explicitId;
+    }
+    const connected = devices.filter((d) => d.status === 'Connected');
+    if (connected.length === 0) {
+        throw new DeviceResolutionError('No connected device found. Run hdc list targets to check available devices.');
+    }
+    if (connected.length === 1) {
+        return connected[0].id;
+    }
+    throw new DeviceResolutionError(
+        `Multiple connected devices found: ${connected.map((d) => d.id).join(', ')}. ` +
+            'Run listDevices and pass deviceId explicitly.'
+    );
+}
+
+/**
+ * Tool-body device resolution. Always resolve the active target so multi-device
+ * setups fail fast unless the caller passes an explicit deviceId.
+ */
+async function tryResolveDeviceId(explicitId?: string): Promise<string | undefined> {
+    return resolveDeviceId(explicitId);
 }
 
 // Keyed by device ID; cleared on process restart.
@@ -115,6 +228,7 @@ interface SnapshotCapture {
     snapshotId: string;
     fingerprint: string;
     bundleName?: string;
+    deviceId?: string;
 }
 
 interface PermissionActionTarget {
@@ -338,6 +452,7 @@ function indent(d: number): string {
 function yamlNeedsQuotes(str: string): boolean {
     if (!str.length) return true;
     if (/^\s|\s$/.test(str)) return true;
+    // eslint-disable-next-line no-control-regex
     if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(str)) return true;
     if (/^-/.test(str)) return true;
     if (/[\n:]( |$)/.test(str)) return true;
@@ -415,9 +530,9 @@ function renderYamlNodes(nodes: (AriaNode | string)[], depth = 0): string {
 // Layout loading & snapshot helpers
 // ---------------------------------------------------------------------------
 
-async function dumpLayout(bundleName?: string): Promise<LayoutNode> {
+async function dumpLayout(bundleName?: string, deviceId?: string): Promise<LayoutNode> {
     const args = bundleName ? ['shell', 'uitest', 'dumpLayout', '-b', bundleName] : ['shell', 'uitest', 'dumpLayout'];
-    const dumpOutput = await runHdc(args, 20000);
+    const dumpOutput = await runHdc(args, 20000, deviceId);
     const match = dumpOutput.match(/saved to:(\S+)/);
     if (!match) throw new Error('Failed to get layout file path from hdc');
 
@@ -425,7 +540,7 @@ async function dumpLayout(bundleName?: string): Promise<LayoutNode> {
     const localDir = mkdtempSync(join(tmpdir(), 'opendesk-hdc-layout-'));
     const localPath = join(localDir, 'layout.json');
     try {
-        await runHdc(['file', 'recv', devicePath, localPath], 10000);
+        await runHdc(['file', 'recv', devicePath, localPath], 10000, deviceId);
         return JSON.parse(readFileSync(localPath, 'utf-8'));
     } finally {
         rmSync(localDir, { recursive: true, force: true });
@@ -434,26 +549,35 @@ async function dumpLayout(bundleName?: string): Promise<LayoutNode> {
 
 const SNAPSHOT_TTL_MS = 5 * 60 * 1000;
 let snapshotSequence = 0;
-// Track the previous snapshot fingerprint for dedup detection.
-// When a new snapshot has the same content, we return a short
-// "unchanged" message instead of the full aria tree.
-let prevSnapshotFingerprint: string | undefined;
-let prevSnapshotId: string | undefined;
-const snapshotCaptures = new Map<
-    string,
-    {
-        createdAt: number;
-        snapshot: string;
-        fingerprint: string;
-        targets: Map<string, SnapshotTarget>;
-        bundleName?: string;
-    }
->();
+// Track the previous snapshot fingerprint per device for dedup detection.
+// When a new snapshot has the same content, we return a short "unchanged"
+// message instead of the full aria tree. Keyed by device so parallel devices
+// never invalidate each other's dedup state.
+interface PrevSnapshotState {
+    fingerprint: string;
+    id: string;
+}
+const prevSnapshotsByDevice = new Map<string, PrevSnapshotState>();
+interface SnapshotCaptureEntry {
+    createdAt: number;
+    snapshot: string;
+    fingerprint: string;
+    targets: Map<string, SnapshotTarget>;
+    bundleName?: string;
+    deviceId?: string;
+}
+const snapshotCaptures = new Map<string, SnapshotCaptureEntry>();
 
-function getCurrentSnapshot(): { snapshot: string; targets: Map<string, SnapshotTarget> } | undefined {
+function snapshotDeviceKey(deviceId?: string): string {
+    return deviceId || 'default';
+}
+
+/** Returns the newest snapshot for the device (or the newest overall when no device is given). */
+function getCurrentSnapshot(deviceId?: string): { snapshot: string; targets: Map<string, SnapshotTarget> } | undefined {
     let current: { snapshot: string; targets: Map<string, SnapshotTarget> } | undefined;
     let latestTime = 0;
     for (const capture of snapshotCaptures.values()) {
+        if (deviceId && capture.deviceId !== deviceId) continue;
         if (capture.createdAt > latestTime) {
             latestTime = capture.createdAt;
             current = capture;
@@ -511,33 +635,39 @@ function buildSnapshot(layout: LayoutNode, bundleFilter?: string): BuiltSnapshot
     };
 }
 
-function registerSnapshot(built: BuiltSnapshot): SnapshotCapture {
+function registerSnapshot(built: BuiltSnapshot, deviceId?: string): SnapshotCapture {
     const snapshotId = `s${++snapshotSequence}`;
     // Refs describe a point-in-time layout. Only snapshots returned to the
     // caller are registered, so internal polling cannot invalidate live refs.
-    snapshotCaptures.clear();
+    // Device-isolated: concurrent devices keep their own latest capture.
+    const deviceKey = snapshotDeviceKey(deviceId);
+    for (const [id, capture] of snapshotCaptures) {
+        if (snapshotDeviceKey(capture.deviceId) === deviceKey) snapshotCaptures.delete(id);
+    }
     snapshotCaptures.set(snapshotId, {
         createdAt: Date.now(),
         snapshot: built.snapshot,
         fingerprint: built.fingerprint,
         targets: built.targets,
-        bundleName: built.bundleName
+        bundleName: built.bundleName,
+        deviceId
     });
     return {
         snapshot: built.snapshot,
         snapshotId,
         fingerprint: built.fingerprint,
-        bundleName: built.bundleName
+        bundleName: built.bundleName,
+        deviceId
     };
 }
 
-function convertLayout(layout: LayoutNode, bundleFilter?: string): SnapshotCapture {
-    return registerSnapshot(buildSnapshot(layout, bundleFilter));
+function convertLayout(layout: LayoutNode, bundleFilter?: string, deviceId?: string): SnapshotCapture {
+    return registerSnapshot(buildSnapshot(layout, bundleFilter), deviceId);
 }
 
-async function takeSnapshot(bundleName?: string): Promise<SnapshotCapture> {
-    const layout = await dumpLayout(bundleName);
-    return convertLayout(layout, bundleName);
+async function takeSnapshot(bundleName?: string, deviceId?: string): Promise<SnapshotCapture> {
+    const layout = await dumpLayout(bundleName, deviceId);
+    return convertLayout(layout, bundleName, deviceId);
 }
 
 /**
@@ -548,29 +678,31 @@ async function takeSnapshot(bundleName?: string): Promise<SnapshotCapture> {
 async function withSnapshot(
     doSnapshot: boolean,
     result: Record<string, unknown>,
-    bundleName?: string
+    bundleName?: string,
+    deviceId?: string
 ): Promise<Record<string, unknown>> {
     if (!doSnapshot) return result;
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
-        const capture = await takeSnapshot(bundleName);
+        const capture = await takeSnapshot(bundleName, deviceId);
         if (!capture.snapshot.trim()) {
             return {
                 ...result,
                 snapshotError: 'Snapshot was requested but returned no visible content'
             };
         }
-        // Fingerprint dedup: identical content → short message
-        if (prevSnapshotFingerprint !== undefined && capture.fingerprint === prevSnapshotFingerprint) {
+        // Fingerprint dedup: identical content → short message (per device)
+        const deviceKey = snapshotDeviceKey(deviceId);
+        const prev = prevSnapshotsByDevice.get(deviceKey);
+        if (prev && capture.fingerprint === prev.fingerprint) {
             return {
                 ...result,
-                snapshot: `（界面未变化，与 ${prevSnapshotId} 相同）`,
+                snapshot: `（界面未变化，与 ${prev.id} 相同）`,
                 snapshotId: capture.snapshotId,
                 unchanged: true
             };
         }
-        prevSnapshotFingerprint = capture.fingerprint;
-        prevSnapshotId = capture.snapshotId;
+        prevSnapshotsByDevice.set(deviceKey, { fingerprint: capture.fingerprint, id: capture.snapshotId });
         return { ...result, snapshot: capture.snapshot, snapshotId: capture.snapshotId };
     } catch (err) {
         return { ...result, snapshotError: `Failed to capture snapshot: ${String(err)}` };
@@ -683,11 +815,72 @@ function findPermissionDialog(node: LayoutNode): PermissionDialog | undefined {
 // Tools
 // ---------------------------------------------------------------------------
 
+/**
+ * use-harmony 工具基类：对外暴露的参数 JSON Schema 中，带默认值的字段不应列为必填。
+ *
+ * zod 的 `.default(v)` 输入侧本就允许省略（省略时在运行时填充默认值），但 toJSONSchema
+ * 仍会把这类字段写进 required 数组，导致 LLM 被 schema 误导为必填而补传可省略参数。
+ * 这里在后处理时剔除 required 中带 default 的字段，运行时解析仍走原 schema，行为不变。
+ */
+class HarmonyBaseTool<T extends z.ZodType> extends BaseTool<T> {
+    override toJSON() {
+        const json = super.toJSON() as {
+            name: string;
+            description: string;
+            params: { required?: string[]; properties?: Record<string, object> };
+            agentIds?: readonly string[];
+        };
+        const { required, properties } = json.params;
+        if (Array.isArray(required) && properties) {
+            json.params.required = required.filter((key) => {
+                const prop = properties[key];
+                return !prop || !('default' in prop);
+            });
+        }
+        return json;
+    }
+}
+
+// ========== listDevices ==========
+
+const ListDevicesArgsSchema = z.object({});
+
+/**
+ * Exposes the connected hdc devices to the agent so it can pick a target
+ * device (or run against all of them) before invoking device-scoped tools.
+ */
+export class ListDevicesTool extends HarmonyBaseTool<typeof ListDevicesArgsSchema> {
+    constructor() {
+        super(
+            'listDevices',
+            '列出当前通过 hdc 连接的所有鸿蒙设备（设备 ID、连接状态、设备类型）。多台设备连接时先调用本工具确认目标设备，再把 deviceId 传给其他工具',
+            ListDevicesArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(): Promise<string> {
+        try {
+            const devices = await listDevices();
+            return ok({ devices, count: devices.length });
+        } catch (err) {
+            return fail(`Failed to list devices: ${err}`);
+        }
+    }
+}
+
 // ========== listApps ==========
 
-const ListAppsArgsSchema = z.object({});
+const DeviceIdSchema = z
+    .string()
+    .optional()
+    .describe('目标设备 ID（来自 listDevices）。多台设备连接时不传默认使用第一台 Connected 设备');
 
-export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
+const ListAppsArgsSchema = z.object({
+    deviceId: DeviceIdSchema
+});
+
+export class ListAppsTool extends HarmonyBaseTool<typeof ListAppsArgsSchema> {
     constructor() {
         super(
             'listApps',
@@ -697,10 +890,14 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    private async handleExecute(): Promise<string> {
+    private async handleExecute(args: z.output<typeof ListAppsArgsSchema>): Promise<string> {
         try {
-            const deviceId = await getDeviceId();
-            const cached = listAppsCache.get(deviceId);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            // Cache key must be stable per device. tryResolveDeviceId returns
+            // undefined without an explicit id, which would make every device
+            // share one cache slot — fall back to a sentinel for that case.
+            const cacheKey = deviceId ?? 'default';
+            const cached = listAppsCache.get(cacheKey);
             if (cached) {
                 return ok({ apps: cached, count: cached.length, cached: true });
             }
@@ -716,7 +913,9 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
                 '    info=$(bm dump -n $pkg 2>/dev/null)',
                 '    hidden=$(echo "$info" | grep \'hideDesktopIcon\' | head -1)',
                 '    case "$hidden" in',
-                '      *false*) name=$(bm dump -n $pkg -l 2>/dev/null); echo "$pkg|$name" ;;',
+                '    # hideDesktopIcon 字段缺失（旧系统/不同 bm 输出格式）时默认展示应用，只有显式标记 hidden 才跳过',
+                '      *true*) ;;',
+                '      *) name=$(bm dump -n $pkg -l 2>/dev/null); echo "$pkg|$name" ;;',
                 '    esac',
                 '  ) &',
                 '  if [ $((count % 10)) -eq 0 ]; then wait; fi',
@@ -727,10 +926,12 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
             const localDir = mkdtempSync(join(tmpdir(), 'opendesk-hdc-listapps-'));
             const localScript = join(localDir, 'listapps.sh');
             let output: string;
+            // 设备端脚本路径加 pid+ts 后缀，避免并发调用互相覆写
+            const deviceScriptPath = `/data/local/tmp/hdc_listapps_${process.pid}_${Date.now()}.sh`;
             try {
                 writeFileSync(localScript, script);
-                await runHdc(['file', 'send', localScript, '/data/local/tmp/hdc_listapps.sh'], 10000);
-                output = await runHdc(['shell', 'sh', '/data/local/tmp/hdc_listapps.sh'], 120000);
+                await runHdc(['file', 'send', localScript, deviceScriptPath], 10000, deviceId);
+                output = await runHdc(['shell', 'sh', deviceScriptPath], 120000, deviceId);
             } finally {
                 rmSync(localDir, { recursive: true, force: true });
             }
@@ -747,7 +948,7 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
                 }
             }
 
-            listAppsCache.set(deviceId, apps);
+            listAppsCache.set(cacheKey, apps);
             return ok({ apps, count: apps.length });
         } catch (err) {
             return fail(`Failed to list apps: ${err}`);
@@ -760,25 +961,26 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
 const BundleNameSchema = z
     .string()
     .regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)
-    .describe('应用的 bundleName，例如 com.develop.opensource.ohpcd.opendesk');
+    .describe('应用的 bundleName（来自 listApps）。');
 
-async function resolveEntryAbility(bundleName: string): Promise<string> {
-    const dumpOutput = await runHdc(['shell', 'bm', 'dump', '-n', bundleName], 15000);
+async function resolveEntryAbility(bundleName: string, deviceId?: string): Promise<string> {
+    const dumpOutput = await runHdc(['shell', 'bm', 'dump', '-n', bundleName], 15000, deviceId);
     const abilityMatches = [...dumpOutput.matchAll(/"name":\s*"(\w+Ability)"/g)];
     return abilityMatches.find((match) => match[1] === 'EntryAbility')?.[1] || abilityMatches[0]?.[1] || 'EntryAbility';
 }
 
-async function startApp(bundleName: string): Promise<string> {
-    const abilityName = await resolveEntryAbility(bundleName);
-    await runHdc(['shell', 'aa', 'start', '-a', abilityName, '-b', bundleName], 10000);
+async function startApp(bundleName: string, deviceId?: string): Promise<string> {
+    const abilityName = await resolveEntryAbility(bundleName, deviceId);
+    await runHdc(['shell', 'aa', 'start', '-a', abilityName, '-b', bundleName], 10000, deviceId);
     return abilityName;
 }
 
 const OpenAppArgsSchema = z.object({
-    bundleName: BundleNameSchema
+    bundleName: BundleNameSchema,
+    deviceId: DeviceIdSchema
 });
 
-export class OpenAppTool extends BaseTool<typeof OpenAppArgsSchema> {
+export class OpenAppTool extends HarmonyBaseTool<typeof OpenAppArgsSchema> {
     constructor() {
         super('openApp', '通过 bundleName 打开指定应用。会自动查找应用的入口 Ability 并启动', OpenAppArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
@@ -786,7 +988,8 @@ export class OpenAppTool extends BaseTool<typeof OpenAppArgsSchema> {
 
     private async handleExecute(args: z.output<typeof OpenAppArgsSchema>): Promise<string> {
         try {
-            const abilityName = await startApp(args.bundleName);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const abilityName = await startApp(args.bundleName, deviceId);
             return ok({ bundleName: args.bundleName, abilityName });
         } catch (err) {
             return fail(`Failed to open app ${args.bundleName}: ${err}`);
@@ -813,10 +1016,11 @@ const AppLifecycleArgsSchema = z.object({
         .max(30000)
         .default(1000)
         .describe('操作完成后等待应用稳定的时间，单位毫秒，默认 1000'),
-    snapshot: z.boolean().default(false).describe('应用重新启动后是否获取该应用的新快照，默认 false')
+    snapshot: z.boolean().default(false).describe('应用重新启动后是否获取该应用的新快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
+export class AppLifecycleTool extends HarmonyBaseTool<typeof AppLifecycleArgsSchema> {
     constructor() {
         super(
             'appLifecycle',
@@ -834,8 +1038,13 @@ export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
         }
 
         try {
-            await runHdc(['shell', 'aa', 'force-stop', args.bundleName], 10000);
-            snapshotCaptures.clear();
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            await runHdc(['shell', 'aa', 'force-stop', args.bundleName], 10000, deviceId);
+            // Device-isolated: only drop snapshots of the affected device.
+            const deviceKey = snapshotDeviceKey(deviceId);
+            for (const [id, capture] of snapshotCaptures) {
+                if (snapshotDeviceKey(capture.deviceId) === deviceKey) snapshotCaptures.delete(id);
+            }
 
             const result: Record<string, unknown> = {
                 bundleName: args.bundleName,
@@ -844,10 +1053,10 @@ export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
             };
 
             if (args.action === 'clearCache') {
-                await runHdc(['shell', 'bm', 'clean', '-n', args.bundleName, '-c'], 30000);
+                await runHdc(['shell', 'bm', 'clean', '-n', args.bundleName, '-c'], 30000, deviceId);
                 result.cacheCleared = true;
             } else if (args.action === 'clearData') {
-                await runHdc(['shell', 'bm', 'clean', '-n', args.bundleName, '-d'], 30000);
+                await runHdc(['shell', 'bm', 'clean', '-n', args.bundleName, '-d'], 30000, deviceId);
                 result.dataCleared = true;
             }
 
@@ -855,7 +1064,7 @@ export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
                 args.action === 'restart' ||
                 ((args.action === 'clearCache' || args.action === 'clearData') && args.relaunch);
             if (shouldStart) {
-                result.abilityName = await startApp(args.bundleName);
+                result.abilityName = await startApp(args.bundleName, deviceId);
                 result.started = true;
             } else if (args.action === 'clearCache' || args.action === 'clearData') {
                 result.started = false;
@@ -869,7 +1078,7 @@ export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
                 result.snapshotError = '应用当前处于停止状态，无法获取目标应用快照';
                 return ok(result);
             }
-            return ok(await withSnapshot(args.snapshot, result, shouldStart ? args.bundleName : undefined));
+            return ok(await withSnapshot(args.snapshot, result, shouldStart ? args.bundleName : undefined, deviceId));
         } catch (err) {
             return fail(`应用生命周期操作失败（${args.action} ${args.bundleName}）：${err}`);
         }
@@ -878,9 +1087,11 @@ export class AppLifecycleTool extends BaseTool<typeof AppLifecycleArgsSchema> {
 
 // ========== listWindows ==========
 
-const ListWindowsArgsSchema = z.object({});
+const ListWindowsArgsSchema = z.object({
+    deviceId: DeviceIdSchema
+});
 
-export class ListWindowsTool extends BaseTool<typeof ListWindowsArgsSchema> {
+export class ListWindowsTool extends HarmonyBaseTool<typeof ListWindowsArgsSchema> {
     constructor() {
         super(
             'listWindows',
@@ -890,10 +1101,22 @@ export class ListWindowsTool extends BaseTool<typeof ListWindowsArgsSchema> {
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    private async handleExecute(): Promise<string> {
+    private async handleExecute(args: z.output<typeof ListWindowsArgsSchema>): Promise<string> {
         try {
-            const layout = await dumpLayout();
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const layout = await dumpLayout(undefined, deviceId);
             const windows = findAllWindows(layout);
+            if (windows.length === 0) {
+                const screen = await detectScreenState(deviceId);
+                if (screen.state === 'locked') {
+                    return ok({
+                        windows,
+                        count: 0,
+                        screenLocked: true,
+                        hint: '设备可能处于锁屏或熄屏状态，无可见窗口。请先点亮并解锁设备后重试。'
+                    });
+                }
+            }
             return ok({ windows, count: windows.length });
         } catch (err) {
             return fail(`Failed to list windows: ${err}`);
@@ -904,14 +1127,15 @@ export class ListWindowsTool extends BaseTool<typeof ListWindowsArgsSchema> {
 // ========== snapshot ==========
 
 const SnapshotArgsSchema = z.object({
-    bundleName: BundleNameSchema.optional().describe('只获取指定 bundleName 对应窗口的快照。不指定则获取所有窗口')
+    bundleName: BundleNameSchema.optional().describe('只获取指定 bundleName 对应窗口的快照。不指定则获取所有窗口'),
+    deviceId: DeviceIdSchema
 });
 
-export class SnapshotTool extends BaseTool<typeof SnapshotArgsSchema> {
+export class SnapshotTool extends HarmonyBaseTool<typeof SnapshotArgsSchema> {
     constructor() {
         super(
             'snapshot',
-            '获取设备当前界面的无障碍快照（aria tree），格式与 OpenDesk 浏览器快照兼容。' +
+            '获取设备当前界面的无障碍快照（aria tree）。' +
                 '可交互元素会带有 [ref=eN x=<cx> y=<cy>] 标签；每次快照都会刷新 ref，结果中的 snapshotId 可与 ref 一起用于 clickRef',
             SnapshotArgsSchema
         );
@@ -920,26 +1144,38 @@ export class SnapshotTool extends BaseTool<typeof SnapshotArgsSchema> {
 
     private async handleExecute(args: z.output<typeof SnapshotArgsSchema>): Promise<string> {
         try {
-            const capture = await takeSnapshot(args.bundleName);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const capture = await takeSnapshot(args.bundleName, deviceId);
 
             if (!capture.snapshot.trim()) {
+                const screen = await detectScreenState(deviceId);
+                if (screen.state === 'locked') {
+                    return fail(
+                        `No visible windows found. The device appears to be locked or the screen is off` +
+                            `（设备可能处于锁屏/熄屏状态，请先点亮并解锁设备后重试）` +
+                            (screen.detail ? `; PowerManager dump: ${screen.detail}` : '') +
+                            `.`
+                    );
+                }
                 return fail(
                     'No visible windows found. The device may be locked or the specified bundleName has no visible window.'
                 );
             }
 
             // Fingerprint dedup: if the content is identical to the previous
-            // snapshot, return a short "unchanged" message instead of the full
-            // aria tree.  The old refs remain valid because the layout is the same.
-            if (prevSnapshotFingerprint !== undefined && capture.fingerprint === prevSnapshotFingerprint) {
+            // snapshot (per device), return a short "unchanged" message instead
+            // of the full aria tree.  The old refs remain valid because the
+            // layout is the same.
+            const deviceKey = snapshotDeviceKey(deviceId);
+            const prev = prevSnapshotsByDevice.get(deviceKey);
+            if (prev && capture.fingerprint === prev.fingerprint) {
                 return ok({
                     snapshotId: capture.snapshotId,
-                    snapshot: `（界面未变化，与 ${prevSnapshotId} 相同）`,
+                    snapshot: `（界面未变化，与 ${prev.id} 相同）`,
                     unchanged: true
                 });
             }
-            prevSnapshotFingerprint = capture.fingerprint;
-            prevSnapshotId = capture.snapshotId;
+            prevSnapshotsByDevice.set(deviceKey, { fingerprint: capture.fingerprint, id: capture.snapshotId });
 
             return ok({ snapshot: capture.snapshot, snapshotId: capture.snapshotId });
         } catch (err) {
@@ -960,7 +1196,8 @@ const ClickRefArgsSchema = z.object({
         .enum(['center', 'left-center', 'right-center'])
         .default('center')
         .describe('点击位置。发送按钮与右侧选项按钮相邻时使用 left-center'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取相同应用的界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取相同应用的界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
 function pointForTarget(target: SnapshotTarget, position: z.output<typeof ClickRefArgsSchema>['position']) {
@@ -972,7 +1209,7 @@ function pointForTarget(target: SnapshotTarget, position: z.output<typeof ClickR
     return { x: Math.round((x1 + x2) / 2), y };
 }
 
-export class ClickRefTool extends BaseTool<typeof ClickRefArgsSchema> {
+export class ClickRefTool extends HarmonyBaseTool<typeof ClickRefArgsSchema> {
     constructor() {
         super(
             'clickRef',
@@ -984,7 +1221,20 @@ export class ClickRefTool extends BaseTool<typeof ClickRefArgsSchema> {
 
     private async handleExecute(args: z.output<typeof ClickRefArgsSchema>): Promise<string> {
         pruneSnapshotCaptures();
+        const deviceId = await tryResolveDeviceId(args.deviceId);
         const capture = snapshotCaptures.get(args.snapshotId);
+        // Reject refs that belong to a different device than the one targeted.
+        if (
+            capture &&
+            deviceId &&
+            capture.deviceId &&
+            snapshotDeviceKey(capture.deviceId) !== snapshotDeviceKey(deviceId)
+        ) {
+            return fail(
+                `快照 ${args.snapshotId} 属于设备 ${capture.deviceId}，与目标设备 ${deviceId} 不一致。` +
+                    `请在目标设备 ${deviceId} 上重新获取快照后再点击（或指定正确的 deviceId）。`
+            );
+        }
         const target = capture?.targets.get(args.ref);
         if (!target) {
             return fail(`快照引用不存在或已失效：${args.snapshotId}/${args.ref}。请重新获取快照后再点击。`);
@@ -992,7 +1242,7 @@ export class ClickRefTool extends BaseTool<typeof ClickRefArgsSchema> {
 
         const point = pointForTarget(target, args.position);
         try {
-            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000, deviceId);
             const result = await withSnapshot(
                 args.snapshot,
                 {
@@ -1002,7 +1252,8 @@ export class ClickRefTool extends BaseTool<typeof ClickRefArgsSchema> {
                     x: point.x,
                     y: point.y
                 },
-                target.bundleName
+                target.bundleName,
+                deviceId
             );
             return ok(result);
         } catch (err) {
@@ -1022,7 +1273,8 @@ const SelectOptionArgsSchema = z.object({
     bundleName: BundleNameSchema.optional().describe('目标应用 bundleName；不指定时使用全部可见窗口'),
     match: z.enum(['exact', 'contains']).default('exact').describe('选项文本匹配方式，默认 exact'),
     verify: z.boolean().default(true).describe('点击后是否验证选项已生效，默认 true'),
-    maxAttempts: z.number().int().min(1).max(3).default(2).describe('找不到选项时的最大重试次数，默认 2')
+    maxAttempts: z.number().int().min(1).max(3).default(2).describe('找不到选项时的最大重试次数，默认 2'),
+    deviceId: DeviceIdSchema
 });
 
 function normalizeUiText(value: string): string {
@@ -1053,10 +1305,15 @@ function isSameTargetArea(a: ElementMatch, b: ElementMatch): boolean {
     );
 }
 
-function findSelectedOptionInSnapshot(trigger: ElementMatch, option: string, match: 'exact' | 'contains'): boolean {
-    const current = getCurrentSnapshot();
+function findSelectedOptionInSnapshot(
+    trigger: ElementMatch,
+    option: string,
+    match: 'exact' | 'contains',
+    deviceId?: string
+): boolean {
+    const current = getCurrentSnapshot(deviceId);
     if (!current) return false;
-    const elements = findElementsInSnapshot(undefined, undefined, undefined, undefined, undefined, undefined);
+    const elements = findElementsInSnapshot(undefined, undefined, undefined, undefined, undefined, undefined, deviceId);
     if (elements.some((item) => item.selected && optionTextMatches(item.name, option, match))) return true;
     const refs = findRefsByTextContent(current.snapshot, option);
     return elements.some(
@@ -1102,8 +1359,13 @@ function chooseOcrOptionMatch(
     return candidates.find((item) => optionTextMatches(item.text, option, match)) ?? null;
 }
 
-async function chooseOptionWithOcr(trigger: ElementMatch, option: string, match: 'exact' | 'contains') {
-    const screenshotPath = await captureScreenshot();
+async function chooseOptionWithOcr(
+    trigger: ElementMatch,
+    option: string,
+    match: 'exact' | 'contains',
+    deviceId?: string
+) {
+    const screenshotPath = await captureScreenshot(deviceId);
     const screenshotDir = dirname(screenshotPath);
     try {
         const Jimp = await loadJimp();
@@ -1125,7 +1387,7 @@ async function chooseOptionWithOcr(trigger: ElementMatch, option: string, match:
     }
 }
 
-export class SelectOptionTool extends BaseTool<typeof SelectOptionArgsSchema> {
+export class SelectOptionTool extends HarmonyBaseTool<typeof SelectOptionArgsSchema> {
     constructor() {
         super(
             'selectOption',
@@ -1139,9 +1401,18 @@ export class SelectOptionTool extends BaseTool<typeof SelectOptionArgsSchema> {
     private async handleExecute(args: z.output<typeof SelectOptionArgsSchema>): Promise<string> {
         let lastReason = '未找到下拉选项';
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
             for (let attempt = 1; attempt <= args.maxAttempts; attempt++) {
-                const before = await takeSnapshot(args.bundleName);
-                const triggers = findElementsInSnapshot(args.trigger.role, args.trigger.name);
+                const before = await takeSnapshot(args.bundleName, deviceId);
+                const triggers = findElementsInSnapshot(
+                    args.trigger.role,
+                    args.trigger.name,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    deviceId
+                );
                 const trigger = triggers[0];
                 if (!trigger) {
                     lastReason = `未找到下拉触发器：${args.trigger.name}`;
@@ -1150,19 +1421,20 @@ export class SelectOptionTool extends BaseTool<typeof SelectOptionArgsSchema> {
 
                 await runHdc(
                     ['shell', 'uitest', 'uiInput', 'click', String(trigger.center.x), String(trigger.center.y)],
-                    10000
+                    10000,
+                    deviceId
                 );
                 await new Promise((resolve) => setTimeout(resolve, 350));
-                const opened = await takeSnapshot();
+                const opened = await takeSnapshot(undefined, deviceId);
                 const option = chooseOptionMatch(
-                    findElementsInSnapshot(undefined, undefined, undefined, undefined, undefined),
+                    findElementsInSnapshot(undefined, undefined, undefined, undefined, undefined, undefined, deviceId),
                     args.option,
                     args.match
                 );
                 let strategy: 'accessibility' | 'ocr' = 'accessibility';
                 let clickPoint: { x: number; y: number } | null = option?.center ?? null;
                 if (!clickPoint) {
-                    const ocrMatch = await chooseOptionWithOcr(trigger, args.option, args.match);
+                    const ocrMatch = await chooseOptionWithOcr(trigger, args.option, args.match, deviceId);
                     if (ocrMatch) {
                         strategy = 'ocr';
                         clickPoint = { x: ocrMatch.x, y: ocrMatch.y };
@@ -1171,20 +1443,24 @@ export class SelectOptionTool extends BaseTool<typeof SelectOptionArgsSchema> {
                 if (!clickPoint) {
                     lastReason = `下拉框已展开，但未找到选项：${args.option}`;
                     if (attempt < args.maxAttempts) {
-                        await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Escape)], 5000).catch(
-                            () => {}
-                        );
+                        await runHdc(
+                            ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Escape)],
+                            5000,
+                            deviceId
+                        ).catch(() => {});
                     }
                     continue;
                 }
 
                 await runHdc(
                     ['shell', 'uitest', 'uiInput', 'click', String(clickPoint.x), String(clickPoint.y)],
-                    10000
+                    10000,
+                    deviceId
                 );
                 await new Promise((resolve) => setTimeout(resolve, 350));
-                const after = await takeSnapshot(args.bundleName);
-                const verified = !args.verify || findSelectedOptionInSnapshot(trigger, args.option, args.match);
+                const after = await takeSnapshot(args.bundleName, deviceId);
+                const verified =
+                    !args.verify || findSelectedOptionInSnapshot(trigger, args.option, args.match, deviceId);
                 if (!verified) {
                     lastReason = `已点击选项“${args.option}”，但无法验证选择结果`;
                     continue;
@@ -1215,10 +1491,11 @@ const HandlePermissionArgsSchema = z.object({
     action: z
         .enum(['inspect', 'allow', 'allowOnce', 'deny'])
         .describe('必须明确指定权限处理方式：inspect 仅查看，allow 允许，allowOnce 仅本次允许，deny 拒绝'),
-    snapshot: z.boolean().default(true).describe('完成点击后是否获取新快照，默认 true')
+    snapshot: z.boolean().default(true).describe('完成点击后是否获取新快照，默认 true'),
+    deviceId: DeviceIdSchema
 });
 
-export class HandlePermissionTool extends BaseTool<typeof HandlePermissionArgsSchema> {
+export class HandlePermissionTool extends HarmonyBaseTool<typeof HandlePermissionArgsSchema> {
     constructor() {
         super(
             'handlePermission',
@@ -1230,8 +1507,9 @@ export class HandlePermissionTool extends BaseTool<typeof HandlePermissionArgsSc
 
     private async handleExecute(args: z.output<typeof HandlePermissionArgsSchema>): Promise<string> {
         try {
-            const layout = await dumpLayout();
-            const capture = convertLayout(layout);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const layout = await dumpLayout(undefined, deviceId);
+            const capture = convertLayout(layout, undefined, deviceId);
             const dialog = findPermissionDialog(layout);
             if (!dialog) {
                 return fail('当前界面未检测到可安全处理的系统权限确认框。');
@@ -1257,14 +1535,19 @@ export class HandlePermissionTool extends BaseTool<typeof HandlePermissionArgsSc
             }
 
             const point = pointForTarget(selected.target, 'center');
-            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000);
-            const result = await withSnapshot(args.snapshot, {
-                detected: true,
-                action: selected.action,
-                label: selected.label,
-                x: point.x,
-                y: point.y
-            });
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000, deviceId);
+            const result = await withSnapshot(
+                args.snapshot,
+                {
+                    detected: true,
+                    action: selected.action,
+                    label: selected.label,
+                    x: point.x,
+                    y: point.y
+                },
+                undefined,
+                deviceId
+            );
             return ok(result);
         } catch (err) {
             return fail(`处理权限确认框失败：${err}`);
@@ -1275,12 +1558,13 @@ export class HandlePermissionTool extends BaseTool<typeof HandlePermissionArgsSc
 // ========== click ==========
 
 const ClickArgsSchema = z.object({
-    x: z.number().int().describe('点击的 X 坐标'),
-    y: z.number().int().describe('点击的 Y 坐标'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    x: z.number().int().min(0).describe('点击的 X 坐标'),
+    y: z.number().int().min(0).describe('点击的 Y 坐标'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class ClickTool extends BaseTool<typeof ClickArgsSchema> {
+export class ClickTool extends HarmonyBaseTool<typeof ClickArgsSchema> {
     constructor() {
         super(
             'click',
@@ -1292,8 +1576,9 @@ export class ClickTool extends BaseTool<typeof ClickArgsSchema> {
 
     private async handleExecute(args: z.output<typeof ClickArgsSchema>): Promise<string> {
         try {
-            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000);
-            const result = await withSnapshot(args.snapshot, { x: args.x, y: args.y });
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000, deviceId);
+            const result = await withSnapshot(args.snapshot, { x: args.x, y: args.y }, undefined, deviceId);
             return ok(result);
         } catch (err) {
             return fail(`Failed to click (${args.x}, ${args.y}): ${err}`);
@@ -1308,23 +1593,25 @@ async function runPointerGesture(
     command: string,
     commandArgs: string[],
     snapshot: boolean,
-    result: Record<string, unknown>
+    result: Record<string, unknown>,
+    deviceId?: string
 ): Promise<string> {
     try {
-        await runHdc(['shell', 'uitest', 'uiInput', command, ...commandArgs], 10000);
-        return ok(await withSnapshot(snapshot, { gesture, native: true, ...result }));
+        await runHdc(['shell', 'uitest', 'uiInput', command, ...commandArgs], 10000, deviceId);
+        return ok(await withSnapshot(snapshot, { gesture, native: true, ...result }, undefined, deviceId));
     } catch (err) {
         return fail(`设备不支持原生 ${gesture} 手势，或 uiInput 命令执行失败：${err}`);
     }
 }
 
 const DoubleClickArgsSchema = z.object({
-    x: z.number().int().describe('双击位置的 X 坐标'),
-    y: z.number().int().describe('双击位置的 Y 坐标'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    x: z.number().int().min(0).describe('双击位置的 X 坐标'),
+    y: z.number().int().min(0).describe('双击位置的 Y 坐标'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class DoubleClickTool extends BaseTool<typeof DoubleClickArgsSchema> {
+export class DoubleClickTool extends HarmonyBaseTool<typeof DoubleClickArgsSchema> {
     constructor() {
         super(
             'doubleClick',
@@ -1335,23 +1622,32 @@ export class DoubleClickTool extends BaseTool<typeof DoubleClickArgsSchema> {
     }
 
     private async handleExecute(args: z.output<typeof DoubleClickArgsSchema>): Promise<string> {
-        return runPointerGesture('doubleClick', 'doubleClick', [String(args.x), String(args.y)], args.snapshot, {
-            x: args.x,
-            y: args.y
-        });
+        const deviceId = await tryResolveDeviceId(args.deviceId);
+        return runPointerGesture(
+            'doubleClick',
+            'doubleClick',
+            [String(args.x), String(args.y)],
+            args.snapshot,
+            {
+                x: args.x,
+                y: args.y
+            },
+            deviceId
+        );
     }
 }
 
 const DragArgsSchema = z.object({
-    fromX: z.number().int().describe('拖动起点的 X 坐标'),
-    fromY: z.number().int().describe('拖动起点的 Y 坐标'),
-    toX: z.number().int().describe('拖动终点的 X 坐标'),
-    toY: z.number().int().describe('拖动终点的 Y 坐标'),
+    fromX: z.number().int().min(0).describe('拖动起点的 X 坐标'),
+    fromY: z.number().int().min(0).describe('拖动起点的 Y 坐标'),
+    toX: z.number().int().min(0).describe('拖动终点的 X 坐标'),
+    toY: z.number().int().min(0).describe('拖动终点的 Y 坐标'),
     speed: z.number().int().min(200).max(40000).default(600).describe('拖动速度，单位为像素/秒，默认 600'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class DragTool extends BaseTool<typeof DragArgsSchema> {
+export class DragTool extends HarmonyBaseTool<typeof DragArgsSchema> {
     constructor() {
         super(
             'drag',
@@ -1362,23 +1658,26 @@ export class DragTool extends BaseTool<typeof DragArgsSchema> {
     }
 
     private async handleExecute(args: z.output<typeof DragArgsSchema>): Promise<string> {
+        const deviceId = await tryResolveDeviceId(args.deviceId);
         return runPointerGesture(
             'drag',
             'drag',
             [String(args.fromX), String(args.fromY), String(args.toX), String(args.toY), String(args.speed)],
             args.snapshot,
-            { fromX: args.fromX, fromY: args.fromY, toX: args.toX, toY: args.toY, speed: args.speed }
+            { fromX: args.fromX, fromY: args.fromY, toX: args.toX, toY: args.toY, speed: args.speed },
+            deviceId
         );
     }
 }
 
 const LongClickArgsSchema = z.object({
-    x: z.number().int().describe('长按位置的 X 坐标'),
-    y: z.number().int().describe('长按位置的 Y 坐标'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    x: z.number().int().min(0).describe('长按位置的 X 坐标'),
+    y: z.number().int().min(0).describe('长按位置的 Y 坐标'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class LongClickTool extends BaseTool<typeof LongClickArgsSchema> {
+export class LongClickTool extends HarmonyBaseTool<typeof LongClickArgsSchema> {
     constructor() {
         super(
             'longClick',
@@ -1390,10 +1689,18 @@ export class LongClickTool extends BaseTool<typeof LongClickArgsSchema> {
     }
 
     private async handleExecute(args: z.output<typeof LongClickArgsSchema>): Promise<string> {
-        return runPointerGesture('longClick', 'longClick', [String(args.x), String(args.y)], args.snapshot, {
-            x: args.x,
-            y: args.y
-        });
+        const deviceId = await tryResolveDeviceId(args.deviceId);
+        return runPointerGesture(
+            'longClick',
+            'longClick',
+            [String(args.x), String(args.y)],
+            args.snapshot,
+            {
+                x: args.x,
+                y: args.y
+            },
+            deviceId
+        );
     }
 }
 
@@ -1417,11 +1724,12 @@ interface ScrollGestureResult {
 async function performScrollGesture(
     direction: ScrollDirection,
     region?: ScrollRegion,
-    distance?: number
+    distance?: number,
+    deviceId?: string
 ): Promise<ScrollGestureResult> {
     if (!region) {
         const dirMap: Record<ScrollDirection, number> = { up: 2, down: 3, left: 0, right: 1 };
-        await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', String(dirMap[direction])], 10000);
+        await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', String(dirMap[direction])], 10000, deviceId);
         return { method: 'dircFling' };
     }
 
@@ -1448,7 +1756,8 @@ async function performScrollGesture(
 
     await runHdc(
         ['shell', 'uitest', 'uiInput', 'drag', String(fromX), String(fromY), String(toX), String(toY), '600'],
-        10000
+        10000,
+        deviceId
     );
     return { method: 'drag', region, distance: offset };
 }
@@ -1461,10 +1770,10 @@ const ScrollArgsSchema = z.object({
         ),
     region: z
         .object({
-            x: z.number().int().describe('滑动区域中心 X 坐标'),
-            y: z.number().int().describe('滑动区域中心 Y 坐标'),
-            width: z.number().int().describe('滑动区域宽度'),
-            height: z.number().int().describe('滑动区域高度')
+            x: z.number().int().min(0).describe('滑动区域中心 X 坐标'),
+            y: z.number().int().min(0).describe('滑动区域中心 Y 坐标'),
+            width: z.number().int().min(0).describe('滑动区域宽度'),
+            height: z.number().int().min(0).describe('滑动区域高度')
         })
         .optional()
         .describe(
@@ -1491,10 +1800,11 @@ const ScrollArgsSchema = z.object({
                 '无需预先知道容器坐标，工具会自动获取快照并解析容器边界。' +
                 '与 region 互斥——同时指定时优先使用 scrollByContainer'
         ),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class ScrollTool extends BaseTool<typeof ScrollArgsSchema> {
+export class ScrollTool extends HarmonyBaseTool<typeof ScrollArgsSchema> {
     constructor() {
         super('scroll', '在设备屏幕上执行滑动操作，支持全屏滚动、区域滚动和按元素定位滚动', ScrollArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
@@ -1502,18 +1812,24 @@ export class ScrollTool extends BaseTool<typeof ScrollArgsSchema> {
 
     private async handleExecute(args: z.output<typeof ScrollArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
             // Resolve scroll region
             let effectiveRegion: { x: number; y: number; width: number; height: number } | undefined = args.region;
 
             if (args.scrollByContainer) {
-                const resolved = resolveContainerFromSnapshot(args.scrollByContainer.role, args.scrollByContainer.name);
+                const resolved = resolveContainerFromSnapshot(
+                    args.scrollByContainer.role,
+                    args.scrollByContainer.name,
+                    deviceId
+                );
                 if (!resolved) {
                     // Auto-take a snapshot to resolve container
-                    const capture = await takeSnapshot();
+                    const capture = await takeSnapshot(undefined, deviceId);
                     if (capture.snapshotId) {
                         const retry = resolveContainerFromSnapshot(
                             args.scrollByContainer.role,
-                            args.scrollByContainer.name
+                            args.scrollByContainer.name,
+                            deviceId
                         );
                         if (retry) effectiveRegion = retry;
                     }
@@ -1533,8 +1849,10 @@ export class ScrollTool extends BaseTool<typeof ScrollArgsSchema> {
                 return fail('distance 参数仅对区域滚动（region 或 scrollByContainer）有效，dircFling 不支持精确距离');
             }
 
-            const gesture = await performScrollGesture(args.direction, effectiveRegion, args.distance);
-            return ok(await withSnapshot(args.snapshot, { direction: args.direction, ...gesture }));
+            const gesture = await performScrollGesture(args.direction, effectiveRegion, args.distance, deviceId);
+            return ok(
+                await withSnapshot(args.snapshot, { direction: args.direction, ...gesture }, undefined, deviceId)
+            );
         } catch (err) {
             return fail(`Failed to scroll ${args.direction}: ${err}`);
         }
@@ -1558,7 +1876,7 @@ interface ParsedSnapshotLine {
     selected: boolean;
 }
 
-function parseSnapshotElements(snapshotText: string): ParsedSnapshotLine[] {
+function parseSnapshotElements(snapshotText: string, deviceId?: string): ParsedSnapshotLine[] {
     const results: ParsedSnapshotLine[] = [];
     // Match elements with ref. Name is optional (elements can be `- button [ref=e5 ...]`).
     // State attributes like [checked], [disabled], [selected] may appear before [ref=...].
@@ -1574,7 +1892,7 @@ function parseSnapshotElements(snapshotText: string): ParsedSnapshotLine[] {
         const x = parseInt(m[6], 10);
         const y = parseInt(m[7], 10);
         // Recover width/height from the in-memory snapshot targets when available
-        const currentSnapshot = getCurrentSnapshot();
+        const currentSnapshot = getCurrentSnapshot(deviceId);
         const target = currentSnapshot?.targets.get(ref);
         const width = target ? target.bounds.x2 - target.bounds.x1 : 0;
         const height = target ? target.bounds.y2 - target.bounds.y1 : 0;
@@ -1596,13 +1914,14 @@ function parseSnapshotElements(snapshotText: string): ParsedSnapshotLine[] {
 
 function resolveContainerFromSnapshot(
     role: string,
-    name?: string
+    name?: string,
+    deviceId?: string
 ): { x: number; y: number; width: number; height: number } | null {
-    const currentSnapshot = getCurrentSnapshot();
+    const currentSnapshot = getCurrentSnapshot(deviceId);
     if (!currentSnapshot) return null;
 
     // Parse snapshot text to find matching container
-    const elements = parseSnapshotElements(currentSnapshot.snapshot);
+    const elements = parseSnapshotElements(currentSnapshot.snapshot, deviceId);
     for (const el of elements) {
         if (el.role !== role) continue;
         if (name !== undefined && !el.name.includes(name)) continue;
@@ -1642,12 +1961,13 @@ function findElementsInSnapshot(
     hint?: string,
     state?: 'disabled' | 'enabled' | 'checked' | 'selected',
     text?: string,
-    ref?: string
+    ref?: string,
+    deviceId?: string
 ): ElementMatch[] {
-    const currentSnapshot = getCurrentSnapshot();
+    const currentSnapshot = getCurrentSnapshot(deviceId);
     if (!currentSnapshot) return [];
 
-    const elements = parseSnapshotElements(currentSnapshot.snapshot);
+    const elements = parseSnapshotElements(currentSnapshot.snapshot, deviceId);
 
     // Pre-compute text→parentRef mapping if text search is requested
     let textRefs: Set<string> | undefined;
@@ -1738,13 +2058,17 @@ const ScrollToArgsSchema = z.object({
     targetHint: z.string().optional().describe('目标元素的 hint 提示文本'),
     containerRole: z.string().optional().describe('滚动容器的 role 类型，如不指定则使用全屏 dircFling'),
     containerName: z.string().optional().describe('滚动容器的名称'),
-    direction: z.enum(['up', 'down']).optional().describe('滚动方向提示。不指定时根据目标是否在视口上方/下方自动判断'),
+    direction: z
+        .enum(['up', 'down'])
+        .optional()
+        .describe('滚动方向。不指定时默认向上滑动（查看下方内容）；需要反向查找上方内容时显式传 down'),
     maxScrolls: z.number().int().min(1).max(20).default(5).describe('最大滚动尝试次数，超过后认为目标不可达，默认 5'),
     scrollDistance: z.number().int().min(50).default(300).describe('每次滚动的距离（像素），默认 300'),
-    snapshot: z.boolean().default(true).describe('滚动完成后是否获取界面快照，默认 true')
+    snapshot: z.boolean().default(true).describe('滚动完成后是否获取界面快照，默认 true'),
+    deviceId: DeviceIdSchema
 });
 
-export class ScrollToTool extends BaseTool<typeof ScrollToArgsSchema> {
+export class ScrollToTool extends HarmonyBaseTool<typeof ScrollToArgsSchema> {
     constructor() {
         super(
             'scrollTo',
@@ -1758,36 +2082,45 @@ export class ScrollToTool extends BaseTool<typeof ScrollToArgsSchema> {
 
     private async handleExecute(args: z.output<typeof ScrollToArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            // 未指定 direction 时默认向上滑动（查看下方内容）。目标不在视口时不会出现在
+            // 无障碍树中，无法可靠地自动推断它在上方还是下方，因此不做虚假的"自动判断"，
+            // 需要反向查找时由调用方显式传 direction。
+            const direction: 'up' | 'down' = args.direction ?? 'up';
             // Check if target is already visible in latest snapshot
-            let found = findElementsInSnapshot(args.targetRole, args.targetName, args.targetHint);
+            let found = findElementsInSnapshot(
+                args.targetRole,
+                args.targetName,
+                args.targetHint,
+                undefined,
+                undefined,
+                undefined,
+                deviceId
+            );
             if (found.length > 0) {
-                const withSnap = await withSnapshot(args.snapshot, {
-                    scrollsUsed: 0,
-                    targetFound: true,
-                    elements: found.map((e) => ({
-                        ref: e.ref,
-                        role: e.role,
-                        name: e.name,
-                        bounds: e.bounds
-                    }))
-                });
+                const withSnap = await withSnapshot(
+                    args.snapshot,
+                    {
+                        direction,
+                        scrollsUsed: 0,
+                        targetFound: true,
+                        elements: found.map((e) => ({
+                            ref: e.ref,
+                            role: e.role,
+                            name: e.name,
+                            bounds: e.bounds
+                        }))
+                    },
+                    undefined,
+                    deviceId
+                );
                 return ok(withSnap);
-            }
-
-            // Determine scroll direction
-            let direction: 'up' | 'down';
-            if (args.direction) {
-                direction = args.direction;
-            } else {
-                // Heuristic: if targetName contains numbers/letters suggesting lower position,
-                // scroll down (which maps to "up" in the scroll direction system)
-                direction = 'up';
             }
 
             // Resolve container region if specified
             let containerRegion: { x: number; y: number; width: number; height: number } | undefined;
             if (args.containerRole) {
-                const resolved = resolveContainerFromSnapshot(args.containerRole, args.containerName);
+                const resolved = resolveContainerFromSnapshot(args.containerRole, args.containerName, deviceId);
                 if (!resolved) {
                     return fail(
                         `找不到滚动容器：role="${args.containerRole}"` +
@@ -1800,41 +2133,329 @@ export class ScrollToTool extends BaseTool<typeof ScrollToArgsSchema> {
 
             // Iterative scroll
             for (let i = 1; i <= args.maxScrolls; i++) {
-                await performScrollGesture(direction, containerRegion, args.scrollDistance);
+                await performScrollGesture(direction, containerRegion, args.scrollDistance, deviceId);
 
                 // Wait for scroll animation and take new snapshot
                 await new Promise((resolve) => setTimeout(resolve, 500));
-                await takeSnapshot();
+                await takeSnapshot(undefined, deviceId);
 
                 // Check if target is now visible
-                found = findElementsInSnapshot(args.targetRole, args.targetName, args.targetHint);
+                found = findElementsInSnapshot(
+                    args.targetRole,
+                    args.targetName,
+                    args.targetHint,
+                    undefined,
+                    undefined,
+                    undefined,
+                    deviceId
+                );
                 if (found.length > 0) {
-                    const withSnap = await withSnapshot(args.snapshot, {
-                        scrollsUsed: i,
-                        targetFound: true,
-                        elements: found.map((e) => ({
-                            ref: e.ref,
-                            role: e.role,
-                            name: e.name,
-                            bounds: e.bounds
-                        }))
-                    });
+                    const withSnap = await withSnapshot(
+                        args.snapshot,
+                        {
+                            direction,
+                            scrollsUsed: i,
+                            targetFound: true,
+                            elements: found.map((e) => ({
+                                ref: e.ref,
+                                role: e.role,
+                                name: e.name,
+                                bounds: e.bounds
+                            }))
+                        },
+                        undefined,
+                        deviceId
+                    );
                     return ok(withSnap);
                 }
             }
 
             // Max scrolls reached, target not found
-            const withSnap = await withSnapshot(args.snapshot, {
-                scrollsUsed: args.maxScrolls,
-                targetFound: false,
-                message:
-                    `未找到目标元素 role="${args.targetRole}"` +
-                    (args.targetName ? ` name≈"${args.targetName}"` : '') +
-                    `，已尝试 ${args.maxScrolls} 次滚动`
-            });
+            const withSnap = await withSnapshot(
+                args.snapshot,
+                {
+                    direction,
+                    scrollsUsed: args.maxScrolls,
+                    targetFound: false,
+                    message:
+                        `未找到目标元素 role="${args.targetRole}"` +
+                        (args.targetName ? ` name≈"${args.targetName}"` : '') +
+                        `，已尝试 ${args.maxScrolls} 次滚动`
+                },
+                undefined,
+                deviceId
+            );
             return ok(withSnap);
         } catch (err) {
             return fail(`scrollTo failed: ${err}`);
+        }
+    }
+}
+
+// ========== scrollInScrollable (virtual-scroll pickers) ==========
+
+/**
+ * Resolves the "real" screen bounds of a target inside a virtual-scroll list.
+ *
+ * Web time/date pickers report button bounds as content coordinates (the full
+ * virtual list with scroll offset applied), which do NOT match the actual
+ * rendered position. Clicking such a coordinate lands on the picker overlay and
+ * closes the popup without changing the value. The reliable answer is the
+ * scrolling container's viewport bounds: an item is only clickable once its
+ * bounds overlap the container viewport. This helper locates the container and
+ * the target, and tells whether the target is inside the viewport.
+ */
+
+interface RawBounds {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+}
+
+function parseRawBounds(bounds: string | undefined): RawBounds | undefined {
+    if (!bounds) return undefined;
+    const m = bounds.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+    if (!m) return undefined;
+    return { x1: Number(m[1]), y1: Number(m[2]), x2: Number(m[3]), y2: Number(m[4]) };
+}
+
+function walkLayoutNodes(node: LayoutNode, predicate: (node: LayoutNode) => boolean): LayoutNode[] {
+    const found: LayoutNode[] = [];
+    if (predicate(node)) found.push(node);
+    for (const child of node.children) found.push(...walkLayoutNodes(child, predicate));
+    return found;
+}
+
+const MIN_USABLE_SCROLLABLE_DIMENSION = 20;
+
+/**
+ * Picks the scroll container that should be scrolled to reveal `targetBounds`.
+ * Real WebView dumps (time pickers, etc.) contain many
+ * `scrollable=true` genericContainers including degenerate ones (1px-wide outer
+ * wrappers) and siblings of a two-column picker (hour/minute). We filter out
+ * zero-width/zero-height containers and, when the target's x is known, pick the
+ * column whose center is closest to it so sibling columns with identical option
+ * text (both have "00"/"09") resolve to the right list.
+ */
+function findScrollableContainer(
+    layout: LayoutNode,
+    containerRole?: string,
+    containerName?: string,
+    targetX?: number
+): { node: LayoutNode; bounds: RawBounds } | undefined {
+    const role = containerRole || 'genericContainer';
+    const candidates = walkLayoutNodes(layout, (n) => n.attributes.type === role && n.attributes.scrollable === 'true');
+    const usable: Array<{ node: LayoutNode; bounds: RawBounds }> = [];
+    for (const node of candidates) {
+        if (containerName) {
+            const text = node.attributes.text || node.attributes.originalText || '';
+            if (!text.includes(containerName)) continue;
+        }
+        const bounds = parseRawBounds(node.attributes.bounds);
+        if (!bounds) continue;
+        const width = bounds.x2 - bounds.x1;
+        const height = bounds.y2 - bounds.y1;
+        // Zero-width/height degenerate containers (e.g. 1px outer wrappers) cannot
+        // host a scrollable column; skipping them avoids scrolling in thin air.
+        if (width < MIN_USABLE_SCROLLABLE_DIMENSION || height < MIN_USABLE_SCROLLABLE_DIMENSION) continue;
+        usable.push({ node, bounds });
+    }
+    if (usable.length === 0) return undefined;
+    if (usable.length === 1) return usable[0];
+
+    if (targetX !== undefined) {
+        // Two-column pickers (hour/minute) share option text; pick the column
+        // whose center x is closest to the target's x.
+        usable.sort((a, b) => {
+            const aCenterX = (a.bounds.x1 + a.bounds.x2) / 2;
+            const bCenterX = (b.bounds.x1 + b.bounds.x2) / 2;
+            return Math.abs(aCenterX - targetX) - Math.abs(bCenterX - targetX);
+        });
+        return usable[0];
+    }
+
+    // No target x: prefer a narrow, tall column (width < 400 and height >= width)
+    // over whole-page containers; among columns prefer the smallest (picker
+    // columns are small modal lists, not sidebars).
+    usable.sort((a, b) => {
+        const columnScore = (bounds: RawBounds): number => {
+            const w = bounds.x2 - bounds.x1;
+            const h = bounds.y2 - bounds.y1;
+            return w < 400 && h >= w ? 0 : 1;
+        };
+        const aScore = columnScore(a.bounds);
+        const bScore = columnScore(b.bounds);
+        if (aScore !== bScore) return aScore - bScore;
+        const area = (bounds: RawBounds): number => (bounds.x2 - bounds.x1) * (bounds.y2 - bounds.y1);
+        return area(a.bounds) - area(b.bounds);
+    });
+    return usable[0];
+}
+
+function targetNodeText(node: LayoutNode): string {
+    return node.attributes.text || node.attributes.originalText || node.attributes['content-desc'] || '';
+}
+
+function findLayoutTarget(layout: LayoutNode, targetRole: string, targetText: string): LayoutNode[] {
+    const q = targetText.toLowerCase();
+    return walkLayoutNodes(
+        layout,
+        (n) => n.attributes.type === targetRole && targetNodeText(n).toLowerCase().includes(q)
+    );
+}
+
+function centerOf(bounds: RawBounds): { x: number; y: number } {
+    return { x: Math.round((bounds.x1 + bounds.x2) / 2), y: Math.round((bounds.y1 + bounds.y2) / 2) };
+}
+
+/**
+ * Returns true when the target bounds overlap the container viewport in both
+ * axes. A virtual-scroll list only renders items inside its viewport, so this
+ * is the single source of truth for "clickable right now".
+ */
+function isInsideViewport(target: RawBounds, viewport: RawBounds): boolean {
+    const overlapY = target.y1 <= viewport.y2 && target.y2 >= viewport.y1;
+    const overlapX = target.x1 <= viewport.x2 && target.x2 >= viewport.x1;
+    return overlapY && overlapX;
+}
+
+const ScrollInScrollableArgsSchema = z.object({
+    targetRole: z.string().describe('目标元素 role，如 "button"'),
+    targetText: z
+        .string()
+        .min(1)
+        .describe(
+            '目标元素文本（如 "09"），模糊匹配。命中多列同名项时用 containerName 或返回的 targetCenter 的 x 区分'
+        ),
+    bundleName: z.string().optional().describe('目标应用 bundleName（dumpLayout 过滤窗口用）'),
+    containerRole: z.string().default('genericContainer').describe('滚动容器 role，默认 genericContainer'),
+    containerName: z.string().optional().describe('滚动容器名称，可选，精确定位'),
+    direction: z.enum(['up', 'down']).optional().describe('滚动方向，不指定则根据目标相对可视区的位置自动判断'),
+    maxScrolls: z.number().int().min(1).max(20).default(8).describe('最大滚动尝试次数，默认 8'),
+    scrollDistance: z.number().int().min(20).optional().describe('每次滑动距离（像素），默认容器可视高度的 50%'),
+    settleMs: z.number().int().min(0).max(5000).default(300).describe('每次滑动后等待界面稳定的时间，默认 300ms'),
+    snapshot: z.boolean().default(true).describe('滚动完成后是否获取界面快照，默认 true'),
+    deviceId: DeviceIdSchema
+});
+
+export class ScrollInScrollableTool extends HarmonyBaseTool<typeof ScrollInScrollableArgsSchema> {
+    constructor() {
+        super(
+            'scrollInScrollable',
+            '在 Web 虚拟滚动弹窗（时间/日期选择器等）的滚动容器内滑动，直到目标元素进入容器可视区，并返回其真实屏幕坐标。' +
+                '虚拟滚动列表报告的按钮 bounds 是内容坐标（含滚动偏移），直接点击会落在弹窗遮罩上导致值不变；' +
+                '本工具用 dumpLayout 定位滚动容器可视区，在容器内滑动直到目标 bounds 进入可视区，返回 targetCenter（真实可点击坐标）。',
+            ScrollInScrollableArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof ScrollInScrollableArgsSchema>): Promise<string> {
+        try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            let layout = await dumpLayout(args.bundleName, deviceId);
+            // Resolve target x first so sibling columns (hour/minute with identical
+            // option text) pick the right container on the very first layout.
+            const initialTargets = findLayoutTarget(layout, args.targetRole, args.targetText);
+            const initialTargetBounds = initialTargets[0]
+                ? parseRawBounds(initialTargets[0].attributes.bounds)
+                : undefined;
+            const targetX = initialTargetBounds ? centerOf(initialTargetBounds).x : undefined;
+            const container = findScrollableContainer(layout, args.containerRole, args.containerName, targetX);
+            if (!container) {
+                return fail(
+                    `找不到滚动容器：role="${args.containerRole}"` +
+                        (args.containerName ? `, name="${args.containerName}"` : '') +
+                        '（需要 scrollable=true 的节点）。请先打开选择器再重试'
+                );
+            }
+            const viewport = container.bounds;
+
+            let direction = args.direction;
+            let scrollsUsed = 0;
+
+            for (let attempt = 0; attempt <= args.maxScrolls; attempt++) {
+                const targets = findLayoutTarget(layout, args.targetRole, args.targetText);
+                const hit = targets.find((t) => {
+                    const tb = parseRawBounds(t.attributes.bounds);
+                    return tb ? isInsideViewport(tb, viewport) : false;
+                });
+                if (hit) {
+                    const tb = parseRawBounds(hit.attributes.bounds)!;
+                    const center = centerOf(tb);
+                    return ok(
+                        await withSnapshot(
+                            args.snapshot,
+                            {
+                                visible: true,
+                                scrollsUsed,
+                                targetRole: args.targetRole,
+                                targetText: args.targetText,
+                                targetBounds: tb,
+                                targetCenter: center,
+                                containerBounds: viewport,
+                                hint: 'targetCenter 即真实可点击坐标，可直接用于 click'
+                            },
+                            undefined,
+                            deviceId
+                        )
+                    );
+                }
+
+                if (attempt >= args.maxScrolls) break;
+
+                // Decide direction from the first match's position relative to the viewport.
+                const firstMatch = targets[0];
+                if (firstMatch) {
+                    const tb = parseRawBounds(firstMatch.attributes.bounds);
+                    if (tb) {
+                        if (tb.y2 < viewport.y1) {
+                            direction = 'down'; // 目标在可视区上方 → 向下滑动（查看上方内容）
+                        } else if (tb.y1 > viewport.y2) {
+                            direction = 'up'; // 目标在可视区下方 → 向上滑动（查看下方内容）
+                        }
+                    }
+                }
+                if (!direction) {
+                    // No target match at all and no direction hint: default to upward scrolling.
+                    direction = 'up';
+                }
+
+                const region = {
+                    x: Math.round((viewport.x1 + viewport.x2) / 2),
+                    y: Math.round((viewport.y1 + viewport.y2) / 2),
+                    width: viewport.x2 - viewport.x1,
+                    height: viewport.y2 - viewport.y1
+                };
+                const distance = args.scrollDistance ?? Math.max(50, Math.round(region.height * 0.5));
+                await performScrollGesture(direction, region, distance, deviceId);
+                scrollsUsed++;
+
+                await new Promise((resolve) => setTimeout(resolve, args.settleMs));
+                layout = await dumpLayout(args.bundleName, deviceId);
+            }
+
+            // Exhausted maxScrolls without the target entering the viewport.
+            const targets = findLayoutTarget(layout, args.targetRole, args.targetText);
+            return ok(
+                await withSnapshot(
+                    args.snapshot,
+                    {
+                        visible: false,
+                        scrollsUsed,
+                        targetRole: args.targetRole,
+                        targetText: args.targetText,
+                        matchesFound: targets.length,
+                        containerBounds: viewport,
+                        message: `滚动 ${args.maxScrolls} 次后目标仍未进入可视区。可增大 maxScrolls、检查 targetText 是否匹配，或确认目标所在列与容器一致`
+                    },
+                    undefined,
+                    deviceId
+                )
+            );
+        } catch (err) {
+            return fail(`scrollInScrollable failed: ${err}`);
         }
     }
 }
@@ -1995,55 +2616,97 @@ function getAsciiKeyStroke(char: string): KeyStroke | undefined {
     return shiftedKeys[char] ? { key: shiftedKeys[char], shift: true } : undefined;
 }
 
-async function typeAsciiText(text: string): Promise<boolean> {
+async function typeAsciiText(text: string, deviceId?: string): Promise<boolean> {
     const strokes = [...text].map(getAsciiKeyStroke);
     if (strokes.some((stroke) => !stroke)) return false;
 
     for (const stroke of strokes) {
         const codes = stroke!.shift ? [KEYCODE_SHIFT_LEFT, KEY_MAP[stroke!.key]] : [KEY_MAP[stroke!.key]];
-        await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', ...codes.map(String)], 5000);
+        await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', ...codes.map(String)], 5000, deviceId);
     }
     return true;
 }
 
-async function pasteFocusedText(text: string): Promise<void> {
-    await runHdc(['shell', 'uitest', 'uiInput', 'text', text], 10000);
+async function pasteFocusedText(text: string, deviceId?: string): Promise<void> {
+    await runHdc(['shell', 'uitest', 'uiInput', 'text', text], 10000, deviceId);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    await clearFocusedText(3);
-    await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_PASTE)], 5000);
+    await clearFocusedText(3, deviceId);
+    await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_PASTE)], 5000, deviceId);
 }
 
 // ========== input ==========
 
 const InputArgsSchema = z.object({
-    x: z.number().int().describe('输入框的 X 坐标'),
-    y: z.number().int().describe('输入框的 Y 坐标'),
+    x: z.number().int().min(0).describe('输入框的 X 坐标'),
+    y: z.number().int().min(0).describe('输入框的 Y 坐标'),
     text: z.string().describe('要输入的文本内容'),
     mode: z
         .enum(['append', 'replace'])
         .default('append')
-        .describe('输入模式：append 在现有光标处追加；replace 从开头删除已有文本后输入'),
+        .describe('输入模式：append 在现有光标处追加；replace 清空已有文本后输入'),
+    clearMode: z
+        .enum(['dragSelect', 'backspace'])
+        .default('dragSelect')
+        .describe(
+            'replace 模式的清空方式：dragSelect=拖拽全选后输入（默认，需提供 bounds 定位拖拽范围，支持单行/多行）；backspace=设备端批量退格删除（无需 bounds，最多删 maxClearChars 个字符）'
+        ),
+    bounds: z
+        .object({
+            x1: z.number().int().min(0),
+            y1: z.number().int().min(0),
+            x2: z.number().int().min(0),
+            y2: z.number().int().min(0)
+        })
+        .optional()
+        .describe(
+            '输入框边界（来自 snapshot/findElement）。replace + clearMode=dragSelect 时用于从文本起点拖到末尾全选'
+        ),
     maxClearChars: z
         .number()
         .int()
         .min(1)
         .max(4096)
         .default(DEFAULT_REPLACE_CLEAR_CHARS)
-        .describe('replace 模式最多删除的字符数，默认 256；内容更长时需显式增大'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+        .describe(
+            'backspace 清空（含 dragSelect 未提供 bounds 时的回退）最多删除的字符数，默认 256；内容更长时需显式增大'
+        ),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-async function clearFocusedText(maxClearChars: number): Promise<void> {
+async function clearFocusedText(maxClearChars: number, deviceId?: string): Promise<void> {
     // Do NOT use KEY_MAP.Home (keycode 1): it is the system Home button on
     // HarmonyOS, intercepted by the system and triggers browser / home screen
     // instead of "move cursor to beginning of line". Use Backspace to delete
     // from the end instead.
-    for (let i = 0; i < maxClearChars; i++) {
-        await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Backspace)], 5000);
-    }
+    // Run the whole Backspace sequence in a single device-side shell loop so a
+    // large maxClearChars does not cost one hdc round-trip per key event.
+    const script = `i=0; while [ $i -lt ${maxClearChars} ]; do uitest uiInput keyEvent ${KEY_MAP.Backspace}; i=$((i + 1)); done`;
+    await runHdc(['shell', script], Math.max(10000, maxClearChars * 50), deviceId);
 }
 
-export class InputTool extends BaseTool<typeof InputArgsSchema> {
+async function dragSelectAll(
+    bounds: { x1: number; y1: number; x2: number; y2: number },
+    deviceId?: string
+): Promise<void> {
+    // Drag from near the top-left of the field to near the bottom-right to
+    // select the whole text. Web inputs stop the selection at the text end, so
+    // dragging past shorter text still selects it fully; for multi-line fields
+    // the diagonal spans every visible line. Staying inside the field bounds
+    // keeps the drag from landing on a neighboring control.
+    const width = bounds.x2 - bounds.x1;
+    const fromX = Math.round(bounds.x1 + Math.max(4, width * 0.1));
+    const toX = Math.round(bounds.x2 - Math.max(4, width * 0.1));
+    const fromY = bounds.y1 + 4;
+    const toY = bounds.y2 - 4;
+    await runHdc(
+        ['shell', 'uitest', 'uiInput', 'drag', String(fromX), String(fromY), String(toX), String(toY), '600'],
+        10000,
+        deviceId
+    );
+}
+
+export class InputTool extends HarmonyBaseTool<typeof InputArgsSchema> {
     constructor() {
         super(
             'input',
@@ -2056,39 +2719,53 @@ export class InputTool extends BaseTool<typeof InputArgsSchema> {
 
     private async handleExecute(args: z.output<typeof InputArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            // eslint-disable-next-line no-control-regex
             const hasNonAscii = /[^\x00-\x7F]/.test(args.text);
 
             // Click to focus the input.
-            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'click', String(args.x), String(args.y)], 10000, deviceId);
             await new Promise((resolve) => setTimeout(resolve, 300));
 
             if (args.mode === 'replace') {
-                // XComponent can treat Ctrl+A as a literal "a". Delete from the
-                // beginning instead, bounded to avoid an unbounded device operation.
-                await clearFocusedText(args.maxClearChars);
+                if (args.clearMode === 'dragSelect' && args.bounds) {
+                    await dragSelectAll(args.bounds, deviceId);
+                } else {
+                    // XComponent can treat Ctrl+A as a literal "a". Backspace
+                    // from the end instead, bounded to avoid an unbounded
+                    // device operation.
+                    await clearFocusedText(args.maxClearChars, deviceId);
+                }
             }
 
             if (hasNonAscii) {
                 // uiInput text writes the intended text to the pasteboard but leaves
                 // the fixed "va'" fallback sequence in the focused field. Do not
                 // use Ctrl+A here: XComponent may deliver it as a literal "a".
-                await pasteFocusedText(args.text);
+                await pasteFocusedText(args.text, deviceId);
             } else {
                 // uiInput text can prepend a fallback character in XComponent.
                 // Physical key events avoid the clipboard-based text path.
-                const typed = await typeAsciiText(args.text);
+                const typed = await typeAsciiText(args.text, deviceId);
                 if (!typed) {
-                    await runHdc(['shell', 'uitest', 'uiInput', 'text', args.text], 10000);
+                    await runHdc(['shell', 'uitest', 'uiInput', 'text', args.text], 10000, deviceId);
                 }
             }
 
-            const result = await withSnapshot(args.snapshot, {
-                x: args.x,
-                y: args.y,
-                text: args.text,
-                mode: args.mode,
-                ...(args.mode === 'replace' ? { maxClearChars: args.maxClearChars } : {})
-            });
+            const result = await withSnapshot(
+                args.snapshot,
+                {
+                    x: args.x,
+                    y: args.y,
+                    text: args.text,
+                    mode: args.mode,
+                    ...(args.mode === 'replace'
+                        ? { clearMode: args.clearMode === 'dragSelect' && args.bounds ? 'dragSelect' : 'backspace' }
+                        : {})
+                },
+                undefined,
+                deviceId
+            );
             return ok(result);
         } catch (err) {
             return fail(`Failed to input text: ${err}`);
@@ -2144,28 +2821,39 @@ function findPickerTarget(
     });
 }
 
+/**
+ * 解析当前前台（顶层、非系统 shell）应用的 bundleName，用于工具未显式指定目标应用时的兜底。
+ * 窗口列表顺序由 dumpLayout 决定，这里取第一个可见的非系统 shell 窗口。
+ */
+async function resolveForegroundBundleName(deviceId?: string): Promise<string | undefined> {
+    try {
+        const layout = await dumpLayout(undefined, deviceId);
+        return findAllWindows(layout).find((window) => window.bundleName && window.bundleName !== SCENEBOARD_BUNDLE)
+            ?.bundleName;
+    } catch {
+        return undefined;
+    }
+}
+
 function pickerBundleName(layout: LayoutNode): string | undefined {
     const windows = findAllWindows(layout);
     const namedPicker = windows.find((window) => /(?:file|picker|document|storage)/i.test(window.bundleName));
     if (namedPicker) return namedPicker.bundleName;
-    return windows.find(
-        (window) =>
-            window.bundleName && window.bundleName !== SCENEBOARD_BUNDLE && !window.bundleName.includes('opendesk')
-    )?.bundleName;
+    return windows.find((window) => window.bundleName && window.bundleName !== SCENEBOARD_BUNDLE)?.bundleName;
 }
 
-async function clickPickerTarget(target: PickerTarget): Promise<void> {
+async function clickPickerTarget(target: PickerTarget, deviceId?: string): Promise<void> {
     const point = getCenter(target.bounds);
     if (!point) throw new Error(`文件选择器目标没有有效坐标：${target.label}`);
-    await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000);
+    await runHdc(['shell', 'uitest', 'uiInput', 'click', String(point.x), String(point.y)], 10000, deviceId);
 }
 
-async function replaceTextAt(x: number, y: number, text: string): Promise<void> {
-    await runHdc(['shell', 'uitest', 'uiInput', 'click', String(x), String(y)], 10000);
-    await clearFocusedText(DEFAULT_REPLACE_CLEAR_CHARS);
-    const typed = await typeAsciiText(text);
+async function replaceTextAt(x: number, y: number, text: string, deviceId?: string): Promise<void> {
+    await runHdc(['shell', 'uitest', 'uiInput', 'click', String(x), String(y)], 10000, deviceId);
+    await clearFocusedText(DEFAULT_REPLACE_CLEAR_CHARS, deviceId);
+    const typed = await typeAsciiText(text, deviceId);
     if (!typed) {
-        await pasteFocusedText(text);
+        await pasteFocusedText(text, deviceId);
     }
 }
 
@@ -2180,7 +2868,8 @@ const ChooseFileArgsSchema = z.object({
         .describe('设备上的文件、目录或保存目标绝对路径'),
     mode: z.enum(['openFile', 'openDirectory', 'saveFile']).describe('选择文件、选择目录或指定保存文件名'),
     maxScrolls: z.number().int().min(0).max(20).default(6).describe('查找可见条目时最多向下滚动的次数'),
-    snapshot: z.boolean().default(true).describe('确认选择后是否获取所有可见窗口的快照，默认 true')
+    snapshot: z.boolean().default(true).describe('确认选择后是否获取所有可见窗口的快照，默认 true'),
+    deviceId: DeviceIdSchema
 });
 
 const PICKER_CONFIRM_LABELS: Record<z.output<typeof ChooseFileArgsSchema>['mode'], readonly string[]> = {
@@ -2200,7 +2889,7 @@ const PICKER_CONFIRM_LABELS: Record<z.output<typeof ChooseFileArgsSchema>['mode'
     saveFile: ['保存', '确定', '完成', 'Save', 'OK', 'Done']
 };
 
-export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
+export class ChooseFileTool extends HarmonyBaseTool<typeof ChooseFileArgsSchema> {
     constructor() {
         super(
             'chooseFile',
@@ -2212,6 +2901,7 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
     }
 
     private async handleExecute(args: z.output<typeof ChooseFileArgsSchema>): Promise<string> {
+        const deviceId = await tryResolveDeviceId(args.deviceId);
         const normalizedPath = posix.normalize(args.path);
         const targetName = posix.basename(normalizedPath);
         const pathParts = normalizedPath.split('/').filter(Boolean);
@@ -2224,7 +2914,7 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
 
         try {
             while (true) {
-                layout = await dumpLayout();
+                layout = await dumpLayout(undefined, deviceId);
                 detectedBundleName ||= pickerBundleName(layout);
 
                 const nextDirectory = [...parentParts].reverse().find(
@@ -2239,7 +2929,7 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
                         bundleName: detectedBundleName
                     })!;
                     visitedDirectories.add(nextDirectory);
-                    await clickPickerTarget(directoryTarget);
+                    await clickPickerTarget(directoryTarget, deviceId);
                     await new Promise((resolve) => setTimeout(resolve, 300));
                     continue;
                 }
@@ -2258,7 +2948,7 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
                         );
                     if (textBox) {
                         const point = getCenter(textBox.bounds)!;
-                        await replaceTextAt(point.x, point.y, targetName);
+                        await replaceTextAt(point.x, point.y, targetName, deviceId);
                         selectedTarget = textBox;
                         break;
                     }
@@ -2267,25 +2957,25 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
                         bundleName: detectedBundleName
                     });
                     if (selectedTarget) {
-                        await clickPickerTarget(selectedTarget);
+                        await clickPickerTarget(selectedTarget, deviceId);
                         break;
                     }
                 }
 
                 if (scrollsUsed >= args.maxScrolls) {
-                    const capture = convertLayout(layout);
+                    const capture = convertLayout(layout, undefined, deviceId);
                     return fail(
                         `系统文件选择器中未找到 ${args.mode === 'saveFile' ? '文件名输入框' : `目标“${targetName}”`}。` +
                             `请确认 Picker 已打开、路径可浏览且目标已下发到设备。最后快照：${capture.snapshot}`
                     );
                 }
-                await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', '2'], 10000);
+                await runHdc(['shell', 'uitest', 'uiInput', 'dircFling', '2'], 10000, deviceId);
                 scrollsUsed += 1;
                 await new Promise((resolve) => setTimeout(resolve, 300));
             }
 
             await new Promise((resolve) => setTimeout(resolve, 300));
-            layout = await dumpLayout();
+            layout = await dumpLayout(undefined, deviceId);
             const pickerStillVisible = detectedBundleName
                 ? findAllWindows(layout).some((window) => window.bundleName === detectedBundleName)
                 : true;
@@ -2294,21 +2984,26 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
                     bundleName: detectedBundleName
                 });
                 if (!confirmTarget) {
-                    const capture = convertLayout(layout);
+                    const capture = convertLayout(layout, undefined, deviceId);
                     return fail(`已选中“${targetName}”，但未找到文件选择器确认按钮。最后快照：${capture.snapshot}`);
                 }
-                await clickPickerTarget(confirmTarget);
+                await clickPickerTarget(confirmTarget, deviceId);
             }
 
             return ok(
-                await withSnapshot(args.snapshot, {
-                    path: normalizedPath,
-                    mode: args.mode,
-                    selected: Boolean(selectedTarget),
-                    confirmed: true,
-                    ...(detectedBundleName ? { pickerBundleName: detectedBundleName } : {}),
-                    ...(scrollsUsed > 0 ? { scrollsUsed } : {})
-                })
+                await withSnapshot(
+                    args.snapshot,
+                    {
+                        path: normalizedPath,
+                        mode: args.mode,
+                        selected: Boolean(selectedTarget),
+                        confirmed: true,
+                        ...(detectedBundleName ? { pickerBundleName: detectedBundleName } : {}),
+                        ...(scrollsUsed > 0 ? { scrollsUsed } : {})
+                    },
+                    undefined,
+                    deviceId
+                )
             );
         } catch (err) {
             return fail(`系统文件选择失败：${err}`);
@@ -2318,14 +3013,15 @@ export class ChooseFileTool extends BaseTool<typeof ChooseFileArgsSchema> {
 
 const DropFixtureArgsSchema = z.object({
     localPath: z.string().min(1).describe('宿主机上的待投放文件路径'),
-    bundleName: BundleNameSchema.default('com.develop.opensource.ohpcd.opendesk'),
+    bundleName: BundleNameSchema.optional().describe('目标 WebView 应用 bundleName；不指定则自动探测当前前台应用'),
     x: z.number().int().min(0).describe('WebView 中投放目标的 X 坐标'),
     y: z.number().int().min(0).describe('WebView 中投放目标的 Y 坐标'),
-    snapshot: z.boolean().default(true).describe('投放后是否获取目标应用快照，默认 true')
+    snapshot: z.boolean().default(true).describe('投放后是否获取目标应用快照，默认 true'),
+    deviceId: DeviceIdSchema
 });
 
 const DROP_FIXTURE_MAX_BYTES = 20 * 1024 * 1024;
-const DROP_FIXTURE_CHUNK_SIZE = 16 * 1024;
+const DROP_FIXTURE_CHUNK_SIZE = 256 * 1024;
 
 function fixtureMimeType(fileName: string): string {
     const extension = fileName.toLowerCase().split('.').pop() || '';
@@ -2343,7 +3039,7 @@ function fixtureMimeType(fileName: string): string {
     return mimeTypes[extension] || 'application/octet-stream';
 }
 
-export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
+export class DropFixtureTool extends HarmonyBaseTool<typeof DropFixtureArgsSchema> {
     constructor() {
         super(
             'dropFixture',
@@ -2355,9 +3051,20 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
     }
 
     private async handleExecute(args: z.output<typeof DropFixtureArgsSchema>): Promise<string> {
+        // 提升变量到函数作用域：catch 需要 bundleName/fixtureId 做设备端残留清理
+        let deviceId: string | undefined;
+        let bundleName: string | undefined;
+        let fixtureId: string | undefined;
         try {
+            deviceId = await tryResolveDeviceId(args.deviceId);
+            bundleName = args.bundleName ?? (await resolveForegroundBundleName(deviceId));
+            if (!bundleName) {
+                return fail(
+                    'dropFixture 需要 bundleName 目标 WebView 应用，或探测不到当前前台应用，请显式传入 bundleName'
+                );
+            }
             const localPath = resolve(args.localPath);
-            const stats = statSync(localPath);
+            const stats = await statAsync(localPath);
             if (!stats.isFile()) return fail(`dropFixture 只接受文件：${localPath}`);
             if (stats.size > DROP_FIXTURE_MAX_BYTES) {
                 return fail(`文件过大：${stats.size} bytes，dropFixture 上限为 ${DROP_FIXTURE_MAX_BYTES} bytes`);
@@ -2365,12 +3072,8 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
 
             const fileName = basename(localPath);
             const mimeType = fixtureMimeType(fileName);
-            const base64 = readFileSync(localPath).toString('base64');
-            const fixtureId = createHash('sha256')
-                .update(localPath)
-                .update(String(Date.now()))
-                .digest('hex')
-                .slice(0, 16);
+            const base64 = (await readFileAsync(localPath)).toString('base64');
+            fixtureId = createHash('sha256').update(localPath).update(String(Date.now())).digest('hex').slice(0, 16);
             const chunks = base64.match(new RegExp(`.{1,${DROP_FIXTURE_CHUNK_SIZE}}`, 'g')) || [''];
 
             await runHdc(
@@ -2378,11 +3081,12 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
                     'shell',
                     'arkweb_exec_js',
                     '-b',
-                    args.bundleName,
+                    bundleName,
                     '-s',
                     `window.__opendeskFixtureChunks=window.__opendeskFixtureChunks||{};window.__opendeskFixtureChunks[${JSON.stringify(fixtureId)}]=[];`
                 ],
-                10000
+                10000,
+                deviceId
             );
             for (const chunk of chunks) {
                 await runHdc(
@@ -2390,18 +3094,20 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
                         'shell',
                         'arkweb_exec_js',
                         '-b',
-                        args.bundleName,
+                        bundleName,
                         '-s',
                         `window.__opendeskFixtureChunks[${JSON.stringify(fixtureId)}].push(${JSON.stringify(chunk)});`
                     ],
-                    10000
+                    10000,
+                    deviceId
                 );
             }
 
             const dispatchScript = `(()=>{const k=${JSON.stringify(fixtureId)};const b=window.__opendeskFixtureChunks?.[k]?.join('');if(b===undefined)throw new Error('fixture chunks missing');const a=atob(b);const u=new Uint8Array(a.length);for(let i=0;i<a.length;i++)u[i]=a.charCodeAt(i);const f=new File([u],${JSON.stringify(fileName)},{type:${JSON.stringify(mimeType)}});const d=new DataTransfer();d.items.add(f);const e=document.elementFromPoint(${args.x},${args.y});if(!e)throw new Error('drop target not found');for(const t of ['dragenter','dragover','drop'])e.dispatchEvent(new DragEvent(t,{bubbles:true,cancelable:true,clientX:${args.x},clientY:${args.y},dataTransfer:d}));delete window.__opendeskFixtureChunks[k];return 'drop-dispatched';})()`;
             const detail = await runHdc(
-                ['shell', 'arkweb_exec_js', '-b', args.bundleName, '-s', dispatchScript],
-                20000
+                ['shell', 'arkweb_exec_js', '-b', bundleName, '-s', dispatchScript],
+                20000,
+                deviceId
             );
 
             return ok(
@@ -2417,10 +3123,30 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
                         method: 'webview-drop',
                         ...(detail ? { detail } : {})
                     },
-                    args.bundleName
+                    bundleName,
+                    deviceId
                 )
             );
         } catch (err) {
+            // best-effort 清理设备端残留 chunk：chunk 已 push 但 dispatch 未成功时
+            if (bundleName && fixtureId) {
+                try {
+                    await runHdc(
+                        [
+                            'shell',
+                            'arkweb_exec_js',
+                            '-b',
+                            bundleName,
+                            '-s',
+                            `delete window.__opendeskFixtureChunks[${JSON.stringify(fixtureId)}];`
+                        ],
+                        10000,
+                        deviceId
+                    );
+                } catch {
+                    // 清理失败不影响主错误返回
+                }
+            }
             return fail(`投放测试 fixture 失败：${err}`);
         }
     }
@@ -2429,10 +3155,11 @@ export class DropFixtureTool extends BaseTool<typeof DropFixtureArgsSchema> {
 // ========== goBack ==========
 
 const GoBackArgsSchema = z.object({
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class GoBackTool extends BaseTool<typeof GoBackArgsSchema> {
+export class GoBackTool extends HarmonyBaseTool<typeof GoBackArgsSchema> {
     constructor() {
         super('goBack', '按下返回键，返回上一级页面或退出当前应用', GoBackArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
@@ -2440,8 +3167,9 @@ export class GoBackTool extends BaseTool<typeof GoBackArgsSchema> {
 
     private async handleExecute(args: z.output<typeof GoBackArgsSchema>): Promise<string> {
         try {
-            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', 'Back'], 10000);
-            const result = await withSnapshot(args.snapshot, {});
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', 'Back'], 10000, deviceId);
+            const result = await withSnapshot(args.snapshot, {}, undefined, deviceId);
             return ok(result);
         } catch (err) {
             return fail(`Failed to go back: ${err}`);
@@ -2452,10 +3180,11 @@ export class GoBackTool extends BaseTool<typeof GoBackArgsSchema> {
 // ========== goForward ==========
 
 const GoForwardArgsSchema = z.object({
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class GoForwardTool extends BaseTool<typeof GoForwardArgsSchema> {
+export class GoForwardTool extends HarmonyBaseTool<typeof GoForwardArgsSchema> {
     constructor() {
         super('goForward', '按下 Alt+Right 方向键，在支持前进导航的应用中向前导航', GoForwardArgsSchema);
         this.setExecutor(this.handleExecute.bind(this));
@@ -2463,12 +3192,14 @@ export class GoForwardTool extends BaseTool<typeof GoForwardArgsSchema> {
 
     private async handleExecute(args: z.output<typeof GoForwardArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
             // Alt+Right Arrow
             await runHdc(
                 ['shell', 'uitest', 'uiInput', 'keyEvent', String(KEYCODE_ALT_LEFT), String(KEY_MAP.ArrowRight)],
-                10000
+                10000,
+                deviceId
             );
-            const result = await withSnapshot(args.snapshot, {});
+            const result = await withSnapshot(args.snapshot, {}, undefined, deviceId);
             return ok(result);
         } catch (err) {
             return fail(`Failed to go forward: ${err}`);
@@ -2489,10 +3220,11 @@ const PressKeyArgsSchema = z.object({
         .max(2)
         .optional()
         .describe('修饰键列表，如 ["Ctrl"] 或 ["Ctrl", "Shift"]'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class PressKeyTool extends BaseTool<typeof PressKeyArgsSchema> {
+export class PressKeyTool extends HarmonyBaseTool<typeof PressKeyArgsSchema> {
     constructor() {
         super(
             'pressKey',
@@ -2505,6 +3237,7 @@ export class PressKeyTool extends BaseTool<typeof PressKeyArgsSchema> {
 
     private async handleExecute(args: z.output<typeof PressKeyArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
             const keyCode = KEY_MAP[args.key];
             if (keyCode === undefined) {
                 return fail(`Unknown key: "${args.key}". Supported keys: ${Object.keys(KEY_MAP).join(', ')}`);
@@ -2516,11 +3249,11 @@ export class PressKeyTool extends BaseTool<typeof PressKeyArgsSchema> {
 
             // uitest keyEvent accepts up to 3 keycodes: modifier1 modifier2 key
             const allCodes = [...modCodes, keyCode];
-            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', ...allCodes.map(String)], 10000);
+            await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', ...allCodes.map(String)], 10000, deviceId);
 
             const result: Record<string, unknown> = { key: args.key };
             if (mods.length) result.modifiers = mods;
-            const finalResult = await withSnapshot(args.snapshot, result);
+            const finalResult = await withSnapshot(args.snapshot, result, undefined, deviceId);
             return ok(finalResult);
         } catch (err) {
             return fail(`Failed to press key ${args.key}: ${err}`);
@@ -2582,7 +3315,8 @@ const WaitForArgsSchema = z.object({
         .default(300)
         .describe('条件需连续成立的时间，默认 300 毫秒；snapshotChange 会在首次变化时立即返回'),
     snapshot: z.boolean().default(false).describe('固定等待结束后是否自动获取界面快照，默认 false'),
-    screenshotOnTimeout: z.boolean().default(true).describe('条件超时时是否尝试附加最后屏幕的 OCR 证据，默认 true')
+    screenshotOnTimeout: z.boolean().default(true).describe('条件超时时是否尝试附加最后屏幕的 OCR 证据，默认 true'),
+    deviceId: DeviceIdSchema
 });
 
 type ElementLocator = z.output<typeof ElementLocatorSchema>;
@@ -2726,10 +3460,10 @@ function evaluateWaitCondition(
     };
 }
 
-async function captureTimeoutEvidence(): Promise<Record<string, unknown>> {
+async function captureTimeoutEvidence(deviceId?: string): Promise<Record<string, unknown>> {
     let screenshotDir: string | undefined;
     try {
-        const imgPath = await captureScreenshot();
+        const imgPath = await captureScreenshot(deviceId);
         screenshotDir = dirname(imgPath);
         return {
             captured: true,
@@ -2745,7 +3479,7 @@ async function captureTimeoutEvidence(): Promise<Record<string, unknown>> {
     }
 }
 
-export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
+export class WaitForTool extends HarmonyBaseTool<typeof WaitForArgsSchema> {
     constructor() {
         super(
             'waitFor',
@@ -2763,9 +3497,11 @@ export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
             return fail('必须提供 duration 或 condition');
         }
 
+        const deviceId = await tryResolveDeviceId(args.deviceId);
+
         if (args.duration !== undefined) {
             await new Promise((resolve) => setTimeout(resolve, args.duration));
-            const result = await withSnapshot(args.snapshot, { duration: args.duration });
+            const result = await withSnapshot(args.snapshot, { duration: args.duration }, undefined, deviceId);
             return ok(result);
         }
 
@@ -2804,7 +3540,7 @@ export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
                 // Window presence must be evaluated against the complete window
                 // list; element and text waits may use the optional app filter.
                 const snapshotBundleName = condition.type === 'window' ? undefined : args.bundleName;
-                const layout = await dumpLayout(snapshotBundleName);
+                const layout = await dumpLayout(snapshotBundleName, deviceId);
                 const built = buildSnapshot(layout, snapshotBundleName);
                 const evaluation = evaluateWaitCondition(condition, layout, built, baselineFingerprint);
                 lastBuilt = built;
@@ -2814,7 +3550,7 @@ export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
                 if (evaluation.satisfied) {
                     stableSince ??= Date.now();
                     if (Date.now() - stableSince >= requiredStableFor) {
-                        const capture = registerSnapshot(built);
+                        const capture = registerSnapshot(built, deviceId);
                         return ok({
                             matched: true,
                             timedOut: false,
@@ -2840,8 +3576,8 @@ export class WaitForTool extends BaseTool<typeof WaitForArgsSchema> {
             await new Promise((resolve) => setTimeout(resolve, Math.min(args.interval, remaining)));
         }
 
-        const capture = lastBuilt ? registerSnapshot(lastBuilt) : undefined;
-        const screenshot = args.screenshotOnTimeout ? await captureTimeoutEvidence() : undefined;
+        const capture = lastBuilt ? registerSnapshot(lastBuilt, deviceId) : undefined;
+        const screenshot = args.screenshotOnTimeout ? await captureTimeoutEvidence(deviceId) : undefined;
         return JSON.stringify({
             success: false,
             error: `等待界面条件超时（${args.timeout}ms）`,
@@ -2877,7 +3613,8 @@ const ScreenshotArgsSchema = z.object({
         })
         .optional()
         .describe('可选裁剪区域。不指定则返回全屏截图的分析结果'),
-    ocr: z.boolean().default(true).describe('是否对截图执行 OCR 文本识别。默认 true')
+    ocr: z.boolean().default(true).describe('是否对截图执行 OCR 文本识别。默认 true'),
+    deviceId: DeviceIdSchema
 });
 
 interface OcrResult {
@@ -2905,7 +3642,7 @@ interface RegionAnalysis {
  * for example, the option text inside a native `<select>` dropdown rendered
  * as an XComponent.
  */
-export class ScreenshotTool extends BaseTool<typeof ScreenshotArgsSchema> {
+export class ScreenshotTool extends HarmonyBaseTool<typeof ScreenshotArgsSchema> {
     constructor() {
         super(
             'screenshot',
@@ -2921,7 +3658,8 @@ export class ScreenshotTool extends BaseTool<typeof ScreenshotArgsSchema> {
     private async handleExecute(args: z.output<typeof ScreenshotArgsSchema>): Promise<string> {
         let screenshotDir: string | undefined;
         try {
-            const imgPath = await captureScreenshot();
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const imgPath = await captureScreenshot(deviceId);
             screenshotDir = dirname(imgPath);
             const result: Record<string, unknown> = {};
 
@@ -2966,7 +3704,8 @@ const VisualAssertArgsSchema = z.discriminatedUnion('mode', [
                 y2: z.number().int().min(0).describe('对比区域右下角 Y 坐标')
             })
             .optional()
-            .describe('可选，只对比指定区域')
+            .describe('可选，只对比指定区域'),
+        deviceId: DeviceIdSchema
     }),
     z.object({
         mode: z.literal('color'),
@@ -2980,11 +3719,13 @@ const VisualAssertArgsSchema = z.discriminatedUnion('mode', [
                 })
             )
             .max(20)
-            .describe('采样点列表，最多 20 个')
+            .describe('采样点列表，最多 20 个'),
+        deviceId: DeviceIdSchema
     }),
     z.object({
         mode: z.literal('theme'),
-        expectedTheme: z.enum(['light', 'dark']).optional().describe('期望的主题')
+        expectedTheme: z.enum(['light', 'dark']).optional().describe('期望的主题'),
+        deviceId: DeviceIdSchema
     })
 ]);
 
@@ -3008,7 +3749,7 @@ interface ColorSample {
     matched?: boolean;
 }
 
-export class VisualAssertTool extends BaseTool<typeof VisualAssertArgsSchema> {
+export class VisualAssertTool extends HarmonyBaseTool<typeof VisualAssertArgsSchema> {
     constructor() {
         super(
             'visualAssert',
@@ -3024,7 +3765,8 @@ export class VisualAssertTool extends BaseTool<typeof VisualAssertArgsSchema> {
     private async handleExecute(args: z.output<typeof VisualAssertArgsSchema>): Promise<string> {
         let screenshotDir: string | undefined;
         try {
-            const imgPath = await captureScreenshot();
+            const deviceId = await tryResolveDeviceId((args as { deviceId?: string }).deviceId);
+            const imgPath = await captureScreenshot(deviceId);
             screenshotDir = dirname(imgPath);
 
             if (args.mode === 'diff') {
@@ -3093,7 +3835,9 @@ async function performDiff(
     const pixelmatchModule = await import('pixelmatch').catch(() => null);
     const pixelmatch = pixelmatchModule?.default;
     if (!pixelmatch) {
-        throw new Error('pixelmatch is required for visual diff. It should be a dependency of OpenDesk.');
+        throw new Error(
+            'pixelmatch is required for visual diff. It should be a declared dependency of the host application.'
+        );
     }
 
     const screenshot = await loadImageRaw(screenshotPath, args.region);
@@ -3241,13 +3985,17 @@ async function detectTheme(imgPath: string): Promise<{
 // ---------------------------------------------------------------------------
 
 const HoverArgsSchema = z.object({
-    x: z.number().int().describe('悬停位置的 X 坐标'),
-    y: z.number().int().describe('悬停位置的 Y 坐标'),
+    x: z.number().int().min(0).describe('悬停位置的 X 坐标'),
+    y: z.number().int().min(0).describe('悬停位置的 Y 坐标'),
+    bundleName: BundleNameSchema.optional().describe(
+        '目标 WebView 应用 bundleName；仅用于 WebView JS 注入降级路径，不指定时自动探测当前前台应用'
+    ),
     duration: z.number().int().min(100).max(5000).default(800).describe('悬停保持时长（毫秒），默认 800ms'),
-    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照')
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取界面快照'),
+    deviceId: DeviceIdSchema
 });
 
-export class HoverTool extends BaseTool<typeof HoverArgsSchema> {
+export class HoverTool extends HarmonyBaseTool<typeof HoverArgsSchema> {
     constructor() {
         super(
             'hover',
@@ -3264,8 +4012,14 @@ export class HoverTool extends BaseTool<typeof HoverArgsSchema> {
 
     private async handleExecute(args: z.output<typeof HoverArgsSchema>): Promise<string> {
         try {
-            const result = await executeHover(args.x, args.y, args.duration);
-            const withSnap = await withSnapshot(args.snapshot, { x: args.x, y: args.y, ...result });
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const result = await executeHover(args.x, args.y, args.duration, deviceId, args.bundleName);
+            const withSnap = await withSnapshot(
+                args.snapshot,
+                { x: args.x, y: args.y, ...result },
+                args.bundleName,
+                deviceId
+            );
             return ok(withSnap);
         } catch (err) {
             return fail(`hover(${args.x}, ${args.y}) failed: ${err}`);
@@ -3276,7 +4030,9 @@ export class HoverTool extends BaseTool<typeof HoverArgsSchema> {
 async function executeHover(
     x: number,
     y: number,
-    duration: number
+    duration: number,
+    deviceId?: string,
+    bundleName?: string
 ): Promise<{ method: string; native: boolean; detail?: string }> {
     // Tier 1: HDC native mouseMove
     const mouseMoveMethods = [
@@ -3287,7 +4043,7 @@ async function executeHover(
 
     for (const method of mouseMoveMethods) {
         try {
-            await runHdc(['shell', ...method, String(x), String(y)], 5000);
+            await runHdc(['shell', ...method, String(x), String(y)], 5000, deviceId);
             if (duration > 0) {
                 await new Promise((resolve) => setTimeout(resolve, duration));
             }
@@ -3312,10 +4068,12 @@ async function executeHover(
             })();
         `;
 
-        const result = await runHdc(
-            ['shell', 'arkweb_exec_js', '-b', 'com.develop.opensource.ohpcd.opendesk', '-s', jsPayload],
-            10000
-        );
+        const targetBundle = bundleName ?? (await resolveForegroundBundleName(deviceId));
+        if (!targetBundle) {
+            // 无法确定目标 WebView 应用，无法注入 JS，落到 Tier 3
+            throw new Error('cannot resolve a foreground bundleName for WebView JS injection');
+        }
+        const result = await runHdc(['shell', 'arkweb_exec_js', '-b', targetBundle, '-s', jsPayload], 10000, deviceId);
         if (duration > 0) {
             await new Promise((resolve) => setTimeout(resolve, duration));
         }
@@ -3326,7 +4084,11 @@ async function executeHover(
 
     // Tier 3: 0-pixel drag workaround (unreliable)
     try {
-        await runHdc(['shell', 'uitest', 'uiInput', 'drag', String(x), String(y), String(x), String(y), '1'], 10000);
+        await runHdc(
+            ['shell', 'uitest', 'uiInput', 'drag', String(x), String(y), String(x), String(y), '1'],
+            10000,
+            deviceId
+        );
         if (duration > 0) {
             await new Promise((resolve) => setTimeout(resolve, duration));
         }
@@ -3359,10 +4121,11 @@ const FindElementArgsSchema = z.object({
             '搜索元素内的纯文本内容（- text: "..." 子节点），模糊匹配。' + '适合搜索"标题包含XX的listitem"等场景'
         ),
     ref: z.string().optional().describe('精确匹配元素的 ref 标识（如 "e5"），用于按引用查找'),
-    limit: z.number().int().min(1).max(50).default(20).describe('最大返回数量，默认 20')
+    limit: z.number().int().min(1).max(50).default(20).describe('最大返回数量，默认 20'),
+    deviceId: DeviceIdSchema
 });
 
-export class FindElementTool extends BaseTool<typeof FindElementArgsSchema> {
+export class FindElementTool extends HarmonyBaseTool<typeof FindElementArgsSchema> {
     constructor() {
         super(
             'findElement',
@@ -3377,7 +4140,16 @@ export class FindElementTool extends BaseTool<typeof FindElementArgsSchema> {
 
     private async handleExecute(args: z.output<typeof FindElementArgsSchema>): Promise<string> {
         try {
-            const matches = findElementsInSnapshot(args.role, args.name, args.hint, args.state, args.text, args.ref);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const matches = findElementsInSnapshot(
+                args.role,
+                args.name,
+                args.hint,
+                args.state,
+                args.text,
+                args.ref,
+                deviceId
+            );
 
             const limited = matches.slice(0, args.limit);
 
@@ -3403,10 +4175,11 @@ export class FindElementTool extends BaseTool<typeof FindElementArgsSchema> {
 }
 
 const GetElementStateArgsSchema = z.object({
-    ref: z.string().describe('元素引用标识，如 "e5"。必须来自最新快照')
+    ref: z.string().describe('元素引用标识，如 "e5"。必须来自最新快照'),
+    deviceId: DeviceIdSchema
 });
 
-export class GetElementStateTool extends BaseTool<typeof GetElementStateArgsSchema> {
+export class GetElementStateTool extends HarmonyBaseTool<typeof GetElementStateArgsSchema> {
     constructor() {
         super(
             'getElementState',
@@ -3419,7 +4192,16 @@ export class GetElementStateTool extends BaseTool<typeof GetElementStateArgsSche
 
     private async handleExecute(args: z.output<typeof GetElementStateArgsSchema>): Promise<string> {
         try {
-            const matches = findElementsInSnapshot(undefined, undefined, undefined, undefined, undefined, args.ref);
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const matches = findElementsInSnapshot(
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                args.ref,
+                deviceId
+            );
 
             if (matches.length === 0) {
                 // Check if the ref exists in any capture (not just latest)
@@ -3460,8 +4242,10 @@ export class GetElementStateTool extends BaseTool<typeof GetElementStateArgsSche
 /**
  * Takes a screenshot on the device, downloads it, and returns the local file path.
  */
-async function captureScreenshot(): Promise<string> {
-    const dumpOutput = await runHdc(['shell', 'snapshot_display', '/data/local/tmp/opendesk_screenshot.png'], 20000);
+async function captureScreenshot(deviceId?: string): Promise<string> {
+    // 设备端截图路径加 pid+ts 后缀，避免并发调用互相覆写后误读对方截图
+    const requestedPath = `/data/local/tmp/opendesk_screenshot_${process.pid}_${Date.now()}.png`;
+    const dumpOutput = await runHdc(['shell', 'snapshot_display', requestedPath], 20000, deviceId);
     const match = dumpOutput.match(/write to\s+(\S+)/);
     if (!match) throw new Error('Failed to capture screenshot: ' + dumpOutput);
 
@@ -3469,12 +4253,32 @@ async function captureScreenshot(): Promise<string> {
     const localDir = mkdtempSync(join(tmpdir(), 'opendesk-screenshot-'));
     const localPath = join(localDir, 'screenshot.jpg');
     try {
-        await runHdc(['file', 'recv', devicePath, localPath], 10000);
+        await runHdc(['file', 'recv', devicePath, localPath], 10000, deviceId);
         return localPath;
     } catch (err) {
         rmSync(localDir, { recursive: true, force: true });
         throw err;
     }
+}
+
+// 进程级缓存：tesseract --list-langs 每次 OCR 都要启动一次子进程探测语言，成本高；
+// 语言包在运行期间不会变化，探测一次复用即可（首次失败按 eng 处理）。
+let ocrLangCache: string | undefined;
+let ocrLangChecked = false;
+
+async function resolveOcrLang(): Promise<string> {
+    if (ocrLangChecked) return ocrLangCache ?? 'eng';
+    ocrLangChecked = true;
+    try {
+        const { stdout: langList } = await execFileAsync('tesseract', ['--list-langs'], {
+            encoding: 'utf-8',
+            timeout: 5000
+        });
+        ocrLangCache = langList.split(/\r?\n/).includes('chi_sim') ? 'chi_sim+eng' : 'eng';
+    } catch {
+        ocrLangCache = 'eng';
+    }
+    return ocrLangCache;
 }
 
 /**
@@ -3527,19 +4331,7 @@ async function performOcr(
     writeFileSync(tmpImg, preparedBuf);
 
     try {
-        // Try chi_sim+eng first, fall back to eng
-        let lang = 'eng';
-        try {
-            const { stdout: langList } = await execFileAsync('tesseract', ['--list-langs'], {
-                encoding: 'utf-8',
-                timeout: 5000
-            });
-            if (langList.split(/\r?\n/).includes('chi_sim')) {
-                lang = 'chi_sim+eng';
-            }
-        } catch {
-            // tesseract not found or no chi_sim — continue with eng
-        }
+        const lang = await resolveOcrLang();
 
         await execFileAsync('tesseract', [tmpImg, tmpOut, '-l', lang, '--psm', '6', 'tsv'], {
             encoding: 'utf-8',
@@ -3656,25 +4448,62 @@ async function analyzeRegionBrightness(
 
 // ========== systemDialog ==========
 
+/**
+ * OCRs the detected option rows of a system dialog and returns the recognized
+ * text per row. The whole picker area is scanned once, then each recognized
+ * word is assigned to the row band containing its vertical center. Returns an
+ * empty array when OCR is unavailable (no tesseract/jimp) or nothing matches.
+ */
+async function ocrOptionRows(
+    imgPath: string,
+    segments: { y1: number; y2: number }[],
+    width: number
+): Promise<{ text: string; y1: number; y2: number }[]> {
+    try {
+        if (segments.length === 0) return [];
+        const Jimp = await loadJimp();
+        if (!Jimp) return [];
+        const img = await Jimp.read(imgPath);
+        const height = img.bitmap.height;
+        if (!width || !height) return [];
+        const scanY1 = Math.max(0, segments[0].y1);
+        const scanY2 = Math.min(height, segments[segments.length - 1].y2);
+        if (scanY1 >= scanY2) return [];
+
+        const ocr = await performOcr(imgPath, { x1: 0, y1: scanY1, x2: width, y2: scanY2 });
+        const rows = segments.map((seg) => ({ text: '', y1: seg.y1, y2: seg.y2 }));
+        for (const item of ocr) {
+            if (item.confidence <= 10 || item.text.startsWith('(OCR failed:')) continue;
+            const centerY = item.y + item.height / 2;
+            const idx = rows.findIndex((r) => centerY >= r.y1 && centerY <= r.y2);
+            if (idx >= 0) rows[idx].text += (rows[idx].text ? ' ' : '') + item.text;
+        }
+        return rows;
+    } catch {
+        return [];
+    }
+}
+
 const SystemDialogArgsSchema = z.object({
     action: z
         .enum(['inspect', 'select', 'dismiss'])
         .describe('inspect：仅检测弹窗。select：选择选项（按 option 文本或 optionIndex 索引）。dismiss：关闭弹窗'),
     option: z.string().optional().describe('select 模式下要选择的选项文本，模糊匹配'),
-    optionIndex: z.number().int().optional().describe('select 模式下按索引选择（从0开始，与 option 二选一）'),
-    triggerX: z.number().int().optional().describe('触发弹窗的 X 坐标'),
-    triggerY: z.number().int().optional().describe('触发弹窗的 Y 坐标'),
-    settleTime: z.number().int().default(800).describe('触发后等待弹窗稳定的时间，默认 800ms'),
-    snapshot: z.boolean().default(true).describe('操作后是否获取新快照')
+    optionIndex: z.number().int().min(0).optional().describe('select 模式下按索引选择（从0开始，与 option 二选一）'),
+    triggerX: z.number().int().min(0).optional().describe('触发弹窗的 X 坐标'),
+    triggerY: z.number().int().min(0).optional().describe('触发弹窗的 Y 坐标'),
+    settleTime: z.number().int().min(0).default(800).describe('触发后等待弹窗稳定的时间，默认 800ms'),
+    snapshot: z.boolean().default(false).describe('操作后是否获取新快照，默认 false'),
+    deviceId: DeviceIdSchema
 });
 
-export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
+export class SystemDialogTool extends HarmonyBaseTool<typeof SystemDialogArgsSchema> {
     constructor() {
         super(
             'systemDialog',
             '通用系统弹窗交互工具，用于操作原生 <select> 选择器、Picker 等不在无障碍树中的系统级弹窗。\n' +
                 '三种模式：inspect（仅检测） / select（按文本或索引选择） / dismiss（关闭）。\n' +
-                '原理：snapshot_display 全屏截图 → 扫描蓝色高亮行（系统选中态）→ 计算选项位置 → 点击。',
+                '原理：snapshot_display 全屏截图 → 对比度扫描高亮行（系统选中态）→ 计算选项位置 → 点击。',
             SystemDialogArgsSchema
         );
         this.serialExecution = true;
@@ -3683,23 +4512,25 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
 
     private async handleExecute(args: z.output<typeof SystemDialogArgsSchema>): Promise<string> {
         try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
             // 1. Trigger dialog if coordinates provided
             if (args.triggerX !== undefined && args.triggerY !== undefined) {
                 await runHdc(
                     ['shell', 'uitest', 'uiInput', 'click', String(args.triggerX), String(args.triggerY)],
-                    10000
+                    10000,
+                    deviceId
                 );
                 await new Promise((resolve) => setTimeout(resolve, args.settleTime));
             }
 
             if (args.action === 'dismiss') {
-                await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Escape)], 5000);
+                await runHdc(['shell', 'uitest', 'uiInput', 'keyEvent', String(KEY_MAP.Escape)], 5000, deviceId);
                 return ok({ action: 'dismiss', dismissed: true });
             }
 
             // 2. Take full-screen screenshot (system dialogs visible here, not in snapshot)
-            const imgPath = await captureScreenshot();
-            const screenshotDir = dirname(imgPath);
+            const imgPath = await captureScreenshot(deviceId);
+            dirname(imgPath);
             const Jimp = await loadJimp();
             if (!Jimp) return fail('jimp is required for systemDialog');
             const img = await Jimp.read(imgPath);
@@ -3707,35 +4538,58 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
             const width = img.bitmap.width;
             const height = img.bitmap.height;
 
-            // 3. Scan for blue-highlighted rows (HarmonyOS picker selected state)
-            // System picker highlights the selected option in blue (B > R + 50, B > 150)
-            const OPTION_HEIGHT = 44; // typical HarmonyOS picker option height
-            const blueRows: number[] = [];
+            // 3. Detect the highlighted/selected option row (system picker selected state).
+            // Instead of assuming a blue highlight (which breaks on dark themes, RTL or
+            // alternative ROMs), compare each row's average brightness with its neighbors:
+            // the selected row is the strip with the largest local contrast to its context.
+            const rowBrightness: { y: number; brightness: number }[] = [];
             for (let y = 0; y < height; y += 2) {
-                let blueCount = 0;
+                let total = 0;
                 let totalPixels = 0;
                 for (let x = 0; x < width; x += 8) {
                     const idx = (y * width + x) * 4;
-                    if (data[idx + 2] > data[idx] + 50 && data[idx + 2] > 150) blueCount++;
+                    total += (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
                     totalPixels++;
                 }
-                if (blueCount > totalPixels * 0.1) blueRows.push(y);
+                rowBrightness.push({ y, brightness: totalPixels > 0 ? total / totalPixels : 0 });
             }
 
-            // Group consecutive blue rows into segments
-            const blueSegments: { y1: number; y2: number }[] = [];
+            // Local contrast: distance between a row's brightness and the average of a
+            // small window of neighbors. Selected rows pop out; plain rows stay close.
+            const contrastRows: number[] = [];
+            const contextRadius = 2;
+            for (let i = 0; i < rowBrightness.length; i++) {
+                const windowStart = Math.max(0, i - contextRadius);
+                const windowEnd = Math.min(rowBrightness.length - 1, i + contextRadius);
+                let ctxSum = 0;
+                let ctxCount = 0;
+                for (let j = windowStart; j <= windowEnd; j++) {
+                    if (j !== i) {
+                        ctxSum += rowBrightness[j].brightness;
+                        ctxCount++;
+                    }
+                }
+                if (ctxCount === 0) continue;
+                const contrast = Math.abs(rowBrightness[i].brightness - ctxSum / ctxCount);
+                if (contrast > 25) contrastRows.push(rowBrightness[i].y);
+            }
+
+            // Group consecutive contrast rows into segments (the selected strip).
+            const highlightSegments: { y1: number; y2: number }[] = [];
             let segStart = 0;
-            for (let i = 1; i <= blueRows.length; i++) {
-                if (i === blueRows.length || blueRows[i] - blueRows[i - 1] > 6) {
-                    if (i - segStart > 3) {
-                        blueSegments.push({ y1: blueRows[segStart], y2: blueRows[i - 1] });
+            for (let i = 1; i <= contrastRows.length; i++) {
+                if (i === contrastRows.length || contrastRows[i] - contrastRows[i - 1] > 12) {
+                    if (i - segStart > 1) {
+                        highlightSegments.push({ y1: contrastRows[segStart], y2: contrastRows[i - 1] });
                     }
                     segStart = i;
                 }
             }
 
             const highlightedY =
-                blueSegments.length > 0 ? Math.round((blueSegments[0].y1 + blueSegments[0].y2) / 2) : null;
+                highlightSegments.length > 0
+                    ? Math.round((highlightSegments[0].y1 + highlightSegments[0].y2) / 2)
+                    : null;
 
             // 4. Count options by scanning for horizontal text lines around the picker area
             // Estimate total options: scan vertically for rows with dark text pixels
@@ -3794,13 +4648,20 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
             if (args.optionIndex !== undefined) {
                 targetIndex = args.optionIndex;
             } else if (args.option) {
-                // Try to match by position: if highlighted, options above/below
-                const highlighted = options.findIndex((o) => o.highlighted);
-                if (highlighted >= 0) {
-                    // Simple heuristic: options are evenly spaced
-                    // The option text can be matched by relative position
-                    targetIndex = highlighted; // default to highlighted
-                    // User can specify optionIndex for different positions
+                // Match the requested option text against the OCR'd rows.
+                // Previously this branch was a no-op that always picked the
+                // highlighted row; the option argument was documented but not
+                // implemented. Fall back to the highlighted row when OCR cannot
+                // identify the text (tesseract unavailable / no match).
+                const ocrRows = await ocrOptionRows(imgPath, optionSegments, width);
+                const matchIdx = ocrRows.findIndex(
+                    (row) => row.text && optionTextMatches(row.text, args.option!, 'contains')
+                );
+                if (matchIdx >= 0) {
+                    targetIndex = matchIdx;
+                } else {
+                    const highlighted = options.findIndex((o) => o.highlighted);
+                    if (highlighted >= 0) targetIndex = highlighted;
                 }
             }
 
@@ -3811,13 +4672,15 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
             const target = options[targetIndex];
             await runHdc(
                 ['shell', 'uitest', 'uiInput', 'click', String(Math.round(width / 2)), String(target.y)],
-                10000
+                10000,
+                deviceId
             );
             await new Promise((resolve) => setTimeout(resolve, 350));
 
             return ok({
                 action: 'select',
                 selected: true,
+                option: args.option,
                 optionIndex: targetIndex,
                 totalOptions: options.length,
                 highlightedIndex: options.findIndex((o) => o.highlighted),
@@ -3829,11 +4692,260 @@ export class SystemDialogTool extends BaseTool<typeof SystemDialogArgsSchema> {
     }
 }
 
+// ========== shell ==========
+
+const ShellArgsSchema = z.object({
+    command: z
+        .string()
+        .min(1)
+        .describe(
+            '要执行的 hdc shell 命令，如 "bm dump -a"、"ls -l /data/local/tmp"、"hidumper -s 3301"。' +
+                '可直接包含管道、重定向、引号等 shell 语法，整条命令在设备端 shell 中执行'
+        ),
+    timeout: z
+        .number()
+        .int()
+        .min(1000)
+        .max(120000)
+        .optional()
+        .describe('命令执行超时时间（毫秒），默认 15000。耗时命令（如大文件操作、批量查询）可调大'),
+    deviceId: DeviceIdSchema
+});
+
+export class ShellTool extends HarmonyBaseTool<typeof ShellArgsSchema> {
+    constructor() {
+        super(
+            'shell',
+            '在设备上执行任意 hdc shell 命令并返回设备端输出（stdout / stderr / 退出码）。' +
+                '用于框架未覆盖的场景：查询系统信息、查看文件、执行 bm/aa/hidumper 等运维命令。' +
+                '注意：命令直接在设备端执行，删除文件、修改系统配置等破坏性操作须谨慎；' +
+                '已有专用工具（openApp/appLifecycle/pressKey/screenshot 等）的场景优先使用专用工具',
+            ShellArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof ShellArgsSchema>): Promise<string> {
+        try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const output = await runHdc(['shell', args.command], args.timeout ?? 15000, deviceId);
+            return ok({ output });
+        } catch (err) {
+            // 命令非零退出时 execFile 抛错，错误对象携带 stdout/stderr/exit code，尽量原样返回设备端输出
+            const e = err as { stdout?: string; stderr?: string; code?: number };
+            if (e !== null && typeof e === 'object' && (e.stdout !== undefined || e.stderr !== undefined)) {
+                return ok({
+                    output: e.stdout ?? '',
+                    stderr: e.stderr ?? '',
+                    exitCode: e.code ?? 1
+                });
+            }
+            return fail(`Failed to run shell command: ${err}`);
+        }
+    }
+}
+
+// ========== getDeviceInfo ==========
+
+const GetDeviceInfoArgsSchema = z.object({
+    deviceId: DeviceIdSchema
+});
+
+/** Reads a device system property via `param get`, trimming the value; returns undefined on any failure. */
+async function getDeviceParam(name: string, deviceId?: string): Promise<string | undefined> {
+    try {
+        const out = await runHdc(['shell', 'param', 'get', name], 8000, deviceId);
+        const value = out.trim();
+        return value || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export class GetDeviceInfoTool extends HarmonyBaseTool<typeof GetDeviceInfoArgsSchema> {
+    constructor() {
+        super(
+            'getDeviceInfo',
+            '获取设备基本信息：型号、品牌、产品名、系统版本、SDK/API 版本、屏幕分辨率、WLAN IP。' +
+                '分辨率为绝对坐标类操作（click/input/scroll 等）提供坐标换算与校验基准，也能用于判断设备形态（手机/平板/PC）。' +
+                '单个字段读取失败不影响整体，缺失字段返回 undefined',
+            GetDeviceInfoArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof GetDeviceInfoArgsSchema>): Promise<string> {
+        try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const [model, brand, productName, sysVersion, sdkVersion, displayOut, wlanOut] = await Promise.all([
+                getDeviceParam('const.product.model', deviceId),
+                getDeviceParam('const.product.brand', deviceId),
+                getDeviceParam('const.product.name', deviceId),
+                getDeviceParam('const.product.software.version', deviceId),
+                getDeviceParam('const.ohos.apiversion', deviceId),
+                runHdc(['shell', 'hidumper', '-s', 'RenderService', '-a', 'screen'], 10000, deviceId).catch(() => ''),
+                runHdc(['shell', 'ifconfig'], 10000, deviceId).catch(() => '')
+            ]);
+            const sizeMatch = displayOut ? displayOut.match(/activeMode:\s*(\d+)x(\d+)/) : null;
+            const displaySize = sizeMatch ? { width: Number(sizeMatch[1]), height: Number(sizeMatch[2]) } : undefined;
+            const wlanIp = wlanOut ? wlanOut.match(/inet addr:(?!127)(\d+\.\d+\.\d+\.\d+)/)?.[1] : undefined;
+            return ok({
+                model,
+                brand,
+                productName,
+                sysVersion,
+                sdkVersion,
+                displaySize,
+                wlanIp
+            });
+        } catch (err) {
+            return fail(`Failed to get device info: ${err}`);
+        }
+    }
+}
+
+// ========== pushFile / pullFile ==========
+
+const PushFileArgsSchema = z.object({
+    localPath: z.string().min(1).describe('本机源文件绝对路径'),
+    remotePath: z.string().min(1).describe('设备端目标路径，如 /data/local/tmp/xxx'),
+    deviceId: DeviceIdSchema
+});
+
+export class PushFileTool extends HarmonyBaseTool<typeof PushFileArgsSchema> {
+    constructor() {
+        super(
+            'pushFile',
+            '将本机文件推送到设备（等价于 hdc file send）。用于导入测试数据、HAP 包、配置文件等到设备端 /data/local/tmp 等目录。返回设备端路径',
+            PushFileArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof PushFileArgsSchema>): Promise<string> {
+        try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const localPath = resolve(args.localPath);
+            await statAsync(localPath);
+            await runHdc(['file', 'send', localPath, args.remotePath], 30000, deviceId);
+            return ok({ localPath, remotePath: args.remotePath, sent: true });
+        } catch (err) {
+            return fail(`Failed to push file: ${err}`);
+        }
+    }
+}
+
+const PullFileArgsSchema = z.object({
+    remotePath: z.string().min(1).describe('设备端源文件路径'),
+    localPath: z.string().min(1).describe('本机保存路径，支持绝对路径或相对路径（自动解析为绝对路径）'),
+    deviceId: DeviceIdSchema
+});
+
+export class PullFileTool extends HarmonyBaseTool<typeof PullFileArgsSchema> {
+    constructor() {
+        super(
+            'pullFile',
+            '将设备端文件拉取到本机（等价于 hdc file recv）。用于提取设备端日志、截图、配置文件等。返回本机保存路径',
+            PullFileArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof PullFileArgsSchema>): Promise<string> {
+        try {
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            const localPath = resolve(args.localPath);
+            await runHdc(['file', 'recv', args.remotePath, localPath], 30000, deviceId);
+            return ok({ remotePath: args.remotePath, localPath, pulled: true });
+        } catch (err) {
+            return fail(`Failed to pull file: ${err}`);
+        }
+    }
+}
+
+// ========== installApp / uninstallApp ==========
+
+const InstallAppArgsSchema = z.object({
+    hapPath: z.string().min(1).describe('本机 .hap 安装包绝对路径'),
+    deviceId: DeviceIdSchema
+});
+
+export class InstallAppTool extends HarmonyBaseTool<typeof InstallAppArgsSchema> {
+    constructor() {
+        super(
+            'installApp',
+            '通过 hdc 安装 .hap 应用到设备（等价于 hdc install）。安装前校验本机文件存在且为 .hap 后缀。' +
+                '安装成功后如需启动应用请使用 openApp',
+            InstallAppArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof InstallAppArgsSchema>): Promise<string> {
+        try {
+            const hapPath = resolve(args.hapPath);
+            if (!hapPath.toLowerCase().endsWith('.hap')) {
+                return fail(`Not a .hap file: ${args.hapPath}`);
+            }
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            await statAsync(hapPath);
+            await runHdc(['install', hapPath], 120000, deviceId);
+            return ok({ hapPath, installed: true });
+        } catch (err) {
+            return fail(`Failed to install app: ${err}`);
+        }
+    }
+}
+
+const UninstallAppArgsSchema = z.object({
+    bundleName: BundleNameSchema,
+    confirmDestructive: z
+        .boolean()
+        .default(false)
+        .describe('卸载会删除应用及其全部数据，不可恢复，必须显式设为 true 才执行'),
+    deviceId: DeviceIdSchema
+});
+
+export class UninstallAppTool extends HarmonyBaseTool<typeof UninstallAppArgsSchema> {
+    constructor() {
+        super(
+            'uninstallApp',
+            '卸载设备上的应用（等价于 hdc uninstall）。卸载是破坏性操作，会删除应用及其全部数据，' +
+                '须显式传入 confirmDestructive: true 才执行',
+            UninstallAppArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(args: z.output<typeof UninstallAppArgsSchema>): Promise<string> {
+        try {
+            if (!args.confirmDestructive) {
+                return ok({
+                    success: false,
+                    error: `uninstallApp 是破坏性操作，请确认后传入 confirmDestructive: true 再卸载 ${args.bundleName}`
+                });
+            }
+            const deviceId = await tryResolveDeviceId(args.deviceId);
+            await runHdc(['uninstall', args.bundleName], 120000, deviceId);
+            return ok({ bundleName: args.bundleName, uninstalled: true });
+        } catch (err) {
+            return fail(`Failed to uninstall app: ${err}`);
+        }
+    }
+}
+
 export function createUseHarmonyToolset(): BaseToolset {
     const toolset = new BaseToolset('use-harmony');
+    toolset.addTool(new ListDevicesTool());
     toolset.addTool(new ListAppsTool());
     toolset.addTool(new OpenAppTool());
     toolset.addTool(new AppLifecycleTool());
+    toolset.addTool(new ShellTool());
+    toolset.addTool(new GetDeviceInfoTool());
+    toolset.addTool(new PushFileTool());
+    toolset.addTool(new PullFileTool());
+    toolset.addTool(new InstallAppTool());
+    toolset.addTool(new UninstallAppTool());
 
     toolset.addTool(new ListWindowsTool());
     toolset.addTool(new SnapshotTool());
@@ -3850,6 +4962,7 @@ export function createUseHarmonyToolset(): BaseToolset {
     toolset.addTool(new LongClickTool());
     toolset.addTool(new ScrollTool());
     toolset.addTool(new ScrollToTool());
+    toolset.addTool(new ScrollInScrollableTool());
     toolset.addTool(new InputTool());
     toolset.addTool(new PressKeyTool());
     toolset.addTool(new GoBackTool());
