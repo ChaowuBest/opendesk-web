@@ -1,0 +1,416 @@
+import { z } from 'zod';
+import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
+import { ToolCall } from '../../../main/aikernel/messages.js';
+import { PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
+import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import type { TaskState } from '../../../main/aikernel/states/tasks.js';
+import {
+    applyPluginToolDefinitions,
+    PluginToolsetProvider
+} from '../../../main/applications/pluginmgr/runtime/tool-provider.js';
+
+describe('PluginToolsetProvider', () => {
+    test('preserves shared tool execution capabilities when adapting a plugin tool', async () => {
+        const host = new PluginHost();
+        const abortController = new AbortController();
+        const progress: string[] = [];
+        let stopped = false;
+        let permissionContext: { taskId?: string; workspace?: string; abort: AbortSignal } | undefined;
+        await host.activate(
+            definePlugin({
+                id: 'capability-demo',
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', (input, output) => {
+                        if (input.tool === 'capability-demo-write-report') {
+                            output.description = 'adapted report writer';
+                        }
+                    });
+                    ctx.tools.register({
+                        name: 'write-report',
+                        description: 'write a report',
+                        parameters: z.object({ path: z.string() }),
+                        agentIds: ['main'],
+                        serialExecution: true,
+                        getDeclaredPermissions(args, context) {
+                            permissionContext = context;
+                            return [{ resourceType: 'file', action: 'write', resourcePath: args.path }];
+                        },
+                        async execute(args, _context, result) {
+                            result.attachResult(`writing ${args.path}`);
+                            result.updateResultObject({ path: args.path });
+                        },
+                        async stop() {
+                            stopped = true;
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:capability-demo' }
+        );
+        const taskState = {
+            task_id: 'task-1',
+            getWorkspace: () => '/workspace',
+            getAbortSignal: () => abortController.signal
+        } as TaskState;
+
+        const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets(taskState);
+        await applyPluginToolDefinitions(toolsets, taskState, host);
+        const [toolset] = toolsets;
+        const tool = toolset.getTool('capability-demo-write-report');
+        const permissions = tool?.getDeclaredPermissions({ path: '/workspace/report.md' }, taskState);
+        const execution = await tool?.execute(
+            { path: '/workspace/report.md' },
+            (result) => progress.push(result.result),
+            taskState
+        );
+        await tool?.stop();
+
+        expect(tool?.agentIds).toEqual(['main']);
+        expect(tool?.serialExecution).toBe(true);
+        expect(tool?.description).toBe('adapted report writer');
+        expect(permissions).toEqual([{ resourceType: 'file', action: 'write', resourcePath: '/workspace/report.md' }]);
+        expect(permissionContext).toEqual({
+            taskId: 'task-1',
+            workspace: '/workspace',
+            abort: abortController.signal
+        });
+        expect(execution).toMatchObject({
+            status: 'success',
+            result: 'writing /workspace/report.md',
+            result_object: { path: '/workspace/report.md' }
+        });
+        expect(progress).toEqual(['writing /workspace/report.md', 'writing /workspace/report.md']);
+        expect(stopped).toBe(true);
+    });
+    test('把插件工具适配成 BaseToolset', async () => {
+        const host = new PluginHost();
+        const abortController = new AbortController();
+        let receivedAbort: AbortSignal | undefined;
+        await host.activate(
+            definePlugin({
+                id: 'demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'hello tool',
+                        parameters: z.object({ name: z.string() }),
+                        async execute(args, context) {
+                            receivedAbort = context.abort;
+                            return {
+                                output: `hello ${args.name}`,
+                                resultObject: { greeted: args.name }
+                            };
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:demo' }
+        );
+
+        const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolsets[0]?.getTool('demo-hello');
+        const result = await tool?.execute({ name: 'OpenDesk' }, undefined, {
+            task_id: 'task-1',
+            getWorkspace: () => '/workspace',
+            getAbortSignal: () => abortController.signal
+        } as TaskState);
+
+        expect(toolsets[0]?.name).toBe('plugin-demo');
+        expect(`${toolsets[0]?.name}-${tool?.name}`).toMatch(/^[a-zA-Z0-9_-]+$/);
+        expect(result?.result).toBe('hello OpenDesk');
+        expect(result?.result_object).toEqual({ greeted: 'OpenDesk' });
+        expect(receivedAbort).toBe(abortController.signal);
+        const call = new ToolCall(0, 'call-1', 'demo-hello', '{"name":"OpenDesk"}');
+        await expect(tool?.renderToolCall(call)).resolves.toBeUndefined();
+        expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
+        abortController.abort();
+        expect(receivedAbort?.aborted).toBe(true);
+    });
+
+    test('tool.definition 可以改写插件工具描述', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'transformer',
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', (_input, output) => {
+                        output.description = `transformed: ${output.description}`;
+                    });
+                }
+            }),
+            { origin: 'test:transformer' }
+        );
+        await host.activate(
+            definePlugin({
+                id: 'demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'hello tool',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:demo' }
+        );
+
+        const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
+        await applyPluginToolDefinitions(
+            toolsets,
+            { task_id: 'task-1', getWorkspace: () => '/workspace' } as TaskState,
+            host
+        );
+
+        expect(toolsets[0]?.getTool('demo-hello')?.description).toBe('transformed: hello tool');
+    });
+
+    test('插件 ID 和工具名中的协议非法字符不会进入模型工具名称', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'demo.plugin',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello/world',
+                        description: 'safe tool name',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'safe';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:safe-tool-name' }
+        );
+
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const [toolName] = toolset.getTools().keys();
+
+        expect(toolset.name).toBe('plugin-demo-plugin');
+        expect(toolName).toBe('demo-plugin-hello-world');
+        expect(`${toolset.name}-${toolName}`).toMatch(/^[a-zA-Z0-9_-]+$/);
+        await expect(toolset.getTool(toolName)?.execute({})).resolves.toMatchObject({ result: 'safe' });
+    });
+
+    test('tool.definition 也能改写 OpenDesk 内置工具定义', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'builtin-transformer',
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', (input, output) => {
+                        if (input.tool === 'builtin') output.description = 'changed';
+                    });
+                }
+            }),
+            { origin: 'test:builtin-transformer' }
+        );
+        const builtin = new BaseTool('builtin', 'original', z.object({}));
+        const toolset = new BaseToolset('builtin');
+        toolset.addTool(builtin);
+
+        await applyPluginToolDefinitions(
+            [toolset],
+            { task_id: 'task-1', getWorkspace: () => '/workspace' } as TaskState,
+            host
+        );
+
+        expect(toolset.getTool('builtin')?.description).toBe('changed');
+        expect(builtin.description).toBe('original');
+    });
+
+    test('插件工具集对所有任务可用并保留执行时 workspace 上下文', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'workspace-demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'workspace hello',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:workspace-demo' }
+        );
+        const provider = new PluginToolsetProvider(host);
+
+        const matching = await provider.listAvailableToolsets({
+            getWorkspace: () => '/workspace/one'
+        } as TaskState);
+        const other = await provider.listAvailableToolsets({
+            getWorkspace: () => '/workspace/two'
+        } as TaskState);
+
+        expect(matching[0]?.getTool('workspace-demo-hello')).toBeDefined();
+        expect(other[0]?.getTool('workspace-demo-hello')).toBeDefined();
+    });
+
+    test('使用结构化 DTO 安全渲染插件工具', async () => {
+        const host = new PluginHost();
+        let guiContext: unknown;
+        let cliWidth: number | undefined;
+        await host.activate(
+            definePlugin({
+                id: 'render-demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'inspect',
+                        description: 'rendered tool',
+                        parameters: z.object({ value: z.string() }),
+                        async execute() {
+                            return 'done';
+                        },
+                        render: {
+                            gui(context) {
+                                guiContext = context;
+                                return {
+                                    type: 'keyValue',
+                                    items: [{ label: '<script>', value: '<img src=x onerror=alert(1)>' }]
+                                };
+                            },
+                            cli(context) {
+                                cliWidth = context.width;
+                                return [`${context.status}: ${context.result}`];
+                            }
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:render-demo' }
+        );
+
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('render-demo-inspect');
+        const call = new ToolCall(0, 'call-1', 'render-demo-inspect', '{"value":"demo"}');
+        call.args_object = { value: 'demo' };
+        call.status = 'success';
+        call.result = 'done';
+        call.result_object = { count: 1 };
+
+        const html = await tool?.renderToolCall(call);
+        const lines = tool?.renderToolCallCli(call, 72);
+
+        expect(guiContext).toEqual({
+            tool: 'render-demo-inspect',
+            callId: 'call-1',
+            status: 'success',
+            args: { value: 'demo' },
+            result: 'done',
+            resultObject: { count: 1 }
+        });
+        expect(html).toContain('&lt;script&gt;');
+        expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(html).not.toContain('<script>');
+        expect(html).not.toContain('<img src=x');
+        expect(lines).toEqual(['success: done']);
+        expect(cliWidth).toBe(72);
+    });
+
+    test('tool.definition 包装后保留插件 renderer', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'renderer',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'original',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        },
+                        render: {
+                            gui: () => ({ type: 'text', text: 'custom GUI' }),
+                            cli: () => ['custom CLI']
+                        }
+                    });
+                    ctx.hooks.on('tool.definition', (input, output) => {
+                        if (input.tool === 'renderer-hello') output.description = 'changed';
+                    });
+                }
+            }),
+            { origin: 'test:renderer' }
+        );
+        const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
+        await applyPluginToolDefinitions(
+            toolsets,
+            { task_id: 'task-1', getWorkspace: () => '/workspace' } as TaskState,
+            host
+        );
+        const tool = toolsets[0]?.getTool('renderer-hello');
+        const call = new ToolCall(0, 'call-1', 'renderer-hello', '{}');
+
+        await expect(tool?.renderToolCall(call)).resolves.toContain('custom GUI');
+        expect(tool?.renderToolCallCli(call, 80)).toEqual(['custom CLI']);
+    });
+
+    test('插件 renderer 异常时回退到默认渲染', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'broken-renderer',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'broken renderer',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        },
+                        render: {
+                            gui() {
+                                throw new Error('GUI render failed');
+                            },
+                            cli() {
+                                throw new Error('CLI render failed');
+                            }
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:broken-renderer' }
+        );
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('broken-renderer-hello');
+        const call = new ToolCall(0, 'call-1', 'broken-renderer-hello', '{}');
+
+        await expect(tool?.renderToolCall(call)).resolves.toBeUndefined();
+        expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
+    });
+
+    test('插件 CLI renderer 返回非法值时回退到默认渲染', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'invalid-renderer',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello',
+                        description: 'invalid renderer',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        },
+                        render: {
+                            cli: (() => 'invalid') as never
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:invalid-renderer' }
+        );
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('invalid-renderer-hello');
+        const call = new ToolCall(0, 'call-1', 'invalid-renderer-hello', '{}');
+
+        expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
+    });
+});

@@ -73,6 +73,7 @@ import { CliPlatform } from '../../platforms/cli.js';
 import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
 import { resolveTaskMode } from '../aikernel/task/mode.js';
+import { syncPluginTuiCommands } from '../applications/pluginmgr/index.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -115,6 +116,7 @@ export class OpenDeskTUI {
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
     private retryCommandRegistered = false;
+    private pluginCommandNames = new Set<string>();
 
     public activeTaskId?: string;
 
@@ -350,6 +352,7 @@ export class OpenDeskTUI {
         // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
         this.setupCommands();
+        this.pluginCommandNames = syncPluginTuiCommands(this, this.pluginCommandNames);
         this.inputArea.setCommandRegistry(this.commandRegistry);
         this.taskView.onRetryStateChange = () => {
             this.syncRetryCommandAvailability();
@@ -2169,6 +2172,7 @@ export class OpenDeskTUI {
                     activeTask.allowedTools = mode.allowedTools;
                     activeTask.disabledTools = mode.disabledTools;
                     activeTask.persistLater();
+                    await activeTask.refreshToolsets();
                 }
             }
 

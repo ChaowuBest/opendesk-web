@@ -190,6 +190,25 @@ export class SkillResourcePath extends ResourcePath {
     }
 }
 
+/** 插件资源路径。插件 ID 是独立权限客体，不按文件路径拆分。 */
+export class PluginResourcePath extends ResourcePath {
+    readonly resourceType = 'plugin' as const;
+    readonly normalized: string;
+
+    constructor(normalizedPath: string) {
+        super();
+        this.normalized = normalizedPath;
+    }
+
+    getPrefixes(): { label: string; pattern: string }[] {
+        return [{ label: this.normalized, pattern: escapeGlobLiteralPath(this.normalized) }];
+    }
+
+    toGlobPattern(): string {
+        return this.normalized;
+    }
+}
+
 /**
  * 工厂函数：根据资源类型创建对应的 ResourcePath 实例。
  */
@@ -201,6 +220,8 @@ export function createResourcePath(resourceType: PermissionResourceType, path: s
             return new NetworkResourcePath(path);
         case 'skill':
             return new SkillResourcePath(path);
+        case 'plugin':
+            return new PluginResourcePath(path);
         default:
             return new FileResourcePath(path);
     }

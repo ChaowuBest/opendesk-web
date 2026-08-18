@@ -496,6 +496,7 @@ export class TaskState {
     private _turnRunning: boolean = false;
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
+    private _pluginAbortController = new AbortController();
     private _activeTurnMetadata?: RuntimeMetadata;
     private _activeModelRequestOptions?: TaskModelRequestOptions;
     private _subTaskCreatedListeners = new Set<(subTask: TaskState) => void>();
@@ -569,6 +570,12 @@ export class TaskState {
         const previousOnUsage = modelRequestOptions?.onUsage;
         return {
             ...modelRequestOptions,
+            hookContext: {
+                ...modelRequestOptions?.hookContext,
+                taskId: this.task_id,
+                workspace: this.getWorkspace() || undefined,
+                modelAlias: this.ensureValidModelOrFallback()
+            },
             onUsage: async (usage, context) => {
                 if (previousOnUsage) {
                     try {
@@ -787,6 +794,15 @@ export class TaskState {
 
     getExecutionHost(): ExecutionHost {
         return this.harnessContext?.executionHost ?? { type: 'local' };
+    }
+
+    getAbortSignal(): AbortSignal {
+        return this._pluginAbortController.signal;
+    }
+
+    private resetPluginAbortSignal(): void {
+        this._pluginAbortController.abort();
+        this._pluginAbortController = new AbortController();
     }
 
     /**
@@ -1050,11 +1066,21 @@ export class TaskState {
 
     async startInternalTurn(options: StartInternalTurnOptions): Promise<void> {
         await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
+        const pluginPrompt = await this.hooks.applyChatMessage(
+            {
+                taskId: this.task_id,
+                workspace: this.getWorkspace() || undefined,
+                modelAlias: this.ensureValidModelOrFallback(),
+                internal: true
+            },
+            options.prompt
+        );
         const generation = ++this._turnGeneration;
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
         this._currentTurnInteractive = false;
         this.task_status = 'running';
+        this.resetPluginAbortSignal();
         this.started_at = new Date();
         this.updated_at = new Date();
         this.stop_requested_by_user = false;
@@ -1064,9 +1090,9 @@ export class TaskState {
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
-        const userMessage = new UserMessage(options.prompt);
+        const userMessage = new UserMessage(pluginPrompt);
         userMessage.internal = true;
-        userMessage.rawText = options.rawText;
+        userMessage.rawText = options.rawText ?? (pluginPrompt !== options.prompt ? options.prompt : undefined);
         userMessage.metadata = metadata;
         this.chat_context.appendMessage(userMessage);
         for (let i = 0; i < userMessage.content.length; i++) {
@@ -1422,6 +1448,13 @@ export class TaskState {
         this.resolveAllToolCalls();
     }
 
+    async refreshToolsets(): Promise<void> {
+        const allToolsets = await this.buildToolsets();
+        this.chat_context.toolsets.clear();
+        this.chat_context.attachToolsets(...allToolsets);
+        this.resolveAllToolCalls();
+    }
+
     async attachFiles(filePaths: string[]) {
         if (filePaths.length === 0) {
             return;
@@ -1577,9 +1610,19 @@ export class TaskState {
         const extensionInputResult = await this.extensions.handleUserMessage(message, options.imageDataUris);
         if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();
+        const pluginMessage = await this.hooks.applyChatMessage(
+            {
+                taskId: this.task_id,
+                workspace: this.getWorkspace() || undefined,
+                modelAlias: model,
+                internal: false
+            },
+            message
+        );
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
         this._currentTurnInteractive = options.interactive === true;
         this.task_status = 'running';
+        this.resetPluginAbortSignal();
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
         const generation = ++this._turnGeneration;
@@ -1596,7 +1639,8 @@ export class TaskState {
 
         // 先构建用户消息并立即推送到前端，避免后续的 prepareContextForModel / replaceSlashSkills
         // 等耗时异步操作阻塞用户消息的显示
-        const user_message = new UserMessage(message);
+        const user_message = new UserMessage(pluginMessage);
+        if (pluginMessage !== message) user_message.rawText = message;
         // 标记本条用户消息所属的运行代次，与 startInternalTurn 路径一致（tasks.ts:781-782）。
         // generation 已在上方 1223 行递增，此处将其写入消息元数据，使下游
         // （安全网关 skill 归因等）能从 message 反查到 turn 归属。
@@ -1609,7 +1653,7 @@ export class TaskState {
             }
         };
 
-        const imagePaths = extractImagePaths(message);
+        const imagePaths = extractImagePaths(pluginMessage);
         for (const imgPath of imagePaths) {
             try {
                 const dataUri = imageToDataUri(imgPath);
@@ -1682,11 +1726,11 @@ export class TaskState {
         }
 
         // 检测用户消息中的 /skillname，替换文本（用户消息已经显示，如果有替换则更新显示）
-        const displayMessage = await this.replaceSlashSkillsInText(message);
+        const displayMessage = await this.replaceSlashSkillsInText(pluginMessage);
 
         // 如果文本被替换了，保留原始输入并更新显示文本，重新推送到前端
-        if (displayMessage !== message) {
-            user_message.rawText = message;
+        if (displayMessage !== pluginMessage) {
+            user_message.rawText ??= pluginMessage;
             const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
             if (textPart) {
                 textPart.text = displayMessage;
@@ -1727,7 +1771,7 @@ export class TaskState {
         this.chat_context.attachToolsets(...allToolsets);
 
         // 检测用户消息中的 /skillname 引用并预加载到 assistant message
-        await this.preloadSlashSkills(message, assistant_message);
+        await this.preloadSlashSkills(pluginMessage, assistant_message);
 
         // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
         for (let i = 0; i < assistant_message.content.length; i++) {
@@ -1741,13 +1785,13 @@ export class TaskState {
             this.name_pending = false;
             if (taskConfig?.generate_taskname !== false) {
                 this.task_name = '未命名任务';
-                this.generateTaskName(message, telemetryRequestOptions).then(() => {
+                this.generateTaskName(pluginMessage, telemetryRequestOptions).then(() => {
                     this.persistLater();
                     this.task_manager_state.publishTaskListUpdate();
                 });
             } else {
                 // 关闭自动生成时，使用用户 prompt 作为任务名（截断到 30 字符）
-                this.task_name = message.length > 30 ? message.substring(0, 30) + '...' : message;
+                this.task_name = pluginMessage.length > 30 ? pluginMessage.substring(0, 30) + '...' : pluginMessage;
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             }
@@ -1820,6 +1864,7 @@ export class TaskState {
 
         if (!alreadyStopped) {
             this.task_status = 'stopped';
+            this._pluginAbortController.abort();
             this.stop_requested_by_user = reason === 'user';
             this.finished_at = new Date();
             // turn 结束，清空交互标记，避免模式切换时读到上一个 turn 的残留值
@@ -1919,6 +1964,7 @@ export class TaskState {
     async interruptRunningTurn(options: InterruptRunningTurnOptions): Promise<void> {
         // 与 stop() 同理：确保任务已完全加载，防止访问空的 chat_context
         this.ensureLoaded();
+        this._pluginAbortController.abort();
         const requestedAt = new Date().toISOString();
         this.runtimeInterrupt = {
             requested: true,
@@ -2180,8 +2226,9 @@ export class TaskState {
 
             const { bundleName } = entry;
             try {
-                const loadedSkill = await registry.getSkillForAgent(bundleName, name, this.agentId);
-                if (!loadedSkill) continue;
+                const loaded = await registry.loadSkillForAgent(bundleName, name, this.agentId, this.hooks);
+                if (!loaded) continue;
+                const { skill: loadedSkill, content: fullContent } = loaded;
 
                 // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
                 if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {
@@ -2190,8 +2237,6 @@ export class TaskState {
                         `preloaded skill ${name} env merged to task harnessContext.environ: ${Object.keys(loadedSkill.env).join(', ')}`
                     );
                 }
-
-                const fullContent = loadedSkill.getFullContent();
 
                 const qualifiedToolName = 'skill-manager-LoadSkill';
                 const toolCall = new ToolCall(
@@ -2538,6 +2583,34 @@ export class TaskState {
 
             args = validation.data as Record<string, unknown>;
             tool_call.args_object = args;
+
+            const argsBeforeToolInterception = JSON.stringify(args);
+            const interception = await this.hooks.interceptToolCall(this, tool_call, args);
+            if (interception.operation === 'deny') {
+                tool_call.status = 'error';
+                tool_call.result = interception.message;
+                if (interception.metadata) {
+                    tool_call.result_object = interception.metadata;
+                }
+                return;
+            }
+
+            const interceptedArgsValidation = tool.validateArgs(interception.args);
+            if (!interceptedArgsValidation.success) {
+                logger.error(
+                    `tool ${tool_call.tool_name} intercepted args validation failed: ${interceptedArgsValidation.error}`
+                );
+                tool_call.args_object = interception.args;
+                tool_call.status = 'error';
+                tool_call.result = interceptedArgsValidation.error;
+                return;
+            }
+            args = interceptedArgsValidation.data as Record<string, unknown>;
+            tool_call.args_object = args;
+            const argsAfterToolInterception = JSON.stringify(args);
+            if (argsAfterToolInterception !== argsBeforeToolInterception) {
+                tool_call.args_string = argsAfterToolInterception;
+            }
             tool_call.status = 'running';
 
             await this.sendSubscriptionFeedback();

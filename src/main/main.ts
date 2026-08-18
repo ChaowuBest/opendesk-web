@@ -96,6 +96,12 @@ import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/oper
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
+import {
+    PluginToolsetProvider,
+    combineToolsetProviders,
+    disposePluginHost,
+    initializePluginHost
+} from './applications/pluginmgr/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
@@ -1291,6 +1297,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.disabledTools = mode.disabledTools;
             await task.rebuildSystemPrompt();
             task.persistLater();
+            await task.refreshToolsets();
             return { status: 'ok' };
         } catch (err: any) {
             logger.error(`Failed to update task workspace: ${err?.message ?? err}`);
@@ -3084,6 +3091,7 @@ async function startApplication(): Promise<void> {
     app.on('before-quit', (event) => {
         if (officeQuitApproved) {
             isAppQuitting = true;
+            void disposePluginHost();
             return;
         }
 
@@ -3215,9 +3223,13 @@ async function startApplication(): Promise<void> {
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
 
-        GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
-        };
+        await initializePluginHost();
+        GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
+            {
+                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+            },
+            new PluginToolsetProvider()
+        );
 
         registerMemoryReviewHook({
             taskManagerState: GlobalState.getInstance().taskManagerState,

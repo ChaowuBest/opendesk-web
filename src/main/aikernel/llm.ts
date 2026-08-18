@@ -33,6 +33,7 @@ import { t } from '../../locale/index.js';
 import { fetchModelUrl } from '../utils/model-network.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
 import iconv from 'iconv-lite';
+import { GlobalHooks, type ChatHeadersInput } from './hooks.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -71,6 +72,10 @@ interface LLMRequestOptions {
     maxCompletionTokens?: number;
     /** 本次模型请求额外携带的运行时 HTTP headers，不落盘 */
     extraHeaders?: Record<string, string>;
+    /** 当前模型请求关联的插件上下文，不落盘。 */
+    hookContext?: ChatHeadersInput;
+    /** 宿主 instrumentation 等必须最终生效的 headers，不向插件暴露。 */
+    extraHeaderOverrides?: Record<string, string>;
     /** 重试回调，供任务级 usage 统计使用 */
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
     /** 请求结束后上报 usage，供任务级 token 统计使用 */
@@ -515,7 +520,12 @@ class LLM {
             const wrappedRequestOptions = LLM.__wrapOnUsage(options.requestOptions, operation);
 
             while (finalResponse === undefined && numRetries < 5) {
-                let content = await adapter.completeText(chatContext, visionSupported, {}, wrappedRequestOptions);
+                const pluginRequestOptions = await LLM.__resolvePluginHeaders(
+                    options.model,
+                    modelInstance,
+                    wrappedRequestOptions
+                );
+                let content = await adapter.completeText(chatContext, visionSupported, {}, pluginRequestOptions);
                 content = LLM.__stripThinkTags(content, modelInstance);
 
                 const assistantMessage = new AssistantMessage([], {
@@ -594,6 +604,28 @@ class LLM {
                     await originalOnUsage(usage, ctx);
                 }
             }
+        };
+    }
+
+    private static async __resolvePluginHeaders(
+        model: ModelParam,
+        modelInstance: ModelInstance,
+        requestOptions?: LLMRequestOptions
+    ): Promise<LLMRequestOptions> {
+        const { extraHeaderOverrides, ...adapterOptions } = requestOptions ?? {};
+        const hookContext = requestOptions?.hookContext;
+        const input: ChatHeadersInput = {
+            ...hookContext,
+            modelAlias: hookContext?.modelAlias ?? (typeof model === 'string' ? model : modelInstance.model_name)
+        };
+        const hookHeaders = await GlobalHooks.applyChatHeaders(input, requestOptions?.extraHeaders);
+        const extraHeaders = {
+            ...hookHeaders,
+            ...extraHeaderOverrides
+        };
+        return {
+            ...adapterOptions,
+            extraHeaders: Object.keys(extraHeaders).length > 0 ? extraHeaders : undefined
         };
     }
 
@@ -692,11 +724,12 @@ class LLM {
         });
         return TelemetryOperationRegistry.aroundOperation(operation, async () => {
             const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
+            const pluginRequestOptions = await LLM.__resolvePluginHeaders(model, modelInstance, wrappedOptions);
             return await this.__getAdapter(modelInstance).complete(
                 chatContext,
                 visionSupported,
                 options,
-                wrappedOptions
+                pluginRequestOptions
             );
         });
     }
@@ -717,11 +750,12 @@ class LLM {
             'llm.request_type': 'streamComplete'
         });
         const wrappedOptions = LLM.__wrapOnUsage(requestOptions, operation);
+        const pluginRequestOptions = await LLM.__resolvePluginHeaders(model, modelInstance, wrappedOptions);
         const streamGen = this.__getAdapter(modelInstance).streamComplete(
             chatContext,
             visionSupported,
             options,
-            wrappedOptions
+            pluginRequestOptions
         );
         for await (const response of TelemetryOperationRegistry.traceStream(operation, streamGen)) {
             yield response;

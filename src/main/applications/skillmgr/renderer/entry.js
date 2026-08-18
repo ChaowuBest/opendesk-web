@@ -21,16 +21,16 @@ function getSkillsAPI() {
         list: () => window.applicationAPI.call('list'),
         refresh: () => window.applicationAPI.call('refresh'),
         getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
-        addFromDirectory: (sourceDirectory) => window.applicationAPI.call('addFromDirectory', sourceDirectory),
-        addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
-        addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
+        addFromDirectory: (sourceDirectory) => window.applicationAPI.callMainWorld('addFromDirectory', sourceDirectory),
+        addFromZip: (zipPath, skillRelPath) => window.applicationAPI.callMainWorld('addFromZip', zipPath, skillRelPath),
+        addFromUrl: (url) => window.applicationAPI.callMainWorld('addFromUrl', url),
         delete: (skillId) => window.applicationAPI.call('delete', skillId),
         deleteSkills: (skillIds, callback) => window.applicationAPI.streamCall('deleteSkills', callback, skillIds),
         getRegistries: () => window.applicationAPI.call('getRegistries'),
         searchRegistry: (registryId, query, page, limit, cursor, categoryFilter) =>
             window.applicationAPI.call('searchRegistry', registryId, query, page, limit, cursor, categoryFilter),
         installFromRegistry: (installUrl, force, customName) =>
-            window.applicationAPI.call('installFromRegistry', installUrl, force, customName),
+            window.applicationAPI.callMainWorld('installFromRegistry', installUrl, force, customName),
         skillExists: (skillName) => window.applicationAPI.call('skillExists', skillName),
         getSkillDetail: (skillId) => window.applicationAPI.call('getSkillDetail', skillId),
         sendNotification: (type, title, message) =>
@@ -2385,6 +2385,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             name: skill.name,
             description: skill.description,
             bundleName: skill.bundleName,
+            pluginId: skill.pluginId,
+            pluginName: skill.pluginName,
             tools: skill.tools || [],
             body: '',
             resources: { references: [], scripts: [], assets: [] },
@@ -2500,6 +2502,12 @@ class SkillMgrEntryWidget extends HTMLElement {
             detail.stars || downloadsStr
                 ? `<div style="display:flex;gap:6px;margin-top:4px">${detail.stars ? `<span class="tag-pill tag-star">★ ${detail.stars}</span>` : ''}${downloadsStr ? `<span class="tag-pill tag-download">↓ ${downloadsStr}</span>` : ''}</div>`
                 : '';
+        const pluginSkillOwner = detail.pluginName || detail.pluginId;
+        const pluginSkillAttribution = pluginSkillOwner ? `${pluginSkillOwner}/${detail.name || detail.id}` : '';
+        const headerAttribution =
+            opts.isBuiltin && detail.bundleName
+                ? `<div style="font-size:11px;color:#8e8e93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>`
+                : '';
 
         let actions;
         if (opts.isBuiltin || opts.isExternal) {
@@ -2522,6 +2530,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         card.model = {
             id: detail.id,
             name: detail.name || detail.id,
+            subtitle: pluginSkillAttribution || undefined,
             closeLabel: '关闭',
             description: detail.description,
             descriptionLabel: '简介',
@@ -2529,7 +2538,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             bodyLabel: '技能内容',
             metadata: metaItems,
             metadataLabel: '元信息',
-            headerExtraHtml: `${opts.isBuiltin && detail.bundleName ? `<div style="font-size:11px;color:#8e8e93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>` : ''}${statsPills}`,
+            headerExtraHtml: `${opts.isBuiltin ? headerAttribution : ''}${statsPills}`,
             extraSectionsHtml: `${resourceHtml}${toolsHtml}`,
             actions
         };
@@ -3495,6 +3504,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                       (s.name || '').toLowerCase().includes(q) ||
                       (s.id || '').toLowerCase().includes(q) ||
                       (s.description || '').toLowerCase().includes(q) ||
+                      (s.pluginName || '').toLowerCase().includes(q) ||
+                      (s.pluginId || '').toLowerCase().includes(q) ||
                       (s.bundleName || '').toLowerCase().includes(q)
               )
             : this.builtinSkills;
@@ -3512,21 +3523,25 @@ class SkillMgrEntryWidget extends HTMLElement {
                         const color = this._getSkillPastel(s.name || s.id);
                         const toolCount = (s.tools && s.tools.length) || 0;
                         const isEnabled = s.enabled !== false;
+                        const skillOwner = s.pluginName || s.pluginId || s.bundleName || '';
+                        const scopeControl = s.readOnly
+                            ? `<span class="tag-pill tag-score">${escapeHtml(s.bundleName || '')}</span>`
+                            : `<label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                  <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
+                  <span class="skill-toggle-slider"></span>
+                </label>`;
                         return `
             <div class="skill-card builtin-card" data-builtin-skill="${escapeHtml(s.id)}">
               <div class="card-header">
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
                 <div class="card-info">
                   <div class="card-title">${escapeHtml(s.name || s.id)}</div>
-                  ${s.bundleName ? `<div class="card-author">${escapeHtml(s.bundleName)}${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}</div>` : ''}
+                  ${skillOwner ? `<div class="card-author">${escapeHtml(skillOwner)}${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}</div>` : ''}
                 </div>
               </div>
               ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
               <div class="card-footer">
-                <label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
-                  <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
-                  <span class="skill-toggle-slider"></span>
-                </label>
+                ${scopeControl}
                 <span class="tag-pill tag-score">内置</span>
               </div>
             </div>`;

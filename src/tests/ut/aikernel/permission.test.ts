@@ -28,6 +28,7 @@ import {
 import {
     FileResourcePath,
     NetworkResourcePath,
+    PluginResourcePath,
     SkillResourcePath,
     createResourcePath,
     escapeGlobLiteralPath
@@ -1366,6 +1367,32 @@ describe('ResourcePath 前缀计算', () => {
         });
     });
 
+    test('插件读取默认允许，修改和执行默认询问', async () => {
+        const enforcer = await GlobPermissionEnforcer.create(createDefaultPermissionRules('/workspace'));
+
+        await expect(
+            enforcer.check({ resourceType: 'plugin', action: 'read', resourcePath: 'review-helper' })
+        ).resolves.toMatchObject({ effect: 'allow' });
+        await expect(
+            enforcer.check({ resourceType: 'plugin', action: 'write', resourcePath: 'review-helper' })
+        ).resolves.toMatchObject({ effect: 'ask' });
+        await expect(
+            enforcer.check({ resourceType: 'plugin', action: 'execute', resourcePath: 'review-helper' })
+        ).resolves.toMatchObject({ effect: 'ask' });
+    });
+
+    describe('PluginResourcePath', () => {
+        test('插件 ID 作为独立权限资源', () => {
+            const rp = new PluginResourcePath('review-helper');
+            expect(rp.getPrefixes()).toEqual([
+                {
+                    label: 'review-helper',
+                    pattern: 'review-helper'
+                }
+            ]);
+        });
+    });
+
     describe('createResourcePath 工厂函数', () => {
         test('file 类型 → FileResourcePath', () => {
             const rp = createResourcePath('file', '/workspace/file.txt');
@@ -1380,6 +1407,11 @@ describe('ResourcePath 前缀计算', () => {
         test('skill 类型 → SkillResourcePath', () => {
             const rp = createResourcePath('skill', 'my-skill');
             expect(rp).toBeInstanceOf(SkillResourcePath);
+        });
+
+        test('plugin 类型 → PluginResourcePath', () => {
+            const rp = createResourcePath('plugin', 'review-helper');
+            expect(rp).toBeInstanceOf(PluginResourcePath);
         });
     });
 });

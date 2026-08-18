@@ -27,7 +27,7 @@ import { defaultSelectListTheme, defaultMarkdownTheme } from '../../tui/theme';
 import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
 import { Setting } from '../../utils/setting.js';
-import { SkillMgrApplication } from './app.js';
+import { installSkillInMain, SkillMgrApplication } from './app.js';
 import { getSkillStatus, setSkillStatus } from './status.js';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
@@ -334,7 +334,10 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromDirectory(path);
+            const result = await installSkillInMain(
+                { source: 'directory', path },
+                async () => await skillInstallManager.installFromDirectory(path)
+            );
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
@@ -379,7 +382,10 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromLocalZip(path);
+            const result = await installSkillInMain(
+                { source: 'zip', path },
+                async () => await skillInstallManager.installFromLocalZip(path)
+            );
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
@@ -424,7 +430,10 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromUrl(url);
+            const result = await installSkillInMain(
+                { source: 'url', url },
+                async () => await skillInstallManager.installFromUrl(url)
+            );
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name ?? ''}`, false, 'main');
@@ -685,11 +694,12 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromRegistryInstallUrl(
-                this.pendingInstallSkill.installUrl,
-                {
-                    customName: name
-                }
+            const result = await installSkillInMain(
+                { source: 'registry', url: this.pendingInstallSkill.installUrl, customName: name },
+                async () =>
+                    await skillInstallManager.installFromRegistryInstallUrl(this.pendingInstallSkill!.installUrl, {
+                        customName: name
+                    })
             );
 
             if (result && result.success) {
@@ -912,11 +922,12 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromRegistryInstallUrl(
-                this.pendingInstallSkill.installUrl,
-                {
-                    force: true
-                }
+            const result = await installSkillInMain(
+                { source: 'registry', url: this.pendingInstallSkill.installUrl, force: true },
+                async () =>
+                    await skillInstallManager.installFromRegistryInstallUrl(this.pendingInstallSkill!.installUrl, {
+                        force: true
+                    })
             );
 
             if (result && result.success) {
@@ -981,7 +992,10 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await skillInstallManager.installFromRegistryInstallUrl(skill.installUrl);
+            const result = await installSkillInMain(
+                { source: 'registry', url: skill.installUrl },
+                async () => await skillInstallManager.installFromRegistryInstallUrl(skill.installUrl)
+            );
 
             if (result && result.success) {
                 SkillMgrApplication.notifySkillsChanged();

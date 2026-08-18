@@ -29,6 +29,12 @@ import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
 import { Setting, getDefaultOpendeskDirectory, setCustomOpendeskDirectory } from './utils/setting';
 import { program as prog, Option } from 'commander';
+import {
+    PluginToolsetProvider,
+    combineToolsetProviders,
+    initializePluginHost,
+    setRuntimePluginDirectories
+} from './applications/pluginmgr/index.js';
 import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
@@ -143,6 +149,7 @@ function parseCommandLineArgs() {
         `specify custom config directory (default: ${getDefaultOpendeskDirectory()})`,
         (v) => v
     );
+    prog.option('--plugins-directory <path>', t('cli.plugins_directory.description'), (v) => v);
     prog.option('-v, --version', 'print the version');
 
     registerToolsCommand(prog);
@@ -266,6 +273,15 @@ function parseCommandLineArgs() {
         if (kwargs.configDirectory) {
             setCustomOpendeskDirectory(kwargs.configDirectory);
             reloadLoggerFileTransport();
+        }
+
+        if (kwargs.pluginsDirectory) {
+            const pluginsDirectory = path.resolve(kwargs.pluginsDirectory);
+            if (!fs.existsSync(pluginsDirectory) || !fs.statSync(pluginsDirectory).isDirectory()) {
+                console.error(`[error] ${t('cli.plugins_directory.invalid', { path: pluginsDirectory })}`);
+                process.exit(1);
+            }
+            setRuntimePluginDirectories([pluginsDirectory]);
         }
 
         // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）
@@ -423,16 +439,20 @@ async function main(args: CommandLineArgs) {
 
     if (args.headless && args.command) {
         GlobalState.initialize();
+        initializeRegistry();
+        await initializePluginHost();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();
 
-        initializeRegistry();
         initializeRegistryWorker();
         await ApplicationRegistry.ensureFullyLoaded();
-        GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
-        };
+        GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
+            {
+                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+            },
+            new PluginToolsetProvider()
+        );
 
         const runner = new HeadlessRunner(args);
         await runner.setupLazyHarnessInit();
@@ -442,6 +462,8 @@ async function main(args: CommandLineArgs) {
         });
     } else {
         GlobalState.initialize();
+        initializeRegistry();
+        await initializePluginHost();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();
@@ -454,12 +476,14 @@ async function main(args: CommandLineArgs) {
             process.stdout.write(FULL_CLEAR);
         }
 
-        initializeRegistry();
         initializeRegistryWorker();
         await ApplicationRegistry.ensureFullyLoaded();
-        GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
-        };
+        GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
+            {
+                listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+            },
+            new PluginToolsetProvider()
+        );
 
         const tui = new OpenDeskTUI(args);
         tui.start();

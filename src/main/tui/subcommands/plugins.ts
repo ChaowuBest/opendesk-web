@@ -10,8 +10,13 @@
  */
 
 import type { Command } from 'commander';
+import { randomUUID } from 'crypto';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import {
+    disposePluginHost,
+    getPluginHost,
+    initializePluginHost,
+    reloadPluginHost,
     getPluginRuntimeEntry,
     setPluginOptions,
     setPluginGrantedCapabilities,
@@ -23,7 +28,7 @@ import {
     verifyInstalledPlugin,
     formatPluginInstallError
 } from '../../applications/pluginmgr/index.js';
-import type { PluginCapability } from '../../applications/pluginmgr/index.js';
+import type { PluginCapability, PluginHostEntry } from '../../applications/pluginmgr/index.js';
 import { t } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import process from 'process';
@@ -35,6 +40,11 @@ function applyGlobalOptions(command: Command): void {
     }
 }
 
+function getWorkspaceOption(command: Command): string | undefined {
+    const workspace = command.optsWithGlobals().workspace;
+    return typeof workspace === 'string' && workspace ? workspace : undefined;
+}
+
 function parseCapabilities(values: string[]): PluginCapability[] {
     const requested = values.flatMap((value) => value.split(',')).filter(Boolean);
     const invalid = requested.filter(
@@ -44,90 +54,267 @@ function parseCapabilities(values: string[]): PluginCapability[] {
     return OPENDESK_PLUGIN_CAPABILITIES.filter((capability) => requested.includes(capability));
 }
 
+function printRuntimeStatus(entries: PluginHostEntry[], json: boolean): void {
+    if (json) {
+        console.log(JSON.stringify(entries, null, 2));
+        return;
+    }
+    if (entries.length === 0) {
+        console.log(t('plugin.runtime.empty'));
+        return;
+    }
+    console.log(t('plugin.runtime.title'));
+    for (const entry of entries) {
+        console.log(`  ${entry.id} [${t(`plugin.runtime.status.${entry.status}`)}] ${entry.origin}`);
+        for (const diagnostic of entry.diagnostics) {
+            const detail = diagnostic.detail ? `: ${diagnostic.detail}` : '';
+            console.log(`    ${diagnostic.stage}/${diagnostic.code}${detail}`);
+        }
+    }
+}
+
 export function registerPluginsCommand(prog: Command): void {
     const pluginsCmd = prog.command('plugins').description(t('plugin.cli.description'));
 
     pluginsCmd
         .command('install <spec>')
         .description(t('plugin.install.description'))
-        .action(async (spec: string, command: Command) => {
+        .action(async (spec: string) => {
             useCliTransport();
             useConsoleTransport();
-            applyGlobalOptions(command);
             console.log(t('plugin.install.start', { spec }));
             const result = await installPlugin(spec);
             if (result.success) {
                 console.log(`✓ ${t('plugin.install.successDetail', { id: result.id ?? spec })}`);
             } else {
                 console.error(`✗ ${formatPluginInstallError(result)}`);
-                process.exitCode = 1;
+                process.exit(1);
             }
+            process.exit(0);
         });
 
     pluginsCmd
         .command('uninstall <id>')
         .description(t('plugin.uninstall.description'))
-        .action(async (id: string, command: Command) => {
+        .action(async (id: string) => {
             useCliTransport();
-            applyGlobalOptions(command);
             const result = await uninstallPlugin(id);
             if (result.success) {
                 console.log(`✓ ${t('plugin.uninstall.successDetail', { id })}`);
             } else {
                 console.error(`✗ ${t('plugin.uninstall.failDetail', { error: result.error ?? '-' })}`);
-                process.exitCode = 1;
+                process.exit(1);
             }
+            process.exit(0);
         });
 
     pluginsCmd
         .command('list')
         .description(t('plugin.list.description'))
-        .action((command: Command) => {
-            applyGlobalOptions(command);
+        .action(() => {
             const records = listInstalledPlugins();
             if (records.length === 0) {
                 console.log(t('plugin.list.empty'));
-                return;
+            } else {
+                console.log(t('plugin.list.title'));
+                for (const r of records) {
+                    const status = r.enabled
+                        ? `✓ ${t('plugin.list.status.enabled')}`
+                        : `✗ ${t('plugin.list.status.disabled')}`;
+                    console.log(
+                        `  ${t('plugin.list.item', {
+                            id: r.id,
+                            spec: r.spec ?? r.path,
+                            status,
+                            installedAt: r.installedAt ?? '-'
+                        })}`
+                    );
+                }
             }
-            console.log(t('plugin.list.title'));
-            for (const record of records) {
-                const status = record.enabled
-                    ? `✓ ${t('plugin.list.status.enabled')}`
-                    : `✗ ${t('plugin.list.status.disabled')}`;
-                console.log(
-                    `  ${t('plugin.list.item', {
-                        id: record.id,
-                        spec: record.spec ?? record.path,
-                        status,
-                        installedAt: record.installedAt ?? '-'
-                    })}`
-                );
-            }
+            process.exit(0);
         });
 
     pluginsCmd
         .command('enable <id>')
         .description(t('plugin.enable.description'))
-        .action((id: string, command: Command) => {
-            applyGlobalOptions(command);
+        .action((id: string) => {
             if (setPluginEnabled(id, true)) {
                 console.log(`✓ ${t('plugin.enable.successDetail', { id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
-                process.exitCode = 1;
+                process.exit(1);
             }
+            process.exit(0);
         });
 
     pluginsCmd
         .command('disable <id>')
         .description(t('plugin.disable.description'))
-        .action((id: string, command: Command) => {
-            applyGlobalOptions(command);
+        .action((id: string) => {
             if (setPluginEnabled(id, false)) {
                 console.log(`✓ ${t('plugin.disable.successDetail', { id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
-                process.exitCode = 1;
+                process.exit(1);
+            }
+            process.exit(0);
+        });
+
+    pluginsCmd
+        .command('status')
+        .description(t('plugin.runtime.status.description'))
+        .option('--json', t('plugin.runtime.json.description'))
+        .action(async (options: { json?: boolean }, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            try {
+                await initializePluginHost();
+                printRuntimeStatus(getPluginHost().list(), options.json === true);
+            } finally {
+                await disposePluginHost();
+            }
+        });
+
+    pluginsCmd
+        .command('reload')
+        .description(t('plugin.runtime.reload.description'))
+        .option('--json', t('plugin.runtime.json.description'))
+        .action(async (options: { json?: boolean }, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            try {
+                await reloadPluginHost();
+                const entries = getPluginHost().list();
+                if (!options.json) console.log(t('plugin.runtime.reload.success'));
+                printRuntimeStatus(entries, options.json === true);
+            } finally {
+                await disposePluginHost();
+            }
+        });
+
+    pluginsCmd
+        .command('commands')
+        .description(t('plugin.command.list.description'))
+        .action(async (_options: unknown, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            try {
+                await initializePluginHost();
+                const commands = getPluginHost().listCommands();
+                if (commands.length === 0) {
+                    console.log(t('plugin.command.empty'));
+                    return;
+                }
+                for (const contribution of commands) {
+                    console.log(`${contribution.definition.name}\t${contribution.definition.description}`);
+                }
+            } finally {
+                await disposePluginHost();
+            }
+        });
+
+    pluginsCmd
+        .command('run <name> [args...]')
+        .description(t('plugin.command.run.description'))
+        .action(async (name: string, args: string[], _options: unknown, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            const workspace = command.optsWithGlobals().workspace;
+            const effectiveWorkspace = typeof workspace === 'string' ? workspace : undefined;
+            try {
+                await initializePluginHost();
+                const contribution = getPluginHost()
+                    .listCommands()
+                    .find((candidate) => candidate.definition.name === name);
+                if (!contribution) throw new Error(t('plugin.command.notFound', { name }));
+                const result = await getPluginHost().runCommand(contribution.id, args.join(' '), {
+                    workspace: effectiveWorkspace,
+                    abort: new AbortController().signal
+                });
+                if (typeof result === 'string') console.log(result);
+                else if (result) console.log(result.output);
+            } finally {
+                await disposePluginHost();
+            }
+        });
+
+    pluginsCmd
+        .command('tools')
+        .description(t('plugin.tool.list.description'))
+        .action(async (_options: unknown, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            try {
+                await initializePluginHost();
+                const tools = getPluginHost().listTools();
+                if (tools.length === 0) {
+                    console.log(t('plugin.tool.empty'));
+                    return;
+                }
+                for (const contribution of tools) {
+                    console.log(`${contribution.definition.name}\t${contribution.definition.description}`);
+                }
+            } finally {
+                await disposePluginHost();
+            }
+        });
+
+    pluginsCmd
+        .command('call <name> [argsJson]')
+        .description(t('plugin.tool.call.description'))
+        .action(async (name: string, argsJson: string | undefined, _options: unknown, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            const workspace = getWorkspaceOption(command);
+            try {
+                await initializePluginHost();
+                const contribution = getPluginHost()
+                    .listTools()
+                    .find((candidate) => candidate.definition.name === name);
+                if (!contribution) throw new Error(t('plugin.tool.notFound', { name }));
+                let input: unknown = {};
+                if (argsJson) input = JSON.parse(argsJson) as unknown;
+                const args = contribution.definition.parameters.parse(input);
+                const callId = randomUUID();
+                const before = await getPluginHost().trigger(
+                    'tool.execute.before',
+                    {
+                        tool: contribution.definition.name,
+                        taskId: 'plugin-cli',
+                        callId,
+                        workspace
+                    },
+                    { args }
+                );
+                if (before.deny) {
+                    throw new Error(before.deny.message ?? t('plugin.tool.denied', { name }));
+                }
+                const result = await contribution.definition.execute(before.args, {
+                    taskId: 'plugin-cli',
+                    workspace,
+                    abort: new AbortController().signal
+                });
+                const after = await getPluginHost().trigger(
+                    'tool.execute.after',
+                    {
+                        tool: contribution.definition.name,
+                        taskId: 'plugin-cli',
+                        callId,
+                        workspace,
+                        args: before.args
+                    },
+                    typeof result === 'string'
+                        ? { status: 'success', result }
+                        : {
+                              status: 'success',
+                              result: result.output,
+                              resultObject: result.resultObject
+                          }
+                );
+                console.log(after.result);
+                if (after.resultObject) console.log(JSON.stringify(after.resultObject, null, 2));
+            } finally {
+                await disposePluginHost();
             }
         });
 
@@ -146,6 +333,33 @@ export function registerPluginsCommand(prog: Command): void {
             }
             setPluginOptions(id, options as Record<string, unknown>);
             console.log(t('plugin.config.saved', { id }));
+        });
+
+    pluginsCmd
+        .command('permissions <id>')
+        .description(t('plugin.security.permissions.description'))
+        .action(async (id: string, _options: unknown, command: Command) => {
+            useCliTransport();
+            applyGlobalOptions(command);
+            try {
+                await initializePluginHost();
+                const runtime = getPluginHost().get(id);
+                const configured = getPluginRuntimeEntry(id)?.granted_capabilities;
+                console.log(
+                    JSON.stringify(
+                        {
+                            id,
+                            requested: runtime?.requestedCapabilities ?? [],
+                            granted: configured ?? runtime?.grantedCapabilities ?? null,
+                            active: runtime?.capabilities ?? []
+                        },
+                        null,
+                        2
+                    )
+                );
+            } finally {
+                await disposePluginHost();
+            }
         });
 
     pluginsCmd
@@ -179,7 +393,9 @@ export function registerPluginsCommand(prog: Command): void {
             const verification = verifyInstalledPlugin(id);
             if (!verification) throw new Error(t('plugin.security.verify.notFound', { id }));
             if (options.json) console.log(JSON.stringify(verification, null, 2));
-            else console.log(t('plugin.security.verify.integrity', { status: verification.integrityStatus }));
+            else {
+                console.log(t('plugin.security.verify.integrity', { status: verification.integrityStatus }));
+            }
             if (!verification.allowed) process.exitCode = 1;
         });
 
@@ -187,15 +403,29 @@ export function registerPluginsCommand(prog: Command): void {
         .command('doctor')
         .description(t('plugin.security.doctor.description'))
         .option('--json', t('plugin.runtime.json.description'))
-        .action((options: { json?: boolean }, command: Command) => {
+        .action(async (options: { json?: boolean }, command: Command) => {
             useCliTransport();
             applyGlobalOptions(command);
-            const installed = listInstalledPlugins().map((record) => verifyInstalledPlugin(record.id));
-            const report = { installed };
-            if (options.json) {
-                console.log(JSON.stringify(report, null, 2));
-                return;
+            try {
+                await initializePluginHost();
+                const report = {
+                    plugins: getPluginHost().list(),
+                    installed: listInstalledPlugins().map((record) => verifyInstalledPlugin(record.id))
+                };
+                if (options.json) console.log(JSON.stringify(report, null, 2));
+                else {
+                    console.log(
+                        t('plugin.security.doctor.summary', {
+                            plugins: report.plugins.length,
+                            installed: report.installed.length
+                        })
+                    );
+                    for (const entry of report.plugins) {
+                        console.log(`${entry.id}\t${t(`plugin.runtime.status.${entry.status}`)}`);
+                    }
+                }
+            } finally {
+                await disposePluginHost();
             }
-            console.log(t('plugin.security.doctor.summary', { plugins: 0, installed: installed.length }));
         });
 }

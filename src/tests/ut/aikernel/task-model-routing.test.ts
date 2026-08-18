@@ -70,6 +70,33 @@ describe('task model routing', () => {
         expect(task.task_name).toBe('任务名');
     });
 
+    test('generateTaskName receives the task plugin context used by chat.headers', async () => {
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const task = new TaskState(new TaskManagerState());
+        task.task_id = 'task-name';
+        task.model = 'mock-b';
+        task.harnessContext.workspace = '/workspace';
+        const requestOptions = task.createUsageTelemetryRequestOptions({
+            extraHeaders: { cookie: 'sid=abc' }
+        });
+
+        await task.generateTaskName('hello', requestOptions);
+
+        expect(ask).toHaveBeenCalledWith(
+            expect.stringContaining('hello'),
+            'mock-b',
+            expect.objectContaining({
+                reasoningEffort: 'none',
+                extraHeaders: { cookie: 'sid=abc' },
+                hookContext: {
+                    taskId: 'task-name',
+                    workspace: '/workspace',
+                    modelAlias: 'mock-b'
+                }
+            })
+        );
+    });
+
     test('checkTermination uses task model instead of default model', async () => {
         const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('finished');
         const task = new TaskState(new TaskManagerState());

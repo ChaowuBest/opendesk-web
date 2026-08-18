@@ -42,7 +42,7 @@ export async function buildToolsetsForTask(
     task: TaskState,
     interactionToolset?: BaseToolset | null
 ): Promise<BaseToolset[]> {
-    const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets();
+    const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets(task);
     const skillToolset = SkillRegistry.getInstance().getToolset();
     const memoryToolset = createMemoryToolset();
     const planningToolset = task.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
@@ -89,6 +89,8 @@ export async function buildToolsetsForTask(
             }
         }
     }
+
+    await task.hooks.applyToolDefinitions(all, task);
 
     return all;
 }

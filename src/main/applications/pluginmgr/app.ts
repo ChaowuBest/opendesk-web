@@ -7,11 +7,15 @@ import { z } from 'zod';
 import type { Command } from 'commander';
 import path from 'path';
 import { BaseApplication, type EventDecl } from '../base.js';
+import { Skill } from '../../aikernel/skill.js';
+import { BaseToolset } from '../../aikernel/tool.js';
 import { registerPluginsCommand } from '../../tui/subcommands/plugins.js';
 import { getOpendeskDirectory } from '../../utils/setting.js';
+import { disposePluginHost, initializePluginHost, reloadPluginHost } from './runtime/bootstrap.js';
 import { discoverPlugins } from './discovery/discovery.js';
+import { getPluginHost } from './runtime/host.js';
 import { resolvePluginEntry } from './discovery/loader.js';
-import { readPluginManifest, type PluginManifest } from './discovery/manifest.js';
+import { loadPluginContributions, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
 import {
     installPlugin,
     listInstalledPlugins,
@@ -27,6 +31,15 @@ import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/pa
 import { formatPluginInstallError } from './management/errors.js';
 import { t } from './locale/index.js';
 import { t as translate } from '../../../locale/index.js';
+import { getManagePluginsSkill } from './skills.js';
+import {
+    GetPluginDetailsTool,
+    InstallPluginTool,
+    ListPluginsTool,
+    ReloadPluginsTool,
+    SetPluginEnabledTool,
+    UninstallPluginTool
+} from './tools.js';
 
 const PluginMgrConfigSchema = z.object({
     externalPaths: z.array(z.string()).default([])
@@ -69,7 +82,26 @@ export class PluginMgrApplication extends BaseApplication {
         ];
     }
 
+    async getSkills(): Promise<Skill[]> {
+        const managePluginsSkill = Skill.parseMd(getManagePluginsSkill());
+        const toolset = new BaseToolset('plugin-management');
+        toolset.addTool(new ListPluginsTool(this));
+        toolset.addTool(new GetPluginDetailsTool(this));
+        toolset.addTool(new InstallPluginTool(this));
+        toolset.addTool(new UninstallPluginTool(this));
+        toolset.addTool(new SetPluginEnabledTool(this));
+        toolset.addTool(new ReloadPluginsTool(this));
+        managePluginsSkill.toolsets = [toolset];
+        return [managePluginsSkill];
+    }
+
     async list() {
+        await initializePluginHost();
+        const runtimeById = new Map(
+            getPluginHost()
+                .list()
+                .map((entry) => [entry.id, entry])
+        );
         const configDirectory = getOpendeskDirectory();
         const builtinDirectory = getBuiltinPluginsDirectory();
         const records = listPluginRecords();
@@ -80,12 +112,26 @@ export class PluginMgrApplication extends BaseApplication {
             pluginDirectories: getRuntimePluginDirectories()
         });
         const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
-        const ids = new Set([...records.map((record) => record.id), ...candidatesById.keys()]);
+        const skillsByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listSkills']>>();
+        for (const skill of getPluginHost().listSkills()) {
+            const contributions = skillsByPlugin.get(skill.pluginId) ?? [];
+            contributions.push(skill);
+            skillsByPlugin.set(skill.pluginId, contributions);
+        }
+        const mcpServersByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listMcpServers']>>();
+        for (const server of getPluginHost().listMcpServers()) {
+            const contributions = mcpServersByPlugin.get(server.pluginId) ?? [];
+            contributions.push(server);
+            mcpServersByPlugin.set(server.pluginId, contributions);
+        }
+        const ids = new Set([...runtimeById.keys(), ...records.map((record) => record.id), ...candidatesById.keys()]);
         return Array.from(ids)
             .sort()
             .map((id) => {
                 const record = records.find((candidate) => candidate.id === id);
                 const candidate = candidatesById.get(id);
+                let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
+                let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let manifest: PluginManifest | undefined;
                 const rootDirectory =
                     record?.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
@@ -100,8 +146,13 @@ export class PluginMgrApplication extends BaseApplication {
                     try {
                         const resolved = resolvePluginEntry(spec, configDirectory);
                         manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+                        if (skills.length === 0 && mcpServers.length === 0) {
+                            const contributions = loadPluginContributions(manifest, resolved.rootDir);
+                            skills = contributions.skills ?? [];
+                            mcpServers = contributions.mcpServers ?? [];
+                        }
                     } catch {
-                        // Ignore malformed entries so the management view can still list other plugins.
+                        // Runtime diagnostics already describe malformed or unavailable plugins.
                     }
                 }
                 return {
@@ -113,6 +164,7 @@ export class PluginMgrApplication extends BaseApplication {
                     installedAt: record?.installedAt,
                     spec: record?.spec,
                     verification: record?.source === 'managed' ? verifyInstalledPlugin(id) : undefined,
+                    runtime: runtimeById.get(id),
                     manifest: manifest
                         ? {
                               displayName: manifest.displayName,
@@ -120,12 +172,27 @@ export class PluginMgrApplication extends BaseApplication {
                               apiVersion: manifest.apiVersion,
                               capabilities: manifest.capabilities
                           }
-                        : undefined
+                        : undefined,
+                    skills: skills.map((definition) => ({
+                        name: definition.name,
+                        description: definition.description,
+                        directory: definition.directory,
+                        userInvocable: definition.userInvocable,
+                        modelInvocable: definition.modelInvocable
+                    })),
+                    mcpServers: mcpServers.map((definition) => ({
+                        name: definition.name,
+                        transport: definition.transport,
+                        command: definition.transport === 'stdio' ? definition.command : undefined,
+                        cwd: definition.transport === 'stdio' ? definition.cwd : undefined,
+                        url: definition.transport === 'stdio' ? undefined : definition.url
+                    }))
                 };
             });
     }
 
     async reload(id?: string) {
+        await reloadPluginHost();
         this.emitEvent('pluginsChanged', { operation: 'reload', id }).catch(() => {});
         return await this.list();
     }
@@ -133,12 +200,15 @@ export class PluginMgrApplication extends BaseApplication {
     async install(spec: string) {
         const result = await installPlugin(spec);
         if (!result.success) throw new Error(formatPluginInstallError(result));
+        await reloadPluginHost();
         this.emitEvent('pluginsChanged', { operation: 'install', id: result.id }).catch(() => {});
         return result;
     }
 
     async uninstall(id: string) {
+        await disposePluginHost();
         const result = await uninstallPlugin(id);
+        await reloadPluginHost();
         if (!result.success) {
             const message =
                 result.error === 'plugin.uninstall_unmanaged'
@@ -160,29 +230,38 @@ export class PluginMgrApplication extends BaseApplication {
         ) {
             throw new Error(translate('plugin.notFound', { id }));
         }
+        await reloadPluginHost();
         this.emitEvent('pluginsChanged', { operation: enabled ? 'enable' : 'disable', id }).catch(() => {});
         return await this.list();
     }
 
     async setOptions(id: string, options: Record<string, unknown>) {
         const entry = setPluginOptions(id, options);
+        await reloadPluginHost();
         this.emitEvent('pluginsChanged', { operation: 'configure', id }).catch(() => {});
         return entry;
     }
 
     async setGrantedCapabilities(id: string, capabilities: PluginCapability[]) {
         const entry = setPluginGrantedCapabilities(id, capabilities);
+        await reloadPluginHost();
         this.emitEvent('pluginsChanged', { operation: 'permissions', id }).catch(() => {});
         return entry;
     }
 
     async doctor() {
+        await initializePluginHost();
         return {
+            runtime: getPluginHost().list(),
             installed: listInstalledPlugins().map((record) => verifyInstalledPlugin(record.id)),
             discovery: discoverPlugins({
                 externalPaths:
                     (this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined)?.externalPaths ?? []
             })
         };
+    }
+
+    async beforeExit(): Promise<void> {
+        await disposePluginHost();
     }
 }

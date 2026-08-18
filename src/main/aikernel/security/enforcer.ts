@@ -360,8 +360,8 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
  * - 网络访问 → ask（隐式回退）
- * - 技能读取 → allow（所有技能均可读取/加载）
- * - 技能写入 → ask（隐式回退，需用户确认）
+ * - 技能和插件读取 → allow
+ * - 技能和插件的修改或执行 → ask（隐式回退，需用户确认）
  */
 export function createDefaultPermissionRules(workspace: string): PermissionRule[] {
     const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
@@ -391,6 +391,8 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
         ...tempRules,
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
+        // 插件列表和详情读取允许，安装、卸载、启停和重载需用户确认（隐式 ask）
+        { resourceType: 'plugin', action: 'read', pathPattern: '**', effect: 'allow' },
         // 敏感路径保护规则（即使在工作空间内也需要用户确认）
         ...createSensitivePathRules(workspace)
     ];

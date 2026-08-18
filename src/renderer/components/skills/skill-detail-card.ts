@@ -52,6 +52,7 @@ export interface SkillDetailAction {
 export interface SkillDetailCardModel {
     id: string;
     name: string;
+    subtitle?: string;
     closeLabel: string;
     description?: string;
     descriptionLabel?: string;
@@ -151,6 +152,7 @@ export class SkillDetailCard extends HTMLElement {
     private render(): void {
         if (!this.shadowRoot || !this._model) return;
         const model = this._model;
+        const subtitle = model.subtitle ?? model.id;
         const color = getSkillPastel(model.name || model.id);
         const metadata = model.metadata?.length
             ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.metadataLabel ?? '')}</div><div class="detail-meta-grid">${model.metadata.map((item) => `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${escapeHtml(item.value)}</div></div>`).join('')}</div></section>`
@@ -161,7 +163,7 @@ export class SkillDetailCard extends HTMLElement {
                     `<button type="button" class="detail-action ${action.variant === 'default' || !action.variant ? '' : action.variant}" data-detail-action="${escapeHtml(action.id)}" data-detail-action-value="${escapeHtml(action.data ?? '')}">${escapeHtml(action.label)}</button>`
             )
             .join('');
-        this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><div class="detail-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(getSkillInitial(model.name || model.id))}</div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title">${escapeHtml(model.name || model.id)}</div><div class="detail-id">${escapeHtml(model.id)}</div>${model.headerExtraHtml ?? ''}</div><button type="button" class="detail-close" aria-label="${escapeHtml(model.closeLabel)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div><div class="detail-body">${model.description ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.descriptionLabel ?? '')}</div><div class="detail-desc">${escapeHtml(model.description)}</div></section>` : ''}${model.bodyHtml ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.bodyLabel ?? '')}</div><div class="detail-body-content markdown-body">${model.bodyHtml}</div></section>` : ''}${metadata}${model.extraSectionsHtml ?? ''}</div><div class="detail-footer">${actions}</div></div></div>`;
+        this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="detail-overlay"><div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="shared-skill-detail-title"><div class="detail-header info"><div class="detail-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(getSkillInitial(model.name || model.id))}</div><div class="detail-header-info"><div class="detail-name" id="shared-skill-detail-title">${escapeHtml(model.name || model.id)}</div><div class="detail-id">${escapeHtml(subtitle)}</div>${model.headerExtraHtml ?? ''}</div><button type="button" class="detail-close" aria-label="${escapeHtml(model.closeLabel)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div><div class="detail-body">${model.description ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.descriptionLabel ?? '')}</div><div class="detail-desc">${escapeHtml(model.description)}</div></section>` : ''}${model.bodyHtml ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.bodyLabel ?? '')}</div><div class="detail-body-content markdown-body">${model.bodyHtml}</div></section>` : ''}${metadata}${model.extraSectionsHtml ?? ''}</div><div class="detail-footer">${actions}</div></div></div>`;
 
         const detailOverlay = this.shadowRoot.querySelector<HTMLElement>('.detail-overlay');
         if (detailOverlay) {

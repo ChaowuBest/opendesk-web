@@ -51,6 +51,26 @@ const DATABASE_KIT_METHODS = new Set([
 ]);
 
 export class ApplicationRegistry {
+    private static applicationEventListeners = new Set<
+        (bundleName: string, eventName: string, args: unknown[]) => void | Promise<void>
+    >();
+
+    static onApplicationEvent(
+        listener: (bundleName: string, eventName: string, args: unknown[]) => void | Promise<void>
+    ): () => void {
+        this.applicationEventListeners.add(listener);
+        return () => this.applicationEventListeners.delete(listener);
+    }
+
+    private static notifyApplicationEventListeners(bundleName: string, eventName: string, args: unknown[]): void {
+        for (const listener of this.applicationEventListeners) {
+            Promise.resolve()
+                .then(() => listener(bundleName, eventName, args))
+                .catch((error) => {
+                    logger.error(`Application event listener failed: ${bundleName}:${eventName}`, error);
+                });
+        }
+    }
     static applications: Map<string, BaseApplication> = new Map();
     static externalApplicationBundles: Set<string> = new Set();
     static pendingRequests: Map<
@@ -257,6 +277,7 @@ export class ApplicationRegistry {
         if (application) {
             application.sendEventToSubscribers(eventName, ...args);
         }
+        this.notifyApplicationEventListeners(bundleName, eventName, args);
         // 转发给 todomgr worker 进行触发器匹配
         if (this.hasGlobalWorker() && bundleName !== 'todomgr') {
             this.getGlobalWorker().postMessage({
@@ -283,6 +304,7 @@ export class ApplicationRegistry {
 
         // 发送事件给订阅者
         application.sendEventToSubscribers(eventName, ...args);
+        ApplicationRegistry.notifyApplicationEventListeners(bundleName, eventName, args);
 
         // 转发给 todomgr worker 进行事件触发器匹配（避免自身事件循环）
         if (bundleName !== 'todomgr') {
