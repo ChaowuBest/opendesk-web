@@ -10,7 +10,7 @@ import {
     runPluginAfterSkillInstall,
     runPluginBeforeSkillInstall
 } from '../../../main/applications/pluginmgr/runtime/hooks.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('OpenDesk plugin request hooks', () => {
     beforeEach(async () => {

@@ -5,7 +5,7 @@ import {
     getPluginMcpServerStates,
     getPluginMcpToolsets
 } from '../../../main/applications/pluginmgr/runtime/mcp.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('PluginMcpRuntime', () => {
     const server = fileURLToPath(new URL('./fixtures/plugin-mcp-server.mjs', import.meta.url));

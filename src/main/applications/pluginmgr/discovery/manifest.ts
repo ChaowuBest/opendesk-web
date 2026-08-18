@@ -13,7 +13,7 @@ import {
     type PluginCapability,
     type PluginMcpServerDefinition,
     type PluginStaticContributions
-} from '../../../../../packages/plugin/src/index.js';
+} from '../../../../../packages/plugin-sdk/src/index.js';
 
 export interface PluginManifestContributions {
     skills?: string[];
@@ -240,8 +240,8 @@ function findManifestSkillDirectories(rootDir: string, declaredPath: string): st
         .map((entry) => path.join(resolved, entry.name))
         .filter((directory) => {
             const safeDirectory = resolveManifestPath(
-                rootDir,
-                path.relative(rootDir, directory),
+                resolved,
+                path.relative(resolved, directory),
                 'plugin.manifest_skill_path_invalid'
             );
             return (

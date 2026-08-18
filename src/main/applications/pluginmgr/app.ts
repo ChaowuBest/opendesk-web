@@ -25,7 +25,7 @@ import {
 } from './management/manager.js';
 import { setPluginGrantedCapabilities, setPluginOptions } from './management/policy.js';
 import { listPluginRecords } from './management/registry.js';
-import type { PluginCapability } from '../../../../packages/plugin/src/index.js';
+import type { PluginCapability } from '../../../../packages/plugin-sdk/src/index.js';
 import { getRuntimePluginDirectories } from './management/config.js';
 import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/paths.js';
 import { formatPluginInstallError } from './management/errors.js';

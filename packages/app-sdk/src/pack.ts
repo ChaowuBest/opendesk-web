@@ -2,6 +2,7 @@
 import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { z } from 'zod';
 
 const BUNDLE_NAME_MESSAGE =
@@ -69,7 +70,7 @@ export function packOpenDeskApp(sourceDir: string, outPath: string): void {
 function main(): void {
     const [, , command, sourceDirArg, ...rest] = process.argv;
     if (command !== 'pack' || !sourceDirArg) {
-        console.error('Usage: opendesk-appsdk pack <app-dir> --out <app.zip>');
+        console.error('Usage: opendesk-app-sdk pack <app-dir> --out <app.zip>');
         process.exit(1);
     }
     const outIndex = rest.indexOf('--out');
@@ -81,6 +82,6 @@ function main(): void {
     packOpenDeskApp(path.resolve(sourceDirArg), path.resolve(outPathArg));
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
     main();
 }

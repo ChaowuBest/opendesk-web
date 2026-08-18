@@ -17,7 +17,7 @@ import type {
     PluginSkillInstallContext,
     PluginSkillLoadBeforeOutput,
     PluginSkillLoadContext
-} from '../../../../../packages/plugin/src/index.js';
+} from '../../../../../packages/plugin-sdk/src/index.js';
 import type { ChatContextSnapshot, PermissionRequest } from '../../../aikernel/types/index.js';
 
 export type PluginBeforeToolResult =

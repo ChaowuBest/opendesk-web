@@ -5,7 +5,7 @@ import {
     OpenDeskPluginPackageError,
     validateOpenDeskPluginDirectory,
     validateOpenDeskPluginPackage
-} from '../../../../packages/plugin/src/package.js';
+} from '../../../../packages/plugin-sdk/src/package.js';
 
 describe('OpenDesk plugin package validator', () => {
     let root: string;

@@ -1,4 +1,4 @@
-import { OPENDESK_PLUGIN_CAPABILITIES, type ChatMessage } from '../../../../packages/plugin/src/index.js';
+import { OPENDESK_PLUGIN_CAPABILITIES, type ChatMessage } from '../../../../packages/plugin-sdk/src/index.js';
 
 function readPrimaryText(message: ChatMessage): string {
     if (message.role === 'compact_separator') return message.summary;

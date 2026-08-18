@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { SkillMgrApplication } from '../../../main/applications/skillmgr/app.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('SkillMgrApplication install proxy hooks', () => {
     beforeEach(async () => {

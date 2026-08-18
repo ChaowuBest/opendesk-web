@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
-const pluginPackageRoot = path.join(projectRoot, 'packages/plugin');
+const pluginPackageRoot = path.join(projectRoot, 'packages/plugin-sdk');
 const require = createRequire(import.meta.url);
 const npmCli = process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
 const tscCli = require.resolve('typescript/bin/tsc');

@@ -6,7 +6,7 @@
 import path from 'path';
 import { discoverPlugins } from '../discovery/discovery.js';
 import { getBuiltinPluginsDirectory } from './paths.js';
-import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin/src/index.js';
+import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
 import { getPluginRecord, upsertPluginRecord, type PluginRegistryRecord } from './registry.js';
 
 export interface PluginPolicyEntry {

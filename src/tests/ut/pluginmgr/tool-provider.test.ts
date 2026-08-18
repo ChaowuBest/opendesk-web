@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import { PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 import {
     applyPluginToolDefinitions,

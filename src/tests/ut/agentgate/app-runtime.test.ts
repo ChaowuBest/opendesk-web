@@ -60,7 +60,7 @@ const mockEventsCache = {
 
 // ── ESM mock（unstable_mockModule 不提升，变量已初始化） ─────
 
-jest.unstable_mockModule('../../../../packages/appsdk/src/index.js', () => ({
+jest.unstable_mockModule('../../../../packages/app-sdk/src/index.js', () => ({
     BaseApplication: class {
         bundleName: string;
         showIcon: boolean;

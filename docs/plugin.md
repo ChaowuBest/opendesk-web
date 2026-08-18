@@ -359,7 +359,7 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 发布前可校验包结构：
 
 ```bash
-opendesk-plugin validate ./opendesk-plugin-review-helper
+opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 ```
 
 ## 在 setup 中动态注册 Skill 和 MCP
@@ -530,7 +530,7 @@ GUI callMainWorld
   -> skill.install.after
 ```
 
-插件 Hook 定义在 `packages/plugin` 的 `PluginHookMap` 中，并在 `setup(context)` 内注册。Aikernel 只依赖通用
+插件 Hook 定义在 `packages/plugin-sdk` 的 `PluginHookMap` 中，并在 `setup(context)` 内注册。Aikernel 只依赖通用
 `hooks.ts`，PluginManager 在启动时注册插件桥接，因此 Aikernel 不需要直接感知插件运行时。
 
 当前运行时 Hook 包括：

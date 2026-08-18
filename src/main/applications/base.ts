@@ -21,7 +21,7 @@ import {
     type ProtocolHandlerConfig,
     type OpenDeskAppManifest,
     type OpenDeskAppPackageManifest
-} from '../../../packages/appsdk/src/index.js';
+} from '../../../packages/app-sdk/src/index.js';
 import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 

@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import { SlashCommandRegistry } from '../../../main/tui/commands/base.js';
 import { syncPluginTuiCommands } from '../../../main/applications/pluginmgr/runtime/commands.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import type { OpenDeskTUI } from '../../../main/tui/entry.js';
 
 describe('plugin TUI commands', () => {

@@ -1,7 +1,7 @@
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import { runPluginAfterToolCall, runPluginBeforeToolCall } from '../../../main/applications/pluginmgr/runtime/hooks.js';
 
 describe('OpenDesk plugin tool hooks', () => {

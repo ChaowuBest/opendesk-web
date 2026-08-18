@@ -26,7 +26,7 @@ import fs from 'fs';
 import type { Setting } from '../../utils/setting';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../../utils/shellExec.js';
-import { getOpenDeskAppHost } from '../../../../packages/appsdk/src/index.js';
+import { getOpenDeskAppHost } from '../../../../packages/app-sdk/src/index.js';
 import { logger } from '../../utils/logger.js';
 import { electron } from '../../../utils/electron.js';
 

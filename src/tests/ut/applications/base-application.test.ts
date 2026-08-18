@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { BaseApplication } from '../../../../packages/appsdk/src/index.js';
+import { BaseApplication } from '../../../../packages/app-sdk/src/index.js';
 
 class TestApplication extends BaseApplication {
     constructor() {

@@ -28,8 +28,11 @@ import type {
     PluginSkillDefinition,
     PluginMcpServerDefinition,
     PluginStaticContributions
-} from '../../../../../packages/plugin/src/index.js';
-import { OPENDESK_PLUGIN_API_VERSION, OPENDESK_PLUGIN_CAPABILITIES } from '../../../../../packages/plugin/src/index.js';
+} from '../../../../../packages/plugin-sdk/src/index.js';
+import {
+    OPENDESK_PLUGIN_API_VERSION,
+    OPENDESK_PLUGIN_CAPABILITIES
+} from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
 import { qualifyPluginToolName } from './tool-names.js';
 
@@ -677,11 +680,10 @@ export class PluginHost {
                 frontmatter: definition.frontmatter ? { ...definition.frontmatter } : undefined
             };
         }
-        const resolved = path.resolve(pluginDir, definition.directory);
         const normalizedRoot = path.resolve(pluginDir);
-        if (resolved !== normalizedRoot && !resolved.startsWith(`${normalizedRoot}${path.sep}`)) {
-            throw new Error('plugin.skill_directory_outside_root');
-        }
+        const resolved = path.isAbsolute(definition.directory)
+            ? path.resolve(definition.directory)
+            : path.resolve(pluginDir, definition.directory);
         if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
             throw new Error('plugin.skill_directory_not_found');
         }

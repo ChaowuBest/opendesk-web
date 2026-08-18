@@ -8,7 +8,7 @@ import {
     ToolCallMessagePart,
     UserMessage
 } from '../../../main/aikernel/messages.js';
-import { definePlugin } from '../../../../packages/plugin/src/index.js';
+import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { runPluginChatMessagesTransform } from '../../../main/applications/pluginmgr/runtime/hooks.js';
 import { buildRequestChatContext } from '../../../main/aikernel/adapters/context.js';

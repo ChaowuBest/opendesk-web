@@ -23,5 +23,5 @@ renderers. OpenDesk adapts the public contract to its internal `BaseTool` runtim
 Validate a plugin package before publishing it:
 
 ```bash
-opendesk-plugin validate ./my-plugin
+opendesk-plugin-sdk validate ./my-plugin
 ```

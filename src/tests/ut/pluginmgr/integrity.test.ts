@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { validateOpenDeskPluginPackage } from '../../../../packages/plugin/src/package.js';
+import { validateOpenDeskPluginPackage } from '../../../../packages/plugin-sdk/src/package.js';
 import { computePluginIntegrity } from '../../../main/applications/pluginmgr/discovery/integrity.js';
 
 describe('OpenDesk plugin distribution security', () => {

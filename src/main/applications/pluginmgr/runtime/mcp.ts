@@ -16,7 +16,7 @@ import { logger } from '../../../utils/logger.js';
 import { notifyMcpServerProvidersChanged, registerMcpServerProvider } from '../../mcpmgr/provider.js';
 import type { McpServerState } from '../../mcpmgr/common.js';
 import { getPluginHost, type VisiblePluginContribution } from './host.js';
-import type { PluginMcpServerDefinition } from '../../../../../packages/plugin/src/index.js';
+import type { PluginMcpServerDefinition } from '../../../../../packages/plugin-sdk/src/index.js';
 import { sanitizeModelToolName } from './tool-names.js';
 
 interface DiscoveredTool {
