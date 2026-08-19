@@ -31,7 +31,7 @@ import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/pa
 import { formatPluginInstallError } from './management/errors.js';
 import { t } from './locale/index.js';
 import { t as translate } from '../../../locale/index.js';
-import { getManagePluginsSkill } from './skills.js';
+import { MANAGE_PLUGINS_SKILL } from './skills.js';
 import {
     GetPluginDetailsTool,
     InstallPluginTool,
@@ -83,7 +83,7 @@ export class PluginMgrApplication extends BaseApplication {
     }
 
     async getSkills(): Promise<Skill[]> {
-        const managePluginsSkill = Skill.parseMd(getManagePluginsSkill());
+        const managePluginsSkill = Skill.parseMd(MANAGE_PLUGINS_SKILL);
         const toolset = new BaseToolset('plugin-management');
         toolset.addTool(new ListPluginsTool(this));
         toolset.addTool(new GetPluginDetailsTool(this));

@@ -9,74 +9,57 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getLocale } from '../../../locale/index.js';
-
-const ZH_CN_MANAGE_PLUGINS_SKILL = `
+export const MANAGE_PLUGINS_SKILL = `
 ---
 name: manage-plugins
-description: 管理 OpenDesk 插件，包括查询、安装、卸载、启停和重新加载
+description: 查询、校验、安装、启停、卸载和重新加载 OpenDesk 插件
 ---
 
 # OpenDesk 插件管理
 
-使用本技能附带的工具管理符合 OpenDesk 插件规范的插件。
+本技能仅负责管理已有的 OpenDesk 插件目录或安装包，不负责设计、编写或修改插件源码。
+需要开发插件时，请引导用户阅读 [OpenDesk 插件开发指南](https://opendesk.matrix.openharmony.cn/docs/plugins/development/)，不要根据本技能自行生成插件实现。
 
-## 查询
+插件会在 OpenDesk 主进程中以受信任的 Node.js 代码运行。安装或启用前必须向用户说明代码执行、依赖安装和网络访问影响，并取得用户确认。
 
-- 使用 listPlugins 查看插件来源、版本、启用状态和运行状态。
-- 使用 getPluginDetails 查看指定插件的 manifest、Skills、MCP、能力和完整性校验结果。
+## 工具路由
 
-## 安装
+- listPlugins：查询插件来源、版本、启用状态和运行状态。
+- getPluginDetails：查看指定插件的声明、贡献项和校验结果。
+- installPlugin：安装本地目录、ZIP、TGZ、HTTP/HTTPS URL 或 npm spec。安装完成后运行时会自动刷新，不要紧接着重复调用 reloadPlugins。
+- uninstallPlugin：卸载 PluginMgr 托管的 managed 插件。builtin、local 和 external 插件不能通过该工具删除。
+- setPluginEnabled：启用或禁用插件，并刷新该插件提供的能力。
+- reloadPlugins：重新发现并加载全部插件，适用于外部插件或运行时目录内容已经发生变化的情况。
 
-使用 installPlugin 安装插件。spec 支持本地目录、本地 TGZ 文件、HTTP/HTTPS URL 和 npm package spec。
-安装源必须是符合 OpenDesk 插件规范的包；npm 安装默认不会运行生命周期脚本。
+不要猜测工具归属，也不要调用上述列表之外的插件管理工具。卸载请求必须使用本技能的 uninstallPlugin，不能通过文件工具直接删除托管目录。
 
-## 卸载
+## 操作流程
 
-使用 uninstallPlugin 卸载插件。只有通过 PluginMgr 托管安装的 managed 插件可以卸载；builtin、local 和 external 插件不能通过该工具删除。
+### 查询与诊断
 
-## 启用和禁用
+1. 使用 listPlugins 定位插件及其来源和状态。
+2. 需要详细信息或排查加载失败时，使用 getPluginDetails 查看声明、校验结果和运行时诊断。
+3. 向用户报告实际查询结果，不要根据插件名称推测其能力。
 
-使用 setPluginEnabled 修改插件启用状态。该操作会重新加载插件运行时，并同步刷新插件提供的 Tools、Skills 和 MCP。
+### 安装
 
-## 重新加载
+1. 确认用户提供的安装源，说明插件代码和依赖将在本机执行。
+2. 用户确认后调用 installPlugin。不要手工复制文件或修改 PluginMgr 注册数据。
+3. 安装成功后调用 getPluginDetails，确认插件已经被发现且运行状态符合预期。
 
-当 external 插件或运行时插件目录中的文件发生变化时，使用 reloadPlugins 重新执行插件发现和注册。
+### 启用与禁用
+
+1. 先用 listPlugins 或 getPluginDetails 确认插件存在。
+2. 调用 setPluginEnabled，并把 enabled 设置为用户要求的状态。
+3. 再次查询插件，确认状态已经更新。
+
+### 卸载
+
+1. 先确认插件来源为 managed；其他来源不能通过 uninstallPlugin 删除。
+2. 向用户说明卸载会删除 PluginMgr 管理的插件副本，并在用户确认后调用 uninstallPlugin。
+3. 再次查询，确认该 managed 插件已被移除。
+
+### 重新加载
+
+只有插件文件在 PluginMgr 之外发生变化，或用户明确要求重新发现插件时，才调用 reloadPlugins。安装、启停和卸载操作本身已经刷新运行时，不需要额外重载。
 `;
-
-const EN_US_MANAGE_PLUGINS_SKILL = `
----
-name: manage-plugins
-description: Manage OpenDesk plugins, including listing, installation, removal, enablement and reload
----
-
-# OpenDesk Plugin Management
-
-Use the tools attached to this Skill to manage packages that comply with the OpenDesk plugin specification.
-
-## Inspect
-
-- Use listPlugins to inspect plugin sources, versions, enabled states and runtime states.
-- Use getPluginDetails to inspect a plugin manifest, Skills, MCP servers, capabilities and integrity verification.
-
-## Install
-
-Use installPlugin with a local directory, local TGZ file, HTTP/HTTPS URL or npm package spec.
-The source must be a valid OpenDesk plugin package. npm lifecycle scripts are not run during installation.
-
-## Uninstall
-
-Use uninstallPlugin for managed plugins. Builtin, local and external plugins are not deleted by this tool.
-
-## Enable or disable
-
-Use setPluginEnabled to change plugin state. The plugin runtime is reloaded and contributed Tools, Skills and MCP servers are refreshed.
-
-## Reload
-
-Use reloadPlugins after changing an external plugin or a plugin under a runtime plugin directory.
-`;
-
-export function getManagePluginsSkill(): string {
-    return getLocale() === 'en-US' ? EN_US_MANAGE_PLUGINS_SKILL : ZH_CN_MANAGE_PLUGINS_SKILL;
-}
