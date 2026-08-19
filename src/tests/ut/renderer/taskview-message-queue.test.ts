@@ -1560,7 +1560,7 @@ describe('task-view message queue', () => {
         );
     });
 
-    test('keeps previous usage visible until assistant progress has non-zero usage', () => {
+    test('shows estimated usage during streaming and corrects it when real usage arrives', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
@@ -1588,7 +1588,7 @@ describe('task-view message queue', () => {
                 {
                     task_status: 'running',
                     message_id: 'assistant-2',
-                    last_part: { type: 'text', rendered: 'new output' },
+                    last_part: { type: 'text', rendered: 'new output', text: 'new output' },
                     last_part_index: 0,
                     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
                 },
@@ -1597,16 +1597,19 @@ describe('task-view message queue', () => {
         ).toBe(true);
 
         expect(taskView.querySelector('#message-content-assistant-2')?.textContent).toContain('new output');
-        expect(taskView.querySelector('#message-container-assistant-1 .message-usage')).not.toBeNull();
-        expect(taskView.querySelector('#message-container-assistant-2 .message-usage')).toBeNull();
-        expect(taskView.querySelector('.usage-text')?.textContent?.trim()).toBe('已输出 34 词, 总计 46 词');
+        // 新消息流式期间立即出现按 chars/4 估算的胶囊（'new output' 11 chars → 3 词），
+        // 同时按「仅保留最新一条胶囊」的既有规则移除旧消息上的 usage
+        expect(taskView.querySelector('#message-container-assistant-1 .message-usage')).toBeNull();
+        expect(taskView.querySelector('#message-container-assistant-2 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 3 词, 总计 3 词'
+        );
 
         expect(
             taskView._renderAssistantProgress(
                 {
                     task_status: 'stopped',
                     message_id: 'assistant-2',
-                    last_part: { type: 'text', rendered: 'new output done' },
+                    last_part: { type: 'text', rendered: 'new output done', text: 'new output done' },
                     last_part_index: 0,
                     usage: { prompt_tokens: 11, completion_tokens: 5, total_tokens: 16 }
                 },
@@ -1614,11 +1617,123 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
 
+        // 真实 usage 到达后校正，旧消息上的胶囊随之移除
         expect(taskView.querySelectorAll('.message-usage')).toHaveLength(1);
         expect(taskView.querySelector('#message-container-assistant-1 .message-usage')).toBeNull();
         expect(taskView.querySelector('#message-container-assistant-2 .usage-text')?.textContent?.trim()).toBe(
             '已输出 5 词, 总计 16 词'
         );
+    });
+
+    test('renders estimated usage with output speed anchored to the current streaming part', async () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            _speedPartState: { key: string; startMs: number; partChars: number; partStartUsage: number | null } | null;
+            _speedMessageState: {
+                messageId: string;
+                messageChars: number;
+                messageUsage: { p: number; c: number; t: number } | null;
+            } | null;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        // 无 usage 时：「已输出/总计」立即按消息 chars/4 估算显示；elapsed < 500ms 时不显示速度
+        const baseTime = Date.now();
+        const dateNow = jest.spyOn(Date, 'now');
+        let now = baseTime;
+        dateNow.mockImplementation(() => now);
+
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-speed',
+                    last_part: { type: 'text', text: 'a'.repeat(40) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
+            '已输出 10 词, 总计 10 词'
+        );
+
+        now = baseTime + 1000;
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-speed',
+                    last_part: { type: 'text', text: 'a'.repeat(400) },
+                    last_part_index: 0
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        // 400 chars / 4 = 100 tokens / 1s = 100 token/s，速度内联在「已输出」之后
+        expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
+            '已输出 100 词 (100 词/秒), 总计 100 词'
+        );
+
+        // 工具 part 插入：速度锚点清零，但胶囊上已显示的内容保持原状
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-speed',
+                    last_part: { type: 'tool_call', rendered: '<div>tool</div>' },
+                    last_part_index: 1
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        expect(taskView._speedPartState).toBeNull();
+        expect(taskView._speedMessageState?.messageChars).toBe(400);
+        expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
+            '已输出 100 词 (100 词/秒), 总计 100 词'
+        );
+
+        // 下一个生成 part：速度重新锚定（elapsed 不足时保持旧速度），估算累计跨 part / 工具间隙继续
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-speed',
+                    last_part: { type: 'text', text: 'b'.repeat(200) },
+                    last_part_index: 2
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        expect(taskView._speedPartState?.key).toBe('assistant-speed:2:text');
+        // messageChars = 400 + 200 = 600 → 估算 150；速度保持上一个值 100
+        expect(taskView.querySelector('#message-container-assistant-speed .usage-text')?.textContent?.trim()).toBe(
+            '已输出 150 词 (100 词/秒), 总计 150 词'
+        );
+
+        // usage 到达后校正为真实值；速度按 usage 相对 part 基线的增量计算：
+        // baseline = 90 - round(200/4) = 40 → 增量 50 token / 1s = 50 token/s
+        now = baseTime + 2000;
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-speed',
+                    last_part: { type: 'text', text: 'b'.repeat(200) },
+                    last_part_index: 2,
+                    usage: { prompt_tokens: 10, completion_tokens: 90, total_tokens: 100 }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+        const usageEl = taskView.querySelector('#message-container-assistant-speed .usage-text');
+        expect(usageEl?.textContent?.trim()).toBe('已输出 90 词 (50 词/秒), 总计 100 词');
+        expect(usageEl?.closest('.message-usage')?.getAttribute('data-speed-value')).toBe('50');
+
+        dateNow.mockRestore();
     });
 
     test('reload renders the latest assistant usage that is not zero-only', async () => {

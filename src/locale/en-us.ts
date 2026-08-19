@@ -1880,7 +1880,8 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.edit.confirm': 'Continue',
     'renderer.taskview.edit.cancel': 'Cancel',
     'renderer.taskview.usage.title': 'Input: ${input}, Output: ${output}, Total: ${total}',
-    'renderer.taskview.usage.display': 'Output ${output} words, total ${total} words${ratio}',
+    'renderer.taskview.usage.display': 'Output ${output} words${speed}, total ${total} words${ratio}',
+    'renderer.taskview.usage.speed': ' (${speed} token/s)',
     'renderer.taskview.usage.contextRatio': ', context ratio ${pct}%',
     'renderer.taskview.usage.contextRatioExceeded':
         ', context ratio ${pct}% (exceeded, context window config is too small, response tokens exceed window size)',
