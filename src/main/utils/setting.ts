@@ -995,7 +995,7 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
- * - HarmonyOS PC: userHomeDir/Documents/OpenDesk
+ * - HarmonyOS PC: userHomeDir/Documents/OpenDesk（权限不足时回退到 userHomeDir/OpenDesk）
  * - HarmonyOS tablet: appDataDir/workspace
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
@@ -1005,6 +1005,13 @@ function getTempWorkspaceDirectory(): string {
     const harmonyRuntime = getHarmonyRuntimeEnvironment();
     if (harmonyRuntime) {
         workspacePath = getHarmonyWorkspaceDirectory(harmonyRuntime);
+        if (harmonyRuntime.userHomeDir) {
+            try {
+                return ensureDirectoryExists(workspacePath);
+            } catch {
+                workspacePath = path.posix.join(harmonyRuntime.userHomeDir, 'OpenDesk');
+            }
+        }
     } else if (process.platform === 'win32') {
         const userProfile = process.env.USERPROFILE || process.env.HOME || '';
         workspacePath = path.join(userProfile, 'opendesk');
