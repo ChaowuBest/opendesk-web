@@ -11,7 +11,7 @@ OpenDesk 是一个基于 Electron 的全能型 AI 工作站，同时提供 CLI �
 - 构建全部 (Electron): `npm run build`
 - 运行 CLI: `npm run cli`
 - 运行测试: `npm test`
-- 运行 Node runner 测试: `npm run test:node`
+- 运行 Node runner 测试: `npm run test:node` (可选项，通常仅需要检查自己修改的这部分内容对应的 Node runner 测试是否通过)
 - 代码检查: `npm run lint`
 - 代码格式化: `npm run format`
 - 架构检查: `npm run check:architecture`

@@ -220,6 +220,13 @@ const GUIConfigSchema = z.object({
     window_bounds: WindowBoundsSchema.optional()
         .default(null)
         .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存'),
+    floating_window_position: z
+        .enum(['top-left', 'top-right', 'bottom-left', 'bottom-right'])
+        .optional()
+        .default('bottom-right')
+        .describe(
+            '任务状态浮窗（card/pill）显示位置: top-left=左上角, top-right=右上角, bottom-left=左下角, bottom-right=右下角'
+        ),
     sidebar_width: z.number().min(200).max(800).optional().default(320).describe('侧边栏宽度 (px)'),
     gui_reason_display: z
         .enum(['inline', 'bubble'])
@@ -414,6 +421,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             font_preset: 'default',
             ctrl_enter_send: false,
             window_bounds: null,
+            floating_window_position: 'bottom-right',
             sidebar_width: 320,
             gui_reason_display: 'inline',
             floating_window_mode: 'card'

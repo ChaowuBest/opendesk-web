@@ -36,16 +36,20 @@ import { Setting } from '../utils/setting.js';
  * 任务状态浮窗（主进程侧窗口管理）。
  *
  * 依据设置的显示模式（pill=单行胶囊 / card=完整卡片 / 未设置=关闭）与当前是否
- * 存在活跃任务，在屏幕右上角创建常驻最前的无边框小窗展示活跃任务；浮窗开启期间
+ * 存在活跃任务，在屏幕右下角创建常驻最前的无边框小窗展示活跃任务；浮窗开启期间
  * 任务结束后保留为完成状态，直到主窗口恢复前台才关闭。pill 模式默认胶囊、获得焦点
- * 展开、失焦收回；card 模式默认完整卡片，仅手动收起。
+ * 展开、失焦收回；card 模式默认完整卡片，仅手动收起。每次启动的初始显示位置由设置
+ * floating_window_position 决定（默认右下角）；会话内用户拖拽后的位置保持到应用退出。
  */
 
 const WIDGET_WIDTH = 340;
-const WIDGET_HEIGHT = 300;
+const WIDGET_HEIGHT = 215;
 const WIDGET_COLLAPSED_WIDTH = 240;
 const WIDGET_COLLAPSED_HEIGHT = 44;
 const WIDGET_MARGIN = 28;
+
+/** 悬浮窗显示位置（与设置 gui_config.floating_window_position 对齐）。 */
+type FloatingWindowPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 export interface TaskStatusWidgetHost {
     getPreloadPath(): string;
@@ -80,6 +84,13 @@ let isCollapsed = true;
 let lastTriggerActive = false;
 /** 上一次的显示模式，用于检测设置变更。 */
 let lastMode: FloatingWindowMode = undefined;
+/**
+ * 本次会话内用户拖拽后的窗口左上角（仅存内存，不落盘，应用退出即失效）。
+ * null 表示本次会话尚未拖拽过，使用设置中的初始角。
+ */
+let sessionPosition: { x: number; y: number } | null = null;
+/** 上次程序化 setBounds 的目标左上角，用于在 moved 事件中区分用户拖拽与程序化移动。 */
+let lastProgrammaticOrigin: { x: number; y: number } | null = null;
 /**
  * 用户通过关闭菜单设置的抑制状态：
  * - dismissed：本次触发周期内不再显示（主窗口回到前台后自动恢复）；
@@ -263,24 +274,75 @@ function ensureWidgetWindow(): BrowserWindow | null {
         widgetWindow = null;
     });
 
+    // 记录用户拖拽后的位置（仅本次会话内保持，不落盘）。程序化 setBounds 的目标位置
+    // 会先写入 lastProgrammaticOrigin，moved 事件中通过位置比对区分并跳过。
+    win.on('moved', () => {
+        const bounds = win.getBounds();
+        if (lastProgrammaticOrigin && bounds.x === lastProgrammaticOrigin.x && bounds.y === lastProgrammaticOrigin.y) {
+            lastProgrammaticOrigin = null;
+            return;
+        }
+        lastProgrammaticOrigin = null;
+        sessionPosition = { x: bounds.x, y: bounds.y };
+    });
+
     host.loadWidgetPage(win);
     widgetWindow = win;
     return win;
 }
 
-function positionWidget(win: BrowserWindow): void {
+/** 读取设置中的悬浮窗显示位置，无效值回退右下角。 */
+function getFloatingWindowPosition(): FloatingWindowPosition {
+    try {
+        const guiConfig = Setting.getInstance().getData().gui_config as Record<string, unknown> | undefined;
+        const pos = guiConfig?.floating_window_position;
+        return pos === 'top-left' || pos === 'top-right' || pos === 'bottom-left' || pos === 'bottom-right'
+            ? pos
+            : 'bottom-right';
+    } catch {
+        return 'bottom-right';
+    }
+}
+
+/** 按设置中的初始角计算窗口左上角坐标（默认右下角，仅启动首显时使用）。 */
+function getWidgetOrigin(): { x: number; y: number } {
     const main = host?.getMainWindow();
     const display =
         main && !main.isDestroyed() ? screen.getDisplayMatching(main.getBounds()) : screen.getPrimaryDisplay();
-    const { x, y, width } = display.workArea;
-    // 右上角锚定：胶囊与完整面板的右上角保持一致。
-    const rightEdge = x + width - WIDGET_MARGIN;
-    const top = y + WIDGET_MARGIN;
+    const { x, y, width, height } = display.workArea;
     const widgetWidth = isCollapsed ? WIDGET_COLLAPSED_WIDTH : WIDGET_WIDTH;
     const widgetHeight = isCollapsed ? WIDGET_COLLAPSED_HEIGHT : WIDGET_HEIGHT;
-    win.setBounds({
-        x: Math.round(rightEdge - widgetWidth),
-        y: Math.round(top),
+    const left = x + WIDGET_MARGIN;
+    const top = y + WIDGET_MARGIN;
+    const right = Math.round(x + width - WIDGET_MARGIN - widgetWidth);
+    const bottom = Math.round(y + height - WIDGET_MARGIN - widgetHeight);
+    switch (getFloatingWindowPosition()) {
+        case 'top-left':
+            return { x: Math.round(left), y: Math.round(top) };
+        case 'top-right':
+            return { x: right, y: Math.round(top) };
+        case 'bottom-left':
+            return { x: Math.round(left), y: bottom };
+        case 'bottom-right':
+        default:
+            return { x: right, y: bottom };
+    }
+}
+
+/** 设置窗口 bounds，并把目标位置记为程序化移动（供 moved 事件区分用户拖拽）。 */
+function applyWidgetBounds(win: BrowserWindow, bounds: { x: number; y: number; width: number; height: number }): void {
+    lastProgrammaticOrigin = { x: bounds.x, y: bounds.y };
+    win.setBounds(bounds);
+}
+
+function positionWidget(win: BrowserWindow): void {
+    const widgetWidth = isCollapsed ? WIDGET_COLLAPSED_WIDTH : WIDGET_WIDTH;
+    const widgetHeight = isCollapsed ? WIDGET_COLLAPSED_HEIGHT : WIDGET_HEIGHT;
+    // 本次会话内用户拖拽过：保持拖拽位置；否则使用设置中的初始角。
+    const origin = sessionPosition ?? getWidgetOrigin();
+    applyWidgetBounds(win, {
+        x: origin.x,
+        y: origin.y,
         width: widgetWidth,
         height: widgetHeight
     });
@@ -422,14 +484,33 @@ function setWidgetCollapsed(collapsed: boolean): void {
         return;
     }
     const bounds = widgetWindow.getBounds();
-    // 右上角锚定：展开向左下扩展，收起向右上收拢。
-    const rightEdge = bounds.x + bounds.width;
-    const top = bounds.y;
+    // 按显示位置锚定：展开/收起保持对应的角不变。
     const widgetWidth = collapsed ? WIDGET_COLLAPSED_WIDTH : WIDGET_WIDTH;
     const widgetHeight = collapsed ? WIDGET_COLLAPSED_HEIGHT : WIDGET_HEIGHT;
-    widgetWindow.setBounds({
-        x: rightEdge - widgetWidth,
-        y: top,
+    let x = bounds.x;
+    let y = bounds.y;
+    switch (getFloatingWindowPosition()) {
+        case 'top-left':
+            // 左上角锚定：展开向右下扩展，收起向左上收拢。
+            break;
+        case 'top-right':
+            // 右上角锚定：展开向左下扩展，收起向右上收拢。
+            x = bounds.x + bounds.width - widgetWidth;
+            break;
+        case 'bottom-left':
+            // 左下角锚定：展开向右上扩展，收起向左下收拢。
+            y = bounds.y + bounds.height - widgetHeight;
+            break;
+        case 'bottom-right':
+        default:
+            // 右下角锚定：展开向左上扩展，收起向右下收拢。
+            x = bounds.x + bounds.width - widgetWidth;
+            y = bounds.y + bounds.height - widgetHeight;
+            break;
+    }
+    applyWidgetBounds(widgetWindow, {
+        x,
+        y,
         width: widgetWidth,
         height: widgetHeight
     });
@@ -447,6 +528,8 @@ function handleSettingChanged(): void {
         lastMode = mode;
         lastTriggerActive = false;
     }
+    // 注意：显示位置（floating_window_position）只决定每次启动时首次显示的初始角，
+    // 会话内用户拖拽后应保持拖拽位置，因此这里不响应位置变更。
     reevaluate();
 }
 

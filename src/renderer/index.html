@@ -317,10 +317,10 @@
                 </div>
             </splitter-widget>
 
-            <!-- 通知面板 -->
+            <!-- 通知面板（z-index 需高于模态弹窗 99999，保证弹窗内的提示可见） -->
             <notification-panel
                 id="notification-panel"
-                class="fixed top-16 right-5 z-50 flex flex-col gap-3 w-[360px] font-sans"
+                class="fixed top-16 right-5 z-[100000] flex flex-col gap-3 w-[360px] font-sans"
             ></notification-panel>
         </div>
 
