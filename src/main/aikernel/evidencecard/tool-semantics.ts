@@ -61,6 +61,8 @@ export type EvidenceToolOperation =
     | 'execute'
     | 'interact';
 
+export type EvidenceToolRepeatPolicy = 'never' | 'target';
+
 interface EvidenceToolLike {
     name: string;
 }
@@ -92,6 +94,8 @@ export interface EvidenceToolSemantics {
     target: string;
     evidenceKind: EvidenceCardEvidenceKind;
     phase: EvidenceCardPhase;
+    /** Omitted policies default to never. */
+    repeatPolicy?: EvidenceToolRepeatPolicy;
 }
 
 const KNOWN_TOOLSETS = [
@@ -447,7 +451,8 @@ function fileSemantics(invocation: ResolvedEvidenceToolInvocation): EvidenceTool
             operation: 'read',
             target: limitTarget(`file:read:${filePath ?? 'unspecified'}:${range}`),
             evidenceKind,
-            phase: 'inspect'
+            phase: 'inspect',
+            repeatPolicy: 'target'
         };
     }
     if (toolName === 'readimage' || toolName === 'askimage') {
@@ -463,7 +468,8 @@ function fileSemantics(invocation: ResolvedEvidenceToolInvocation): EvidenceTool
             operation: 'read',
             target: `file:extractText:${filePath ?? 'unspecified'}:args=${digestEvidenceValue(args)}`,
             evidenceKind: 'full_file',
-            phase: 'inspect'
+            phase: 'inspect',
+            repeatPolicy: 'target'
         };
     }
     if (['editfile', 'searchreplace'].includes(toolName)) {
@@ -499,7 +505,8 @@ function fileSemantics(invocation: ResolvedEvidenceToolInvocation): EvidenceTool
             operation: 'search',
             target: `file:glob:${root ? normalizePath(root) : 'workspace'}:pattern=${digestEvidenceValue(args.pattern ?? args)}`,
             evidenceKind: 'repo_map',
-            phase: 'localize'
+            phase: 'localize',
+            repeatPolicy: 'target'
         };
     }
     if (toolName === 'grepfiles' || toolName === 'semanticsearch') {
@@ -508,7 +515,8 @@ function fileSemantics(invocation: ResolvedEvidenceToolInvocation): EvidenceTool
             operation: 'search',
             target: `file:${toolName}:${root ? normalizePath(root) : 'workspace'}:query=${digestEvidenceValue(args.pattern ?? args.query ?? args)}`,
             evidenceKind: toolName === 'grepfiles' ? 'symbol_signature' : 'search_result',
-            phase: 'localize'
+            phase: 'localize',
+            repeatPolicy: 'target'
         };
     }
     return undefined;
@@ -530,16 +538,23 @@ function terminalSemantics(invocation: ResolvedEvidenceToolInvocation, resultTex
     if (/git\s+diff|apply_patch|patch\s+-p|diff\s+-u/i.test(command)) {
         return { operation: 'edit', target, evidenceKind: 'edit_region', phase: 'patch' };
     }
-    if (/\brg\b|grep|select-string|ripgrep|\bfind\b|\blist\b|\bls\b|get-childitem|git\s+ls-files/i.test(command)) {
+    if (/\brg\b|grep|select-string|ripgrep|\bfind\b|\bls\b|get-childitem|git\s+ls-files/i.test(command)) {
         return {
             operation: 'search',
             target,
             evidenceKind: /\brg\b|grep|select-string|ripgrep/i.test(command) ? 'symbol_signature' : 'repo_map',
-            phase: 'localize'
+            phase: 'localize',
+            repeatPolicy: 'target'
         };
     }
     if (/get-content|\bcat\b|\bsed\b|\bnl\b|\btype\b|\bhead\b|\btail\b/i.test(command)) {
-        return { operation: 'read', target, evidenceKind: 'tool_observation', phase: 'inspect' };
+        return {
+            operation: 'read',
+            target,
+            evidenceKind: 'tool_observation',
+            phase: 'inspect',
+            repeatPolicy: 'target'
+        };
     }
     if (invocation.toolName.toLowerCase() === 'checkshellstatus') {
         return { operation: 'observe', target, evidenceKind: 'external_state', phase: 'inspect' };
@@ -825,7 +840,8 @@ export function classifyOpenDeskToolSemantics(
                 operation: 'read',
                 target: `skill:load:${safeSegment(args.bundleName)}/${safeSegment(args.skillName)}`,
                 evidenceKind: 'skill_definition',
-                phase: 'inspect'
+                phase: 'inspect',
+                repeatPolicy: 'target'
             },
             toolCall
         );
@@ -875,7 +891,11 @@ export function classifyOpenDeskToolSemantics(
                     ? `web:fetch:${normalizeUrl(url)}`
                     : `web:${invocation.toolName}:query=${digestEvidenceValue(args.query ?? args)}`,
                 evidenceKind: 'search_result',
-                phase: toolName === 'webfetch' ? 'inspect' : 'localize'
+                phase: toolName === 'webfetch' ? 'inspect' : 'localize',
+                repeatPolicy:
+                    toolsetName === 'search' && (toolName === 'webfetch' || toolName.endsWith('search'))
+                        ? 'target'
+                        : undefined
             },
             toolCall
         );
@@ -888,7 +908,8 @@ export function classifyOpenDeskToolSemantics(
                 operation: isQuery ? 'read' : isList ? 'search' : 'act',
                 target: `knowledge:${safeSegment(args.providerId ?? args.provider)}/${safeSegment(args.knowledgeBaseId ?? args.id)}:${toolName}:args=${digestEvidenceValue(args)}`,
                 evidenceKind: isQuery ? 'knowledge_result' : isList ? 'external_state' : 'ui_action',
-                phase: isQuery ? 'inspect' : isList ? 'localize' : 'act'
+                phase: isQuery ? 'inspect' : isList ? 'localize' : 'act',
+                repeatPolicy: isQuery ? 'target' : undefined
             },
             toolCall
         );
@@ -899,7 +920,8 @@ export function classifyOpenDeskToolSemantics(
                 operation: toolName === 'mcpsearchtools' ? 'search' : 'read',
                 target: `mcp:${invocation.toolName}:args=${digestEvidenceValue(args)}`,
                 evidenceKind: 'skill_definition',
-                phase: toolName === 'mcpsearchtools' ? 'localize' : 'inspect'
+                phase: toolName === 'mcpsearchtools' ? 'localize' : 'inspect',
+                repeatPolicy: 'target'
             },
             toolCall
         );

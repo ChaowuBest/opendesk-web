@@ -48,6 +48,7 @@ test('file tools use typed path and range arguments for target, kind, and phase'
         { target: fullRead.target, kind: fullRead.evidenceKind, phase: fullRead.phase },
         { target: 'file:read:C:/Repo/src/a.ts:full', kind: 'full_file', phase: 'inspect' }
     );
+    assert.equal(fullRead.repeatPolicy, 'target');
     assert.deepEqual(
         { target: rangedRead.target, kind: rangedRead.evidenceKind, phase: rangedRead.phase },
         { target: 'file:read:C:/Repo/src/a.ts:lines=101..180', kind: 'function_body', phase: 'inspect' }
@@ -55,7 +56,63 @@ test('file tools use typed path and range arguments for target, kind, and phase'
     assert.match(edit.target, /^file:edit:C:\/Repo\/src\/a\.ts:region=[a-f0-9]{16}$/);
     assert.equal(edit.evidenceKind, 'edit_region');
     assert.equal(edit.phase, 'patch');
+    assert.notEqual(edit.repeatPolicy, 'target');
     assert.doesNotMatch(edit.target, /password|not-a-secret|const value/);
+});
+
+test('only explicitly stable evidence operations opt in to target repetition', () => {
+    const stableCases = [
+        makeToolCall('filemgr-extractText', { filePath: '/repo/report.pdf' }),
+        makeToolCall('filemgr-globFiles', { path: '/repo', pattern: '**/*.ts' }),
+        makeToolCall('filemgr-grepFiles', { path: '/repo', pattern: 'EvidenceCard' }),
+        makeToolCall('filemgr-semanticSearch', { path: '/repo', query: 'EvidenceCard policy' }),
+        makeToolCall('terminal-executeBash', { command: 'rg EvidenceCard src' }),
+        makeToolCall('terminal-executeBash', { command: 'Get-Content package.json' }),
+        makeToolCall('skill-manager-LoadSkill', { bundleName: 'builtin', skillName: 'use-harmony' }),
+        makeToolCall('search-webSearch', { query: 'OpenDesk EvidenceCard' }),
+        makeToolCall('search-AcademicSearch', { query: 'EvidenceCard coding agents' }),
+        makeToolCall('search-webFetch', { url: 'https://example.com/docs' }),
+        makeToolCall('knowledgebase-operate-retrieve', {
+            providerId: 'local',
+            knowledgeBaseId: 'kb',
+            query: 'EvidenceCard'
+        }),
+        makeToolCall('mcpmgr-mcpSearchTools', { query: 'filesystem read' }),
+        makeToolCall('mcpmgr-mcpGetTool', { serverId: 'filesystem', toolName: 'read_file' })
+    ];
+
+    for (const call of stableCases) {
+        assert.equal(resolveEvidenceToolSemantics(call).repeatPolicy, 'target', call.tool_name);
+    }
+});
+
+test('stateful, mutating, verification, wrapped, and unknown tools do not opt in to target repetition', () => {
+    const neverCases = [
+        makeToolCall('terminal-checkShellStatus', { pid: 1234, kill: false }),
+        makeToolCall('terminal-executeBash', { command: 'npm test' }),
+        makeToolCall('terminal-executeBash', { command: 'hdc list targets' }),
+        makeToolCall('filemgr-editFile', { filePath: '/repo/a.ts', oldString: 'a', newString: 'b' }),
+        makeToolCall('browser-navigate', { url: 'https://example.com' }),
+        makeToolCall('todomgr-TodoWrite', { todos: [] }),
+        makeToolCall('interaction-askUser', { questions: [{ question: 'Continue?' }] }),
+        makeToolCall('search-manage-listSearchTools', {}),
+        makeToolCall('skill-manager-CallSkillTool', {
+            bundleName: 'office',
+            skillName: 'documents',
+            toolName: 'readDocument',
+            toolArgs: { documentId: 'doc-1' }
+        }),
+        makeToolCall('mcpmgr-mcpCallTool', {
+            serverId: 'github',
+            toolName: 'search_code',
+            arguments: { query: 'EvidenceCard' }
+        }),
+        makeToolCall('future-tools-readSomething', { resourceId: 'resource-1' })
+    ];
+
+    for (const call of neverCases) {
+        assert.notEqual(resolveEvidenceToolSemantics(call).repeatPolicy, 'target', call.tool_name);
+    }
 });
 
 test('skill wrapper resolves its real tool identity and repaired nested arguments', () => {
@@ -191,6 +248,7 @@ test('all use-harmony sample tools have distinct typed semantics', () => {
         );
         assert.equal(semantics.evidenceKind, evidenceKind, toolName);
         assert.equal(semantics.phase, phase, toolName);
+        assert.notEqual(semantics.repeatPolicy, 'target', toolName);
         assert.doesNotMatch(semantics.target, /unknown/, toolName);
         targets.add(semantics.target);
     }

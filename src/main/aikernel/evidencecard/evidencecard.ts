@@ -661,7 +661,9 @@ export function recordEvidenceCardToolCall(
     const evidenceKind = semantics.evidenceKind;
     const phase = semantics.phase;
     const target = semantics.target;
-    const previousTargetCount = state.target_counts[target] ?? 0;
+    const repeatEligible = semantics.repeatPolicy === 'target' && toolCall.status === 'success';
+    const previousTargetCount = repeatEligible ? (state.target_counts[target] ?? 0) : 0;
+    const repeatedEvidence = repeatEligible && previousTargetCount > 0;
     const argsSummary = summarizeArgs(args);
     const originalChars = toolCall.result_storage?.original_chars ?? resultText.length;
     const visibleChars = resultText.length;
@@ -677,7 +679,9 @@ export function recordEvidenceCardToolCall(
         0,
         state.total_original_tool_result_chars - state.total_visible_tool_result_chars
     );
-    state.target_counts[target] = previousTargetCount + 1;
+    if (repeatEligible) {
+        state.target_counts[target] = previousTargetCount + 1;
+    }
 
     appendLedgerEntry(state, settings, {
         id: 'ec_' + String(state.ledger.length + 1) + '_' + Date.now().toString(36),
@@ -690,8 +694,8 @@ export function recordEvidenceCardToolCall(
         planned_budget_tokens: plannedBudget,
         actual_tokens: actualTokens,
         evidence_score: evidenceScore,
-        decision: previousTargetCount > 0 ? 'reuse' : actualTokens > plannedBudget ? 'compress' : 'collect',
-        repeated_evidence: previousTargetCount > 0,
+        decision: repeatedEvidence ? 'reuse' : actualTokens > plannedBudget ? 'compress' : 'collect',
+        repeated_evidence: repeatedEvidence,
         stop_rule: inferStopRule(phase, evidenceKind),
         args_summary: argsSummary,
         tool_name: toolCall.tool_name,
