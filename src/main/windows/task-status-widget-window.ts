@@ -357,7 +357,19 @@ function showWidgetInactiveIfStillWanted(win: BrowserWindow): void {
 
 function hideWidget(): void {
     if (widgetWindow && !widgetWindow.isDestroyed() && widgetWindow.isVisible()) {
+        const main = host?.getMainWindow();
+        // 主窗口可见但不在前台（后台/最小化）时，直接隐藏浮窗会让系统把浮窗释放的
+        // 焦点转移给主窗口，从而把它带到前台。临时禁止主窗口接收焦点，让焦点
+        // 回退到其他应用，隐藏完再恢复可聚焦（macOS 行为，见验证脚本）。
+        const mainInBackground =
+            process.platform === 'darwin' && !!main && !main.isDestroyed() && main.isVisible() && !main.isFocused();
+        if (mainInBackground) {
+            main.setFocusable(false);
+        }
         widgetWindow.hide();
+        if (mainInBackground) {
+            main.setFocusable(true);
+        }
     }
 }
 
