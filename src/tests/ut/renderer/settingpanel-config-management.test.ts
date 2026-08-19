@@ -283,4 +283,46 @@ describe('setting-panel config management', () => {
             '配置已导出为 JSON 文件'
         );
     });
+
+    test('saving model converts k-format context length and max output tokens to integers', async () => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '128k';
+        (panel.querySelector('#model-max-output-tokens-input') as HTMLInputElement).value = '256K';
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        await panel.saveModel();
+
+        expect(panel.currentData.models[0]).toMatchObject({
+            alias: 'my-model',
+            context_length: 128000,
+            max_output_tokens: 256000
+        });
+    });
+
+    test('rejects invalid k-format context length', async () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '12x';
+
+        await panel.saveModel();
+
+        expect(window.notificationAPI.sendNotification).toHaveBeenCalledWith(
+            'error',
+            '系统设置',
+            '上下文长度必须为非负整数'
+        );
+        expect(panel.currentData.models).toHaveLength(0);
+    });
 });

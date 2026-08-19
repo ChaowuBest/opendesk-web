@@ -194,7 +194,7 @@ describe('ModelConfigPage', () => {
         expect(effortField.options).not.toContain('max');
     });
 
-    test.each(['1.5', '16k', '9007199254740992'])('rejects non-integer max_output_tokens %s', (value) => {
+    test.each(['1.5', '9007199254740992'])('rejects non-integer max_output_tokens %s', (value) => {
         const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
 
         (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
@@ -210,6 +210,47 @@ describe('ModelConfigPage', () => {
 
         expect(openDeskTUI.inputArea.showPromptWidget).toHaveBeenCalled();
         expect((Setting.getInstance().getData() as any).models).toHaveLength(0);
+    });
+
+    test.each(['12x', 'abc', '16.5'])('rejects invalid context_length %s', (value) => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'bad-ctx',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: value,
+            max_output_tokens: '',
+            auto_parse_think_tags: false
+        });
+
+        expect(openDeskTUI.inputArea.showPromptWidget).toHaveBeenCalled();
+        expect((Setting.getInstance().getData() as any).models).toHaveLength(0);
+    });
+
+    test('converts k-format context length and max output tokens when saving', () => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'k-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '128k',
+            max_output_tokens: '16K',
+            auto_parse_think_tags: false
+        });
+
+        const data = Setting.getInstance().getData() as any;
+        expect(data.models).toHaveLength(1);
+        expect(data.models[0]).toMatchObject({
+            alias: 'k-model',
+            context_length: 128000,
+            max_output_tokens: 16000
+        });
     });
 
     test('leaves context length and max output tokens unset when saved empty', () => {

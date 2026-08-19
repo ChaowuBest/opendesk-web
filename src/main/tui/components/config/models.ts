@@ -12,6 +12,7 @@
 import { type Component, SelectList, type TUI } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
+import { parseTokenCount, isInvalidTokenCount } from '../../../../utils/model.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import { InfoOverlay } from '../notice.js';
 import type { OpenDeskTUI } from '../../entry.js';
@@ -321,8 +322,8 @@ export class ModelConfigPage implements Component {
             model_name: values.model_name ?? '',
             model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
             reasoning_effort: values.reasoning_effort ?? '',
-            context_length: values.context_length ? parseInt(values.context_length, 10) : undefined,
-            max_output_tokens: values.max_output_tokens ? parseInt(values.max_output_tokens, 10) : undefined,
+            context_length: values.context_length ? parseTokenCount(values.context_length) : undefined,
+            max_output_tokens: values.max_output_tokens ? parseTokenCount(values.max_output_tokens) : undefined,
             vision: values.vision === 'true' ? true : values.vision === 'false' ? false : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false
         };
@@ -412,15 +413,29 @@ export class ModelConfigPage implements Component {
             return;
         }
 
-        const parsedContextLength = parseInt(values.context_length, 10);
+        const parsedContextLength = parseTokenCount(values.context_length);
 
-        // 校验 max_output_tokens 为非负整数（与 GUI 行为一致）
+        // 校验 context_length 为非负整数或 k 格式（与 GUI 行为一致）
+        if (isInvalidTokenCount(values.context_length)) {
+            this.form?.deactivate();
+            const info = new InfoOverlay(this.openDeskTUI, {
+                title: t('config.model.validation.context_length_invalid'),
+                message: chalk.red(String(values.context_length)),
+                type: 'error',
+                allowDuringConfig: true,
+                closeLabel: t('common.close')
+            });
+            info.show(() => {
+                this.form?.activate();
+                this.tui.requestRender();
+            });
+            return;
+        }
+
+        // 校验 max_output_tokens 为非负整数或 k 格式（与 GUI 行为一致）
         const maxOutputRaw = (values.max_output_tokens ?? '').toString().trim();
-        const parsedMaxOutputTokens = maxOutputRaw === '' ? undefined : Number(maxOutputRaw);
-        if (
-            maxOutputRaw !== '' &&
-            (!/^\d+$/.test(maxOutputRaw) || !Number.isSafeInteger(parsedMaxOutputTokens) || parsedMaxOutputTokens < 0)
-        ) {
+        const parsedMaxOutputTokens = parseTokenCount(maxOutputRaw);
+        if (isInvalidTokenCount(maxOutputRaw)) {
             this.form?.deactivate();
             const info = new InfoOverlay(this.openDeskTUI, {
                 title: t('config.model.validation.max_output_tokens_invalid'),
@@ -451,7 +466,7 @@ export class ModelConfigPage implements Component {
             model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
             reasoning_effort: values.model_type === 'embedding' ? '' : (values.reasoning_effort ?? ''),
             context_length:
-                values.model_type !== 'embedding' && Number.isFinite(parsedContextLength) && parsedContextLength > 0
+                values.model_type !== 'embedding' && parsedContextLength !== undefined && parsedContextLength > 0
                     ? parsedContextLength
                     : undefined,
             max_output_tokens:

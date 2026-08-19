@@ -19,6 +19,7 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
+import { parseTokenCount, isInvalidTokenCount } from '../../utils/model.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -3017,11 +3018,11 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
-                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+                        <input id="model-context-length-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
-                        <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                        <input id="model-max-output-tokens-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
@@ -3381,9 +3382,9 @@ class SettingPanel extends HTMLElement {
         const model_type = this.normalizeModelType(this.querySelector('#model-type-input')?.value || 'chat');
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
-        const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
+        const contextLengthNum = parseTokenCount(contextLengthRaw);
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
-        const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
+        const maxOutputTokensNum = parseTokenCount(maxOutputTokensRaw);
         const visionRaw = this.querySelector('#model-vision-input')?.value;
         const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
@@ -3397,7 +3398,7 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
-        if (contextLengthRaw && (!Number.isFinite(contextLengthNum) || contextLengthNum < 0)) {
+        if (isInvalidTokenCount(contextLengthRaw)) {
             window.notificationAPI.sendNotification(
                 'error',
                 this._t('config.main.title'),
@@ -3406,10 +3407,7 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
-        if (
-            maxOutputTokensRaw &&
-            (!/^\d+$/.test(maxOutputTokensRaw) || !Number.isSafeInteger(maxOutputTokensNum) || maxOutputTokensNum < 0)
-        ) {
+        if (isInvalidTokenCount(maxOutputTokensRaw)) {
             window.notificationAPI.sendNotification(
                 'error',
                 this._t('config.main.title'),

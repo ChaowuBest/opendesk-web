@@ -36,7 +36,7 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
-import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
+import { Setting, getShortcuts, getTaskArtifactDirectory, getEnvDefaultModelInstance } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
 import { getGoalElapsedMs } from '../../common/goal/format.js';
 import { logger } from '../utils/logger.js';
@@ -674,13 +674,15 @@ export class OpenDeskTUI {
 
     public getCurrentModelAlias(): string {
         const data = Setting.getInstance().getData() as any;
+        // OPENDESK_MODEL_NAME 等环境变量指定的默认模型，优先级高于系统设置中的 default_model
+        const envModelName = getEnvDefaultModelInstance()?.model_name ?? '';
         const task = this.getActiveTask();
         if (task && this.isTaskStarted(task)) {
             task.ensureValidModelOrFallback();
-            return task.model || data.default_model || this.model || '';
+            return task.model || envModelName || data.default_model || this.model || '';
         }
         this.model = this.resolveValidChatModelAlias(this.model);
-        return this.model || data.default_model || '';
+        return this.model || envModelName || data.default_model || '';
     }
 
     public setGlobalDefaultModel(alias: string): void {
@@ -1523,8 +1525,12 @@ export class OpenDeskTUI {
         this.inputArea.statusBar.update({ workspace: currentWorkspace });
 
         // 优先使用用户配置的上下文长度
+        const envModel = getEnvDefaultModelInstance();
         if (modelCfg?.context_length && modelCfg.context_length > 0) {
             this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
+        } else if (envModel?.context_length && envModel.context_length > 0) {
+            // 环境变量显式指定的上下文长度（OPENDESK_MODEL_CONTEXT_LENGTH）
+            this.inputArea.statusBar.update({ contextSize: envModel.context_length });
         } else {
             // 先用内置表即时填充，再异步 API 覆盖
             const knownSize = lookupKnownContextSize(modelName);
@@ -1533,7 +1539,7 @@ export class OpenDeskTUI {
             }
 
             const modelInstance = aliasToUse
-                ? setting.getModelInstance(aliasToUse, 'chat')
+                ? (setting.getModelInstance(aliasToUse, 'chat') ?? envModel)
                 : setting.getDefaultModelInstance();
             if (modelInstance) {
                 fetchContextSizeFromAPI(modelInstance)
