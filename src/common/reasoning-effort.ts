@@ -18,30 +18,20 @@
  * TUI 侧的本地化通过 REASONING_EFFORT_LABEL_KEYS + t() 在消费端实现。
  */
 
-import type { ReasoningEffort } from '../main/aikernel/types/reasoning.js';
+import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../main/aikernel/types/reasoning.js';
 
+export { REASONING_EFFORT_VALUES };
 export type { ReasoningEffort };
 
 /** 写入设置/API 的值（空字符串 = 模型默认） */
-export const REASONING_EFFORT_STORAGE_VALUES = [
-    '',
-    'none',
-    'low',
-    'medium',
-    'high',
-    'max'
-] as const satisfies readonly ReasoningEffort[];
+export const REASONING_EFFORT_STORAGE_VALUES = REASONING_EFFORT_VALUES;
 
 /** 非默认（''）档位值，用于 model-context 等场景描述「模型支持的推理档位」 */
 export type ReasoningEffortLevel = Exclude<ReasoningEffort, ''>;
 
-export const REASONING_EFFORT_LEVELS = [
-    'none',
-    'low',
-    'medium',
-    'high',
-    'max'
-] as const satisfies readonly ReasoningEffortLevel[];
+export const REASONING_EFFORT_LEVELS = REASONING_EFFORT_VALUES.filter(
+    (value): value is ReasoningEffortLevel => value !== ''
+);
 
 /** storage value → locale key，供 TUI 侧 t() 查找 */
 export const REASONING_EFFORT_LABEL_KEYS: Record<string, string> = {

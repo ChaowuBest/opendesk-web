@@ -1,6 +1,6 @@
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
-import { runPluginPermissionAsk, runPluginShellEnv } from '../../../main/applications/pluginmgr/runtime/hooks.js';
+import { runPluginBeforePermissionAsk, runPluginShellEnv } from '../../../main/applications/pluginmgr/runtime/hooks.js';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 
 describe('OpenDesk plugin core hooks', () => {
@@ -32,13 +32,13 @@ describe('OpenDesk plugin core hooks', () => {
         } as TaskState;
 
         await expect(
-            runPluginPermissionAsk(task, {
+            runPluginBeforePermissionAsk(task, {
                 tool: 'terminal',
                 permissions: [{ resourceType: 'file', action: 'read', resourcePath: '/allowed' }]
             })
         ).resolves.toBe('allow');
         await expect(
-            runPluginPermissionAsk(task, {
+            runPluginBeforePermissionAsk(task, {
                 tool: 'terminal',
                 permissions: [{ resourceType: 'file', action: 'read', resourcePath: '/blocked' }]
             })

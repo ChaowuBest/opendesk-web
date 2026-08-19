@@ -16,7 +16,7 @@ import os from 'os';
 import { createRequire } from 'module';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
-import type { ReasoningEffort } from '../aikernel/types/reasoning.js';
+import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount } from '../../utils/model.js';
 
 const require = createRequire(import.meta.url);
@@ -109,7 +109,7 @@ const ModelTypeSchema = z.preprocess(
 );
 
 const ReasoningEffortSchema = z
-    .enum(['', 'none', 'low', 'medium', 'high', 'max'])
+    .enum(REASONING_EFFORT_VALUES)
     .default('')
     .describe('模型默认推理模式(空字符串表示默认)');
 

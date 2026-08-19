@@ -41,6 +41,7 @@ export type {
     PermissionResourceType,
     PermissionRule
 } from './permissions.js';
+export { REASONING_EFFORT_VALUES } from './reasoning.js';
 export type { ReasoningEffort } from './reasoning.js';
 export type {
     ToolDefinition,

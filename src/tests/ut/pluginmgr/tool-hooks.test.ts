@@ -2,7 +2,10 @@ import { ToolCall } from '../../../main/aikernel/messages.js';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
-import { runPluginAfterToolCall, runPluginBeforeToolCall } from '../../../main/applications/pluginmgr/runtime/hooks.js';
+import {
+    runPluginAfterToolCall,
+    runPluginBeforeToolCallValidate
+} from '../../../main/applications/pluginmgr/runtime/hooks.js';
 
 describe('OpenDesk plugin tool hooks', () => {
     const task = {
@@ -33,7 +36,7 @@ describe('OpenDesk plugin tool hooks', () => {
         const call = new ToolCall(0, 'call-1', 'demo', '{"value":1}');
         call.args_object = { value: 1 };
 
-        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({ operation: 'allow' });
+        await expect(runPluginBeforeToolCallValidate(task, call)).resolves.toEqual({ operation: 'allow' });
         expect(call.args_object).toEqual({ value: 2 });
     });
 
@@ -53,7 +56,7 @@ describe('OpenDesk plugin tool hooks', () => {
         const call = new ToolCall(0, 'call-1', 'demo', '{"value":1}');
         call.args_object = { value: 1 };
 
-        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({ operation: 'allow' });
+        await expect(runPluginBeforeToolCallValidate(task, call)).resolves.toEqual({ operation: 'allow' });
         expect(call.args_object).toEqual({ value: 1 });
     });
 
@@ -75,7 +78,7 @@ describe('OpenDesk plugin tool hooks', () => {
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{}');
 
-        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({
+        await expect(runPluginBeforeToolCallValidate(task, call)).resolves.toEqual({
             operation: 'deny',
             message: expect.any(String)
         });
@@ -95,7 +98,7 @@ describe('OpenDesk plugin tool hooks', () => {
         );
         const call = new ToolCall(0, 'call-1', 'demo', '{}');
 
-        await expect(runPluginBeforeToolCall(task, call)).resolves.toEqual({
+        await expect(runPluginBeforeToolCallValidate(task, call)).resolves.toEqual({
             operation: 'deny',
             message: 'blocked by policy'
         });

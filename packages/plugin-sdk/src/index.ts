@@ -96,7 +96,7 @@ export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
 export type PluginFailureMode = 'open' | 'closed';
 
-export interface PluginChatHeadersInput {
+export interface PluginChatRequestInput {
     taskId?: string;
     workspace?: string;
     modelAlias?: string;
@@ -224,11 +224,11 @@ export interface PluginStaticContributions {
 
 export interface PluginHookMap {
     'chat.headers': {
-        input: PluginChatHeadersInput;
+        input: PluginChatRequestInput;
         output: PluginChatHeadersOutput;
     };
     'chat.params': {
-        input: PluginChatHeadersInput;
+        input: PluginChatRequestInput;
         output: PluginChatParams;
     };
     'skill.load.before': {
@@ -313,7 +313,21 @@ export interface PluginHookMap {
     };
 }
 
-export type PluginHookName = keyof PluginHookMap;
+export const OPENDESK_PLUGIN_HOOK_NAMES = [
+    'chat.headers',
+    'chat.params',
+    'skill.load.before',
+    'skill.load.after',
+    'skill.install.before',
+    'skill.install.after',
+    'permission.ask',
+    'shell.env',
+    'tool.definition',
+    'tool.execute.before',
+    'tool.execute.after'
+] as const satisfies readonly (keyof PluginHookMap)[];
+
+export type PluginHookName = (typeof OPENDESK_PLUGIN_HOOK_NAMES)[number];
 
 export type PluginHookCallback<Name extends PluginHookName> = (
     input: PluginHookMap[Name]['input'],

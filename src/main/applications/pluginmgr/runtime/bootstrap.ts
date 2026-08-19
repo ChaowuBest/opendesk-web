@@ -8,19 +8,19 @@ import { GlobalState } from '../../../aikernel/states/global.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
-import type { PluginChatHeadersInput } from '../../../../../packages/plugin-sdk/src/index.js';
+import type { PluginChatRequestInput } from '../../../../../packages/plugin-sdk/src/index.js';
 import { loadPlugin, OPENDESK_RUNTIME_VERSION, type PluginCandidate } from '../discovery/loader.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
 import { getPluginRecord } from '../management/registry.js';
 import {
     runPluginAfterToolCall,
-    runPluginBeforeToolCall,
+    runPluginBeforeToolCallValidate,
     runPluginChatHeaders,
     runPluginChatParams,
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
-    runPluginPermissionAsk,
+    runPluginBeforePermissionAsk,
     runPluginShellEnv
 } from './hooks.js';
 import { applyPluginToolDefinitions } from './tool-provider.js';
@@ -108,13 +108,20 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.push(
         GlobalHooks.beforeChatModelRequest(
             async (ctx) => {
-                const input: PluginChatHeadersInput = {
+                const input: PluginChatRequestInput = {
                     taskId: ctx.task?.task_id,
                     workspace: ctx.task?.getWorkspace() || undefined,
                     modelAlias: ctx.model.model_name
                 };
-                ctx.options.extraHeaders = await runPluginChatHeaders(input, ctx.options.extraHeaders);
-                Object.assign(ctx.options, await runPluginChatParams(input, ctx.options));
+                ctx.options.extraHeaders = await runPluginChatHeaders(input, ctx.options.extraHeaders ?? {});
+                const pluginParams = await runPluginChatParams(input, {
+                    reasoningEffort: ctx.options.reasoningEffort,
+                    maxCompletionTokens: ctx.options.maxCompletionTokens
+                });
+                Object.assign(ctx.options, {
+                    reasoningEffort: pluginParams.reasoningEffort,
+                    maxCompletionTokens: pluginParams.maxCompletionTokens
+                });
             },
             { onError: 'throw' }
         )
@@ -134,7 +141,7 @@ async function initialize(): Promise<void> {
     );
     disposeAikernelHooks.push(
         GlobalHooks.beforeToolCallValidate(async ({ task, toolCall }) => {
-            return await runPluginBeforeToolCall(task, toolCall);
+            return await runPluginBeforeToolCallValidate(task, toolCall);
         })
     );
     disposeAikernelHooks.push(
@@ -153,7 +160,7 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.push(
         GlobalHooks.beforePermissionAsk(
             async ({ task, toolCall, permissions, action }) => {
-                action.decision = await runPluginPermissionAsk(task, {
+                action.decision = await runPluginBeforePermissionAsk(task, {
                     tool: toolCall.tool_name,
                     callId: toolCall.id,
                     permissions

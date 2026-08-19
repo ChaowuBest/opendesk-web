@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { z } from 'zod';
-import type { ToolDefinition } from '../../../aikernel/types/index.js';
+import { REASONING_EFFORT_VALUES, type ToolDefinition } from '../../../aikernel/types/index.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import type {
@@ -31,7 +31,8 @@ import type {
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import {
     OPENDESK_PLUGIN_API_VERSION,
-    OPENDESK_PLUGIN_CAPABILITIES
+    OPENDESK_PLUGIN_CAPABILITIES,
+    OPENDESK_PLUGIN_HOOK_NAMES
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
 import { qualifyPluginToolName } from './tool-names.js';
@@ -138,6 +139,74 @@ function validatePluginId(id: string): boolean {
     return /^[a-zA-Z][a-zA-Z0-9._-]*$/.test(id);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidToolParameters(parameters: unknown): parameters is ToolDefinition['parameters'] {
+    if (
+        !parameters ||
+        (typeof parameters !== 'object' && typeof parameters !== 'function') ||
+        typeof (parameters as { safeParse?: unknown }).safeParse !== 'function' ||
+        typeof (parameters as { toJSONSchema?: unknown }).toJSONSchema !== 'function'
+    ) {
+        return false;
+    }
+    try {
+        const parseResult = (parameters as { safeParse(value: unknown): unknown }).safeParse(undefined);
+        const jsonSchema = (parameters as { toJSONSchema(): unknown }).toJSONSchema();
+        return (
+            isRecord(parseResult) &&
+            typeof parseResult.success === 'boolean' &&
+            isRecord(jsonSchema) &&
+            jsonSchema.type === 'object'
+        );
+    } catch {
+        return false;
+    }
+}
+
+function validatePluginToolDefinition(definition: unknown): asserts definition is ToolDefinition {
+    if (!isRecord(definition)) throw new Error('plugin.tool_definition_invalid');
+
+    const name = typeof definition.name === 'string' ? definition.name.trim() : '';
+    if (!name) throw new Error('plugin.tool_name_invalid');
+    if (typeof definition.description !== 'string' || !definition.description.trim()) {
+        throw new Error(`plugin.tool_description_invalid:${name}`);
+    }
+
+    if (!isValidToolParameters(definition.parameters)) {
+        throw new Error(`plugin.tool_parameters_invalid:${name}`);
+    }
+
+    if (typeof definition.execute !== 'function') throw new Error(`plugin.tool_execute_invalid:${name}`);
+    if (
+        definition.agentIds !== undefined &&
+        (!Array.isArray(definition.agentIds) ||
+            definition.agentIds.some((agentId) => typeof agentId !== 'string' || !agentId.trim()))
+    ) {
+        throw new Error(`plugin.tool_agent_ids_invalid:${name}`);
+    }
+    if (definition.serialExecution !== undefined && typeof definition.serialExecution !== 'boolean') {
+        throw new Error(`plugin.tool_serial_execution_invalid:${name}`);
+    }
+    if (definition.getDeclaredPermissions !== undefined && typeof definition.getDeclaredPermissions !== 'function') {
+        throw new Error(`plugin.tool_permissions_invalid:${name}`);
+    }
+    if (definition.stop !== undefined && typeof definition.stop !== 'function') {
+        throw new Error(`plugin.tool_stop_invalid:${name}`);
+    }
+    if (definition.render !== undefined) {
+        if (!isRecord(definition.render)) throw new Error(`plugin.tool_render_invalid:${name}`);
+        if (definition.render.gui !== undefined && typeof definition.render.gui !== 'function') {
+            throw new Error(`plugin.tool_render_gui_invalid:${name}`);
+        }
+        if (definition.render.cli !== undefined && typeof definition.render.cli !== 'function') {
+            throw new Error(`plugin.tool_render_cli_invalid:${name}`);
+        }
+    }
+}
+
 function cloneValue<T>(value: T): T {
     try {
         return structuredClone(value);
@@ -191,13 +260,27 @@ function validateHookOutput<Name extends PluginHookName>(name: Name, output: Plu
         const decision = (output as PluginHookMap['skill.load.before']['output']).operation;
         if (decision !== 'allow' && decision !== 'deny') throw new Error('plugin.skill_load_decision_invalid');
     }
+    if (name === 'chat.headers') {
+        const headers = output as PluginHookMap['chat.headers']['output'];
+        if (
+            !headers.headers ||
+            typeof headers.headers !== 'object' ||
+            Array.isArray(headers.headers) ||
+            Object.values(headers.headers).some((value) => typeof value !== 'string')
+        ) {
+            throw new Error('plugin.chat_headers_invalid');
+        }
+    }
     if (name === 'chat.params') {
         const params = output as PluginHookMap['chat.params']['output'];
+        if (params.reasoningEffort !== undefined && !REASONING_EFFORT_VALUES.includes(params.reasoningEffort)) {
+            throw new Error('plugin.chat_params_reasoning_effort_invalid');
+        }
         if (
             params.maxCompletionTokens !== undefined &&
             (!Number.isInteger(params.maxCompletionTokens) || params.maxCompletionTokens <= 0)
         ) {
-            throw new Error('plugin.chat_params_invalid');
+            throw new Error('plugin.chat_params_max_completion_tokens_invalid');
         }
     }
     if (name === 'permission.ask') {
@@ -213,6 +296,15 @@ function validateHookOutput<Name extends PluginHookName>(name: Name, output: Plu
             Object.values(env).some((value) => value !== undefined && typeof value !== 'string')
         ) {
             throw new Error('plugin.shell_env_invalid');
+        }
+    }
+    if (name === 'tool.definition') {
+        const definition = output as PluginHookMap['tool.definition']['output'];
+        if (typeof definition.description !== 'string' || !definition.description.trim()) {
+            throw new Error('plugin.tool_definition_description_invalid');
+        }
+        if (!isValidToolParameters(definition.parameters)) {
+            throw new Error('plugin.tool_definition_parameters_invalid');
         }
     }
 }
@@ -537,7 +629,13 @@ export class PluginHost {
                     callback: PluginHookCallback<Name>,
                     hookOptions?: PluginHookRegistrationOptions
                 ) => {
+                    if (!(OPENDESK_PLUGIN_HOOK_NAMES as readonly string[]).includes(name)) {
+                        throw new Error(`plugin.hook_unknown:${String(name)}`);
+                    }
                     addCapability('hook');
+                    if (typeof callback !== 'function') {
+                        throw new Error(`plugin.hook_callback_invalid:${String(name)}`);
+                    }
                     const record: HookRecord<Name> = {
                         pluginKey: entry.key,
                         pluginId: entry.id,
@@ -562,6 +660,7 @@ export class PluginHost {
             tools: {
                 register: <T extends z.ZodType>(definition: ToolDefinition<T>) => {
                     addCapability('tool');
+                    validatePluginToolDefinition(definition);
                     const name = qualifyPluginToolName(entry.id, definition.name);
                     const collides = Array.from(this.tools.values()).some((record) => record.definition.name === name);
                     if (collides) {
@@ -585,6 +684,9 @@ export class PluginHost {
                 register: (definition: PluginSkillDefinition) => {
                     this.validateNamedContribution('skill', definition.name, definition.description);
                     addCapability('skill');
+                    if (typeof definition.body !== 'string') {
+                        throw new Error(`plugin.skill_body_invalid:${definition.name}`);
+                    }
                     const normalized = this.normalizeSkillDefinition(
                         definition,
                         path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory())
@@ -620,6 +722,9 @@ export class PluginHost {
                 register: (definition: PluginCommandDefinition) => {
                     this.validateNamedContribution('command', definition.name, definition.description);
                     addCapability('command');
+                    if (typeof definition.execute !== 'function') {
+                        throw new Error(`plugin.command_execute_invalid:${definition.name}`);
+                    }
                     const normalized = normalizeToolName(entry.id, definition.name);
                     return this.registerContribution(
                         this.commands,
@@ -633,6 +738,7 @@ export class PluginHost {
             events: {
                 onApplication: (filter: PluginApplicationEventFilter, callback: PluginApplicationEventCallback) => {
                     addCapability('event');
+                    if (typeof callback !== 'function') throw new Error('plugin.event_callback_invalid');
                     const record: ApplicationEventRecord = {
                         pluginKey: entry.key,
                         pluginId: entry.id,

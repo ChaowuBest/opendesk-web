@@ -486,7 +486,7 @@ discover
   -> import plugin
   -> validate API version, capability grants and options
   -> register static contributions
-  -> setup(context)
+  -> setup(ctx)
 ```
 
 `setup` 失败会释放本次激活已创建的注册项。插件停用或宿主重载时，Hook、工具、Skill、MCP、
@@ -530,26 +530,26 @@ GUI callMainWorld
   -> skill.install.after
 ```
 
-插件 Hook 定义在 `packages/plugin-sdk` 的 `PluginHookMap` 中，并在 `setup(context)` 内注册。Aikernel 只依赖通用
-`hooks.ts`，PluginManager 在启动时注册插件桥接，因此 Aikernel 不需要直接感知插件运行时。
+插件 Hook 定义在 `packages/plugin-sdk` 的 `PluginHookMap` 中，并在 `setup(ctx)` 内注册。
 
 当前运行时 Hook 包括：
 
-- `chat.headers`：为当前模型请求追加 HTTP Header。
-- `chat.params`：调整推理强度和最大输出 token。
-- `chat.message`：变换发送给模型的单条文本消息。
-- `chat.messages.transform`：变换当前请求的完整消息列表。
+- `chat.headers`：在当前模型请求前追加或改写 HTTP Header。
+- `chat.params`：在当前模型请求前调整推理强度和最大输出 token。
 - `skill.load.before`：在 Agent 明确加载某个 Skill 时触发，可通过 `output.operation = 'deny'` 拒绝本次加载。
 - `skill.load.after`：某个 Skill 成功加载并生成完整正文后触发，仅用于观测和审计。
+- `skill.install.before`：用户 Skill 安装前触发，可拒绝安装。
+- `skill.install.after`：用户 Skill 安装成功后触发，仅用于观测和审计。
 - `tool.definition`：调整工具在模型侧可见的描述和参数 Schema。
 - `tool.execute.before`：在权限检查前修改工具参数或拒绝本次执行。
 - `tool.execute.after`：在工具完成后修改状态、文本结果或结构化结果。
 - `permission.ask`：对权限请求返回 `ask`、`allow` 或 `deny`。
 - `shell.env`：为终端 Shell 请求调整环境变量。
 
-`chat.messages.transform` 接收到的是当前模型请求的临时视图，不是任务持久化历史。该视图已经包含上下文压缩、partial
-assistant 裁剪、request-time tool result override 和本次请求 tail；插件可以修改它，但修改只影响当前模型请求，
-不会写回任务的原始 `ChatContext`。工具集会保留在变换后的上下文中。
+当前插件 API 暂不提供 `chat.message` 和 `chat.messages.transform`。JavaScript 插件注册未知 Hook 名时会在
+`setup` 阶段失败；TypeScript 插件可以使用 `PluginHookName` 或 `OPENDESK_PLUGIN_HOOK_NAMES` 获得同一套有效名称。
+`chat.headers` 和 `chat.params` 共享 `PluginChatRequestInput`，但使用独立输出对象并依次执行。单个 Hook
+回调失败时，只回滚该 Hook 的修改；`chat.headers` 不会改写模型参数，`chat.params` 也不会改写 Header。
 
 `skill.load.before` 和 `skill.load.after` 只对应一次具体的 Skill 加载请求，例如 Agent 调用 `LoadSkill` 或用户通过
 `/skill-name` 预加载。Skill 列举、目录扫描、registry refresh，以及 `CallSkillTool` 调用已加载 Skill 的内部工具，
@@ -575,8 +575,7 @@ assistant 裁剪、request-time tool result override 和本次请求 tail；插�
 ctx.hooks.on('permission.ask', callback, { failureMode: 'closed' });
 ```
 
-`failureMode` 与 Aikernel `HookOptions.onError` 不同。前者由 PluginHost 决定插件回调失败后是否抛错，后者是宿主内部
-通用 Hook 的调度策略，控制 Aikernel 桥接回调失败后继续还是抛出；插件作者只需要配置 `failureMode`。
+插件 API 不提供其他错误调度选项；插件作者只需要按上述语义配置 `failureMode`。
 
 通过 `ctx.hooks.on`、`ctx.tools.register`、`ctx.skills.register`、`ctx.mcps.registerServer`、`ctx.commands.register`
 和 `ctx.events.onApplication` 创建的注册项，都会在插件停用、重载或宿主退出时按逆序释放。

@@ -3,12 +3,14 @@ import {
     REASONING_EFFORT_STORAGE_VALUES,
     buildSupportedEffortValues
 } from '../../../common/reasoning-effort.js';
+import { REASONING_EFFORT_VALUES } from '../../../main/aikernel/types/reasoning.js';
 import { lookupKnownReasoningEfforts, resolveModelReasoningEfforts } from '../../../main/utils/model-context.js';
 
 describe('model-context reasoning efforts', () => {
     test('系统档位包含 none/low/medium/high/max', () => {
         expect(REASONING_EFFORT_LEVELS).toEqual(['none', 'low', 'medium', 'high', 'max']);
         expect(REASONING_EFFORT_STORAGE_VALUES).toEqual(['', 'none', 'low', 'medium', 'high', 'max']);
+        expect(REASONING_EFFORT_STORAGE_VALUES).toBe(REASONING_EFFORT_VALUES);
     });
 
     test('内置表中配置了限制档位的模型只返回其子集', () => {

@@ -7,7 +7,8 @@ export {
     definePlugin,
     tool,
     OPENDESK_PLUGIN_API_VERSION,
-    OPENDESK_PLUGIN_CAPABILITIES
+    OPENDESK_PLUGIN_CAPABILITIES,
+    OPENDESK_PLUGIN_HOOK_NAMES
 } from '../../../../packages/plugin-sdk/src/index.js';
 export type {
     OpenDeskPlugin,
@@ -15,7 +16,7 @@ export type {
     PluginApplicationEventCallback,
     PluginApplicationEventFilter,
     PluginCapability,
-    PluginChatHeadersInput,
+    PluginChatRequestInput,
     PluginChatHeadersOutput,
     PluginChatParams,
     PluginSkillLoadContext,
@@ -80,7 +81,7 @@ export {
     runPluginBeforeSkillInstall,
     runPluginAfterSkillInstall
 } from './runtime/hooks.js';
-export { runPluginPermissionAsk, runPluginShellEnv } from './runtime/hooks.js';
+export { runPluginBeforePermissionAsk, runPluginShellEnv } from './runtime/hooks.js';
 export {
     applyPluginToolDefinitions,
     CompositeToolsetProvider,
