@@ -12,6 +12,9 @@ import { parseHTML } from 'linkedom';
  * 会把缩放触发的 wheel/scroll 事件误判为“用户手动滚动”，从而错误解除锁定并弹出菜单。
  */
 describe('task-view 滚动锁定状态与缩放事件', () => {
+    /** 最近一次创建 TaskView 时注册的 ResizeObserver 回调（模拟聊天区尺寸变化）。 */
+    let resizeObserverCallback: (() => void) | null = null;
+
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
         Object.assign(globalThis, {
@@ -31,6 +34,18 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
                 return 0;
             },
             cancelAnimationFrame: () => undefined
+        });
+        // 模拟 ResizeObserver：捕获回调，供测试手动触发（模拟放大预览等布局变化）
+        Object.defineProperty(window, 'ResizeObserver', {
+            value: class {
+                constructor(callback: () => void) {
+                    resizeObserverCallback = callback;
+                }
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            },
+            configurable: true
         });
         Object.defineProperty(globalThis, 'navigator', {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
@@ -327,5 +342,93 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         dispatchScroll(history);
 
         expect(taskView.auto_scrolling_to_bottom).toBe(true);
+    });
+
+    // ------------------------------------------------------------------
+    // 放大预览场景：侧边栏展开/收起、预览卡片加载等布局变化会导致聊天区
+    // 尺寸变化，锁定状态下应重新滚到底部；预览区域内的键盘滚动不应被
+    // 误判为聊天区滚动意图。
+    // ------------------------------------------------------------------
+
+    /** 直接调用 keydown 意图监听，模拟指定焦点目标（linkedom 无法自定义 dispatchEvent target）。 */
+    function dispatchKeyDownWithTarget(taskView: any, key: string, target: unknown) {
+        taskView._historyScrollKeydownHandler({ key, ctrlKey: false, metaKey: false, target });
+    }
+
+    test('放大预览（聊天区尺寸变化）后，锁定状态下重新滚到底部', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        mockScrolledAway(history); // scrollTop=1000, scrollHeight=3000, clientHeight=500
+
+        // 模拟侧边栏展开导致的聊天区尺寸变化
+        resizeObserverCallback?.();
+
+        // 锁定状态保持
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        // 且视图被重新滚到底部（target = 3000 - 500 = 2500）
+        expect(history.scrollTop).toBe(2500);
+    });
+
+    test('放大预览后未锁定底部时，尺寸变化不强制滚动', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(false);
+        mockScrolledAway(history);
+
+        resizeObserverCallback?.();
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
+        expect(history.scrollTop).toBe(1000);
+    });
+
+    test('焦点在右侧边栏预览中时键盘滚动不标记意图，不解除锁定', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        mockScrolledAway(history);
+
+        // 复用 render() 已创建的右侧边栏（task-artifacts），在其中放置获得焦点的元素
+        const artifacts = taskView.querySelector('#task-task-scroll-1-artifacts');
+        const focusTarget = document.createElement('button');
+        artifacts.appendChild(focusTarget);
+
+        dispatchKeyDownWithTarget(taskView, 'PageDown', focusTarget);
+        dispatchScroll(history);
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+    });
+
+    test('焦点在画中画浮窗中时键盘滚动不标记意图，不解除锁定', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        mockScrolledAway(history);
+
+        const pip = document.createElement('div');
+        pip.className = 'browser-pip';
+        taskView.appendChild(pip);
+        const focusTarget = document.createElement('button');
+        pip.appendChild(focusTarget);
+
+        dispatchKeyDownWithTarget(taskView, 'ArrowDown', focusTarget);
+        dispatchScroll(history);
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+    });
+
+    test('焦点在聊天区消息内时键盘滚动仍正常解除锁定', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        mockScrolledAway(history);
+
+        const msg = document.createElement('div');
+        history.appendChild(msg);
+
+        dispatchKeyDownWithTarget(taskView, 'PageDown', msg);
+        dispatchScroll(history);
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
     });
 });

@@ -400,6 +400,9 @@ class TaskView extends HTMLElement {
     /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
     _historyScrollKeydownHandler = null;
 
+    /** @type {ResizeObserver | null} 聊天区尺寸变化监听：布局变化（侧边栏展开/收起等）后保持底部锁定。 */
+    _historyResizeObserver = null;
+
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollControls = this.querySelector('#taskview-scroll-controls');
@@ -418,6 +421,22 @@ class TaskView extends HTMLElement {
     /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
     _hasRecentUserScrollIntent() {
         return Date.now() - this._lastUserScrollTs < 300;
+    }
+
+    /**
+     * 判断键盘事件目标是否位于预览区域（右侧边栏、画中画浮窗）。
+     * 这些区域拥有独立的滚动容器，其中的键盘滚动（PageDown/方向键等）
+     * 作用于预览内容而非聊天历史，不应被标记为聊天区滚动意图——
+     * 否则放大预览时滚动预览内容会把聊天区的底部锁定误解除。
+     */
+    _isKeydownInPreviewArea(target) {
+        if (!target || typeof target.closest !== 'function') return false;
+        // 右侧边栏（task-artifacts 宿主，含其 shadow DOM 内的键盘事件）
+        const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+        if (artifacts && artifacts.contains(target)) return true;
+        // 浏览器画中画浮窗
+        if (target.closest('.browser-pip')) return true;
+        return false;
     }
 
     getHistoryContainer() {
@@ -3984,6 +4003,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('keydown', this._historyScrollKeydownHandler);
             this._historyScrollKeydownHandler = null;
         }
+        if (this._historyResizeObserver) {
+            this._historyResizeObserver.disconnect();
+            this._historyResizeObserver = null;
+        }
         if (this._poolSegObserver) {
             this._poolSegObserver.disconnect();
             this._poolSegObserver = null;
@@ -4342,6 +4365,21 @@ class TaskView extends HTMLElement {
         // 触摸滚动视为用户主动滚动；仅在真实移动（touchmove）时标记，
         // 避免纯点击（touchstart 无位移）留下滚动意图痕迹
         chatHistory.addEventListener('touchmove', () => this._markUserScrollIntent(), { passive: true });
+        // 聊天区尺寸变化（放大预览时侧边栏展开/收起、预览卡片加载、窗口缩放等引起
+        // 的布局变化）会使视图偏离底部；锁定底部时重新滚到底部，避免“锁定但不在底部”
+        // 的失效。重复调用 setUpEventListeners 时先释放旧观察器，避免累积
+        if (this._historyResizeObserver) {
+            this._historyResizeObserver.disconnect();
+            this._historyResizeObserver = null;
+        }
+        if (typeof window.ResizeObserver === 'function') {
+            this._historyResizeObserver = new window.ResizeObserver(() => {
+                if (this.auto_scrolling_to_bottom) {
+                    this.tryScrollToEnd();
+                }
+            });
+            this._historyResizeObserver.observe(chatHistory);
+        }
         // 命中右侧滚动条区域的拖拽（鼠标）视为滚动意图，覆盖滚动条拖动场景
         chatHistory.addEventListener('pointerdown', (e) => {
             // 触控笔（pen）在内容区按下基本为绘制/拖动，且可能不派发 touchmove，直接视为滚动意图
@@ -4364,6 +4402,11 @@ class TaskView extends HTMLElement {
             if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
             const target = e.target;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
+                return;
+            }
+            // 焦点位于预览区域（右侧边栏/画中画）时，键盘滚动作用于预览自身，
+            // 不应标记为聊天区滚动意图（否则放大预览时滚动预览内容会误解除底部锁定）
+            if (this._isKeydownInPreviewArea(target)) {
                 return;
             }
             const key = e.key;
