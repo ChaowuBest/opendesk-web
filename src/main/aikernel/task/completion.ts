@@ -789,8 +789,10 @@ export async function processTaskCompletion(
                 task.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
 
                 if (assistant_message.content.length > 0) {
-                    // 仅回退最后一个未完成的 part，保留已完成的 parts
-                    assistant_message.rollbackLastPart();
+                    // 回滚到本轮 completion 开始时的状态：清除本次请求新增的所有 parts，
+                    // 保留之前 round 已完成的文本与已执行的 tool_call（含结果），
+                    // 避免模型重试时丢失已发生副作用的工具调用记录。
+                    assistant_message.rollbackToRoundStart();
                     // 重新计算 lastSentTextPartIndex：找到最后一个 text part 的索引
                     lastSentTextPartIndex = -1;
                     for (let i = assistant_message.content.length - 1; i >= 0; i--) {
