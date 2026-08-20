@@ -5,7 +5,7 @@ import {
     parseEvidenceToolCallArgs,
     resolveEvidenceToolInvocation,
     resolveEvidenceToolSemantics
-} from '../../../main/aikernel/evidencecard/tool-semantics.js';
+} from '../../../main/utils/evidencecard.js';
 
 function makeToolCall(
     toolName: string,

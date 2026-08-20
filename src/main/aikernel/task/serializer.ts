@@ -22,7 +22,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import { TaskState } from '../states/tasks.js';
 import type { TaskManagerState } from './manager.js';
 import { logger } from '../../utils/logger.js';
-import { normalizeEvidenceCardState } from '../evidencecard/evidencecard.js';
+import { normalizeEvidenceCardState } from '../../utils/evidencecard.js';
 
 // ═══════════════════ Helpers ═══════════════════
 

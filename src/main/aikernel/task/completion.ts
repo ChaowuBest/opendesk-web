@@ -28,7 +28,7 @@ import {
     getEvidenceCardPreviewOptions,
     getEvidenceCardSettings,
     recordEvidenceCardLLMUsage
-} from '../evidencecard/evidencecard.js';
+} from '../../utils/evidencecard.js';
 import { AssistantMessage, AssistantMessagePart, ToolCall, AssistantResponse } from '../messages.js';
 import type { BaseRuntimeMetadata as RuntimeMetadata } from '../types/index.js';
 import type { ActiveContextView } from '../compaction/types.js';

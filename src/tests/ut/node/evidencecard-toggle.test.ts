@@ -7,7 +7,7 @@ import {
     createEvidenceCardState,
     recordEvidenceCardToolCall,
     syncEvidenceCardTaskState
-} from '../../../main/aikernel/evidencecard/evidencecard.js';
+} from '../../../main/utils/evidencecard.js';
 
 test.beforeEach(() => {
     Setting.clearCache();
