@@ -1,4 +1,3 @@
-import { jest } from '@jest/globals';
 import { OfficeTaskSessionRegistry } from '../../../main/office/officeTaskSessions.js';
 
 class FakeContents {
@@ -79,31 +78,26 @@ describe('OfficeTaskSessionRegistry', () => {
     });
 
     test('waits for the requested task and file to become bound', async () => {
-        jest.useFakeTimers();
-        try {
-            const registry = new OfficeTaskSessionRegistry<FakeContents>();
-            const contents = new FakeContents(11);
-            const pending = registry.waitFor('slides', 'task-a', '/workspace/a.pptx', 1_000);
+        const registry = new OfficeTaskSessionRegistry<FakeContents>();
+        const contents = new FakeContents(11);
+        const pending = registry.waitFor('slides', 'task-a', '/workspace/a.pptx');
 
-            registry.bind('slides', 'task-b', '/workspace/a.pptx', contents);
-            registry.bind('slides', 'task-a', '/workspace/other.pptx', contents);
-            registry.bind('slides', 'task-a', '/workspace/a.pptx', contents);
+        registry.bind('slides', 'task-b', '/workspace/a.pptx', contents);
+        registry.bind('slides', 'task-a', '/workspace/other.pptx', contents);
+        registry.bind('slides', 'task-a', '/workspace/a.pptx', contents);
 
-            await expect(pending).resolves.toMatchObject({
-                taskId: 'task-a',
-                kind: 'slides',
-                filePath: '/workspace/a.pptx',
-                contents
-            });
-        } finally {
-            jest.useRealTimers();
-        }
+        await expect(pending).resolves.toMatchObject({
+            taskId: 'task-a',
+            kind: 'slides',
+            filePath: '/workspace/a.pptx',
+            contents
+        });
     });
 
-    test('cancels a pending session wait when the file switch is declined', async () => {
+    test('cancels a pending session wait when the owning request is aborted', async () => {
         const registry = new OfficeTaskSessionRegistry<FakeContents>();
         const controller = new AbortController();
-        const pending = registry.waitFor('slides', 'task-a', '/workspace/a.pptx', 30_000, controller.signal);
+        const pending = registry.waitFor('slides', 'task-a', '/workspace/a.pptx', controller.signal);
 
         controller.abort();
 

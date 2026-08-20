@@ -33,7 +33,6 @@ export class OfficeTaskSessionRegistry<T extends OfficeSessionContents> {
         Set<{
             filePath: string;
             resolve: (session: TaskBoundOfficeSession<T> | undefined) => void;
-            timer: ReturnType<typeof setTimeout>;
             abortSignal?: AbortSignal;
             abortListener?: () => void;
         }>
@@ -68,7 +67,6 @@ export class OfficeTaskSessionRegistry<T extends OfficeSessionContents> {
         if (waiters) {
             for (const waiter of [...waiters]) {
                 if (waiter.filePath !== filePath) continue;
-                clearTimeout(waiter.timer);
                 if (waiter.abortSignal && waiter.abortListener) {
                     waiter.abortSignal.removeEventListener('abort', waiter.abortListener);
                 }
@@ -99,7 +97,6 @@ export class OfficeTaskSessionRegistry<T extends OfficeSessionContents> {
         kind: OfficeTaskSessionKind,
         taskId: string,
         filePath: string,
-        timeoutMs: number,
         abortSignal?: AbortSignal
     ): Promise<TaskBoundOfficeSession<T> | undefined> {
         const sessionKey = this.key(kind, taskId);
@@ -110,7 +107,6 @@ export class OfficeTaskSessionRegistry<T extends OfficeSessionContents> {
         return new Promise((resolve) => {
             const waiters = this.waitersByTask.get(sessionKey) ?? new Set();
             const finish = (session: TaskBoundOfficeSession<T> | undefined): void => {
-                clearTimeout(waiter.timer);
                 if (waiter.abortSignal && waiter.abortListener) {
                     waiter.abortSignal.removeEventListener('abort', waiter.abortListener);
                 }
@@ -121,13 +117,11 @@ export class OfficeTaskSessionRegistry<T extends OfficeSessionContents> {
             const waiter: {
                 filePath: string;
                 resolve: (session: TaskBoundOfficeSession<T> | undefined) => void;
-                timer: ReturnType<typeof setTimeout>;
                 abortSignal?: AbortSignal;
                 abortListener?: () => void;
             } = {
                 filePath,
                 resolve: finish,
-                timer: setTimeout(() => finish(undefined), timeoutMs),
                 abortSignal
             };
             if (abortSignal) {

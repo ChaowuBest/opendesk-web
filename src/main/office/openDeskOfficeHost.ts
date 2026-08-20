@@ -267,6 +267,10 @@ export async function openOpenDeskOfficeTaskFile(
     }
     const requestId = randomUUID();
     const waitController = new AbortController();
+    const waitSignal = AbortSignal.any([
+        waitController.signal,
+        AbortSignal.timeout(OPEN_OFFICE_TASK_TIMEOUT_MS)
+    ]);
     const rendererResult = new Promise<OfficeTaskFileRendererResult>((resolve) => {
         pendingOfficeTaskFileResults.set(requestId, resolve);
     });
@@ -285,7 +289,7 @@ export async function openOpenDeskOfficeTaskFile(
 
         const outcome = await Promise.race([
             officeTaskSessions
-                .waitFor(kind, taskId, resolvedPath, OPEN_OFFICE_TASK_TIMEOUT_MS, waitController.signal)
+                .waitFor(kind, taskId, resolvedPath, waitSignal)
                 .then((session) => ({ type: 'session' as const, session })),
             rendererResult.then((status) => ({ type: 'renderer' as const, status }))
         ]);
