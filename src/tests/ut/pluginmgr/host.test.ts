@@ -3,6 +3,79 @@ import { PluginHookError, PluginHost } from '../../../main/applications/pluginmg
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
 describe('PluginHost', () => {
+    test('JavaScript 插件注册未知 hook 名时激活失败', async () => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'unknown-hook',
+                capabilities: ['hook'],
+                setup(ctx) {
+                    const on = ctx.hooks.on as unknown as (name: string, callback: () => void) => void;
+                    on('chat.message', () => {});
+                }
+            }),
+            { origin: 'test:unknown-hook' }
+        );
+
+        expect(entry.status).toBe('error');
+        expect(entry.diagnostics).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    code: 'plugin.setup_failed',
+                    detail: 'plugin.hook_unknown:chat.message'
+                })
+            ])
+        );
+    });
+
+    test.each([
+        [
+            'Hook callback',
+            ['hook'],
+            (ctx: any) => ctx.hooks.on('chat.headers', 'not-a-function'),
+            'plugin.hook_callback_invalid:chat.headers'
+        ],
+        [
+            'Command execute',
+            ['command'],
+            (ctx: any) =>
+                ctx.commands.register({ name: 'broken-command', description: 'Broken command', execute: 'invalid' }),
+            'plugin.command_execute_invalid:broken-command'
+        ],
+        [
+            'Event callback',
+            ['event'],
+            (ctx: any) => ctx.events.onApplication({}, 'not-a-function'),
+            'plugin.event_callback_invalid'
+        ],
+        [
+            'Skill body',
+            ['skill'],
+            (ctx: any) => ctx.skills.register({ name: 'broken-skill', description: 'Broken skill', body: 42 }),
+            'plugin.skill_body_invalid:broken-skill'
+        ]
+    ])('启用阶段拒绝无效注册回调或必要字段：%s', async (_caseName, capabilities, register, expectedError) => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'invalid-registration',
+                capabilities: capabilities as any,
+                setup(ctx) {
+                    register(ctx);
+                }
+            }),
+            { origin: 'test:invalid-registration' }
+        );
+
+        expect(entry.status).toBe('error');
+        expect(entry.diagnostics).toContainEqual(
+            expect.objectContaining({ code: 'plugin.setup_failed', detail: expectedError })
+        );
+        expect(host.listSkills()).toEqual([]);
+        expect(host.listCommands()).toEqual([]);
+        expect(await host.trigger('chat.headers', {}, { headers: {} })).toEqual({ headers: {} });
+    });
+
     test('按插件激活顺序执行 hook，并共享 output 修改', async () => {
         const host = new PluginHost();
         await host.activate(
@@ -172,6 +245,73 @@ describe('PluginHost', () => {
 
         expect(entry.status).toBe('error');
         expect(entry.diagnostics[0]?.code).toBe('plugin.setup_failed');
+        expect(host.listTools()).toEqual([]);
+    });
+
+    test.each([
+        [
+            '缺少 parameters',
+            {
+                name: 'echo',
+                description: 'Echo text',
+                args: { text: 'string' },
+                async execute() {
+                    return 'echo';
+                }
+            },
+            'plugin.tool_parameters_invalid:echo'
+        ],
+        [
+            'parameters 不是 Zod Schema',
+            {
+                name: 'echo',
+                description: 'Echo text',
+                parameters: { type: 'object' },
+                async execute() {
+                    return 'echo';
+                }
+            },
+            'plugin.tool_parameters_invalid:echo'
+        ],
+        [
+            'parameters 根类型不是对象',
+            {
+                name: 'echo',
+                description: 'Echo text',
+                parameters: z.string(),
+                async execute() {
+                    return 'echo';
+                }
+            },
+            'plugin.tool_parameters_invalid:echo'
+        ],
+        [
+            '缺少 execute',
+            {
+                name: 'echo',
+                description: 'Echo text',
+                parameters: z.object({ text: z.string() })
+            },
+            'plugin.tool_execute_invalid:echo'
+        ]
+    ])('启用阶段拒绝无效 Tool：%s', async (_caseName, definition, expectedError) => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'invalid-tool',
+                capabilities: ['tool'],
+                setup(ctx) {
+                    const register = ctx.tools.register as unknown as (value: unknown) => void;
+                    register(definition);
+                }
+            }),
+            { origin: 'test:invalid-tool' }
+        );
+
+        expect(entry.status).toBe('error');
+        expect(entry.diagnostics).toContainEqual(
+            expect.objectContaining({ code: 'plugin.setup_failed', detail: expectedError })
+        );
         expect(host.listTools()).toEqual([]);
     });
 

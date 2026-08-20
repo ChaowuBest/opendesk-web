@@ -1,4 +1,8 @@
-import { OPENDESK_PLUGIN_CAPABILITIES, type ChatMessage } from '../../../../packages/plugin-sdk/src/index.js';
+import {
+    OPENDESK_PLUGIN_CAPABILITIES,
+    OPENDESK_PLUGIN_HOOK_NAMES,
+    type ChatMessage
+} from '../../../../packages/plugin-sdk/src/index.js';
 
 function readPrimaryText(message: ChatMessage): string {
     if (message.role === 'compact_separator') return message.summary;
@@ -13,6 +17,12 @@ function readPrimaryText(message: ChatMessage): string {
 describe('OpenDesk plugin chat contract', () => {
     test('does not expose agent as a plugin capability', () => {
         expect(OPENDESK_PLUGIN_CAPABILITIES).not.toContain('agent');
+    });
+
+    test('uses separate hooks for headers and model parameters', () => {
+        expect(OPENDESK_PLUGIN_HOOK_NAMES).toContain('chat.headers');
+        expect(OPENDESK_PLUGIN_HOOK_NAMES).toContain('chat.params');
+        expect(OPENDESK_PLUGIN_HOOK_NAMES).not.toContain('chat.request.before');
     });
 
     test('narrows serialized messages and message parts by their discriminants', () => {

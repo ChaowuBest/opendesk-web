@@ -3,7 +3,7 @@
 `@bitclub.ai/opendesk-plugin-sdk` is the public SDK for native OpenDesk plugins. It exports the plugin definition helpers, hook and contribution contracts, and package validation API.
 
 ```ts
-import { definePlugin, tool } from '@bitclub.ai/opendesk-plugin-sdk';
+import { definePlugin, OPENDESK_PLUGIN_HOOK_NAMES, tool } from '@bitclub.ai/opendesk-plugin-sdk';
 import type {
     ChatMessage,
     PermissionRequest,
@@ -15,6 +15,9 @@ import type {
 
 These contracts are the same types used by OpenDesk itself. The package build bundles their declarations, so plugin
 projects do not need to import files from the OpenDesk repository.
+
+`OPENDESK_PLUGIN_HOOK_NAMES` is the runtime list of hook names accepted by the current API. TypeScript
+plugins can use `PluginHookName` for the corresponding string-literal union.
 
 `ToolDefinition` supports the same host-managed execution capabilities used by native tools: Agent visibility,
 serial execution, declared permissions, incremental result updates, cancellation signals, cleanup, and CLI/GUI

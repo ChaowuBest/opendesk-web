@@ -167,6 +167,52 @@ describe('PluginToolsetProvider', () => {
         expect(toolsets[0]?.getTool('demo-hello')?.description).toBe('transformed: hello tool');
     });
 
+    test.each([
+        [
+            'description',
+            (_input: unknown, output: any) => {
+                output.description = '';
+            }
+        ],
+        [
+            'parameters',
+            (_input: unknown, output: any) => {
+                output.parameters = { type: 'object' };
+            }
+        ],
+        [
+            'parameters root type',
+            (_input: unknown, output: any) => {
+                output.parameters = z.string();
+            }
+        ]
+    ])('tool.definition 非法 %s 输出会回滚', async (_caseName, mutate) => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'invalid-transformer',
+                capabilities: ['hook'],
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', mutate);
+                }
+            }),
+            { origin: 'test:invalid-transformer' }
+        );
+        const originalParameters = z.object({ value: z.string() });
+        const builtin = new BaseTool('builtin', 'original description', originalParameters);
+        const toolset = new BaseToolset('builtin');
+        toolset.addTool(builtin);
+
+        await applyPluginToolDefinitions([toolset], undefined, host);
+
+        expect(toolset.getTool('builtin')).toBe(builtin);
+        expect(builtin.description).toBe('original description');
+        expect(builtin.params).toBe(originalParameters);
+        expect(host.get('invalid-transformer')?.diagnostics).toContainEqual(
+            expect.objectContaining({ code: 'plugin.hook_failed', stage: 'hook' })
+        );
+    });
+
     test('插件 ID 和工具名中的协议非法字符不会进入模型工具名称', async () => {
         const host = new PluginHost();
         await host.activate(

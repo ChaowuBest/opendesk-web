@@ -19,6 +19,10 @@ const LAYER_DEPS = {
     applications: ['aikernel', 'services', 'tui', 'utils', 'plugins', 'telemetry']
 };
 
+// aikernel/types 只承载公共契约，所有层均可依赖；其自身仍由下方规则限制为不能依赖其他实现目录。
+const SHARED_CONTRACT_LAYERS = ['aikernel/types'];
+const AIKERNEL_TYPES_ROOT = path.resolve(process.cwd(), 'src', 'main', 'aikernel', 'types');
+
 // 文件级例外：允许特定文件依赖白名单之外的层。
 // 仅用于无法通过重构避免的合理跨层依赖，每条需注明理由。
 const FILE_EXCEPTIONS = {
@@ -100,6 +104,10 @@ function getTargetLayer(importPath, currentFile) {
     const currentDir = path.dirname(currentFile);
     const resolved = path.resolve(currentDir, importPath);
 
+    if (resolved === AIKERNEL_TYPES_ROOT || resolved.startsWith(AIKERNEL_TYPES_ROOT + path.sep)) {
+        return 'aikernel/types';
+    }
+
     const mainIndex = resolved.indexOf(path.join('src', 'main') + path.sep);
     if (mainIndex === -1) return null;
 
@@ -114,18 +122,17 @@ function checkFile(filePath) {
     if (!currentLayer) return violations;
 
     const imports = extractImports(filePath);
-    const allowedDeps = LAYER_DEPS[currentLayer] || [];
+    const allowedDeps = [...(LAYER_DEPS[currentLayer] || []), ...SHARED_CONTRACT_LAYERS];
 
     const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
     const fileExceptions = FILE_EXCEPTIONS[relativePath] || [];
     const forbiddenImports = FILE_FORBIDDEN_IMPORTS[relativePath] || [];
 
-    const aikernelTypesRoot = path.resolve(process.cwd(), 'src', 'main', 'aikernel', 'types');
-    if (filePath.startsWith(aikernelTypesRoot + path.sep)) {
+    if (filePath.startsWith(AIKERNEL_TYPES_ROOT + path.sep)) {
         for (const importPath of extractAikernelTypeImports(filePath)) {
             if (!importPath.startsWith('.')) continue;
             const resolved = path.resolve(path.dirname(filePath), importPath);
-            if (resolved !== aikernelTypesRoot && !resolved.startsWith(aikernelTypesRoot + path.sep)) {
+            if (resolved !== AIKERNEL_TYPES_ROOT && !resolved.startsWith(AIKERNEL_TYPES_ROOT + path.sep)) {
                 violations.push({
                     file: filePath,
                     from: 'aikernel/types',

@@ -9,7 +9,7 @@ import { t } from '../../../../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, PluginHookError } from './host.js';
 import type {
-    PluginChatHeadersInput,
+    PluginChatRequestInput,
     PluginChatParams,
     PluginSkillInstallAfterContext,
     PluginSkillInstallBeforeOutput,
@@ -21,10 +21,20 @@ import type { PermissionRequest } from '../../../aikernel/types/index.js';
 import type { BeforeToolCallValidateAction } from '../../../aikernel/hooks.js';
 
 export async function runPluginChatParams(
-    input: PluginChatHeadersInput,
+    input: PluginChatRequestInput,
     params: PluginChatParams = {}
 ): Promise<PluginChatParams> {
     return await getPluginHost().trigger('chat.params', input, { ...params });
+}
+
+export async function runPluginChatHeaders(
+    input: PluginChatRequestInput,
+    headers: Record<string, string> = {}
+): Promise<Record<string, string>> {
+    const output = await getPluginHost().trigger('chat.headers', input, {
+        headers: { ...headers }
+    });
+    return output.headers;
 }
 
 export async function runPluginBeforeSkillLoad(input: PluginSkillLoadContext): Promise<PluginSkillLoadBeforeOutput> {
@@ -61,17 +71,7 @@ export async function runPluginAfterSkillInstall(input: PluginSkillInstallAfterC
     }
 }
 
-export async function runPluginChatHeaders(
-    input: PluginChatHeadersInput,
-    headers: Record<string, string> = {}
-): Promise<Record<string, string>> {
-    const output = await getPluginHost().trigger('chat.headers', input, {
-        headers: { ...headers }
-    });
-    return output.headers;
-}
-
-export async function runPluginBeforeToolCall(
+export async function runPluginBeforeToolCallValidate(
     task: TaskState,
     toolCall: ToolCall
 ): Promise<BeforeToolCallValidateAction> {
@@ -141,7 +141,7 @@ export async function runPluginAfterToolCall(task: TaskState, toolCall: ToolCall
     }
 }
 
-export async function runPluginPermissionAsk(
+export async function runPluginBeforePermissionAsk(
     task: TaskState,
     input: { tool: string; callId?: string; permissions: PermissionRequest[] }
 ): Promise<'ask' | 'allow' | 'deny'> {

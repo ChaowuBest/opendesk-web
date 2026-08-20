@@ -10,4 +10,6 @@
  */
 
 /** An empty value delegates the reasoning depth to the selected model. */
-export type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high' | 'max';
+export const REASONING_EFFORT_VALUES = ['', 'none', 'low', 'medium', 'high', 'max'] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number];

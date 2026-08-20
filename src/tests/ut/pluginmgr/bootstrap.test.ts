@@ -19,15 +19,24 @@ describe('OpenDesk plugin bootstrap', () => {
     let configDirectory: string;
     let previousBuiltinPluginsDirectory: string | undefined;
 
-    /** 调度 beforeChatModelRequest 钩子并返回钩子改写后的 extraHeaders */
-    async function applyChatModelRequest(): Promise<Record<string, string> | undefined> {
+    /** 调度 beforeChatModelRequest 钩子并返回钩子改写后的请求选项 */
+    async function applyChatModelRequestOptions(): Promise<{
+        extraHeaders?: Record<string, string>;
+        reasoningEffort?: string;
+        maxCompletionTokens?: number;
+    }> {
         const ctx = {
             chat: new ChatContext(),
             model: new ModelInstance('mock-model', 'https://example.test/v1', 'key', true),
             options: {}
         };
         await GlobalHooks.applyBeforeChatModelRequest(ctx);
-        return ctx.options.extraHeaders;
+        return ctx.options;
+    }
+
+    /** 调度 beforeChatModelRequest 钩子并返回钩子改写后的 extraHeaders */
+    async function applyChatModelRequest(): Promise<Record<string, string> | undefined> {
+        return (await applyChatModelRequestOptions()).extraHeaders;
     }
 
     beforeEach(() => {
@@ -62,6 +71,58 @@ describe('OpenDesk plugin bootstrap', () => {
             source: 'system',
             removable: false,
             active: true
+        });
+    });
+
+    test('分别桥接 chat.headers 与 chat.params 到同一模型请求', async () => {
+        await initializePluginHost();
+        await getPluginHost().activate(
+            {
+                id: 'separate-chat-hooks',
+                capabilities: ['hook'],
+                setup(ctx) {
+                    ctx.hooks.on('chat.headers', (_input, output) => {
+                        output.headers['x-plugin'] = 'enabled';
+                    });
+                    ctx.hooks.on('chat.params', (_input, output) => {
+                        output.reasoningEffort = 'high';
+                        output.maxCompletionTokens = 4096;
+                    });
+                }
+            },
+            { origin: 'test:separate-chat-hooks' }
+        );
+
+        await expect(applyChatModelRequestOptions()).resolves.toEqual({
+            extraHeaders: { 'x-plugin': 'enabled' },
+            reasoningEffort: 'high',
+            maxCompletionTokens: 4096
+        });
+    });
+
+    test('chat.params 只回写约定的模型参数字段', async () => {
+        await initializePluginHost();
+        await getPluginHost().activate(
+            {
+                id: 'chat-params-output-boundary',
+                capabilities: ['hook'],
+                setup(ctx) {
+                    ctx.hooks.on('chat.params', (_input, output) => {
+                        output.reasoningEffort = 'high';
+                        output.maxCompletionTokens = 4096;
+                        (output as unknown as Record<string, unknown>).extraHeaders = {
+                            'x-unexpected': 'ignored'
+                        };
+                    });
+                }
+            },
+            { origin: 'test:chat-params-output-boundary' }
+        );
+
+        await expect(applyChatModelRequestOptions()).resolves.toEqual({
+            extraHeaders: {},
+            reasoningEffort: 'high',
+            maxCompletionTokens: 4096
         });
     });
 

@@ -121,9 +121,50 @@ describe('OpenDesk plugin request hooks', () => {
             { origin: 'test:broken-params' }
         );
 
-        await expect(runPluginChatParams({}, { maxCompletionTokens: 2048 })).resolves.toEqual({
+        await expect(runPluginChatParams({}, { reasoningEffort: 'low', maxCompletionTokens: 2048 })).resolves.toEqual({
+            reasoningEffort: 'low',
             maxCompletionTokens: 2048
         });
+    });
+
+    test('JavaScript 插件的无效 header 输出会被回滚', async () => {
+        await getPluginHost().activate(
+            definePlugin({
+                id: 'invalid-request-output',
+                setup(ctx) {
+                    ctx.hooks.on('chat.headers', (_input, output) => {
+                        (output as { headers: unknown }).headers = { authorization: 1 };
+                    });
+                }
+            }),
+            { origin: 'test:invalid-request-output' }
+        );
+
+        await expect(runPluginChatHeaders({}, { authorization: 'caller' })).resolves.toEqual({
+            authorization: 'caller'
+        });
+        expect(getPluginHost().get('invalid-request-output')?.diagnostics).toEqual(
+            expect.arrayContaining([expect.objectContaining({ code: 'plugin.hook_failed' })])
+        );
+    });
+
+    test('JavaScript 插件的无效模型参数输出会被回滚', async () => {
+        await getPluginHost().activate(
+            definePlugin({
+                id: 'invalid-params-output',
+                setup(ctx) {
+                    ctx.hooks.on('chat.params', (_input, output) => {
+                        (output as { reasoningEffort?: unknown }).reasoningEffort = 'unsupported';
+                    });
+                }
+            }),
+            { origin: 'test:invalid-params-output' }
+        );
+
+        await expect(runPluginChatParams({}, { reasoningEffort: 'low' })).resolves.toEqual({ reasoningEffort: 'low' });
+        expect(getPluginHost().get('invalid-params-output')?.diagnostics).toEqual(
+            expect.arrayContaining([expect.objectContaining({ code: 'plugin.hook_failed' })])
+        );
     });
 
     test('skill load hooks forward before decisions and after notifications', async () => {
