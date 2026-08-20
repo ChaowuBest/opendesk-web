@@ -89,6 +89,31 @@ describe('PPT task skill', () => {
         });
     });
 
+    test('loads the current Office picture editing actions', async () => {
+        const pictureCapabilities: SlidesCapabilityDefinition[] = [
+            { name: 'crop_image', description: '裁剪图片', inputSchema: { type: 'object', properties: {} } },
+            {
+                name: 'set_picture_opacity',
+                description: '设置图片透明度',
+                inputSchema: { type: 'object', properties: {} }
+            },
+            {
+                name: 'replace_image',
+                description: '替换图片内容',
+                inputSchema: { type: 'object', properties: {} }
+            }
+        ];
+
+        const skill = buildSlidesSkill(pictureCapabilities, jest.fn() as never);
+        const result = await skill.getTool('list_actions')!.execute({ category: 'layout' });
+
+        expect(JSON.parse(result.result)).toEqual([
+            { name: 'crop_image', category: 'layout', summary: '裁剪图片' },
+            { name: 'set_picture_opacity', category: 'layout', summary: '修改图片透明度' },
+            { name: 'replace_image', category: 'layout', summary: '原位替换图片内容' }
+        ]);
+    });
+
     test('validates and executes a named action for the current task', async () => {
         const execute = jest.fn(async () => ({
             output: 'updated',

@@ -211,6 +211,40 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);
     });
 
+    test.each([
+        ['slides', 'deck.pptx', 1536, '1.5 KB'],
+        ['word', 'report.docx', 24 * 1024, '24 KB'],
+        ['sheets', 'budget.xlsx', 2 * 1024 * 1024, '2.0 MB']
+    ] as const)('reuses the file list size in the %s preview header', async (_kind, name, size, expected) => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        (window as any).officeHostAPI = {
+            prepare: jest.fn<() => Promise<boolean>>().mockResolvedValue(true),
+            requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
+        };
+
+        const filePath = `/workspace/${name}`;
+        const explorer = new FileExplorer() as FileExplorerModule['FileExplorer'] & {
+            _container: HTMLElement;
+            _rootNode: ParentNode;
+            _workspaceRoot: string;
+            _childrenCache: Map<string, unknown>;
+            _renderPanel(): void;
+        };
+        explorer._container = container;
+        explorer._rootNode = container;
+        explorer._workspaceRoot = '/workspace';
+        explorer._childrenCache.set('/workspace', [
+            { name, path: filePath, isDirectory: false, size, modifiedAt: null }
+        ]);
+        explorer._renderPanel();
+
+        explorer.selectFile(filePath);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe(expected);
+    });
+
     test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);

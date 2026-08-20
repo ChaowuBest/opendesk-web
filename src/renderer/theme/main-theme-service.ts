@@ -14,7 +14,7 @@
  * Lives under renderer/theme for a single module root; imported only from src/main/main.ts.
  */
 
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, webContents } from 'electron';
 import { Setting } from '../../main/utils/setting.js';
 import { logger } from '../../main/utils/logger.js';
 import { safeSendToWebContents } from '../../main/utils/electron-ipc.js';
@@ -150,6 +150,9 @@ export class MainThemeService {
                 safeSendToWebContents(win.webContents, THEME_CHANNEL, resolved);
             }
         }
+        for (const contents of webContents.getAllWebContents()) {
+            safeSendToWebContents(contents, 'app:theme-changed', resolved.preference);
+        }
     }
 }
 
@@ -164,6 +167,11 @@ export function getMainThemeService(): MainThemeService {
 
 export function registerThemeHandlers(): void {
     const service = getMainThemeService();
+
+    ipcMain.handle('app:get-theme', () => {
+        service.init();
+        return service.getResolvedTheme().preference;
+    });
 
     ipcMain.handle('theme:getResolvedTheme', () => {
         try {

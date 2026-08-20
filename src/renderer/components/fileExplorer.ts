@@ -1467,6 +1467,7 @@ export class FileExplorer {
         try {
             const editorConfig = getOfficeEditorConfig(filePath);
             if (editorConfig) {
+                const fileSize = this._getCachedFileSize(filePath) ?? 0;
                 const officeHostAPI = window.officeHostAPI;
                 if (!officeHostAPI?.prepare) {
                     throw new Error(t(editorConfig.unavailableKey));
@@ -1478,7 +1479,7 @@ export class FileExplorer {
                 if (this._selectedFile !== filePath) return;
                 this._previewState = {
                     status: 'idle',
-                    data: { tooLarge: false, size: 0, limit: 0, content: '', binary: false }
+                    data: { tooLarge: false, size: fileSize, limit: 0, content: '', binary: false }
                 };
                 this._previewFullscreen = true;
                 this._notifyWorkspaceFocusLayoutChange();
@@ -1506,6 +1507,15 @@ export class FileExplorer {
         }
         this._renderPreview();
         this._applyFullscreenLayout();
+    }
+
+    private _getCachedFileSize(filePath: string): number | undefined {
+        for (const cached of this._childrenCache.values()) {
+            if (!Array.isArray(cached)) continue;
+            const entry = cached.find((candidate) => candidate.path === filePath && !candidate.isDirectory);
+            if (entry) return entry.size;
+        }
+        return undefined;
     }
 
     // ----- context menu -----
