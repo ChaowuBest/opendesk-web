@@ -206,11 +206,11 @@ describe('setting-panel config management', () => {
 
         await panel.saveModel();
 
-        expect(window.notificationAPI.sendNotification).toHaveBeenCalledWith(
-            'error',
-            '系统设置',
-            '最大补全长度必须为非负整数'
-        );
+        // 校验失败不再弹 notification，而是在输入框下方红字提示
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#model-max-output-tokens-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('最大补全长度必须为非负整数');
+        expect(panel.querySelector('#model-max-output-tokens-input')?.classList.contains('od-sp-fi-error')).toBe(true);
         expect(panel.currentData.models).toHaveLength(0);
         expect(panel.saveImmediately).not.toHaveBeenCalled();
     });
@@ -282,5 +282,145 @@ describe('setting-panel config management', () => {
             '导出成功',
             '配置已导出为 JSON 文件'
         );
+    });
+
+    test('saving model converts k-format context length and max output tokens to integers', async () => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '128k';
+        (panel.querySelector('#model-max-output-tokens-input') as HTMLInputElement).value = '256K';
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        await panel.saveModel();
+
+        expect(panel.currentData.models[0]).toMatchObject({
+            alias: 'my-model',
+            context_length: 128000,
+            max_output_tokens: 256000
+        });
+    });
+
+    test('rejects invalid k-format context length', async () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-context-length-input') as HTMLInputElement).value = '12x';
+
+        await panel.saveModel();
+
+        // 校验失败不再弹 notification，而是在输入框下方红字提示
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#model-context-length-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('上下文长度必须为非负整数');
+        expect(panel.querySelector('#model-context-length-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+        expect(panel.currentData.models).toHaveLength(0);
+    });
+
+    test('model alias required shows inline error instead of notification', async () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+
+        await panel.saveModel();
+
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#model-alias-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('请输入模型别名');
+        expect(panel.querySelector('#model-alias-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+        expect(panel.currentData.models).toHaveLength(0);
+    });
+
+    test('verify and save requires provider selection with inline error', async () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+
+        await panel.verifyAndSaveModel();
+
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#model-provider-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('请选择提供方');
+        expect(panel.querySelector('#model-provider-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+    });
+
+    test('provider name required shows inline error instead of notification', () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showProviderEditModal(-1);
+
+        panel.saveProvider();
+
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#provider-name-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('请输入提供方名称');
+        expect(panel.querySelector('#provider-name-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+    });
+
+    test('telemetry endpoint url required shows inline error instead of notification', () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showTelemetryEditModal(-1, 'opentelemetry');
+
+        panel.saveTelemetryEndpoint();
+
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#telemetry-url-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('OpenTelemetry 端点 URL 不能为空。');
+        expect(panel.querySelector('#telemetry-url-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+    });
+
+    test('inline field error clears when user edits the input', async () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+
+        await panel.saveModel();
+        expect(panel.querySelector('.od-sp-field-error')).not.toBeNull();
+
+        const aliasInput = panel.querySelector('#model-alias-input') as HTMLInputElement;
+        aliasInput.value = 'fixed-alias';
+        aliasInput.dispatchEvent(new Event('input'));
+
+        expect(panel.querySelector('.od-sp-field-error')).toBeNull();
+        expect(aliasInput.classList.contains('od-sp-fi-error')).toBe(false);
+    });
+
+    test('saving valid model clears previous inline errors', async () => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.render();
+        panel.showModelEditModal(-1);
+
+        // 第一次保存触发 alias 必填错误
+        await panel.saveModel();
+        expect(panel.querySelector('.od-sp-field-error')).not.toBeNull();
+
+        // 补全字段后再次保存应清除错误并成功
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'my-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        await panel.saveModel();
+
+        expect(panel.querySelector('.od-sp-field-error')).toBeNull();
+        expect(panel.currentData.models).toHaveLength(1);
+        expect(panel.scheduleSave).toHaveBeenCalledTimes(1);
     });
 });

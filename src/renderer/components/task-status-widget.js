@@ -26,7 +26,6 @@ const CHEVRON_SVG = `<svg class="chev" width="11" height="11" viewBox="0 0 24 24
 const BACK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>`;
 const TODO_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
 const SUBTASK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><line x1="8" y1="7.2" x2="15.6" y2="10.8"/><line x1="8" y1="16.8" x2="15.6" y2="13.2"/></svg>`;
-const CLOCK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
 const UP_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>`;
 const DOWN_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>`;
 const DONE_CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8 12.5 11 15.5 16 9.5"/></svg>`;
@@ -453,7 +452,7 @@ const WIDGET_CSS = `
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 12px 14px;
+    padding: 10px 14px;
     border-bottom: 1px solid var(--line-soft);
     flex: none;
     -webkit-app-region: drag;
@@ -477,6 +476,9 @@ const WIDGET_CSS = `
     font-size: 11px;
     color: var(--ink3);
     margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* 详情页状态指示器适当放大。 */
@@ -492,11 +494,30 @@ const WIDGET_CSS = `
 
 .dt-body {
     flex: 1;
-    padding: 14px 16px;
+    padding: 11px 16px;
     display: flex;
     flex-direction: column;
-    gap: 13px;
+    gap: 10px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+}
+
+/* 待办 / 子任务进度并排：两项都存在时各占一半，仅一项时占满整行。 */
+.dt-stats-row {
+    display: flex;
+    gap: 12px;
+}
+
+.dt-stats-row .dt-stat {
+    flex: 1;
+    min-width: 0;
+}
+
+.dt-stats-row .dt-stat .row .vl {
+    min-width: 0;
     overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .dt-stat {
@@ -512,8 +533,7 @@ const WIDGET_CSS = `
     gap: 8px;
 }
 
-.dt-stat .lb,
-.dt-run .lb {
+.dt-stat .lb {
     font-size: 11.5px;
     color: var(--ink3);
     display: flex;
@@ -521,28 +541,19 @@ const WIDGET_CSS = `
     gap: 6px;
 }
 
-.dt-stat .lb svg,
-.dt-run .lb svg {
+.dt-stat .lb svg {
     width: 12px;
     height: 12px;
     color: var(--ink4);
     flex: none;
 }
 
-.dt-stat .vl,
-.dt-run .vl {
+.dt-stat .vl {
     font-family: var(--mono);
     font-size: 12px;
     font-weight: 600;
     color: var(--ink2);
     white-space: nowrap;
-}
-
-.dt-run {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
 }
 
 .dt-tok {
@@ -556,7 +567,7 @@ const WIDGET_CSS = `
     background: var(--bg);
     border: 1px solid var(--line-soft);
     border-radius: 9px;
-    padding: 7px 10px;
+    padding: 6px 10px;
 }
 
 .dt-tok .tk .k {
@@ -573,7 +584,7 @@ const WIDGET_CSS = `
     font-size: 13px;
     font-weight: 600;
     color: var(--ink);
-    margin-top: 3px;
+    margin-top: 2px;
 }
 
 .dt-tok .tk .v.v-blue {
@@ -585,7 +596,7 @@ const WIDGET_CSS = `
 }
 
 .dt-foot {
-    padding: 9px 16px 12px;
+    padding: 9px 16px 11px;
     border-top: 1px solid var(--line-soft);
     display: flex;
     justify-content: space-between;
@@ -1599,77 +1610,65 @@ export class TaskStatusWidget extends HTMLElement {
         this._elapsedEls = [];
 
         const meta = statusMeta(task.task_status, task.waiting_for_input);
-        const elapsedMs = elapsedMsOf(task);
         const startTime = formatStartTime(task.started_at);
 
-        // 头部
+        // 头部：任务名 + 「状态 · 运行时间 · 开始时间」副标题（运行时间随 ticker 刷新，
+        // 与 body 中待办/子任务进度、tokens 共同容纳在紧凑高度内，不再单独占用一行）。
         this._detailHeadTx.textContent = '';
         const tt = document.createElement('div');
         tt.className = 'tt';
         tt.textContent = task.task_name || task.task_id || '';
         const ts = document.createElement('div');
         ts.className = 'ts';
-        ts.textContent = `${meta.label} · ${formatElapsed(elapsedMs)}`;
         this._detailHeadTx.appendChild(tt);
         this._detailHeadTx.appendChild(ts);
         this._applyIndicator(this._detailDot, meta);
+        const formatHeadSub = (item) =>
+            `${meta.label} · ${formatElapsed(elapsedMsOf(item))}${
+                startTime ? ` · ${t('renderer.taskStatusWidget.startedAt', { time: startTime })}` : ''
+            }`;
+        ts.textContent = formatHeadSub(task);
+        this._elapsedEls.push({ elapsed: ts, task, rebuild: formatHeadSub });
 
         // 内容
         this._detailBody.textContent = '';
 
-        // 待办事项（没有待办时不展示整条进度）
+        // 待办 / 子任务进度：两项都存在时并排各占一半，仅一项时占满整行。
         const todo = task.todo_progress || { completed: 0, total: 0, percent: 0 };
-        if (todo.total > 0) {
-            this._detailBody.appendChild(
-                this._buildDetailStat(
-                    TODO_SVG,
-                    t('renderer.taskStatusWidget.todo'),
-                    t('renderer.taskStatusWidget.todoDone', { completed: todo.completed, total: todo.total }),
-                    todo.percent,
-                    ''
-                )
-            );
-        }
-
-        // 子任务（没有子任务时不展示整条进度）
         const subtask = task.subtask_progress || { completed: 0, total: 0, percent: 0 };
-        if (subtask.total > 0) {
-            this._detailBody.appendChild(
-                this._buildDetailStat(
-                    SUBTASK_SVG,
-                    t('renderer.taskStatusWidget.subtask'),
-                    t('renderer.taskStatusWidget.subtaskStat', { total: subtask.total, completed: subtask.completed }),
-                    subtask.percent,
-                    'green'
-                )
-            );
+        if (todo.total > 0 || subtask.total > 0) {
+            const statsRow = document.createElement('div');
+            statsRow.className = 'dt-stats-row';
+            if (todo.total > 0) {
+                statsRow.appendChild(
+                    this._buildDetailStat(
+                        TODO_SVG,
+                        t('renderer.taskStatusWidget.todo'),
+                        t('renderer.taskStatusWidget.todoDone', { completed: todo.completed, total: todo.total }),
+                        todo.percent,
+                        ''
+                    )
+                );
+            }
+            if (subtask.total > 0) {
+                statsRow.appendChild(
+                    this._buildDetailStat(
+                        SUBTASK_SVG,
+                        t('renderer.taskStatusWidget.subtask'),
+                        t('renderer.taskStatusWidget.subtaskStat', {
+                            total: subtask.total,
+                            completed: subtask.completed
+                        }),
+                        subtask.percent,
+                        'green'
+                    )
+                );
+            }
+            this._detailBody.appendChild(statsRow);
         }
-
-        // 已运行时间
-        const run = document.createElement('div');
-        run.className = 'dt-run';
-        const runLb = document.createElement('span');
-        runLb.className = 'lb';
-        runLb.insertAdjacentHTML('beforeend', CLOCK_SVG);
-        runLb.appendChild(document.createTextNode(t('renderer.taskStatusWidget.elapsed')));
-        const runVl = document.createElement('span');
-        runVl.className = 'vl num';
-        const runElapsed = document.createElement('span');
-        runElapsed.textContent = formatElapsed(elapsedMs);
-        runVl.appendChild(runElapsed);
-        if (startTime) {
-            runVl.appendChild(
-                document.createTextNode(` · ${t('renderer.taskStatusWidget.startedAt', { time: startTime })}`)
-            );
-        }
-        run.appendChild(runLb);
-        run.appendChild(runVl);
-        this._detailBody.appendChild(run);
 
         // Tokens
         this._detailBody.appendChild(this._buildDetailTokens(task));
-
-        this._elapsedEls.push({ elapsed: runElapsed, task });
     }
 
     _buildDetailStat(svg, label, value, percent, fillClass) {
@@ -1740,9 +1739,14 @@ export class TaskStatusWidget extends HTMLElement {
     }
 
     _updateElapsed() {
-        for (const { elapsed, task } of this._elapsedEls) {
-            if (task.task_status === 'completed') continue;
-            elapsed.textContent = formatElapsed(elapsedMsOf(task));
+        for (const entry of this._elapsedEls) {
+            if (entry.task.task_status === 'completed') continue;
+            if (entry.rebuild) {
+                // 需整体重建文本的条目（如详情页头部副标题）。
+                entry.elapsed.textContent = entry.rebuild(entry.task);
+            } else {
+                entry.elapsed.textContent = formatElapsed(elapsedMsOf(entry.task));
+            }
         }
     }
 }

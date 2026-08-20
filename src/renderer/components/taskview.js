@@ -331,6 +331,20 @@ class TaskView extends HTMLElement {
         this._historyRenderStartIndex = 0;
         /** @type {boolean} 防止顶部滚动连续触发重复补载。 */
         this._loadingOlderHistory = false;
+        /**
+         * 输出速度统计 - 消息级累计状态（跨 part 保留，工具 part 不清零）：
+         * messageChars 为消息内所有生成 part 的累计字符数，用于无 usage 时按 chars/4 估算
+         * 「已输出 / 总计」；messageUsage 记录本消息最近一次真实 usage，用于估算基线。
+         * @type {{messageId: string, messageChars: number, messageUsage: {p: number, c: number, t: number} | null, messageCharsAtUsage: number} | null}
+         */
+        this._speedMessageState = null;
+        /**
+         * 输出速度统计 - part 级锚点（reasoning/text），key 变化或工具 part 插入后重建：
+         * 速度只统计当前 part；partStartUsage 为 null 表示同消息非首 part 且起点无 usage，
+         * 之后 usage 首次到达时按「usage.completion - 当前 part chars/4」校正基线。
+         * @type {{key: string, startMs: number, partChars: number, partStartUsage: number | null, baseMessageChars: number} | null}
+         */
+        this._speedPartState = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -400,6 +414,9 @@ class TaskView extends HTMLElement {
     /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
     _historyScrollKeydownHandler = null;
 
+    /** @type {ResizeObserver | null} 聊天区尺寸变化监听：布局变化（侧边栏展开/收起等）后保持底部锁定。 */
+    _historyResizeObserver = null;
+
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollControls = this.querySelector('#taskview-scroll-controls');
@@ -418,6 +435,22 @@ class TaskView extends HTMLElement {
     /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
     _hasRecentUserScrollIntent() {
         return Date.now() - this._lastUserScrollTs < 300;
+    }
+
+    /**
+     * 判断键盘事件目标是否位于预览区域（右侧边栏、画中画浮窗）。
+     * 这些区域拥有独立的滚动容器，其中的键盘滚动（PageDown/方向键等）
+     * 作用于预览内容而非聊天历史，不应被标记为聊天区滚动意图——
+     * 否则放大预览时滚动预览内容会把聊天区的底部锁定误解除。
+     */
+    _isKeydownInPreviewArea(target) {
+        if (!target || typeof target.closest !== 'function') return false;
+        // 右侧边栏（task-artifacts 宿主，含其 shadow DOM 内的键盘事件）
+        const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+        if (artifacts && artifacts.contains(target)) return true;
+        // 浏览器画中画浮窗
+        if (target.closest('.browser-pip')) return true;
+        return false;
     }
 
     getHistoryContainer() {
@@ -600,6 +633,9 @@ class TaskView extends HTMLElement {
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
+    /** 无持续 usage 时按字符数估算 token 的比例（chars / 4） */
+    static CHARS_PER_TOKEN_ESTIMATE = 4;
+
     static normalizeUsageToken(value) {
         return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
     }
@@ -711,7 +747,7 @@ class TaskView extends HTMLElement {
         return taskViewT('renderer.taskview.usage.contextRatio', { pct: pctNum.toFixed(1) });
     }
 
-    static formatUsageHtml(usage, contextSize, isStreaming = false) {
+    static formatUsageHtml(usage, contextSize, isStreaming = false, speed = null) {
         if (!TaskView.hasDisplayableUsage(usage)) return '';
         const { promptTokens, completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
         const titleParts = taskViewT('renderer.taskview.usage.title', {
@@ -719,9 +755,21 @@ class TaskView extends HTMLElement {
             output: completionTokens,
             total: totalTokens
         });
-        const ratioText = TaskView.formatContextRatioText(totalTokens, contextSize);
+        const speedSuffix = speed != null ? taskViewT('renderer.taskview.usage.speed', { speed }) : '';
+        const displayText = TaskView.formatUsageDisplayText(completionTokens, totalTokens, contextSize, speedSuffix);
         const spinnerDisplay = isStreaming ? '' : 'display:none;';
-        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">${taskViewT('renderer.taskview.usage.display', { output: completionTokens, total: totalTokens, ratio: ratioText })}</span></span>`;
+        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}" data-speed-value="${speed ?? ''}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">${displayText}</span></span>`;
+    }
+
+    /** 组装 usage 胶囊的展示文本（已输出词数 + 速度内联 + 总计 + 上下文占比）。 */
+    static formatUsageDisplayText(completionTokens, totalTokens, contextSize, speedText = '') {
+        const ratioText = TaskView.formatContextRatioText(totalTokens, contextSize);
+        return taskViewT('renderer.taskview.usage.display', {
+            output: completionTokens,
+            total: totalTokens,
+            ratio: ratioText,
+            speed: speedText
+        });
     }
 
     /**
@@ -1539,29 +1587,44 @@ class TaskView extends HTMLElement {
         }
 
         const isStreaming = progress.task_status === 'running';
+        // 实时输出速度 + 消息级 token 估算（无 usage 时按 chars/4 临时估算「已输出/总计」）
+        const speedInfo = this._trackOutputSpeed(progress);
         const usageEl = message_container.querySelector('.message-usage');
         const usage = TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : null;
         if (usageEl) {
             const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
             const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
             const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
-            const usageTokens = TaskView.getUsageDisplayTokens(usage);
-            const promptTokens = usage ? usageTokens.promptTokens : prevPrompt;
-            const completionTokens = usage ? usageTokens.completionTokens : prevCompletion;
-            const totalTokens = usage ? usageTokens.totalTokens : prevTotal;
+            // 优先真实 usage；无 usage 的生成 part 用估算值；工具等非生成 part 保持上一状态
+            const promptTokens = usage
+                ? TaskView.getUsageDisplayTokens(usage).promptTokens
+                : speedInfo
+                  ? speedInfo.estPrompt
+                  : prevPrompt;
+            const completionTokens = usage
+                ? TaskView.getUsageDisplayTokens(usage).completionTokens
+                : speedInfo
+                  ? speedInfo.estCompletion
+                  : prevCompletion;
+            const totalTokens = usage
+                ? TaskView.getUsageDisplayTokens(usage).totalTokens
+                : speedInfo
+                  ? speedInfo.estTotal
+                  : prevTotal;
             if (usage) {
                 this._removeUsageOutside(message_container);
             }
-            const titleParts =
-                totalTokens > 0
-                    ? taskViewT('renderer.taskview.usage.title', {
-                          input: promptTokens,
-                          output: completionTokens,
-                          total: totalTokens
-                      })
-                    : '';
-            const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
-            usageEl.title = titleParts;
+            if (speedInfo && speedInfo.speed != null) {
+                usageEl.dataset.speedValue = String(speedInfo.speed);
+            }
+            // title 只展示真实 usage，避免估算期间出现误导性 tooltip
+            if (usage) {
+                usageEl.title = taskViewT('renderer.taskview.usage.title', {
+                    input: promptTokens,
+                    output: completionTokens,
+                    total: totalTokens
+                });
+            }
             usageEl.dataset.promptTokens = String(promptTokens);
             usageEl.dataset.completionTokens = String(completionTokens);
             usageEl.dataset.totalTokens = String(totalTokens);
@@ -1572,17 +1635,30 @@ class TaskView extends HTMLElement {
             }
             const textEl = usageEl.querySelector('.usage-text');
             if (textEl) {
-                textEl.textContent = taskViewT('renderer.taskview.usage.display', {
-                    output: completionTokens,
-                    total: totalTokens,
-                    ratio: ratioText
-                });
+                const speedValue = usageEl.dataset.speedValue || '';
+                const speedSuffix = speedValue ? taskViewT('renderer.taskview.usage.speed', { speed: speedValue }) : '';
+                if (completionTokens > 0 || totalTokens > 0) {
+                    textEl.textContent = TaskView.formatUsageDisplayText(
+                        completionTokens,
+                        totalTokens,
+                        this._modelContextSize,
+                        speedSuffix
+                    );
+                } else if (speedSuffix) {
+                    textEl.textContent = speedSuffix;
+                }
             }
-        } else if (usage) {
+        } else if (usage || (isStreaming && speedInfo && (speedInfo.estCompletion > 0 || speedInfo.estTotal > 0))) {
             this._removeUsageOutside(message_container);
+            // 无 usage 时用估算值构造展示用 usage，保证流式中「已输出/总计」始终可见
+            const displayUsage = usage ?? {
+                prompt_tokens: speedInfo.estPrompt,
+                completion_tokens: speedInfo.estCompletion,
+                total_tokens: speedInfo.estTotal
+            };
             message_container.insertAdjacentHTML(
                 'beforeend',
-                TaskView.formatUsageHtml(usage, this._modelContextSize, isStreaming)
+                TaskView.formatUsageHtml(displayUsage, this._modelContextSize, isStreaming, speedInfo?.speed ?? null)
             );
         }
 
@@ -2014,15 +2090,121 @@ class TaskView extends HTMLElement {
         if (!lastUsage) return;
         const completionTokens = parseInt(lastUsage.dataset.completionTokens || '0', 10);
         const totalTokens = parseInt(lastUsage.dataset.totalTokens || '0', 10);
-        const ratioText = TaskView.formatContextRatioText(totalTokens, this._modelContextSize);
         const textEl = lastUsage.querySelector('.usage-text');
         if (textEl) {
-            textEl.textContent = taskViewT('renderer.taskview.usage.display', {
-                output: completionTokens,
-                total: totalTokens,
-                ratio: ratioText
-            });
+            const speedValue = lastUsage.dataset.speedValue || '';
+            textEl.textContent = TaskView.formatUsageDisplayText(
+                completionTokens,
+                totalTokens,
+                this._modelContextSize,
+                speedValue ? taskViewT('renderer.taskview.usage.speed', { speed: speedValue }) : ''
+            );
         }
+    }
+
+    /**
+     * 实时统计当前流式输出的 token 速度与消息级估算 token 数。
+     * 返回 null（非生成 part，如工具调用）或：
+     * - speed: 当前 part 的输出速度（token/s），数据不足时为 null；
+     * - estPrompt/estCompletion/estTotal: 无真实 usage 时的临时估算值（chars/4），
+     *   usage 到达后调用方直接显示真实 usage，无需估算。
+     *
+     * 规则：
+     * - 速度锚定当前 message part（reasoning/text），key 变化或工具 part 插入后重新统计；
+     *   统计清零时胶囊上已显示的速度（dataset.speedValue）保持原状，直到新值产生；
+     * - 「已输出/总计」估算按消息内累计 chars/4 计算（跨 part、跨工具间隙保留），
+     *   真实 usage 到达后校正为 usage 值，并作为后续估算的基线；
+     * - 速度优先使用 usage 增量（completion_tokens 相对 part 起点基线），
+     *   无 usage 时按当前 part chars/4 估算。
+     */
+    _trackOutputSpeed(progress) {
+        const partType = progress?.last_part?.type;
+        if (partType !== 'reasoning' && partType !== 'text') {
+            // 工具等非生成 part：速度锚点清零（显示保持原状），消息级累计保留
+            this._speedPartState = null;
+            return null;
+        }
+        const messageId = String(progress.message_id ?? '');
+        const partChars =
+            partType === 'reasoning'
+                ? String(progress.last_part.content ?? '').length
+                : String(progress.last_part.text ?? '').length;
+        const usageTokens = TaskView.getUsageDisplayTokens(progress.usage);
+        const hasUsage = usageTokens.completionTokens > 0 || usageTokens.totalTokens > 0;
+
+        // 消息级累计状态：新消息时重建
+        let msg = this._speedMessageState;
+        if (!msg || msg.messageId !== messageId) {
+            msg = this._speedMessageState = {
+                messageId,
+                messageChars: 0,
+                messageUsage: null,
+                messageCharsAtUsage: 0
+            };
+        }
+
+        // part 级锚点：key 变化（新消息 / 新 part / 工具后首个生成 part）时重建
+        const key = `${messageId}:${getProgressPartIndex(progress)}:${partType}`;
+        let part = this._speedPartState;
+        const isFirstPartOfMessage = msg.messageChars === 0 && msg.messageUsage === null;
+        if (!part || part.key !== key) {
+            part = this._speedPartState = {
+                key,
+                startMs: Date.now(),
+                partChars,
+                // 首个 part 从消息 0 起计；非首 part 且起点无 usage 时为 null（待 usage 首达校正）
+                partStartUsage: hasUsage ? usageTokens.completionTokens : isFirstPartOfMessage ? 0 : null,
+                baseMessageChars: msg.messageChars
+            };
+        } else {
+            part.partChars = partChars;
+        }
+        msg.messageChars = part.baseMessageChars + partChars;
+
+        if (hasUsage) {
+            if (part.partStartUsage === null) {
+                // usage 首次到达：completion 是消息级累计，扣除当前 part 的估算 token 后作为基线
+                part.partStartUsage = Math.max(
+                    0,
+                    usageTokens.completionTokens - Math.round(partChars / TaskView.CHARS_PER_TOKEN_ESTIMATE)
+                );
+            }
+            msg.messageUsage = {
+                p: usageTokens.promptTokens,
+                c: usageTokens.completionTokens,
+                t: usageTokens.totalTokens
+            };
+            msg.messageCharsAtUsage = msg.messageChars;
+        }
+
+        // 速度：elapsed < 500ms 或速度 ≤ 0 时为 null
+        const elapsedMs = Date.now() - part.startMs;
+        let speed = null;
+        if (elapsedMs >= 500) {
+            const tokens =
+                part.partStartUsage !== null && usageTokens.completionTokens > part.partStartUsage
+                    ? usageTokens.completionTokens - part.partStartUsage
+                    : partChars / TaskView.CHARS_PER_TOKEN_ESTIMATE;
+            const value = Math.round(tokens / (elapsedMs / 1000));
+            if (Number.isFinite(value) && value > 0) {
+                speed = value;
+            }
+        }
+
+        // 消息级估算（无真实 usage 时的「已输出/总计」临时值）
+        let estPrompt = 0;
+        let estCompletion;
+        let estTotal;
+        if (msg.messageUsage) {
+            const delta = Math.round((msg.messageChars - msg.messageCharsAtUsage) / TaskView.CHARS_PER_TOKEN_ESTIMATE);
+            estPrompt = msg.messageUsage.p;
+            estCompletion = msg.messageUsage.c + delta;
+            estTotal = msg.messageUsage.t + delta;
+        } else {
+            estCompletion = Math.round(msg.messageChars / TaskView.CHARS_PER_TOKEN_ESTIMATE);
+            estTotal = estCompletion;
+        }
+        return { speed, estPrompt, estCompletion, estTotal };
     }
 
     static renderCompactBoundary() {
@@ -3984,6 +4166,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('keydown', this._historyScrollKeydownHandler);
             this._historyScrollKeydownHandler = null;
         }
+        if (this._historyResizeObserver) {
+            this._historyResizeObserver.disconnect();
+            this._historyResizeObserver = null;
+        }
         if (this._poolSegObserver) {
             this._poolSegObserver.disconnect();
             this._poolSegObserver = null;
@@ -4342,6 +4528,21 @@ class TaskView extends HTMLElement {
         // 触摸滚动视为用户主动滚动；仅在真实移动（touchmove）时标记，
         // 避免纯点击（touchstart 无位移）留下滚动意图痕迹
         chatHistory.addEventListener('touchmove', () => this._markUserScrollIntent(), { passive: true });
+        // 聊天区尺寸变化（放大预览时侧边栏展开/收起、预览卡片加载、窗口缩放等引起
+        // 的布局变化）会使视图偏离底部；锁定底部时重新滚到底部，避免“锁定但不在底部”
+        // 的失效。重复调用 setUpEventListeners 时先释放旧观察器，避免累积
+        if (this._historyResizeObserver) {
+            this._historyResizeObserver.disconnect();
+            this._historyResizeObserver = null;
+        }
+        if (typeof window.ResizeObserver === 'function') {
+            this._historyResizeObserver = new window.ResizeObserver(() => {
+                if (this.auto_scrolling_to_bottom) {
+                    this.tryScrollToEnd();
+                }
+            });
+            this._historyResizeObserver.observe(chatHistory);
+        }
         // 命中右侧滚动条区域的拖拽（鼠标）视为滚动意图，覆盖滚动条拖动场景
         chatHistory.addEventListener('pointerdown', (e) => {
             // 触控笔（pen）在内容区按下基本为绘制/拖动，且可能不派发 touchmove，直接视为滚动意图
@@ -4364,6 +4565,11 @@ class TaskView extends HTMLElement {
             if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
             const target = e.target;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
+                return;
+            }
+            // 焦点位于预览区域（右侧边栏/画中画）时，键盘滚动作用于预览自身，
+            // 不应标记为聊天区滚动意图（否则放大预览时滚动预览内容会误解除底部锁定）
+            if (this._isKeydownInPreviewArea(target)) {
                 return;
             }
             const key = e.key;

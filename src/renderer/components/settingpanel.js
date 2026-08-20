@@ -19,6 +19,7 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
+import { parseTokenCount, isInvalidTokenCount } from '../../utils/model.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -51,6 +52,8 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-fc { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .od-sp-fc input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--mc-accent); cursor: pointer; }
 .od-sp-fc label { font-size: 13px; color: var(--mc-ink2); cursor: pointer; }
+.od-sp-fi.od-sp-fi-error, .od-sp-fi.od-sp-fi-error:focus { border-color: var(--mc-red); }
+.od-sp-field-error { margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--mc-red); }
 .od-sp-fr { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
 .od-sp-key-wrap { position: relative; }
 .od-sp-key-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: none; background: transparent; cursor: pointer; color: var(--mc-ink3); padding: 2px; transition: color 0.15s; }
@@ -392,6 +395,8 @@ class SettingPanel extends HTMLElement {
                 padding-right: 26px;
                 cursor: pointer;
             }
+            .sp-form-input.sp-form-input-error, .sp-form-input.sp-form-input-error:focus { border-color: var(--sp-color-danger); }
+            .sp-form-group .od-sp-field-error { margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--sp-color-danger); }
 
             /* ── Toggle Switch ── */
             .sp-toggle-row {
@@ -1239,6 +1244,12 @@ class SettingPanel extends HTMLElement {
         const rawFloatingWindowMode = this.currentData?.gui_config?.floating_window_mode;
         const floatingWindowMode =
             rawFloatingWindowMode === 'card' ? 'card' : rawFloatingWindowMode === 'pill' ? 'pill' : 'off';
+        const rawFloatingWindowPosition = this.currentData?.gui_config?.floating_window_position;
+        const floatingWindowPosition = ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(
+            rawFloatingWindowPosition
+        )
+            ? rawFloatingWindowPosition
+            : 'bottom-right';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -1342,6 +1353,15 @@ class SettingPanel extends HTMLElement {
                         <option value="pill"${floatingWindowMode === 'pill' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.pill')}</option>
                         <option value="card"${floatingWindowMode === 'card' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.card')}</option>
                         <option value="off"${floatingWindowMode === 'off' ? ' selected' : ''}>${this._t('sp.general.floatingWindow.off')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.floatingWindowPosition')}</label>
+                    <select id="floating-window-position-select" class="sp-form-input">
+                        <option value="top-left"${floatingWindowPosition === 'top-left' ? ' selected' : ''}>${this._t('sp.general.floatingWindowPosition.topLeft')}</option>
+                        <option value="top-right"${floatingWindowPosition === 'top-right' ? ' selected' : ''}>${this._t('sp.general.floatingWindowPosition.topRight')}</option>
+                        <option value="bottom-left"${floatingWindowPosition === 'bottom-left' ? ' selected' : ''}>${this._t('sp.general.floatingWindowPosition.bottomLeft')}</option>
+                        <option value="bottom-right"${floatingWindowPosition === 'bottom-right' ? ' selected' : ''}>${this._t('sp.general.floatingWindowPosition.bottomRight')}</option>
                     </select>
                 </div>
             </div>
@@ -1705,10 +1725,10 @@ class SettingPanel extends HTMLElement {
         let endpoint;
         if (protocol === 'opentelemetry') {
             const url = this.querySelector('#telemetry-url-input')?.value?.trim();
+            this.clearFieldErrors();
             if (!url) {
-                window.notificationAPI.sendNotification(
-                    'error',
-                    this._t('renderer.settings.telemetry'),
+                this.showFieldError(
+                    this.querySelector('#telemetry-url-input'),
                     this._t('config.telemetry.validation.endpoint_required')
                 );
                 return;
@@ -1724,20 +1744,24 @@ class SettingPanel extends HTMLElement {
             const flushIntervalSeconds = positiveInteger('#telemetry-langfuse-flush-interval-input');
             const publicKey = this.querySelector('#telemetry-langfuse-public-key-input')?.value || '';
             const secretKey = this.querySelector('#telemetry-langfuse-secret-key-input')?.value || '';
+            this.clearFieldErrors();
             if (!maxPayloadChars || !flushAt || !flushIntervalSeconds) {
-                window.notificationAPI.sendNotification(
-                    'error',
-                    this._t('renderer.settings.telemetry'),
-                    this._t('config.telemetry.langfuse.validation.positive_integer')
-                );
+                const msg = this._t('config.telemetry.langfuse.validation.positive_integer');
+                if (!maxPayloadChars) {
+                    this.showFieldError(this.querySelector('#telemetry-langfuse-max-payload-chars-input'), msg);
+                }
+                if (!flushAt) {
+                    this.showFieldError(this.querySelector('#telemetry-langfuse-flush-at-input'), msg);
+                }
+                if (!flushIntervalSeconds) {
+                    this.showFieldError(this.querySelector('#telemetry-langfuse-flush-interval-input'), msg);
+                }
                 return;
             }
             if (enabled && (!publicKey.trim() || !secretKey.trim())) {
-                window.notificationAPI.sendNotification(
-                    'error',
-                    this._t('renderer.settings.telemetry'),
-                    this._t('config.telemetry.langfuse.validation.keys_required')
-                );
+                const msg = this._t('config.telemetry.langfuse.validation.keys_required');
+                this.showFieldError(this.querySelector('#telemetry-langfuse-public-key-input'), msg);
+                this.showFieldError(this.querySelector('#telemetry-langfuse-secret-key-input'), msg);
                 return;
             }
             endpoint = {
@@ -2226,6 +2250,12 @@ class SettingPanel extends HTMLElement {
             } else {
                 this.currentData.gui_config.floating_window_mode = value;
             }
+            this.saveImmediately();
+        });
+
+        this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.floating_window_position = e.target.value;
             this.saveImmediately();
         });
 
@@ -2822,8 +2852,10 @@ class SettingPanel extends HTMLElement {
         const no_proxy = this.querySelector('#provider-no-proxy-input')?.checked || false;
         const no_ssl = this.querySelector('#provider-no-ssl-input')?.checked || false;
 
+        this.clearFieldErrors();
+
         if (!name) {
-            window.notificationAPI.sendNotification('error', this._t('sp.title'), this._t('sp.providers.nameRequired'));
+            this.showFieldError(this.querySelector('#provider-name-input'), this._t('sp.providers.nameRequired'));
             return;
         }
 
@@ -3017,11 +3049,11 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
-                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+                        <input id="model-context-length-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.context_length || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
-                        <input id="model-max-output-tokens-input" type="number" min="0" step="1" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                        <input id="model-max-output-tokens-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
@@ -3267,26 +3299,25 @@ class SettingPanel extends HTMLElement {
         const resultDiv = this.querySelector('#model-verify-result');
         const saveBtn = this.querySelector('#save-model-btn');
 
+        this.clearFieldErrors();
+
         if (!alias) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+            this.showFieldError(
+                this.querySelector('#model-alias-input'),
                 this._t('config.model.validation.alias_required')
             );
             return;
         }
         if (!provider_name) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+            this.showFieldError(
+                this.querySelector('#model-provider-input'),
                 this._t('config.model.validation.provider_required')
             );
             return;
         }
         if (!model_name) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+            this.showFieldError(
+                this.querySelector('#model-name-input'),
                 this._t('config.model.validation.model_name_required')
             );
             return;
@@ -3295,15 +3326,10 @@ class SettingPanel extends HTMLElement {
         // 提前检查别名是否重复，避免验证通过后才发现无法保存
         const existingIdx = this.currentData.models?.findIndex((m) => m.alias === alias);
         if (existingIdx !== undefined && existingIdx !== -1 && existingIdx !== this._editingModelIndex) {
-            await showConfirmModal({
-                icon: 'fa-circle-exclamation',
-                iconBg: '#FEF2F2',
-                iconColor: '#DC2626',
-                title: this._t('config.model.validation.alias_exists'),
-                message: this._t('config.model.validation.alias_exists'),
-                confirmText: this._t('common.confirm'),
-                cancelText: null
-            });
+            this.showFieldError(
+                this.querySelector('#model-alias-input'),
+                this._t('config.model.validation.alias_exists')
+            );
             return;
         }
 
@@ -3321,9 +3347,8 @@ class SettingPanel extends HTMLElement {
 
         const provider = this.currentData?.providers?.find((p) => p.name === provider_name);
         if (!provider) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+            this.showFieldError(
+                this.querySelector('#model-provider-input'),
                 this._t('config.model.validation.provider_not_found')
             );
             return;
@@ -3381,38 +3406,34 @@ class SettingPanel extends HTMLElement {
         const model_type = this.normalizeModelType(this.querySelector('#model-type-input')?.value || 'chat');
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
-        const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
+        const contextLengthNum = parseTokenCount(contextLengthRaw);
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
-        const maxOutputTokensNum = maxOutputTokensRaw ? Number(maxOutputTokensRaw) : undefined;
+        const maxOutputTokensNum = parseTokenCount(maxOutputTokensRaw);
         const visionRaw = this.querySelector('#model-vision-input')?.value;
         const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
+        this.clearFieldErrors();
+
         if (!alias) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+            this.showFieldError(
+                this.querySelector('#model-alias-input'),
                 this._t('config.model.validation.alias_required')
             );
             return;
         }
 
-        if (contextLengthRaw && (!Number.isFinite(contextLengthNum) || contextLengthNum < 0)) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+        if (isInvalidTokenCount(contextLengthRaw)) {
+            this.showFieldError(
+                this.querySelector('#model-context-length-input'),
                 this._t('config.model.validation.context_length_invalid')
             );
             return;
         }
 
-        if (
-            maxOutputTokensRaw &&
-            (!/^\d+$/.test(maxOutputTokensRaw) || !Number.isSafeInteger(maxOutputTokensNum) || maxOutputTokensNum < 0)
-        ) {
-            window.notificationAPI.sendNotification(
-                'error',
-                this._t('config.main.title'),
+        if (isInvalidTokenCount(maxOutputTokensRaw)) {
+            this.showFieldError(
+                this.querySelector('#model-max-output-tokens-input'),
                 this._t('config.model.validation.max_output_tokens_invalid')
             );
             return;
@@ -3421,15 +3442,10 @@ class SettingPanel extends HTMLElement {
         // 检查别名是否重复
         const existingIndex = this.currentData.models?.findIndex((m) => m.alias === alias);
         if (existingIndex !== undefined && existingIndex !== -1 && existingIndex !== this._editingModelIndex) {
-            await showConfirmModal({
-                icon: 'fa-circle-exclamation',
-                iconBg: '#FEF2F2',
-                iconColor: '#DC2626',
-                title: this._t('config.model.validation.alias_exists'),
-                message: this._t('config.model.validation.alias_exists'),
-                confirmText: this._t('common.confirm'),
-                cancelText: null
-            });
+            this.showFieldError(
+                this.querySelector('#model-alias-input'),
+                this._t('config.model.validation.alias_exists')
+            );
             return;
         }
 
@@ -3602,6 +3618,11 @@ class SettingPanel extends HTMLElement {
                 } else {
                     this.currentData.gui_config.floating_window_mode = value;
                 }
+                this.saveImmediately();
+            });
+            this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.floating_window_position = e.target.value;
                 this.saveImmediately();
             });
             this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
@@ -3786,11 +3807,7 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#import-quickpass-confirm-btn')?.addEventListener('click', async () => {
             const quickpass = this.querySelector('#import-input')?.value?.trim();
             if (!quickpass) {
-                window.notificationAPI.sendNotification(
-                    'error',
-                    this._t('sp.title'),
-                    this._t('sp.quickpass.import.empty')
-                );
+                this.showFieldError(this.querySelector('#import-input'), this._t('sp.quickpass.import.empty'));
                 return;
             }
 
@@ -3841,13 +3858,10 @@ class SettingPanel extends HTMLElement {
         });
 
         this.querySelector('#gateway-port-input')?.addEventListener('change', (e) => {
+            this.clearFieldError(e.target);
             const port = parseInt(e.target.value, 10);
             if (!Number.isInteger(port) || port < 1 || port > 65535) {
-                window.notificationAPI.sendNotification(
-                    'error',
-                    this._t('sp.title'),
-                    this._t('sp.gateway.portInvalid')
-                );
+                this.showFieldError(e.target, this._t('sp.gateway.portInvalid'));
                 e.target.value = String(this._getGatewayConfig().port);
                 return;
             }
@@ -4036,6 +4050,41 @@ class SettingPanel extends HTMLElement {
             document.removeEventListener('keydown', this._modalEscHandler, true);
             this._modalEscHandler = null;
         }
+    }
+
+    // --- 表单校验错误提示 ---
+    showFieldError(inputEl, message) {
+        if (!inputEl) return;
+        if (inputEl.classList.contains('sp-form-input')) {
+            inputEl.classList.add('sp-form-input-error');
+        } else {
+            inputEl.classList.add('od-sp-fi-error');
+        }
+        const group = inputEl.closest('.od-sp-fg') || inputEl.closest('.sp-form-group') || inputEl.parentElement;
+        if (!group) return;
+        let errEl = group.querySelector('.od-sp-field-error');
+        if (!errEl) {
+            errEl = document.createElement('p');
+            errEl.className = 'od-sp-field-error';
+            group.appendChild(errEl);
+        }
+        errEl.textContent = message;
+        const clear = () => this.clearFieldError(inputEl);
+        inputEl.addEventListener('input', clear, { once: true });
+        inputEl.addEventListener('change', clear, { once: true });
+    }
+
+    clearFieldError(inputEl) {
+        inputEl.classList.remove('od-sp-fi-error');
+        inputEl.classList.remove('sp-form-input-error');
+        const group = inputEl.closest('.od-sp-fg') || inputEl.closest('.sp-form-group');
+        group?.querySelector('.od-sp-field-error')?.remove();
+    }
+
+    clearFieldErrors() {
+        this.querySelectorAll('.od-sp-fi-error').forEach((el) => el.classList.remove('od-sp-fi-error'));
+        this.querySelectorAll('.sp-form-input-error').forEach((el) => el.classList.remove('sp-form-input-error'));
+        this.querySelectorAll('.od-sp-field-error').forEach((el) => el.remove());
     }
 
     // --- 工具方法 ---

@@ -17,6 +17,7 @@ import { createRequire } from 'module';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import type { ReasoningEffort } from '../aikernel/types/reasoning.js';
+import { parseTokenCount } from '../../utils/model.js';
 
 const require = createRequire(import.meta.url);
 
@@ -219,6 +220,13 @@ const GUIConfigSchema = z.object({
     window_bounds: WindowBoundsSchema.optional()
         .default(null)
         .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存'),
+    floating_window_position: z
+        .enum(['top-left', 'top-right', 'bottom-left', 'bottom-right'])
+        .optional()
+        .default('bottom-right')
+        .describe(
+            '任务状态浮窗（card/pill）显示位置: top-left=左上角, top-right=右上角, bottom-left=左下角, bottom-right=右下角'
+        ),
     sidebar_width: z.number().min(200).max(800).optional().default(320).describe('侧边栏宽度 (px)'),
     gui_reason_display: z
         .enum(['inline', 'bubble'])
@@ -413,6 +421,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             font_preset: 'default',
             ctrl_enter_send: false,
             window_bounds: null,
+            floating_window_position: 'bottom-right',
             sidebar_width: 320,
             gui_reason_display: 'inline',
             floating_window_mode: 'card'
@@ -532,6 +541,42 @@ export class ModelInstance {
     getModelType(): ModelType {
         return normalizeModelType(this.model_type);
     }
+}
+
+/** 通过环境变量覆盖默认对话模型时使用的环境变量名 */
+export const ENV_DEFAULT_MODEL_NAME = 'OPENDESK_MODEL_NAME';
+export const ENV_DEFAULT_MODEL_CONTEXT_LENGTH = 'OPENDESK_MODEL_CONTEXT_LENGTH';
+export const ENV_DEFAULT_PROVIDER_BASE_URL = 'OPENDESK_PROVIDER_BASE_URL';
+export const ENV_DEFAULT_PROVIDER_TYPE = 'OPENDESK_PROVIDER_TYPE';
+export const ENV_DEFAULT_PROVIDER_API_KEY = 'OPENDESK_PROVIDER_API_KEY';
+
+/**
+ * 通过环境变量构造默认对话模型实例。
+ * 仅当 OPENDESK_MODEL_NAME 存在时启用覆盖；其余变量可选，缺省使用空值/默认值。
+ * 上下文长度留空或非法时返回 undefined，由系统自动估算。
+ */
+export function getEnvDefaultModelInstance(): ModelInstance | null {
+    const modelName = process.env[ENV_DEFAULT_MODEL_NAME]?.trim();
+    if (!modelName) {
+        return null;
+    }
+    const providerType = process.env[ENV_DEFAULT_PROVIDER_TYPE]?.trim() === 'anthropic' ? 'anthropic' : 'openai';
+    return new ModelInstance(
+        modelName,
+        process.env[ENV_DEFAULT_PROVIDER_BASE_URL]?.trim() ?? '',
+        process.env[ENV_DEFAULT_PROVIDER_API_KEY]?.trim() ?? '',
+        false,
+        false,
+        '',
+        parseTokenCount(process.env[ENV_DEFAULT_MODEL_CONTEXT_LENGTH]),
+        undefined,
+        undefined,
+        false,
+        undefined,
+        providerType,
+        'chat',
+        'env'
+    );
 }
 
 export class Setting {
@@ -757,9 +802,14 @@ export class Setting {
     }
 
     /**
-     * Get the default model instance, or null if not configured or not found
+     * Get the default model instance, or null if not configured or not found.
+     * 若配置了 OPENDESK_MODEL_NAME 等环境变量，则优先使用环境变量指定的默认对话模型。
      */
     getDefaultModelInstance(): ModelInstance | null {
+        const envModel = getEnvDefaultModelInstance();
+        if (envModel !== null) {
+            return envModel;
+        }
         if (!this.data.default_model) {
             return null;
         }

@@ -239,6 +239,73 @@ describe('task LLM auto retry', () => {
         expect(toolCalls[10].status).toBe('pending');
     });
 
+    test('keeps executed tool calls from previous rounds when retry rolls back partial output', async () => {
+        const { task, chunks } = createRunningTask(true);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+
+        // 模拟上一轮已执行的工具调用（带副作用，如创建子任务/修改文件）
+        const executedPart = new ToolCallMessagePart();
+        const executedCall = new ToolCall(0, 'executed-call', 'createSubTask', '{"title":"subtask"}');
+        executedCall.status = 'success';
+        executedCall.result = 'subtask created';
+        executedPart.push(executedCall);
+        assistant.appendToolCallPart(executedPart);
+
+        let requestCount = 0;
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            requestCount++;
+            if (requestCount === 1) {
+                // 本轮生成新的工具调用后流失败
+                yield toolCallResponse(1, 'new');
+                yield AssistantResponse.richError('Stream Completion Failed', 'provider returned 500');
+                return;
+            }
+            yield toolCallResponse(1, 'new');
+        });
+
+        const completion = task.processCompletion();
+
+        await waitForCondition(() =>
+            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
+        );
+        await jest.advanceTimersByTimeAsync(10_000);
+        await completion;
+
+        const toolCalls = assistant.content.flatMap((part) => (part.type === 'tool_call' ? part.toolcalls : []));
+        // 已执行的工具调用必须保留（含结果），重试不能丢失带副作用的操作
+        expect(toolCalls.some((tc) => tc.id === 'executed-call' && tc.status === 'success')).toBe(true);
+        // 重试生成的新工具调用也在
+        expect(toolCalls.some((tc) => tc.id === 'new-call-1')).toBe(true);
+    });
+
+    test('skips empty toolcall placeholder chunks and pushes new parts across round boundaries', () => {
+        const assistant = new AssistantMessage();
+
+        // 上一轮已执行的工具调用
+        const executedPart = new ToolCallMessagePart();
+        const executedCall = new ToolCall(0, 'executed-call', 'createSubTask', '{"title":"subtask"}');
+        executedCall.status = 'success';
+        executedCall.result = 'subtask created';
+        executedPart.push(executedCall);
+        assistant.appendToolCallPart(executedPart);
+
+        assistant.beginCompletionRound(true);
+
+        // 跨轮到达的空 toolcall 占位 chunk 应被跳过，不能 push 空 part 割裂消息
+        assistant.appendToolCallPart(new ToolCallMessagePart());
+        expect(assistant.content.length).toBe(1);
+
+        // 跨轮到达的非空 tool_call delta 应 push 新 part，而非并入上一轮已执行的 part
+        const delta = new ToolCallMessagePart();
+        delta.push(new ToolCall(1, 'new-call-1', 'search', '{"q":"x"}'));
+        assistant.appendToolCallPart(delta);
+        expect(assistant.content.length).toBe(2);
+
+        const toolCalls = assistant.content.flatMap((part) => (part.type === 'tool_call' ? part.toolcalls : []));
+        expect(toolCalls.filter((tc) => tc.id === 'executed-call' && tc.status === 'success')).toHaveLength(1);
+        expect(toolCalls.filter((tc) => tc.id === 'new-call-1')).toHaveLength(1);
+    });
+
     test('marks a stream stopped by the per-request tool call cap as an internal hook interruption', async () => {
         const { task } = createRunningTask(false);
 

@@ -49,6 +49,7 @@ import type { BaseApplication } from './applications/base.js';
 
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
+import { OPENDESK_ENV_VAR_DOCS } from './tui/env.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -208,6 +209,17 @@ function parseCommandLineArgs() {
             }
             lines.push('');
         }
+        return lines.join('\n');
+    });
+
+    // 在 --help 末尾展示 OPENDESK_ 环境变量参考（仅英文，与 commander 帮助风格一致）。
+    // 文档列表由 src/main/tui/env.ts 中的 OPENDESK_ENV_VAR_DOCS 自动生成，无需在此维护。
+    prog.addHelpText('after', () => {
+        const lines: string[] = ['', 'Environment variables (OPENDESK_*):'];
+        for (const { name, description } of OPENDESK_ENV_VAR_DOCS) {
+            lines.push(`  ${name.padEnd(38)} ${description}`);
+        }
+        lines.push('');
         return lines.join('\n');
     });
 

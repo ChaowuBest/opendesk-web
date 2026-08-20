@@ -1630,17 +1630,17 @@ export class AssistantMessage implements BaseAssistantMessage {
     }
 
     /**
-     * 仅移除最后一个未完成的 part（流式输出中正在构建的部分）。
-     * 用于 LLM 请求失败重试时保留已完成的 parts，而非清空整条消息。
+     * 回滚当前 completion round 中新增的所有 parts，恢复到 beginCompletionRound 时的状态。
+     * 用于 LLM 请求失败重试：跨 round 已执行的 tool_call（含结果）与已完成的文本均保留，
+     * 仅清除本次未完成/失败的流式输出。
      */
-    rollbackLastPart(): void {
-        if (this.content.length > 0) {
-            this.content.pop();
+    rollbackToRoundStart(): void {
+        if (this.content.length > this._thinkRoundStartPartIndex) {
+            this.content.length = this._thinkRoundStartPartIndex;
         }
         this._insideThinkTag = false;
         this._allowThinkTagParsing = this.content.length === 0;
         this._allowImplicitThinkClose = this.content.length === 0;
-        this._thinkRoundStartPartIndex = this.content.length;
     }
 
     appendReasoningContent(
@@ -1649,8 +1649,16 @@ export class AssistantMessage implements BaseAssistantMessage {
     ): AssistantMessage {
         this._allowThinkTagParsing = false;
         this._allowImplicitThinkClose = false;
-        const last_part = this.content[this.content.length - 1];
-        if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
+        const last_index = this.content.length - 1;
+        const last_part = this.content[last_index];
+        // 仅合并当前 completion round 内的 reasoning，避免跨 round 追加到旧 part 上，
+        // 否则失败重试回滚时无法清除本轮新增的思考内容。
+        if (
+            last_part &&
+            last_part.type === 'reasoning' &&
+            last_part.source === source &&
+            last_index >= this._thinkRoundStartPartIndex
+        ) {
             last_part.content += content;
             last_part.invalidateRender();
         } else {
@@ -1692,8 +1700,11 @@ export class AssistantMessage implements BaseAssistantMessage {
     }
 
     private _appendRawText(text: string): void {
-        const last_part = this.content[this.content.length - 1];
-        if (last_part && last_part.type === 'text') {
+        const last_index = this.content.length - 1;
+        const last_part = this.content[last_index];
+        // 仅当最后一个 text part 属于当前 completion round 时才追加，避免跨 round 合并。
+        // 否则 LLM 请求失败回滚到 round 起点时，无法移除追加到旧 part 上的本轮文本。
+        if (last_part && last_part.type === 'text' && last_index >= this._thinkRoundStartPartIndex) {
             last_part.text += text;
             last_part.invalidateRender();
         } else {
@@ -1956,6 +1967,7 @@ export class AssistantMessage implements BaseAssistantMessage {
         // 某些提供商会在 tool_calls 附带空白 content。允许跨过纯空白 text 合并参数续传，
         // 但非空 text、reasoning 或 error 都是新的轮次边界，不能并入更早的 tool_call。
         let last_tool_call_part: ToolCallMessagePart | undefined = undefined;
+        let last_tool_call_part_index = -1;
         for (let i = this.content.length - 1; i >= 0; i--) {
             const candidate = this.content[i];
             if (candidate?.type === 'text') {
@@ -1969,11 +1981,23 @@ export class AssistantMessage implements BaseAssistantMessage {
             }
             if (candidate && candidate.type === 'tool_call') {
                 last_tool_call_part = candidate;
+                last_tool_call_part_index = i;
                 break;
             }
         }
         if (last_tool_call_part) {
-            last_tool_call_part.extend(part);
+            // 仅合并当前 completion round 内新增的 tool_call part（索引 >= _thinkRoundStartPartIndex）。
+            // 上一轮收口的 tool_call part 中的调用可能已执行（status 非 pending，带副作用），
+            // 若跨 round 合并进同一 part，LLM 请求失败回滚时会连同已执行的调用一并丢失。
+            if (last_tool_call_part_index >= this._thinkRoundStartPartIndex) {
+                last_tool_call_part.extend(part);
+            } else if (part.toolcalls.length > 0) {
+                // 跨 round 边界：push 新 part 而非并入旧 part；同时跳过空 toolcall 占位 chunk，
+                // 并关闭 think 标签解析，与下方无旧 part 时的分支保持一致。
+                this.content.push(part);
+                this._allowThinkTagParsing = false;
+                this._allowImplicitThinkClose = false;
+            }
         } else if (part.toolcalls.length > 0) {
             /* 如果API返回的chunk中有空的toolcall列表占位，我们需要跳过它们, 否则消息将会被割裂成许多碎片 */
             this.content.push(part);
