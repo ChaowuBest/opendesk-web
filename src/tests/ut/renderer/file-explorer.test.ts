@@ -149,8 +149,10 @@ describe('file explorer', () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const prepare = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
+        const bindOfficeTask = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
         (window as any).officeHostAPI = {
             prepare,
+            bindOfficeTask,
             requestClose: jest.fn<() => Promise<boolean>>().mockResolvedValue(true)
         };
 
@@ -163,6 +165,7 @@ describe('file explorer', () => {
         explorer._container = container;
         explorer._rootNode = container;
         explorer._workspaceRoot = '/workspace';
+        explorer.setTaskId('task-a');
         const onWorkspaceFocusLayoutChange = jest.fn();
         (explorer as any).onWorkspaceFocusLayoutChange = onWorkspaceFocusLayoutChange;
         explorer._renderPanel();
@@ -177,6 +180,12 @@ describe('file explorer', () => {
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
         expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
         expect(onWorkspaceFocusLayoutChange).toHaveBeenLastCalledWith({ active: true, fullscreen: true });
+
+        (editor as any).getWebContentsId = () => 42;
+        const readyEvent = new window.Event('ipc-message');
+        Object.assign(readyEvent, { channel: 'opendesk-office:document-ready', args: [] });
+        editor?.dispatchEvent(readyEvent);
+        expect(bindOfficeTask).toHaveBeenCalledWith('word', 'task-a', '/workspace/report.docx', 42);
     });
 
     test('opens xlsx files in the embedded OpenDesk Office editor', async () => {
@@ -502,14 +511,17 @@ describe('file explorer', () => {
 
         const editor = container.querySelector<HTMLElement>('.ws-office-editor-frame')!;
         (editor as any).getWebContentsId = () => 42;
-        explorer.selectFile('/workspace/readme.txt');
+        const onSwitchBlocked = jest.fn();
+        explorer.selectFile('/workspace/readme.txt', undefined, onSwitchBlocked);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(requestClose).toHaveBeenCalledWith('slides', 42);
         expect(explorer._selectedFile).toBe('/workspace/deck.pptx');
+        expect(onSwitchBlocked).toHaveBeenCalledTimes(1);
 
-        explorer.selectFile('/workspace/readme.txt');
+        explorer.selectFile('/workspace/readme.txt', undefined, onSwitchBlocked);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(explorer._selectedFile).toBe('/workspace/readme.txt');
+        expect(onSwitchBlocked).toHaveBeenCalledTimes(1);
     });
 });

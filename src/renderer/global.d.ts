@@ -32,7 +32,24 @@ declare global {
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
             requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
-            bindSlidesTask: (taskId: string, filePath: string, webContentsId: number) => Promise<boolean>;
+            bindOfficeTask: (
+                kind: 'slides' | 'word' | 'sheets',
+                taskId: string,
+                filePath: string,
+                webContentsId: number
+            ) => Promise<boolean>;
+            onOpenOfficeTaskFile: (
+                callback: (request: {
+                    requestId: string;
+                    kind: 'slides' | 'word' | 'sheets';
+                    taskId: string;
+                    filePath: string;
+                }) => void
+            ) => () => void;
+            reportOpenOfficeTaskFileResult: (
+                requestId: string,
+                status: 'not_opened' | 'failed'
+            ) => void;
         };
         settingErrorAPI: {
             onSettingLoadError: (callback: (message: string) => void) => void;

@@ -1832,6 +1832,13 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.skillTag.directory': '目录',
     'office.slides.error.noTaskSession': '当前任务没有打开的 PPT',
     'office.slides.error.capabilityUnavailable': '当前 Office 包不支持 PPT 自动化能力',
+    'office.error.unsupportedFile': '文件格式与目标 Office 编辑器不匹配',
+    'office.error.fileNotFound': '目标 Office 文件不存在或不可访问',
+    'office.error.windowUnavailable': '当前没有可用的 OpenDesk 编辑窗口',
+    'office.error.routeUnavailable': '当前任务的文件预览区域不可用，无法打开 Office 文件',
+    'office.error.openTimeout': '等待 Office 编辑器打开超时',
+    'office.open.notCompleted':
+        '未切换文件：用户取消了切换，或当前文件未能安全关闭。请保持当前文件，除非用户再次明确要求，否则不要自动重试。',
     'renderer.taskview.edit.title': '确认编辑消息',
     'renderer.taskview.edit.message': '是否要用编辑后的消息继续对话？<b>后续的所有对话历史将会丢失。</b>',
     'renderer.taskview.edit.confirm': '继续对话',

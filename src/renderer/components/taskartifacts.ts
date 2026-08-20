@@ -490,13 +490,13 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：切换到工作空间 tab 并打开指定文件的预览。
      * @param line 可选行号，打开后跳转到该行（仅对使用编辑器预览的文件生效）
      */
-    openFilePreview(filePath: string, line?: number): void {
+    openFilePreview(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
         if (isHtmlFile(filePath)) {
             this._fileExplorer.onOpenInBrowser?.(filePath);
             return;
         }
         this._switchTab('workspace');
-        this._fileExplorer.selectFile(filePath, line);
+        this._fileExplorer.selectFile(filePath, line, onSwitchBlocked);
     }
 
     /** Backward-compatible alias for callers that previously closed only the editor. */

@@ -1357,9 +1357,16 @@ export class FileExplorer {
      * 选中并预览指定文件。
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
-    selectFile(filePath: string, line?: number): void {
+    selectFile(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
-        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line))) return;
+        if (
+            this._deferUntilOfficeCanClose(
+                () => this.selectFile(filePath, line, onSwitchBlocked),
+                onSwitchBlocked
+            )
+        ) {
+            return;
+        }
 
         // HTML/HTM 文件在浏览器 tab 中打开，不在文件预览面板中渲染
         if (isHtmlFile(filePath)) {
@@ -1432,7 +1439,7 @@ export class FileExplorer {
         }
     }
 
-    private _deferUntilOfficeCanClose(onApproved: () => void): boolean {
+    private _deferUntilOfficeCanClose(onApproved: () => void, onBlocked?: () => void): boolean {
         if (this._officeCloseApproved) {
             this._officeCloseApproved = false;
             return false;
@@ -1452,11 +1459,14 @@ export class FileExplorer {
         void window.officeHostAPI
             .requestClose(editorConfig.kind, webContentsId)
             .then((canClose) => {
-                if (!canClose) return;
+                if (!canClose) {
+                    onBlocked?.();
+                    return;
+                }
                 this._officeCloseApproved = true;
                 onApproved();
             })
-            .catch(() => {})
+            .catch(() => onBlocked?.())
             .finally(() => {
                 this._officeClosePending = false;
             });
@@ -2668,12 +2678,17 @@ export class FileExplorer {
             host.classList.remove('ws-office-editor-loading');
             host.querySelector('.ws-office-editor-loading-indicator')?.remove();
             webview.classList.remove('ws-office-editor-frame--loading');
-            if (editorConfig.kind === 'slides' && this._taskId && window.officeHostAPI?.bindSlidesTask) {
+            if (this._taskId && window.officeHostAPI?.bindOfficeTask) {
                 const webContentsId = (
                     webview as HTMLElement & { getWebContentsId?: () => number }
                 ).getWebContentsId?.();
                 if (webContentsId) {
-                    void window.officeHostAPI.bindSlidesTask(this._taskId, filePath, webContentsId);
+                    void window.officeHostAPI.bindOfficeTask(
+                        editorConfig.kind,
+                        this._taskId,
+                        filePath,
+                        webContentsId
+                    );
                 }
             }
         };

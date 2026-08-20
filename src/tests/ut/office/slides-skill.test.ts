@@ -56,13 +56,14 @@ const capabilities = [deckContextCapability, textCapability, chartCapability];
 
 describe('PPT task skill', () => {
     test('loads and enumerates a deterministic presentation action catalog', async () => {
-        const skill = buildSlidesSkill(capabilities, jest.fn() as never);
+        const skill = buildSlidesSkill(capabilities, jest.fn() as never, jest.fn() as never);
 
         expect(skill.frontmatter.name).toBe('edit-current-presentation');
         expect(skill.body).toContain('[read] get_deck_context');
         expect(skill.body).toContain('[text] set_element_text');
         expect(skill.body).toContain('[chart] edit_chart');
         expect([...skill.toolsets![0].tools.keys()]).toEqual([
+            'open_presentation',
             'list_actions',
             'get_action_definition',
             'execute_action'
@@ -75,7 +76,7 @@ describe('PPT task skill', () => {
     });
 
     test('returns the exact Office definition for a named action', async () => {
-        const skill = buildSlidesSkill(capabilities, jest.fn() as never);
+        const skill = buildSlidesSkill(capabilities, jest.fn() as never, jest.fn() as never);
 
         const result = await skill.getTool('get_action_definition')!.execute({ name: 'edit_chart' });
         const definition = JSON.parse(result.result);
@@ -104,7 +105,7 @@ describe('PPT task skill', () => {
             }
         ];
 
-        const skill = buildSlidesSkill(pictureCapabilities, jest.fn() as never);
+        const skill = buildSlidesSkill(pictureCapabilities, jest.fn() as never, jest.fn() as never);
         const result = await skill.getTool('list_actions')!.execute({ category: 'layout' });
 
         expect(JSON.parse(result.result)).toEqual([
@@ -120,7 +121,7 @@ describe('PPT task skill', () => {
             summary: 'set_element_text',
             mutated: true
         }));
-        const skill = buildSlidesSkill(capabilities, execute);
+        const skill = buildSlidesSkill(capabilities, execute, jest.fn() as never);
 
         const result = await skill.getTool('execute_action')!.execute(
             {
@@ -142,5 +143,49 @@ describe('PPT task skill', () => {
             sourceId: 'shape-1',
             paragraphs: [{ text: '新标题' }]
         });
+    });
+
+    test('opens a known presentation for the current task before editing', async () => {
+        const openPresentation = jest.fn(async () => ({
+            status: 'opened' as const,
+            filePath: '/workspace/deck.pptx'
+        }));
+        const skill = buildSlidesSkill(capabilities, jest.fn() as never, openPresentation);
+
+        const result = await skill.getTool('open_presentation')!.execute(
+            { filePath: '/workspace/deck.pptx' },
+            undefined,
+            { task_id: 'task-a' } as never
+        );
+
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result)).toEqual({
+            status: 'opened',
+            filePath: '/workspace/deck.pptx'
+        });
+        expect(openPresentation).toHaveBeenCalledWith('task-a', '/workspace/deck.pptx');
+    });
+
+    test('reports a cancelled switch as a completed decision that must not be retried', async () => {
+        const openPresentation = jest.fn(async () => ({
+            status: 'not_opened' as const,
+            filePath: '/workspace/other.pptx',
+            message: '当前文件保持打开，请勿自动重试'
+        }));
+        const skill = buildSlidesSkill(capabilities, jest.fn() as never, openPresentation);
+
+        const result = await skill.getTool('open_presentation')!.execute(
+            { filePath: '/workspace/other.pptx' },
+            undefined,
+            { task_id: 'task-a' } as never
+        );
+
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result)).toMatchObject({
+            status: 'not_opened',
+            message: expect.stringContaining('请勿自动重试')
+        });
+        expect(skill.body).toContain('不要自动重试');
+        expect(skill.body).not.toContain('只能在当前任务尚未绑定 PPT 时');
     });
 });
