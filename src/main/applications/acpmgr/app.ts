@@ -14,7 +14,11 @@ import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
 import type { AgentDecl } from '../../aikernel/agents/common.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
-import { createDefaultAcpConnectionFactory, getActiveAcpProfileIds } from '../../aikernel/agents/acp/connection.js';
+import {
+    createDefaultAcpConnectionFactory,
+    getActiveAcpProfileIds,
+    type AcpConnectionFactory
+} from '../../aikernel/agents/acp/connection.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
@@ -33,6 +37,7 @@ interface AcpMgrLog {
 
 export interface AcpMgrApplicationDependencies {
     log?: AcpMgrLog;
+    createConnection?: AcpConnectionFactory;
 }
 
 export class AcpMgrApplication extends BaseApplication {
@@ -40,10 +45,12 @@ export class AcpMgrApplication extends BaseApplication {
     private agentRefreshTail: Promise<void> = Promise.resolve();
     private registeredAgentNames = new Set<string>();
     private readonly log: AcpMgrLog;
+    private readonly createConnection: AcpConnectionFactory;
 
     constructor(dependencies: AcpMgrApplicationDependencies = {}) {
         super('acpmgr', false);
         this.log = dependencies.log ?? logger;
+        this.createConnection = dependencies.createConnection ?? createDefaultAcpConnectionFactory();
     }
 
     getName(): string {
@@ -114,9 +121,8 @@ export class AcpMgrApplication extends BaseApplication {
 
     async testAgent(input: unknown, workspace?: string): Promise<Record<string, unknown>> {
         const profile = AcpAgentProfileSchema.parse(input);
-        const factory = createDefaultAcpConnectionFactory();
         const effectiveWorkspace = workspace || getPlatform().getEffectiveWorkspace();
-        const handle = await factory(
+        const handle = await this.createConnection(
             profile,
             {
                 sessionUpdate: async () => undefined,
@@ -124,18 +130,31 @@ export class AcpMgrApplication extends BaseApplication {
             },
             effectiveWorkspace
         );
+        let sessionId: string | undefined;
         try {
-            const response = await handle.connection.initialize({
+            const initializeResponse = await handle.connection.initialize({
                 protocolVersion: PROTOCOL_VERSION,
                 clientCapabilities: {},
                 clientInfo: { name: 'OpenDesk', version: '0.3.3' }
             });
+            const sessionResponse = await handle.connection.newSession({
+                cwd: effectiveWorkspace,
+                mcpServers: []
+            });
+            sessionId = sessionResponse.sessionId;
             return {
-                protocolVersion: response.protocolVersion,
-                agentInfo: response.agentInfo ?? null,
-                agentCapabilities: response.agentCapabilities ?? {}
+                protocolVersion: initializeResponse.protocolVersion,
+                agentInfo: initializeResponse.agentInfo ?? null,
+                agentCapabilities: initializeResponse.agentCapabilities ?? {},
+                authMethods: initializeResponse.authMethods ?? [],
+                sessionId,
+                modes: sessionResponse.modes ?? null,
+                configOptions: sessionResponse.configOptions ?? []
             };
         } finally {
+            if (sessionId && handle.connection.closeSession) {
+                await handle.connection.closeSession({ sessionId });
+            }
             await handle.close();
         }
     }

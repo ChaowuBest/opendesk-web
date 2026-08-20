@@ -1407,8 +1407,15 @@ export const enUs: Record<string, string> = {
     'sp.agents.error.configOptionsInvalid': 'ACP config options must be a JSON object with string or boolean values.',
     'sp.agents.error.reconnectInvalid': 'A reconnect value is outside its valid range.',
     'sp.agents.error.unknown': 'Unable to read the ACP agent settings.',
-    'sp.agents.test.running': 'Connecting and negotiating the ACP protocol…',
-    'sp.agents.test.success': 'Connection succeeded: ${name}',
+    'sp.agents.test.running': 'Connecting, creating a session, and discovering ACP options…',
+    'sp.agents.test.success': 'ACP session ready: ${name}; discovered ${count} session option(s).',
+    'sp.agents.test.noOptions': 'ACP session created, but this Agent advertised no configurable session options.',
+    'sp.agents.test.authMethods': 'Authentication methods advertised by the Agent: ${methods}',
+    'sp.agents.config.discovered': 'Agent session configuration',
+    'sp.agents.config.discovered.hint':
+        'Shown after testing the connection. Selected values are written to the JSON above and applied after creating a task session.',
+    'sp.agents.config.none': 'This Agent advertised no configurable session options.',
+    'sp.agents.config.savedUnavailable': 'Saved value is not currently advertised by the Agent',
     'sp.agents.test.failed': 'Connection failed: ${message}',
     'sp.agents.delete.title': 'Delete ACP Agent',
     'sp.agents.delete.message': 'Delete “${name}”? Local records in existing tasks will not be removed.',
@@ -2669,5 +2676,8 @@ export const enUs: Record<string, string> = {
     'acpmgr.error.sessionNotInitialized': 'The ACP session is not initialized',
     'acpmgr.error.missingEnvironment': 'Environment variable ${name} is missing',
     'acpmgr.error.mcpCommandMissing': 'MCP server “${name}” has no command configured',
-    'acpmgr.error.mcpUrlMissing': 'MCP server “${name}” has no URL configured'
+    'acpmgr.error.mcpUrlMissing': 'MCP server “${name}” has no URL configured',
+    'acpmgr.error.configOptionUnsupported': 'ACP config option “${id}” was not advertised by the Agent',
+    'acpmgr.error.configOptionTypeMismatch': 'The value type for ACP config option “${id}” is invalid',
+    'acpmgr.error.configOptionValueUnsupported': 'ACP config option “${id}” does not support value “${value}”'
 };

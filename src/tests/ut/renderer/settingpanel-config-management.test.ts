@@ -221,6 +221,54 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#acp-agent-test-result')?.classList.contains('od-sp-verify-success')).toBe(true);
     });
 
+    test('discovers ACP session options and writes a selected model to the profile JSON', async () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'OpenDesk ACP',
+            session: { configOptions: {} },
+            transport: { type: 'stdio', command: 'node', args: [] }
+        };
+        panel.innerHTML = `
+            <textarea id="acp-agent-config-options">{}</textarea>
+            <div id="acp-agent-discovered-config" hidden><div id="acp-agent-discovered-config-controls"></div></div>
+            <div id="acp-agent-test-result" hidden></div>`;
+        panel._readAcpAgentForm = jest.fn(() => profile);
+        window.applicationRegistryAPI = {
+            callMainWorld: jest.fn(async () => ({
+                agentInfo: { name: 'OpenCode' },
+                configOptions: [
+                    {
+                        id: 'model',
+                        name: 'Model',
+                        type: 'select',
+                        category: 'model',
+                        currentValue: 'opencode/big-pickle',
+                        options: [
+                            { value: 'opencode/big-pickle', name: 'Big Pickle' },
+                            { value: 'opencode/deepseek-v4-flash-free', name: 'DeepSeek Free' }
+                        ]
+                    }
+                ],
+                authMethods: [{ id: 'login', name: 'Login', description: 'Run login in a terminal' }]
+            }))
+        };
+
+        await panel._testAcpAgent(profile.id);
+
+        const select = panel.querySelector('[data-acp-config-option-id="model"]') as HTMLSelectElement;
+        expect(select).not.toBeNull();
+        Object.defineProperty(select, 'value', {
+            configurable: true,
+            value: 'opencode/deepseek-v4-flash-free'
+        });
+        select.dispatchEvent(new Event('change'));
+        expect(JSON.parse((panel.querySelector('#acp-agent-config-options') as HTMLTextAreaElement).value)).toEqual({
+            model: 'opencode/deepseek-v4-flash-free'
+        });
+        expect(panel.querySelector('#acp-agent-test-result')?.textContent).toContain('OpenCode');
+    });
+
     test.each(['1.5', '9007199254740992'])('rejects non-integer max output tokens %s', async (value) => {
         const panel = createPanel();
         panel.render();

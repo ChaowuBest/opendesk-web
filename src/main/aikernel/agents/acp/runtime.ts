@@ -16,6 +16,7 @@ import {
     type McpServer,
     type RequestPermissionRequest,
     type RequestPermissionResponse,
+    type SessionConfigOption,
     type SessionNotification,
     type StopReason
 } from '@agentclientprotocol/sdk';
@@ -154,6 +155,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
     private journal?: AcpEventJournal;
     private mapper = new AcpSessionUpdateMapper();
     private capabilities?: AgentCapabilities;
+    private sessionConfigOptions?: SessionConfigOption[];
     private sessionId?: string;
     private replaying = false;
 
@@ -322,6 +324,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
+                    this.sessionConfigOptions = response?.configOptions ?? undefined;
                 } finally {
                     this.replaying = false;
                 }
@@ -333,6 +336,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                     mcpServers
                 });
                 this.record('inbound', 'session/resume/result', response);
+                this.sessionConfigOptions = response?.configOptions ?? undefined;
             } else if (this.capabilities?.loadSession) {
                 this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: request.workspace });
                 this.replaying = true;
@@ -343,6 +347,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
+                    this.sessionConfigOptions = response?.configOptions ?? undefined;
                 } finally {
                     this.replaying = false;
                 }
@@ -354,6 +359,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
             const response = await connection.newSession({ cwd: request.workspace, mcpServers });
             this.record('inbound', 'session/new/result', response);
             this.sessionId = response.sessionId;
+            this.sessionConfigOptions = response.configOptions ?? undefined;
         }
         await this.saveCheckpoint({ sessionId: this.sessionId, phase: 'idle' });
         await this.applySessionSettings();
@@ -426,6 +432,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
             this.record('inbound', 'session/set_mode/result', response);
         }
         for (const [configId, value] of Object.entries(this.profile.session.configOptions)) {
+            this.validateSessionConfigOption(configId, value);
             const params =
                 typeof value === 'boolean'
                     ? ({ sessionId, configId, type: 'boolean', value } as const)
@@ -433,8 +440,31 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
             this.record('outbound', 'session/set_config_option', params);
             const response = await connection.setSessionConfigOption(params);
             this.record('inbound', 'session/set_config_option/result', response);
+            if (response.configOptions?.length) this.sessionConfigOptions = response.configOptions;
         }
         await this.saveCheckpoint();
+    }
+
+    private validateSessionConfigOption(configId: string, value: string | boolean): void {
+        const options = this.sessionConfigOptions;
+        if (!options?.length) return;
+        const option = options.find((candidate) => candidate.id === configId);
+        if (!option) {
+            throw new Error(t('acpmgr.error.configOptionUnsupported', { id: configId }));
+        }
+        if (option.type === 'boolean') {
+            if (typeof value !== 'boolean') {
+                throw new Error(t('acpmgr.error.configOptionTypeMismatch', { id: configId }));
+            }
+            return;
+        }
+        if (typeof value !== 'string') {
+            throw new Error(t('acpmgr.error.configOptionTypeMismatch', { id: configId }));
+        }
+        const values = option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
+        if (!values.some((entry) => entry.value === value)) {
+            throw new Error(t('acpmgr.error.configOptionValueUnsupported', { id: configId, value }));
+        }
     }
 
     private buildPrompt(request: AgentTaskRuntimeTurnRequest): ContentBlock[] {

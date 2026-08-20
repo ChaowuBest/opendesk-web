@@ -139,6 +139,61 @@ test('ACP manager config rejects duplicate stable profile ids', () => {
     assert.throws(() => AcpMgrConfigSchema.parse({ agents: [enabledProfile, enabledProfile] }), /duplicate/i);
 });
 
+test('ACP agent test creates a disposable session and exposes its configuration', async () => {
+    const calls: string[] = [];
+    const application = new AcpMgrApplication({
+        createConnection: async () => ({
+            connection: {
+                initialize: async () => {
+                    calls.push('initialize');
+                    return {
+                        protocolVersion: 1,
+                        agentCapabilities: {},
+                        authMethods: [{ id: 'login', name: 'Login', description: 'Run login' }],
+                        agentInfo: { name: 'Fake Agent', version: '1.0.0' }
+                    };
+                },
+                newSession: async (params: { cwd: string; mcpServers: unknown[] }) => {
+                    calls.push(`session/new:${params.cwd}:${params.mcpServers.length}`);
+                    return {
+                        sessionId: 'temporary-session',
+                        configOptions: [
+                            {
+                                id: 'model',
+                                name: 'Model',
+                                type: 'select',
+                                category: 'model',
+                                currentValue: 'provider/model',
+                                options: [{ value: 'provider/model', name: 'Model' }]
+                            }
+                        ]
+                    };
+                },
+                closeSession: async (params: { sessionId: string }) => {
+                    calls.push(`session/close:${params.sessionId}`);
+                }
+            } as any,
+            closed: Promise.resolve(),
+            close: async () => {
+                calls.push('transport/close');
+            }
+        }),
+        log: { info: () => undefined, error: () => undefined }
+    });
+
+    const result = await application.testAgent(enabledProfile, 'D:/workspace');
+
+    assert.equal((result.agentInfo as any).name, 'Fake Agent');
+    assert.equal((result.authMethods as any[]).length, 1);
+    assert.equal((result.configOptions as any[])[0].category, 'model');
+    assert.deepEqual(calls, [
+        'initialize',
+        'session/new:D:/workspace:0',
+        'session/close:temporary-session',
+        'transport/close'
+    ]);
+});
+
 test('selected MCP manager entries are converted to ACP SDK server shapes', () => {
     const profile = AcpAgentProfileSchema.parse({
         ...enabledProfile,

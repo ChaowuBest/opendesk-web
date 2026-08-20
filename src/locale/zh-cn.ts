@@ -1365,8 +1365,14 @@ export const zhCn: Record<string, string> = {
     'sp.agents.error.configOptionsInvalid': 'ACP 配置项必须是值为字符串或布尔值的 JSON 对象。',
     'sp.agents.error.reconnectInvalid': '重连参数超出有效范围。',
     'sp.agents.error.unknown': '无法读取 ACP Agent 参数。',
-    'sp.agents.test.running': '正在连接并协商 ACP 协议…',
-    'sp.agents.test.success': '连接成功：${name}',
+    'sp.agents.test.running': '正在连接、创建会话并发现 ACP 配置…',
+    'sp.agents.test.success': 'ACP 会话就绪：${name}，发现 ${count} 个会话配置项。',
+    'sp.agents.test.noOptions': 'ACP 会话已创建，但 Agent 未公布可配置的会话项。',
+    'sp.agents.test.authMethods': 'Agent 公布的认证方式：${methods}',
+    'sp.agents.config.discovered': 'Agent 会话配置',
+    'sp.agents.config.discovered.hint': '测试连接后显示。选择的值会写入上方 JSON，并在任务会话创建后应用。',
+    'sp.agents.config.none': '该 Agent 未公布可配置的会话项。',
+    'sp.agents.config.savedUnavailable': '已保存的值当前未被 Agent 公布',
     'sp.agents.test.failed': '连接失败：${message}',
     'sp.agents.delete.title': '删除 ACP Agent',
     'sp.agents.delete.message': '确定删除“${name}”吗？已有任务中的本地记录不会被删除。',
@@ -2590,5 +2596,8 @@ export const zhCn: Record<string, string> = {
     'acpmgr.error.sessionNotInitialized': 'ACP 会话尚未初始化',
     'acpmgr.error.missingEnvironment': '缺少环境变量 ${name}',
     'acpmgr.error.mcpCommandMissing': 'MCP Server“${name}”未配置命令',
-    'acpmgr.error.mcpUrlMissing': 'MCP Server“${name}”未配置 URL'
+    'acpmgr.error.mcpUrlMissing': 'MCP Server“${name}”未配置 URL',
+    'acpmgr.error.configOptionUnsupported': 'ACP 配置项“${id}”未被 Agent 公布',
+    'acpmgr.error.configOptionTypeMismatch': 'ACP 配置项“${id}”的值类型不匹配',
+    'acpmgr.error.configOptionValueUnsupported': 'ACP 配置项“${id}”不支持值“${value}”'
 };

@@ -160,6 +160,55 @@ test('ACP runtime creates a session, applies configured parameters, and checkpoi
     }
 });
 
+test('ACP runtime rejects a configured value that the Agent no longer advertises', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-runtime-invalid-option-'));
+    try {
+        const connection = new FakeConnection();
+        connection.newSession = async (params: NewSessionRequest): Promise<any> => {
+            connection.calls.push({ method: 'session/new', params });
+            return {
+                sessionId: 'session-1',
+                configOptions: [
+                    {
+                        id: 'model',
+                        name: 'Model',
+                        type: 'select',
+                        currentValue: 'provider/available',
+                        options: [{ value: 'provider/available', name: 'Available' }]
+                    }
+                ]
+            };
+        };
+        const invalidProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            session: { configOptions: { model: 'provider/removed' } }
+        });
+        const runtime = new AcpTaskRuntime(invalidProfile, {
+            artifactDirectory: () => directory,
+            createConnection: async (_profile, handlers): Promise<AcpConnectionHandle> => {
+                connection.handlers = handlers;
+                return {
+                    connection,
+                    closed: new Promise(() => undefined),
+                    close: async () => undefined
+                };
+            },
+            resolveMcpServers: async () => []
+        });
+
+        await assert.rejects(
+            () => runtime.runTurn(makeRequest()),
+            /does not support value|不支持值|not advertised|未被 Agent 公布/
+        );
+        assert.deepEqual(
+            connection.calls.map((call) => call.method),
+            ['initialize', 'session/new']
+        );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('ACP runtime resumes an idle persisted session without creating a new one', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-resume-'));
     try {

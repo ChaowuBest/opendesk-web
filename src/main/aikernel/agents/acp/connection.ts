@@ -51,7 +51,8 @@ export type AcpClientConnection = Pick<
     | 'setSessionConfigOption'
     | 'prompt'
     | 'cancel'
->;
+> &
+    Partial<Pick<Agent, 'closeSession'>>;
 
 export interface AcpConnectionHandle {
     connection: AcpClientConnection;

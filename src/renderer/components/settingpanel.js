@@ -1255,6 +1255,11 @@ class SettingPanel extends HTMLElement {
                         <textarea id="acp-agent-config-options" class="od-sp-fi" spellcheck="false">${json(session.configOptions)}</textarea>
                         <div class="od-sp-hint">${this._t('sp.agents.field.configOptions.hint')}</div>
                     </div>
+                    <div id="acp-agent-discovered-config" class="od-sp-fg" hidden>
+                        <label class="od-sp-fl">${this._t('sp.agents.config.discovered')}</label>
+                        <div id="acp-agent-discovered-config-controls"></div>
+                        <div class="od-sp-hint">${this._t('sp.agents.config.discovered.hint')}</div>
+                    </div>
 
                     <div class="od-sp-fs">${this._t('sp.agents.section.reconnect')}</div>
                     <div class="od-sp-fc">
@@ -1328,17 +1333,125 @@ class SettingPanel extends HTMLElement {
         void this.saveImmediately();
     }
 
+    _getAcpConfigOptionValues() {
+        const field = this.querySelector('#acp-agent-config-options');
+        if (!field) return {};
+        try {
+            const parsed = JSON.parse(field.value || '{}');
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+            return {};
+        }
+    }
+
+    _setAcpConfigOptionValue(configId, value) {
+        const field = this.querySelector('#acp-agent-config-options');
+        if (!field) return;
+        const values = this._getAcpConfigOptionValues();
+        values[configId] = value;
+        field.value = JSON.stringify(values, null, 2);
+    }
+
+    _renderAcpSessionConfigOptions(configOptions) {
+        const section = this.querySelector('#acp-agent-discovered-config');
+        const controls = this.querySelector('#acp-agent-discovered-config-controls');
+        if (!section || !controls) return;
+        section.hidden = false;
+        if (!Array.isArray(configOptions) || configOptions.length === 0) {
+            controls.innerHTML = `<div class="od-sp-hint">${this._t('sp.agents.config.none')}</div>`;
+            return;
+        }
+
+        const configured = this._getAcpConfigOptionValues();
+        const renderSelectOption = (option, selectedValue) => {
+            const selected = option.value === selectedValue ? ' selected' : '';
+            const title = option.description ? ` title="${this.escapeHtml(option.description)}"` : '';
+            return `<option value="${this.escapeHtml(option.value)}"${selected}${title}>${this.escapeHtml(option.name)}</option>`;
+        };
+        const renderSelectOptions = (options, selectedValue) => {
+            if (!Array.isArray(options)) return '';
+            return options
+                .map((option) => {
+                    if (option && Array.isArray(option.options)) {
+                        const groupOptions = option.options
+                            .map((entry) => renderSelectOption(entry, selectedValue))
+                            .join('');
+                        return `<optgroup label="${this.escapeHtml(option.name || option.group || '')}">${groupOptions}</optgroup>`;
+                    }
+                    return option && typeof option.value === 'string' ? renderSelectOption(option, selectedValue) : '';
+                })
+                .join('');
+        };
+
+        const rendered = configOptions
+            .map((option) => {
+                if (!option || typeof option.id !== 'string' || typeof option.name !== 'string') return '';
+                const configuredValue = configured[option.id];
+                const optionId = this.escapeHtml(option.id);
+                const description = option.description
+                    ? `<div class="od-sp-hint">${this.escapeHtml(option.description)}</div>`
+                    : '';
+                if (option.type === 'boolean') {
+                    const checked =
+                        typeof configuredValue === 'boolean' ? configuredValue : option.currentValue === true;
+                    return `<div class="od-sp-fc"><input type="checkbox" data-acp-config-option-id="${optionId}" data-acp-config-option-type="boolean" ${checked ? 'checked' : ''}><label>${this.escapeHtml(option.name)}</label>${description}</div>`;
+                }
+                if (option.type !== 'select') return '';
+                const selectedValue = typeof configuredValue === 'string' ? configuredValue : option.currentValue;
+                const optionValues = Array.isArray(option.options)
+                    ? option.options.flatMap((entry) =>
+                          entry && Array.isArray(entry.options) ? entry.options : [entry]
+                      )
+                    : [];
+                const hasSelectedValue = optionValues.some((entry) => entry && entry.value === selectedValue);
+                const savedUnavailable =
+                    typeof configuredValue === 'string' && configuredValue.length > 0 && !hasSelectedValue;
+                const unavailableOption = savedUnavailable
+                    ? `<option value="${this.escapeHtml(configuredValue)}" selected>${this.escapeHtml(this._t('sp.agents.config.savedUnavailable'))}: ${this.escapeHtml(configuredValue)}</option>`
+                    : '';
+                return `<div class="od-sp-fg"><label class="od-sp-fl">${this.escapeHtml(option.name)}</label><select class="od-sp-fi" data-acp-config-option-id="${optionId}" data-acp-config-option-type="select">${unavailableOption}${renderSelectOptions(option.options, selectedValue)}</select>${description}</div>`;
+            })
+            .filter(Boolean)
+            .join('');
+
+        controls.innerHTML = rendered || `<div class="od-sp-hint">${this._t('sp.agents.config.none')}</div>`;
+        controls.querySelectorAll('[data-acp-config-option-id]').forEach((control) => {
+            control.addEventListener('change', () => {
+                const configId = control.dataset.acpConfigOptionId;
+                if (!configId) return;
+                const value = control.dataset.acpConfigOptionType === 'boolean' ? control.checked : control.value;
+                this._setAcpConfigOptionValue(configId, value);
+            });
+        });
+    }
+
     async _testAcpAgent(profileId) {
         const result = this.querySelector('#acp-agent-test-result');
         try {
             const profile = this._readAcpAgentForm(profileId);
+            const discoveredConfig = this.querySelector('#acp-agent-discovered-config');
+            const discoveredControls = this.querySelector('#acp-agent-discovered-config-controls');
+            if (discoveredConfig) discoveredConfig.hidden = true;
+            if (discoveredControls) discoveredControls.innerHTML = '';
             result.hidden = false;
             result.className = 'od-sp-verify-result od-sp-verify-info';
             result.textContent = this._t('sp.agents.test.running');
             const response = await window.applicationRegistryAPI.callMainWorld('acpmgr', 'testAgent', profile);
             const agentName = response?.agentInfo?.name || profile.name;
+            const configOptions = Array.isArray(response?.configOptions) ? response.configOptions : [];
+            this._renderAcpSessionConfigOptions(configOptions);
             result.className = 'od-sp-verify-result od-sp-verify-success';
-            result.textContent = this._t('sp.agents.test.success', { name: agentName });
+            const messages = [this._t('sp.agents.test.success', { name: agentName, count: configOptions.length })];
+            if (configOptions.length === 0) messages.push(this._t('sp.agents.test.noOptions'));
+            const authMethods = Array.isArray(response?.authMethods) ? response.authMethods : [];
+            if (authMethods.length > 0) {
+                const methods = authMethods
+                    .map((method) => method?.description || method?.name || method?.id)
+                    .filter(Boolean)
+                    .join('; ');
+                if (methods) messages.push(this._t('sp.agents.test.authMethods', { methods }));
+            }
+            result.textContent = messages.join(' ');
         } catch (error) {
             if (error instanceof AcpAgentFormError) {
                 this._showAcpAgentFormError(error);
