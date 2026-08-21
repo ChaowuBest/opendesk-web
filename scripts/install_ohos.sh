@@ -10,7 +10,7 @@
 #   2. 检测 NodeJS / NPM 环境
 #   3. 确保 $(npm prefix -g)/bin 在 PATH 中
 #   4. 配置国内镜像加速
-#   5. 安装 opendesk-cli（稳定版或 nightly 版）
+#   5. 安装 opendesk-cli
 #   6. 验证安装
 # ==============================================================================
 
@@ -254,39 +254,21 @@ configure_mirror() {
 install_opendesk() {
     print_step "步骤 5/5: 安装 OpenDesk CLI..."
 
-    echo ""
-    echo "  请选择要安装的版本:"
-    echo -e "    ${BOLD}1)${NC} Nightly 版本 ${CYAN}(推荐 - 拥有最新特性)${NC}"
-    echo -e "    ${BOLD}2)${NC} 稳定版本"
-    echo ""
+    local install_cmd="npm i -g ${NPM_PACKAGE}"
 
-    local version_choice
-    version_choice=$(read_input "请输入选项 [1/2] (默认: 1): " "1")
-
-    local install_cmd=""
-    local version_label=""
-
-    case "$version_choice" in
-        1)
-            install_cmd="npm i -g \"${NPM_PACKAGE}@nightly\""
-            version_label="Nightly (日构建版本)"
-            ;;
-        2)
-            install_cmd="npm i -g \"${NPM_PACKAGE}\""
-            version_label="稳定版本"
-            ;;
-        *)
-            print_warning "无效选项，使用默认 Nightly 版本"
-            install_cmd="npm i -g \"${NPM_PACKAGE}@nightly\""
-            version_label="Nightly (日构建版本)"
-            ;;
-    esac
+    # 查询最新稳定版本号用于展示（查询失败时回退为"稳定版本"）
+    local target_version
+    target_version=$(npm view "${NPM_PACKAGE}" version 2>/dev/null || echo "")
+    local version_label="稳定版本"
+    if [ -n "$target_version" ]; then
+        version_label="${target_version}"
+    fi
 
     # 保存版本标签供 print_finish 使用
     INSTALLED_VERSION_LABEL="${version_label}"
 
     echo ""
-    echo -e "  将安装: ${BOLD}${version_label}${NC}"
+    echo -e "  将安装： ${BOLD}${version_label}${NC}"
 
     # 检查是否已安装
     if command -v opendesk &>/dev/null || npm list -g --depth=0 2>/dev/null | grep -q "${NPM_PACKAGE}"; then
