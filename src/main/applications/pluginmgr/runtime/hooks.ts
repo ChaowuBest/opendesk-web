@@ -11,6 +11,7 @@ import { getPluginHost, PluginHookError } from './host.js';
 import type {
     PluginChatRequestInput,
     PluginChatParams,
+    PluginShellType,
     PluginSkillInstallAfterContext,
     PluginSkillInstallBeforeOutput,
     PluginSkillInstallContext,
@@ -19,6 +20,26 @@ import type {
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import type { PermissionRequest } from '../../../aikernel/types/index.js';
 import type { BeforeToolCallValidateAction } from '../../../aikernel/hooks.js';
+
+// ── Shell 工具名 → shellType 映射 ─────────────────────────────────────────────
+
+const SHELL_TOOL_TYPE_MAP: Record<string, PluginShellType> = {
+    'terminal-executeBash': 'bash',
+    'terminal-executeZsh': 'zsh',
+    'terminal-executePowerShell': 'powershell'
+};
+
+function getShellToolType(toolName: string): PluginShellType | undefined {
+    return SHELL_TOOL_TYPE_MAP[toolName];
+}
+
+function extractReturnCode(resultObject: unknown): number | null {
+    if (resultObject && typeof resultObject === 'object' && 'exitCode' in resultObject) {
+        const code = (resultObject as { exitCode: unknown }).exitCode;
+        return typeof code === 'number' && Number.isInteger(code) ? code : null;
+    }
+    return null;
+}
 
 export async function runPluginChatParams(
     input: PluginChatRequestInput,
@@ -110,6 +131,46 @@ export async function runPluginBeforeToolCallValidate(
     if (JSON.stringify(output.args) !== JSON.stringify(toolCall.args_object)) {
         toolCall.args_object = output.args as Record<string, unknown>;
     }
+
+    // ── shell.execute.before（工具级 hook 之后触发，仅针对三种 shell 工具） ──
+    const shellType = getShellToolType(toolCall.tool_name);
+    if (shellType) {
+        const shellOutput: {
+            args: unknown;
+            deny?: { message?: string; metadata?: Record<string, unknown> };
+        } = { args: toolCall.args_object };
+        try {
+            await getPluginHost().trigger(
+                'shell.execute.before',
+                {
+                    tool: toolCall.tool_name,
+                    taskId: task.task_id,
+                    callId: toolCall.id,
+                    workspace: task.getWorkspace(),
+                    shellType
+                },
+                shellOutput
+            );
+        } catch (error) {
+            if (error instanceof PluginHookError && error.failureMode === 'closed') {
+                return { operation: 'deny', message: t('plugin.hook.beforeTool.failed') };
+            }
+            logger.error(`Plugin shell-before hook failed: ${toolCall.tool_name}`, error);
+        }
+        if (shellOutput.deny) {
+            if (shellOutput.deny.metadata) {
+                toolCall.result_object = shellOutput.deny.metadata;
+            }
+            return {
+                operation: 'deny',
+                message: shellOutput.deny.message || t('plugin.hook.beforeTool.denied')
+            };
+        }
+        if (JSON.stringify(shellOutput.args) !== JSON.stringify(toolCall.args_object)) {
+            toolCall.args_object = shellOutput.args as Record<string, unknown>;
+        }
+    }
+
     return { operation: 'allow' };
 }
 
@@ -137,6 +198,38 @@ export async function runPluginAfterToolCall(task: TaskState, toolCall: ToolCall
     } catch (error) {
         if (!(error instanceof PluginHookError)) {
             logger.error(`Plugin after-tool hook failed: ${toolCall.tool_name}`, error);
+        }
+    }
+
+    // ── shell.execute.after（工具级 hook 之后触发，仅针对三种 shell 工具） ──
+    const shellType = getShellToolType(toolCall.tool_name);
+    if (shellType) {
+        const shellOutput = {
+            status: toolCall.status === 'success' ? ('success' as const) : ('error' as const),
+            result: toolCall.result ?? '',
+            resultObject: toolCall.result_object
+        };
+        try {
+            await getPluginHost().trigger(
+                'shell.execute.after',
+                {
+                    tool: toolCall.tool_name,
+                    taskId: task.task_id,
+                    callId: toolCall.id,
+                    workspace: task.getWorkspace(),
+                    args: toolCall.args_object,
+                    shellType,
+                    returnCode: extractReturnCode(toolCall.result_object)
+                },
+                shellOutput
+            );
+            toolCall.status = shellOutput.status;
+            toolCall.result = shellOutput.result;
+            toolCall.result_object = shellOutput.resultObject;
+        } catch (error) {
+            if (!(error instanceof PluginHookError)) {
+                logger.error(`Plugin shell-after hook failed: ${toolCall.tool_name}`, error);
+            }
         }
     }
 }
