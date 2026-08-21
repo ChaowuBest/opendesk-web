@@ -538,6 +538,20 @@ class SettingPanel extends HTMLElement {
                 border: 1px solid var(--sp-color-border);
                 border-radius: var(--sp-radius-lg);
                 padding: 11px 13px;
+                box-sizing: border-box;
+                min-width: 0;
+                max-width: 100%;
+            }
+            .sp-acp-agent-card-body { min-width: 0; }
+            .sp-acp-agent-summary {
+                display: -webkit-box;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 2;
+                overflow: hidden;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+                white-space: normal;
+                line-height: 1.4;
             }
             .sp-card-actions { display: flex; gap: 4px; }
             .sp-card-action-btn {
@@ -786,6 +800,7 @@ class SettingPanel extends HTMLElement {
             }
 
             /* ── Scrollbar ── */
+            .sp-scroll-content { min-width: 0; }
             .sp-scroll-content::-webkit-scrollbar { width: 6px; }
             .sp-scroll-content::-webkit-scrollbar-track { background: transparent; }
             .sp-scroll-content::-webkit-scrollbar-thumb {
@@ -969,9 +984,9 @@ class SettingPanel extends HTMLElement {
                     ? agent.transport.url
                     : [agent.transport?.command, ...(agent.transport?.args || [])].filter(Boolean).join(' ');
                 return `
-                <div class="sp-card">
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px">
-                        <div style="min-width:0;flex:1">
+                <div class="sp-card sp-acp-agent-card">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;min-width:0">
+                        <div class="sp-acp-agent-card-body" style="flex:1">
                             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                                 <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(agent.name)}</h3>
                                 <span class="sp-tag sp-tag-neutral">${isHttp ? 'Streamable HTTP' : 'stdio'}</span>
@@ -980,7 +995,7 @@ class SettingPanel extends HTMLElement {
                                 </span>
                                 ${agent.dispatchable ? `<span class="sp-tag sp-tag-neutral">${this._t('sp.agents.dispatchable')}</span>` : ''}
                             </div>
-                            <div style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.escapeHtml(endpoint)}">${this.escapeHtml(endpoint)}</div>
+                            <div class="sp-acp-agent-summary" style="font-size:12px;color:var(--sp-color-text-secondary);margin-top:5px" title="${this.escapeHtml(endpoint)}">${this.escapeHtml(endpoint)}</div>
                             ${agent.whenToUse ? `<p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:5px">${this.escapeHtml(agent.whenToUse)}</p>` : ''}
                         </div>
                         <div style="display:flex;gap:6px;flex-shrink:0">

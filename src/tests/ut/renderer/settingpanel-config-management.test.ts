@@ -221,6 +221,44 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#acp-agent-test-result')?.classList.contains('od-sp-verify-success')).toBe(true);
     });
 
+    test('constrains long ACP command summaries without hiding card actions', () => {
+        const panel = createPanel();
+        const endpoint =
+            'C:/Program Files/nodejs/node.exe --no-warnings D:/ai/oh-robot/tmp_patch/OpenDesk/dist/cli/opendesk serve --mode acp --config-directory C:/Users/85481/AppData/Roaming/opendesk';
+        panel.currentData.applications = {
+            acpmgr: {
+                agents: [
+                    {
+                        name: 'OpenDesk ACP Server',
+                        enabled: true,
+                        dispatchable: true,
+                        transport: {
+                            type: 'stdio',
+                            command: 'C:/Program Files/nodejs/node.exe',
+                            args: [
+                                '--no-warnings',
+                                'D:/ai/oh-robot/tmp_patch/OpenDesk/dist/cli/opendesk',
+                                'serve',
+                                '--mode',
+                                'acp',
+                                '--config-directory',
+                                'C:/Users/85481/AppData/Roaming/opendesk'
+                            ]
+                        }
+                    }
+                ]
+            }
+        };
+
+        panel.innerHTML = panel.renderAcpAgentsSection();
+
+        const summary = panel.querySelector('.sp-acp-agent-summary') as HTMLElement;
+        expect(summary).not.toBeNull();
+        expect(summary.title).toBe(endpoint);
+        expect(panel.querySelector('.edit-acp-agent-btn')).not.toBeNull();
+        expect(panel.querySelector('.delete-acp-agent-btn')).not.toBeNull();
+    });
+
     test('discovers ACP session options and writes a selected model to the profile JSON', async () => {
         const panel = createPanel();
         const profile = {
