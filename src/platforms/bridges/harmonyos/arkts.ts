@@ -31,6 +31,8 @@ export const EtsBridgeMethods = {
     LOGIN_RESTORE: 'EtsBridge.OpenDeskLoginRestore',
     LOGIN_PEEK: 'EtsBridge.OpenDeskLoginPeek',
     LOGIN_CLOSE: 'EtsBridge.OpenDeskLoginClose',
+    GET_SYSTEM_HTTP_PROXY_START: 'EtsBridge.OpenDeskGetSystemHttpProxyStart',
+    GET_SYSTEM_HTTP_PROXY_PEEK: 'EtsBridge.OpenDeskGetSystemHttpProxyPeek',
     ARKDATA_PING: 'ArkData.Ping',
     ARKDATA_EXEC_SQL: 'ArkData.ExecSql',
     ARKDATA_EXEC_SQL_PARAMS: 'ArkData.ExecSqlParams',

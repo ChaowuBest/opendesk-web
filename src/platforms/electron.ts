@@ -26,6 +26,8 @@ import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
 import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electron-ipc.js';
 import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
+import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
+import { Setting } from '../main/utils/setting.js';
 import type { PlatformFetchOptions } from './base.js';
 import type { InteractiveToolset } from '../main/aikernel/tool.js';
 import crypto from 'crypto';
@@ -38,6 +40,7 @@ interface ElectronFetchSessionOptions {
     proxyUrl?: string | null;
     bypassProxy?: boolean;
     skipTlsVerification?: boolean;
+    proxyBypassRules?: string;
 }
 
 const electronFetchSessionCache = new Map<string, Promise<Electron.Session>>();
@@ -62,7 +65,11 @@ function electronProxyRules(proxyUrl: string): string {
 }
 
 async function getElectronFetchSession(options: ElectronFetchSessionOptions): Promise<Electron.Session> {
-    const proxyKey = options.bypassProxy ? 'direct' : options.proxyUrl ? `proxy:${options.proxyUrl}` : 'system';
+    const proxyKey = options.bypassProxy
+        ? 'direct'
+        : options.proxyUrl
+          ? `proxy:${options.proxyUrl}:${options.proxyBypassRules ?? ''}`
+          : 'system';
     const key = `${proxyKey}:tls:${options.skipTlsVerification ? 'skip' : 'verify'}`;
     let sessionPromise = electronFetchSessionCache.get(key);
     if (!sessionPromise) {
@@ -76,7 +83,7 @@ async function getElectronFetchSession(options: ElectronFetchSessionOptions): Pr
                 await fetchSession.setProxy({
                     mode: 'fixed_servers',
                     proxyRules: electronProxyRules(options.proxyUrl),
-                    proxyBypassRules: '<local>;localhost;*.localhost;127.0.0.1;127.*;[::1]'
+                    proxyBypassRules: options.proxyBypassRules ?? '<local>;localhost;*.localhost;127.0.0.1;127.*;[::1]'
                 });
             } else {
                 await fetchSession.setProxy({ mode: 'system' });
@@ -159,25 +166,59 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
-        const { net } = await import('electron');
         const url = input instanceof URL ? input.href : input;
+        const networkConfig = Setting.getInstance().getData().network_config;
+        const useProxy = networkConfig.use_proxy ?? 'none';
+        const customProxyUrl = networkConfig.custom_proxy_addr.trim();
+        const bypassProxy =
+            !!options?.bypassProxy ||
+            isHostInNoProxy(url) ||
+            useProxy === 'none' ||
+            (useProxy === 'custom' && customProxyUrl.length === 0);
+        let proxyUrl = useProxy === 'custom' && !bypassProxy ? customProxyUrl : null;
+        let proxyBypassRules: string | undefined;
+
+        // On OpenHarmony, Chromium's setProxy({ mode: 'system' }) does not read the OS
+        // proxy configuration. When use_proxy is 'system', bridge to ArkTS to retrieve
+        // the system HTTP proxy via connection.getDefaultHttpProxy() and convert it to
+        // fixed_servers mode so Chromium actually uses it.
+        if (useProxy === 'system' && !bypassProxy && process.platform === 'openharmony') {
+            try {
+                const systemProxy = await getHarmonyOSSystemProxy();
+                if (systemProxy) {
+                    // 鸿蒙 getDefaultHttpProxy().host 可能带协议前缀（如 "http://1.2.3.4"），
+                    // 此处统一剥离，再拼成标准 "http://host:port" 格式
+                    const cleanHost = systemProxy.host.replace(/^https?:\/\//, '');
+                    proxyUrl = `http://${cleanHost}:${systemProxy.port}`;
+                    if (systemProxy.exclusionList.length > 0) {
+                        proxyBypassRules = [
+                            ...systemProxy.exclusionList,
+                            '<local>',
+                            'localhost',
+                            '*.localhost',
+                            '127.0.0.1',
+                            '127.*',
+                            '[::1]'
+                        ].join(';');
+                    }
+                }
+            } catch {
+                // Bridge failure: degrade to Chromium's system mode (original behavior)
+            }
+        }
 
         // Electron must stay on Chromium's network stack. Some Electron target platforms
         // (notably the OpenHarmony adapter) cannot load undici here; do not replace this
         // implementation with the shared undici-based proxy-fetch helper.
-        if (options?.forceEnvironmentProxy || options?.bypassProxy || options?.skipTlsVerification) {
-            const bypassProxy = !!options.bypassProxy || isHostInNoProxy(url);
-            const proxyUrl = options.forceEnvironmentProxy && !bypassProxy ? await resolveProxyUrl() : null;
-            if (bypassProxy || proxyUrl || options.skipTlsVerification) {
-                const fetchSession = await getElectronFetchSession({
-                    proxyUrl: bypassProxy ? null : proxyUrl,
-                    bypassProxy,
-                    skipTlsVerification: options.skipTlsVerification
-                });
-                return fetchSession.fetch(url, init);
-            }
-        }
-        return net.fetch(url, init);
+        // In system mode, Electron delegates directly to the OS proxy configuration.
+        // Environment proxy variables are intentionally not converted into fixed proxy rules.
+        const fetchSession = await getElectronFetchSession({
+            proxyUrl,
+            bypassProxy,
+            skipTlsVerification: networkConfig.no_ssl || options?.skipTlsVerification,
+            proxyBypassRules
+        });
+        return fetchSession.fetch(url, init);
     }
 
     getNativeBridge(): NativeBridge | null {

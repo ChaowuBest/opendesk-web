@@ -57,11 +57,65 @@ const ModelSchema = z.object({
 });
 ```
 
-### 4. 应用程序配置 (`applications`)
+### 4. 网络代理配置 (`network_config`)
+
+网络代理配置控制 OpenDesk 的两个网络出口：Electron fetch（LLM 请求）和命令行子进程（Agent 工具 executeBash/PowerShell/Zsh）。
+
+```javascript
+const NetworkConfigSchema = z.object({
+    no_ssl: z.boolean().default(false), // 是否禁用 TLS 校验
+    use_proxy: z.enum(['system', 'custom', 'none']).default('none'),
+    custom_proxy_addr: z.string().default(''), // use_proxy='custom' 时的代理地址
+    no_proxy: z.string().default('') // 自定义 no_proxy 列表（逗号分隔）
+});
+```
+
+#### `use_proxy` 三档语义
+
+| 值       | Electron fetch（LLM）                                      | 命令行子进程（Agent 工具）                                 |
+| -------- | ---------------------------------------------------------- | ---------------------------------------------------------- |
+| `none`   | Chromium `mode: 'direct'`，不走代理                        | 清空 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`                 |
+| `system` | Chromium `mode: 'system'`（Windows/macOS 读注册表/scutil） | 读系统代理 API，注入 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` |
+| `custom` | Chromium `mode: 'fixed_servers'`，用 `custom_proxy_addr`   | 注入 `custom_proxy_addr` 到 `HTTP_PROXY`/`HTTPS_PROXY`     |
+
+#### 命令行子进程的代理环境变量映射
+
+`network_config` 解析为标准代理环境变量后注入到子进程：
+
+| `use_proxy` | 平台        | 代理来源                            | `HTTP_PROXY`/`HTTPS_PROXY` | `NO_PROXY`                |
+| ----------- | ----------- | ----------------------------------- | -------------------------- | ------------------------- |
+| `none`      | 所有        | 无                                  | 清空                       | 清空                      |
+| `custom`    | 所有        | `custom_proxy_addr`                 | `custom_proxy_addr`        | `network_config.no_proxy` |
+| `system`    | OpenHarmony | ArkTS `getDefaultHttpProxy()` 桥接  | `http://host:port`         | `exclusionList` 逗号分隔  |
+| `system`    | Windows     | 注册表 `HKCU\...\Internet Settings` | `http://host:port`         | `ProxyOverride` 转逗号    |
+| `system`    | macOS       | `scutil --proxy`                    | `http://host:port`         | `ExceptionsList` 逗号分隔 |
+| `system`    | Linux       | `process.env.HTTP_PROXY` 透传       | env 值                     | `process.env.NO_PROXY`    |
+
+注入采用**方案 network_config 优先覆盖**：子进程 env 中已有的 `HTTP_PROXY` 会被 `network_config` 解析的值无条件覆盖。大小写双写（`HTTP_PROXY`/`http_proxy`）兼容 curl/wget/Node fetch。
+
+#### 缓存与刷新
+
+命令行子进程的代理变量由 [`buildChildProcessEnv()`](src/main/utils/shellExec.ts:532) 同步注入，代理来源由 30s TTL 缓存提供（[`proxy-env.ts`](src/main/utils/proxy-env.ts)）：
+
+- **启动预热**：Electron GUI 启动时立即刷新一次缓存
+- **定时刷新**：每 30s 刷新一次，捕获系统代理变化（Windows 注册表/macOS scutil）
+- **配置变更即时刷新**：GUI 设置面板保存网络配置后立即刷新，无需等 30s
+
+验证命令行代理是否生效：
+
+```bash
+# bash/zsh
+echo $HTTP_PROXY
+
+# PowerShell
+echo $env:HTTP_PROXY
+```
+
+### 5. 应用程序配置 (`applications`)
 
 应用程序配置是一个动态扩展的对象，各应用通过 [`registerApplicationSettings()`](src/main/utils/setting.ts:157) 方法注册自己的配置 Schema。
 
-### 5. 遥测配置 (`telemetry`)
+### 6. 遥测配置 (`telemetry`)
 
 遥测配置由 `TelemetrySchema` 统一校验。OpenTelemetry 与 Langfuse 是 `telemetry` 下两个同级协议，
 可以单独启用，也可以同时启用：
@@ -110,7 +164,7 @@ OpenTelemetry Provider，通过独立的 Span Processor 隔离上报数据：普
 Langfuse Observation 只发送到 Langfuse，不会互相冲突。完整的观测范围、调用层级和环境变量说明见
 [Telemetry 架构文档](telemetry.md)。
 
-### 6. OpenCode Server 权限配置 (`permission`)
+### 7. OpenCode Server 权限配置 (`permission`)
 
 使用 `opendesk serve --use-config-permissions` 启动 OpenCode 兼容服务器后，可以在 `setting.json`
 顶层配置 OpenCode 风格的权限规则：

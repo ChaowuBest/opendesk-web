@@ -23,6 +23,7 @@ import path from 'path';
 import iconv from 'iconv-lite';
 import { Setting, getOpendeskDirectory, type SettingData } from './setting.js';
 import { getPlatform } from '../../platforms/base.js';
+import { getCachedProxyEnvVars } from './proxy-env.js';
 
 // ── 可执行文件查找 ──────────────────────────────────────────────────────────
 
@@ -531,7 +532,10 @@ export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Proc
  */
 export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     let env = mergeGlobalEnviron(explicitEnv) ?? { ...process.env, ...explicitEnv };
-    let settingData: Pick<SettingData, 'cli_config'> = { cli_config: undefined };
+    let settingData: Pick<SettingData, 'cli_config' | 'network_config'> = {
+        cli_config: undefined,
+        network_config: undefined
+    };
     try {
         settingData = Setting.getInstance().getData();
     } catch {
@@ -551,6 +555,24 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
     if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = 'utf-8';
     if (!env.PYTHONUTF8) env.PYTHONUTF8 = '1';
     injectNonInteractiveEnv(env);
+
+    // 代理变量注入：network_config 优先（方案 B），无条件覆盖 env。
+    //   - none   → 清空所有代理变量，确保命令行不走代理
+    //   - system → 覆盖为系统代理（鸿蒙走 ArkTS 桥接，其他平台透传 env）
+    //   - custom → 覆盖为 custom_proxy_addr
+    // 缓存由 refreshProxyEnvCache() 预热，未就绪时不动 env（不阻塞 spawn）。
+    const useProxy = settingData.network_config?.use_proxy ?? 'none';
+    if (useProxy === 'none') {
+        delete env.HTTP_PROXY;
+        delete env.HTTPS_PROXY;
+        delete env.http_proxy;
+        delete env.https_proxy;
+        delete env.NO_PROXY;
+        delete env.no_proxy;
+    } else {
+        const proxyEnv = getCachedProxyEnvVars();
+        if (proxyEnv) Object.assign(env, proxyEnv);
+    }
     return env;
 }
 
