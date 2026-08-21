@@ -91,6 +91,7 @@ import { readUserPortrait, writeUserPortrait } from './aikernel/memory/user_port
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
+import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
@@ -2145,6 +2146,8 @@ const registerSettingAPIHandlers = () => {
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
+            // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
+            void onNetworkConfigChanged();
             try {
                 getMainThemeService().applyFromSettings();
             } catch (themeErr) {
@@ -3222,6 +3225,7 @@ async function startApplication(): Promise<void> {
         startMemoryCleanupScheduler(() =>
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
+        startProxyEnvRefreshScheduler();
 
         await initializePluginHost();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(

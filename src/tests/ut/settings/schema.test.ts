@@ -123,6 +123,12 @@ describe('设置 schema', () => {
         expect(setting.cli_config.inherit_venv).toBe(true);
     });
 
+    test('网络配置缺省时不使用代理', () => {
+        const setting = Setting.getSettingSchema().parse({});
+
+        expect(setting.network_config.use_proxy).toBe('none');
+    });
+
     test('终端 CLI 可以关闭隔离 Python 环境', () => {
         const setting = Setting.getSettingSchema().parse({
             cli_config: {
