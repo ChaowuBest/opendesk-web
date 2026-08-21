@@ -220,13 +220,13 @@ describe('OpenDesk plugin shell hooks', () => {
         expect(call.result_object).toEqual({ filtered: true, exitCode: 1 });
     });
 
-    test('shell.execute.before 与 tool.execute.before 在 shell 工具上都会触发', async () => {
+    test('shell.execute.before 与 tool.validate.before 在 shell 工具上都会触发', async () => {
         const order: string[] = [];
         await getPluginHost().activate(
             definePlugin({
                 id: 'shell-order',
                 setup(ctx) {
-                    ctx.hooks.on('tool.execute.before', () => {
+                    ctx.hooks.on('tool.validate.before', () => {
                         order.push('tool.before');
                     });
                     ctx.hooks.on('shell.execute.before', () => {

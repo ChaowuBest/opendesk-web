@@ -316,7 +316,7 @@ export interface PluginHookMap {
             parameters: z.ZodType;
         };
     };
-    'tool.execute.before': {
+    'tool.validate.before': {
         input: {
             tool: string;
             taskId: string;
@@ -325,6 +325,20 @@ export interface PluginHookMap {
         };
         output: {
             args: unknown;
+            deny?: {
+                message?: string;
+                metadata?: Record<string, unknown>;
+            };
+        };
+    };
+    'tool.execute.before': {
+        input: {
+            tool: string;
+            taskId: string;
+            callId: string;
+            workspace?: string;
+        };
+        output: {
             deny?: {
                 message?: string;
                 metadata?: Record<string, unknown>;
@@ -359,6 +373,7 @@ export const OPENDESK_PLUGIN_HOOK_NAMES = [
     'shell.execute.before',
     'shell.execute.after',
     'tool.definition',
+    'tool.validate.before',
     'tool.execute.before',
     'tool.execute.after'
 ] as const satisfies readonly (keyof PluginHookMap)[];

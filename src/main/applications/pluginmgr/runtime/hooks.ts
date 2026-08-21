@@ -19,7 +19,7 @@ import type {
     PluginSkillLoadContext
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import type { PermissionRequest } from '../../../aikernel/types/index.js';
-import type { BeforeToolCallValidateAction } from '../../../aikernel/hooks.js';
+import type { BeforeToolCallExecAction, BeforeToolCallValidateAction } from '../../../aikernel/hooks.js';
 
 // ── Shell 工具名 → shellType 映射 ─────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ export async function runPluginBeforeToolCallValidate(
     } = { args: toolCall.args_object };
     try {
         await getPluginHost().trigger(
-            'tool.execute.before',
+            'tool.validate.before',
             {
                 tool: toolCall.tool_name,
                 taskId: task.task_id,
@@ -171,6 +171,40 @@ export async function runPluginBeforeToolCallValidate(
         }
     }
 
+    return { operation: 'allow' };
+}
+
+export async function runPluginBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<BeforeToolCallExecAction> {
+    const output: {
+        deny?: { message?: string; metadata?: Record<string, unknown> };
+    } = {};
+    try {
+        await getPluginHost().trigger(
+            'tool.execute.before',
+            {
+                tool: toolCall.tool_name,
+                taskId: task.task_id,
+                callId: toolCall.id,
+                workspace: task.getWorkspace()
+            },
+            output
+        );
+    } catch (error) {
+        if (error instanceof PluginHookError && error.failureMode === 'closed') {
+            return { operation: 'deny', message: t('plugin.hook.beforeTool.failed') };
+        }
+        logger.error(`Plugin before-execution hook failed: ${toolCall.tool_name}`, error);
+        return { operation: 'allow' };
+    }
+    if (output.deny) {
+        if (output.deny.metadata) {
+            toolCall.result_object = output.deny.metadata;
+        }
+        return {
+            operation: 'deny',
+            message: output.deny.message || t('plugin.hook.beforeTool.denied')
+        };
+    }
     return { operation: 'allow' };
 }
 

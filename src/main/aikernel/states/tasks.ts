@@ -2539,6 +2539,9 @@ export class TaskState {
         const profilerToken = this.profiler?.beginTool(tool_call.tool_name, this._currentTurn);
 
         tool_call.setTool(tool);
+        // 进入执行阶段的标志：只要 beforeToolCall（执行阶段入口）被触发，
+        // 无论 execute 成功/失败/抛错，afterToolCall 都必须成对触发
+        let execEntered = false;
         try {
             let args: Record<string, unknown> = {};
             if (tool_call.args_string) {
@@ -2548,20 +2551,12 @@ export class TaskState {
                 // 因 JSON.parse 失败而清空参数
                 tool_call.args_string = repaired;
             }
-            const validation = tool.validateArgs(args);
-            if (!validation.success) {
-                logger.error(`tool ${tool_call.tool_name} validation failed: ${validation.error}`);
-                tool_call.args_object = args;
-                tool_call.status = 'error';
-                tool_call.result = validation.error;
-                return;
-            }
-
-            args = validation.data as Record<string, unknown>;
+            // 让 validate 钩子可见初始参数，允许其就地修改 args_object/args_string
             tool_call.args_object = args;
 
-            /* beforeToolCallValidate：参数层审查，钩子可拒绝或就地修改
-             * tool_call.args_object 调整参数（重新校验见下） */
+            /* beforeToolCallValidate：在参数校验与权限检查之前触发，钩子可拒绝
+             * 或就地修改 tool_call.args_object / args_string 以更正参数；
+             * 修改后的参数随后进入校验与权限阶段 */
             const validateFeedback = await this.hooks.checkBeforeToolCallValidate({ task: this, toolCall: tool_call });
             if (validateFeedback.operation === 'deny') {
                 tool_call.status = 'error';
@@ -2569,18 +2564,23 @@ export class TaskState {
                 return;
             }
 
-            /* 钩子可能替换了 tool_call.args_object，重新校验并同步 */
-            if (tool_call.args_object !== args) {
-                const reValidation = tool.validateArgs(tool_call.args_object);
-                if (!reValidation.success) {
-                    logger.error(`tool ${tool_call.tool_name} args re-validation failed: ${reValidation.error}`);
-                    tool_call.args_object = reValidation.data as Record<string, unknown>;
-                    tool_call.status = 'error';
-                    tool_call.result = reValidation.error;
-                    return;
-                }
-                args = reValidation.data as Record<string, unknown>;
-                tool_call.args_object = args;
+            // 钩子是否替换了参数对象（用于决定是否回写 args_string）
+            const hookModifiedArgs = tool_call.args_object !== args;
+
+            const validation = tool.validateArgs(tool_call.args_object ?? args);
+            if (!validation.success) {
+                logger.error(`tool ${tool_call.tool_name} validation failed: ${validation.error}`);
+                tool_call.args_object = tool_call.args_object ?? args;
+                tool_call.status = 'error';
+                tool_call.result = validation.error;
+                return;
+            }
+
+            args = validation.data as Record<string, unknown>;
+            tool_call.args_object = args;
+            // 仅当 validate 钩子确实替换了参数对象时才回写 args_string，避免覆盖
+            // jsonrepair 已修复的合法 JSON（未改动时保留原始修复字符串，见 sanitize-outbound 测试）
+            if (hookModifiedArgs) {
                 tool_call.args_string = JSON.stringify(args);
             }
             tool_call.status = 'running';
@@ -2603,6 +2603,7 @@ export class TaskState {
                 }
             }
 
+            // ===== 执行阶段开始：beforeToolCall / execute / afterToolCall 成对 =====
             const hookFeedback = await TelemetryOperationRegistry.aroundOperation(
                 new TelemetryOperation('hook.before_tool_call', {
                     'tool.name': tool_call.tool_name
@@ -2617,6 +2618,10 @@ export class TaskState {
                 tool_call.result = hookFeedback.message;
                 return;
             }
+
+            // 至此通过所有前置检查，正式进入执行阶段：无论 execute 成功/抛错，
+            // afterToolCall（afterexec）都必须成对触发
+            execEntered = true;
 
             const toolOperation = new TelemetryOperation('tool.execute', {
                 'tool.name': tool_call.tool_name
@@ -2645,13 +2650,15 @@ export class TaskState {
             if (profilerToken !== undefined) {
                 this.profiler?.endTool(profilerToken, { status: tool_call.status });
             }
-            await TelemetryOperationRegistry.aroundOperation(
-                new TelemetryOperation('hook.after_tool_call', {
-                    'tool.name': tool_call.tool_name,
-                    'tool.status': tool_call.status
-                }),
-                () => this.hooks.noticeAfterToolCall({ task: this, toolCall: tool_call })
-            );
+            if (execEntered) {
+                await TelemetryOperationRegistry.aroundOperation(
+                    new TelemetryOperation('hook.after_tool_call', {
+                        'tool.name': tool_call.tool_name,
+                        'tool.status': tool_call.status
+                    }),
+                    () => this.hooks.noticeAfterToolCall({ task: this, toolCall: tool_call })
+                );
+            }
             try {
                 await AgentExecutionInstrumentationRegistry.recordToolCall({
                     taskId: this.task_id,
