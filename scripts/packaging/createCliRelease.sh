@@ -2,7 +2,7 @@
 
 set -e
 
-# Restore manifests changed for a nightly release.
+# Restore manifests changed for a release (nightly version, plugin SDK alignment).
 restore_package_json() {
   if [ -f "package.json.backup" ]; then
     echo "Restoring original package.json..."
@@ -29,8 +29,9 @@ print_usage() {
   echo "  --stable     Build stable CLI and plugin SDK release packages."
   echo "  --nightly    Build nightly CLI and plugin SDK release packages."
   echo "  --yesterday Use yesterday's date for a nightly release."
-  echo "  --publish    Publish the CLI first, then the plugin SDK."
-  echo "  --dry-run    Prepare both packages and run npm publish --dry-run; implies --publish."
+  echo "  --publish    Reserved for compatibility; automatic publishing is disabled."
+  echo "               The script never publishes. Publish manually as instructed at the end."
+  echo "  --dry-run    Build and validate both packages locally without publishing."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -141,15 +142,15 @@ if [ "$RELEASE_TYPE" = "nightly" ]; then
   # Directly modify package.json instead of using npm version
   sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$NIGHTLY_VERSION\"/" package.json
   rm -f package.json.bak
-
-  cp packages/plugin-sdk/package.json packages/plugin-sdk/package.json.backup
-  PLUGIN_CURRENT_VERSION=$(grep '"version"' packages/plugin-sdk/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
-  PLUGIN_CLEAN_VERSION=$(echo "$PLUGIN_CURRENT_VERSION" | sed 's/-nightly-.*$//')
-  PLUGIN_NIGHTLY_VERSION="${PLUGIN_CLEAN_VERSION}-nightly-${DATE}"
-  echo "Setting plugin nightly version: $PLUGIN_NIGHTLY_VERSION"
-  sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_NIGHTLY_VERSION\"/" packages/plugin-sdk/package.json
-  rm -f packages/plugin-sdk/package.json.bak
 fi
+
+# Align the plugin SDK version with the CLI version so that both packages are
+# published under the same version. The manifest is backed up and restored on exit.
+echo "Aligning plugin SDK version with the CLI version..."
+cp packages/plugin-sdk/package.json packages/plugin-sdk/package.json.backup
+PLUGIN_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
+sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_VERSION\"/" packages/plugin-sdk/package.json
+rm -f packages/plugin-sdk/package.json.bak
 
 # Step 2: Build CLI
 if [ "$RELEASE_TYPE" = "nightly" ]; then
@@ -223,16 +224,11 @@ cat > "$RELEASE_DIR/package.json" << EOF
 }
 EOF
 
-# Step 5: Create .npmrc for an actual npm publish
+# Step 5: Create .npmrc for a manual npm publish (optional)
 if [ "$RELEASE_TYPE" = "nightly" ]; then
-  echo "Step 5: Creating .npmrc..."
+  echo "Step 5: Preparing .npmrc (optional)..."
 else
-  echo "Step 4: Creating .npmrc..."
-fi
-if [ "$DRY_RUN" = false ] && [ -z "$NPM_TOKEN" ]; then
-  echo "ERROR: NPM_TOKEN environment variable is not set!"
-  echo "Please set NPM_TOKEN before publishing. Use --dry-run for local release verification."
-  exit 1
+  echo "Step 4: Preparing .npmrc (optional)..."
 fi
 
 if [ -n "$NPM_TOKEN" ]; then
@@ -240,8 +236,10 @@ cat > "$RELEASE_DIR/.npmrc" << EOF
 registry=https://registry.npmjs.org/
 //registry.npmjs.org/:_authToken=$NPM_TOKEN
 EOF
+  echo "Created $RELEASE_DIR/.npmrc using NPM_TOKEN for manual npm publish."
 else
-  echo "Skipping .npmrc creation because NPM_TOKEN is not set."
+  echo "NPM_TOKEN is not set; skipping .npmrc creation."
+  echo "Set NPM_TOKEN if you want the release dir to carry publish credentials, or log in via 'npm login' before publishing."
 fi
 
 # Step 6: Copy README file
@@ -272,69 +270,42 @@ echo "Preparing plugin SDK release..."
 mkdir -p "$PLUGIN_RELEASE_DIR"
 npm --prefix packages/plugin-sdk run build
 
-PLUGIN_PACK_RESULT=$(npm pack ./packages/plugin-sdk --pack-destination "$PLUGIN_RELEASE_DIR" --json --ignore-scripts)
-PLUGIN_TARBALL_NAME=$(node -e 'const [pack] = JSON.parse(process.argv[1]); process.stdout.write(pack.filename);' "$PLUGIN_PACK_RESULT")
-PLUGIN_TARBALL="$PLUGIN_RELEASE_DIR/$PLUGIN_TARBALL_NAME"
-if [ ! -f "$PLUGIN_TARBALL" ]; then
-  echo "ERROR: Plugin SDK tarball was not created: $PLUGIN_TARBALL"
-  exit 1
-fi
+echo "Copying built plugin SDK files..."
+cp -R packages/plugin-sdk/dist "$PLUGIN_RELEASE_DIR/dist"
+
+echo "Creating publish-ready package.json..."
+# The manifest version has already been aligned with the CLI version above.
+# Drop the build scripts so that publish/install never re-runs the rollup
+# build against the release directory (which has no src/).
+cp packages/plugin-sdk/package.json "$PLUGIN_RELEASE_DIR/package.json"
+node -e "const fs = require('fs'); const p = process.argv[1]; const j = JSON.parse(fs.readFileSync(p, 'utf8')); delete j.scripts; fs.writeFileSync(p, JSON.stringify(j, null, 4) + '\n');" "$PLUGIN_RELEASE_DIR/package.json"
+
+echo "Copying README file..."
+cp packages/plugin-sdk/README.md "$PLUGIN_RELEASE_DIR/README.md"
+
 if [ -n "$NPM_TOKEN" ]; then
   cp "$RELEASE_DIR/.npmrc" "$PLUGIN_RELEASE_DIR/.npmrc"
 fi
 
 echo "Validating CLI release package..."
-npm pack "$RELEASE_DIR" --dry-run --json > /dev/null
-echo "Validating plugin SDK tarball..."
-npm pack "$PLUGIN_TARBALL" --dry-run --json > /dev/null
+# Prefix with ./ so npm treats it as a local directory rather than a GitHub
+# shorthand spec (e.g. "dist/cli-release" would be parsed as github:dist/cli-release).
+npm pack "./$RELEASE_DIR" --dry-run --json > /dev/null
+echo "Validating plugin SDK release package..."
+npm pack "./$PLUGIN_RELEASE_DIR" --dry-run --json > /dev/null
 
+# Automatic publishing is intentionally disabled: this script only builds and
+# validates the release packages. Publishing is always done manually by the user.
 if [ "$PUBLISH" = true ]; then
-
-  if [ "$DRY_RUN" = false ]; then
-    PLUGIN_VERSION=$(grep '"version"' packages/plugin-sdk/package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
-
-    ensure_version_is_available() {
-      local package_name="$1"
-      local package_version="$2"
-      local lookup_result
-      if lookup_result=$(npm view "$package_name@$package_version" version --userconfig "$RELEASE_DIR/.npmrc" 2>&1); then
-        echo "ERROR: $package_name@$package_version already exists in npm."
-        exit 1
-      fi
-      if [[ "$lookup_result" != *"E404"* ]] && [[ "$lookup_result" != *"404 Not Found"* ]]; then
-        echo "ERROR: Unable to verify whether $package_name@$package_version is available."
-        echo "$lookup_result"
-        exit 1
-      fi
-    }
-
-    ensure_version_is_available "@bitclub.ai/opendesk-cli" "$VERSION"
-    ensure_version_is_available "@bitclub.ai/opendesk-plugin-sdk" "$PLUGIN_VERSION"
-  fi
-
-  PUBLISH_ARGS=(--access public --tag "$NPM_TAG")
-  if [ "$DRY_RUN" = true ]; then
-    PUBLISH_ARGS+=(--dry-run)
-  else
-    PUBLISH_ARGS+=(--userconfig "$RELEASE_DIR/.npmrc")
-  fi
-
-  echo "Publishing OpenDesk CLI..."
-  npm publish "$RELEASE_DIR" "${PUBLISH_ARGS[@]}"
-  echo "Publishing OpenDesk plugin SDK..."
-  npm publish "$PLUGIN_TARBALL" "${PUBLISH_ARGS[@]}"
+  echo "NOTE: Automatic publishing is disabled by design."
+  echo "      The packages below are ready; please publish them manually as instructed."
+  echo ""
 fi
 
-# Step 8: Cleanup and success message
-if [ "$PUBLISH" = true ] && [ "$DRY_RUN" = true ]; then
-  echo "=== CLI and Plugin SDK Release Dry Run Completed Successfully ==="
-elif [ "$PUBLISH" = true ]; then
-  echo "=== CLI and Plugin SDK Published Successfully ==="
-else
-echo "=== CLI Release Created Successfully ==="
-fi
+# Step 8: Success message
+echo "=== CLI and Plugin SDK Release Packages Created Successfully ==="
 echo "Release location: $RELEASE_DIR"
-echo "Plugin SDK tarball: $PLUGIN_TARBALL"
+echo "Plugin SDK release: $PLUGIN_RELEASE_DIR"
 echo ""
 echo "To install locally:"
 echo "  cd $RELEASE_DIR && npm install"
@@ -342,21 +313,12 @@ echo "  Note: Local install via 'npm install' does NOT make 'opendesk' globally 
 echo "  For global access, use one of the following:"
 echo "    cd $RELEASE_DIR && npm link          # Create a global symlink (recommended for testing)"
 echo "    npm install -g ./$RELEASE_DIR        # Install globally from local directory"
+echo "  cd $PLUGIN_RELEASE_DIR && npm install"
+echo "    npm install -g ./$PLUGIN_RELEASE_DIR # Install plugin SDK globally"
 echo ""
-if [ "$PUBLISH" = false ]; then
-  echo "To publish manually, publish the CLI first and then the plugin SDK:"
-  echo "  (cd $RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
-  echo "  (cd $PLUGIN_RELEASE_DIR && npm publish $PLUGIN_TARBALL_NAME --access public --tag $NPM_TAG)"
-  echo ""
-  echo "To publish both packages automatically:"
-  echo "  $0 --$RELEASE_TYPE --publish"
-  echo ""
-  echo "To validate the joint publish locally without an npm token:"
-  if [ "$RELEASE_TYPE" = "nightly" ]; then
-    echo "  $0 --nightly --dry-run"
-  else
-    echo "  $0 --stable --dry-run"
-  fi
-else
-  echo "CLI was published before the plugin SDK."
-fi
+echo "To publish manually, publish the CLI first and then the plugin SDK:"
+echo "  (cd $RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
+echo "  (cd $PLUGIN_RELEASE_DIR && npm publish --access public --tag $NPM_TAG)"
+echo ""
+echo "This script never publishes automatically. Review the packages above,"
+echo "then run the publish commands yourself when ready."
