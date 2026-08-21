@@ -46,7 +46,7 @@ function createPluginApp(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PluginMgr management tools', () => {
-    test('plugin manager exposes one management-only skill with the complete plugin toolset', async () => {
+    test('plugin manager exposes one plugin management and development skill with the complete plugin toolset', async () => {
         const app = Object.create(PluginMgrApplication.prototype) as PluginMgrApplication;
 
         const skills = await app.getSkills();
@@ -65,7 +65,7 @@ describe('PluginMgr management tools', () => {
         const instructions = skills[0].getFullContent();
         expect(instructions).toMatch(/uninstallPlugin/);
         expect(instructions).toContain('https://opendesk.matrix.openharmony.cn/docs/plugins/development/');
-        expect(instructions).toMatch(/仅负责管理/);
+        expect(instructions).toMatch(/协助用户设计、编写或修改插件源码/);
         expect(instructions).not.toMatch(/definePlugin|ctx\.hooks|ctx\.tools|opendesk\.plugin\.json/);
         expect(instructions).not.toMatch(/从零开发流程|开发需求门禁|工具渲染/);
     });

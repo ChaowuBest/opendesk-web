@@ -541,7 +541,8 @@ GUI callMainWorld
 - `skill.install.before`：用户 Skill 安装前触发，可拒绝安装。
 - `skill.install.after`：用户 Skill 安装成功后触发，仅用于观测和审计。
 - `tool.definition`：调整工具在模型侧可见的描述和参数 Schema。
-- `tool.execute.before`：在权限检查前修改工具参数或拒绝本次执行。
+- `tool.validate.before`：在参数校验前修改工具参数或拒绝本次执行（对应 aikernel 的 `beforeToolCallValidate`）。
+- `tool.execute.before`：在执行前（权限检查之后）拒绝本次执行或读取参数做审计（**不可修改参数**，以免绕过权限检查）（对应 aikernel 的 `beforeToolCall`）。
 - `tool.execute.after`：在工具完成后修改状态、文本结果或结构化结果。
 - `permission.ask`：对权限请求返回 `ask`、`allow` 或 `deny`。
 - `shell.env`：为终端 Shell 请求调整环境变量。
@@ -559,11 +560,11 @@ GUI callMainWorld
 工具调用顺序如下：
 
 ```text
-解析并校验模型参数
-  -> tool.execute.before（可修改参数或拒绝）
-  -> 使用修改后的参数重新校验
+解析模型参数
+  -> tool.validate.before（参数校验前，可修改参数或拒绝）
+  -> 参数校验（使用修改后的参数）
   -> 权限检查
-  -> beforeToolCall 安全门禁
+  -> tool.execute.before（执行前，仅可拒绝，不可修改参数）
   -> 执行工具
   -> tool.execute.after
 ```

@@ -96,6 +96,8 @@ export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
 export type PluginFailureMode = 'open' | 'closed';
 
+export type PluginShellType = 'bash' | 'zsh' | 'powershell';
+
 export interface PluginChatRequestInput {
     taskId?: string;
     workspace?: string;
@@ -270,6 +272,38 @@ export interface PluginHookMap {
             env: Record<string, string | undefined>;
         };
     };
+    'shell.execute.before': {
+        input: {
+            tool: string;
+            taskId: string;
+            callId: string;
+            workspace?: string;
+            shellType: PluginShellType;
+        };
+        output: {
+            args: unknown;
+            deny?: {
+                message?: string;
+                metadata?: Record<string, unknown>;
+            };
+        };
+    };
+    'shell.execute.after': {
+        input: {
+            tool: string;
+            taskId: string;
+            callId: string;
+            workspace?: string;
+            args: unknown;
+            shellType: PluginShellType;
+            returnCode: number | null;
+        };
+        output: {
+            status: 'success' | 'error';
+            result: string;
+            resultObject?: object;
+        };
+    };
     'tool.definition': {
         input: {
             tool: string;
@@ -282,7 +316,7 @@ export interface PluginHookMap {
             parameters: z.ZodType;
         };
     };
-    'tool.execute.before': {
+    'tool.validate.before': {
         input: {
             tool: string;
             taskId: string;
@@ -291,6 +325,20 @@ export interface PluginHookMap {
         };
         output: {
             args: unknown;
+            deny?: {
+                message?: string;
+                metadata?: Record<string, unknown>;
+            };
+        };
+    };
+    'tool.execute.before': {
+        input: {
+            tool: string;
+            taskId: string;
+            callId: string;
+            workspace?: string;
+        };
+        output: {
             deny?: {
                 message?: string;
                 metadata?: Record<string, unknown>;
@@ -322,7 +370,10 @@ export const OPENDESK_PLUGIN_HOOK_NAMES = [
     'skill.install.after',
     'permission.ask',
     'shell.env',
+    'shell.execute.before',
+    'shell.execute.after',
     'tool.definition',
+    'tool.validate.before',
     'tool.execute.before',
     'tool.execute.after'
 ] as const satisfies readonly (keyof PluginHookMap)[];

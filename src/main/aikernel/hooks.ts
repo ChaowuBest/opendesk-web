@@ -289,15 +289,18 @@ type BeforeChatModelRequestCallback = (ctx: BeforeChatModelRequestContext) => vo
 /******************************************************************************
  * Before Tool Call Validate Callbacks
  * ------------------------
- * 1. 在工具参数解析并校验通过后、真正执行前触发，允许各模块对本次调用做参数层
+ * 1. 在工具参数解析后、参数校验与权限检查之前触发，允许各模块对本次调用做参数层
  *    审查：既可以拒绝该调用，也可以就地调整参数——回调直接修改 ctx.toolCall 的
- *    args_object / args_string 即可生效，无需返回值中转；
+ *    args_object / args_string 即可生效，无需返回值中转，修改后的参数随后进入
+ *    校验与执行阶段；
  * 2. 模块通过 beforeToolCallValidate 注册回调，回调收到 { task, toolCall }，
  *    返回 { operation: 'allow' | 'deny', message? }：
  *   - 返回 deny：立即终止检查链并阻止执行，message 会写回 tool_call.result；
- *   - 返回 allow：继续执行后续检查。
- * 3. 与 beforeToolCall 的区别：本钩子面向参数层（参数已校验、位于权限检查之前），
- *    beforeToolCall 面向整个工具调用做策略判定（位于权限检查之后）。
+ *   - 返回 allow：继续执行后续检查（随后进行参数校验、权限检查）。
+ * 3. 与 beforeToolCall 的区别：本钩子面向参数层（位于参数校验与权限检查之前），
+ *    beforeToolCall 面向整个工具调用做策略判定（位于权限检查之后、执行之前）；
+ *    若本钩子或校验/权限环节已拒绝执行，则不会进入 beforeToolCall/afterToolCall
+ *    所代表的执行阶段。
  ******************************************************************************/
 
 /** beforeToolCallValidate 钩子动作反馈：allow 继续执行，deny 阻止执行并带原因 */
@@ -717,8 +720,8 @@ export class Hooks {
      *
      * 典型用途：安全拦截（AgentGate）、循环检测（电路断路器）、参数审计。
      */
-    beforeToolCall(callback: BeforeToolCallExecCallback, options?: HookOptions): void {
-        this.beforeToolCallHooks.push({ callback, options: resolveHookOptions(options) });
+    beforeToolCall(callback: BeforeToolCallExecCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.beforeToolCallHooks, callback, options);
     }
 
     async checkBeforeToolCall(ctx: BeforeToolCallExecContext): Promise<BeforeToolCallExecAction> {

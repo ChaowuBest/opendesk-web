@@ -284,12 +284,12 @@ export function registerPluginsCommand(prog: Command): void {
                         callId,
                         workspace
                     },
-                    { args }
+                    {}
                 );
                 if (before.deny) {
                     throw new Error(before.deny.message ?? t('plugin.tool.denied', { name }));
                 }
-                const result = await contribution.definition.execute(before.args, {
+                const result = await contribution.definition.execute(args, {
                     taskId: 'plugin-cli',
                     workspace,
                     abort: new AbortController().signal
@@ -301,7 +301,7 @@ export function registerPluginsCommand(prog: Command): void {
                         taskId: 'plugin-cli',
                         callId,
                         workspace,
-                        args: before.args
+                        args
                     },
                     typeof result === 'string'
                         ? { status: 'success', result }

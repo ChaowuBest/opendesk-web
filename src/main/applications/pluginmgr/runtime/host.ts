@@ -222,9 +222,14 @@ function cloneHookOutput<Name extends PluginHookName>(
     const candidate = { ...(output as Record<string, unknown>) };
     if (name === 'chat.headers') {
         candidate.headers = { ...((output as PluginHookMap['chat.headers']['output']).headers ?? {}) };
+    } else if (name === 'tool.validate.before') {
+        const before = output as PluginHookMap['tool.validate.before']['output'];
+        candidate.args = cloneValue(before.args);
+        candidate.deny = before.deny
+            ? { ...before.deny, metadata: before.deny.metadata ? cloneValue(before.deny.metadata) : undefined }
+            : undefined;
     } else if (name === 'tool.execute.before') {
         const before = output as PluginHookMap['tool.execute.before']['output'];
-        candidate.args = cloneValue(before.args);
         candidate.deny = before.deny
             ? { ...before.deny, metadata: before.deny.metadata ? cloneValue(before.deny.metadata) : undefined }
             : undefined;
@@ -239,6 +244,15 @@ function cloneHookOutput<Name extends PluginHookName>(
         candidate.metadata = before.metadata ? cloneValue(before.metadata) : undefined;
     } else if (name === 'shell.env') {
         candidate.env = { ...(output as PluginHookMap['shell.env']['output']).env };
+    } else if (name === 'shell.execute.before') {
+        const before = output as PluginHookMap['shell.execute.before']['output'];
+        candidate.args = cloneValue(before.args);
+        candidate.deny = before.deny
+            ? { ...before.deny, metadata: before.deny.metadata ? cloneValue(before.deny.metadata) : undefined }
+            : undefined;
+    } else if (name === 'shell.execute.after') {
+        const after = output as PluginHookMap['shell.execute.after']['output'];
+        candidate.resultObject = after.resultObject ? cloneValue(after.resultObject) : undefined;
     }
     return candidate as PluginHookMap[Name]['output'];
 }

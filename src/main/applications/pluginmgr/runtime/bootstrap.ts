@@ -15,6 +15,7 @@ import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
 import { getPluginRecord } from '../management/registry.js';
 import {
     runPluginAfterToolCall,
+    runPluginBeforeToolCall,
     runPluginBeforeToolCallValidate,
     runPluginChatHeaders,
     runPluginChatParams,
@@ -142,6 +143,11 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.push(
         GlobalHooks.beforeToolCallValidate(async ({ task, toolCall }) => {
             return await runPluginBeforeToolCallValidate(task, toolCall);
+        })
+    );
+    disposeAikernelHooks.push(
+        GlobalHooks.beforeToolCall(async ({ task, toolCall }) => {
+            return await runPluginBeforeToolCall(task, toolCall);
         })
     );
     disposeAikernelHooks.push(

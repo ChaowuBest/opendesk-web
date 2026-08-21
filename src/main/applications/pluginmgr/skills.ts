@@ -12,13 +12,13 @@
 export const MANAGE_PLUGINS_SKILL = `
 ---
 name: manage-plugins
-description: 查询、校验、安装、启停、卸载和重新加载 OpenDesk 插件
+description: 管理并协助用户开发 OpenDesk 插件 (查询、校验、安装、启停、卸载)
 ---
 
 # OpenDesk 插件管理
 
-本技能仅负责管理已有的 OpenDesk 插件目录或安装包，不负责设计、编写或修改插件源码。
-需要开发插件时，请引导用户阅读 [OpenDesk 插件开发指南](https://opendesk.matrix.openharmony.cn/docs/plugins/development/)，不要根据本技能自行生成插件实现。
+本技能负责管理已有的 OpenDesk 插件目录或安装包，以及协助用户设计、编写或修改插件源码。
+需要开发插件时，请你阅读 [OpenDesk 插件开发指南](https://opendesk.matrix.openharmony.cn/docs/plugins/development/)，并根据指南中的引导生成插件实现。
 
 插件会在 OpenDesk 主进程中以受信任的 Node.js 代码运行。安装或启用前必须向用户说明代码执行、依赖安装和网络访问影响，并取得用户确认。
 
