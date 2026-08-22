@@ -98,7 +98,7 @@ function externalAppResourceHandler(request: Electron.ProtocolRequest): Response
         .split('/')
         .filter(Boolean)
         .map((part) => decodeURIComponent(part));
-    if (parts.length === 1 && parts[0] === 'icon.png') {
+    if (parts.length === 1 && (parts[0] === 'icon.png' || parts[0] === 'icon.svg')) {
         const iconPath = appRecord.iconPath;
         if (iconPath && fs.existsSync(iconPath)) {
             return responseFromFile(iconPath);
@@ -106,7 +106,9 @@ function externalAppResourceHandler(request: Electron.ProtocolRequest): Response
         // 回退到用户放置的默认图标（生产/开发环境多路径查找）
         const defaultIconCandidates = [
             path.join(__dirname, '..', '..', 'renderer', 'applications', 'default_icon.png'),
-            path.join(app.getAppPath(), 'resources', 'renderer', 'applications', 'default_icon.png')
+            path.join(__dirname, '..', '..', 'renderer', 'applications', 'default_icon.svg'),
+            path.join(app.getAppPath(), 'resources', 'renderer', 'applications', 'default_icon.png'),
+            path.join(app.getAppPath(), 'resources', 'renderer', 'applications', 'default_icon.svg')
         ];
         for (const candidate of defaultIconCandidates) {
             if (fs.existsSync(candidate)) {

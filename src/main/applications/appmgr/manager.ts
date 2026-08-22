@@ -232,7 +232,7 @@ function copyIconFromVersion(appDir: string, versionDir: string, manifest: OpenD
 }
 
 export function appIconUrl(bundleName: string): string {
-    return `opendesk-app://${bundleName}/icon.png`;
+    return `opendesk-app://${bundleName}/icon.svg`;
 }
 
 export function appEntryUrl(app: UserAppRecord, versionId: string = app.currentVersionId): string {

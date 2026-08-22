@@ -392,7 +392,7 @@ class SideBar extends HTMLElement {
             if (isVisible) {
                 this._dismissAppPopover();
             } else {
-                this._showAppPopover();
+                this._showAppPopoverAt(appsBtn);
             }
         });
         this._appPopoverDismissHandler = (e) => {
@@ -417,43 +417,13 @@ class SideBar extends HTMLElement {
         window.addEventListener('blur', this._appPopoverBlurHandler);
     }
 
-    _showAppPopover() {
-        const popover = this.querySelector('#app-popover');
-        const appsBtn = this.querySelector('#open-apps-btn');
-        if (!popover || !appsBtn) return;
-
-        popover.classList.remove('sb-app-popover-hidden');
-        popover.classList.add('sb-app-popover-visible');
-        appsBtn.classList.add('sb-nav-btn-active');
-
-        // 初始 offscreen 定位，避免 popover 在 DOM 默认位置闪现一帧
-        popover.style.position = 'fixed';
-        popover.style.left = '-9999px';
-        popover.style.top = '-9999px';
-
-        requestAnimationFrame(() => {
-            // 在同一帧内获取按钮和 popover 的 rect，避免 CSS transition 时序差
-            const btnRect = appsBtn.getBoundingClientRect();
-            const popRect = popover.getBoundingClientRect();
-            let left = btnRect.left;
-            let top = btnRect.bottom + 4;
-            if (left + popRect.width > window.innerWidth) {
-                left = window.innerWidth - popRect.width - 8;
-            }
-            if (top + popRect.height > window.innerHeight) {
-                top = btnRect.top - popRect.height - 4;
-            }
-            popover.style.left = `${left}px`;
-            popover.style.top = `${top}px`;
-        });
-    }
-
     _showAppPopoverAt(anchorBtn) {
         const popover = this.querySelector('#app-popover');
         if (!popover || !anchorBtn) return;
 
         popover.classList.remove('sb-app-popover-hidden');
         popover.classList.add('sb-app-popover-visible');
+        anchorBtn.classList.add('sb-nav-btn-active');
 
         // 初始 offscreen 定位，避免 popover 在 DOM 默认位置闪现一帧
         popover.style.position = 'fixed';
@@ -461,17 +431,28 @@ class SideBar extends HTMLElement {
         popover.style.top = '-9999px';
 
         requestAnimationFrame(() => {
-            // 在同一帧内获取按钮和 popover 的 rect，避免 CSS transition 时序差
+            // 以 taskview 区域（rightPanel 左边缘，即分隔线右侧）为基准，展开/收起间距一致，
+            // 避免展开态被拖拽条（resizer）挤占导致菜单紧贴分割线
             const btnRect = anchorBtn.getBoundingClientRect();
             const popRect = popover.getBoundingClientRect();
-            let left = btnRect.right + 4;
-            let top = btnRect.top;
+            const rightPanel =
+                this.closest?.('splitter-widget')?.querySelector?.('[slot="right"]') ||
+                this.parentElement?.nextElementSibling;
+            const panelEl = this.parentElement;
+            const dividerX = rightPanel
+                ? rightPanel.getBoundingClientRect().left
+                : panelEl
+                  ? panelEl.getBoundingClientRect().right
+                  : btnRect.right;
+            let left = dividerX + 8;
             if (left + popRect.width > window.innerWidth) {
-                left = btnRect.left - popRect.width - 4;
+                left = Math.max(8, window.innerWidth - popRect.width - 8);
             }
+            let top = btnRect.top;
             if (top + popRect.height > window.innerHeight) {
                 top = window.innerHeight - popRect.height - 8;
             }
+            if (top < 8) top = 8;
             popover.style.left = `${left}px`;
             popover.style.top = `${top}px`;
         });
@@ -490,6 +471,10 @@ class SideBar extends HTMLElement {
         }
         if (appsBtn) {
             appsBtn.classList.remove('sb-nav-btn-active');
+        }
+        const collapsedAppsBtn = this.querySelector('#sb-collapsed-apps');
+        if (collapsedAppsBtn) {
+            collapsedAppsBtn.classList.remove('sb-nav-btn-active');
         }
     }
 
@@ -548,20 +533,20 @@ class SideBar extends HTMLElement {
                     <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
                 </button>
                 <button
-                    id="open-apps-btn"
-                    class="sb-nav-btn"
-                    title="${this._t('renderer.sidebar.apps')}"
-                >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg>
-                    <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
-                </button>
-                <button
                     id="open-skills-btn"
                     class="sb-nav-btn"
                     title="${this._t('renderer.sidebar.skills')}"
                 >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
                     <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
+                </button>
+                <button
+                    id="open-apps-btn"
+                    class="sb-nav-btn"
+                    title="${this._t('renderer.sidebar.apps')}"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="3" width="7" height="7" rx="3.5"/><rect x="14" y="14" width="7" height="7" rx="3.5"/><rect x="3" y="14" width="7" height="7" rx="3.5"/></svg>
+                    <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
                 </button>
             </div>
 
@@ -1077,17 +1062,20 @@ class SideBar extends HTMLElement {
         if (!popover) return;
         popover.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        const visibleApps = appList.filter((app) => isApplicationVisibleInMenu(app, this._experimentalFeature));
+        // 技能中心已由侧边栏「技能」按钮直达，无需在应用菜单中重复展示
+        const visibleApps = appList.filter(
+            (app) => app.bundleName !== 'skillmgr' && isApplicationVisibleInMenu(app, this._experimentalFeature)
+        );
 
         let gridHtml = '<div class="sb-app-popover-grid">';
         for (const app of visibleApps) {
             const isMailbox = app.bundleName === 'mailbox';
-            const iconUrl = app.iconUrl || `./applications/${app.bundleName}/icon.png`;
+            const iconUrl = app.iconUrl || `./applications/${app.bundleName}/icon.svg`;
             const appSource = app.source || '';
             gridHtml += `
             <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}" data-app-source="${appSource}">
                 <div class="sb-app-popover-icon-wrap">
-                    <img src="${iconUrl}" alt="${app.name}" onerror="this.src='./applications/default_icon.png'">
+                    <img src="${iconUrl}" alt="${app.name}" class="${/\.svg$/i.test(iconUrl) ? 'sb-app-icon-svg' : ''}" onerror="if(!this.dataset.fb1){this.dataset.fb1='1';this.src='./applications/${app.bundleName}/icon.png';}else if(!this.dataset.fb2){this.dataset.fb2='1';this.src='./applications/default_icon.png';}">
                     ${isMailbox ? '<span class="mailbox-unread-badge">0</span>' : ''}
                 </div>
                 <span class="sb-app-popover-label">${app.name}</span>

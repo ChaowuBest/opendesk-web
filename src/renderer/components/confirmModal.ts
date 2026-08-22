@@ -356,7 +356,7 @@ export const MODAL_CSS = `
     font-size: 11px; color: var(--mc-ink3); margin-top: 2px;
 }
 .od-confirm-modal-close {
-    width: 26px; height: 26px; border: 0; border-radius: 7px;
+    width: 26px; height: 26px; border: 0; border-radius: 7px; padding: 0;
     background: var(--mc-close-bg); color: var(--mc-ink3);
     cursor: pointer; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
