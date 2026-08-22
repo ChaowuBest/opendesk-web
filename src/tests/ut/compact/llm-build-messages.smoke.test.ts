@@ -101,11 +101,11 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () =>
         }
     });
 
-    test('FileMessagePart render includes data-open-file with full path', async () => {
+    test('FileMessagePart render includes data-open-preview and data-file-path with full path', async () => {
         const filePath = '/tmp/report.pdf';
         const part = new FileMessagePart(filePath);
         const html = await part.render();
-        expect(html).toContain(`data-open-file="${filePath}"`);
+        expect(html).toContain(`data-open-preview="${filePath}"`);
         expect(html).toContain(`data-file-path="${filePath}"`);
     });
 

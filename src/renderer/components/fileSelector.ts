@@ -232,9 +232,8 @@ export class FileSelector {
 
             try {
                 const children = await this._list(entry.path);
-                if (children.length > 0) {
-                    this._columns.push({ parentPath: entry.path, entries: children, selectedPath: null });
-                }
+                // 无论是否有子目录，都为该目录展示右侧一列（无子目录时显示“（无子目录）”）
+                this._columns.push({ parentPath: entry.path, entries: children, selectedPath: null });
             } catch {
                 break;
             }
@@ -403,10 +402,15 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
             colEl.dataset.colIdx = String(colIdx);
 
             if (col.entries.length === 0) {
-                const emptyText =
-                    col.parentPath === '{DRIVE_ROOT}'
-                        ? this._t('renderer.fileSelector.emptyDrive')
-                        : this._t('renderer.fileSelector.emptyDir');
+                let emptyText: string;
+                if (col.parentPath === '{DRIVE_ROOT}') {
+                    emptyText = this._t('renderer.fileSelector.emptyDrive');
+                } else if (colIdx > 0) {
+                    // 选中的文件夹没有子目录
+                    emptyText = this._t('renderer.fileSelector.noSubdir');
+                } else {
+                    emptyText = this._t('renderer.fileSelector.emptyDir');
+                }
                 colEl.innerHTML = `<div class="od-fscol-empty">${emptyText}</div>`;
             } else {
                 for (const entry of col.entries) {
@@ -504,23 +508,40 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         // 已选中同一目录时无需重复展开
         if (this._columns[colIdx].selectedPath === dirPath) return;
 
-        const columnsToRemove = this._columns.length - colIdx - 1;
+        const oldColumnCount = this._columns.length;
+        const columnsToRemove = oldColumnCount - colIdx - 1;
 
-        if (columnsToRemove > 0) {
-            const colEls = this.element.querySelectorAll('.od-fscol');
+        // 立即更新当前列选中高亮，提供即时视觉反馈
+        const colEls = this.element.querySelectorAll('.od-fscol');
+        const clickedCol = colEls[colIdx] as HTMLElement | undefined;
+        if (clickedCol) {
+            clickedCol.querySelectorAll('.od-fsitem').forEach((item) => {
+                const el = item as HTMLElement;
+                if (el.dataset.path === dirPath) el.classList.add('selected');
+                else el.classList.remove('selected');
+            });
+        }
+
+        // 先获取目标目录子项，才能判断最终列数（目录深度）是否发生变化
+        let children: FSEntry[] = [];
+        try {
+            children = await this._list(dirPath);
+        } catch {
+            children = [];
+        }
+
+        // 选中的文件夹无论是否有子目录都在右侧展示一列，因此目标列数固定为 colIdx + 2
+        const newColumnCount = colIdx + 2;
+        // 深度未改变（如从 /a/b/c 切到同层的 /a/b/d）时不播动画，原地替换内容，避免界面抖动
+        const depthUnchanged = newColumnCount === oldColumnCount;
+
+        // 仅当深度真正减少时，才播放退场动画移除被覆盖的下游列
+        if (!depthUnchanged && columnsToRemove > 0) {
             const exiting: HTMLElement[] = [];
             for (let i = colIdx + 1; i < colEls.length; i++) {
                 const el = colEls[i] as HTMLElement;
                 el.classList.add('od-fscol-exit');
                 exiting.push(el);
-            }
-            const clickedCol = colEls[colIdx] as HTMLElement | undefined;
-            if (clickedCol) {
-                clickedCol.querySelectorAll('.od-fsitem').forEach((item) => {
-                    const el = item as HTMLElement;
-                    if (el.dataset.path === dirPath) el.classList.add('selected');
-                    else el.classList.remove('selected');
-                });
             }
             await new Promise<void>((res) => {
                 if (exiting.length > 0) {
@@ -537,18 +558,12 @@ html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
         this._columns[colIdx].selectedPath = dirPath;
         this._selectedPath = dirPath;
         this._notifySelect();
-        this._render();
 
-        try {
-            const children = await this._list(dirPath);
-            if (children.length > 0) {
-                const newIdx = this._columns.length;
-                this._columns.push({ parentPath: dirPath, entries: children, selectedPath: null });
-                this._render(newIdx);
-            }
-        } catch {
-            /* _render() already called above, no need to re-render */
-        }
+        // 始终为选中的文件夹展示右侧一列；无子目录时该列显示“（无子目录）”
+        const newIdx = this._columns.length;
+        this._columns.push({ parentPath: dirPath, entries: children, selectedPath: null });
+        // 深度不变时不播放入场动画，直接原地渲染
+        this._render(depthUnchanged ? undefined : newIdx);
     }
 
     /* ───────── context menu ───────── */

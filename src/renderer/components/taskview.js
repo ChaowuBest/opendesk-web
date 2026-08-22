@@ -2960,6 +2960,8 @@ class TaskView extends HTMLElement {
     _handlePreviewOpenClick(e) {
         const target = e.target.closest('[data-open-preview]');
         if (!target) return;
+        // 排除 FileMessagePart 卡片的三点菜单按钮，避免与 _handleFileCardMenuClick 冲突
+        if (e.target.closest('.od-file-card-menu')) return;
         e.preventDefault();
         e.stopPropagation();
         const filePath = target.dataset.openPreview;
@@ -2973,17 +2975,43 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 处理 .od-file-pill 元素的右键菜单事件。
+     * 处理 file-pill 与 FileMessagePart 卡片的右键菜单事件。
+     * 两者共用同一份菜单内容（预览 / 复制路径 / 默认打开 / 在文件夹显示），保证一致性。
      */
     _handleFilePillContextMenu(e) {
-        const target = e.target.closest('.od-file-pill[data-open-preview]');
+        const target = e.target.closest('.od-file-pill[data-open-preview], .od-file-card[data-open-preview]');
         if (!target) return;
         e.preventDefault();
         e.stopPropagation();
-
         const filePath = target.dataset.openPreview;
         if (!filePath) return;
+        this._openFileContextMenu(filePath, e.clientX, e.clientY);
+    }
 
+    /**
+     * 处理 FileMessagePart 卡片右上角三点按钮的点击，复用与 file-pill 一致的右键菜单。
+     */
+    _handleFileCardMenuClick(e) {
+        const btn = e.target.closest('.od-file-card-menu');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const card = btn.closest('.od-file-card[data-open-preview]');
+        if (!card) return;
+        const filePath = card.dataset.openPreview;
+        if (!filePath) return;
+        const rect = btn.getBoundingClientRect();
+        // 菜单贴近按钮下方弹出
+        this._openFileContextMenu(filePath, rect.left, rect.bottom);
+    }
+
+    /**
+     * 弹出文件操作右键菜单（file-pill 与 FileMessagePart 卡片共用）。
+     * @param {string} filePath 文件绝对路径
+     * @param {number} x 菜单左上角 x 坐标
+     * @param {number} y 菜单左上角 y 坐标
+     */
+    _openFileContextMenu(filePath, x, y) {
         this._dismissFilePillContextMenu();
 
         const dark =
@@ -2994,8 +3022,8 @@ class TaskView extends HTMLElement {
         menu.id = 'od-file-pill-ctx';
         menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
         menu.style.minWidth = '180px';
-        menu.style.left = `${e.clientX}px`;
-        menu.style.top = `${e.clientY}px`;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
 
         const items = [
             { action: 'preview', icon: FILE_TAG_PREVIEW_SVG, label: taskViewT('renderer.taskview.fileTag.preview') },
@@ -3838,6 +3866,10 @@ class TaskView extends HTMLElement {
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
 
+        // 添加 FileMessagePart 卡片三点菜单按钮的点击事件监听（事件代理）
+        this._handleFileCardMenuClick = this._handleFileCardMenuClick.bind(this);
+        this.addEventListener('click', this._handleFileCardMenuClick);
+
         // 添加文件标签右键菜单的事件监听（事件代理）
         this._handleFilePillContextMenu = this._handleFilePillContextMenu.bind(this);
         this.addEventListener('contextmenu', this._handleFilePillContextMenu);
@@ -4102,6 +4134,7 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleOpenFileClick);
         this.removeEventListener('click', this._handleSkillPillClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
+        this.removeEventListener('click', this._handleFileCardMenuClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
