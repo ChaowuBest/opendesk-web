@@ -2352,6 +2352,8 @@ export const zhCn: Record<string, string> = {
     'agentoffice.error.noReply': '该员工已完成任务，但没有通过 sendReply 回复。',
     'agentoffice.error.resourceDenied': '资源不在这位数字员工已配置的权限范围内：${path}',
     'agentgate.attribution.status': '正在进行恶意技能归因分析……',
+    'harmony.localRuntime.tabletUnavailable': '平板版本不提供本地命令运行时',
+    'harmony.localRuntime.pcMissing': '本地运行时安装异常：缺少 ${capabilities}',
     'workflowMgr.app.name': '工作流',
     'workflow.phase.untitled': '未命名阶段',
     'workflow.agent.untitled': 'Workflow agent',

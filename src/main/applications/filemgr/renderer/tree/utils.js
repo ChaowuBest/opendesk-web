@@ -37,8 +37,6 @@ const DEFAULT_DIRECTORY_NAMES = new Set([
     '.DS_Store'
 ]);
 
-const OPENHARMONY_HOME_ROOT = '/storage/Users/currentUser';
-
 function isAbsolutePattern(pattern) {
     return pattern.startsWith('/') || /^[A-Za-z]:\//.test(pattern);
 }
@@ -234,7 +232,7 @@ export function getHomeRoot(defaultWorkspace) {
     if (platform === 'win32') {
         result = DRIVE_ROOT_PATH;
     } else if (isOH) {
-        result = OPENHARMONY_HOME_ROOT;
+        result = normalizePath(systemHomePath);
     } else if (systemHomePath) {
         result = normalizePath(systemHomePath);
     }

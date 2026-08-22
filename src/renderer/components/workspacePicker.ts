@@ -15,6 +15,15 @@ import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 
 declare const window: Window & {
+    systemInfo?: {
+        isWindows?: boolean;
+        isOpenHarmony?: boolean;
+        harmonyRuntime?: {
+            variant: 'pc' | 'tablet';
+            appDataDir: string;
+            browseRoots: { kind: 'userHome' | 'appSandbox'; path: string }[];
+        } | null;
+    };
     workspaceAPI: {
         getEffectiveWorkspace(): Promise<string>;
         setWorkspaceDirectory(path: string): Promise<string>;
@@ -482,21 +491,8 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
                         const drives = await window.workspaceAPI.listDrives();
                         return drives || [];
                     }
-                    // 处理虚拟根目录：OpenHarmony 家目录 + 应用沙箱
-                    if (p === '{OH_ROOT}') {
-                        return [
-                            {
-                                name: t('renderer.workspacePicker.home'),
-                                path: '/storage/Users/currentUser',
-                                isDirectory: true
-                            },
-                            {
-                                name: t('renderer.workspacePicker.sandbox'),
-                                path: '/data/storage/el2/base/files',
-                                isDirectory: true
-                            }
-                        ];
-                    }
+                    // {OH_ROOT}（OpenHarmony 家目录 + 应用沙箱）由主进程统一处理，
+                    // 通过 getHarmonyBrowseRoots 返回与运行时一致的根目录列表。
                     return window.workspaceAPI.listDirectory(p, opts);
                 },
                 onSelect: (p) => {
@@ -545,20 +541,21 @@ export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promi
 /**
  * 从工作空间路径推导出合理的起始浏览目录。
  * Windows 平台返回虚拟根目录标记，显示所有盘符。
- * OpenHarmony 平台使用系统暴露的家目录路径（USER_DATA_PATH）。
+ * HarmonyOS PC 使用包含用户家目录和应用沙箱的虚拟根；tablet 直接从应用沙箱开始。
  * Unix/macOS 平台返回用户家目录。
  */
 function _getHomeDirFromWorkspace(workspace: string): string {
-    const systemInfo = (window as any).systemInfo;
+    const systemInfo = window.systemInfo;
 
     // Windows 平台返回虚拟根目录标记
     if (systemInfo?.isWindows || navigator.platform.toLowerCase().includes('win')) {
         return '{DRIVE_ROOT}';
     }
 
-    // OpenHarmony 平台返回虚拟根目录标记（家目录 + 应用沙箱）
+    // HarmonyOS tablet 不存在 PC 用户家目录，只允许从应用沙箱开始浏览。
     if (systemInfo?.isOpenHarmony) {
-        return '{OH_ROOT}';
+        const roots = systemInfo.harmonyRuntime?.browseRoots ?? [];
+        return roots.length === 1 ? roots[0].path : '{OH_ROOT}';
     }
 
     // Unix/macOS 原有逻辑

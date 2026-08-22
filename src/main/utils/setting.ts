@@ -13,32 +13,26 @@ import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { createRequire } from 'module';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount } from '../../utils/model.js';
-
-const require = createRequire(import.meta.url);
-
-function tryElectronUserDataPath(): string | undefined {
-    try {
-        const electron = require('electron') as typeof import('electron');
-        const p = electron.app?.getPath?.('userData');
-        return typeof p === 'string' && p.length > 0 ? p : undefined;
-    } catch {
-        return undefined;
-    }
-}
+import {
+    getHarmonyRuntimeEnvironment,
+    getHarmonyWorkspaceDirectory
+} from '../../platforms/bridges/harmonyos/runtime.js';
 
 /**
  * 解析可写的应用数据根目录（与主进程、Worker 通过 workerData 传入的路径一致）
  *
- * OpenHarmony 上 HOME / APPDATA 均不存在，优先使用 USER_DATA_PATH（由 main.js 在启动时
- * 通过 app.getPath('userData') 注入）。若该环境变量也未设置，则尝试 Electron API、
- * os.homedir()、os.tmpdir() 等作为回退。
+ * HarmonyOS 始终使用 ArkTS 注入的应用沙箱 filesDir。PC 用户家目录只用于用户文件，
+ * 不能作为设置、日志或数据库等应用数据的存储根目录。
  */
 function resolveWritableUserDataRoot(): string {
+    const harmonyRuntime = getHarmonyRuntimeEnvironment();
+    if (harmonyRuntime) {
+        return harmonyRuntime.appDataDir;
+    }
     if (customOpendeskDirectory) {
         return customOpendeskDirectory;
     }
@@ -52,33 +46,12 @@ function resolveWritableUserDataRoot(): string {
     if (envConfigDirectory) {
         return path.resolve(envConfigDirectory);
     }
-    if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
-        return process.env.USER_DATA_PATH;
-    }
     if (process.env.APPDATA) {
         return path.join(process.env.APPDATA, 'opendesk');
     }
     if (process.env.HOME) {
         return path.join(process.env.HOME, '.opendesk');
     }
-    const fromElectron = tryElectronUserDataPath();
-    if (fromElectron) {
-        return fromElectron;
-    }
-
-    // OpenHarmony 回退：HOME/APPDATA 不存在时，尝试 os.homedir() 和 os.tmpdir()
-    if ((process.platform as string) === 'openharmony') {
-        try {
-            const home = os.homedir();
-            if (home && home !== '/' && fs.existsSync(home)) {
-                return path.join(home, '.opendesk');
-            }
-        } catch {
-            /* os.homedir() 可能在沙箱环境中不可用 */
-        }
-        return path.join(os.tmpdir(), '.opendesk');
-    }
-
     // 最终回退使用临时目录，避免依赖当前工作目录（cwd 可能指向无权限路径）
     return path.join(os.tmpdir(), '.opendesk');
 }
@@ -978,7 +951,10 @@ function setCustomOpendeskDirectory(dir: string | undefined): void {
  * 获取默认的应用数据目录路径（不创建目录），供 CLI help 提示使用
  */
 function getDefaultOpendeskDirectory(): string {
-    if (process.env.APPDATA) {
+    const harmonyRuntime = getHarmonyRuntimeEnvironment();
+    if (harmonyRuntime) {
+        return harmonyRuntime.appDataDir;
+    } else if (process.env.APPDATA) {
         return path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
         return path.join(process.env.HOME, '.opendesk');
@@ -1019,20 +995,22 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
- * - OpenHarmony: /storage/Users/currentUser/Documents/OpenDesk（权限不足时回退到家目录下的 OpenDesk）
+ * - HarmonyOS PC: userHomeDir/Documents/OpenDesk（权限不足时回退到 userHomeDir/OpenDesk）
+ * - HarmonyOS tablet: appDataDir/workspace
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
  */
 function getTempWorkspaceDirectory(): string {
     let workspacePath: string;
-    if ((process.platform as string) === 'openharmony') {
-        workspacePath = '/storage/Users/currentUser/Documents/OpenDesk';
-        try {
-            return ensureDirectoryExists(workspacePath);
-        } catch {
-            // Documents 目录可能因权限不足而不可写（用户未授权），
-            // 回退到家目录下的 OpenDesk 目录
-            workspacePath = '/storage/Users/currentUser/OpenDesk';
+    const harmonyRuntime = getHarmonyRuntimeEnvironment();
+    if (harmonyRuntime) {
+        workspacePath = getHarmonyWorkspaceDirectory(harmonyRuntime);
+        if (harmonyRuntime.userHomeDir) {
+            try {
+                return ensureDirectoryExists(workspacePath);
+            } catch {
+                workspacePath = path.posix.join(harmonyRuntime.userHomeDir, 'OpenDesk');
+            }
         }
     } else if (process.platform === 'win32') {
         const userProfile = process.env.USERPROFILE || process.env.HOME || '';

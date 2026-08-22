@@ -49,7 +49,7 @@ import fastGlob from 'fast-glob';
 import lockfile from 'proper-lockfile';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
+import { getHomeDir } from '../../utils/temp.js';
 import {
     filterIndexedResults,
     mergeSearchRoutes,
@@ -1176,17 +1176,7 @@ class FileManagerWorker extends BaseWorker {
 
         const platform = process.platform;
         const isOpenHarmony = platform === 'openharmony';
-        const homePath =
-            (() => {
-                try {
-                    return os.homedir?.() ?? '';
-                } catch {
-                    return '';
-                }
-            })() ||
-            process.env.HOME ||
-            process.env.USERPROFILE ||
-            '';
+        const homePath = getHomeDir();
 
         if (status !== 'running' && status !== 'readonly') {
             return this._buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath });

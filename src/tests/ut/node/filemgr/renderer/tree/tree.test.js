@@ -37,12 +37,12 @@ function primeDesktopPlatformSnapshot(homePath = '/Users/liumingxing') {
     setSnapshot(data);
 }
 
-function primeOpenHarmonyPlatformSnapshot() {
+function primeOpenHarmonyPlatformSnapshot(homePath = '/storage/Users/currentUser') {
     const data = {
         status: 'ready',
         platform: 'openharmony',
         is_openharmony: true,
-        home_path: '/storage/Users/currentUser',
+        home_path: homePath,
         sources: []
     };
     syncStateFromSnapshot(data);
@@ -318,14 +318,20 @@ test('getHomeRoot picks home from worker-provided platform fields', () => {
     __resetForTesting();
     setPlatform('openharmony');
     setIsOpenHarmony(true);
-    setSystemHomePath('/storage/Users');
+    setSystemHomePath('/storage/Users/currentUser');
     assert.equal(getHomeRoot(''), '/storage/Users/currentUser');
     assert.equal(getHomeRoot('/storage/Users'), '/storage/Users/currentUser');
     assert.equal(getHomeRoot('/storage/Users/currentUser/Desktop'), '/storage/Users/currentUser');
     assert.equal(getHomeRoot('/Users/foo'), '/storage/Users/currentUser');
+
+    __resetForTesting();
+    setPlatform('openharmony');
+    setIsOpenHarmony(true);
+    setSystemHomePath('/data/storage/el2/base/files');
+    assert.equal(getHomeRoot('/storage/Users/currentUser/Desktop'), '/data/storage/el2/base/files');
 });
 
-test('file tree renders /storage/Users/currentUser when worker snapshot reports openharmony', async () => {
+test('file tree renders the PC user home supplied by the Harmony runtime snapshot', async () => {
     __resetForTesting();
     const { document, window } = parseHTML('<!doctype html><html><head></head><body><main></main></body></html>');
     const previousDocument = globalThis.document;
@@ -380,6 +386,13 @@ test('file tree renders /storage/Users/currentUser when worker snapshot reports 
         globalThis.requestAnimationFrame = previousRequestAnimationFrame;
         globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
     }
+});
+
+test('file tree uses the application sandbox as tablet home', () => {
+    __resetForTesting();
+    primeOpenHarmonyPlatformSnapshot('/data/storage/el2/base/files');
+
+    assert.equal(getHomeRoot('/data/storage/el2/base/files/workspace'), '/data/storage/el2/base/files');
 });
 
 test('file tree shows overlay until worker snapshot arrives, then renders', async () => {

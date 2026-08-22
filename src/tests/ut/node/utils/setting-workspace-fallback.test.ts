@@ -5,6 +5,24 @@ import { getTempWorkspaceDirectory } from '../../../../main/utils/setting.js';
 
 test('getTempWorkspaceDirectory falls back to home OpenDesk when Documents is not writable on OpenHarmony', () => {
     const originalPlatform = process.platform;
+    const runtimeEnvironment = {
+        OPENDESK_HARMONY_BUILD_VARIANT: 'pc',
+        OPENDESK_HARMONY_DEVICE_TYPE: '2in1',
+        OPENDESK_HARMONY_APP_DATA_DIR: '/data/storage/el2/base/files',
+        OPENDESK_HARMONY_TEMP_DIR: '/data/storage/el2/base/temp',
+        OPENDESK_HARMONY_CACHE_DIR: '/data/storage/el2/base/cache',
+        OPENDESK_HARMONY_USER_HOME_DIR: '/storage/Users/currentUser'
+    };
+    const affectedEnvironmentKeys = [
+        ...Object.keys(runtimeEnvironment),
+        'USER_DATA_PATH',
+        'HOME',
+        'TMPDIR',
+        'TMP',
+        'TEMP',
+        'XDG_CACHE_HOME'
+    ];
+    const originalEnvironment = Object.fromEntries(affectedEnvironmentKeys.map((key) => [key, process.env[key]]));
 
     // 模拟鸿蒙平台上 Documents 目录创建失败（权限不足），但回退路径可创建
     const mkdirMock = mock.method(fs, 'mkdirSync', (p: string | URL) => {
@@ -20,6 +38,7 @@ test('getTempWorkspaceDirectory falls back to home OpenDesk when Documents is no
             value: 'openharmony',
             configurable: true
         });
+        Object.assign(process.env, runtimeEnvironment);
 
         const result = getTempWorkspaceDirectory();
 
@@ -38,6 +57,13 @@ test('getTempWorkspaceDirectory falls back to home OpenDesk when Documents is no
             value: originalPlatform,
             configurable: true
         });
+        for (const [key, value] of Object.entries(originalEnvironment)) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
         mkdirMock.mock.restore();
     }
 });

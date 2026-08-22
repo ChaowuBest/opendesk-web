@@ -50,6 +50,17 @@ import {
 import { createHash } from 'crypto';
 import { logger } from '../../utils/logger.js';
 import { getProvidedMcpServers, onMcpServerProvidersChanged } from './provider.js';
+import {
+    getHarmonyLocalRuntimeFeatureAvailability,
+    getHarmonyStdioCommandAvailability,
+    type HarmonyLocalRuntimeFeatureAvailability
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
+
+function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeatureAvailability): string {
+    return availability.reason === 'tablet-local-runtime-disabled'
+        ? globalT('harmony.localRuntime.tabletUnavailable')
+        : globalT('harmony.localRuntime.pcMissing', { capabilities: availability.missing.join(', ') });
+}
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
@@ -230,6 +241,7 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async addServer(config: McpServerConfig): Promise<McpServerConfig> {
+        this.assertServerLocalRuntimeAvailable(config);
         const servers = this.getServersFromConfig();
 
         // 检查是否已存在相同配置的服务器
@@ -249,7 +261,9 @@ export class McpMgrApplication extends BaseApplication {
         const servers = this.getServersFromConfig();
         const idx = servers.findIndex((s) => s.id === id);
         if (idx === -1) throw new Error('Server not found');
-        servers[idx] = { ...servers[idx], ...updates, id };
+        const updatedServer = { ...servers[idx], ...updates, id };
+        this.assertServerLocalRuntimeAvailable(updatedServer);
+        servers[idx] = updatedServer;
         this.saveServersToConfig(servers);
         this.sendEventToSubscribers('serversUpdated');
     }
@@ -264,6 +278,7 @@ export class McpMgrApplication extends BaseApplication {
         const servers = this.getServersFromConfig();
         const server = servers.find((s) => s.id === id);
         if (!server) throw new Error('Server not found');
+        if (enabled) this.assertServerLocalRuntimeAvailable(server);
         server.enabled = enabled;
         this.saveServersToConfig(servers);
         this.sendEventToSubscribers('serversUpdated');
@@ -290,6 +305,7 @@ export class McpMgrApplication extends BaseApplication {
                 config.url = cfg.url;
                 config.headers = cfg.headers || {};
             }
+            this.assertServerLocalRuntimeAvailable(config);
             servers.push(config);
             imported++;
         }
@@ -297,6 +313,21 @@ export class McpMgrApplication extends BaseApplication {
         this.saveServersToConfig(servers);
         this.sendEventToSubscribers('serversUpdated');
         return imported;
+    }
+
+    private assertServerLocalRuntimeAvailable(server: McpServerConfig): void {
+        if (server.transport !== 'stdio') return;
+        const availability = getHarmonyStdioCommandAvailability(server.command);
+        if (!availability.available) throw new Error(getLocalRuntimeUnavailableMessage(availability));
+    }
+
+    getLocalRuntimeStatus(): { available: boolean; reason: string | null; message: string | null } {
+        const availability = getHarmonyLocalRuntimeFeatureAvailability('stdio-mcp');
+        return {
+            available: availability.available,
+            reason: availability.reason,
+            message: availability.available ? null : getLocalRuntimeUnavailableMessage(availability)
+        };
     }
 
     getMcpRegistries() {

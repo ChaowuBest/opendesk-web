@@ -128,6 +128,13 @@ button, input, textarea { font: inherit; }
     border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
     position: relative; z-index: 100;
 }
+.runtime-banner {
+    flex-shrink: 0; margin: 0 24px 12px; padding: 10px 14px; border-radius: 8px;
+    color: #9a6700; background: #fff8c5; border: 1px solid #d4a72c;
+}
+:host([data-theme="dark"]) .runtime-banner {
+    color: #f2cc60; background: rgba(187,128,9,0.16); border-color: rgba(210,153,34,0.45);
+}
 .header-title {
     font-size: 22px; font-weight: 700; color: #1d1d1f;
     margin-bottom: 14px;
@@ -559,6 +566,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private servers: McpServerState[] = [];
     private loadingServers = true;
     private serverError = '';
+    private localRuntimeAvailable = true;
+    private localRuntimeMessage = '';
     private selectedServerId: string | null = null;
     private installingId: string | null = null;
     private saving = false;
@@ -591,6 +600,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         getAPI().subscribe('serversUpdated', this._onServersUpdated);
         this.loadServers();
         this.loadRegistries();
+        this.loadLocalRuntimeStatus();
     }
 
     disconnectedCallback() {
@@ -693,6 +703,21 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             }
         } catch {
             this.registries = [];
+        }
+        this.render();
+    }
+
+    async loadLocalRuntimeStatus() {
+        try {
+            const status = await getAPI().callMainWorld<{
+                available: boolean;
+                message: string | null;
+            }>('getLocalRuntimeStatus');
+            this.localRuntimeAvailable = status.available;
+            this.localRuntimeMessage = status.message || '';
+        } catch {
+            this.localRuntimeAvailable = true;
+            this.localRuntimeMessage = '';
         }
         this.render();
     }
@@ -1018,6 +1043,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
         </div>
+        ${this.localRuntimeMessage ? `<div class="runtime-banner">${escapeHtml(this.localRuntimeMessage)}</div>` : ''}
         <div class="content">
             <div class="tab-panel ${this.activeTab !== 'installed' ? 'active' : ''}" id="panel-registry">${this.activeTab !== 'installed' ? this.renderRegistryPanel(this.activeTab) : ''}</div>
             <div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this.renderInstalledPanel()}</div>
@@ -1302,7 +1328,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     private showServerModal(mode: 'add' | 'edit', server?: McpServerState) {
-        const transport = server?.transport || 'stdio';
+        const transport = server?.transport || (this.localRuntimeAvailable ? 'stdio' : 'streamableHttp');
         const envEntries = Object.entries(server?.env || {});
         const headerText = Object.entries(server?.headers || {})
             .map(([key, value]) => `${key}: ${value}`)
@@ -1336,7 +1362,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     ${(['stdio', 'sse', 'streamableHttp'] as const)
                         .map(
                             (item) =>
-                                `<label class="transport-option"><input type="radio" name="transport" value="${item}" ${transport === item ? 'checked' : ''}><span>${TRANSPORT_LABELS[item]}</span></label>`
+                                `<label class="transport-option"><input type="radio" name="transport" value="${item}" ${transport === item ? 'checked' : ''} ${item === 'stdio' && !this.localRuntimeAvailable ? 'disabled' : ''}><span>${TRANSPORT_LABELS[item]}</span></label>`
                         )
                         .join('')}
                 </div>

@@ -10,6 +10,7 @@
  */
 
 import { z } from 'zod';
+import { getHomeDir } from '../../utils/temp.js';
 
 const defaultExcludePatterns = [
     '**/node_modules/**',
@@ -23,7 +24,7 @@ const defaultExcludePatterns = [
 ];
 
 function getHomeDirectory() {
-    return process.env.HOME || process.env.USERPROFILE || '';
+    return getHomeDir();
 }
 
 if (process.platform === 'darwin') {

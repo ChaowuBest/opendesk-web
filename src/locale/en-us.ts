@@ -2417,6 +2417,8 @@ export const enUs: Record<string, string> = {
     'agentoffice.error.resourceDenied':
         "Resource is outside this digital staff member's configured permissions: ${path}",
     'agentgate.attribution.status': 'Analyzing malicious skill attribution...',
+    'harmony.localRuntime.tabletUnavailable': 'Local command runtimes are not available in the tablet version',
+    'harmony.localRuntime.pcMissing': 'The local runtime installation is incomplete. Missing: ${capabilities}',
     'workflowMgr.app.name': 'Workflows',
     'workflow.phase.untitled': 'Untitled phase',
     'workflow.agent.untitled': 'Workflow agent',

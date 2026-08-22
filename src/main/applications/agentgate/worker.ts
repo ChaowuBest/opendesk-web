@@ -28,6 +28,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import { findExecutableInPath } from '../../utils/shellExec.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 // 依赖 agent-gate@0.5.4 的存储格式：tool_calls 表 / tool_calls/<session>.json 文件布局。
 
@@ -163,6 +164,14 @@ export default class AgentGateWorker extends BaseWorker {
      * 系统 node 仅作备选（理论上加载不了任何 binding，但保留以防 ABI 重新编译过）。
      */
     private _spawnNodeDelete(dbPath: string, idsJson: string, bsDir: string): Promise<any> {
+        const availability = getHarmonyLocalRuntimeFeatureAvailability('agentgate');
+        if (!availability.available) {
+            return Promise.resolve({
+                ok: false,
+                deleted: 0,
+                error: `local runtime unavailable: ${availability.reason}`
+            });
+        }
         return new Promise((resolve) => {
             // 写内联脚本到临时文件
             let helperPath = '';

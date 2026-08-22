@@ -12,8 +12,20 @@
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
-import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath, hasZsh, findOpenHarmonyBash } from '../../utils/shellExec.js';
+import { ExecutePowerShellTool, ExecuteBashTool, CheckShellStatusTool } from './tools.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
+import {
+    getHarmonyLocalRuntimeFeatureAvailability,
+    getHarmonyLocalRuntimeState,
+    type HarmonyLocalRuntimeState
+} from '../../../platforms/bridges/harmonyos/local-runtime.js';
+
+export function getOpenHarmonyTerminalBashPath(
+    state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
+): string | null {
+    const availability = getHarmonyLocalRuntimeFeatureAvailability('terminal', state);
+    return availability.available ? (state?.commands.bash ?? null) : null;
+}
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
@@ -28,7 +40,7 @@ export class TerminalApplication extends BaseApplication {
         const toolset = new BaseToolset('terminal');
 
         switch (process.platform as string) {
-            case 'win32':
+            case 'win32': {
                 toolset.addTool(new ExecutePowerShellTool());
                 // 检测 Windows 下是否有 bash.exe（如 Git Bash、WSL 等）
                 const bashPath = findExecutableInPath('bash');
@@ -36,13 +48,12 @@ export class TerminalApplication extends BaseApplication {
                     toolset.addTool(new ExecuteBashTool(bashPath));
                 }
                 break;
+            }
             case 'openharmony': {
-                // /bin/zsh 在 OpenHarmony 上可能存在但运行时报 "Error relocating"，优先使用 HNP bash
-                const ohBash = findOpenHarmonyBash();
+                const ohBash = getOpenHarmonyTerminalBashPath();
                 if (ohBash) {
                     toolset.addTool(new ExecuteBashTool(ohBash));
-                } else if (hasZsh()) {
-                    toolset.addTool(new ExecuteZshTool());
+                    toolset.addTool(new CheckShellStatusTool());
                 }
                 break;
             }
@@ -52,8 +63,10 @@ export class TerminalApplication extends BaseApplication {
                 break;
         }
 
-        toolset.addTool(new CheckShellStatusTool());
+        if ((process.platform as string) !== 'openharmony') {
+            toolset.addTool(new CheckShellStatusTool());
+        }
 
-        return [toolset];
+        return toolset.tools.size > 0 ? [toolset] : [];
     }
 }

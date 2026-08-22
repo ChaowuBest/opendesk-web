@@ -51,6 +51,7 @@ import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
 import { runPluginAfterSkillInstall, runPluginBeforeSkillInstall } from '../pluginmgr/runtime/hooks.js';
 import type { PluginSkillInstallContext } from '../../../../packages/plugin-sdk/src/index.js';
+import { getHarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
 
@@ -101,6 +102,10 @@ async function installSkillThroughWorker(
     const name = response.data?.name ?? '';
     await runPluginAfterSkillInstall({ ...context, skillName: name });
     return { name };
+}
+
+function shouldRegisterHarmonyLocalRuntimeSkills(): boolean {
+    return isHarmonyosRuntime && getHarmonyLocalRuntimeState()?.variant === 'pc';
 }
 
 export class SkillMgrApplication extends BaseApplication {

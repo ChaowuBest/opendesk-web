@@ -20,6 +20,7 @@ import { GlobalHooks } from '../../aikernel/hooks.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Setting } from '../../utils/setting';
 import { logger } from '../../utils/logger.js';
+import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import AgentGateWorker from './worker';
 
 // 依赖 agent-gate@0.5.4 的存储格式：tool_calls 表 / tool_calls/<session>.json 文件布局。
@@ -525,6 +526,13 @@ class AgentGateApplication extends BaseApplication {
         const data = setting.getData() as any;
         const agEnabled = data?.applications?.agentgate?.enabled === true;
         const bridge = AgentGateBridge.getInstance();
+        const availability = getHarmonyLocalRuntimeFeatureAvailability('agentgate');
+        if (!availability.available) {
+            if (bridge.isRunning()) bridge.stop();
+            bridge.setLocalRuntimeUnavailable(availability);
+            AgentGateEventsCache.getInstance().stopPolling();
+            return;
+        }
         if (agEnabled && !bridge.isRunning()) {
             bridge.start(setting);
             // Bridge 启动后，如果浮窗开关已打开，启动 events-cache
@@ -603,6 +611,7 @@ class AgentGateApplication extends BaseApplication {
      * @param notify  IPC 事件推送函数，由 main.ts 注入（持有 globalMainWindow）
      */
     registerGuiHooks(notify: (channel: string, payload: object) => void): void {
+        if (!getHarmonyLocalRuntimeFeatureAvailability('agentgate').available) return;
         GlobalHooks.afterFinishTurn(async ({ task }) => {
             if (task.task_status !== 'stopped') return;
             await this.analyzeAndPromptMaliciousSkills(task, {
@@ -618,6 +627,7 @@ class AgentGateApplication extends BaseApplication {
      * CLI 无 GUI 弹窗通道，仅做轻量级文本输出。
      */
     registerCliHooks(): void {
+        if (!getHarmonyLocalRuntimeFeatureAvailability('agentgate').available) return;
         GlobalHooks.afterFinishTurn(async ({ task }) => {
             if (task.task_status !== 'stopped') return;
             const allRecords = readInterceptionRecords(task.task_id);
