@@ -14,6 +14,12 @@ describe('plugin manager application renderer', () => {
             Event: window.Event,
             customElements: window.customElements
         });
+        // 固定渲染语言为中文，避免 locale 检测依赖运行环境的 navigator.language 而漂移
+        Object.defineProperty(globalThis, 'navigator', {
+            configurable: true,
+            writable: true,
+            value: { language: 'zh-CN', languages: ['zh-CN'] }
+        });
         window.confirm = jest.fn(() => true);
         await jest.unstable_mockModule('../../../renderer/theme/theme-iframe-bridge.ts', () => ({
             OPENDESK_THEME_CHANGED: 'opendesk-theme-changed'
