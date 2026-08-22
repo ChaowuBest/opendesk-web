@@ -102,7 +102,13 @@ export function registerPluginsCommand(prog: Command): void {
             if (result.success) {
                 console.log(`✓ ${t('plugin.uninstall.successDetail', { id })}`);
             } else {
-                console.error(`✗ ${t('plugin.uninstall.failDetail', { error: result.error ?? '-' })}`);
+                const error =
+                    result.error === 'plugin.uninstall_builtin'
+                        ? t('plugin.uninstall.builtin', { id })
+                        : result.error === 'plugin.uninstall_external'
+                          ? t('plugin.uninstall.external', { id })
+                          : (result.error ?? '-');
+                console.error(`✗ ${t('plugin.uninstall.failDetail', { error })}`);
                 process.exit(1);
             }
             process.exit(0);

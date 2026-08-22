@@ -364,6 +364,16 @@ export class PluginHost {
         }));
     }
 
+    listHooks(): Array<{ pluginId: string; name: PluginHookName; failureMode: PluginFailureMode }> {
+        return Array.from(this.hooks.values()).flatMap((records) =>
+            records.map((record) => ({
+                pluginId: record.pluginId,
+                name: record.name,
+                failureMode: record.failureMode
+            }))
+        );
+    }
+
     listSkills(): VisiblePluginContribution<PluginSkillDefinition>[] {
         return this.listContributions(this.skills);
     }

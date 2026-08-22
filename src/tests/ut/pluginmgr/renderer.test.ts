@@ -33,7 +33,7 @@ describe('plugin manager application renderer', () => {
                         id: '<local-plugin>',
                         source: 'local',
                         path: '/plugins/local',
-                        managed: false,
+                        removable: true,
                         enabled: true,
                         runtime: {
                             id: '<local-plugin>',
@@ -64,24 +64,31 @@ describe('plugin manager application renderer', () => {
                                 name: 'local-text-stats',
                                 transport: 'stdio'
                             }
-                        ]
+                        ],
+                        tools: [
+                            {
+                                name: 'review-code',
+                                description: 'Review a piece of code.'
+                            }
+                        ],
+                        hooks: [{ name: 'tool.execute.before' }, { name: 'shell.env' }]
                     },
                     {
-                        id: 'managed-plugin',
-                        source: 'managed',
-                        path: '/plugins/managed',
-                        managed: true,
+                        id: 'installed-plugin',
+                        source: 'local',
+                        path: '/plugins/installed',
+                        removable: true,
                         enabled: false,
                         manifest: {
-                            displayName: 'Managed Plugin',
+                            displayName: 'Installed Plugin',
                             version: '2.0.0',
                             apiVersion: 1,
                             capabilities: ['command', 'skill']
                         },
                         skills: [
                             {
-                                name: 'managed-review',
-                                description: 'Review a managed release.'
+                                name: 'release-review',
+                                description: 'Review a release.'
                             }
                         ],
                         mcpServers: []
@@ -110,13 +117,31 @@ describe('plugin manager application renderer', () => {
         return widget;
     }
 
-    test('renders discovered plugins safely and only offers uninstall for managed entries', async () => {
+    test('renders discovered plugins safely and only offers uninstall for removable entries', async () => {
         const widget = await createWidget();
 
         expect(widget.shadowRoot.innerHTML).toContain('&lt;local-plugin&gt;');
         expect(widget.shadowRoot.querySelector('local-plugin')).toBeNull();
-        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(1);
-        expect(widget.shadowRoot.querySelector('[data-plugin-id="managed-plugin"]')).not.toBeNull();
+        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(2);
+        expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]')).not.toBeNull();
+    });
+
+    test('renders tool and hook contributions on plugin cards and detail sections', async () => {
+        const widget = await createWidget();
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="<local-plugin>"]');
+
+        expect(card.innerHTML).toContain('1 个工具');
+        expect(card.innerHTML).toContain('2 个钩子');
+
+        card.dispatchEvent(new Event('click'));
+
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        expect(detail.shadowRoot.innerHTML).toContain('工具');
+        expect(detail.shadowRoot.innerHTML).toContain('review-code');
+        expect(detail.shadowRoot.innerHTML).toContain('Review a piece of code.');
+        expect(detail.shadowRoot.innerHTML).toContain('钩子');
+        expect(detail.shadowRoot.innerHTML).toContain('tool.execute.before');
+        expect(detail.shadowRoot.innerHTML).toContain('shell.env');
     });
 
     test('renders plugin enable controls as skill-style switches', async () => {
@@ -125,7 +150,7 @@ describe('plugin manager application renderer', () => {
             '[data-plugin-id="\\<local-plugin\\>"] [data-action="toggle"]'
         );
         const disabledToggle = widget.shadowRoot.querySelector(
-            '[data-plugin-id="managed-plugin"] [data-action="toggle"]'
+            '[data-plugin-id="installed-plugin"] [data-action="toggle"]'
         );
 
         expect(activeToggle.tagName).toBe('INPUT');
@@ -150,12 +175,12 @@ describe('plugin manager application renderer', () => {
 
     test('routes enable and npm install actions through the application API', async () => {
         const widget = await createWidget();
-        const enable = widget.shadowRoot.querySelector('[data-plugin-id="managed-plugin"] [data-action="toggle"]');
+        const enable = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] [data-action="toggle"]');
         enable.checked = true;
         enable.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'managed-plugin', true);
+        expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'installed-plugin', true);
 
         widget.shadowRoot.querySelector('[data-action="add"]').dispatchEvent(new Event('click'));
         widget.shadowRoot.querySelector('[data-install-source="npm"]').dispatchEvent(new Event('click'));
@@ -177,12 +202,12 @@ describe('plugin manager application renderer', () => {
                     finishToggle = resolve;
                 })
         );
-        const toggle = widget.shadowRoot.querySelector('[data-plugin-id="managed-plugin"] [data-action="toggle"]');
+        const toggle = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] [data-action="toggle"]');
 
         toggle.checked = true;
         toggle.dispatchEvent(new Event('change'));
 
-        expect(widget.shadowRoot.querySelector('[data-plugin-id="managed-plugin"] [data-action="toggle"]')).toBe(
+        expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] [data-action="toggle"]')).toBe(
             toggle
         );
         expect(toggle.disabled).toBe(true);
@@ -191,7 +216,7 @@ describe('plugin manager application renderer', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    test('installs a selected directory as a managed plugin', async () => {
+    test('installs a selected directory as a local plugin', async () => {
         const widget = await createWidget();
 
         widget.shadowRoot.querySelector('[data-action="add"]').dispatchEvent(new Event('click'));
@@ -241,7 +266,7 @@ describe('plugin manager application renderer', () => {
     test('uses the OpenDesk confirmation modal before uninstalling a plugin', async () => {
         const widget = await createWidget();
         const uninstall = widget.shadowRoot.querySelector(
-            '[data-plugin-id="managed-plugin"] [data-action="uninstall"]'
+            '[data-plugin-id="installed-plugin"] [data-action="uninstall"]'
         );
 
         uninstall.dispatchEvent(new Event('click'));
@@ -250,12 +275,12 @@ describe('plugin manager application renderer', () => {
         expect(window.confirm).not.toHaveBeenCalled();
         const modal = widget.shadowRoot.querySelector('.od-confirm-modal-overlay');
         expect(modal).not.toBeNull();
-        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'managed-plugin');
+        expect(callMainWorld).not.toHaveBeenCalledWith('uninstall', 'installed-plugin');
 
         modal.querySelector('[data-action="confirm"]').dispatchEvent(new Event('click'));
         await new Promise((resolve) => setTimeout(resolve, 220));
 
-        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'managed-plugin');
+        expect(callMainWorld).toHaveBeenCalledWith('uninstall', 'installed-plugin');
     });
 
     test('renders only the installed page with skill-style add actions', async () => {
@@ -286,14 +311,14 @@ describe('plugin manager application renderer', () => {
 
     test('uses manifest metadata in the detail when a plugin is disabled', async () => {
         const widget = await createWidget();
-        const card = widget.shadowRoot.querySelector('[data-plugin-id="managed-plugin"]');
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]');
 
         card.dispatchEvent(new Event('click'));
 
         const detail = widget.shadowRoot.querySelector('skill-detail-card');
-        expect(detail.shadowRoot.innerHTML).toContain('Managed Plugin');
+        expect(detail.shadowRoot.innerHTML).toContain('Installed Plugin');
         expect(detail.shadowRoot.innerHTML).toContain('2.0.0');
         expect(detail.shadowRoot.innerHTML).toContain('command, skill');
-        expect(detail.shadowRoot.innerHTML).toContain('managed-review');
+        expect(detail.shadowRoot.innerHTML).toContain('release-review');
     });
 });

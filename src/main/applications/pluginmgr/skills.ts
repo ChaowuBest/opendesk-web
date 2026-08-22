@@ -27,11 +27,11 @@ description: 管理并协助用户开发 OpenDesk 插件 (查询、校验、安�
 - listPlugins：查询插件来源、版本、启用状态和运行状态。
 - getPluginDetails：查看指定插件的声明、贡献项和校验结果。
 - installPlugin：安装本地目录、ZIP、TGZ、HTTP/HTTPS URL 或 npm spec。安装完成后运行时会自动刷新，不要紧接着重复调用 reloadPlugins。
-- uninstallPlugin：卸载 PluginMgr 托管的 managed 插件。builtin、local 和 external 插件不能通过该工具删除。
+- uninstallPlugin：卸载 plugins 目录中的插件（包括通过 installPlugin 安装和手工放入的插件）。builtin 和 external 插件不能通过该工具删除。
 - setPluginEnabled：启用或禁用插件，并刷新该插件提供的能力。
 - reloadPlugins：重新发现并加载全部插件，适用于外部插件或运行时目录内容已经发生变化的情况。
 
-不要猜测工具归属，也不要调用上述列表之外的插件管理工具。卸载请求必须使用本技能的 uninstallPlugin，不能通过文件工具直接删除托管目录。
+不要猜测工具归属，也不要调用上述列表之外的插件管理工具。卸载请求必须使用本技能的 uninstallPlugin，不能通过文件工具直接删除 plugins 目录中的插件。
 
 ## 操作流程
 
@@ -55,9 +55,9 @@ description: 管理并协助用户开发 OpenDesk 插件 (查询、校验、安�
 
 ### 卸载
 
-1. 先确认插件来源为 managed；其他来源不能通过 uninstallPlugin 删除。
-2. 向用户说明卸载会删除 PluginMgr 管理的插件副本，并在用户确认后调用 uninstallPlugin。
-3. 再次查询，确认该 managed 插件已被移除。
+1. 先确认插件来源不是 builtin 或 external；这两类不能通过 uninstallPlugin 删除。
+2. 向用户说明卸载会从 plugins 目录删除该插件，并在用户确认后调用 uninstallPlugin。
+3. 再次查询，确认该插件已被移除。
 
 ### 重新加载
 

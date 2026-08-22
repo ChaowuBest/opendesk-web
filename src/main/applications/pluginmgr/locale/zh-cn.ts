@@ -4,6 +4,6 @@
  */
 
 export const zhCn: Record<string, string> = {
-    'app.name': '插件中心',
+    'app.name': '插件',
     'app.event.pluginsChanged': '插件安装、卸载、启停或重载后触发'
 };

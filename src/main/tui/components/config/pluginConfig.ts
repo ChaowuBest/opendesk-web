@@ -19,8 +19,8 @@ import { defaultSelectListTheme } from '../../theme.js';
 
 interface PluginListEntry {
     id: string;
-    source: 'managed' | 'local' | 'external';
-    managed: boolean;
+    source: 'builtin' | 'local' | 'external';
+    removable: boolean;
     enabled: boolean;
     runtime?: {
         status: 'active' | 'error' | 'disabled';
@@ -124,7 +124,7 @@ export class PluginConfigPage implements Component {
                 value: 'toggle',
                 label: entry.enabled ? t('plugin.center.disable') : t('plugin.center.enable')
             },
-            ...(entry.managed ? [{ value: 'uninstall', label: chalk.red(t('plugin.center.uninstall')) }] : []),
+            ...(entry.removable ? [{ value: 'uninstall', label: chalk.red(t('plugin.center.uninstall')) }] : []),
             { value: 'back', label: t('plugin.tui.back') }
         ];
         this.list = new SelectList(items, items.length, defaultSelectListTheme);

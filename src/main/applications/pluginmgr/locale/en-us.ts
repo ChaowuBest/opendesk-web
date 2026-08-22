@@ -4,6 +4,6 @@
  */
 
 export const enUs: Record<string, string> = {
-    'app.name': 'Plugin Center',
+    'app.name': 'Plugins',
     'app.event.pluginsChanged': 'Triggered after plugins are installed, uninstalled, enabled, disabled, or reloaded'
 };

@@ -14,8 +14,8 @@ function createPluginApp(overrides: Record<string, unknown> = {}) {
         list: jest.fn(async () => [
             {
                 id: 'review-helper',
-                source: 'managed',
-                managed: true,
+                source: 'local',
+                removable: true,
                 enabled: true,
                 manifest: {
                     displayName: 'Review Helper',
@@ -30,7 +30,7 @@ function createPluginApp(overrides: Record<string, unknown> = {}) {
             {
                 id: 'external-helper',
                 source: 'external',
-                managed: false,
+                removable: false,
                 enabled: false,
                 runtime: { status: 'disabled' },
                 skills: [],
@@ -74,14 +74,14 @@ describe('PluginMgr management tools', () => {
         const app = createPluginApp();
         const tool = new ListPluginsTool(app as any);
 
-        const result = await tool.execute({ source: 'managed', enabled: true });
+        const result = await tool.execute({ source: 'local', enabled: true });
 
         expect(result.status).toBe('success');
         expect(JSON.parse(result.result)).toEqual({
             plugins: [
                 expect.objectContaining({
                     id: 'review-helper',
-                    source: 'managed',
+                    source: 'local',
                     enabled: true,
                     version: '1.0.0',
                     status: 'active'
@@ -93,8 +93,8 @@ describe('PluginMgr management tools', () => {
     test('getPluginDetails returns manifest, contributions, capabilities and verification', async () => {
         const plugin = {
             id: 'review-helper',
-            source: 'managed',
-            managed: true,
+            source: 'local',
+            removable: true,
             enabled: true,
             manifest: {
                 displayName: 'Review Helper',
@@ -148,7 +148,7 @@ describe('PluginMgr management tools', () => {
         ]);
     });
 
-    test('uninstallPlugin delegates managed-only enforcement to the application', async () => {
+    test('uninstallPlugin delegates enforcement to the application', async () => {
         const app = createPluginApp();
         const tool = new UninstallPluginTool(app as any);
 

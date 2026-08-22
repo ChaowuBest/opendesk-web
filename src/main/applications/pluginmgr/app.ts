@@ -124,12 +124,27 @@ export class PluginMgrApplication extends BaseApplication {
             contributions.push(server);
             mcpServersByPlugin.set(server.pluginId, contributions);
         }
+        const toolsByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listTools']>>();
+        for (const tool of getPluginHost().listTools()) {
+            const contributions = toolsByPlugin.get(tool.pluginId) ?? [];
+            contributions.push(tool);
+            toolsByPlugin.set(tool.pluginId, contributions);
+        }
+        const hooksByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listHooks']>>();
+        for (const hook of getPluginHost().listHooks()) {
+            const contributions = hooksByPlugin.get(hook.pluginId) ?? [];
+            if (!contributions.some((candidate) => candidate.name === hook.name)) contributions.push(hook);
+            hooksByPlugin.set(hook.pluginId, contributions);
+        }
         const ids = new Set([...runtimeById.keys(), ...records.map((record) => record.id), ...candidatesById.keys()]);
         return Array.from(ids)
             .sort()
             .map((id) => {
                 const record = records.find((candidate) => candidate.id === id);
                 const candidate = candidatesById.get(id);
+                // 'managed' 仅存在于旧版注册表数据中，对外统一归为 local。
+                const rawSource = record?.source ?? candidate?.source ?? 'local';
+                const source = rawSource === 'managed' ? 'local' : rawSource;
                 let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let manifest: PluginManifest | undefined;
@@ -157,13 +172,13 @@ export class PluginMgrApplication extends BaseApplication {
                 }
                 return {
                     id,
-                    source: record?.source ?? candidate?.source ?? 'local',
+                    source,
                     path: candidate?.spec ?? record?.path,
-                    managed: record?.source === 'managed',
+                    removable: source !== 'builtin' && source !== 'external',
                     enabled: record?.enabled ?? true,
                     installedAt: record?.installedAt,
                     spec: record?.spec,
-                    verification: record?.source === 'managed' ? verifyInstalledPlugin(id) : undefined,
+                    verification: record ? verifyInstalledPlugin(id) : undefined,
                     runtime: runtimeById.get(id),
                     manifest: manifest
                         ? {
@@ -186,7 +201,12 @@ export class PluginMgrApplication extends BaseApplication {
                         command: definition.transport === 'stdio' ? definition.command : undefined,
                         cwd: definition.transport === 'stdio' ? definition.cwd : undefined,
                         url: definition.transport === 'stdio' ? undefined : definition.url
-                    }))
+                    })),
+                    tools: (toolsByPlugin.get(id) ?? []).map(({ definition }) => ({
+                        name: definition.name,
+                        description: definition.description
+                    })),
+                    hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name }))
                 };
             });
     }
@@ -211,9 +231,11 @@ export class PluginMgrApplication extends BaseApplication {
         await reloadPluginHost();
         if (!result.success) {
             const message =
-                result.error === 'plugin.uninstall_unmanaged'
-                    ? translate('plugin.uninstall.unmanaged', { id })
-                    : result.error;
+                result.error === 'plugin.uninstall_builtin'
+                    ? translate('plugin.uninstall.builtin', { id })
+                    : result.error === 'plugin.uninstall_external'
+                      ? translate('plugin.uninstall.external', { id })
+                      : result.error;
             throw new Error(message);
         }
         this.emitEvent('pluginsChanged', { operation: 'uninstall', id }).catch(() => {});

@@ -34,9 +34,9 @@ interface PluginRuntimeEntry {
 
 interface PluginListEntry {
     id: string;
-    source: 'builtin' | 'managed' | 'local' | 'external';
+    source: 'builtin' | 'local' | 'external';
     path?: string;
-    managed: boolean;
+    removable: boolean;
     enabled: boolean;
     installedAt?: string;
     spec?: string;
@@ -64,6 +64,13 @@ interface PluginListEntry {
         command?: string;
         cwd?: string;
         url?: string;
+    }>;
+    tools?: Array<{
+        name: string;
+        description: string;
+    }>;
+    hooks?: Array<{
+        name: string;
     }>;
 }
 
@@ -424,10 +431,10 @@ button:hover { background: #f4f5f7; }
 .contributions { display: flex; flex-wrap: wrap; gap: 6px; }
 .contribution-pill { padding: 3px 9px; color: #5b8def; background: #ebf3fe; border-radius: 12px; font-size: 11px; font-weight: 550; }
 .contribution-pill.mcp { color: #4a9b63; background: #e7f6ea; }
+.contribution-pill.tool { color: #8b6fd6; background: #f1ecfb; }
+.contribution-pill.hook { color: #c07a2d; background: #fdf3e7; }
 .card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
-.source { min-width: 0; overflow: hidden; color: #999; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.card-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.card-actions button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
+.card-footer button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
 .plugin-toggle {
     position: relative;
     width: 40px;
@@ -464,9 +471,6 @@ button:hover { background: #f4f5f7; }
 .plugin-toggle input:checked + .plugin-toggle-slider::after { transform: translateX(16px); }
 .plugin-toggle input:focus-visible + .plugin-toggle-slider { outline: 2px solid #5b8def; outline-offset: 2px; }
 .plugin-toggle input:disabled + .plugin-toggle-slider { cursor: default; opacity: .45; }
-.badge { flex: none; padding: 3px 8px; color: #666a73; background: #eceef2; border-radius: 999px; font-size: 11px; }
-.badge.active { color: #287a40; background: #e6f6eb; }
-.badge.error { color: #b0372c; background: #fff0ee; }
 :host([data-theme="dark"]) { color: #ddd; background: #1e1e1e; color-scheme: dark; }
 :host([data-theme="dark"]) .header-area { background: rgba(37, 37, 38, .95); border-color: rgba(255, 255, 255, .1); }
 :host([data-theme="dark"]) .seg-control { background: #333; }
@@ -508,7 +512,7 @@ button:hover { background: #f4f5f7; }
 }
 :host([data-theme="dark"]) .empty-title { color: #ddd; }
 :host([data-theme="dark"]) .name { color: #e5e7eb; }
-:host([data-theme="dark"]) .meta, :host([data-theme="dark"]) .source, :host([data-theme="dark"]) .plugin-id,
+:host([data-theme="dark"]) .meta, :host([data-theme="dark"]) .plugin-id,
 :host([data-theme="dark"]) .modal-dialog .hint { color: #a4a7ad; }
 @media (max-width: 700px) {
     .header-area, .installed-panel { padding-left: 16px; padding-right: 16px; }
@@ -709,10 +713,31 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     private renderCard(entry: PluginListEntry): string {
-        const status = this.statusOf(entry);
         const diagnostics = entry.runtime?.diagnostics ?? [];
         const name = entry.runtime?.displayName || entry.manifest?.displayName || entry.id;
         const color = getSkillPastel(name);
+        const contributionPills = [
+            entry.skills?.length
+                ? `<span class="contribution-pill">${escapeHtml(
+                      this.t('plugin.center.skillCount', { count: entry.skills.length })
+                  )}</span>`
+                : '',
+            entry.mcpServers?.length
+                ? `<span class="contribution-pill mcp">${escapeHtml(
+                      this.t('plugin.center.mcpCount', { count: entry.mcpServers.length })
+                  )}</span>`
+                : '',
+            entry.tools?.length
+                ? `<span class="contribution-pill tool">${escapeHtml(
+                      this.t('plugin.center.toolCount', { count: entry.tools.length })
+                  )}</span>`
+                : '',
+            entry.hooks?.length
+                ? `<span class="contribution-pill hook">${escapeHtml(
+                      this.t('plugin.center.hookCount', { count: entry.hooks.length })
+                  )}</span>`
+                : ''
+        ].filter(Boolean);
         return `<article class="card" data-plugin-id="${escapeHtml(entry.id)}" role="button" tabindex="0">
             <div class="card-head">
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(getSkillInitial(name))}</div>
@@ -720,16 +745,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
                     <div class="name">${escapeHtml(name)}</div>
                     <div class="plugin-id">${escapeHtml(entry.id)}</div>
                 </div>
-                <span class="badge ${status}">${escapeHtml(this.t(`plugin.runtime.status.${status}`))}</span>
             </div>
-            <div class="contributions">
-                <span class="contribution-pill">${escapeHtml(
-                    this.t('plugin.center.skillCount', { count: entry.skills?.length ?? 0 })
-                )}</span>
-                <span class="contribution-pill mcp">${escapeHtml(
-                    this.t('plugin.center.mcpCount', { count: entry.mcpServers?.length ?? 0 })
-                )}</span>
-            </div>
+            ${contributionPills.length ? `<div class="contributions">${contributionPills.join('')}</div>` : ''}
             ${diagnostics
                 .map(
                     (item) =>
@@ -737,24 +754,21 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 )
                 .join('')}
             <div class="card-footer">
-                <div class="source">${escapeHtml(this.t(`plugin.center.source.${entry.source}`))}</div>
-                <div class="card-actions">
-                    <label class="plugin-toggle" title="${escapeHtml(
-                        this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
-                    )}">
-                        <input type="checkbox" data-action="toggle" data-id="${escapeHtml(entry.id)}"
-                            aria-label="${escapeHtml(
-                                this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
-                            )}"
-                            ${entry.enabled ? 'checked' : ''} ${this.busy ? 'disabled' : ''}>
-                        <span class="plugin-toggle-slider"></span>
-                    </label>
-                    ${
-                        entry.managed
-                            ? `<button class="danger" data-action="uninstall" data-id="${escapeHtml(entry.id)}" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.uninstall'))}</button>`
-                            : ''
-                    }
-                </div>
+                <label class="plugin-toggle" title="${escapeHtml(
+                    this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
+                )}">
+                    <input type="checkbox" data-action="toggle" data-id="${escapeHtml(entry.id)}"
+                        aria-label="${escapeHtml(
+                            this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
+                        )}"
+                        ${entry.enabled ? 'checked' : ''} ${this.busy ? 'disabled' : ''}>
+                    <span class="plugin-toggle-slider"></span>
+                </label>
+                ${
+                    entry.removable
+                        ? `<button class="danger" data-action="uninstall" data-id="${escapeHtml(entry.id)}" ${this.busy ? 'disabled' : ''}>${escapeHtml(this.t('plugin.center.uninstall'))}</button>`
+                        : ''
+                }
             </div>
         </article>`;
     }
@@ -785,6 +799,21 @@ export class PluginMgrEntryWidget extends HTMLElement {
                   })
                   .join('')
             : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noMcps'))}</div>`;
+        const tools = entry.tools ?? [];
+        const hooks = entry.hooks ?? [];
+        const toolItems = tools.length
+            ? tools
+                  .map(
+                      (tool) => `<div class="detail-tool-item">
+                        <div class="detail-tool-name">${escapeHtml(tool.name)}</div>
+                        <div class="detail-tool-desc">${escapeHtml(tool.description)}</div>
+                    </div>`
+                  )
+                  .join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noTools'))}</div>`;
+        const hookItems = hooks.length
+            ? hooks.map((hook) => `<span class="hook-pill">${escapeHtml(hook.name)}</span>`).join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noHooks'))}</div>`;
         return `<section class="detail-section">
             <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.skills'))}</div>
             <div class="detail-tools-list">${skillItems}</div>
@@ -792,6 +821,14 @@ export class PluginMgrEntryWidget extends HTMLElement {
         <section class="detail-section">
             <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.mcps'))}</div>
             <div class="detail-tools-list">${mcpItems}</div>
+        </section>
+        <section class="detail-section">
+            <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.tools'))}</div>
+            <div class="detail-tools-list">${toolItems}</div>
+        </section>
+        <section class="detail-section">
+            <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.hooks'))}</div>
+            <div class="hook-list">${hookItems}</div>
         </section>`;
     }
 
@@ -829,9 +866,6 @@ export class PluginMgrEntryWidget extends HTMLElement {
                     value: capabilities.join(', ') || '-'
                 }
             ],
-            headerExtraHtml: `<span class="tag-pill tag-download">${escapeHtml(
-                this.t(`plugin.runtime.status.${status}`)
-            )}</span>`,
             extraSectionsHtml: this.renderContributionDetails(entry),
             actions: [
                 {
@@ -839,7 +873,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
                     label: this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable'),
                     variant: entry.enabled ? 'default' : 'primary'
                 },
-                ...(entry.managed
+                ...(entry.removable
                     ? [
                           {
                               id: 'uninstall',

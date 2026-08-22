@@ -14,7 +14,6 @@ import { listPluginRecords, type PluginRegistryRecord, type PluginSourceKind } f
 export interface DiscoveredPluginCandidate extends PluginCandidate {
     id: string;
     source: PluginSourceKind;
-    managed: boolean;
     enabled: boolean;
 }
 
@@ -105,8 +104,8 @@ function toCandidate(
         id: record?.id ?? inferPluginId(spec),
         spec,
         origin,
-        source,
-        managed: source === 'managed',
+        // 'managed' 仅存在于旧版注册表数据中，对外统一视为本地目录插件。
+        source: source === 'managed' ? 'local' : source,
         enabled: record?.enabled ?? true,
         options: record?.options,
         grantedCapabilities: record?.grantedCapabilities,
@@ -161,9 +160,11 @@ export function discoverPlugins(
     const records = listPluginRecords(configDirectory);
     const builtinCandidates = scanDirectory(builtinDirectory, 'builtin');
     const builtinIds = new Set(builtinCandidates.map((candidate) => candidate.id));
-    const managedContainerNames = new Set(
+    // Registry records inside the plugins directory start with their container
+    // entry (directory or single plugin file); skip those during the loose scan.
+    const containerNames = new Set(
         records
-            .filter((record) => record.source === 'managed' && !path.isAbsolute(record.path))
+            .filter((record) => record.source !== 'builtin' && !path.isAbsolute(record.path))
             .map((record) => record.path.split(/[\\/]/)[0])
     );
     const candidates: DiscoveredPluginCandidate[] = [];
@@ -195,7 +196,7 @@ export function discoverPlugins(
     }
 
     for (const candidate of scanDirectory(root, 'local')) {
-        if (managedContainerNames.has(path.basename(candidate.spec))) continue;
+        if (containerNames.has(path.basename(candidate.spec))) continue;
         if (builtinIds.has(candidate.id)) continue;
         const realPath = fs.realpathSync(candidate.spec);
         if (knownPaths.has(realPath)) continue;
@@ -264,7 +265,9 @@ export function verifyPluginRecord(record: PluginRegistryRecord, configDirectory
             allowed: false
         };
     }
-    if (record.source !== 'managed') {
+    // Only plugins with a recorded integrity snapshot are integrity-checked;
+    // hand-placed plugins have no baseline and are allowed as-is.
+    if (!record.integrity) {
         return {
             id: record.id,
             path: pluginPath,

@@ -122,7 +122,6 @@ describe('pluginmgr discovery', () => {
             expect.objectContaining({
                 id: 'builtin-review',
                 source: 'builtin',
-                managed: false,
                 spec: path.join(builtinDirectory, 'builtin-review')
             })
         ]);
