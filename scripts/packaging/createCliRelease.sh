@@ -146,11 +146,16 @@ fi
 
 # Align the plugin SDK version with the CLI version so that both packages are
 # published under the same version. The manifest is backed up and restored on exit.
+# packages/plugin-sdk/package.json ships with a valid-semver placeholder
+# "0.0.0-sync-with-opendesk" so that `npm install` (file: dep) works while
+# still signalling that the version is managed by the release script.
 echo "Aligning plugin SDK version with the CLI version..."
 cp packages/plugin-sdk/package.json packages/plugin-sdk/package.json.backup
-PLUGIN_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^\"]*\)".*/\1/')
-sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$PLUGIN_VERSION\"/" packages/plugin-sdk/package.json
-rm -f packages/plugin-sdk/package.json.bak
+PLUGIN_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+if ! grep -q '"version": *"0.0.0-sync-with-opendesk"' packages/plugin-sdk/package.json; then
+  echo "WARNING: packages/plugin-sdk/package.json version is not the expected placeholder 0.0.0-sync-with-opendesk; still aligning to $PLUGIN_VERSION"
+fi
+node -e "const fs=require('fs');const f='packages/plugin-sdk/package.json';const j=JSON.parse(fs.readFileSync(f,'utf8'));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,4)+'\n')" "$PLUGIN_VERSION"
 
 # Step 2: Build CLI
 if [ "$RELEASE_TYPE" = "nightly" ]; then

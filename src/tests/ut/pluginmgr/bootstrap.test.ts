@@ -357,8 +357,8 @@ Extract decisions and actions.
             expect.arrayContaining([
                 expect.objectContaining({
                     id: 'external-source',
-                    source: 'managed',
-                    managed: true
+                    source: 'local',
+                    removable: true
                 })
             ])
         );

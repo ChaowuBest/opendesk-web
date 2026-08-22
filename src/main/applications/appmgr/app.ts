@@ -31,7 +31,7 @@ import { logger } from '../../utils/logger.js';
 /** 复用已有任务的最大时间窗口（毫秒） */
 const RECENT_TASK_WINDOW_MS = 15 * 60 * 1000;
 
-const APPMGR_ICON_URL = './applications/appmgr/icon.png';
+const APPMGR_ICON_URL = './applications/appmgr/icon.svg';
 
 export class AppMgrApplication extends BaseApplication {
     static bundleName: string = 'appmgr';
@@ -103,7 +103,7 @@ export class AppMgrApplication extends BaseApplication {
             .filter((app) => !AppManagerStore.getApp(app.bundleName))
             .map((app) => ({
                 ...app.toJSON(),
-                iconUrl: (app.toJSON() as any).iconUrl || `./applications/${app.bundleName}/icon.png`,
+                iconUrl: (app.toJSON() as any).iconUrl || `./applications/${app.bundleName}/icon.svg`,
                 source: 'system',
                 removable: false,
                 active: true
@@ -128,7 +128,7 @@ export class AppMgrApplication extends BaseApplication {
         }
         return {
             ...builtinApp.toJSON(),
-            iconUrl: (builtinApp.toJSON() as any).iconUrl || `./applications/${builtinApp.bundleName}/icon.png`,
+            iconUrl: (builtinApp.toJSON() as any).iconUrl || `./applications/${builtinApp.bundleName}/icon.svg`,
             source: 'system',
             removable: false,
             active: true

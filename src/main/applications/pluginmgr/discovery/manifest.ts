@@ -9,9 +9,11 @@ import { Skill, SKILL_MD_FILENAME } from '../../../aikernel/skill.js';
 import {
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES,
+    OPENDESK_PLUGIN_PLATFORMS,
     type OpenDeskPlugin,
     type PluginCapability,
     type PluginMcpServerDefinition,
+    type PluginPlatform,
     type PluginStaticContributions
 } from '../../../../../packages/plugin-sdk/src/index.js';
 
@@ -28,12 +30,14 @@ export interface PluginManifest {
     version?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
+    platforms?: PluginPlatform[];
     minOpenDeskVersion?: string;
     maxOpenDeskVersion?: string;
     contributions?: PluginManifestContributions;
 }
 
 const capabilitySet = new Set<string>(OPENDESK_PLUGIN_CAPABILITIES);
+const platformSet = new Set<string>(OPENDESK_PLUGIN_PLATFORMS);
 const pluginIdPattern = /^[a-zA-Z][a-zA-Z0-9._-]*$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -78,6 +82,18 @@ function parseCapabilities(value: unknown): PluginCapability[] | undefined {
         throw new Error('plugin.manifest_unknown_capability');
     }
     return capabilities as PluginCapability[];
+}
+
+function parsePlatforms(value: unknown): PluginPlatform[] | undefined {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.some((platform) => typeof platform !== 'string')) {
+        throw new Error('plugin.manifest_invalid_platforms');
+    }
+    const platforms = [...new Set(value as string[])];
+    if (platforms.some((platform) => !platformSet.has(platform))) {
+        throw new Error('plugin.manifest_unknown_platform');
+    }
+    return platforms as PluginPlatform[];
 }
 
 function parseMcpServer(value: unknown): PluginMcpServerDefinition {
@@ -137,6 +153,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     const id = optionalString(value.id, 'plugin.manifest_invalid_id');
     if (id && !pluginIdPattern.test(id)) throw new Error('plugin.manifest_invalid_id');
     const capabilities = parseCapabilities(value.capabilities);
+    const platforms = parsePlatforms(value.platforms);
     const contributions = parseContributions(value.contributions);
     if (capabilities && contributions?.skills?.length && !capabilities.includes('skill')) {
         throw new Error('plugin.manifest_contribution_capability_missing:skill');
@@ -152,6 +169,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         version: optionalString(value.version, 'plugin.manifest_invalid_version'),
         apiVersion: apiVersion as number,
         capabilities,
+        platforms,
         minOpenDeskVersion: optionalString(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
         maxOpenDeskVersion: optionalString(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
         contributions
@@ -208,6 +226,7 @@ export function applyPluginManifest(plugin: OpenDeskPlugin, manifest?: PluginMan
         version: plugin.version ?? manifest.version,
         apiVersion: plugin.apiVersion ?? manifest.apiVersion,
         capabilities: plugin.capabilities ?? manifest.capabilities,
+        platforms: plugin.platforms ?? manifest.platforms,
         minOpenDeskVersion: plugin.minOpenDeskVersion ?? manifest.minOpenDeskVersion,
         maxOpenDeskVersion: plugin.maxOpenDeskVersion ?? manifest.maxOpenDeskVersion
     };

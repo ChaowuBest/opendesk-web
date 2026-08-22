@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
-import { OPENDESK_PLUGIN_API_VERSION, OPENDESK_PLUGIN_CAPABILITIES } from './index.js';
+import { OPENDESK_PLUGIN_API_VERSION, OPENDESK_PLUGIN_CAPABILITIES, OPENDESK_PLUGIN_PLATFORMS } from './index.js';
 
 export const OPENDESK_PLUGIN_MANIFEST = 'opendesk.plugin.json';
 
@@ -70,6 +70,7 @@ export const OpenDeskPluginManifestSchema = z.object({
     version: z.string().min(1).optional(),
     apiVersion: z.literal(OPENDESK_PLUGIN_API_VERSION),
     capabilities: z.array(z.enum(OPENDESK_PLUGIN_CAPABILITIES)),
+    platforms: z.array(z.enum(OPENDESK_PLUGIN_PLATFORMS)).optional(),
     minOpenDeskVersion: z.string().min(1).optional(),
     maxOpenDeskVersion: z.string().min(1).optional(),
     contributions: PluginContributionsSchema.optional()

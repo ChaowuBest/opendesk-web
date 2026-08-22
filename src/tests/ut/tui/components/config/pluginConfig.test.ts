@@ -18,14 +18,14 @@ describe('PluginConfigPage', () => {
                 {
                     id: 'local-plugin',
                     source: 'local',
-                    managed: false,
+                    removable: true,
                     enabled: true,
                     runtime: { status: 'active', apiVersion: 1, capabilities: ['skill'] }
                 },
                 {
-                    id: 'managed-plugin',
-                    source: 'managed',
-                    managed: true,
+                    id: 'external-plugin',
+                    source: 'external',
+                    removable: false,
                     enabled: false
                 }
             ]),
@@ -53,25 +53,25 @@ describe('PluginConfigPage', () => {
         );
     }
 
-    test('shows local and managed plugins discovered by the application', async () => {
+    test('shows local and external plugins discovered by the application', async () => {
         const page = createPage();
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         const text = page.render(100).join('\n');
         expect(text).toContain('local-plugin');
         expect(text).toContain('Local plugin directory');
-        expect(text).toContain('managed-plugin');
-        expect(text).toContain('Managed installation');
+        expect(text).toContain('external-plugin');
+        expect(text).toContain('Configured path');
     });
 
     test('toggles a selected plugin through pluginmgr', async () => {
         const page = createPage() as any;
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        page.list.onSelect({ value: 'managed-plugin' });
+        page.list.onSelect({ value: 'external-plugin' });
         page.list.onSelect({ value: 'toggle' });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(application.setEnabled).toHaveBeenCalledWith('managed-plugin', true);
+        expect(application.setEnabled).toHaveBeenCalledWith('external-plugin', true);
     });
 });

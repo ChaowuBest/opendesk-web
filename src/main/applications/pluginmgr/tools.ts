@@ -26,7 +26,7 @@ interface PluginManagementApplication {
 interface PluginView {
     id: string;
     source?: string;
-    managed?: boolean;
+    removable?: boolean;
     enabled?: boolean;
     manifest?: {
         displayName?: string;
@@ -57,7 +57,7 @@ function summarizePlugin(plugin: PluginView): Record<string, unknown> {
         id: plugin.id,
         displayName: plugin.manifest?.displayName ?? plugin.runtime?.displayName ?? plugin.id,
         source: plugin.source,
-        managed: plugin.managed ?? false,
+        removable: plugin.removable ?? false,
         enabled: plugin.enabled ?? true,
         version: plugin.manifest?.version ?? plugin.runtime?.version,
         apiVersion: plugin.manifest?.apiVersion ?? plugin.runtime?.apiVersion,
@@ -70,7 +70,7 @@ function serialize(value: unknown): string {
     return JSON.stringify(value ?? null);
 }
 
-const PluginSourceSchema = z.enum(['builtin', 'managed', 'local', 'external']);
+const PluginSourceSchema = z.enum(['builtin', 'local', 'external']);
 const ListPluginsArgsSchema = z.object({
     source: PluginSourceSchema.optional().describe('Optional plugin source filter'),
     enabled: z.boolean().optional().describe('Optional enabled-state filter')
@@ -136,7 +136,7 @@ export class InstallPluginTool extends BaseTool<typeof InstallPluginArgsSchema> 
     constructor(private readonly pluginApp: PluginManagementApplication) {
         super(
             'installPlugin',
-            'Install a managed OpenDesk plugin from a local directory, TGZ, URL or npm package spec.',
+            'Install an OpenDesk plugin into the plugins directory from a local directory, TGZ, URL or npm package spec.',
             InstallPluginArgsSchema
         );
         this.serialExecution = true;
@@ -156,12 +156,16 @@ export class InstallPluginTool extends BaseTool<typeof InstallPluginArgsSchema> 
 }
 
 const UninstallPluginArgsSchema = z.object({
-    id: z.string().trim().min(1).describe('Managed plugin ID')
+    id: z.string().trim().min(1).describe('Plugin ID')
 });
 
 export class UninstallPluginTool extends BaseTool<typeof UninstallPluginArgsSchema> {
     constructor(private readonly pluginApp: PluginManagementApplication) {
-        super('uninstallPlugin', 'Uninstall a managed OpenDesk plugin by ID.', UninstallPluginArgsSchema);
+        super(
+            'uninstallPlugin',
+            'Uninstall an OpenDesk plugin by ID. Builtin and external plugins cannot be uninstalled.',
+            UninstallPluginArgsSchema
+        );
         this.serialExecution = true;
         this.setExecutor(this.uninstall.bind(this));
     }

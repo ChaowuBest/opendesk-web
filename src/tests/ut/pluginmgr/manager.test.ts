@@ -14,7 +14,7 @@ import {
 } from '../../../main/applications/pluginmgr/management/manager.js';
 import { discoverPlugins } from '../../../main/applications/pluginmgr/discovery/discovery.js';
 import { getPluginsDirectory, getPluginTrashDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
-import { getPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
+import { getPluginRecord, upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 
 async function writePluginTgz(archivePath: string, pluginDirectory: string): Promise<void> {
     await createTar(
@@ -88,7 +88,7 @@ describe('pluginmgr managed installation', () => {
         expect(listInstalledPlugins(configDirectory)).toEqual([
             expect.objectContaining({
                 id: 'review-helper',
-                source: 'managed',
+                source: 'local',
                 path: path.join('review-helper', 'node_modules', '@example', 'review-helper'),
                 enabled: true
             })
@@ -144,7 +144,7 @@ describe('pluginmgr managed installation', () => {
         expect(result).toEqual({ success: true, id: 'test-external-plugin' });
         expect(npmCalled).toBe(false);
         expect(getPluginRecord('test-external-plugin', configDirectory)).toMatchObject({
-            source: 'managed',
+            source: 'local',
             path: 'test-external-plugin',
             spec: sourceDirectory
         });
@@ -381,7 +381,7 @@ describe('pluginmgr managed installation', () => {
         ]);
         expect(path.basename(dependencyInstallDirectory)).toMatch(/^install-/);
         expect(getPluginRecord('tgz-review-helper', configDirectory)).toMatchObject({
-            source: 'managed',
+            source: 'local',
             path: 'tgz-review-helper',
             spec: tgzPath
         });
@@ -656,5 +656,133 @@ describe('pluginmgr managed installation', () => {
             if (previous === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
             else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previous;
         }
+    });
+
+    test('卸载手工放入 plugins 目录且无注册表记录的插件', async () => {
+        const pluginDirectory = path.join(getPluginsDirectory(configDirectory), 'manual-review');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'manual-review',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), `export default {};`);
+
+        await expect(uninstallPlugin('manual-review', configDirectory)).resolves.toEqual({ success: true });
+        expect(fs.existsSync(pluginDirectory)).toBe(false);
+        expect(fs.readdirSync(getPluginTrashDirectory(configDirectory))).toHaveLength(1);
+        expect(discoverPlugins({ configDirectory }).candidates).toEqual([]);
+    });
+
+    test('卸载手工放入的单文件插件', async () => {
+        const pluginFile = path.join(getPluginsDirectory(configDirectory), 'single.mjs');
+        fs.mkdirSync(getPluginsDirectory(configDirectory), { recursive: true });
+        fs.writeFileSync(pluginFile, `export default { id: 'single', setup() {} };`);
+        fs.writeFileSync(
+            path.join(getPluginsDirectory(configDirectory), 'single.opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'single',
+                entry: './single.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+
+        await expect(uninstallPlugin('single', configDirectory)).resolves.toEqual({ success: true });
+        expect(fs.existsSync(pluginFile)).toBe(false);
+        expect(fs.readdirSync(getPluginTrashDirectory(configDirectory))).toHaveLength(1);
+    });
+
+    test('拒绝卸载内置插件且不移动其文件', async () => {
+        const builtinDirectory = path.join(configDirectory, 'builtin');
+        const pluginDirectory = path.join(builtinDirectory, 'builtin-review');
+        const previous = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'builtin-review',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'index.mjs'),
+            `export default { id: 'builtin-review', setup() {} };`
+        );
+        process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = builtinDirectory;
+
+        try {
+            await expect(uninstallPlugin('builtin-review', configDirectory)).resolves.toEqual({
+                success: false,
+                error: 'plugin.uninstall_builtin'
+            });
+            expect(fs.existsSync(pluginDirectory)).toBe(true);
+        } finally {
+            if (previous === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+            else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previous;
+        }
+    });
+
+    test('拒绝卸载 externalPaths 配置的外部插件', async () => {
+        const sourceDirectory = path.join(configDirectory, 'dev-plugin');
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'dev-plugin',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(sourceDirectory, 'index.mjs'), `export default {};`);
+
+        expect(setPluginEnabled('dev-plugin', true, { configDirectory, externalPaths: [sourceDirectory] })).toBe(true);
+        await expect(uninstallPlugin('dev-plugin', configDirectory)).resolves.toEqual({
+            success: false,
+            error: 'plugin.uninstall_external'
+        });
+        expect(fs.existsSync(sourceDirectory)).toBe(true);
+    });
+
+    test('兼容卸载旧版注册表中 source 为 managed 的记录', async () => {
+        const containerDirectory = path.join(getPluginsDirectory(configDirectory), 'legacy');
+        const pluginDirectory = path.join(containerDirectory, 'node_modules', 'legacy-helper');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'legacy-helper',
+                entry: './index.js',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.js'), `export default {};`);
+        upsertPluginRecord(
+            {
+                id: 'legacy-helper',
+                source: 'managed',
+                path: path.join('legacy', 'node_modules', 'legacy-helper'),
+                enabled: true,
+                options: {}
+            },
+            configDirectory
+        );
+
+        await expect(uninstallPlugin('legacy-helper', configDirectory)).resolves.toEqual({ success: true });
+        expect(fs.existsSync(containerDirectory)).toBe(false);
+        expect(listInstalledPlugins(configDirectory)).toEqual([]);
     });
 });

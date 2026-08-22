@@ -22,14 +22,14 @@ OpenDesk 插件由独立应用 `pluginmgr` 负责发现、安装、启停、校�
 plugins/
 ├── review-helper/                       # 手工放入的本地插件
 ├── standalone.mjs                       # 手工放入的单文件插件
-├── managed-plugin-id/                   # pluginmgr 管理的安装容器
+├── installed-plugin-id/                 # 通过插件中心或 CLI 安装的插件容器
 │   └── node_modules/
 │       └── opendesk-plugin-example/
 └── .pluginmgr/
     ├── registry.json                    # 安装、启用、配置和授权记录
     ├── staging/                         # 安装暂存目录
     ├── cache/
-    └── trash/                           # 被替换或卸载的托管插件
+    └── trash/                           # 被替换或卸载的插件
 ```
 
 直接把插件目录或 `.js`、`.mjs`、`.cjs` 文件放进 `plugins/`，重启 OpenDesk
@@ -92,7 +92,7 @@ CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发�
 
 内置插件在 pluginmgr 中的来源为 `builtin`，默认启用且不允许卸载。启停、权限和 options
 只作为用户策略写入 pluginmgr 注册表，不会修改内置插件文件。内置插件 ID 具有最高优先级；
-用户目录、托管安装或外部路径中的同 ID 插件不会覆盖内置插件。
+用户目录、安装到 plugins 目录或外部路径中的同 ID 插件不会覆盖内置插件。
 
 ## 最小 Tool 插件
 
@@ -352,9 +352,9 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 - `package.json` 是 npm/Node.js 的包元数据和依赖清单。
 - `opendesk.plugin.json` 是 OpenDesk 插件协议，可用于没有 npm 包元数据的本地插件。
 
-如果两处同时声明，入口和 id 必须一致。托管安装要求包中存在有效 `package.json`，并且具有
-`opendesk.plugin.json` 或 `package.json#opendesk` 声明；仅有
-`package.json#exports["./opendesk"]` 不能通过托管安装校验。
+如果两处同时声明，入口和 id 必须一致。通过插件中心或 CLI 安装要求包中存在有效 `package.json`，
+并且具有 `opendesk.plugin.json` 或 `package.json#opendesk` 声明；仅有
+`package.json#exports["./opendesk"]` 不能通过安装校验。
 
 发布前可校验包结构：
 
@@ -421,8 +421,8 @@ Node.js 可以直接运行的 `.js`、`.mjs` 或 `.cjs` 文件。
 
 ## 安装和管理
 
-通过 GUI“插件中心”或 CLI 显式安装时，`pluginmgr` 会把插件安装到隔离的托管容器；npm spec
-由 npm 安装，ZIP 和 TGZ 则只在声明了运行时依赖时调用 npm：
+通过 GUI“插件中心”或 CLI 显式安装时，`pluginmgr` 会把插件安装到 `plugins/` 目录下的独立容器；
+npm spec 由 npm 安装，ZIP 和 TGZ 则只在声明了运行时依赖时调用 npm：
 
 ```bash
 opendesk plugins install opendesk-plugin-review-helper@latest
@@ -433,18 +433,18 @@ opendesk plugins uninstall review-helper
 ```
 
 安装源可以是 npm spec、本地路径、ZIP、tarball 或 URL。GUI 中的 npm、目录、ZIP、TGZ 和 URL
-入口都属于托管安装，安装内容会复制到全局 `plugins` 目录并写入 `managed` 注册记录，因此可以通过
-GUI 或 CLI 卸载。`externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
+入口都会校验后复制到全局 `plugins` 目录并写入注册记录，因此可以通过 GUI 或 CLI 卸载。
+`externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
 
-CLI 安装命令接收的本地目录仍按托管安装处理：直接校验并复制包含 `opendesk.plugin.json` 或
+CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk.plugin.json` 或
 `package.json#opendesk` 声明的插件目录，不要求 `package.json`，也不会执行 npm；目录插件依赖的
 第三方包需要已经位于该目录的 `node_modules` 中。目录内容会直接复制到 `plugins/<插件ID>/`，
 不会增加额外的 `plugin/` 中间层。ZIP 和 TGZ 位于同一归档层：统一下载、解压和校验；如果根目录
 `package.json` 声明了 `dependencies` 或 `peerDependencies`，再安装这些运行时依赖，无运行时依赖的
 归档不要求 npm。
 所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
-可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载只适用于托管插件，手工插件应从
-`plugins/` 删除，外部目录插件应从 `externalPaths` 移除。
+可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载适用于 `plugins/` 目录中的全部插件，
+包括手工放入的插件文件或目录；内置插件不能卸载，外部目录插件应从 `externalPaths` 移除。
 
 其他常用 CLI：
 
@@ -471,7 +471,7 @@ GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设
 `listPlugins`、`getPluginDetails`、`installPlugin`、`uninstallPlugin`、
 `setPluginEnabled` 和 `reloadPlugins` 工具。插件列表和详情读取默认允许；安装、卸载、
 启停和重新加载会通过 `plugin` 权限资源请求用户确认。Agent 安装仍遵循上述 OpenDesk
-插件校验、托管目录和 `--ignore-scripts` 规则。
+插件校验、plugins 目录和 `--ignore-scripts` 规则。
 
 ## 生命周期和安全边界
 
@@ -480,7 +480,7 @@ GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设
 ```text
 discover
   -> resolve entry
-  -> validate path containment and managed integrity
+  -> validate path containment and recorded integrity
   -> read manifest and static contributions
   -> verify the entry is directly runnable
   -> import plugin
@@ -494,7 +494,8 @@ discover
 
 Hook 按插件激活顺序串行执行。默认 `failureMode: 'open'` 会记录失败并继续主流程；
 安全或认证场景可以在注册 Hook 时指定 `failureMode: 'closed'`，让异常阻止对应操作。
-托管插件在 import 前检查安装内容完整性；手工和外部插件会标记为 unmanaged，不进行内容锁定。
+带有完整性基线（安装时写入的 integrity 记录）的插件在 import 前检查安装内容完整性；
+手工放入和外部插件没有基线，标记为 unmanaged，不进行内容锁定。
 
 ## Runtime Hooks
 

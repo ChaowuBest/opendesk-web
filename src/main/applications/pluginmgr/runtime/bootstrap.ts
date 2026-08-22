@@ -81,9 +81,10 @@ function configuredCandidates(): ResolvedCandidate[] {
                 requireDeclaration: true
             };
         }
-        if (!candidate.managed) return candidate;
+        // Only plugins with a recorded integrity snapshot are verified; hand-placed
+        // plugins have no baseline and load without an integrity gate.
         const record = getPluginRecord(candidate.id, configDir);
-        if (!record) return candidate;
+        if (!record?.integrity) return candidate;
         const verification = verifyPluginRecord(record, configDir);
         return {
             ...candidate,

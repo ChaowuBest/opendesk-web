@@ -614,4 +614,58 @@ describe('PluginHost', () => {
         expect(invalid.status).toBe('error');
         expect(invalid.diagnostics[0]?.code).toBe('plugin.config_invalid');
     });
+
+    test('指定 platforms 包含当前平台时插件正常激活', async () => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'platform-match',
+                capabilities: [],
+                platforms: [process.platform as any],
+                setup() {}
+            }),
+            { origin: 'test:platform-match' }
+        );
+
+        expect(entry.status).toBe('active');
+        expect(entry.diagnostics).toEqual([]);
+    });
+
+    test('指定 platforms 不包含当前平台时插件被禁用', async () => {
+        const host = new PluginHost();
+        const unsupportedPlatform = process.platform === 'win32' ? 'darwin' : 'win32';
+        const entry = await host.activate(
+            definePlugin({
+                id: 'platform-mismatch',
+                capabilities: [],
+                platforms: [unsupportedPlatform as any],
+                setup() {}
+            }),
+            { origin: 'test:platform-mismatch' }
+        );
+
+        expect(entry.status).toBe('disabled');
+        expect(entry.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin.platform_unsupported',
+                stage: 'validate',
+                detail: process.platform
+            })
+        ]);
+    });
+
+    test('未指定 platforms 时任意平台都可加载插件', async () => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'no-platforms',
+                capabilities: [],
+                setup() {}
+            }),
+            { origin: 'test:no-platforms' }
+        );
+
+        expect(entry.status).toBe('active');
+        expect(entry.diagnostics).toEqual([]);
+    });
 });

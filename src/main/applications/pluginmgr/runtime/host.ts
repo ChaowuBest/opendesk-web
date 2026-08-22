@@ -364,6 +364,16 @@ export class PluginHost {
         }));
     }
 
+    listHooks(): Array<{ pluginId: string; name: PluginHookName; failureMode: PluginFailureMode }> {
+        return Array.from(this.hooks.values()).flatMap((records) =>
+            records.map((record) => ({
+                pluginId: record.pluginId,
+                name: record.name,
+                failureMode: record.failureMode
+            }))
+        );
+    }
+
     listSkills(): VisiblePluginContribution<PluginSkillDefinition>[] {
         return this.listContributions(this.skills);
     }
@@ -515,6 +525,15 @@ export class PluginHost {
                 });
                 return this.replaceEntry(entry);
             }
+        }
+        if (plugin.platforms && plugin.platforms.length > 0 && !plugin.platforms.includes(process.platform as any)) {
+            entry.status = 'disabled';
+            entry.diagnostics.push({
+                code: 'plugin.platform_unsupported',
+                stage: 'validate',
+                detail: `${process.platform}`
+            });
+            return this.replaceEntry(entry);
         }
         const deniedCapabilities = requestedCapabilities.filter(
             (capability) => !grantedCapabilities.includes(capability)

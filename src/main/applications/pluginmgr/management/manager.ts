@@ -308,13 +308,12 @@ function waitForMoveRetry(delay: number): Promise<void> {
     });
 }
 
-async function moveExistingInstallToTrash(pluginId: string, configDirectory: string): Promise<void> {
-    const destination = path.join(getPluginsDirectory(configDirectory), pluginId);
-    if (!fs.existsSync(destination)) return;
-    const trash = path.join(getPluginTrashDirectory(configDirectory), `${pluginId}-${Date.now()}`);
+async function moveToTrash(source: string, configDirectory: string): Promise<void> {
+    if (!fs.existsSync(source)) return;
+    const trash = path.join(getPluginTrashDirectory(configDirectory), `${path.basename(source)}-${Date.now()}`);
     for (let attempt = 0; ; attempt += 1) {
         try {
-            await fs.promises.rename(destination, trash);
+            await fs.promises.rename(source, trash);
             return;
         } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
@@ -410,13 +409,13 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
         const destination = path.join(getPluginsDirectory(configDirectory), validated.id);
-        await moveExistingInstallToTrash(validated.id, configDirectory);
+        await moveToTrash(destination, configDirectory);
         fs.renameSync(stagingDirectory, destination);
 
         const previous = getPluginRecord(validated.id, configDirectory);
         const record: PluginRegistryRecord = {
             id: validated.id,
-            source: 'managed',
+            source: 'local',
             path: managedPath,
             spec,
             enabled: previous?.enabled ?? true,
@@ -448,14 +447,30 @@ export async function uninstallPlugin(
     id: string,
     configDirectory: string = getOpendeskDirectory()
 ): Promise<{ success: boolean; error?: string }> {
+    const pluginsRoot = path.resolve(getPluginsDirectory(configDirectory));
     const record = getPluginRecord(id, configDirectory);
-    if (!record) return { success: false, error: `Plugin not found: ${id}` };
-    if (record.source !== 'managed') {
-        return { success: false, error: 'plugin.uninstall_unmanaged' };
+    let target: string | undefined;
+    if (record && record.source !== 'builtin' && !path.isAbsolute(record.path)) {
+        // Registry records for plugins inside the plugins directory always start
+        // with the container entry (directory or single plugin file).
+        target = path.resolve(pluginsRoot, record.path.split(/[\\/]/)[0]);
+        if (!target.startsWith(`${pluginsRoot}${path.sep}`)) {
+            return { success: false, error: 'plugin.uninstall_invalid_path' };
+        }
+    } else {
+        const candidate = discoverPlugins({ configDirectory }).candidates.find((entry) => entry.id === id);
+        if (!candidate) return { success: false, error: `Plugin not found: ${id}` };
+        if (candidate.source === 'builtin') return { success: false, error: 'plugin.uninstall_builtin' };
+        if (candidate.source === 'external') return { success: false, error: 'plugin.uninstall_external' };
+        const spec = path.resolve(candidate.spec);
+        if (!spec.startsWith(`${pluginsRoot}${path.sep}`)) {
+            return { success: false, error: 'plugin.uninstall_external' };
+        }
+        target = spec;
     }
     try {
         ensurePluginDirectories(configDirectory);
-        await moveExistingInstallToTrash(id, configDirectory);
+        await moveToTrash(target, configDirectory);
         removePluginRecord(id, configDirectory);
         return { success: true };
     } catch (error) {
@@ -466,7 +481,7 @@ export async function uninstallPlugin(
 }
 
 export function listInstalledPlugins(configDirectory?: string): PluginRegistryRecord[] {
-    return listPluginRecords(configDirectory).filter((record) => record.source === 'managed');
+    return listPluginRecords(configDirectory);
 }
 
 export function setPluginEnabled(
