@@ -216,11 +216,12 @@ button, input { font: inherit; }
     border-radius: 8px;
     font-size: 14px;
     font-weight: 700;
+    color: #1d1d1f;
+    background: var(--od-bg);
 }
-.add-dropdown-item .icon.npm { color: #c43d3d; background: #fdecec; }
-.add-dropdown-item .icon.folder { color: #5b8def; background: #ebf3fe; }
-.add-dropdown-item .icon.archive { color: #e8935a; background: #fef1e6; }
-.add-dropdown-item .icon.url { color: #4caf6e; background: #e7f6ea; }
+.add-dropdown-item .icon svg { width: 16px; height: 16px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.add-dropdown-item .icon .k { stroke: currentColor; }
+.add-dropdown-item .icon .r { stroke: #de4433; }
 .item-info { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .item-name { color: #1d1d1f; font-size: 13px; font-weight: 600; line-height: 1.3; }
 .item-hint { color: #999da5; font-size: 11px; line-height: 1.35; }
@@ -501,6 +502,8 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) .install-progress-spec { color: #c8cad0; background: #303033; }
 :host([data-theme="dark"]) .install-progress-track { background: #3a3d44; }
 :host([data-theme="dark"]) .add-dropdown-item { color: #ddd; }
+:host([data-theme="dark"]) .add-dropdown-item .icon { color: #eceae6; background: var(--od-bg); }
+:host([data-theme="dark"]) .add-dropdown-item .icon .r { stroke: #ff6b5a; }
 :host([data-theme="dark"]) .add-dropdown-item:hover { background: rgba(255, 255, 255, .08); }
 :host([data-theme="dark"]) .add-dropdown-section + .add-dropdown-section { border-top-color: rgba(255, 255, 255, .1); }
 :host([data-theme="dark"]) .item-name { color: #e5e7eb; }
@@ -989,22 +992,22 @@ export class PluginMgrEntryWidget extends HTMLElement {
                                 <div class="add-dropdown ${this.addMenuOpen ? 'visible' : ''}">
                                     <div class="add-dropdown-section">
                                         <button type="button" class="add-dropdown-item" data-install-source="npm">
-                                            <span class="icon npm">N</span>
+                                            <span class="icon npm"><svg viewBox="0 0 24 24"><g class="k"><path d="M21 14.5V18a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18v-3.5"/></g><g class="r"><path d="M12 3.5v10"/><path d="m7.5 9.5 4.5 4.5 4.5-4.5"/></g></svg></span>
                                             <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromNpm'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromNpmHint'))}</span></span>
                                         </button>
                                         <button type="button" class="add-dropdown-item" data-install-source="directory">
-                                            <span class="icon folder">📁</span>
+                                            <span class="icon folder"><svg viewBox="0 0 24 24"><g class="k"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></g></svg></span>
                                             <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromDirectory'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromDirectoryHint'))}</span></span>
                                         </button>
                                         <label class="add-dropdown-item">
                                             <input type="file" data-install-file accept=".tgz,.zip,application/gzip,application/zip" hidden>
-                                            <span class="icon archive">📦</span>
+                                            <span class="icon archive"><svg viewBox="0 0 24 24"><g class="k"><rect x="2.5" y="3.5" width="19" height="5" rx="1.2"/><path d="M4.5 8.5V18a2.5 2.5 0 0 0 2.5 2.5h10A2.5 2.5 0 0 0 19.5 18V8.5"/></g><g class="r"><path d="M9.75 12.5h4.5"/></g></svg></span>
                                             <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromPackage'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromPackageHint'))}</span></span>
                                         </label>
                                     </div>
                                     <div class="add-dropdown-section">
                                         <button type="button" class="add-dropdown-item" data-install-source="url">
-                                            <span class="icon url">🔗</span>
+                                            <span class="icon url"><svg viewBox="0 0 24 24"><g class="k"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9.5h18"/><path d="M6.2 7h.01"/><path d="M9 7h.01"/><path d="M6.5 16h11"/></g><g class="r"><path d="M6.5 13h7"/></g></svg></span>
                                             <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromUrl'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromUrlHint'))}</span></span>
                                         </button>
                                     </div>
