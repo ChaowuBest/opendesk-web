@@ -67,9 +67,11 @@ export default defineConfig(({ mode }) => {
                         if (warning.message?.includes('@tailwindcss/vite')) {
                             return;
                         }
+                        const normalizedWarningMessage = warning.message?.replaceAll('\\', '/');
                         if (
                             warning.code === 'UNUSED_EXTERNAL_IMPORT' &&
-                            warning.message?.includes('@bitclub.ai/opendesk-office/dist/')
+                            (normalizedWarningMessage?.includes('@bitclub.ai/opendesk-office/dist/') ||
+                                normalizedWarningMessage?.includes('/packages/opendesk-office/dist/'))
                         ) {
                             warn(warning);
                             return;

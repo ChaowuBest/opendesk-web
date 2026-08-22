@@ -2969,13 +2969,7 @@ class TaskView extends HTMLElement {
         const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
         const validLine = line !== undefined && Number.isFinite(line) && line > 0 ? line : undefined;
 
-        // 1. 展开侧边栏
-        this._forceExpandRightSidebar();
-        // 2. 在预览模式下打开文件（不打开编辑器），并跳转到指定行
-        const sidebar = this._getRightSidebarEl();
-        if (sidebar && typeof sidebar.openFilePreview === 'function') {
-            sidebar.openFilePreview(filePath, validLine);
-        }
+        this.openFileInSidebar(filePath, validLine);
     }
 
     /**
@@ -3139,6 +3133,17 @@ class TaskView extends HTMLElement {
 
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    /**
+     * 公开方法：在当前任务的右侧工作空间中打开文件。
+     */
+    openFileInSidebar(filePath, line, onSwitchBlocked) {
+        this._forceExpandRightSidebar();
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.openFilePreview === 'function') {
+            sidebar.openFilePreview(filePath, line, onSwitchBlocked);
+        }
     }
 
     /**

@@ -22,8 +22,15 @@ export interface SlidesCapabilityExecution {
     summary: string;
 }
 
+export interface SlidesPresentationOpenResult {
+    status: 'opened' | 'not_opened';
+    filePath: string;
+    message?: string;
+}
+
 export interface SlidesCapabilityProvider {
     getCapabilities(): Promise<readonly SlidesCapabilityDefinition[]>;
+    openPresentation(taskId: string, filePath: string): Promise<SlidesPresentationOpenResult>;
     execute(taskId: string, name: string, input: Record<string, unknown>): Promise<SlidesCapabilityExecution>;
 }
 

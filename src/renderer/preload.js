@@ -672,6 +672,8 @@ function exposeOfficeHostAPI() {
         sheets: 'office-host:sheets:request-close'
     });
     const isOfficeEditorKind = (kind) => Object.prototype.hasOwnProperty.call(requestCloseChannels, kind);
+    const openOfficeTaskFileChannel = 'office-host:open-task-file';
+    const openOfficeTaskFileResultChannel = 'office-host:open-task-file-result';
     safeExposeInMainWorld('officeHostAPI', {
         prepare: (kind) => {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
@@ -681,9 +683,20 @@ function exposeOfficeHostAPI() {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);
         },
-        bindSlidesTask: (taskId, filePath, webContentsId) => {
-            if (!taskId || !filePath || !Number.isInteger(webContentsId)) return Promise.resolve(false);
-            return ipcRenderer.invoke('office-host:slides:bind-task', taskId, filePath, webContentsId);
+        bindOfficeTask: (kind, taskId, filePath, webContentsId) => {
+            if (!isOfficeEditorKind(kind) || !taskId || !filePath || !Number.isInteger(webContentsId)) {
+                return Promise.resolve(false);
+            }
+            return ipcRenderer.invoke('office-host:bind-task', kind, taskId, filePath, webContentsId);
+        },
+        onOpenOfficeTaskFile: (callback) => {
+            const listener = (_event, request) => callback(request);
+            ipcRenderer.on(openOfficeTaskFileChannel, listener);
+            return () => ipcRenderer.removeListener(openOfficeTaskFileChannel, listener);
+        },
+        reportOpenOfficeTaskFileResult: (requestId, status) => {
+            if (!requestId || (status !== 'not_opened' && status !== 'failed')) return;
+            ipcRenderer.send(openOfficeTaskFileResultChannel, { requestId, status });
         }
     });
 }

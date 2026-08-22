@@ -1879,6 +1879,13 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.skillTag.directory': 'Directory',
     'office.slides.error.noTaskSession': 'No PPT is open in the current task',
     'office.slides.error.capabilityUnavailable': 'The current Office package does not support PPT automation',
+    'office.error.unsupportedFile': 'The file format does not match the target Office editor',
+    'office.error.fileNotFound': 'The target Office file does not exist or cannot be accessed',
+    'office.error.windowUnavailable': 'No OpenDesk editor window is currently available',
+    'office.error.routeUnavailable': "The current task's file preview is unavailable, so the Office file cannot be opened",
+    'office.error.openTimeout': 'Timed out while waiting for the Office editor to open',
+    'office.open.notCompleted':
+        'The file was not switched because the user cancelled or the current file could not close safely. Keep the current file open and do not retry automatically unless the user explicitly asks again.',
     'renderer.taskview.edit.title': 'Confirm Edit Message',
     'renderer.taskview.edit.message':
         'Continue the conversation with the edited message? <b>All subsequent conversation history will be lost.</b>',

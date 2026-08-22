@@ -1357,9 +1357,16 @@ export class FileExplorer {
      * 选中并预览指定文件。
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
-    selectFile(filePath: string, line?: number): void {
+    selectFile(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
-        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line))) return;
+        if (
+            this._deferUntilOfficeCanClose(
+                () => this.selectFile(filePath, line, onSwitchBlocked),
+                onSwitchBlocked
+            )
+        ) {
+            return;
+        }
 
         // HTML/HTM 文件在浏览器 tab 中打开，不在文件预览面板中渲染
         if (isHtmlFile(filePath)) {
@@ -1432,7 +1439,7 @@ export class FileExplorer {
         }
     }
 
-    private _deferUntilOfficeCanClose(onApproved: () => void): boolean {
+    private _deferUntilOfficeCanClose(onApproved: () => void, onBlocked?: () => void): boolean {
         if (this._officeCloseApproved) {
             this._officeCloseApproved = false;
             return false;
@@ -1452,11 +1459,14 @@ export class FileExplorer {
         void window.officeHostAPI
             .requestClose(editorConfig.kind, webContentsId)
             .then((canClose) => {
-                if (!canClose) return;
+                if (!canClose) {
+                    onBlocked?.();
+                    return;
+                }
                 this._officeCloseApproved = true;
                 onApproved();
             })
-            .catch(() => {})
+            .catch(() => onBlocked?.())
             .finally(() => {
                 this._officeClosePending = false;
             });
@@ -1467,6 +1477,7 @@ export class FileExplorer {
         try {
             const editorConfig = getOfficeEditorConfig(filePath);
             if (editorConfig) {
+                const fileSize = this._getCachedFileSize(filePath) ?? 0;
                 const officeHostAPI = window.officeHostAPI;
                 if (!officeHostAPI?.prepare) {
                     throw new Error(t(editorConfig.unavailableKey));
@@ -1478,7 +1489,7 @@ export class FileExplorer {
                 if (this._selectedFile !== filePath) return;
                 this._previewState = {
                     status: 'idle',
-                    data: { tooLarge: false, size: 0, limit: 0, content: '', binary: false }
+                    data: { tooLarge: false, size: fileSize, limit: 0, content: '', binary: false }
                 };
                 this._previewFullscreen = true;
                 this._notifyWorkspaceFocusLayoutChange();
@@ -1506,6 +1517,15 @@ export class FileExplorer {
         }
         this._renderPreview();
         this._applyFullscreenLayout();
+    }
+
+    private _getCachedFileSize(filePath: string): number | undefined {
+        for (const cached of this._childrenCache.values()) {
+            if (!Array.isArray(cached)) continue;
+            const entry = cached.find((candidate) => candidate.path === filePath && !candidate.isDirectory);
+            if (entry) return entry.size;
+        }
+        return undefined;
     }
 
     // ----- context menu -----
@@ -2658,12 +2678,17 @@ export class FileExplorer {
             host.classList.remove('ws-office-editor-loading');
             host.querySelector('.ws-office-editor-loading-indicator')?.remove();
             webview.classList.remove('ws-office-editor-frame--loading');
-            if (editorConfig.kind === 'slides' && this._taskId && window.officeHostAPI?.bindSlidesTask) {
+            if (this._taskId && window.officeHostAPI?.bindOfficeTask) {
                 const webContentsId = (
                     webview as HTMLElement & { getWebContentsId?: () => number }
                 ).getWebContentsId?.();
                 if (webContentsId) {
-                    void window.officeHostAPI.bindSlidesTask(this._taskId, filePath, webContentsId);
+                    void window.officeHostAPI.bindOfficeTask(
+                        editorConfig.kind,
+                        this._taskId,
+                        filePath,
+                        webContentsId
+                    );
                 }
             }
         };

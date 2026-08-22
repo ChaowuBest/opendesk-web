@@ -39,6 +39,7 @@ import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 import { createRendererTranslator } from '../locale.ts';
+import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
 
 // 本地化字符串映射
 const LOCALE_STRINGS = {
@@ -75,6 +76,14 @@ window.__odT = createRendererTranslator();
 })();
 window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
+});
+window.officeHostAPI?.onOpenOfficeTaskFile?.((request) => {
+    const routed = routeTaskFileOpenRequest(document, request, (requestId) => {
+        window.officeHostAPI?.reportOpenOfficeTaskFileResult?.(requestId, 'not_opened');
+    });
+    if (!routed) {
+        window.officeHostAPI?.reportOpenOfficeTaskFileResult?.(request.requestId, 'failed');
+    }
 });
 
 /**

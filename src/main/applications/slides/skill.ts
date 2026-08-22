@@ -13,7 +13,11 @@ import { Skill } from '../../aikernel/skill.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { z } from 'zod';
 import { t } from './locale/index.js';
-import type { SlidesCapabilityDefinition, SlidesCapabilityExecution } from './provider.js';
+import type {
+    SlidesCapabilityDefinition,
+    SlidesCapabilityExecution,
+    SlidesPresentationOpenResult
+} from './provider.js';
 
 export type { SlidesCapabilityDefinition } from './provider.js';
 
@@ -22,6 +26,11 @@ export type SlidesCapabilityExecutor = (
     name: string,
     input: Record<string, unknown>
 ) => Promise<SlidesCapabilityExecution>;
+
+export type SlidesPresentationOpener = (
+    taskId: string,
+    filePath: string
+) => Promise<SlidesPresentationOpenResult>;
 
 const SLIDES_ACTION_CATEGORIES = ['read', 'text', 'layout', 'slide', 'insert', 'chart', 'table'] as const;
 type SlidesActionCategory = (typeof SLIDES_ACTION_CATEGORIES)[number];
@@ -45,6 +54,9 @@ const SLIDES_ACTION_METADATA: Record<string, SlidesActionMetadata> = {
     execute_slide_script: { category: 'layout', summary: '批量执行页面布局与样式操作' },
     set_element_fill: { category: 'layout', summary: '修改元素填充' },
     set_element_stroke: { category: 'layout', summary: '修改元素边框' },
+    crop_image: { category: 'layout', summary: '裁剪图片' },
+    set_picture_opacity: { category: 'layout', summary: '修改图片透明度' },
+    replace_image: { category: 'layout', summary: '原位替换图片内容' },
     delete_element: { category: 'layout', summary: '删除元素' },
     ungroup_element: { category: 'layout', summary: '取消元素组合' },
     delete_slide: { category: 'slide', summary: '删除页面' },
@@ -74,6 +86,10 @@ const ExecuteActionSchema = z.object({
     input: z.record(z.string(), z.unknown()).describe('严格符合该动作 inputSchema 的输入对象')
 });
 
+const OpenPresentationSchema = z.object({
+    filePath: z.string().min(1).describe('目标 .pptx 文件的明确路径')
+});
+
 function toInternalToolSchema(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(toInternalToolSchema);
     if (!value || typeof value !== 'object') return value;
@@ -91,21 +107,22 @@ function toInternalToolSchema(value: unknown): unknown {
 const EDIT_CURRENT_PRESENTATION_SKILL = `
 ---
 name: edit-current-presentation
-description: 读取和编辑当前任务中已打开的 PPT，包括幻灯片、文本、形状、表格、图表和布局等确定性操作
+description: 打开、读取和编辑当前任务中的 PPT，包括幻灯片、文本、形状、表格、图表和布局等确定性操作
 ---
 
 # 编辑当前任务中的 PPT
 
-本 Skill 操作当前任务右侧编辑器中已经打开的 PPT。它不会查找其他任务或其他窗口中的文档。
+本 Skill 操作当前任务右侧编辑器中的 PPT。它不会查找其他任务或其他窗口中的文档。
 
 ## 使用顺序
 
-1. 从下方固定目录选择精确动作名称；可用 \`list_actions\` 按固定类别重新列举，不进行关键词或语义搜索。
-2. 调用 \`get_action_definition\` 获取该动作的完整参数 Schema。
-3. 调用 \`execute_action\` 执行；同一份文档上的多步修改应按顺序调用。
-4. 修改前后使用 \`get_deck_context\` 或 \`read_slide\` 对应动作读取并确认页面状态。
+1. 如果目标 PPT 尚未打开且已经知道明确路径，先调用 \`open_presentation\`。目标不明确时先确认，不要猜测。
+2. 从下方固定目录选择精确动作名称；可用 \`list_actions\` 按固定类别重新列举，不进行关键词或语义搜索。
+3. 调用 \`get_action_definition\` 获取该动作的完整参数 Schema。
+4. 调用 \`execute_action\` 执行；同一份文档上的多步修改应按顺序调用。
+5. 修改前后使用 \`get_deck_context\` 或 \`read_slide\` 对应动作读取并确认页面状态。
 
-工具只作用于当前 task 绑定的 PPT 编辑器会话。如果当前任务没有打开 PPT，应先让用户在工作空间中打开目标 .pptx 文件。
+工具只作用于当前 task 绑定的 PPT 编辑器会话。\`open_presentation\` 可以打开目标文件或切换当前文件；如返回 \`not_opened\`，说明用户取消或当前文件未能安全关闭，应保持现状并告知用户，不要自动重试。
 `;
 
 function prepareSlidesActions(definitions: readonly SlidesCapabilityDefinition[]): PreparedSlidesAction[] {
@@ -132,7 +149,8 @@ function buildActionCatalog(actions: readonly PreparedSlidesAction[]): string {
 
 export function buildSlidesSkill(
     definitions: readonly SlidesCapabilityDefinition[],
-    executeCapability: SlidesCapabilityExecutor
+    executeCapability: SlidesCapabilityExecutor,
+    openPresentation: SlidesPresentationOpener
 ): Skill {
     const actions = prepareSlidesActions(definitions);
     const actionsByName = new Map(actions.map((action) => [action.definition.name, action]));
@@ -144,6 +162,17 @@ export function buildSlidesSkill(
 
     const skill = Skill.parseMd(EDIT_CURRENT_PRESENTATION_SKILL + buildActionCatalog(actions));
     const toolset = new BaseToolset('current-presentation');
+
+    const openPresentationTool = new BaseTool(
+        'open_presentation',
+        '目标路径明确时，在当前任务中打开或切换到该 .pptx，并等待编辑器就绪',
+        OpenPresentationSchema
+    ).setExecutor(async ({ filePath }, taskState) => {
+        const taskId = taskState?.task_id;
+        if (!taskId) throw new Error(t('error.taskContextRequired'));
+        return JSON.stringify(await openPresentation(taskId, filePath));
+    });
+    openPresentationTool.serialExecution = true;
 
     const listActions = new BaseTool(
         'list_actions',
@@ -201,7 +230,7 @@ export function buildSlidesSkill(
     });
     executeAction.serialExecution = true;
 
-    toolset.addTools(listActions, getActionDefinition, executeAction);
+    toolset.addTools(openPresentationTool, listActions, getActionDefinition, executeAction);
 
     skill.toolsets = [toolset];
     return skill;

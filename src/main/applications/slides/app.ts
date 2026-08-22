@@ -30,7 +30,13 @@ export class SlidesApplication extends BaseApplication {
         const provider = getSlidesCapabilityProvider();
         this.skillsPromise ??= provider
             .getCapabilities()
-            .then((definitions) => [buildSlidesSkill(definitions, provider.execute.bind(provider))])
+            .then((definitions) => [
+                buildSlidesSkill(
+                    definitions,
+                    provider.execute.bind(provider),
+                    provider.openPresentation.bind(provider)
+                )
+            ])
             .catch((error: unknown) => {
                 this.skillsPromise = undefined;
                 throw error;

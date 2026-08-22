@@ -12,13 +12,15 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
-import { SlidesTaskSessionRegistry } from './slidesTaskSessions.js';
+import { OfficeTaskSessionRegistry, type OfficeTaskSessionKind } from './officeTaskSessions.js';
 import { t } from '../../locale/index.js';
+import { safeSendToWebContents } from '../utils/electron-ipc.js';
 
-export type OpenDeskOfficeEditorKind = 'slides' | 'word' | 'sheets';
+export type OpenDeskOfficeEditorKind = OfficeTaskSessionKind;
 
 const require = createRequire(import.meta.url);
 
@@ -49,6 +51,7 @@ export interface SlidesCapabilityExecution {
 
 interface OfficeEditorDefinition {
     kind: OpenDeskOfficeEditorKind;
+    extension: string;
     rendererPageName: string;
     preloadName: string;
     requestCloseChannel: string;
@@ -84,6 +87,7 @@ function getIronCalcWasmPath(): string {
 const editorDefinitions: readonly OfficeEditorDefinition[] = [
     {
         kind: 'slides',
+        extension: '.pptx',
         rendererPageName: 'slides_editor.html',
         preloadName: 'slidesPreload.js',
         requestCloseChannel: 'office-host:slides:request-close',
@@ -94,6 +98,7 @@ const editorDefinitions: readonly OfficeEditorDefinition[] = [
     },
     {
         kind: 'word',
+        extension: '.docx',
         rendererPageName: 'word_editor.html',
         preloadName: 'wordPreload.js',
         requestCloseChannel: 'office-host:word:request-close',
@@ -104,6 +109,7 @@ const editorDefinitions: readonly OfficeEditorDefinition[] = [
     },
     {
         kind: 'sheets',
+        extension: '.xlsx',
         rendererPageName: 'sheets_editor.html',
         preloadName: 'sheetsPreload.js',
         requestCloseChannel: 'office-host:sheets:request-close',
@@ -129,7 +135,19 @@ const editorRuntimes: readonly OfficeEditorRuntime[] = editorDefinitions.map((de
 
 let attachedWindow: BrowserWindow | undefined;
 let prepareHandlerRegistered = false;
-const slidesTaskSessions = new SlidesTaskSessionRegistry<WebContents>();
+const officeTaskSessions = new OfficeTaskSessionRegistry<WebContents>();
+const OPEN_OFFICE_TASK_FILE_CHANNEL = 'office-host:open-task-file';
+const OPEN_OFFICE_TASK_FILE_RESULT_CHANNEL = 'office-host:open-task-file-result';
+const OPEN_OFFICE_TASK_TIMEOUT_MS = 30_000;
+type OfficeTaskFileRendererResult = 'not_opened' | 'failed';
+
+export interface OfficeTaskFileOpenResult {
+    status: 'opened' | 'not_opened';
+    filePath: string;
+    message?: string;
+}
+
+const pendingOfficeTaskFileResults = new Map<string, (status: OfficeTaskFileRendererResult) => void>();
 
 function getEditorRuntime(kind: OpenDeskOfficeEditorKind): OfficeEditorRuntime {
     const runtime = editorRuntimes.find((candidate) => candidate.kind === kind);
@@ -184,18 +202,34 @@ export function registerEmbeddedOpenDeskOffice(): void {
         return true;
     });
     ipcMain.handle(
-        'office-host:slides:bind-task',
-        async (event, taskId: string, filePath: string, webContentsId: number) => {
+        'office-host:bind-task',
+        async (
+            event,
+            kind: OpenDeskOfficeEditorKind,
+            taskId: string,
+            filePath: string,
+            webContentsId: number
+        ) => {
             if (!taskId || !filePath || !Number.isInteger(webContentsId)) return false;
             const target = (await import('electron')).webContents.fromId(webContentsId);
             if (!target || target.isDestroyed() || target.getType() !== 'webview') return false;
             if (target.hostWebContents?.id !== event.sender.id) return false;
-            const runtime = getEditorRuntime('slides');
+            const runtime = getEditorRuntime(kind);
             if (!runtime.isTrustedUrl(target.getURL())) return false;
             const host = await loadEditorHost(runtime);
             host.activateContents(target);
-            slidesTaskSessions.bind(taskId, filePath, target);
+            officeTaskSessions.bind(kind, taskId, filePath, target);
             return true;
+        }
+    );
+    ipcMain.on(
+        OPEN_OFFICE_TASK_FILE_RESULT_CHANNEL,
+        (event, result: { requestId?: unknown; status?: unknown } | undefined) => {
+            if (!attachedWindow || attachedWindow.isDestroyed()) return;
+            if (event.sender.id !== attachedWindow.webContents.id) return;
+            if (!result || typeof result.requestId !== 'string') return;
+            if (result.status !== 'not_opened' && result.status !== 'failed') return;
+            pendingOfficeTaskFileResults.get(result.requestId)?.(result.status);
         }
     );
 }
@@ -205,12 +239,91 @@ export async function getOpenDeskSlidesCapabilities(): Promise<readonly SlidesCa
     return host.getCapabilities?.() ?? [];
 }
 
+export async function openOpenDeskOfficeTaskFile(
+    kind: OpenDeskOfficeEditorKind,
+    taskId: string,
+    filePath: string
+): Promise<OfficeTaskFileOpenResult> {
+    const runtime = getEditorRuntime(kind);
+    const resolvedPath = path.resolve(filePath);
+    if (path.extname(resolvedPath).toLowerCase() !== runtime.extension) {
+        throw new Error(t('office.error.unsupportedFile'));
+    }
+
+    let isFile = false;
+    try {
+        isFile = existsSync(resolvedPath) && statSync(resolvedPath).isFile();
+    } catch {
+        isFile = false;
+    }
+    if (!isFile) throw new Error(t('office.error.fileNotFound'));
+
+    const current = officeTaskSessions.get(kind, taskId);
+    if (current && path.resolve(current.filePath) === resolvedPath) {
+        return { status: 'opened', filePath: resolvedPath };
+    }
+    if (!attachedWindow || attachedWindow.isDestroyed()) {
+        throw new Error(t('office.error.windowUnavailable'));
+    }
+    const requestId = randomUUID();
+    const waitController = new AbortController();
+    const waitSignal = AbortSignal.any([
+        waitController.signal,
+        AbortSignal.timeout(OPEN_OFFICE_TASK_TIMEOUT_MS)
+    ]);
+    const rendererResult = new Promise<OfficeTaskFileRendererResult>((resolve) => {
+        pendingOfficeTaskFileResults.set(requestId, resolve);
+    });
+
+    try {
+        if (
+            !safeSendToWebContents(attachedWindow.webContents, OPEN_OFFICE_TASK_FILE_CHANNEL, {
+                requestId,
+                kind,
+                taskId,
+                filePath: resolvedPath
+            })
+        ) {
+            throw new Error(t('office.error.windowUnavailable'));
+        }
+
+        const outcome = await Promise.race([
+            officeTaskSessions
+                .waitFor(kind, taskId, resolvedPath, waitSignal)
+                .then((session) => ({ type: 'session' as const, session })),
+            rendererResult.then((status) => ({ type: 'renderer' as const, status }))
+        ]);
+        if (outcome.type === 'renderer') {
+            if (outcome.status === 'not_opened') {
+                return {
+                    status: 'not_opened',
+                    filePath: resolvedPath,
+                    message: t('office.open.notCompleted')
+                };
+            }
+            throw new Error(t('office.error.routeUnavailable'));
+        }
+        if (!outcome.session) throw new Error(t('office.error.openTimeout'));
+        return { status: 'opened', filePath: resolvedPath };
+    } finally {
+        waitController.abort();
+        pendingOfficeTaskFileResults.delete(requestId);
+    }
+}
+
+export async function openOpenDeskSlidesPresentation(
+    taskId: string,
+    filePath: string
+): Promise<OfficeTaskFileOpenResult> {
+    return await openOpenDeskOfficeTaskFile('slides', taskId, filePath);
+}
+
 export async function executeOpenDeskSlidesCapability(
     taskId: string,
     name: string,
     input: Record<string, unknown>
 ): Promise<SlidesCapabilityExecution> {
-    const session = slidesTaskSessions.get(taskId);
+    const session = officeTaskSessions.get('slides', taskId);
     if (!session) throw new Error(t('office.slides.error.noTaskSession'));
     const host = await loadEditorHost(getEditorRuntime('slides'));
     if (!host.executeCapability) throw new Error(t('office.slides.error.capabilityUnavailable'));

@@ -34,7 +34,11 @@ import crypto from 'crypto';
 import path from 'path';
 import { SlidesApplication } from '../main/applications/slides/app.js';
 import { configureSlidesCapabilityProvider } from '../main/applications/slides/provider.js';
-import { executeOpenDeskSlidesCapability, getOpenDeskSlidesCapabilities } from '../main/office/openDeskOfficeHost.js';
+import {
+    executeOpenDeskSlidesCapability,
+    getOpenDeskSlidesCapabilities,
+    openOpenDeskSlidesPresentation
+} from '../main/office/openDeskOfficeHost.js';
 
 interface ElectronFetchSessionOptions {
     proxyUrl?: string | null;
@@ -153,6 +157,7 @@ export class ElectronPlatform extends WorkerPlatform {
         this.electronApp = electronApp;
         configureSlidesCapabilityProvider({
             getCapabilities: getOpenDeskSlidesCapabilities,
+            openPresentation: openOpenDeskSlidesPresentation,
             execute: executeOpenDeskSlidesCapability
         });
     }

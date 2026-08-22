@@ -2561,4 +2561,26 @@ describe('task-view message queue', () => {
 
         TaskViewClass.rightSidebarExpanded = false;
     });
+
+    test('opens a workspace file through the existing right sidebar', () => {
+        const sidebar = {
+            openFilePreview: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _forceExpandRightSidebar: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            openFileInSidebar: (filePath: string, line?: number, onSwitchBlocked?: () => void) => void;
+        };
+        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+        const onSwitchBlocked = jest.fn();
+
+        taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
+        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(sidebar.openFilePreview).toHaveBeenCalledWith(
+            '/workspace/deck.pptx',
+            undefined,
+            onSwitchBlocked
+        );
+    });
 });
