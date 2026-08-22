@@ -1,6 +1,6 @@
 {
     "name": "@bitclub.ai/opendesk-plugin-sdk",
-    "version": "SYNC-WITH-OPENDESK",
+    "version": "0.0.0-sync-with-opendesk",
     "description": "Plugin SDK and package validation tools for OpenDesk",
     "license": "MulanPSL-2.0",
     "type": "module",
