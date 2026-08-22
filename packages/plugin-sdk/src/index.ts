@@ -94,6 +94,10 @@ export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'co
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
+export const OPENDESK_PLUGIN_PLATFORMS = ['win32', 'darwin', 'linux', 'android', 'openharmony'] as const;
+
+export type PluginPlatform = (typeof OPENDESK_PLUGIN_PLATFORMS)[number];
+
 export type PluginFailureMode = 'open' | 'closed';
 
 export type PluginShellType = 'bash' | 'zsh' | 'powershell';
@@ -423,6 +427,7 @@ export interface OpenDeskPlugin {
     version?: string;
     apiVersion?: number;
     capabilities?: PluginCapability[];
+    platforms?: PluginPlatform[];
     minOpenDeskVersion?: string;
     maxOpenDeskVersion?: string;
     configSchema?: z.ZodType;

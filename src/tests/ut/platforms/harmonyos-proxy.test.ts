@@ -79,7 +79,8 @@ jest.unstable_mockModule('../../../main/applications/slides/provider.js', () => 
 
 jest.unstable_mockModule('../../../main/office/openDeskOfficeHost.js', () => ({
     executeOpenDeskSlidesCapability: jest.fn(),
-    getOpenDeskSlidesCapabilities: jest.fn()
+    getOpenDeskSlidesCapabilities: jest.fn(),
+    openOpenDeskSlidesPresentation: jest.fn()
 }));
 
 jest.unstable_mockModule('../../../main/utils/proxy.js', () => ({

@@ -956,13 +956,22 @@ describe('Platform fetch 抽象层', () => {
             expect(platform.getName()).toBe('worker');
         });
 
-        test('fetch 在无 parentPort 时也能正常执行（降级为原生 fetch）', async () => {
+        test('fetch 在无 parentPort 时降级为原生 fetch', async () => {
             const { WorkerPlatform } = await import('../../../platforms/worker');
             const platform = new WorkerPlatform();
 
-            // 无 parentPort 时降级为 globalThis.fetch（测试环境兼容）
+            // 测试环境无 parentPort，应降级为 globalThis.fetch（不依赖真实网络）
+            const nativeFetch = jest
+                .spyOn(globalThis, 'fetch')
+                .mockResolvedValue(new Response('worker-fallback-ok', { status: 200 }) as unknown as Response);
+
             const response = await platform.fetch('https://example.com');
-            expect(response.status).toBeGreaterThanOrEqual(200);
+
+            expect(nativeFetch).toHaveBeenCalledTimes(1);
+            expect(nativeFetch.mock.calls[0][0]).toBe('https://example.com');
+            expect(response.status).toBe(200);
+            const body = await response.text();
+            expect(body).toBe('worker-fallback-ok');
         });
     });
 

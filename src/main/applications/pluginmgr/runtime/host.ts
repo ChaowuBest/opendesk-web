@@ -526,6 +526,15 @@ export class PluginHost {
                 return this.replaceEntry(entry);
             }
         }
+        if (plugin.platforms && plugin.platforms.length > 0 && !plugin.platforms.includes(process.platform as any)) {
+            entry.status = 'disabled';
+            entry.diagnostics.push({
+                code: 'plugin.platform_unsupported',
+                stage: 'validate',
+                detail: `${process.platform}`
+            });
+            return this.replaceEntry(entry);
+        }
         const deniedCapabilities = requestedCapabilities.filter(
             (capability) => !grantedCapabilities.includes(capability)
         );
