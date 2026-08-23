@@ -68,6 +68,7 @@ export const zhCn: Record<string, string> = {
     // Renderer - 文件选择器（工作空间选择器内部使用）
     'renderer.fileSelector.emptyDrive': '未检测到磁盘',
     'renderer.fileSelector.emptyDir': '空目录',
+    'renderer.fileSelector.noSubdir': '（无子目录）',
     'renderer.fileSelector.rename': '重命名',
     'renderer.fileSelector.newFolder': '新建文件夹',
     'renderer.fileSelector.newFolderInside': '新建文件夹（在 ${name} 内）',

@@ -90,7 +90,7 @@ describe('snapshot image details', () => {
         expect(images['inline-data'].image).toBeUndefined();
     });
 
-    test('renders large image URL and size inline while preserving the accessible name and ref', () => {
+    test('compact snapshot omits long CDN URLs; explore mode keeps the full URL', () => {
         const root: AriaNode = {
             role: 'fragment',
             name: '',
@@ -118,10 +118,15 @@ describe('snapshot image details', () => {
             props: {}
         };
 
+        // Default (compactImages=true): long CDN URLs are dropped, size kept.
         const yaml = renderAriaTreeToYaml(root);
-
-        expect(yaml).toContain(`img "Bridge photo" <https://example.test/bridge.jpg>, size: 320 * 180 [ref=e3]`);
+        expect(yaml).toContain(`img "Bridge photo" [img 320*180] [ref=e3]`);
+        expect(yaml).not.toContain('https://example.test/bridge.jpg');
         expect(yaml).toContain(`img "Small icon" [ref=e4]`);
         expect(yaml).not.toContain('- /url:');
+
+        // explore() / diff render with collapse=false, which reveals full URLs.
+        const fullYaml = renderAriaTreeToYaml(root, false);
+        expect(fullYaml).toContain(`img "Bridge photo" <https://example.test/bridge.jpg>, size: 320 * 180 [ref=e3]`);
     });
 });

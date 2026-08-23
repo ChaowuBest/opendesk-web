@@ -26,8 +26,11 @@ import {
     mergeFrameTrees,
     renderAriaTreeToYaml,
     resolveNestedRefCoords,
-    isNestedRef
+    isNestedRef,
+    runAriaPasses,
+    collapseNoisySubtrees
 } from './aria.js';
+import { DEFAULT_ARIA_PASSES, pruneOffscreenPass } from '../passes/index.js';
 
 /** Minimum rendered image area that warrants exposing its source in snapshots. */
 export const IMAGE_DETAIL_MIN_RENDERED_AREA = 10_000;
@@ -49,11 +52,18 @@ export const IMAGE_DETAIL_MIN_RENDERED_AREA = 10_000;
  * - Returns JSON tree directly (NOT YAML)
  */
 export const SNAPSHOT_INJECTION = `(() => {
-    // Clean up old refs
-    var oldRefs = document.querySelectorAll('[data-od-ref]');
-    for (var i = 0; i < oldRefs.length; i++) oldRefs[i].removeAttribute('data-od-ref');
-
+    // Stable ref scheme: we PRESERVE existing data-od-ref attributes across
+    // snapshots so the same DOM node keeps the same ref between calls. This
+    // enables ref-based diffing and the explore() tool. We only assign a fresh
+    // ref to elements that don't already have one, continuing the index from
+    // the highest existing value.
     var refIdx = 0;
+    var existingRefs = document.querySelectorAll('[data-od-ref]');
+    for (var i = 0; i < existingRefs.length; i++) {
+        var m = /(?:^|[-])e(\\d+)$/.exec(existingRefs[i].getAttribute('data-od-ref') || '');
+        if (m) refIdx = Math.max(refIdx, parseInt(m[1], 10) + 1);
+    }
+
     var iframeIdx = 0;
     var iframeUrls = [];
 
@@ -337,7 +347,9 @@ export const SNAPSHOT_INJECTION = `(() => {
         var isInline = display === 'inline';
         var cursor = '';
         try { cursor = getComputedStyle(el).cursor || ''; } catch(e) {}
-        return { visible: visible, inline: isInline, cursor: cursor, width: width, height: height };
+        var inViewport = visible && rect.bottom > 0 && rect.top < (window.innerHeight || 0)
+            && rect.right > 0 && rect.left < (window.innerWidth || 0);
+        return { visible: visible, inline: isInline, cursor: cursor, width: width, height: height, inViewport: inViewport };
     }
 
     function getImageUrl(el) {
@@ -347,6 +359,41 @@ export const SNAPSHOT_INJECTION = `(() => {
             if (candidate && !/^(?:data|blob):/i.test(candidate)) return candidate;
         }
         return '';
+    }
+
+    // ---- Icon-font detection ----
+    // <i>/<span> that render a glyph via an icon font (e.g. Font Awesome
+    // <i class="fa fa-cog"></i>) carry no text content and no implicit ARIA
+    // role, so they are otherwise dropped by the generic-wrapper cleanup
+    // passes and never appear in the snapshot. Lift them into named 'img'
+    // nodes so the agent can see (and target) the icon.
+
+    function isIconFontElement(el) {
+        if (el.tagName !== 'I' && el.tagName !== 'SPAN') return false;
+        var cls = el.getAttribute('class');
+        if (!cls || !cls.trim()) return false;
+        // No real text content (whitespace-only)
+        var text = (el.textContent || '').replace(/[\\s\\u00A0]+/g, '');
+        if (text) return false;
+        // Must actually render a box (icon glyph sized by its font)
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        return true;
+    }
+
+    function iconNameFromClass(el) {
+        var cls = (el.getAttribute('class') || '').trim();
+        if (!cls) return '';
+        var tokens = cls.split(/\\s+/);
+        // Prefer the icon glyph class (e.g. "fa-cog", "icon-search", "mdi-home");
+        // skip generic family/size modifiers (fa, fa-solid, fa-regular, fa-2x).
+        var skip = /^(?:fa|fa-solid|fa-regular|fa-brands|fa-[0-9]+x)$/i;
+        for (var i = tokens.length - 1; i >= 0; i--) {
+            var t = tokens[i];
+            if (!t || skip.test(t)) continue;
+            return t;
+        }
+        return cls;
     }
 
     // ---- State computation ----
@@ -407,6 +454,15 @@ export const SNAPSHOT_INJECTION = `(() => {
         if (!role || role === 'presentation' || role === 'none') return null;
 
         var name = getAccessibleName(el);
+        // Icon-font glyphs (<i class="fa fa-cog"> etc.) have no text content and
+        // default to 'generic', which the cleanup passes would drop. Name them
+        // from their class so they survive the passes. <i> (the idiomatic icon
+        // tag) is lifted to an explicit 'icon' role; a decorated <span> stays
+        // generic but keeps its class-derived name.
+        if (isIconFontElement(el)) {
+            if (el.tagName === 'I') role = 'icon';
+            name = iconNameFromClass(el);
+        }
         // Trim name to reasonable length
         if (name.length > 900) name = name.slice(0, 900);
 
@@ -558,15 +614,21 @@ export const SNAPSHOT_INJECTION = `(() => {
         var childAriaNode = visible ? toAriaNode(el) : null;
 
         if (childAriaNode) {
-            // Compute ref for interactable elements
-            if (childAriaNode.box.visible && childAriaNode.rpe) {
+            // Reuse a stable ref if this element already carries one from a
+            // previous snapshot; otherwise mint a fresh one. Reusing keeps the
+            // same DOM node mapped to the same ref across snapshots.
+            var existingRef = el.getAttribute('data-od-ref');
+            if (existingRef) {
+                childAriaNode.ref = existingRef;
+            } else if (childAriaNode.box.visible && childAriaNode.rpe) {
                 var ref = 'e' + refIdx;
                 childAriaNode.ref = ref;
                 el.setAttribute('data-od-ref', ref);
                 refIdx++;
             }
             // Iframe elements ALWAYS get a ref, even if not yet visible.
-            // The ref is needed for tree merging (prefixing child-frame refs).
+            // The ref is needed for tree merging (prefixing child-frame refs)
+            // and for lazy on-demand expansion via explore().
             if (el.tagName === 'IFRAME' && !childAriaNode.ref) {
                 var iframeRef = 'e' + refIdx;
                 childAriaNode.ref = iframeRef;
@@ -579,57 +641,9 @@ export const SNAPSHOT_INJECTION = `(() => {
         processElement(childAriaNode || parentAriaNode, el, ariaOwned, visible);
     }
 
-    // ---- Normalize string children (merge adjacent text) ----
-
-    function normalizeStrings(ariaNode) {
-        var newChildren = [];
-        var buf = [];
-        for (var i = 0; i < ariaNode.children.length; i++) {
-            var child = ariaNode.children[i];
-            if (typeof child === 'string') {
-                buf.push(child);
-            } else {
-                if (buf.length) {
-                    var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
-                    if (merged) newChildren.push(merged);
-                    buf = [];
-                }
-                normalizeStrings(child);
-                newChildren.push(child);
-            }
-        }
-        if (buf.length) {
-            var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
-            if (merged) newChildren.push(merged);
-        }
-        ariaNode.children = newChildren;
-
-        // Remove text child that is same as name
-        if (ariaNode.children.length === 1 && ariaNode.children[0] === ariaNode.name)
-            ariaNode.children = [];
-    }
-
-    // ---- Normalize generic roles (prune wrappers) ----
-
-    function normalizeGenerics(node) {
-        var result = [];
-        for (var i = 0; i < node.children.length; i++) {
-            var child = node.children[i];
-            if (typeof child === 'string') {
-                result.push(child);
-                continue;
-            }
-            var normalized = normalizeGenerics(child);
-            result.push.apply(result, normalized);
-        }
-
-        var removeSelf = node.role === 'generic' && !node.name &&
-            result.length <= 1 && result.every(function(c) { return typeof c !== 'string' && !!c.ref; });
-        if (removeSelf) return result;
-
-        node.children = result;
-        return [node];
-    }
+    // Tree normalization/optimization passes now run in TypeScript
+    // (see passes/: runAriaPasses / DEFAULT_ARIA_PASSES), so the raw
+    // snapshot emitted here preserves the maximum AriaNode information.
 
     // ---- Serialize to JSON (strip internal fields: box, rpe, el) ----
 
@@ -657,6 +671,9 @@ export const SNAPSHOT_INJECTION = `(() => {
         if (node.selected !== undefined) obj.selected = node.selected;
         if (node.image !== undefined) obj.image = node.image;
 
+        // Copy layout box (visible / inViewport) so viewport-aware passes can run
+        if (node.box !== undefined) obj.box = node.box;
+
         // Copy iframe metadata
         if (node.frameSrc !== undefined) obj.frameSrc = node.frameSrc;
         if (node.frameIndex !== undefined) obj.frameIndex = node.frameIndex;
@@ -682,9 +699,6 @@ export const SNAPSHOT_INJECTION = `(() => {
         visitNode(root, document.body, true);
     }
 
-    normalizeStrings(root);
-    normalizeGenerics(root);
-
     // Serialize to clean JSON (no internal JS fields)
     var serializedRoot = serializeNode(root);
 
@@ -702,6 +716,19 @@ export const SNAPSHOT_INJECTION = `(() => {
 // Snapshot capture
 // ---------------------------------------------------------------------------
 
+export interface CapturedSnapshot extends PageSnapshot {
+    /** Full ARIA tree (with collapse flags + complete children) for the explore() tool. */
+    tree: AriaNode;
+}
+
+export interface SnapshotOptions {
+    /**
+     * Collapse subtrees outside the current viewport that carry no interactable
+     * descendant, so the snapshot focuses on what the agent can actually see.
+     */
+    viewportOnly?: boolean;
+}
+
 /**
  * Capture a page snapshot across ALL frames (including cross-origin iframes).
  *
@@ -711,10 +738,20 @@ export const SNAPSHOT_INJECTION = `(() => {
  * Refs in child frames are prefixed with the parent iframe's ref
  * (e.g. "e5-e3" means element e3 inside iframe e5).
  *
- * The final output is rendered as a YAML string for backward compatibility
- * with the existing PageSnapshot protocol.
+ * The captured tree is first run through the optimization pass pipeline, then
+ * "noisy" subtrees (iframes, large landmark regions, deep decoration chains)
+ * are marked collapsed. Collapsed nodes keep their full children in `tree` so
+ * the explore() tool can expand them on demand, while the rendered
+ * `ariaSnapshot` shows only a compact one-line summary.
+ *
+ * When `opts.viewportOnly` is true an additional pruneOffscreenPass runs at the
+ * tail of the pipeline, folding off-screen non-interactive regions into one
+ * line so long pages shrink to the visible part. The rendered snapshot is
+ * always prefixed with an interactive-element index (P0): the index sits at the
+ * very top so a truncated result still carries the clickable refs the agent
+ * needs to continue.
  */
-export async function captureSnapshot(session: CDPSession): Promise<PageSnapshot> {
+export async function captureSnapshot(session: CDPSession, opts: SnapshotOptions = {}): Promise<CapturedSnapshot> {
     const nestedResult = await session.executeJavaScriptOnAllFrames(SNAPSHOT_INJECTION);
 
     // Parse main frame result
@@ -730,15 +767,20 @@ export async function captureSnapshot(session: CDPSession): Promise<PageSnapshot
         mergeFrameTrees(mainResult.root, nestedResult.frameResults);
     }
 
-    // Render to YAML
-    const yamlStr = renderAriaTreeToYaml(mainResult.root);
+    // Run the optimization pass pipeline, then mark noisy subtrees collapsed.
+    // Collapsed nodes retain their full children in `tree` for explore().
+    const passes = opts.viewportOnly ? [...DEFAULT_ARIA_PASSES, pruneOffscreenPass] : DEFAULT_ARIA_PASSES;
+    const optimizedRoot = runAriaPasses(mainResult.root, passes);
+    collapseNoisySubtrees(optimizedRoot);
+    const ariaSnapshot = renderAriaTreeToYaml(optimizedRoot, true);
 
     return {
         url: mainResult.url,
         title: mainResult.title,
         viewport: mainResult.viewport,
         scroll: mainResult.scroll,
-        ariaSnapshot: yamlStr
+        ariaSnapshot,
+        tree: optimizedRoot
     };
 }
 

@@ -937,14 +937,16 @@ export class FileMessagePart implements BaseFileMessagePart {
         if (modifiedStr) metaParts.push(`modified ${modifiedStr}`);
         const metaInfo = metaParts.join(', ');
 
+        // 左键点击行为与普通文本消息中的 file-pill 保持一致：带 data-open-preview，
+        // 由渲染端 _handlePreviewOpenClick 统一在右侧预览。data-file-path 供右键/三点菜单使用。
         return `
-        <div class="od-file-card" data-file-path="${escapeHtml(this.path)}" data-open-file="${escapeHtml(this.path)}">
+        <div class="od-file-card" data-file-path="${escapeHtml(this.path)}" data-open-preview="${escapeHtml(this.path)}">
             <div class="od-file-card-icon">${fileIcon}</div>
             <div class="od-file-card-info">
                 <span class="od-file-card-name">${fileName}</span>
                 ${metaInfo ? `<span class="od-file-card-meta">${metaInfo}</span>` : `<span class="od-file-card-meta">${ext} 文档</span>`}
             </div>
-            <button class="od-file-card-menu" aria-label="文件操作">
+            <button class="od-file-card-menu" aria-label="文件操作" data-open-preview="${escapeHtml(this.path)}">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                     <circle cx="8" cy="3" r="1.5"/>
                     <circle cx="8" cy="8" r="1.5"/>
