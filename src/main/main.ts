@@ -46,6 +46,8 @@ import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
+import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
+import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import {
@@ -487,6 +489,14 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
     // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
     // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
     hostWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        // 导航拦截 workaround：guest 的 renderer 自发起跨文档导航会被框架层静默取消，
+        // preload 仅注入主 frame；搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）
+        // 需要把 NAV_INTERCEPT_SCRIPT 注入每个 frame。注入脚本自带幂等标记，重复执行无害。
+        injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
+        webContents.on('did-frame-navigate', () => {
+            injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
+        });
+
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank' && !hostWindow.isDestroyed()) {
                 safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);

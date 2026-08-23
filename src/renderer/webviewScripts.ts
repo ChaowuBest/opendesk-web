@@ -278,3 +278,167 @@ export const NOTIFY_POPUP_CLOSED_SCRIPT = `(function() {
         });
     }
 })()`;
+
+// ---------------------------------------------------------------------------
+// 导航劫持（workaround）：webview guest 的 renderer 自发起跨文档导航会被
+// browser process 在提交前静默中止（ERR_ABORTED canceled=true），而
+// webview.loadURL 通道正常。此脚本把页面内最常见的同窗口导航入口——左键
+// 点击 <a>、GET 表单提交（含 form.submit() 方法）、以及用户意图窗口内的
+// 同主域 JS 导航（location 赋值）——转为 console 信令，由宿主 renderer
+// 通过 loadURL 完成导航。
+//
+// 明确放行（保持原生行为）：
+//  - 修饰键点击（Ctrl/Meta 新标签、Shift 新窗口）
+//  - target=_blank / rel=external（由 setWindowOpenHandler popup 通道处理）
+//  - 非 http(s) 协议（javascript: / mailto: / 锚点等）
+//  - POST 表单（无法无损转为 URL）
+//  - 跨主域的 JS 导航
+// ---------------------------------------------------------------------------
+
+/** guest → renderer 导航信令的 console 前缀，与 entry.ts / browser.ts 解析端一致。 */
+export const NAV_INTERCEPT_CONSOLE_PREFIX = '__od_nav__:';
+
+export const NAV_INTERCEPT_SCRIPT = `(function() {
+    if (window.__odNavInterceptInstalled) return;
+    window.__odNavInterceptInstalled = true;
+
+    var PREFIX = '${NAV_INTERCEPT_CONSOLE_PREFIX}';
+
+    function isHttpLike(el) {
+        return el && (el.protocol === 'http:' || el.protocol === 'https:');
+    }
+
+    function findAnchor(node) {
+        while (node) {
+            if (node.tagName === 'A') return node;
+            node = node.parentElement;
+        }
+        return null;
+    }
+
+    // 左键点击 <a>：修饰键 / 弹窗目标 / 非 http(s) 一律放行
+    document.addEventListener('click', function(e) {
+        if (e.defaultPrevented || e.button !== 0) return;
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        var path = e.composedPath ? e.composedPath() : [];
+        var a = null;
+        for (var i = 0; i < path.length; i++) {
+            if (path[i] && path[i].tagName === 'A') { a = path[i]; break; }
+        }
+        if (!a && e.target && e.target.closest) a = e.target.closest('a[href]');
+        if (!a) return;
+        if (a.getAttribute('target') !== null && a.getAttribute('target') !== '_self') return;
+        if ((a.getAttribute('rel') || '').indexOf('external') !== -1) return;
+        if (!isHttpLike(a)) return;
+        e.preventDefault();
+        console.log(PREFIX + a.href);
+    }, true);
+
+    // GET 表单提交（含搜索框回车的隐式提交）：序列化为 URL 后走 loadURL 通道；
+    // POST 无法无损转为 URL，放行原生行为。
+    document.addEventListener('submit', function(e) {
+        if (e.defaultPrevented) return;
+        var form = e.target;
+        if (!form || form.tagName !== 'FORM') return;
+        var t = form.getAttribute('target');
+        if (t !== null && t !== '_self') return;
+        var action;
+        try { action = new URL(form.getAttribute('action') || location.href, location.href); }
+        catch (err) { return; }
+        if (action.protocol !== 'http:' && action.protocol !== 'https:') return;
+        if ((form.getAttribute('method') || 'get').toLowerCase() !== 'get') return;
+        var params = new URLSearchParams(action.search);
+        var appended = false;
+        try {
+            var fd = new FormData(form);
+            fd.forEach(function(value, name) {
+                if (!name) return;
+                if (typeof value === 'string') { params.append(name, value); appended = true; }
+            });
+        } catch (err) { /* FormData 构造失败则放弃劫持 */ }
+        if (!appended) return;
+        action.search = params.toString();
+        e.preventDefault();
+        console.log(PREFIX + action.toString());
+    }, true);
+
+    // form.submit() 的原生导航在 webview 中被静默挂起，且不触发 submit 事件，
+    // 上面的 submit 拦截捕获不到（Bing 搜索框回车即走此路径）。包装
+    // HTMLFormElement.prototype.submit，对可无损转为 URL 的 GET 表单转为信令
+    // 走 loadURL 通道；POST / 非 http(s) 放行原生行为。
+    var _origSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function() {
+        var form = this;
+        var action;
+        try { action = new URL(form.getAttribute('action') || location.href, location.href); }
+        catch (err) { return _origSubmit.apply(this, arguments); }
+        if (action.protocol !== 'http:' && action.protocol !== 'https:') return _origSubmit.apply(this, arguments);
+        if ((form.getAttribute('method') || 'get').toLowerCase() !== 'get') return _origSubmit.apply(this, arguments);
+        var params = new URLSearchParams(action.search);
+        var appended = false;
+        try {
+            var fd = new FormData(form);
+            fd.forEach(function(value, name) {
+                if (!name) return;
+                if (typeof value === 'string') { params.append(name, value); appended = true; }
+            });
+        } catch (err) { /* FormData 构造失败则放行原生 */ }
+        if (!appended) return _origSubmit.apply(this, arguments);
+        action.search = params.toString();
+        console.log(PREFIX + action.toString());
+    };
+
+    // JS 直接导航兜底：location.assign / location.replace。
+    // 搜索框回车等场景常由页面 JS 调用 assign/replace 完成导航，这类导航同样
+    // 会被 webview 框架层静默中止，这里转为 console 信令走 loadURL 通道。
+    // 只拦截 http(s) 完整 URL 且与当前页面同主域（避免误伤登录回调、短链跳转等
+    // 跨域重定向）；每个 frame 有独立的 Location 实例，不影响其他 frame。
+    //
+    // 注意：location.href = url 赋值在 Chromium 中 Location.prototype.href 没有
+    // 可覆写的 setter（实测 Object.getOwnPropertyDescriptor 返回 undefined），
+    // 无法在 guest 侧拦截，此类导航仍会挂起——这是无法绕过的平台限制。
+    //
+    // 为避免拦截页面在输入过程中自动发起的 URL 更新导航（这些导航被框架层取消
+    // 但页面保持不动，若拦截会导致每次输入都跳转搜索页），仅在用户明确导航
+    // 意图（回车 / 左键点击）后的短暂窗口（1s）内生效。
+    var _lastNavIntent = 0;
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) _lastNavIntent = Date.now();
+    }, true);
+    document.addEventListener('click', function(e) {
+        if (e.button === 0) _lastNavIntent = Date.now();
+    }, true);
+
+    var HTTP_NAV_RE = new RegExp('^https?://', 'i');
+    function isHttpNav(url) {
+        return typeof url === 'string' && HTTP_NAV_RE.test(url);
+    }
+    function sameMainDomain(a, b) {
+        var ha = String(a).toLowerCase();
+        var hb = String(b).toLowerCase();
+        if (ha.slice(0, 4) === 'www.') ha = ha.slice(4);
+        if (hb.slice(0, 4) === 'www.') hb = hb.slice(4);
+        return ha === hb || ha.slice(-hb.length - 1) === '.' + hb || hb.slice(-ha.length - 1) === '.' + ha;
+    }
+    function routeJsNav(url) {
+        if (!isHttpNav(url)) return false;
+        if (Date.now() - _lastNavIntent > 1000) return false;
+        try {
+            if (!sameMainDomain(new URL(url).hostname, location.hostname)) return false;
+        } catch (err) { return false; }
+        console.log(PREFIX + url);
+        return true;
+    }
+    try {
+        var _assign = Location.prototype.assign;
+        var _replace = Location.prototype.replace;
+        Location.prototype.assign = function(url) {
+            if (routeJsNav(url)) return;
+            return _assign.apply(this, arguments);
+        };
+        Location.prototype.replace = function(url) {
+            if (routeJsNav(url)) return;
+            return _replace.apply(this, arguments);
+        };
+    } catch (err) { /* Location.prototype 在部分环境不可覆写 */ }
+})();`;

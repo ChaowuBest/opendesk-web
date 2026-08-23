@@ -13,7 +13,12 @@ import type { WebviewTag } from 'electron';
 import { BrowserInstance } from '../common/embedBrowserUse/renderer';
 import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../common/browserErrors';
-import { WINDOW_OPEN_PROXY_SCRIPT, OPENER_BRIDGE_SCRIPT, NOTIFY_POPUP_CLOSED_SCRIPT } from './webviewScripts';
+import {
+    WINDOW_OPEN_PROXY_SCRIPT,
+    OPENER_BRIDGE_SCRIPT,
+    NOTIFY_POPUP_CLOSED_SCRIPT,
+    NAV_INTERCEPT_CONSOLE_PREFIX
+} from './webviewScripts';
 import { createRendererTranslator } from './locale.js';
 
 export type { BrowserState, TabInfo };
@@ -1236,6 +1241,15 @@ export class EmbeddedBrowser extends BrowserInstance {
                 if (childTab) {
                     this.closeTab(childTab.id);
                 }
+                return;
+            }
+            // 导航劫持 workaround：guest 内同窗口导航被框架层静默中止，
+            // 页面脚本将导航转为信令，这里对来源 tab 用 loadURL 完成。
+            if (msg.startsWith(NAV_INTERCEPT_CONSOLE_PREFIX)) {
+                const url = msg.slice(NAV_INTERCEPT_CONSOLE_PREFIX.length);
+                if (url && /^https?:\/\//.test(url)) {
+                    this.navigateTo(url, tab);
+                }
             }
         });
 
@@ -1399,8 +1413,10 @@ export class EmbeddedBrowser extends BrowserInstance {
 
     // ==== Public API (called by user UI AND by agent tools via IPC) ====
 
-    public navigateTo(url: string): void {
-        const tab = this.getActiveTab();
+    public navigateTo(url: string, targetTab?: BrowserTab): void {
+        // 指定 targetTab 时对指定 tab 导航（导航拦截信令可能来自后台 tab），
+        // 否则对当前活跃 tab 导航；UI 同步仍基于活跃 tab。
+        const tab = targetTab ?? this.getActiveTab();
         if (!tab || !tab.webview) return;
         const targetUrl = this.normalizeUrl(url.trim());
         if (!targetUrl) return;
