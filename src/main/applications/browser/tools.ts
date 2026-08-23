@@ -98,30 +98,41 @@ function getController(app: BrowserApplication, taskId: string) {
  * 在工具操作成功后，可选地自动获取页面快照。
  * 当 doSnapshot 为 true 时，等待 500ms 后执行 snapshot 并拼入返回结果。
  * snapshot 失败不影响原操作结果。
+ *
+ * 返回值为多行 YAML 文本（而非 JSON），使落盘结果可直接 readFile/grep，
+ * 同时快照默认走 diff 模式：只返回相对上一次快照变化的子树，体积更小；
+ * 无上一次基准时（首次快照）自动回退完整快照。
  */
 async function withSnapshot(
     ctrl: BrowserController,
     doSnapshot: boolean,
     result: Record<string, any>
-): Promise<Record<string, any>> {
-    if (!doSnapshot) return result;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    try {
-        const snapshot = await ctrl.snapshot();
-        const lines: string[] = [];
-        lines.push('- Page URL: ' + snapshot.url);
-        if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
-        lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
-        if (snapshot.scroll.x || snapshot.scroll.y)
-            lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
-        lines.push('');
-        lines.push('[Accessibility Snapshot]');
-        lines.push(snapshot.ariaSnapshot);
-        return { ...result, snapshot: lines.join('\n') };
-    } catch {
-        // snapshot 失败不影响原操作结果
-        return result;
+): Promise<string> {
+    const lines: string[] = [];
+    // 渲染操作结果的结构化字段为 YAML 行（简单标量直出，嵌套值单行 JSON）
+    for (const [key, value] of Object.entries(result)) {
+        if (value === undefined || value === null || value === '') continue;
+        const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+        lines.push(`- ${key}: ${rendered}`);
     }
+    if (doSnapshot) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        try {
+            // 对比操作前后的 URL：变化说明发生了跨页导航，让 agent 一眼识别
+            // （SPA 路由 / 表单提交等），避免对旧 ref 产生误解。
+            const urlBefore = ctrl.getLastUrl();
+            const snapshot = await ctrl.snapshot({ mode: 'diff' });
+            if (urlBefore !== undefined && urlBefore !== snapshot.url) {
+                lines.push(`- Page Changed: yes (${urlBefore} → ${snapshot.url})`);
+            }
+            lines.push('');
+            lines.push('[Accessibility Snapshot]');
+            lines.push(snapshot.ariaSnapshot);
+        } catch {
+            // snapshot 失败不影响原操作结果
+        }
+    }
+    return lines.join('\n');
 }
 
 // ========== navigate ==========
@@ -169,8 +180,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.navigate(args.url, args.newTab);
             if (result.error) return fail(result.error);
-            const finalResult = await withSnapshot(ctrl, args.snapshot, { url: result.url, title: result.title });
-            return ok(finalResult);
+            return withSnapshot(ctrl, args.snapshot, { url: result.url, title: result.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -179,7 +189,26 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
 
 // ========== snapshot ==========
 
-const BrowserSnapshotArgsSchema = z.object({});
+const BrowserSnapshotArgsSchema = z.object({
+    mode: z
+        .enum(['full', 'diff'])
+        .default('full')
+        .describe(
+            '快照模式：full=完整快照（默认，仍会折叠噪声/重复区域）；diff=仅返回相对上一次快照变化的 ref 子树，体积更小，适合操作后确认页面变化'
+        ),
+    viewportOnly: z
+        .boolean()
+        .default(false)
+        .describe(
+            '仅聚焦当前视口：视口外且无交互后代的子树折叠为一行摘要，长页面体积显著更小。适合长列表/长文页滚动定位场景'
+        ),
+    ref: z
+        .string()
+        .optional()
+        .describe(
+            '只渲染指定 ref 的子树（如 e3，或嵌套 ref 如 e5-e3），返回该节点的完整 ARIA 内容。适合大快照被截断时按需取某区域（如商品价格区），无需 evaluate 兜底'
+        )
+});
 
 export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSchema> {
     private browserApp: BrowserApplication;
@@ -187,7 +216,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
     constructor(browserApp: BrowserApplication) {
         super(
             'snapshot',
-            '获取当前页面的无障碍（Accessibility）快照，以 YAML 格式返回完整的 ARIA 树结构。每个可交互元素标注 ref（如 e0、e3），用于后续 click / type 等操作的 target 定位。这是与页面交互前的必要步骤。',
+            '获取当前页面的无障碍（Accessibility）快照，以 YAML 格式返回完整的 ARIA 树结构。每个可交互元素标注 ref（如 e0、e3），用于后续 click / type 等操作的 target 定位。这是与页面交互前的必要步骤。噪声区域（iframe、页脚、深层装饰）默认折叠为一行摘要，可用 explore(ref) 展开。',
             BrowserSnapshotArgsSchema
         );
         this.browserApp = browserApp;
@@ -203,7 +232,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
             if (urlMatch) body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(urlMatch[1], width - 16)));
             if (titleMatch) body.push(chalk.dim('  标题: ') + chalk.white(truncText(titleMatch[1], width - 16)));
             // Count refs in YAML to report element count
-            const refCount = (toolcall.result.match(/\[ref=e\d+\]/g) || []).length;
+            const refCount = (toolcall.result.match(/\[ref=e\d+.*?\]/g) || []).length;
             body.push(chalk.dim('  可交互元素: ') + chalk.green(String(refCount) + ' 个'));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -212,7 +241,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
     }
 
     private async handleExecute(
-        _args: z.output<typeof BrowserSnapshotArgsSchema>,
+        args: z.output<typeof BrowserSnapshotArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
@@ -220,7 +249,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const snapshot = await ctrl.snapshot();
+            const snapshot = await ctrl.snapshot({ mode: args.mode, viewportOnly: args.viewportOnly, ref: args.ref });
 
             const lines: string[] = [];
             lines.push('- Page URL: ' + snapshot.url);
@@ -228,10 +257,65 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
             lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
             if (snapshot.scroll.x || snapshot.scroll.y)
                 lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
+            if (args.mode === 'diff') lines.push('- Mode: diff (仅展示变化部分)');
             lines.push('');
             lines.push('[Accessibility Snapshot]');
             lines.push(snapshot.ariaSnapshot);
             return lines.join('\n');
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== explore ==========
+
+const BrowserExploreArgsSchema = z.object({
+    ref: z
+        .string()
+        .describe(
+            '要展开的元素 ref（如 e3，或嵌套 ref 如 e5-e3）。展开其在快照中被折叠（iframe / 页脚 / 深层装饰）的子树，返回完整内容'
+        ),
+    snapshot: z.boolean().default(false).describe('展开后是否再获取一次完整页面快照（默认 false，仅返回该 ref 的子树）')
+});
+
+export class BrowserExploreTool extends BaseTool<typeof BrowserExploreArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'explore',
+            '展开快照中某个 ref 折叠的子树，返回其完整 ARIA 内容。默认快照会把 iframe、页脚、深层装饰等噪声区域折叠为一行摘要；当你需要查看其中具体内容（如页脚链接、某个 iframe 的内部结构）时，用 explore(ref) 按需展开，避免每次快照都把整页内容塞进上下文。',
+            BrowserExploreArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.ref) body.push(chalk.dim('  ref: ') + chalk.yellow(args.ref));
+        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已展开'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '🔬', title: '展开节点', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserExploreArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.explore(args.ref);
+            if (args.snapshot) {
+                return withSnapshot(ctrl, true, { ariaSnapshot: result.ariaSnapshot });
+            }
+            return ok({ ariaSnapshot: result.ariaSnapshot });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -286,7 +370,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
                 doubleClick: args.doubleClick,
                 modifiers: args.modifiers
             });
-            return ok(await withSnapshot(ctrl, args.snapshot, result));
+            return withSnapshot(ctrl, args.snapshot, result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -344,7 +428,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
                 submit: args.submit,
                 slowly: args.slowly
             });
-            return ok(await withSnapshot(ctrl, args.snapshot, result));
+            return withSnapshot(ctrl, args.snapshot, result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -432,7 +516,7 @@ export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgs
 
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.uploadFile(args.target, filePaths);
-            return ok(await withSnapshot(ctrl, args.snapshot, result));
+            return withSnapshot(ctrl, args.snapshot, result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -580,7 +664,7 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
         try {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.selectOption(args.target, args.values);
-            return ok(await withSnapshot(ctrl, args.snapshot, result));
+            return withSnapshot(ctrl, args.snapshot, result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -675,8 +759,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.goBack();
             if (info.error) return fail(`后退失败: ${info.error}`);
-            const finalResult = await withSnapshot(ctrl, _args.snapshot, { url: info.url, title: info.title });
-            return ok(finalResult);
+            return withSnapshot(ctrl, _args.snapshot, { url: info.url, title: info.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -876,7 +959,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         try {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.tabs(args.action, args.tabId, args.url);
-            return ok(await withSnapshot(ctrl, args.snapshot, result));
+            return withSnapshot(ctrl, args.snapshot, result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }

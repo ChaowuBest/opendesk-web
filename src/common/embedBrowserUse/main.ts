@@ -19,8 +19,20 @@
 import { Channels } from './protocol';
 import type { BrowserState, TabInfo, PageSnapshot, IPCResponse } from './protocol';
 import { CDPSession, CDPSessionManager, setCDPLogger } from './cdp/session';
-import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
-import { isNestedRef, parseRef, resolveNestedRefCoords, navigateToFrame, navigateIntoFrame } from './cdp/aria';
+import { captureSnapshot, resolveTargetCoords, type CapturedSnapshot } from './cdp/snapshot';
+import {
+    isNestedRef,
+    parseRef,
+    resolveNestedRefCoords,
+    navigateToFrame,
+    navigateIntoFrame,
+    findNodeByRef,
+    renderAriaTreeToYaml,
+    diffTrees,
+    shouldFallbackToFullDiff,
+    buildRefMissNote,
+    type AriaNode
+} from './cdp/aria';
 import { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
 import type { CDPLogger } from './cdp/session';
 import fs from 'node:fs/promises';
@@ -298,6 +310,29 @@ export function makePressTabInDocumentScript(reverse: boolean): string {
 // BrowserController — per-instance controller
 // ---------------------------------------------------------------------------
 
+/** Info about a tab that was opened by the action and is now active. */
+export interface ActionNewTab {
+    id?: number;
+    title: string;
+    url: string;
+}
+
+/**
+ * What actually happened after an interactive action (click / type+submit):
+ * whether a same-tab navigation occurred and/or a new tab was opened.
+ * Lets callers report reality instead of silently returning stale state.
+ */
+export interface ActionOutcome {
+    navigated: boolean;
+    newTab: ActionNewTab | null;
+}
+
+/** Element actually sitting under the click point right before dispatch. */
+export interface ClickHitElement {
+    tag: string;
+    text: string;
+}
+
 /**
  * Per-instance browser controller that encapsulates all CDP-based automation
  * operations. Each controller is associated with a unique instance ID
@@ -312,6 +347,12 @@ export class BrowserController {
     // Serialize all browser actions to prevent concurrent CDP conflicts
     // (e.g. two type() calls interleaving keystrokes into wrong elements)
     private _actionQueue: Promise<any> = Promise.resolve();
+
+    // New-tab / navigation detection window after an interactive action.
+    // target=_blank links often activate their new tab a few hundred ms after
+    // the click, so detection must poll instead of checking once.
+    private _actionPollIntervalMs = 150;
+    private _actionDetectWindowMs = 1000;
 
     constructor(
         id: string,
@@ -553,12 +594,17 @@ export class BrowserController {
      * Wait for click side-effects (navigation, new tab, DOM mutations) to settle.
      *
      * Strategy (in order):
-     * 1. If the click opened a new tab → wait for new tab's page ready
-     * 2. If the URL changed (same-tab navigation) → waitForPageReady
-     * 3. Otherwise (SPA interaction) → wait for DOM to stabilize via MutationObserver
-     * 4. Hard timeout fallback → fixed 500ms delay
+     * 1. Poll within a short window: a click that opens a new tab (target=_blank)
+     *    or triggers same-tab navigation is detected as soon as it happens.
+     *    New tabs often activate several hundred ms after the click, so a single
+     *    post-click check would miss them and keep reporting the OLD page.
+     * 2. Otherwise (SPA interaction) → wait for DOM to stabilize via MutationObserver
+     * 3. Hard timeout fallback → fixed 500ms delay
+     *
+     * Returns an ActionOutcome so callers can report what actually happened
+     * (new tab info / navigation) instead of silently returning stale state.
      */
-    async waitForClickCompletion(session: CDPSession, callback: () => Promise<void>): Promise<void> {
+    async waitForClickCompletion(session: CDPSession, callback: () => Promise<void>): Promise<ActionOutcome> {
         // Record pre-action state
         let urlBefore: string | null = null;
         let wcIdBefore: number | null = null;
@@ -575,40 +621,46 @@ export class BrowserController {
 
         await callback();
 
-        // Small delay for the browser to process the event
-        await sleep(100);
+        // Poll for side-effects inside a short window (new-tab activation and
+        // same-tab navigation are both checked each round).
+        const deadline = Date.now() + this._actionDetectWindowMs;
+        for (;;) {
+            await sleep(this._actionPollIntervalMs);
 
-        // 1) Detect new tab: if webContentsId changed, a new tab was opened and activated
-        if (wcIdBefore != null) {
-            try {
-                const wcIdAfter = await this.callRendererBrowser('browserGetWebContentsId');
-                if (wcIdAfter != null && wcIdAfter !== wcIdBefore) {
-                    // New tab activated — wait for it to be ready
-                    const newSession = await this.getCDPSession();
-                    if (newSession) {
-                        await newSession.waitForPageReady(8000);
+            // 1) New tab opened & activated?
+            if (wcIdBefore != null) {
+                try {
+                    const wcIdAfter = await this.callRendererBrowser('browserGetWebContentsId');
+                    if (wcIdAfter != null && wcIdAfter !== wcIdBefore) {
+                        const newTab = await this._describeActiveTab();
+                        const newSession = await this.getCDPSession();
+                        if (newSession) {
+                            await newSession.waitForPageReady(8000);
+                        }
+                        return { navigated: false, newTab };
                     }
-                    return;
+                } catch {
+                    // Tab detection failed — fall through to URL check
+                }
+            }
+
+            // 2) Same-tab navigation? A failed URL read also indicates a transition.
+            try {
+                const r = await session.send('Runtime.evaluate', {
+                    expression: 'location.href',
+                    returnByValue: true
+                });
+                const urlAfter = r.result.value;
+                if (urlAfter !== urlBefore) {
+                    await session.waitForPageReady(8000);
+                    return { navigated: true, newTab: null };
                 }
             } catch {
-                // Tab detection failed — fall through to URL / DOM checks
-            }
-        }
-
-        // 2) Same-tab navigation: URL changed
-        try {
-            const r = await session.send('Runtime.evaluate', {
-                expression: 'location.href',
-                returnByValue: true
-            });
-            const urlAfter = r.result.value;
-            if (urlAfter !== urlBefore) {
                 await session.waitForPageReady(8000);
-                return;
+                return { navigated: true, newTab: null };
             }
-        } catch {
-            await session.waitForPageReady(8000);
-            return;
+
+            if (Date.now() >= deadline) break;
         }
 
         // 3) SPA interaction — wait for DOM (menu, dialog, lazy content, animations) to settle
@@ -617,6 +669,24 @@ export class BrowserController {
         } catch {
             // MutationObserver couldn't be injected — fallback to fixed delay
             await sleep(500);
+        }
+        return { navigated: false, newTab: null };
+    }
+
+    /** Describe the currently active tab via the renderer bridge. */
+    private async _describeActiveTab(): Promise<ActionNewTab | null> {
+        try {
+            const tabs = await this.callRendererBrowser('browserListTabs');
+            if (!Array.isArray(tabs)) return null;
+            const active = tabs.find((t: any) => t && t.active) ?? tabs[tabs.length - 1];
+            if (!active || typeof active !== 'object') return null;
+            return {
+                id: active.id,
+                title: String(active.title ?? ''),
+                url: String(active.url ?? '')
+            };
+        } catch {
+            return null;
         }
     }
 
@@ -1025,17 +1095,88 @@ export class BrowserController {
         });
     }
 
-    async snapshot(): Promise<PageSnapshot> {
+    /** Cache of the last full ARIA tree, used by explore() and diff mode. */
+    private _lastTree?: AriaNode;
+
+    /** URL of the last snapshot, used to detect cross-page navigation on ref miss. */
+    private _lastUrl?: string;
+
+    async snapshot(opts: { mode?: 'full' | 'diff'; viewportOnly?: boolean; ref?: string } = {}): Promise<PageSnapshot> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
-            return captureSnapshot(session);
+            const captured: CapturedSnapshot = await captureSnapshot(session, { viewportOnly: opts.viewportOnly });
+            const prev = this._lastTree;
+            const prevUrl = this._lastUrl;
+            this._lastTree = captured.tree;
+            this._lastUrl = captured.url;
+
+            // 指定 ref 时只渲染该节点的完整子树（实时抓取，不依赖折叠状态）。
+            // 用于大快照被截断时按需取某个区域（如商品价格区），无需 evaluate 兜底。
+            if (opts.ref) {
+                const node = findNodeByRef(captured.tree, opts.ref);
+                if (!node) {
+                    // 自动降级：ref 失效时返回完整折叠快照并说明原因，让 agent
+                    // 无需额外调用即可基于新 ref 继续，而不是收到一句泛化的报错。
+                    const note = buildRefMissNote(opts.ref, prevUrl, captured.url);
+                    return { ...captured, ariaSnapshot: note + '\n' + captured.ariaSnapshot };
+                }
+                const yaml = renderAriaTreeToYaml({ role: 'fragment', name: '', children: [node], props: {} }, false);
+                return { ...captured, ariaSnapshot: yaml };
+            }
+
+            if (opts.mode === 'diff' && prev) {
+                const diff = diffTrees(prev, captured.tree);
+                // 变化过大（如跨页导航整树替换）时 diff 反而比 full 大，回退折叠版完整快照
+                if (shouldFallbackToFullDiff(diff)) return captured;
+                return { ...captured, ariaSnapshot: diff.yaml || '(no changes)' };
+            }
+            return captured;
+        });
+    }
+
+    /** URL of the most recent snapshot, or undefined if none taken yet. */
+    getLastUrl(): string | undefined {
+        return this._lastUrl;
+    }
+
+    /**
+     * Expand a single ref into its full (uncollapsed) ARIA subtree.
+     *
+     * The default snapshot collapses noisy regions (iframes, footers, deep
+     * decoration) into one-line summaries. explore(ref) reveals the complete
+     * content behind any ref so the agent can drill into a region on demand
+     * without bloating every snapshot.
+     */
+    async explore(ref: string): Promise<{ ariaSnapshot: string }> {
+        return this._withExclusiveLock(async () => {
+            if (!this._lastTree) {
+                const session = await this.requireCDP();
+                const captured = await captureSnapshot(session);
+                this._lastTree = captured.tree;
+            }
+            const node = findNodeByRef(this._lastTree!, ref);
+            if (!node) {
+                return {
+                    ariaSnapshot: `ref "${ref}" not found. The page may have changed — call snapshot to refresh.`
+                };
+            }
+            const yaml = renderAriaTreeToYaml({ role: 'fragment', name: '', children: [node], props: {} }, false);
+            return { ariaSnapshot: yaml };
         });
     }
 
     async click(
         target: string,
         options: { button?: 'left' | 'right' | 'middle'; doubleClick?: boolean; modifiers?: string[] } = {}
-    ): Promise<{ target: string; tag: string; text: string; page?: Record<string, any> | null }> {
+    ): Promise<{
+        target: string;
+        tag: string;
+        text: string;
+        page?: Record<string, any> | null;
+        newTab: ActionNewTab | null;
+        hitElement?: ClickHitElement;
+        warning?: string;
+    }> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
             const coords = await resolveTargetCoords(session, target);
@@ -1043,7 +1184,28 @@ export class BrowserController {
             const clickCount = options.doubleClick ? 2 : 1;
             const button = options.button || 'left';
 
+            let hitElement: ClickHitElement | null = null;
+
             const performClick = async () => {
+                // Pre-dispatch hit verification: record what actually sits under
+                // the click point right before the events go out. A floating
+                // overlay that appeared after the snapshot (TOCTOU — observed on
+                // ifeng where a sidebar news item opened an ad instead) is then
+                // reported to the agent instead of silently hijacking the click.
+                try {
+                    const hitResult = await session.send('Runtime.evaluate', {
+                        expression: `(() => {
+                            var el = document.elementFromPoint(${coords.x}, ${coords.y});
+                            return el ? JSON.stringify({ tag: el.tagName.toLowerCase(), text: (el.innerText || '').trim().slice(0, 80) }) : '';
+                        })()`,
+                        returnByValue: true
+                    });
+                    const v = hitResult?.result?.value;
+                    if (v) hitElement = JSON.parse(v);
+                } catch {
+                    /* best-effort verification */
+                }
+
                 await session.send('Input.dispatchMouseEvent', {
                     type: 'mouseMoved',
                     x: coords.x,
@@ -1106,9 +1268,28 @@ export class BrowserController {
                 }
             };
 
-            await this.waitForClickCompletion(session, performClick);
+            const outcome = await this.waitForClickCompletion(session, performClick);
             const pageState = await this.readPageState(session);
-            return { target, tag: coords.tag, text: coords.text, ...(pageState && { page: pageState }) };
+
+            // Surface a hijack warning when the click point was covered by
+            // another element (the CDP events went to the overlay, and the
+            // degraded el.click() may still be intercepted by the page).
+            let warning: string | undefined;
+            if ((coords as any).obscured) {
+                warning = hitElement
+                    ? `点击坐标当前被其他元素遮挡（<${hitElement.tag}> "${hitElement.text}"），实际点击可能落在了遮挡元素上`
+                    : '点击坐标被其他元素遮挡，实际点击可能落在遮挡元素上';
+            }
+
+            return {
+                target,
+                tag: coords.tag,
+                text: coords.text,
+                ...(pageState && { page: pageState }),
+                newTab: outcome.newTab,
+                ...(hitElement && { hitElement }),
+                ...(warning && { warning })
+            };
         });
     }
 
@@ -1116,7 +1297,13 @@ export class BrowserController {
         target: string,
         text: string,
         options: { clearFirst?: boolean; submit?: boolean; slowly?: boolean } = {}
-    ): Promise<{ target: string; typed: number }> {
+    ): Promise<{
+        target: string;
+        typed: number;
+        page?: Record<string, any> | null;
+        newTab: ActionNewTab | null;
+        warning?: string;
+    }> {
         return this._withExclusiveLock(async () => {
             const { clearFirst = true, submit = false, slowly = false } = options;
             const session = await this.requireCDP();
@@ -1185,29 +1372,29 @@ export class BrowserController {
             }
 
             // Clear existing text
-            const clearExpr = targetFrame
-                ? `(() => {
-                    var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
-                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-                        el.value = '';
+            // React 受控组件对原生 el.value 直接赋值无感知（内部 state 不同步），
+            // 需通过 prototype 上的 value setter 赋值 + 派发 input 事件才能让
+            // React 更新 state。否则后续 insertText/Enter 提交读到的是旧值。
+            const setValueExpr = (refExpr: string, value: string): string => {
+                const escaped = JSON.stringify(value);
+                return `(() => {
+                    var el = ${refExpr};
+                    if (!el) return;
+                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                        var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                        var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                        if (setter) setter.call(el, ${escaped});
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                         el.dispatchEvent(new Event('change', { bubbles: true }));
-                    } else if (el && el.isContentEditable) {
-                        el.textContent = '';
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                })()`
-                : `(() => {
-                    const el = document.activeElement;
-                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-                        el.value = '';
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    } else if (el && el.isContentEditable) {
-                        el.textContent = '';
+                    } else if (el.isContentEditable) {
+                        el.textContent = ${escaped};
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                     }
                 })()`;
+            };
+            const clearExpr = targetFrame
+                ? setValueExpr(`document.querySelector('[data-od-ref="${elementRefForFrame}"]')`, '')
+                : setValueExpr('document.activeElement', '');
 
             if (targetFrame) {
                 await targetFrame.executeJavaScript(clearExpr);
@@ -1235,7 +1422,9 @@ export class BrowserController {
                                     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
                                         var start = el.selectionStart || 0;
                                         var v = el.value || '';
-                                        el.value = v.slice(0, start) + ch + v.slice(el.selectionEnd || start);
+                                        var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                                        var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                                        if (setter) setter.call(el, v.slice(0, start) + ch + v.slice(el.selectionEnd || start));
                                         el.selectionStart = el.selectionEnd = start + ch.length;
                                     } else if (el.isContentEditable) {
                                         document.execCommand('insertText', false, ch);
@@ -1262,7 +1451,9 @@ export class BrowserController {
                                 if (!el) return;
                                 var text = ${escapedText};
                                 if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-                                    el.value = text;
+                                    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                                    var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                                    if (setter) setter.call(el, text);
                                 } else if (el.isContentEditable) {
                                     el.textContent = text;
                                 }
@@ -1298,6 +1489,41 @@ export class BrowserController {
                 }
             }
 
+            // Verify the typed text actually landed in the element. React
+            // controlled components can keep a stale internal state while the
+            // DOM value looks right (observed on taobao home: Enter then
+            // submitted the OLD keyword instead of what was typed here).
+            const warnings: string[] = [];
+            if (textToInsert) {
+                await sleep(50);
+                try {
+                    const readBackExpr = `(() => {
+                        var el = document.activeElement;
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return el.value || '';
+                        if (el && el.isContentEditable) return ((el.innerText || el.textContent || '') + '').trim();
+                        return '';
+                    })()`;
+                    let readBack = '';
+                    if (targetFrame) {
+                        readBack = ((await targetFrame.executeJavaScript(readBackExpr)) as string) || '';
+                    } else {
+                        const r = await session.send('Runtime.evaluate', {
+                            expression: readBackExpr,
+                            returnByValue: true
+                        });
+                        readBack = (r?.result?.value as string) || '';
+                    }
+                    if (readBack !== textToInsert) {
+                        warnings.push(
+                            `输入验证失败：预期 "${textToInsert.slice(0, 40)}" 但页面读回 "${readBack.slice(0, 40)}"，页面框架可能未同步本次输入，提交前请先 snapshot 确认`
+                        );
+                    }
+                } catch {
+                    /* best-effort verification */
+                }
+            }
+
+            let submitOutcome: ActionOutcome | null = null;
             if (submit) {
                 await sleep(50);
                 if (targetFrame) {
@@ -1318,12 +1544,27 @@ export class BrowserController {
                         })()`
                     );
                 } else {
-                    await this.waitForClickCompletion(session, async () => {
+                    // 与 pressKey 对齐：先确保 webview 获得键盘焦点，
+                    // 否则 CDP Input.dispatchKeyEvent 的 Enter 可能不会送达页面
+                    // （Electron 中焦点可能仍停留在宿主 UI）。
+                    await this._focusActiveWebviewForKeyboard(session);
+                    submitOutcome = await this.waitForClickCompletion(session, async () => {
                         await session.send('Input.dispatchKeyEvent', {
                             type: 'keyDown',
                             key: 'Enter',
                             code: 'Enter',
                             windowsVirtualKeyCode: 13
+                        });
+                        // 补发 char（keypress）事件：原生 <form> 的隐式提交（回车
+                        // 提交）由 keypress 默认行为触发，缺了它 bilibili 这类
+                        // 表单搜索框按回车不会跳转。
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'char',
+                            key: 'Enter',
+                            code: 'Enter',
+                            windowsVirtualKeyCode: 13,
+                            text: '\r',
+                            unmodifiedText: '\r'
                         });
                         await session.send('Input.dispatchKeyEvent', {
                             type: 'keyUp',
@@ -1335,7 +1576,21 @@ export class BrowserController {
                 }
             }
 
-            return { target, typed: text.length };
+            // Report what the submit actually did instead of returning silently.
+            if (submit && submitOutcome && !submitOutcome.navigated && !submitOutcome.newTab) {
+                warnings.push(
+                    'Enter 提交后未检测到页面导航或新标签页，提交可能未生效。可尝试点击搜索/提交按钮，或直接 navigate 到目标 URL'
+                );
+            }
+
+            const pageState = await this.readPageState(session);
+            return {
+                target,
+                typed: text.length,
+                ...(pageState && { page: pageState }),
+                newTab: submitOutcome?.newTab ?? null,
+                ...(warnings.length && { warning: warnings.join('\n') })
+            };
         });
     }
 
@@ -1419,6 +1674,20 @@ export class BrowserController {
                     text,
                     modifiers: modMask
                 });
+                // Enter 需要补发 char（keypress）事件，否则原生 <form> 的隐式提交
+                // （回车提交）不会触发——光有 rawKeyDown + keyUp 不够。
+                if (keyDesc.keyCode === 13) {
+                    await session.send('Input.dispatchKeyEvent', {
+                        type: 'char',
+                        key: 'Enter',
+                        code: 'Enter',
+                        windowsVirtualKeyCode: 13,
+                        nativeVirtualKeyCode: 13,
+                        text: '\r',
+                        unmodifiedText: '\r',
+                        modifiers: modMask
+                    });
+                }
                 await session.send('Input.dispatchKeyEvent', {
                     type: 'keyUp',
                     key: keyDesc.key,

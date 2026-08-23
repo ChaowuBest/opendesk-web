@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import {
     BrowserNavigateTool,
     BrowserSnapshotTool,
+    BrowserExploreTool,
     BrowserClickTool,
     BrowserTypeTool,
     BrowserUploadFileTool,
@@ -601,6 +602,7 @@ class BrowserApplication extends BaseApplication {
         for (const tool of [
             new BrowserNavigateTool(this),
             new BrowserSnapshotTool(this),
+            new BrowserExploreTool(this),
             new BrowserClickTool(this),
             new BrowserTypeTool(this),
             new BrowserUploadFileTool(this),
