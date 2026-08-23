@@ -1064,7 +1064,13 @@ export class BrowserController {
 
                 const session = await this.getCDPSession();
                 if (session) {
-                    await session.waitForPageReady(NAVIGATE_TIMEOUT - 2000);
+                    // Leave room for the DOM-stable wait below so the combined
+                    // budget stays under NAVIGATE_TIMEOUT.
+                    await session.waitForPageReady(NAVIGATE_TIMEOUT - 5000);
+                    // SPA pages render their content asynchronously after the
+                    // JS context is ready; without this wait an auto-snapshot
+                    // taken right after navigation captures a mostly empty page.
+                    await session.waitForDOMStable(3000, 500);
                     await sleep(200);
                     const info = await this.readPageInfo(session);
                     if (info.error) {
