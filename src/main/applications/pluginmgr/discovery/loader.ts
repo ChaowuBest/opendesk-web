@@ -17,7 +17,7 @@ import { applyPluginManifest, loadPluginContributions, readPluginManifest, type 
 const INDEX_FILES = ['index.js', 'index.mjs', 'index.cjs'];
 const RUNNABLE_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 
-export const OPENDESK_RUNTIME_VERSION = '0.3.4';
+export const OPENDESK_RUNTIME_VERSION = '0.3.5';
 
 export interface PluginCandidate {
     spec: string;
