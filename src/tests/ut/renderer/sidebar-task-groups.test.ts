@@ -4,6 +4,7 @@ import {
     buildSidebarTaskGroups,
     getSidebarRecentTasks,
     getSidebarRunningTasks,
+    isRootTask,
     isSidebarTaskVisible,
     type SidebarTask
 } from '../../../renderer/sidebarTaskGroups.js';
@@ -22,6 +23,30 @@ function task(task_id: string, created_at: string, overrides: Partial<SidebarTas
 }
 
 describe('sidebar task grouping', () => {
+    describe('isRootTask', () => {
+        test('无 parent_id 视为根任务', () => {
+            expect(isRootTask(task('root', '2026-07-29T10:00:00'), [])).toBe(true);
+            expect(isRootTask(task('root', '2026-07-29T10:00:00', { parent_id: null }), [])).toBe(true);
+        });
+
+        test('parent_id 指向列表中存在任务时视为子任务', () => {
+            const all = [
+                task('root', '2026-07-29T10:00:00'),
+                task('child', '2026-07-29T10:01:00', { parent_id: 'root' })
+            ];
+            expect(isRootTask(all[1], all)).toBe(false);
+        });
+
+        test('parent_id 指向列表外任务时视为根任务（孤儿子任务）', () => {
+            const all = [task('child', '2026-07-29T10:01:00', { parent_id: 'gone' })];
+            expect(isRootTask(all[0], all)).toBe(true);
+        });
+
+        test('空值返回 false', () => {
+            expect(isRootTask(null, [])).toBe(false);
+            expect(isRootTask(undefined, [])).toBe(false);
+        });
+    });
     test('hides titleless placeholder tasks but keeps named tasks', () => {
         expect(isSidebarTaskVisible(null)).toBe(false);
         expect(isSidebarTaskVisible(task('missing-title', '2026-07-29T10:00:00', { task_name: undefined }))).toBe(

@@ -432,3 +432,119 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         expect(taskView.auto_scrolling_to_bottom).toBe(false);
     });
 });
+
+describe('task-view 发送消息时强制进入滚动到底部状态', () => {
+    function createTaskView() {
+        const taskView = document.createElement('task-view') as any;
+        taskView.setAttribute('task_id', 'task-scroll-send-1');
+        taskView.task_id = 'task-scroll-send-1';
+        taskView.render();
+        taskView.setUpEventListeners();
+        return taskView;
+    }
+
+    function getHistory(taskView: any) {
+        return taskView.querySelector('#taskview-chat-history') as HTMLElement & {
+            scrollTop: number;
+            scrollHeight: number;
+            clientHeight: number;
+        };
+    }
+
+    function mockScrolledAway(
+        container: HTMLElement & { scrollTop: number; scrollHeight: number; clientHeight: number }
+    ) {
+        Object.defineProperty(container, 'scrollTop', { value: 1000, configurable: true, writable: true });
+        Object.defineProperty(container, 'scrollHeight', { value: 3000, configurable: true, writable: true });
+        Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true, writable: true });
+    }
+
+    /** 关闭发送流程中与滚动无关的 UI 副作用，保持测试聚焦。 */
+    function stubSendSideEffects(taskView: any) {
+        taskView.emitTaskStatusChanged = jest.fn();
+        taskView._syncArtifactsTaskStatus = jest.fn();
+        taskView._cancelBrowserIdleTimer = jest.fn();
+        taskView.updateStopButtonVisibility = jest.fn();
+        taskView._updateMessageQueuePanel = jest.fn();
+    }
+
+    test('输入新信息发送时，即使此前离开过底部也强制重新锁定并滚到底部', async () => {
+        const prevAPI = window.taskManagerAPI;
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(false);
+        mockScrolledAway(history);
+        window.taskManagerAPI = { submitMessage: jest.fn(async () => undefined) };
+        taskView._isActiveGoalRunningNow = jest.fn(async () => false);
+        taskView._showWaitingAssistantPlaceholder = jest.fn();
+        stubSendSideEffects(taskView);
+
+        const input = taskView.querySelector('#task-task-scroll-send-1-input');
+        input.dispatchEvent(new window.CustomEvent('submit', { detail: { message: 'hello' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        expect(history.scrollTop).toBe(2500);
+        window.taskManagerAPI = prevAPI;
+    });
+
+    test('队列消息自动发出时，即使此前离开过底部也强制重新锁定并滚到底部', () => {
+        const prevAPI = window.taskManagerAPI;
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(false);
+        mockScrolledAway(history);
+        window.taskManagerAPI = { submitMessage: jest.fn(async () => undefined) };
+        stubSendSideEffects(taskView);
+        taskView.task_status = 'stopped';
+        taskView.messageQueue = [
+            {
+                id: 'queue-1',
+                message: 'queued message',
+                attachedFilePaths: [],
+                attachedImages: [],
+                selectedModel: undefined,
+                reasoningEffort: undefined,
+                selectedExecutionNodeId: undefined
+            }
+        ];
+
+        taskView._autoSendQueueMessages();
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        expect(history.scrollTop).toBe(2500);
+        window.taskManagerAPI = prevAPI;
+    });
+
+    test('点击立即发送队列消息时，即使此前离开过底部也强制重新锁定并滚到底部', async () => {
+        const prevAPI = window.taskManagerAPI;
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(false);
+        mockScrolledAway(history);
+        window.taskManagerAPI = {
+            interruptForNewMessage: jest.fn(async () => undefined),
+            submitMessage: jest.fn(async () => undefined)
+        };
+        stubSendSideEffects(taskView);
+        taskView.task_status = 'running';
+        taskView.messageQueue = [
+            {
+                id: 'queue-1',
+                message: 'send now',
+                attachedFilePaths: [],
+                attachedImages: [],
+                selectedModel: undefined,
+                reasoningEffort: undefined,
+                selectedExecutionNodeId: undefined
+            }
+        ];
+        taskView._handleRunningGoalInput = jest.fn(async () => undefined);
+
+        await taskView.sendQueueMessageImmediately('queue-1');
+
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        expect(history.scrollTop).toBe(2500);
+        window.taskManagerAPI = prevAPI;
+    });
+});
