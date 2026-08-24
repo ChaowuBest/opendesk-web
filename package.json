@@ -1,6 +1,6 @@
 {
     "name": "opendesk",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "description": "An all-in-one ai studio for productivity scenarios",
     "license": "MulanPSL-2.0",
     "author": "uv0xab",
@@ -50,6 +50,7 @@
         "check:architecture": "node scripts/check-architecture.cjs",
         "check:docs": "tsx scripts/docs-freshness/docs-freshness.ts",
         "changelog": "node scripts/collect-changelog.js",
+        "version": "node scripts/sync-version.mjs",
         "prepare": "husky"
     },
     "lint-staged": {
