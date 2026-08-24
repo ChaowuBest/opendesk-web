@@ -152,14 +152,19 @@ else
     SIGNED_ZIP="${LOCAL_WORK}/${JOB_ID}-for-notary.zip"
     ditto -c -k --keepParent "${OUT_DIR}/${APP_NAME}" "${SIGNED_ZIP}"
 
-    # notarytool submit --wait blocks 3–10 min. If the network drops mid-wait,
-    # the submission is still queued on Apple's side. Capture the submission ID
-    # so the user can recover with:
+    # notarytool submit --wait blocks 3–10 min. Tee the full transcript to a log
+    # file and parse the submission ID only AFTER the pipeline completes: a
+    # former `| head -1` here closed the pipe right after the id line, SIGPIPE-
+    # killed notarytool mid-wait (exit 141), and `set -euo pipefail` aborted the
+    # whole script before stapling / DMG. If the network still drops mid-wait,
+    # the submission is queued on Apple's side and recoverable with:
     #   xcrun notarytool info <id> --keychain-profile opendesk-notary
     #   xcrun stapler staple out/signed/opendesk.app
-    SUBMISSION_ID=$(xcrun notarytool submit "${SIGNED_ZIP}" \
+    NOTARY_LOG="${LOCAL_WORK}/${JOB_ID}-notary.log"
+    xcrun notarytool submit "${SIGNED_ZIP}" \
         --keychain-profile "${NOTARY_PROFILE}" \
-        --wait 2>&1 | tee /dev/stderr | grep '^\s*id:' | awk '{print $2}' | head -1)
+        --wait 2>&1 | tee "${NOTARY_LOG}"
+    SUBMISSION_ID=$(grep -m1 '^\s*id:' "${NOTARY_LOG}" | awk '{print $2}')
     if [[ -z "${SUBMISSION_ID}" ]]; then
         echo "WARNING: could not extract submission ID — check output above"
     fi
