@@ -19,6 +19,7 @@
  */
 
 import type { TaskLiveUsageSnapshot } from '../aikernel/task/types.js';
+import { isRootTask } from '../../renderer/sidebarTaskGroups.js';
 export type { TaskLiveUsageSnapshot } from '../aikernel/task/types.js';
 
 /** 视为「活跃」的任务状态：等待中或进行中。与 TaskState.waitUntilFinished 的口径一致。 */
@@ -200,9 +201,11 @@ function toWidgetTask(
 
 /**
  * 更新快照：
- * 1. 当前活跃任务排在最前，并实时刷新其状态/时间；
- * 2. 之前已显示、现在已结束（仍存在于列表）的任务保留并标记为 completed；
- * 3. 已从列表移除的任务从快照中剔除。
+ * 1. 仅展示根任务（复用侧边栏 isRootTask 的层级判定，保证浮窗任务是侧边栏任务的子集）；
+ *    子任务只参与上级任务的 subtask_progress 统计，不单独展示；
+ * 2. 当前活跃任务排在最前，并实时刷新其状态/时间；
+ * 3. 之前已显示、现在已结束（仍存在于列表）的任务保留并标记为 completed；
+ * 4. 已从列表移除、或不再作为根任务展示（如父任务重新出现）的任务从快照中剔除。
  */
 export function updateTaskSnapshot(
     snapshot: readonly TaskStatusWidgetTask[],
@@ -213,7 +216,7 @@ export function updateTaskSnapshot(
 
     const list = taskList ?? [];
     for (const task of list) {
-        if (typeof task.task_id !== 'string' || !isActiveTask(task)) {
+        if (typeof task.task_id !== 'string' || !isActiveTask(task) || !isRootTask(task, list)) {
             continue;
         }
         next.push(toWidgetTask(task, task.task_status as TaskStatusWidgetTask['task_status'], list));
@@ -226,8 +229,8 @@ export function updateTaskSnapshot(
             continue;
         }
         const current = currentById.get(entry.task_id);
-        if (!current) {
-            // 任务已被移除，不再显示。
+        if (!current || !isRootTask(current, list)) {
+            // 任务已被移除，或不再作为根任务展示（如父任务重新出现），不再显示。
             continue;
         }
         next.push(toWidgetTask(current, 'completed', list));

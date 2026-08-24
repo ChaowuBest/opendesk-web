@@ -1703,6 +1703,20 @@ class TaskView extends HTMLElement {
         });
     }
 
+    /**
+     * 强制进入"滚动到底部"状态并立即滚动到底部。
+     * 用于用户发送新消息、队列消息自动/立即发出等主动产生新消息流的场景：
+     * 即使此前用户手动滚动离开过底部（auto_scrolling_to_bottom=false），
+     * 消息发出时也应重新锁定并回到底部，避免错过最新内容。
+     */
+    forceScrollToEnd() {
+        this.setAutoScrollingToBottom(true);
+        // 组件可能尚未渲染历史容器（如仅存在于 model 层的最小 task-view），此时仅锁定状态
+        if (this.getHistoryContainer()) {
+            this.tryScrollToEnd();
+        }
+    }
+
     _findGoalMessageTarget(messageId) {
         const escapedId =
             typeof messageId === 'string' &&
@@ -2434,6 +2448,9 @@ class TaskView extends HTMLElement {
         this._immediateQueueSending = true;
         this.removeFromMessageQueue(id);
 
+        // 立即锁定并滚动到底部，及时展示即将发出的新消息
+        this.forceScrollToEnd();
+
         // 中断当前任务（不停止正在运行的子任务，子任务转为后台执行）
         if (this.task_status === 'running') {
             try {
@@ -2517,6 +2534,9 @@ class TaskView extends HTMLElement {
         this._syncArtifactsTaskStatus();
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
+
+        // 自动发出队列消息前锁定并滚动到底部，及时展示新消息
+        this.forceScrollToEnd();
 
         window.taskManagerAPI
             .submitMessage(this.task_id, {
@@ -4480,7 +4500,7 @@ class TaskView extends HTMLElement {
             this.updateStopButtonVisibility();
 
             this._showWaitingAssistantPlaceholder({ force: true });
-            this.tryScrollToEnd();
+            this.forceScrollToEnd();
 
             try {
                 await window.taskManagerAPI.submitMessage(this.task_id, event.detail);

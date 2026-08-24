@@ -46,6 +46,24 @@ export function isSidebarTaskVisible(task: SidebarTask | null | undefined): task
 }
 
 /**
+ * 判断任务是否为根任务：无 parent_id，或 parent_id 指向的任务不在当前列表中（孤儿任务）。
+ * 类型取宽松结构，供主进程侧（如任务状态浮窗）与渲染进程侧共用。
+ */
+export function isRootTask(
+    task: { task_id?: string; parent_id?: string | null } | null | undefined,
+    allTasks: readonly { task_id?: string }[] | null | undefined
+): boolean {
+    if (!task) {
+        return false;
+    }
+    if (!task.parent_id) {
+        return true;
+    }
+    const parentId = task.parent_id;
+    return !(allTasks ?? []).some((other) => other.task_id === parentId);
+}
+
+/**
  * 取最近活跃的可见任务（按活动时间降序，最多 limit 个）。
  * 排除自动化任务（internal），供收起态侧边栏的对话快捷菜单等场景使用。
  */
@@ -79,15 +97,15 @@ function sortTreeItems(items: SidebarTaskTreeItem[]): SidebarTaskTreeItem[] {
 }
 
 function buildRootItems(tasks: SidebarTask[]): SidebarTaskTreeItem[] {
-    const tasksById = new Map(tasks.map((task) => [task.task_id, task]));
     const childrenByParent = new Map<string, SidebarTask[]>();
     const roots: SidebarTask[] = [];
 
     for (const task of tasks) {
-        if (task.parent_id && tasksById.has(task.parent_id)) {
-            const children = childrenByParent.get(task.parent_id) ?? [];
+        if (!isRootTask(task, tasks)) {
+            const parentId = task.parent_id ?? '';
+            const children = childrenByParent.get(parentId) ?? [];
             children.push(task);
-            childrenByParent.set(task.parent_id, children);
+            childrenByParent.set(parentId, children);
         } else {
             roots.push(task);
         }

@@ -176,6 +176,38 @@ describe('task-status-widget 纯逻辑', () => {
 
             expect(snapshot).toHaveLength(0);
         });
+
+        test('快照仅含主任务，子任务不单独展示（仅参与上级进度统计）', () => {
+            const list = [
+                task({ task_id: 'a', task_name: 'Alpha', task_status: 'running' }),
+                task({ task_id: 's1', parent_id: 'a', task_name: 'Sub-1', task_status: 'running' }),
+                task({ task_id: 's2', parent_id: 'a', task_name: 'Sub-2', task_status: 'waiting' })
+            ];
+            const snapshot = updateTaskSnapshot([], list);
+
+            expect(snapshot.map((t) => t.task_id)).toEqual(['a']);
+            expect(snapshot[0].subtask_progress).toEqual({ completed: 0, total: 2, percent: 0 });
+        });
+
+        test('父任务已从列表移除的子任务按根任务展示（与侧边栏层级口径一致）', () => {
+            const list = [task({ task_id: 's1', parent_id: 'gone', task_name: 'Orphan', task_status: 'running' })];
+            const snapshot = updateTaskSnapshot([], list);
+
+            expect(snapshot.map((t) => t.task_id)).toEqual(['s1']);
+        });
+
+        test('快照中已存在的非根任务不再保留（避免历史子任务滞留）', () => {
+            const initial: TaskStatusWidgetTask[] = [
+                snapshotEntry({ task_id: 's1', task_name: 'Sub', task_status: 'running' })
+            ];
+            const list = [
+                task({ task_id: 'a', task_name: 'Alpha', task_status: 'running' }),
+                task({ task_id: 's1', parent_id: 'a', task_name: 'Sub', task_status: 'stopped' })
+            ];
+            const snapshot = updateTaskSnapshot(initial, list);
+
+            expect(snapshot.map((t) => t.task_id)).toEqual(['a']);
+        });
     });
 
     describe('buildTaskStatusSummary', () => {
