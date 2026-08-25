@@ -8,7 +8,7 @@ import { GlobalState } from '../../../aikernel/states/global.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
-import type { PluginChatRequestInput } from '../../../../../packages/plugin-sdk/src/index.js';
+import type { PluginChatRequestInput, PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
 import { loadPlugin, OPENDESK_RUNTIME_VERSION, type PluginCandidate } from '../discovery/loader.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
@@ -208,6 +208,14 @@ async function loadCandidate(
         const loaded = await loadPlugin(candidate, baseDirectory, {
             requireDeclaration: candidate.requireDeclaration
         });
+        // 平台不匹配属于正常跳过场景：记录警告即可，不进入运行时与已安装插件列表。
+        const platforms = loaded.plugin.platforms;
+        if (platforms && platforms.length > 0 && !platforms.includes(process.platform as PluginPlatform)) {
+            logger.warn(
+                `Skipping OpenDesk plugin: ${candidate.id} (unsupported platform ${process.platform}, declared: ${platforms.join(', ')})`
+            );
+            return;
+        }
         await host.activate(loaded.plugin, {
             origin: candidate.origin,
             configDir: getOpendeskDirectory(),

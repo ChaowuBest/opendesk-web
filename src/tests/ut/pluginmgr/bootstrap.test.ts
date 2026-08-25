@@ -11,6 +11,7 @@ import { disposePluginHost, initializePluginHost } from '../../../main/applicati
 import { setRuntimePluginDirectories } from '../../../main/applications/pluginmgr/management/config.js';
 import { PLUGIN_SKILL_BUNDLE } from '../../../main/applications/pluginmgr/runtime/contributions.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
+import { logger } from '../../../main/utils/logger.js';
 import { installPlugin } from '../../../main/applications/pluginmgr/management/manager.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
@@ -553,6 +554,43 @@ Review the current changes.`
             await expect(applyChatModelRequest()).resolves.toEqual({});
         } finally {
             fs.rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
+    test('声明不支持平台的插件被跳过并仅记录警告', async () => {
+        const unsupportedPlatform = process.platform === 'win32' ? 'darwin' : 'win32';
+        const pluginDirectory = path.join(getPluginsDirectory(configDirectory), 'unsupported-platform');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'index.mjs'),
+            `export default { id: 'unsupported-platform', setup() {} };`
+        );
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'unsupported-platform',
+                entry: './index.mjs',
+                apiVersion: 1,
+                platforms: [unsupportedPlatform]
+            })
+        );
+
+        const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+        try {
+            await initializePluginHost();
+
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unsupported-platform'));
+
+            // 不产生 runtime entry，避免诊断信息出现在插件运行状态里
+            expect(getPluginHost().get('unsupported-platform')).toBeUndefined();
+
+            // 已安装插件列表不展示该插件
+            const application = new PluginMgrApplication();
+            const entries = await application.list();
+            expect(entries.some((entry) => entry.id === 'unsupported-platform')).toBe(false);
+        } finally {
+            warnSpy.mockRestore();
         }
     });
 });

@@ -25,7 +25,7 @@ import {
 } from './management/manager.js';
 import { setPluginGrantedCapabilities, setPluginOptions } from './management/policy.js';
 import { listPluginRecords } from './management/registry.js';
-import type { PluginCapability } from '../../../../packages/plugin-sdk/src/index.js';
+import type { PluginCapability, PluginPlatform } from '../../../../packages/plugin-sdk/src/index.js';
 import { getRuntimePluginDirectories } from './management/config.js';
 import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/paths.js';
 import { formatPluginInstallError } from './management/errors.js';
@@ -170,6 +170,10 @@ export class PluginMgrApplication extends BaseApplication {
                         // Runtime diagnostics already describe malformed or unavailable plugins.
                     }
                 }
+                // 平台不匹配的插件仅在加载时记录警告（见 bootstrap），不出现在已安装插件列表。
+                if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
+                    return undefined;
+                }
                 return {
                     id,
                     source,
@@ -208,7 +212,8 @@ export class PluginMgrApplication extends BaseApplication {
                     })),
                     hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name }))
                 };
-            });
+            })
+            .filter((entry) => entry !== undefined);
     }
 
     async reload(id?: string) {
