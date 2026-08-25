@@ -112,6 +112,25 @@ describe('plugin manager application renderer', () => {
                                 body: '# Ghost\n\nNot dispatchable.'
                             }
                         ]
+                    },
+                    {
+                        id: 'localized-plugin',
+                        source: 'local',
+                        path: '/plugins/localized',
+                        removable: true,
+                        enabled: true,
+                        runtime: {
+                            id: 'localized-plugin',
+                            displayName: { en: 'Localized En Name', zh: '本地化中文名' },
+                            version: '1.0.0',
+                            status: 'active',
+                            origin: '/plugins/localized',
+                            apiVersion: 1,
+                            capabilities: [],
+                            diagnostics: []
+                        },
+                        skills: [],
+                        mcpServers: []
                     }
                 ];
             }
@@ -142,7 +161,7 @@ describe('plugin manager application renderer', () => {
 
         expect(widget.shadowRoot.innerHTML).toContain('&lt;local-plugin&gt;');
         expect(widget.shadowRoot.querySelector('local-plugin')).toBeNull();
-        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(2);
+        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(3);
         expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]')).not.toBeNull();
     });
 
@@ -415,5 +434,56 @@ describe('plugin manager application renderer', () => {
         expect(detail.shadowRoot.querySelector('.detail-back')?.hasAttribute('hidden')).toBe(true);
         // 首屏仍列出两个 agent
         expect(detail.shadowRoot.querySelectorAll('[data-agent-name]')).toHaveLength(2);
+    });
+
+    test('displays the localized displayName for the current language on cards and details', async () => {
+        const widget = await createWidget();
+        // 测试环境 navigator 固定为 zh-CN，应显示中文翻译
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+        expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="localized-plugin"]');
+        card.dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        expect(detail.shadowRoot.innerHTML).toContain('本地化中文名');
+    });
+
+    test('switches localized display names when the main window notifies a locale change', async () => {
+        const widget = await createWidget();
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+
+        const event = new Event('message');
+        Object.defineProperty(event, 'data', {
+            value: { type: 'LOCALE_CHANGED', locale: 'en-US' }
+        });
+        window.dispatchEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('Localized En Name');
+        expect(widget.shadowRoot.innerHTML).not.toContain('本地化中文名');
+
+        const back = new Event('message');
+        Object.defineProperty(back, 'data', {
+            value: { type: 'LOCALE_CHANGED', locale: 'zh-CN' }
+        });
+        window.dispatchEvent(back);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+    });
+
+    test('ignores locale messages without the LOCALE_CHANGED type', async () => {
+        const widget = await createWidget();
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+
+        const event = new Event('message');
+        Object.defineProperty(event, 'data', {
+            value: { locale: 'en-US' }
+        });
+        window.dispatchEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+        expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
     });
 });

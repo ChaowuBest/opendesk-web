@@ -2,7 +2,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
-import { loadPluginResources, parsePluginManifest } from '../../../main/applications/pluginmgr/discovery/manifest.js';
+import {
+    applyPluginManifest,
+    loadPluginResources,
+    parsePluginManifest
+} from '../../../main/applications/pluginmgr/discovery/manifest.js';
 import { definePlugin, type AgentDefinition } from '../../../../packages/plugin-sdk/src/index.js';
 
 function writeAgentDirectory(rootDir: string, name: string, files: { agentsMd?: string; agentJson?: object }): string {
@@ -47,6 +51,47 @@ describe('pluginmgr agents', () => {
                     resources: { agents: ['./agents', 42] }
                 })
             ).toThrow('plugin.manifest_invalid_agents');
+        });
+
+        test('displayName 字符串形式保持不变并去除首尾空白', () => {
+            const manifest = parsePluginManifest({ schemaVersion: 1, displayName: ' Review Helper ' });
+            expect(manifest.displayName).toBe('Review Helper');
+        });
+
+        test('displayName 支持对象形式并将语言键归一化为主语言标签', () => {
+            const manifest = parsePluginManifest({
+                schemaVersion: 1,
+                displayName: { en: 'Hello Plugin', 'zh-CN': '你好插件' }
+            });
+            expect(manifest.displayName).toEqual({ en: 'Hello Plugin', zh: '你好插件' });
+        });
+
+        test('displayName 对象中的值必须是非空字符串', () => {
+            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: {} })).toThrow(
+                'plugin.manifest_invalid_display_name'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: { en: '' } })).toThrow(
+                'plugin.manifest_invalid_display_name'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: { en: 'ok', zh: 42 } })).toThrow(
+                'plugin.manifest_invalid_display_name'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: 42 })).toThrow(
+                'plugin.manifest_invalid_display_name'
+            );
+        });
+
+        test('applyPluginManifest 将 manifest 中的本地化 displayName 合并进入口对象', () => {
+            const plugin = definePlugin({ id: 'localized-plugin', setup: () => undefined });
+            const merged = applyPluginManifest(
+                plugin,
+                parsePluginManifest({
+                    schemaVersion: 1,
+                    capabilities: [],
+                    displayName: { en: 'Hello Plugin', zh: '你好插件' }
+                })
+            );
+            expect(merged.displayName).toEqual({ en: 'Hello Plugin', zh: '你好插件' });
         });
     });
 

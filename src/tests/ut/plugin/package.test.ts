@@ -209,4 +209,38 @@ describe('OpenDesk plugin package validator', () => {
 
         expect(() => validateOpenDeskPluginPackage(root)).toThrow('Unsafe plugin path');
     });
+
+    test('displayName 支持本地化对象形式并拒绝非法值', () => {
+        fs.writeFileSync(
+            path.join(root, 'package.json'),
+            JSON.stringify({ name: 'opendesk-plugin-localized', version: '1.0.0' })
+        );
+        fs.writeFileSync(
+            path.join(root, 'opendesk.plugin.json'),
+            JSON.stringify({
+                entry: './dist/plugin.js',
+                schemaVersion: 1,
+                apiVersion: 1,
+                capabilities: [],
+                displayName: { en: 'Localized Plugin', zh: '本地化插件' }
+            })
+        );
+
+        expect(validateOpenDeskPluginDirectory(root)).toMatchObject({
+            name: 'opendesk-plugin-localized'
+        });
+
+        fs.writeFileSync(
+            path.join(root, 'opendesk.plugin.json'),
+            JSON.stringify({
+                entry: './dist/plugin.js',
+                schemaVersion: 1,
+                apiVersion: 1,
+                capabilities: [],
+                displayName: { en: '' }
+            })
+        );
+
+        expect(() => validateOpenDeskPluginDirectory(root)).toThrow(OpenDeskPluginPackageError);
+    });
 });

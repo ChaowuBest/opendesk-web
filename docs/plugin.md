@@ -298,6 +298,33 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`。声明静态 Skill 或 MCP 时，
 必须同时声明对应的 `skill` 或 `mcp` capability。
 
+### displayName 本地化
+
+`displayName` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk` 和插件入口对象均适用：
+
+- 简单字符串：所有语言下显示同一名称；
+- 本地化对象：按语言声明名称，键为 BCP 47 语言标签（如 `en`、`zh`、`zh-CN`），
+  值为该语言下的显示名称。
+
+```json
+{
+    "schemaVersion": 1,
+    "id": "locale-demo",
+    "displayName": {
+        "en": "Locale Demo",
+        "zh": "本地化示例插件"
+    },
+    "entry": "./index.js",
+    "apiVersion": 1,
+    "capabilities": []
+}
+```
+
+解析时只比较语言主标签（请求 `zh-CN` 时 `zh-CN` 与 `zh-TW` 等键都视为中文条目）；
+没有匹配语言的条目时回退到对象中声明的第一个翻译；对象中的每个值都必须是非空字符串。
+插件中心按当前界面语言显示插件名称，并在应用切换语言后实时更新；
+未声明 `displayName` 时回退到插件 ID。
+
 ### Skill 路径
 
 `contributions.skills` 中每一项都必须是插件根目录内的目录，不能直接指向
@@ -315,7 +342,7 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 插件根目录内；上例通过将 `cwd` 设为 `"."`，让 Node 从插件根目录解析相对参数。
 
 插件贡献的 MCP 会出现在 GUI 的 MCP 管理器中，来源优先显示插件的
-`displayName`，未声明时回退到插件 ID。
+`displayName`（支持本地化对象形式，按当前界面语言解析），未声明时回退到插件 ID。
 这类配置由插件拥有，因此在 MCP 管理器中只读；应通过插件中心启停插件或修改插件配置。
 
 ## 使用 package.json#opendesk

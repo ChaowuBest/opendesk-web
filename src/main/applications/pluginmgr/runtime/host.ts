@@ -17,6 +17,7 @@ import type {
     PluginCommandDefinition,
     PluginCommandResult,
     PluginContext,
+    PluginDisplayName,
     PluginFailureMode,
     PluginApplicationEvent,
     PluginApplicationEventCallback,
@@ -49,7 +50,7 @@ export interface PluginDiagnostic {
 
 export interface PluginHostEntry {
     id: string;
-    displayName?: string;
+    displayName?: PluginDisplayName;
     version?: string;
     apiVersion: number;
     origin: string;

@@ -10,7 +10,9 @@
  */
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { createRendererTranslator } from '../../../../renderer/locale.js';
+import { isSupportedLocale } from '../../../../common/locale.js';
+import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { resolvePluginDisplayName, type PluginDisplayName } from '../../../../../packages/plugin-sdk/src/index.js';
 import {
     getSkillInitial,
     getSkillPastel,
@@ -24,7 +26,7 @@ import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-ove
 
 interface PluginRuntimeEntry {
     id: string;
-    displayName?: string;
+    displayName?: PluginDisplayName;
     version?: string;
     status: 'active' | 'error' | 'disabled';
     origin: string;
@@ -54,7 +56,7 @@ interface PluginListEntry {
     };
     runtime?: PluginRuntimeEntry;
     manifest?: {
-        displayName?: string;
+        displayName?: PluginDisplayName;
         version?: string;
         apiVersion?: number;
         capabilities?: string[];
@@ -550,7 +552,14 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private returningFromAgent = false;
     private notice?: { text: string; error: boolean };
     private t = createRendererTranslator();
+    private locale = resolveRendererLocale();
     private readonly onPluginsChanged = () => void this.load();
+    /** 主窗口在应用语言变化时向 iframe 广播 LOCALE_CHANGED，这里据此切换插件显示语言 */
+    private readonly onLocaleMessage = (event: Event) => {
+        const data = (event as MessageEvent).data;
+        if (data?.type !== 'LOCALE_CHANGED') return;
+        if (typeof data.locale === 'string') this.applyLocale(data.locale);
+    };
     private readonly onThemeChanged = (event: Event) => {
         const theme = (event as CustomEvent).detail?.effective;
         syncShadowHostTheme(this, theme);
@@ -569,16 +578,36 @@ export class PluginMgrEntryWidget extends HTMLElement {
 
     disconnectedCallback(): void {
         getAPI().unsubscribe('pluginsChanged', this.onPluginsChanged);
+        window.removeEventListener('message', this.onLocaleMessage);
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
+    }
+
+    private applyLocale(locale: string): void {
+        if (!isSupportedLocale(locale) || locale === this.locale) return;
+        this.locale = locale;
+        this.t = createRendererTranslator(locale);
+        this.render();
+    }
+
+    /** 按当前界面语言解析插件显示名：运行时值优先，未声明时回退插件 ID */
+    private pluginName(entry: PluginListEntry): string {
+        return (
+            resolvePluginDisplayName(entry.runtime?.displayName, this.locale) ??
+            resolvePluginDisplayName(entry.manifest?.displayName, this.locale) ??
+            entry.id
+        );
     }
 
     private async initialize(): Promise<void> {
         try {
             const settings = await window.top?.settingAPI?.loadSettingObject?.();
             this.t = createRendererTranslator(settings);
+            this.locale = resolveRendererLocale(settings);
         } catch {
             this.t = createRendererTranslator();
+            this.locale = resolveRendererLocale();
         }
+        window.addEventListener('message', this.onLocaleMessage);
         document.addEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
         getAPI().subscribe('pluginsChanged', this.onPluginsChanged);
         await this.load();
@@ -730,7 +759,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
 
     private renderCard(entry: PluginListEntry): string {
         const diagnostics = entry.runtime?.diagnostics ?? [];
-        const name = entry.runtime?.displayName || entry.manifest?.displayName || entry.id;
+        const name = this.pluginName(entry);
         const color = getSkillPastel(name);
         const contributionPills = [
             entry.skills?.length
@@ -992,7 +1021,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const capabilities = entry.runtime?.capabilities.length
             ? entry.runtime.capabilities
             : (entry.manifest?.capabilities ?? []);
-        const name = entry.runtime?.displayName || entry.manifest?.displayName || entry.id;
+        const name = this.pluginName(entry);
         const detailTheme =
             this.dataset.theme ||
             document.documentElement.dataset.theme ||

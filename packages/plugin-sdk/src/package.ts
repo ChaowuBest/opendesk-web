@@ -37,6 +37,9 @@ export class OpenDeskPluginPackageError extends Error {
 
 const StringRecordSchema = z.record(z.string(), z.string());
 
+/** displayName：简单字符串或按语言声明的本地化对象 */
+const DisplayNameSchema = z.union([z.string().trim().min(1), z.record(z.string().min(1), z.string().trim().min(1))]);
+
 const McpServerSchema = z.discriminatedUnion('transport', [
     z.object({
         name: z.string().min(1),
@@ -67,7 +70,7 @@ export const OpenDeskPluginManifestSchema = z.object({
         .string()
         .regex(/^[a-zA-Z][a-zA-Z0-9._-]*$/)
         .optional(),
-    displayName: z.string().min(1).optional(),
+    displayName: DisplayNameSchema.optional(),
     version: z.string().min(1).optional(),
     apiVersion: z.literal(OPENDESK_PLUGIN_API_VERSION),
     capabilities: z.array(z.enum(OPENDESK_PLUGIN_CAPABILITIES)),

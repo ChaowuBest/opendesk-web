@@ -7,11 +7,13 @@ import fs from 'fs';
 import path from 'path';
 import { Skill, SKILL_MD_FILENAME } from '../../../aikernel/skill.js';
 import {
+    localePrimaryTag,
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES,
     OPENDESK_PLUGIN_PLATFORMS,
     type OpenDeskPlugin,
     type PluginCapability,
+    type PluginDisplayName,
     type PluginMcpServerDefinition,
     type PluginPlatform,
     type PluginStaticResources
@@ -28,7 +30,7 @@ export interface PluginManifest {
     schemaVersion: 1;
     entry?: string;
     id?: string;
-    displayName?: string;
+    displayName?: PluginDisplayName;
     version?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
@@ -50,6 +52,29 @@ function optionalString(value: unknown, code: string): string | undefined {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !value.trim()) throw new Error(code);
     return value.trim();
+}
+
+/**
+ * 解析 displayName：支持简单字符串或 { "en": "...", "zh": "..." } 形式的本地化对象。
+ * 对象键归一化为主语言标签（如 zh-CN -> zh），值必须为非空字符串。
+ */
+function optionalDisplayName(value: unknown, code: string): PluginDisplayName | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) throw new Error(code);
+        return trimmed;
+    }
+    if (!isRecord(value)) throw new Error(code);
+    const localized: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        if (typeof entry !== 'string' || !entry.trim()) throw new Error(code);
+        const tag = localePrimaryTag(key);
+        if (!tag) throw new Error(code);
+        localized[tag] = entry.trim();
+    }
+    if (Object.keys(localized).length === 0) throw new Error(code);
+    return localized;
 }
 
 function requiredString(value: unknown, code: string): string {
@@ -172,7 +197,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         schemaVersion: 1,
         entry: optionalString(value.entry, 'plugin.manifest_invalid_entry'),
         id,
-        displayName: optionalString(value.displayName, 'plugin.manifest_invalid_display_name'),
+        displayName: optionalDisplayName(value.displayName, 'plugin.manifest_invalid_display_name'),
         version: optionalString(value.version, 'plugin.manifest_invalid_version'),
         apiVersion: apiVersion as number,
         capabilities,
