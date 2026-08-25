@@ -24,6 +24,15 @@ function baseForm() {
         modeId: '',
         configOptionsJson: '{"reasoning_effort":"high","sandbox":true}',
         mcpServerIds: 'filesystem, browser',
+        executionLocation: 'client',
+        agentWorkspaceStrategy: 'fixed',
+        remotePlatform: 'posix',
+        remoteCwd: '',
+        mappingLocalRoot: '',
+        mappingRemoteRoot: '',
+        clientWorkspaceStrategy: 'task',
+        clientFixedCwd: '',
+        clientCompatibility: 'preferred',
         reconnectEnabled: true,
         maxAttempts: '3',
         initialDelayMs: '500',
@@ -50,7 +59,15 @@ test('ACP agent settings build a stdio profile without resolving secret template
         },
         session: {
             configOptions: { reasoning_effort: 'high', sandbox: true },
-            mcpServerIds: ['filesystem', 'browser']
+            mcpBindings: [
+                { serverId: 'filesystem', location: 'agent' },
+                { serverId: 'browser', location: 'agent' }
+            ]
+        },
+        execution: {
+            location: 'client',
+            workspace: { strategy: 'task' },
+            compatibility: 'preferred'
         },
         reconnect: {
             enabled: true,
@@ -70,7 +87,11 @@ test('ACP agent settings build a Streamable HTTP profile', () => {
         url: 'https://agent.example.com/acp',
         headersJson: '{"Authorization":"Bearer ${env:REMOTE_TOKEN}"}',
         cookies: 'omit',
-        modeId: 'code'
+        modeId: 'code',
+        executionLocation: 'agent',
+        agentWorkspaceStrategy: 'fixed',
+        remotePlatform: 'posix',
+        remoteCwd: '/workspace/project'
     };
 
     const profile = buildAcpAgentProfile(form, () => 'unused');
@@ -82,6 +103,10 @@ test('ACP agent settings build a Streamable HTTP profile', () => {
         cookies: 'omit'
     });
     assert.equal(profile.session.modeId, 'code');
+    assert.deepEqual(profile.execution, {
+        location: 'agent',
+        workspace: { strategy: 'fixed', path: '/workspace/project', platform: 'posix' }
+    });
     assert.equal(profile.id, profileId);
 });
 
@@ -92,6 +117,28 @@ test('ACP agent settings return stable validation codes for invalid fields', () 
         [{ ...baseForm(), envJson: '{"TOKEN":1}' }, 'envInvalid'],
         [{ ...baseForm(), cwd: 'fixed', fixedCwd: '' }, 'fixedCwdRequired'],
         [{ ...baseForm(), transportType: 'streamableHttp', url: 'file:///tmp/agent' }, 'urlInvalid'],
+        [
+            {
+                ...baseForm(),
+                transportType: 'streamableHttp',
+                url: 'https://agent.example.com/acp',
+                executionLocation: 'agent',
+                agentWorkspaceStrategy: 'fixed',
+                remoteCwd: ''
+            },
+            'remoteCwdRequired'
+        ],
+        [
+            {
+                ...baseForm(),
+                transportType: 'streamableHttp',
+                url: 'https://agent.example.com/acp',
+                executionLocation: 'agent',
+                agentWorkspaceStrategy: 'fixed',
+                remoteCwd: 'workspace/project'
+            },
+            'workspacePathInvalid'
+        ],
         [{ ...baseForm(), configOptionsJson: '{"count":2}' }, 'configOptionsInvalid'],
         [{ ...baseForm(), maxAttempts: '21' }, 'reconnectInvalid']
     ] as const;

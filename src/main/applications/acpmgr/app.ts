@@ -26,6 +26,8 @@ import { logger } from '../../utils/logger.js';
 import type { McpMgrApplication } from '../mcpmgr/app.js';
 import { createAcpAgentDeclarations, resolveAcpMcpServers } from './agent.js';
 import { AcpAgentProfileSchema, AcpMgrConfigSchema, type AcpAgentProfile, type AcpMgrConfig } from './common.js';
+import { ClientWorkspaceRuntime } from './runtime/client-workspace.js';
+import { resolveAcpWorkspace } from './runtime/workspace.js';
 
 function parseConfig(value: unknown): AcpMgrConfig {
     return AcpMgrConfigSchema.parse(value ?? {});
@@ -124,11 +126,27 @@ export class AcpMgrApplication extends BaseApplication {
     async testAgent(input: unknown, workspace?: string): Promise<Record<string, unknown>> {
         const profile = AcpAgentProfileSchema.parse(input);
         const effectiveWorkspace = workspace || getPlatform().getEffectiveWorkspace();
+        const resolvedWorkspace = resolveAcpWorkspace(profile, effectiveWorkspace);
+        const clientWorkspaceRuntime =
+            resolvedWorkspace.executionLocation === 'client'
+                ? new ClientWorkspaceRuntime({ root: resolvedWorkspace.sessionCwd, authorize: async () => false })
+                : undefined;
         const handle = await this.createConnection(
             profile,
             {
                 sessionUpdate: async () => undefined,
-                requestPermission: async () => ({ outcome: { outcome: 'cancelled' } })
+                requestPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
+                ...(clientWorkspaceRuntime
+                    ? {
+                          readTextFile: (params) => clientWorkspaceRuntime.readTextFile(params),
+                          writeTextFile: (params) => clientWorkspaceRuntime.writeTextFile(params),
+                          createTerminal: (params) => clientWorkspaceRuntime.createTerminal(params),
+                          terminalOutput: (params) => clientWorkspaceRuntime.terminalOutput(params),
+                          releaseTerminal: (params) => clientWorkspaceRuntime.releaseTerminal(params),
+                          waitForTerminalExit: (params) => clientWorkspaceRuntime.waitForTerminalExit(params),
+                          killTerminal: (params) => clientWorkspaceRuntime.killTerminal(params)
+                      }
+                    : {})
             },
             effectiveWorkspace
         );
@@ -136,14 +154,18 @@ export class AcpMgrApplication extends BaseApplication {
         try {
             const initializeResponse = await handle.connection.initialize({
                 protocolVersion: PROTOCOL_VERSION,
-                clientCapabilities: {},
-                clientInfo: { name: 'OpenDesk', version: '0.3.3' }
+                clientCapabilities:
+                    resolvedWorkspace.executionLocation === 'client'
+                        ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
+                        : {},
+                clientInfo: { name: 'OpenDesk', version: '0.3.4' }
             });
             const sessionResponse = await handle.connection.newSession({
-                cwd: effectiveWorkspace,
+                cwd: resolvedWorkspace.sessionCwd,
                 mcpServers: []
             });
             sessionId = sessionResponse.sessionId;
+            clientWorkspaceRuntime?.setSessionId(sessionId);
             return {
                 protocolVersion: initializeResponse.protocolVersion,
                 agentInfo: initializeResponse.agentInfo ?? null,
@@ -158,6 +180,7 @@ export class AcpMgrApplication extends BaseApplication {
                 await handle.connection.closeSession({ sessionId });
             }
             await handle.close();
+            await clientWorkspaceRuntime?.close();
         }
     }
 
@@ -204,7 +227,7 @@ export class AcpMgrApplication extends BaseApplication {
     }
 
     private async resolveMcpServers(profile: AcpAgentProfile): Promise<McpServer[]> {
-        if (profile.session.mcpServerIds.length === 0) return [];
+        if (profile.session.mcpBindings.length === 0) return [];
         const mcpManager = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
         if (!mcpManager) throw new Error(t('acpmgr.error.mcpManagerUnavailable'));
         const environ = {

@@ -12,13 +12,28 @@
 import {
     PROTOCOL_VERSION,
     type AgentCapabilities,
+    type ClientCapabilities,
     type ContentBlock,
+    type CreateTerminalRequest,
+    type CreateTerminalResponse,
+    type KillTerminalRequest,
+    type KillTerminalResponse,
     type McpServer,
+    type ReadTextFileRequest,
+    type ReadTextFileResponse,
+    type ReleaseTerminalRequest,
+    type ReleaseTerminalResponse,
     type RequestPermissionRequest,
     type RequestPermissionResponse,
     type SessionConfigOption,
     type SessionNotification,
-    type StopReason
+    type StopReason,
+    type TerminalOutputRequest,
+    type TerminalOutputResponse,
+    type WaitForTerminalExitRequest,
+    type WaitForTerminalExitResponse,
+    type WriteTextFileRequest,
+    type WriteTextFileResponse
 } from '@agentclientprotocol/sdk';
 import type { AcpTaskRuntimeTurnRequest, AcpTaskRuntimeTurnResult } from './types.js';
 import { t } from '../../../../locale/index.js';
@@ -35,6 +50,8 @@ import {
     type AcpConnectionFactory,
     type AcpConnectionHandle
 } from './connection.js';
+import { ClientWorkspaceRuntime, type ClientWorkspaceOperation } from './client-workspace.js';
+import { createAcpExecutionFingerprint, resolveAcpWorkspace, type ResolvedAcpWorkspace } from './workspace.js';
 
 type AcpPhase = 'connecting' | 'idle' | 'running' | 'uncertain' | 'cancelled';
 
@@ -44,6 +61,9 @@ interface AcpRuntimeCheckpoint extends Record<string, unknown> {
     safeProfile: ReturnType<typeof createSafeAcpProfileSnapshot>;
     phase: AcpPhase;
     lastSequence: number;
+    executionLocation?: 'agent' | 'client';
+    sessionCwd?: string;
+    executionFingerprint?: string;
     sessionId?: string;
     protocolVersion?: number;
     agentInfo?: Record<string, unknown>;
@@ -92,6 +112,11 @@ function restoreCheckpoint(profile: AcpAgentProfile, value: unknown, lastSequenc
         phase,
         ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
         ...(typeof value.protocolVersion === 'number' ? { protocolVersion: value.protocolVersion } : {}),
+        ...(value.executionLocation === 'agent' || value.executionLocation === 'client'
+            ? { executionLocation: value.executionLocation }
+            : {}),
+        ...(typeof value.sessionCwd === 'string' ? { sessionCwd: value.sessionCwd } : {}),
+        ...(typeof value.executionFingerprint === 'string' ? { executionFingerprint: value.executionFingerprint } : {}),
         ...(isRecord(value.agentInfo) ? { agentInfo: value.agentInfo } : {}),
         ...(isRecord(value.agentCapabilities) ? { agentCapabilities: value.agentCapabilities } : {})
     };
@@ -133,6 +158,9 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     private sessionConfigOptions?: SessionConfigOption[];
     private sessionId?: string;
     private replaying = false;
+    private resolvedWorkspace?: ResolvedAcpWorkspace;
+    private executionFingerprint?: string;
+    private clientWorkspaceRuntime?: ClientWorkspaceRuntime;
 
     constructor(
         private readonly profile: AcpAgentProfile,
@@ -157,14 +185,32 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         this.activeRequest = request;
         this.journal = this.journal ?? new AcpEventJournal(this.artifactDirectory(request.taskId));
         this.checkpoint = restoreCheckpoint(this.profile, request.persistedState, this.journal.lastSequence);
-        const recoveryPhase = this.checkpoint.phase;
-        const sessionStrategy = this.checkpoint.sessionId ? 'restore' : 'new';
-        this.log.info(
-            `[ACP] dispatch started: task=${request.taskId} profile=${this.profile.id} ` +
-                `name=${JSON.stringify(this.profile.name)} transport=${this.profile.transport.type} ` +
-                `session=${sessionStrategy}`
-        );
+        let recoveryPhase = this.checkpoint.phase;
         try {
+            await this.prepareWorkspace(request.workspace);
+            recoveryPhase = this.checkpoint.phase;
+            if (
+                this.checkpoint.sessionId &&
+                this.checkpoint.executionFingerprint &&
+                this.checkpoint.executionFingerprint !== this.executionFingerprint
+            ) {
+                this.record('lifecycle', 'session/execution_changed', {
+                    previous: this.checkpoint.executionFingerprint,
+                    current: this.executionFingerprint
+                });
+                this.checkpoint.sessionId = undefined;
+                this.checkpoint.phase = 'connecting';
+                recoveryPhase = 'connecting';
+            }
+            this.checkpoint.executionLocation = this.resolvedWorkspace?.executionLocation;
+            this.checkpoint.sessionCwd = this.resolvedWorkspace?.sessionCwd;
+            this.checkpoint.executionFingerprint = this.executionFingerprint;
+            const sessionStrategy = this.checkpoint.sessionId ? 'restore' : 'new';
+            this.log.info(
+                `[ACP] dispatch started: task=${request.taskId} profile=${this.profile.id} ` +
+                    `name=${JSON.stringify(this.profile.name)} transport=${this.profile.transport.type} ` +
+                    `session=${sessionStrategy}`
+            );
             await this.saveCheckpoint();
             try {
                 await this.ensureConnected(request, recoveryPhase);
@@ -248,6 +294,34 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         return outcome;
     }
 
+    async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+        return this.requireClientWorkspaceRuntime().readTextFile(params);
+    }
+
+    async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+        return this.requireClientWorkspaceRuntime().writeTextFile(params);
+    }
+
+    async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
+        return this.requireClientWorkspaceRuntime().createTerminal(params);
+    }
+
+    async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
+        return this.requireClientWorkspaceRuntime().terminalOutput(params);
+    }
+
+    async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
+        return this.requireClientWorkspaceRuntime().releaseTerminal(params);
+    }
+
+    async waitForTerminalExit(params: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse> {
+        return this.requireClientWorkspaceRuntime().waitForTerminalExit(params);
+    }
+
+    async killTerminal(params: KillTerminalRequest): Promise<KillTerminalResponse> {
+        return this.requireClientWorkspaceRuntime().killTerminal(params);
+    }
+
     async cancel(_reason: 'user' | 'system'): Promise<void> {
         if (!this.connection || !this.sessionId) return;
         this.record('outbound', 'session/cancel', { sessionId: this.sessionId });
@@ -257,10 +331,13 @@ export class AcpTaskRuntime implements AcpClientHandlers {
 
     async dispose(): Promise<void> {
         await this.resetConnection();
+        await this.clientWorkspaceRuntime?.close();
+        this.clientWorkspaceRuntime = undefined;
     }
 
     private async ensureConnected(request: AcpTaskRuntimeTurnRequest, recoveryPhase: AcpPhase): Promise<void> {
         if (this.connection && this.sessionId) return;
+        const workspace = this.requireResolvedWorkspace();
         await this.connectWithRetry(request.workspace);
         const connection = this.requireConnection();
         const mcpServers = await this.resolveMcpServers(this.profile);
@@ -271,12 +348,12 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 if (!this.capabilities?.loadSession) {
                     throw new Error(t('acpmgr.error.reconcileUnsupported'));
                 }
-                this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: request.workspace });
+                this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 this.replaying = true;
                 try {
                     const response = await connection.loadSession({
                         sessionId: savedSessionId,
-                        cwd: request.workspace,
+                        cwd: workspace.sessionCwd,
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
@@ -285,21 +362,21 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     this.replaying = false;
                 }
             } else if (this.capabilities?.sessionCapabilities?.resume) {
-                this.record('outbound', 'session/resume', { sessionId: savedSessionId, cwd: request.workspace });
+                this.record('outbound', 'session/resume', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 const response = await connection.resumeSession({
                     sessionId: savedSessionId,
-                    cwd: request.workspace,
+                    cwd: workspace.sessionCwd,
                     mcpServers
                 });
                 this.record('inbound', 'session/resume/result', response);
                 this.sessionConfigOptions = response?.configOptions ?? undefined;
             } else if (this.capabilities?.loadSession) {
-                this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: request.workspace });
+                this.record('outbound', 'session/load', { sessionId: savedSessionId, cwd: workspace.sessionCwd });
                 this.replaying = true;
                 try {
                     const response = await connection.loadSession({
                         sessionId: savedSessionId,
-                        cwd: request.workspace,
+                        cwd: workspace.sessionCwd,
                         mcpServers
                     });
                     this.record('inbound', 'session/load/result', response);
@@ -311,12 +388,13 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 throw new Error(t('acpmgr.error.resumeUnsupported'));
             }
         } else {
-            this.record('outbound', 'session/new', { cwd: request.workspace, mcpServers });
-            const response = await connection.newSession({ cwd: request.workspace, mcpServers });
+            this.record('outbound', 'session/new', { cwd: workspace.sessionCwd, mcpServers });
+            const response = await connection.newSession({ cwd: workspace.sessionCwd, mcpServers });
             this.record('inbound', 'session/new/result', response);
             this.sessionId = response.sessionId;
             this.sessionConfigOptions = response.configOptions ?? undefined;
         }
+        this.clientWorkspaceRuntime?.setSessionId(this.requireSessionId());
         await this.saveCheckpoint({ sessionId: this.sessionId, phase: 'idle' });
         await this.applySessionSettings();
     }
@@ -332,12 +410,16 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 this.handle = await this.createConnection(this.profile, this, workspace);
                 this.watchConnectionClosure(this.handle);
                 this.connection = this.handle.connection;
-                this.record('outbound', 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+                const clientCapabilities = this.clientCapabilities();
+                this.record('outbound', 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities });
                 const response = await this.connection.initialize({
                     protocolVersion: PROTOCOL_VERSION,
-                    clientCapabilities: {},
-                    clientInfo: { name: 'OpenDesk', version: '0.3.3' }
+                    clientCapabilities,
+                    clientInfo: { name: 'OpenDesk', version: '0.3.4' }
                 });
+                if (this.profile.execution.location === 'client' && response.protocolVersion !== 1) {
+                    throw new Error(t('acpmgr.error.clientRuntimeRequiresV1'));
+                }
                 this.record('inbound', 'initialize/result', response);
                 this.capabilities = response.agentCapabilities;
                 await this.saveCheckpoint({
@@ -376,6 +458,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         if (this.handle !== handle) return;
         this.handle = undefined;
         this.connection = undefined;
+        void this.clientWorkspaceRuntime?.close();
     }
 
     private async applySessionSettings(): Promise<void> {
@@ -461,6 +544,98 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         return this.connection;
     }
 
+    private requireResolvedWorkspace(): ResolvedAcpWorkspace {
+        if (!this.resolvedWorkspace) throw new Error(t('acpmgr.error.workspaceNotResolved'));
+        return this.resolvedWorkspace;
+    }
+
+    private requireClientWorkspaceRuntime(): ClientWorkspaceRuntime {
+        if (!this.clientWorkspaceRuntime) throw new Error(t('acpmgr.error.clientRuntimeUnavailable'));
+        return this.clientWorkspaceRuntime;
+    }
+
+    private clientCapabilities(): ClientCapabilities {
+        return this.profile.execution.location === 'client'
+            ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
+            : {};
+    }
+
+    private async prepareWorkspace(taskWorkspace: string): Promise<void> {
+        const resolved = resolveAcpWorkspace(this.profile, taskWorkspace);
+        const fingerprint = createAcpExecutionFingerprint(this.profile, resolved);
+        if (
+            this.clientWorkspaceRuntime &&
+            (resolved.executionLocation !== 'client' || this.resolvedWorkspace?.sessionCwd !== resolved.sessionCwd)
+        ) {
+            await this.clientWorkspaceRuntime.close();
+            this.clientWorkspaceRuntime = undefined;
+        }
+        this.resolvedWorkspace = resolved;
+        this.executionFingerprint = fingerprint;
+        if (resolved.executionLocation === 'client' && !this.clientWorkspaceRuntime) {
+            this.clientWorkspaceRuntime = new ClientWorkspaceRuntime({
+                root: resolved.sessionCwd,
+                authorize: (operation) => this.authorizeClientOperation(operation)
+            });
+        }
+        if (resolved.legacy) {
+            this.log.warn(
+                `[ACP] legacy HTTP workspace path passthrough: profile=${this.profile.id} cwd=${JSON.stringify(resolved.sessionCwd)}`
+            );
+        }
+    }
+
+    private async authorizeClientOperation(operation: ClientWorkspaceOperation): Promise<boolean> {
+        if (!this.activeRequest || this.activeRequest.signal.aborted || !this.sessionId) return false;
+        const kind = operation.kind === 'read' ? 'read' : operation.kind === 'write' ? 'edit' : 'execute';
+        const title =
+            operation.kind === 'read'
+                ? t('acpmgr.permission.localRead')
+                : operation.kind === 'write'
+                  ? t('acpmgr.permission.localWrite')
+                  : t('acpmgr.permission.localExecute');
+        const response = await this.activeRequest.requestPermission({
+            sessionId: this.sessionId,
+            toolCall: {
+                toolCallId: crypto.randomUUID(),
+                title,
+                kind,
+                ...(operation.path ? { locations: [{ path: operation.path }] } : {}),
+                rawInput: {
+                    ...(operation.path ? { path: operation.path } : {}),
+                    ...(operation.command ? { command: operation.command, args: operation.args ?? [] } : {})
+                }
+            },
+            options: [
+                {
+                    optionId: 'opendesk-local-allow-once',
+                    name: t('acpmgr.permission.allowOnce'),
+                    kind: 'allow_once'
+                },
+                {
+                    optionId: 'opendesk-local-allow-always',
+                    name: t('acpmgr.permission.allowAlways'),
+                    kind: 'allow_always'
+                },
+                {
+                    optionId: 'opendesk-local-reject-once',
+                    name: t('acpmgr.permission.rejectOnce'),
+                    kind: 'reject_once'
+                },
+                {
+                    optionId: 'opendesk-local-reject-always',
+                    name: t('acpmgr.permission.rejectAlways'),
+                    kind: 'reject_always'
+                }
+            ]
+        });
+        if (response.outcome.outcome !== 'selected') return false;
+        return (
+            response.outcome.optionId === 'opendesk-local-allow-once' ||
+            response.outcome.optionId === 'opendesk-local-allow-always'
+        );
+    }
+
     private requireSessionId(): string {
         if (!this.sessionId) throw new Error(t('acpmgr.error.sessionNotInitialized'));
         return this.sessionId;
@@ -470,6 +645,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         const handle = this.handle;
         this.handle = undefined;
         this.connection = undefined;
+        await this.clientWorkspaceRuntime?.close();
         if (handle) await handle.close();
     }
 }

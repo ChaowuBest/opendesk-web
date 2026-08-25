@@ -33,6 +33,11 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
     assert.equal(stdio.enabled, true);
     assert.equal(stdio.dispatchable, false);
     assert.equal(stdio.transport.cwd, 'workspace');
+    assert.deepEqual(stdio.execution, {
+        location: 'client',
+        workspace: { strategy: 'task' },
+        compatibility: 'preferred'
+    });
     assert.deepEqual(stdio.reconnect, {
         enabled: true,
         maxAttempts: 3,
@@ -41,6 +46,54 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
     });
     assert.equal(http.transport.type, 'streamableHttp');
     assert.equal(http.transport.cookies, 'include');
+    assert.deepEqual(http.execution, {
+        location: 'agent',
+        workspace: { strategy: 'legacy' }
+    });
+});
+
+test('ACP HTTP profiles model fixed and mapped Agent workspaces explicitly', () => {
+    const fixed = AcpAgentProfileSchema.parse({
+        id: profileId,
+        name: 'Remote Linux Agent',
+        transport: { type: 'streamableHttp', url: 'https://agents.example.com/acp' },
+        execution: {
+            location: 'agent',
+            workspace: { strategy: 'fixed', path: '/workspace/project', platform: 'posix' }
+        }
+    });
+    const mapped = AcpAgentProfileSchema.parse({
+        id: '22222222-2222-4222-8222-222222222222',
+        name: 'Mapped Agent',
+        transport: { type: 'streamableHttp', url: 'https://agents.example.com/acp' },
+        execution: {
+            location: 'agent',
+            workspace: {
+                strategy: 'mapped',
+                localRoot: process.cwd(),
+                remoteRoot: '/workspaces',
+                platform: 'posix'
+            }
+        }
+    });
+
+    assert.equal(fixed.execution.workspace.strategy, 'fixed');
+    assert.equal(mapped.execution.workspace.strategy, 'mapped');
+});
+
+test('ACP profile schema migrates legacy MCP ids into Agent-side bindings', () => {
+    const parsed = AcpAgentProfileSchema.parse({
+        id: profileId,
+        name: 'Legacy MCP profile',
+        transport: { type: 'stdio', command: 'agent' },
+        session: { mcpServerIds: ['filesystem', 'browser'] }
+    });
+
+    assert.deepEqual(parsed.session.mcpBindings, [
+        { serverId: 'filesystem', location: 'agent' },
+        { serverId: 'browser', location: 'agent' }
+    ]);
+    assert.equal('mcpServerIds' in parsed.session, false);
 });
 
 test('ACP settings reject incomplete and unsafe transport configuration', () => {
@@ -104,6 +157,10 @@ test('ACP transport templates resolve environment values without persisting them
     assert.deepEqual(createSafeAcpProfileSnapshot(profile), {
         id: profileId,
         name: 'Remote Agent',
+        execution: {
+            location: 'agent',
+            workspace: { strategy: 'legacy' }
+        },
         transport: {
             type: 'streamableHttp',
             url: 'https://agents.example.com/acp',

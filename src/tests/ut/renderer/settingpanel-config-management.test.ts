@@ -259,6 +259,37 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('.delete-acp-agent-btn')).not.toBeNull();
     });
 
+    test('shows and edits the execution host for a remote ACP agent', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Remote ACP',
+            enabled: true,
+            transport: {
+                type: 'streamableHttp',
+                url: 'https://agent.example.com/acp',
+                headers: {},
+                cookies: 'include'
+            },
+            execution: {
+                location: 'agent',
+                workspace: { strategy: 'fixed', path: '/workspace/project', platform: 'posix' }
+            },
+            session: { configOptions: {}, mcpBindings: [] },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = { acpmgr: { agents: [profile] } };
+        panel.innerHTML = panel.renderAcpAgentsSection();
+
+        expect(panel.querySelector('.sp-acp-agent-card')?.textContent).toContain('Agent 主机');
+
+        panel.showAcpAgentEditModal(0);
+        expect((panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement).value).toBe('agent');
+        expect((panel.querySelector('#acp-agent-remote-cwd') as HTMLInputElement).value).toBe('/workspace/project');
+        const next = panel._readAcpAgentForm(profile.id);
+        expect(next.execution).toEqual(profile.execution);
+    });
+
     test('discovers ACP session options and writes a selected model to the profile JSON', async () => {
         const panel = createPanel();
         const profile = {

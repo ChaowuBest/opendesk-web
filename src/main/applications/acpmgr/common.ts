@@ -10,6 +10,7 @@
  */
 
 import { z } from 'zod';
+import path from 'node:path';
 
 export {
     AcpEnvironmentVariableError,
@@ -65,29 +66,118 @@ export const AcpTransportSchema = z.union([StdioTransportSchema, StreamableHttpT
 
 const SessionValueSchema = z.union([z.string(), z.boolean()]);
 
-export const AcpAgentProfileSchema = z.object({
-    id: z.string().uuid(),
-    name: z.string().trim().min(1),
-    enabled: z.boolean().default(true),
-    dispatchable: z.boolean().default(false),
-    whenToUse: z.string().default(''),
-    transport: AcpTransportSchema,
-    session: z
-        .object({
-            modeId: z.string().trim().min(1).optional(),
-            configOptions: z.record(z.string(), SessionValueSchema).default({}),
-            mcpServerIds: z.array(z.string()).default([])
-        })
-        .default({ configOptions: {}, mcpServerIds: [] }),
-    reconnect: z
-        .object({
-            enabled: z.boolean().default(true),
-            maxAttempts: z.number().int().min(0).max(20).default(3),
-            initialDelayMs: z.number().int().min(0).max(60_000).default(500),
-            maxDelayMs: z.number().int().min(0).max(300_000).default(5_000)
-        })
-        .default({ enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5_000 })
+const AcpMcpBindingSchema = z.object({
+    serverId: z.string().trim().min(1),
+    location: z.enum(['agent', 'client']).default('agent')
 });
+
+const RemotePlatformSchema = z.enum(['posix', 'windows']);
+
+function isAbsoluteForPlatform(value: string, platform: z.output<typeof RemotePlatformSchema>): boolean {
+    return platform === 'windows' ? path.win32.isAbsolute(value) : path.posix.isAbsolute(value);
+}
+
+const AgentWorkspaceSchema = z
+    .discriminatedUnion('strategy', [
+        z.object({ strategy: z.literal('legacy') }),
+        z.object({
+            strategy: z.literal('fixed'),
+            path: z.string().trim().min(1),
+            platform: RemotePlatformSchema.default('posix')
+        }),
+        z.object({
+            strategy: z.literal('mapped'),
+            localRoot: z.string().trim().min(1),
+            remoteRoot: z.string().trim().min(1),
+            platform: RemotePlatformSchema.default('posix')
+        })
+    ])
+    .superRefine((workspace, context) => {
+        if (workspace.strategy === 'fixed' && !isAbsoluteForPlatform(workspace.path, workspace.platform)) {
+            context.addIssue({ code: z.ZodIssueCode.custom, path: ['path'], message: 'Remote cwd must be absolute' });
+        }
+        if (workspace.strategy === 'mapped') {
+            if (!path.isAbsolute(workspace.localRoot)) {
+                context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ['localRoot'],
+                    message: 'Local mapping root must be absolute'
+                });
+            }
+            if (!isAbsoluteForPlatform(workspace.remoteRoot, workspace.platform)) {
+                context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ['remoteRoot'],
+                    message: 'Remote mapping root must be absolute'
+                });
+            }
+        }
+    });
+
+const ClientWorkspaceSchema = z
+    .discriminatedUnion('strategy', [
+        z.object({ strategy: z.literal('task') }),
+        z.object({ strategy: z.literal('fixed'), path: z.string().trim().min(1) })
+    ])
+    .superRefine((workspace, context) => {
+        if (workspace.strategy === 'fixed' && !path.isAbsolute(workspace.path)) {
+            context.addIssue({ code: z.ZodIssueCode.custom, path: ['path'], message: 'Client cwd must be absolute' });
+        }
+    });
+
+export const AcpExecutionSchema = z.discriminatedUnion('location', [
+    z.object({ location: z.literal('agent'), workspace: AgentWorkspaceSchema }),
+    z.object({
+        location: z.literal('client'),
+        workspace: ClientWorkspaceSchema,
+        compatibility: z.enum(['preferred', 'required']).default('preferred')
+    })
+]);
+
+const AcpSessionSchema = z
+    .object({
+        modeId: z.string().trim().min(1).optional(),
+        configOptions: z.record(z.string(), SessionValueSchema).default({}),
+        mcpBindings: z.array(AcpMcpBindingSchema).optional(),
+        mcpServerIds: z.array(z.string()).default([])
+    })
+    .transform(({ mcpServerIds, mcpBindings, ...session }) => ({
+        ...session,
+        mcpBindings: mcpBindings ?? mcpServerIds.map((serverId) => ({ serverId, location: 'agent' as const }))
+    }));
+
+export const AcpAgentProfileSchema = z
+    .object({
+        id: z.string().uuid(),
+        name: z.string().trim().min(1),
+        enabled: z.boolean().default(true),
+        dispatchable: z.boolean().default(false),
+        whenToUse: z.string().default(''),
+        transport: AcpTransportSchema,
+        execution: AcpExecutionSchema.optional(),
+        session: AcpSessionSchema.optional(),
+        reconnect: z
+            .object({
+                enabled: z.boolean().default(true),
+                maxAttempts: z.number().int().min(0).max(20).default(3),
+                initialDelayMs: z.number().int().min(0).max(60_000).default(500),
+                maxDelayMs: z.number().int().min(0).max(300_000).default(5_000)
+            })
+            .default({ enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5_000 })
+    })
+    .transform((profile) => ({
+        ...profile,
+        session: profile.session ?? { configOptions: {}, mcpBindings: [] },
+        execution:
+            profile.execution ??
+            (profile.transport.type === 'stdio'
+                ? ({
+                      location: 'client',
+                      workspace: { strategy: 'task' },
+                      compatibility: 'preferred'
+                  } as const)
+                : ({ location: 'agent', workspace: { strategy: 'legacy' } } as const))
+    }));
 
 const AcpAgentProfilesSchema = z
     .array(AcpAgentProfileSchema)

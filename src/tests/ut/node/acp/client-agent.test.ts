@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { AgentRegistry } from '../../../../main/aikernel/agents/registry.js';
 import {
     ACP_ACTIVE_PROFILE_IDS_ENV,
@@ -165,7 +166,7 @@ test('ACP agent test creates a disposable session and exposes its configuration'
     assert.equal((result.configOptions as any[])[0].category, 'model');
     assert.deepEqual(calls, [
         'initialize',
-        'session/new:D:/workspace:0',
+        `session/new:${path.resolve('D:/workspace')}:0`,
         'session/close:temporary-session',
         'transport/close'
     ]);
@@ -174,7 +175,12 @@ test('ACP agent test creates a disposable session and exposes its configuration'
 test('selected MCP manager entries are converted to ACP SDK server shapes', () => {
     const profile = AcpAgentProfileSchema.parse({
         ...enabledProfile,
-        session: { mcpServerIds: ['stdio-1', 'http-1'] }
+        session: {
+            mcpBindings: [
+                { serverId: 'stdio-1', location: 'agent' },
+                { serverId: 'http-1', location: 'agent' }
+            ]
+        }
     });
     const result = resolveAcpMcpServers(
         profile,
@@ -227,4 +233,28 @@ test('selected MCP manager entries are converted to ACP SDK server shapes', () =
             headers: [{ name: 'Authorization', value: 'Bearer secret' }]
         }
     ]);
+});
+
+test('Client-side MCP bindings are rejected until an OpenDesk proxy transport exists', () => {
+    const profile = AcpAgentProfileSchema.parse({
+        ...enabledProfile,
+        session: { mcpBindings: [{ serverId: 'stdio-1', location: 'client' }] }
+    });
+
+    assert.throws(
+        () =>
+            resolveAcpMcpServers(profile, [
+                {
+                    id: 'stdio-1',
+                    name: 'filesystem',
+                    enabled: true,
+                    transport: 'stdio',
+                    command: 'node',
+                    args: ['server.js'],
+                    env: {},
+                    headers: {}
+                }
+            ]),
+        /proxy|代理|client/i
+    );
 });

@@ -38,7 +38,12 @@ export interface AcpAgentPresetDraft {
     };
     session: {
         configOptions: Record<string, string | boolean>;
-        mcpServerIds: string[];
+        mcpBindings: Array<{ serverId: string; location: 'agent' | 'client' }>;
+    };
+    execution: {
+        location: 'client';
+        workspace: { strategy: 'task' };
+        compatibility: 'preferred';
     };
     reconnect: {
         enabled: boolean;
@@ -170,7 +175,12 @@ export function createAcpAgentPresetDraft(
         },
         session: {
             configOptions: {},
-            mcpServerIds: []
+            mcpBindings: []
+        },
+        execution: {
+            location: 'client',
+            workspace: { strategy: 'task' },
+            compatibility: 'preferred'
         },
         reconnect: {
             enabled: true,

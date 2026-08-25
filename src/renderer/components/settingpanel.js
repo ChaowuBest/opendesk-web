@@ -980,6 +980,7 @@ class SettingPanel extends HTMLElement {
         const cards = agents
             .map((agent, index) => {
                 const isHttp = agent.transport?.type === 'streamableHttp';
+                const executionLocation = agent.execution?.location || (isHttp ? 'agent' : 'client');
                 const endpoint = isHttp
                     ? agent.transport.url
                     : [agent.transport?.command, ...(agent.transport?.args || [])].filter(Boolean).join(' ');
@@ -990,6 +991,11 @@ class SettingPanel extends HTMLElement {
                             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                                 <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(agent.name)}</h3>
                                 <span class="sp-tag sp-tag-neutral">${isHttp ? 'Streamable HTTP' : 'stdio'}</span>
+                                <span class="sp-tag sp-tag-neutral">${
+                                    executionLocation === 'client'
+                                        ? this._t('sp.agents.execution.client')
+                                        : this._t('sp.agents.execution.agent')
+                                }</span>
                                 <span class="sp-tag ${agent.enabled === false ? 'sp-tag-neutral' : 'sp-tag-success'}">
                                     ${agent.enabled === false ? this._t('sp.agents.disabled') : this._t('sp.agents.enabled')}
                                 </span>
@@ -1119,6 +1125,15 @@ class SettingPanel extends HTMLElement {
             modeId: this.querySelector('#acp-agent-mode')?.value || '',
             configOptionsJson: this.querySelector('#acp-agent-config-options')?.value || '{}',
             mcpServerIds: this.querySelector('#acp-agent-mcp-servers')?.value || '',
+            executionLocation: this.querySelector('#acp-agent-execution-location')?.value || 'client',
+            agentWorkspaceStrategy: this.querySelector('#acp-agent-agent-workspace-strategy')?.value || 'fixed',
+            remotePlatform: this.querySelector('#acp-agent-remote-platform')?.value || 'posix',
+            remoteCwd: this.querySelector('#acp-agent-remote-cwd')?.value || '',
+            mappingLocalRoot: this.querySelector('#acp-agent-mapping-local-root')?.value || '',
+            mappingRemoteRoot: this.querySelector('#acp-agent-mapping-remote-root')?.value || '',
+            clientWorkspaceStrategy: this.querySelector('#acp-agent-client-workspace-strategy')?.value || 'task',
+            clientFixedCwd: this.querySelector('#acp-agent-client-fixed-cwd')?.value || '',
+            clientCompatibility: this.querySelector('#acp-agent-client-compatibility')?.value || 'preferred',
             reconnectEnabled: this.querySelector('#acp-agent-reconnect')?.checked === true,
             maxAttempts: this.querySelector('#acp-agent-max-attempts')?.value || '',
             initialDelayMs: this.querySelector('#acp-agent-initial-delay')?.value || '',
@@ -1155,6 +1170,16 @@ class SettingPanel extends HTMLElement {
         };
         const session = profile?.session || { configOptions: {}, mcpServerIds: [] };
         const isHttp = transport.type === 'streamableHttp';
+        const execution =
+            profile?.execution ||
+            (isHttp
+                ? { location: 'agent', workspace: { strategy: 'legacy' } }
+                : { location: 'client', workspace: { strategy: 'task' }, compatibility: 'preferred' });
+        const executionLocation = execution.location === 'agent' ? 'agent' : 'client';
+        const agentWorkspace = executionLocation === 'agent' ? execution.workspace : { strategy: 'fixed' };
+        const clientWorkspace = executionLocation === 'client' ? execution.workspace : { strategy: 'task' };
+        const mcpBindings =
+            session.mcpBindings || (session.mcpServerIds || []).map((serverId) => ({ serverId, location: 'agent' }));
         const dispatchableChecked = isEdit ? profile?.dispatchable === true : profile?.dispatchable !== false;
         const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
 
@@ -1254,6 +1279,79 @@ class SettingPanel extends HTMLElement {
                         </div>
                     </div>
 
+                    <div class="od-sp-fs">${this._t('sp.agents.section.execution')}</div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.agents.field.executionLocation')}</label>
+                        <select id="acp-agent-execution-location" class="od-sp-fi">
+                            <option value="agent" ${executionLocation === 'agent' ? 'selected' : ''}>${this._t('sp.agents.execution.agent')}</option>
+                            <option value="client" ${executionLocation === 'client' ? 'selected' : ''}>${this._t('sp.agents.execution.client')}</option>
+                        </select>
+                        <div class="od-sp-hint">${this._t('sp.agents.field.executionLocation.hint')}</div>
+                    </div>
+                    <div id="acp-agent-agent-execution-fields" ${executionLocation === 'agent' ? '' : 'hidden'}>
+                        ${
+                            agentWorkspace.strategy === 'legacy'
+                                ? `<div class="od-sp-agent-preset-notice"><i class="fas fa-triangle-exclamation"></i><span>${this._t('sp.agents.execution.legacyWarning')}</span></div>`
+                                : ''
+                        }
+                        <div class="od-sp-two-col">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.agentWorkspaceStrategy')}</label>
+                                <select id="acp-agent-agent-workspace-strategy" class="od-sp-fi">
+                                    <option value="fixed" ${agentWorkspace.strategy === 'mapped' ? '' : 'selected'}>${this._t('sp.agents.workspace.fixedRemote')}</option>
+                                    <option value="mapped" ${agentWorkspace.strategy === 'mapped' ? 'selected' : ''}>${this._t('sp.agents.workspace.mapped')}</option>
+                                </select>
+                            </div>
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.remotePlatform')}</label>
+                                <select id="acp-agent-remote-platform" class="od-sp-fi">
+                                    <option value="posix" ${agentWorkspace.platform === 'windows' ? '' : 'selected'}>POSIX</option>
+                                    <option value="windows" ${agentWorkspace.platform === 'windows' ? 'selected' : ''}>Windows</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="acp-agent-remote-cwd-field" class="od-sp-fg" ${agentWorkspace.strategy === 'mapped' ? 'hidden' : ''}>
+                            <label class="od-sp-fl">${this._t('sp.agents.field.remoteCwd')}</label>
+                            <input id="acp-agent-remote-cwd" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'fixed' ? agentWorkspace.path : '')}" placeholder="/workspace/project">
+                            <div class="od-sp-hint">${this._t('sp.agents.field.remoteCwd.hint')}</div>
+                        </div>
+                        <div id="acp-agent-mapping-fields" ${agentWorkspace.strategy === 'mapped' ? '' : 'hidden'}>
+                            <div class="od-sp-two-col">
+                                <div class="od-sp-fg">
+                                    <label class="od-sp-fl">${this._t('sp.agents.field.mappingLocalRoot')}</label>
+                                    <input id="acp-agent-mapping-local-root" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.localRoot : '')}">
+                                </div>
+                                <div class="od-sp-fg">
+                                    <label class="od-sp-fl">${this._t('sp.agents.field.mappingRemoteRoot')}</label>
+                                    <input id="acp-agent-mapping-remote-root" class="od-sp-fi" value="${this.escapeHtml(agentWorkspace.strategy === 'mapped' ? agentWorkspace.remoteRoot : '')}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="acp-agent-client-execution-fields" ${executionLocation === 'client' ? '' : 'hidden'}>
+                        <div class="od-sp-two-col">
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.clientWorkspaceStrategy')}</label>
+                                <select id="acp-agent-client-workspace-strategy" class="od-sp-fi">
+                                    <option value="task" ${clientWorkspace.strategy === 'fixed' ? '' : 'selected'}>${this._t('sp.agents.workspace.taskLocal')}</option>
+                                    <option value="fixed" ${clientWorkspace.strategy === 'fixed' ? 'selected' : ''}>${this._t('sp.agents.cwd.fixed')}</option>
+                                </select>
+                            </div>
+                            <div class="od-sp-fg">
+                                <label class="od-sp-fl">${this._t('sp.agents.field.clientCompatibility')}</label>
+                                <select id="acp-agent-client-compatibility" class="od-sp-fi">
+                                    <option value="preferred" ${execution.compatibility === 'required' ? '' : 'selected'}>${this._t('sp.agents.compatibility.preferred')}</option>
+                                    <option value="required" ${execution.compatibility === 'required' ? 'selected' : ''}>${this._t('sp.agents.compatibility.required')}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="acp-agent-client-fixed-cwd-field" class="od-sp-fg" ${clientWorkspace.strategy === 'fixed' ? '' : 'hidden'}>
+                            <label class="od-sp-fl">${this._t('sp.agents.field.clientFixedCwd')}</label>
+                            <input id="acp-agent-client-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(clientWorkspace.strategy === 'fixed' ? clientWorkspace.path : '')}">
+                        </div>
+                        <div class="od-sp-hint">${this._t('sp.agents.execution.client.hint')}</div>
+                    </div>
+
                     <div class="od-sp-fs">${this._t('sp.agents.section.session')}</div>
                     <div class="od-sp-two-col">
                         <div class="od-sp-fg">
@@ -1262,7 +1360,13 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.mcpServers')}</label>
-                            <input id="acp-agent-mcp-servers" class="od-sp-fi" value="${this.escapeHtml((session.mcpServerIds || []).join(', '))}">
+                            <input id="acp-agent-mcp-servers" class="od-sp-fi" value="${this.escapeHtml(
+                                mcpBindings
+                                    .filter((binding) => binding.location === 'agent')
+                                    .map((binding) => binding.serverId)
+                                    .join(', ')
+                            )}">
+                            <div class="od-sp-hint">${this._t('sp.agents.field.mcpServers.hint')}</div>
                         </div>
                     </div>
                     <div class="od-sp-fg">
@@ -1305,17 +1409,44 @@ class SettingPanel extends HTMLElement {
             </div>
         `);
 
-        const updateTransportFields = () => {
+        const updateExecutionFields = () => {
+            const agent = this.querySelector('#acp-agent-execution-location')?.value === 'agent';
+            this.querySelector('#acp-agent-agent-execution-fields').hidden = !agent;
+            this.querySelector('#acp-agent-client-execution-fields').hidden = agent;
+        };
+        const updateAgentWorkspaceFields = () => {
+            const mapped = this.querySelector('#acp-agent-agent-workspace-strategy')?.value === 'mapped';
+            this.querySelector('#acp-agent-remote-cwd-field').hidden = mapped;
+            this.querySelector('#acp-agent-mapping-fields').hidden = !mapped;
+        };
+        const updateClientWorkspaceFields = () => {
+            this.querySelector('#acp-agent-client-fixed-cwd-field').hidden =
+                this.querySelector('#acp-agent-client-workspace-strategy')?.value !== 'fixed';
+        };
+        const updateTransportFields = (selectDefaultExecution = false) => {
             const http = this.querySelector('#acp-agent-transport')?.value === 'streamableHttp';
             this.querySelector('#acp-agent-stdio-fields').hidden = http;
             this.querySelector('#acp-agent-http-fields').hidden = !http;
+            if (selectDefaultExecution) {
+                this.querySelector('#acp-agent-execution-location').value = http ? 'agent' : 'client';
+                updateExecutionFields();
+            }
         };
         const updateCwdField = () => {
             this.querySelector('#acp-agent-fixed-cwd-field').hidden =
                 this.querySelector('#acp-agent-cwd')?.value !== 'fixed';
         };
-        this.querySelector('#acp-agent-transport')?.addEventListener('change', updateTransportFields);
+        this.querySelector('#acp-agent-transport')?.addEventListener('change', () => updateTransportFields(true));
         this.querySelector('#acp-agent-cwd')?.addEventListener('change', updateCwdField);
+        this.querySelector('#acp-agent-execution-location')?.addEventListener('change', updateExecutionFields);
+        this.querySelector('#acp-agent-agent-workspace-strategy')?.addEventListener(
+            'change',
+            updateAgentWorkspaceFields
+        );
+        this.querySelector('#acp-agent-client-workspace-strategy')?.addEventListener(
+            'change',
+            updateClientWorkspaceFields
+        );
         this.querySelectorAll('.modal-close-btn').forEach((button) => {
             button.addEventListener('click', () => this.closeModal());
         });

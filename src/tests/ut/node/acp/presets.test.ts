@@ -35,7 +35,12 @@ test('ACP preset drafts use platform-specific npx launchers and safe defaults', 
     assert.equal(unixDraft.enabled, true);
     assert.equal(unixDraft.dispatchable, true);
     assert.equal(unixDraft.whenToUse, 'translated:sp.agents.preset.codex.whenToUse');
-    assert.deepEqual(unixDraft.session, { configOptions: {}, mcpServerIds: [] });
+    assert.deepEqual(unixDraft.session, { configOptions: {}, mcpBindings: [] });
+    assert.deepEqual(unixDraft.execution, {
+        location: 'client',
+        workspace: { strategy: 'task' },
+        compatibility: 'preferred'
+    });
     assert.deepEqual(unixDraft.reconnect, {
         enabled: true,
         maxAttempts: 3,

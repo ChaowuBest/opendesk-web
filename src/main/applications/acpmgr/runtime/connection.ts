@@ -14,9 +14,23 @@ import {
     ndJsonStream,
     type Agent,
     type Client,
+    type CreateTerminalRequest,
+    type CreateTerminalResponse,
+    type KillTerminalRequest,
+    type KillTerminalResponse,
+    type ReadTextFileRequest,
+    type ReadTextFileResponse,
+    type ReleaseTerminalRequest,
+    type ReleaseTerminalResponse,
     type RequestPermissionRequest,
     type RequestPermissionResponse,
-    type SessionNotification
+    type SessionNotification,
+    type TerminalOutputRequest,
+    type TerminalOutputResponse,
+    type WaitForTerminalExitRequest,
+    type WaitForTerminalExitResponse,
+    type WriteTextFileRequest,
+    type WriteTextFileResponse
 } from '@agentclientprotocol/sdk';
 import {
     createHttpStream,
@@ -35,6 +49,13 @@ import { logger } from '../../../utils/logger.js';
 export interface AcpClientHandlers {
     sessionUpdate(params: SessionNotification): Promise<void>;
     requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>;
+    readTextFile?(params: ReadTextFileRequest): Promise<ReadTextFileResponse>;
+    writeTextFile?(params: WriteTextFileRequest): Promise<WriteTextFileResponse>;
+    createTerminal?(params: CreateTerminalRequest): Promise<CreateTerminalResponse>;
+    terminalOutput?(params: TerminalOutputRequest): Promise<TerminalOutputResponse>;
+    releaseTerminal?(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse>;
+    waitForTerminalExit?(params: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse>;
+    killTerminal?(params: KillTerminalRequest): Promise<KillTerminalResponse>;
 }
 
 export type AcpClientConnection = Pick<
@@ -105,10 +126,32 @@ function mergedProcessEnvironment(profile: AcpAgentProfile): NodeJS.ProcessEnv {
     };
 }
 
-function createLegacyClient(handlers: AcpClientHandlers): Client {
+function createLegacyClient(profile: AcpAgentProfile, handlers: AcpClientHandlers): Client {
+    const exposeWorkspaceRuntime = profile.execution.location === 'client';
     return {
         sessionUpdate: (params) => handlers.sessionUpdate(params),
-        requestPermission: (params) => handlers.requestPermission(params)
+        requestPermission: (params) => handlers.requestPermission(params),
+        ...(exposeWorkspaceRuntime && handlers.readTextFile
+            ? { readTextFile: (params) => handlers.readTextFile!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.writeTextFile
+            ? { writeTextFile: (params) => handlers.writeTextFile!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.createTerminal
+            ? { createTerminal: (params) => handlers.createTerminal!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.terminalOutput
+            ? { terminalOutput: (params) => handlers.terminalOutput!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.releaseTerminal
+            ? { releaseTerminal: (params) => handlers.releaseTerminal!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.waitForTerminalExit
+            ? { waitForTerminalExit: (params) => handlers.waitForTerminalExit!(params) }
+            : {}),
+        ...(exposeWorkspaceRuntime && handlers.killTerminal
+            ? { killTerminal: (params) => handlers.killTerminal!(params) }
+            : {})
     };
 }
 
@@ -143,7 +186,7 @@ function createStdioHandle(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
         Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
     );
-    const connection = new ClientSideConnection(() => createLegacyClient(handlers), stream);
+    const connection = new ClientSideConnection(() => createLegacyClient(profile, handlers), stream);
     const processClosed = new Promise<void>((resolve) => {
         child.once('close', () => resolve());
         child.once('error', () => resolve());
@@ -183,7 +226,7 @@ function createHttpHandle(
             return getPlatform().fetch(target, init, { forceEnvironmentProxy: true });
         }) as typeof globalThis.fetch
     });
-    const connection = new ClientSideConnection(() => createLegacyClient(handlers), stream);
+    const connection = new ClientSideConnection(() => createLegacyClient(profile, handlers), stream);
     return {
         connection,
         closed: connection.closed,

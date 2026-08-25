@@ -17,6 +17,10 @@ export type AcpAgentFormErrorCode =
     | 'fixedCwdRequired'
     | 'urlInvalid'
     | 'headersInvalid'
+    | 'remoteCwdRequired'
+    | 'mappingRootsRequired'
+    | 'clientFixedCwdRequired'
+    | 'workspacePathInvalid'
     | 'configOptionsInvalid'
     | 'reconnectInvalid';
 
@@ -46,6 +50,15 @@ export type AcpAgentFormValues = {
     modeId: string;
     configOptionsJson: string;
     mcpServerIds: string;
+    executionLocation: string;
+    agentWorkspaceStrategy: string;
+    remotePlatform: string;
+    remoteCwd: string;
+    mappingLocalRoot: string;
+    mappingRemoteRoot: string;
+    clientWorkspaceStrategy: string;
+    clientFixedCwd: string;
+    clientCompatibility: string;
     reconnectEnabled: boolean;
     maxAttempts: string;
     initialDelayMs: string;
@@ -77,8 +90,25 @@ export type AcpAgentSettingsProfile = {
     session: {
         modeId?: string;
         configOptions: Record<string, string | boolean>;
-        mcpServerIds: string[];
+        mcpBindings: Array<{ serverId: string; location: 'agent' | 'client' }>;
     };
+    execution:
+        | {
+              location: 'agent';
+              workspace:
+                  | { strategy: 'fixed'; path: string; platform: 'posix' | 'windows' }
+                  | {
+                        strategy: 'mapped';
+                        localRoot: string;
+                        remoteRoot: string;
+                        platform: 'posix' | 'windows';
+                    };
+          }
+        | {
+              location: 'client';
+              workspace: { strategy: 'task' } | { strategy: 'fixed'; path: string };
+              compatibility: 'preferred' | 'required';
+          };
     reconnect: {
         enabled: boolean;
         maxAttempts: number;
@@ -129,6 +159,14 @@ function parseReconnectInteger(value: string, minimum: number, maximum: number):
     return parsed;
 }
 
+function isAbsolutePath(value: string): boolean {
+    return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\');
+}
+
+function isAbsoluteRemotePath(value: string, platform: 'posix' | 'windows'): boolean {
+    return platform === 'windows' ? /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') : value.startsWith('/');
+}
+
 export function buildAcpAgentProfile(
     form: AcpAgentFormValues,
     idFactory: () => string = () => crypto.randomUUID()
@@ -175,6 +213,42 @@ export function buildAcpAgentProfile(
     }
 
     const modeId = form.modeId.trim();
+    let execution: AcpAgentSettingsProfile['execution'];
+    if (form.executionLocation === 'agent') {
+        const platform = form.remotePlatform === 'windows' ? 'windows' : 'posix';
+        if (form.agentWorkspaceStrategy === 'mapped') {
+            const localRoot = form.mappingLocalRoot.trim();
+            const remoteRoot = form.mappingRemoteRoot.trim();
+            if (!localRoot || !remoteRoot) throw new AcpAgentFormError('mappingRootsRequired');
+            if (!isAbsolutePath(localRoot) || !isAbsoluteRemotePath(remoteRoot, platform)) {
+                throw new AcpAgentFormError('workspacePathInvalid');
+            }
+            execution = {
+                location: 'agent',
+                workspace: { strategy: 'mapped', localRoot, remoteRoot, platform }
+            };
+        } else {
+            const remoteCwd = form.remoteCwd.trim();
+            if (!remoteCwd) throw new AcpAgentFormError('remoteCwdRequired');
+            if (!isAbsoluteRemotePath(remoteCwd, platform)) throw new AcpAgentFormError('workspacePathInvalid');
+            execution = {
+                location: 'agent',
+                workspace: { strategy: 'fixed', path: remoteCwd, platform }
+            };
+        }
+    } else {
+        const strategy = form.clientWorkspaceStrategy === 'fixed' ? 'fixed' : 'task';
+        const fixedPath = form.clientFixedCwd.trim();
+        if (strategy === 'fixed' && !fixedPath) throw new AcpAgentFormError('clientFixedCwdRequired');
+        if (strategy === 'fixed' && !isAbsolutePath(fixedPath)) {
+            throw new AcpAgentFormError('workspacePathInvalid');
+        }
+        execution = {
+            location: 'client',
+            workspace: strategy === 'fixed' ? { strategy, path: fixedPath } : { strategy },
+            compatibility: form.clientCompatibility === 'required' ? 'required' : 'preferred'
+        };
+    }
     return {
         id: form.id?.trim() || idFactory(),
         name,
@@ -182,13 +256,15 @@ export function buildAcpAgentProfile(
         dispatchable: form.dispatchable,
         whenToUse: form.whenToUse.trim(),
         transport,
+        execution,
         session: {
             ...(modeId ? { modeId } : {}),
             configOptions: parseConfigOptions(form.configOptionsJson),
-            mcpServerIds: form.mcpServerIds
+            mcpBindings: form.mcpServerIds
                 .split(',')
                 .map((entry) => entry.trim())
                 .filter(Boolean)
+                .map((serverId) => ({ serverId, location: 'agent' }))
         },
         reconnect: {
             enabled: form.reconnectEnabled,

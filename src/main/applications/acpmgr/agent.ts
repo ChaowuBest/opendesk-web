@@ -27,7 +27,7 @@ export type AcpMcpResolver = (profile: AcpAgentProfile) => Promise<McpServer[]>;
 const ACP_MODE: ModeDecl = {
     id: 'acp',
     name: 'ACP',
-    description: 'The remote agent controls its own modes and tool execution.',
+    description: 'Run tasks through the configured ACP agent and workspace runtime.',
     displayNameKey: 'acpmgr.mode.name',
     descriptionKey: 'acpmgr.mode.description',
     icon: '🔌',
@@ -89,7 +89,13 @@ export function resolveAcpMcpServers(
     configuredServers: McpServerConfig[],
     environ: NodeJS.ProcessEnv = process.env
 ): McpServer[] {
-    const selectedIds = new Set(profile.session.mcpServerIds);
+    const clientBindings = profile.session.mcpBindings.filter((binding) => binding.location === 'client');
+    if (clientBindings.length > 0) {
+        throw new Error(t('acpmgr.error.mcpClientProxyUnsupported'));
+    }
+    const selectedIds = new Set(
+        profile.session.mcpBindings.filter((binding) => binding.location === 'agent').map((binding) => binding.serverId)
+    );
     try {
         return configuredServers
             .filter((server) => server.enabled && selectedIds.has(server.id))

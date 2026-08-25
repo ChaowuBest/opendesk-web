@@ -108,8 +108,13 @@ function makeRequest(
     };
 }
 
-function createRuntime(directory: string, connection: FakeConnection, logs: string[] = []): AcpTaskRuntime {
-    return new AcpTaskRuntime(profile, {
+function createRuntime(
+    directory: string,
+    connection: FakeConnection,
+    logs: string[] = [],
+    runtimeProfile = profile
+): AcpTaskRuntime {
+    return new AcpTaskRuntime(runtimeProfile, {
         artifactDirectory: () => directory,
         createConnection: async (_profile, handlers): Promise<AcpConnectionHandle> => {
             connection.handlers = handlers;
@@ -126,6 +131,66 @@ function createRuntime(directory: string, connection: FakeConnection, logs: stri
         }
     });
 }
+
+test('ACP HTTP Agent execution uses the configured remote cwd and advertises no Client runtime', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-remote-workspace-'));
+    try {
+        const connection = new FakeConnection();
+        const remoteProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            transport: { type: 'streamableHttp', url: 'https://agent.example.com/acp' },
+            execution: {
+                location: 'agent',
+                workspace: { strategy: 'fixed', path: '/srv/workspaces/project', platform: 'posix' }
+            }
+        });
+        const runtime = createRuntime(directory, connection, [], remoteProfile);
+        const request = makeRequest({ workspace: 'D:\\private\\project' });
+
+        const result = await runtime.runTurn(request);
+
+        const initialize = connection.calls.find((call) => call.method === 'initialize')?.params as InitializeRequest;
+        const session = connection.calls.find((call) => call.method === 'session/new')?.params as NewSessionRequest;
+        assert.deepEqual(initialize.clientCapabilities, {});
+        assert.equal(session.cwd, '/srv/workspaces/project');
+        assert.equal((result.state as any).executionLocation, 'agent');
+        assert.equal((result.state as any).sessionCwd, '/srv/workspaces/project');
+        assert.equal(typeof (result.state as any).executionFingerprint, 'string');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP HTTP Client execution advertises v1 filesystem and terminal capabilities', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-client-workspace-'));
+    try {
+        const connection = new FakeConnection();
+        const localProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            transport: { type: 'streamableHttp', url: 'https://agent.example.com/acp' },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required'
+            }
+        });
+        const runtime = createRuntime(directory, connection, [], localProfile);
+
+        await runtime.runTurn(makeRequest({ workspace: directory }));
+
+        const initialize = connection.calls.find((call) => call.method === 'initialize')?.params as InitializeRequest;
+        const session = connection.calls.find((call) => call.method === 'session/new')?.params as NewSessionRequest;
+        assert.deepEqual(initialize.clientCapabilities, {
+            fs: { readTextFile: true, writeTextFile: true },
+            terminal: true
+        });
+        assert.equal(session.cwd, directory);
+        assert.equal(typeof connection.handlers?.readTextFile, 'function');
+        assert.equal(typeof connection.handlers?.createTerminal, 'function');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
 
 test('ACP runtime creates a session, applies configured parameters, and checkpoints locally', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-runtime-'));
@@ -241,6 +306,66 @@ test('ACP runtime resumes an idle persisted session without creating a new one',
             (connection.calls.find((call) => call.method === 'session/prompt')?.params as any).sessionId,
             'saved-session'
         );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime starts a new session when the persisted execution fingerprint changed', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-fingerprint-'));
+    try {
+        const firstConnection = new FakeConnection();
+        const firstRuntime = createRuntime(directory, firstConnection);
+        const firstResult = await firstRuntime.runTurn(makeRequest({ workspace: directory }));
+
+        const nextConnection = new FakeConnection();
+        const changedProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'fixed', path: directory },
+                compatibility: 'required'
+            },
+            session: { ...profile.session, mcpBindings: [{ serverId: 'new-mcp', location: 'agent' }] }
+        });
+        const nextRuntime = createRuntime(directory, nextConnection, [], changedProfile);
+        await nextRuntime.runTurn(makeRequest({ workspace: directory, persistedState: firstResult.state }));
+
+        assert.equal(
+            nextConnection.calls.some((call) => call.method === 'session/new'),
+            true
+        );
+        assert.equal(
+            nextConnection.calls.some((call) => call.method === 'session/resume'),
+            false
+        );
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime clears the active turn when workspace mapping fails before connection', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-workspace-failure-'));
+    try {
+        const connection = new FakeConnection();
+        const mappedProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            transport: { type: 'streamableHttp', url: 'https://agent.example.com/acp' },
+            execution: {
+                location: 'agent',
+                workspace: {
+                    strategy: 'mapped',
+                    localRoot: directory,
+                    remoteRoot: '/workspace',
+                    platform: 'posix'
+                }
+            }
+        });
+        const runtime = createRuntime(directory, connection, [], mappedProfile);
+        const outside = path.resolve(directory, '..', 'outside');
+
+        await assert.rejects(runtime.runTurn(makeRequest({ workspace: outside })), /mapping|映射/i);
+        await assert.rejects(runtime.runTurn(makeRequest({ workspace: outside })), /mapping|映射/i);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
