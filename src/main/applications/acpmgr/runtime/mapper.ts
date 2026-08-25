@@ -10,20 +10,20 @@
  */
 
 import type { SessionUpdate, ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
-import type { AgentRuntimeToolLocation, AgentRuntimeToolStatus, AgentRuntimeUpdate } from '../common.js';
+import type { AcpProjectedToolLocation, AcpProjectedToolStatus, AcpProjectedUpdate } from './types.js';
 
 type ToolSnapshot = {
     toolCallId: string;
     title: string;
-    status: AgentRuntimeToolStatus;
-    locations?: AgentRuntimeToolLocation[];
+    status: AcpProjectedToolStatus;
+    locations?: AcpProjectedToolLocation[];
     rawInput?: unknown;
     rawOutput?: unknown;
 };
 
 function mapLocations(
     locations: ToolCall['locations'] | ToolCallUpdate['locations']
-): AgentRuntimeToolLocation[] | undefined {
+): AcpProjectedToolLocation[] | undefined {
     if (!locations) return undefined;
     return locations.map((location) => ({
         path: location.path,
@@ -31,15 +31,16 @@ function mapLocations(
     }));
 }
 
-function metadataUpdate(update: SessionUpdate): AgentRuntimeUpdate {
-    const { _meta, ...data } = update;
+function metadataUpdate(update: SessionUpdate): AcpProjectedUpdate {
+    const data: Record<string, unknown> = { ...update };
+    delete data._meta;
     return { type: 'metadata', data };
 }
 
 export class AcpSessionUpdateMapper {
     private readonly tools = new Map<string, ToolSnapshot>();
 
-    map(update: SessionUpdate): AgentRuntimeUpdate[] {
+    map(update: SessionUpdate): AcpProjectedUpdate[] {
         switch (update.sessionUpdate) {
             case 'agent_message_chunk':
                 return update.content.type === 'text'
@@ -71,7 +72,7 @@ export class AcpSessionUpdateMapper {
         }
     }
 
-    private mapToolCall(update: Extract<SessionUpdate, { sessionUpdate: 'tool_call' }>): AgentRuntimeUpdate {
+    private mapToolCall(update: Extract<SessionUpdate, { sessionUpdate: 'tool_call' }>): AcpProjectedUpdate {
         const snapshot: ToolSnapshot = {
             toolCallId: update.toolCallId,
             title: update.title,
@@ -86,7 +87,7 @@ export class AcpSessionUpdateMapper {
 
     private mapToolCallUpdate(
         update: Extract<SessionUpdate, { sessionUpdate: 'tool_call_update' }>
-    ): AgentRuntimeUpdate {
+    ): AcpProjectedUpdate {
         const previous = this.tools.get(update.toolCallId);
         const snapshot: ToolSnapshot = {
             toolCallId: update.toolCallId,

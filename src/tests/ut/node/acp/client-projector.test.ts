@@ -1,19 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentRuntimeTurnController, type AgentRuntimeTurnHost } from '../../../main/aikernel/agents/runtime.js';
-import { AssistantMessage, ChatContext, ToolCallMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
+import {
+    AcpMessageProjector,
+    type AcpMessageProjectorHost
+} from '../../../../main/applications/acpmgr/runtime/projector.js';
+import { AssistantMessage, ChatContext, ToolCallMessagePart, UserMessage } from '../../../../main/aikernel/messages.js';
 
-test('agent runtime turn keeps streamed output and tool progress in the local chat context', async () => {
+test('ACP message projector keeps streamed output and tool progress in the local chat context', async () => {
     const chatContext = new ChatContext();
     const publishedParts: number[] = [];
-    const host: AgentRuntimeTurnHost = {
+    const host: AcpMessageProjectorHost = {
         chatContext,
         publishUserMessage: async () => undefined,
         publishAssistantPart: async (partIndex) => {
             publishedParts.push(partIndex);
         }
     };
-    const turn = new AgentRuntimeTurnController(host);
+    const turn = new AcpMessageProjector(host);
 
     await turn.start('Inspect the project');
     await turn.apply({ type: 'thought_delta', text: 'Looking around. ' });
@@ -50,9 +53,9 @@ test('agent runtime turn keeps streamed output and tool progress in the local ch
     assert.deepEqual(publishedParts, [0, 1, 1, 2, 2]);
 });
 
-test('agent runtime turn records errors as local assistant content', async () => {
+test('ACP message projector records errors as local assistant content', async () => {
     const chatContext = new ChatContext();
-    const turn = new AgentRuntimeTurnController({
+    const turn = new AcpMessageProjector({
         chatContext,
         publishUserMessage: async () => undefined,
         publishAssistantPart: async () => undefined

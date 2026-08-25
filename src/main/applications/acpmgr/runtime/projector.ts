@@ -16,10 +16,10 @@ import {
     ToolCall,
     ToolCallMessagePart,
     UserMessage
-} from '../messages.js';
-import type { AgentRuntimeToolStatus, AgentRuntimeUpdate } from './common.js';
+} from '../../../aikernel/messages.js';
+import type { AcpProjectedToolStatus, AcpProjectedUpdate } from './types.js';
 
-export interface AgentRuntimeTurnHost {
+export interface AcpMessageProjectorHost {
     chatContext: ChatContext;
     publishUserMessage(): Promise<void>;
     publishAssistantPart(partIndex: number): Promise<void>;
@@ -35,7 +35,7 @@ function stringifyProtocolValue(value: unknown): string {
     }
 }
 
-function mapToolStatus(status: AgentRuntimeToolStatus): ToolCall['status'] {
+function mapToolStatus(status: AcpProjectedToolStatus): ToolCall['status'] {
     switch (status) {
         case 'in_progress':
             return 'running';
@@ -49,11 +49,11 @@ function mapToolStatus(status: AgentRuntimeToolStatus): ToolCall['status'] {
     }
 }
 
-export class AgentRuntimeTurnController {
+export class AcpMessageProjector {
     private assistant?: AssistantMessage;
     private readonly toolCalls = new Map<string, { call: ToolCall; partIndex: number }>();
 
-    constructor(private readonly host: AgentRuntimeTurnHost) {}
+    constructor(private readonly host: AcpMessageProjectorHost) {}
 
     async start(prompt: string, imageDataUris: string[] = []): Promise<void> {
         if (this.assistant) {
@@ -69,7 +69,7 @@ export class AgentRuntimeTurnController {
         this.host.chatContext.appendMessage(this.assistant);
     }
 
-    async apply(update: AgentRuntimeUpdate): Promise<void> {
+    async apply(update: AcpProjectedUpdate): Promise<void> {
         const assistant = this.requireAssistant();
         switch (update.type) {
             case 'message_delta':
@@ -111,7 +111,7 @@ export class AgentRuntimeTurnController {
         }
     }
 
-    private async applyToolCall(update: Extract<AgentRuntimeUpdate, { type: 'tool_call' }>): Promise<void> {
+    private async applyToolCall(update: Extract<AcpProjectedUpdate, { type: 'tool_call' }>): Promise<void> {
         const assistant = this.requireAssistant();
         let tracked = this.toolCalls.get(update.toolCallId);
         if (!tracked) {

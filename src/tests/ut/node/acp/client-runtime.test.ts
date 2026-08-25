@@ -9,13 +9,13 @@ import type {
     PromptRequest,
     RequestPermissionRequest
 } from '@agentclientprotocol/sdk';
-import type { AgentTaskRuntimeTurnRequest } from '../../../../main/aikernel/agents/common.js';
+import type { AcpTaskRuntimeTurnRequest } from '../../../../main/applications/acpmgr/runtime/types.js';
 import type {
     AcpClientConnection,
     AcpClientHandlers,
     AcpConnectionHandle
-} from '../../../../main/aikernel/agents/acp/connection.js';
-import { AcpTaskRuntime } from '../../../../main/aikernel/agents/acp/runtime.js';
+} from '../../../../main/applications/acpmgr/runtime/connection.js';
+import { AcpTaskRuntime } from '../../../../main/applications/acpmgr/runtime/session.js';
 import { AcpAgentProfileSchema } from '../../../../main/applications/acpmgr/common.js';
 
 const profile = AcpAgentProfileSchema.parse({
@@ -82,8 +82,8 @@ class FakeConnection implements AcpClientConnection {
 }
 
 function makeRequest(
-    overrides: Partial<AgentTaskRuntimeTurnRequest> = {}
-): AgentTaskRuntimeTurnRequest & { updates: unknown[]; checkpoints: Record<string, unknown>[] } {
+    overrides: Partial<AcpTaskRuntimeTurnRequest> = {}
+): AcpTaskRuntimeTurnRequest & { updates: unknown[]; checkpoints: Record<string, unknown>[] } {
     const updates: unknown[] = [];
     const checkpoints: Record<string, unknown>[] = [];
     return {
@@ -97,7 +97,11 @@ function makeRequest(
         checkpoint: async (state) => {
             checkpoints.push(structuredClone(state));
         },
-        requestPermission: async (request) => ({ outcome: 'selected', optionId: request.options[0]?.id }),
+        requestPermission: async (request) => ({
+            outcome: request.options[0]
+                ? { outcome: 'selected', optionId: request.options[0].optionId }
+                : { outcome: 'cancelled' }
+        }),
         ...overrides,
         updates,
         checkpoints
@@ -366,17 +370,16 @@ test('ACP runtime bridges exact permission option ids through the host prompt qu
         const request = makeRequest({
             requestPermission: async (permission) => {
                 bridgedRequest = permission;
-                return { outcome: 'selected', optionId: 'yes' };
+                return { outcome: { outcome: 'selected', optionId: 'yes' } };
             }
         });
 
         await runtime.runTurn(request);
 
-        assert.equal(bridgedRequest.toolCallId, 'call-1');
-        assert.equal(bridgedRequest.resourceType, 'file');
-        assert.equal(bridgedRequest.action, 'write');
+        assert.equal(bridgedRequest.toolCall.toolCallId, 'call-1');
+        assert.equal(bridgedRequest.toolCall.kind, 'edit');
         assert.deepEqual(
-            bridgedRequest.options.map((option: any) => option.id),
+            bridgedRequest.options.map((option: any) => option.optionId),
             ['yes', 'no']
         );
     } finally {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { registerTaskExtension, type TaskExtension } from '../../../main/aikernel/task-extension.js';
+import { extractAttemptCompletionResult } from '../../../main/aikernel/planning/harness.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 
 describe('task extension manager', () => {
@@ -42,5 +43,57 @@ describe('task extension manager', () => {
 
         expect(task.extensions.require<LateExtension>(key).value).toBe('restored');
         expect((task.toJSON() as Record<string, unknown>).late_extension_value).toBe('restored');
+    });
+
+    test('forwards task lifecycle notifications to extensions', () => {
+        const key = `lifecycle-test-${crypto.randomUUID()}`;
+        const calls: string[] = [];
+
+        class LifecycleExtension implements TaskExtension {
+            readonly key = key;
+
+            onTaskLifecycle(event: Parameters<NonNullable<TaskExtension['onTaskLifecycle']>>[0]): void {
+                if (event.type === 'stop') calls.push(`stop:${event.reason}`);
+                if (event.type === 'agent_changed') {
+                    calls.push(`agent:${event.previousAgentId}->${event.nextAgentId}`);
+                }
+                if (event.type === 'dispose') calls.push('dispose');
+            }
+        }
+
+        registerTaskExtension(key, () => new LifecycleExtension());
+        const task = new TaskState(new TaskManagerState());
+
+        task.extensions.notifyLifecycle({ type: 'stop', reason: 'user' });
+        task.extensions.notifyLifecycle({ type: 'agent_changed', previousAgentId: 'old', nextAgentId: 'new' });
+        task.extensions.notifyLifecycle({ type: 'dispose' });
+
+        expect(calls).toEqual(['stop:user', 'agent:old->new', 'dispose']);
+    });
+
+    test('uses extension completion results when no attemptCompletion tool call exists', () => {
+        const key = `completion-test-${crypto.randomUUID()}`;
+        const targetTaskId = crypto.randomUUID();
+
+        class CompletionExtension implements TaskExtension {
+            readonly key = key;
+
+            constructor(private readonly task: TaskState) {}
+
+            getSubTaskCompletionResult() {
+                if (this.task.task_id !== targetTaskId) return undefined;
+                return { success: true, result: 'Remote result', status: 'success' as const };
+            }
+        }
+
+        registerTaskExtension(key, (task) => new CompletionExtension(task));
+        const task = new TaskState(new TaskManagerState());
+        task.task_id = targetTaskId;
+
+        expect(extractAttemptCompletionResult(task)).toEqual({
+            success: true,
+            result: 'Remote result',
+            status: 'success'
+        });
     });
 });

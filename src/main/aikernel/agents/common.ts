@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { PermissionAction, PermissionResourceType, PermissionRule } from '../security/permission.js';
+import type { PermissionRule } from '../security/permission.js';
 import { t } from '../../../locale/index.js';
 import type { ExecutionHost } from '../security/harness.js';
 
@@ -135,94 +135,6 @@ export interface TaskContext {
     getExecutionHost?(): ExecutionHost;
 }
 
-// ─── Agent task runtime ──────────────────────────────────────
-
-export type AgentRuntimeToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
-
-export interface AgentRuntimeToolLocation {
-    path: string;
-    line?: number;
-}
-
-export type AgentRuntimeUpdate =
-    | { type: 'message_delta'; text: string }
-    | { type: 'thought_delta'; text: string }
-    | {
-          type: 'tool_call';
-          toolCallId: string;
-          title: string;
-          status: AgentRuntimeToolStatus;
-          rawInput?: unknown;
-          rawOutput?: unknown;
-          locations?: AgentRuntimeToolLocation[];
-      }
-    | {
-          type: 'plan';
-          entries: Array<{
-              content: string;
-              status: 'pending' | 'in_progress' | 'completed';
-              priority?: 'low' | 'medium' | 'high';
-          }>;
-      }
-    | { type: 'metadata'; data: Record<string, unknown> }
-    | { type: 'error'; title: string; message: string };
-
-export interface AgentRuntimePermissionOption {
-    id: string;
-    label: string;
-    kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
-}
-
-export interface AgentRuntimePermissionRequest {
-    toolCallId: string;
-    title: string;
-    rawInput?: Record<string, unknown>;
-    locations?: AgentRuntimeToolLocation[];
-    resourceType?: PermissionResourceType;
-    action?: PermissionAction;
-    options: AgentRuntimePermissionOption[];
-}
-
-export interface AgentRuntimePermissionResponse {
-    outcome: 'selected' | 'cancelled';
-    optionId?: string;
-}
-
-export interface AgentTaskRuntimeTurnRequest {
-    taskId: string;
-    prompt: string;
-    imageDataUris?: string[];
-    workspace: string;
-    persistedState?: Record<string, unknown>;
-    signal: AbortSignal;
-    onUpdate(update: AgentRuntimeUpdate): Promise<void>;
-    checkpoint(state: Record<string, unknown>): Promise<void>;
-    requestPermission(request: AgentRuntimePermissionRequest): Promise<AgentRuntimePermissionResponse>;
-}
-
-export interface AgentTaskRuntimeTurnResult {
-    stopReason: 'completed' | 'cancelled' | 'max_tokens' | 'refusal' | 'error';
-    state?: Record<string, unknown>;
-}
-
-export interface PersistedAgentRuntimeState {
-    kind: string;
-    state: Record<string, unknown>;
-    lastTurnStopReason?: AgentTaskRuntimeTurnResult['stopReason'];
-}
-
-/**
- * Protocol-neutral execution backend for an AgentDecl.
- * TaskState remains responsible for the durable local task and projects runtime
- * updates into the normal OpenDesk chat model.
- */
-export interface AgentTaskRuntime {
-    readonly kind: string;
-    runTurn(request: AgentTaskRuntimeTurnRequest): Promise<AgentTaskRuntimeTurnResult>;
-    cancel(reason: 'user' | 'system'): Promise<void> | void;
-    dispose?(): Promise<void> | void;
-}
-
 export abstract class AgentDecl {
     /**
      * 仅应用 Agent 需要显式作用域，内置 Agent 不绑定应用作用域。
@@ -235,11 +147,6 @@ export abstract class AgentDecl {
 
     /** Agent 的唯一名称标识 */
     abstract readonly agentName: string;
-
-    /** Agent 面向用户的显示名称，默认与唯一名称标识一致。 */
-    get displayName(): string {
-        return this.agentName;
-    }
 
     /**
      * Agent 的运行时唯一标识。agentName 仅在所属作用域内唯一。
@@ -281,14 +188,6 @@ export abstract class AgentDecl {
     }
 
     abstract createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string>;
-
-    /**
-     * Optionally provide a non-native task runtime. Returning undefined keeps
-     * the existing OpenDesk LLM/tool execution path.
-     */
-    createTaskRuntime(_taskCtx: TaskContext): AgentTaskRuntime | undefined {
-        return undefined;
-    }
 
     /**
      * 将应用提供的 Agent 绑定到应用作用域。

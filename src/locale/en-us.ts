@@ -2661,7 +2661,7 @@ export const enUs: Record<string, string> = {
     'workflow.status.succeeded': 'Succeeded',
     'workflow.status.failed': 'Failed',
     'workflow.status.cancelled': 'Stopped',
-    'agentRuntime.errorTitle': 'Agent connection error',
+    'acpmgr.error.connectionTitle': 'Agent connection error',
     'acpmgr.app.name': 'ACP Agents',
     'acpmgr.mode.name': 'ACP',
     'acpmgr.mode.description': 'The remote agent controls its own modes and tool execution.',

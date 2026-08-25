@@ -2581,7 +2581,7 @@ export const zhCn: Record<string, string> = {
     'workflow.status.succeeded': '已完成',
     'workflow.status.failed': '失败',
     'workflow.status.cancelled': '已停止',
-    'agentRuntime.errorTitle': 'Agent 连接错误',
+    'acpmgr.error.connectionTitle': 'Agent 连接错误',
     'acpmgr.app.name': 'ACP Agents',
     'acpmgr.mode.name': 'ACP',
     'acpmgr.mode.description': '远端 Agent 自主管理其运行模式与工具执行。',

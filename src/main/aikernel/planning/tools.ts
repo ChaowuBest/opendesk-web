@@ -21,7 +21,7 @@ import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.
 import {
     registerSubTaskAttemptCompletionHook,
     appendSubTaskStopCompletion,
-    extractSubTaskCompletionResult,
+    extractAttemptCompletionResult,
     hasAttemptCompletion
 } from './harness.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -216,7 +216,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
                     if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
                         await appendSubTaskStopCompletion(subTask);
                     }
-                    const completionResult = extractSubTaskCompletionResult(subTask);
+                    const completionResult = extractAttemptCompletionResult(subTask);
                     if (completionResult) {
                         return { ...completionResult, subtask_id: subTask.task_id };
                     }
@@ -269,8 +269,8 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             await appendSubTaskStopCompletion(subTask);
         }
 
-        // 统一提取原生 attemptCompletion 或外部 Agent runtime 的最终结果
-        const completionResult = extractSubTaskCompletionResult(subTask);
+        // 统一通过 extractAttemptCompletionResult 提取结果
+        const completionResult = extractAttemptCompletionResult(subTask);
         if (completionResult) {
             return {
                 ...completionResult,
@@ -340,7 +340,7 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
     }
 
     // 如果已经有结果，直接返回
-    const existingResult = extractSubTaskCompletionResult(subTask);
+    const existingResult = extractAttemptCompletionResult(subTask);
     if (existingResult) {
         return {
             ...existingResult,
@@ -355,7 +355,7 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
         await appendSubTaskStopCompletion(subTask);
     }
 
-    const completionResult = extractSubTaskCompletionResult(subTask);
+    const completionResult = extractAttemptCompletionResult(subTask);
     if (completionResult) {
         return {
             ...completionResult,
@@ -447,7 +447,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
         const resultPromise = new Promise<SubTaskResult>((resolve) => {
             const checkCompletion = async () => {
                 await waitForTaskWithProgress(subTask, onProgress);
-                const completionResult = extractSubTaskCompletionResult(subTask);
+                const completionResult = extractAttemptCompletionResult(subTask);
                 if (completionResult) {
                     resolve({
                         ...completionResult,
@@ -480,7 +480,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
     // 同步模式：等待子任务完成
     await waitForTaskWithProgress(subTask, onProgress);
 
-    const completionResult = extractSubTaskCompletionResult(subTask);
+    const completionResult = extractAttemptCompletionResult(subTask);
     if (completionResult) {
         return {
             ...completionResult,
@@ -579,10 +579,6 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         return (toolcall.result_object as any)?.subtask_progress as SubTaskProgressInfo | undefined;
     }
 
-    private static getAgentDisplayName(agentReference: string): string {
-        return AgentRegistry.resolveAgentReference(agentReference)?.displayName ?? agentReference;
-    }
-
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as z.output<typeof CreateSubTaskArgsSchema> | undefined;
         const body: string[] = [];
@@ -597,7 +593,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         let cardTitle: string;
         if (args?.agentName) {
             const maxAgent = Math.max(6, Math.floor((width - 24 - modelTag.length) / 2));
-            const agentLabel = truncText(CreateSubTaskTool.getAgentDisplayName(args.agentName), maxAgent);
+            const agentLabel = truncText(args.agentName, maxAgent);
             const maxTitle = Math.max(12, width - 24 - agentLabel.length - modelTag.length);
             cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})${modelTag}`;
         } else {
@@ -688,7 +684,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const toolName = t('tools.createSubTask.name');
         const objective = args?.objective || '';
         const agentTag = args?.agentName
-            ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(CreateSubTaskTool.getAgentDisplayName(args.agentName))}</span>`
+            ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(args.agentName)}</span>`
             : '';
 
         // explore 子任务使用了快速模型且与默认模型不同时，在标题栏标注模型名称

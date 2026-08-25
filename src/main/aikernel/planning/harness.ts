@@ -139,49 +139,7 @@ export function extractAttemptCompletionResult(
             }
         }
     }
-    return null;
-}
-
-/**
- * 提取子任务交付结果。原生子任务使用 attemptCompletion，外部 Agent runtime
- * 则使用其最后一轮的停止原因和最终 Assistant 文本。
- */
-export function extractSubTaskCompletionResult(
-    task: TaskState
-): { success: boolean; result: string; status?: 'success' | 'fail' | 'ask' } | null {
-    const attemptCompletionResult = extractAttemptCompletionResult(task);
-    if (attemptCompletionResult) return attemptCompletionResult;
-
-    const stopReason = task.agent_runtime?.lastTurnStopReason;
-    if (!stopReason) return null;
-
-    const lastAssistantMessage = [...task.chat_context.messages]
-        .reverse()
-        .find((message): message is AssistantMessage => message instanceof AssistantMessage);
-    if (!lastAssistantMessage) return null;
-
-    const errorPart = lastAssistantMessage.content.find((part): part is ErrorMessagePart => part.type === 'error');
-    if (errorPart) {
-        return {
-            success: false,
-            result: `${errorPart.title}: ${errorPart.message}`,
-            status: 'fail'
-        };
-    }
-
-    const result = lastAssistantMessage.content
-        .filter((part): part is TextMessagePart => part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-        .trim();
-    if (!result) return null;
-
-    const success = stopReason === 'completed';
-    return {
-        success,
-        result,
-        status: success ? 'success' : 'fail'
-    };
+    return task.extensions.getSubTaskCompletionResult() ?? null;
 }
 
 /**

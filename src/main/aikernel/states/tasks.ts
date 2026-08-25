@@ -75,19 +75,8 @@ import {
 import { AgentExecutionInstrumentationRegistry, normalizeTurnContext } from '../../telemetry/agent-execution.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../../telemetry/operation.js';
 import { getPlatform } from '../../../platforms/base.js';
-import { t } from '../../../locale/index.js';
-import {
-    type AgentDecl,
-    type AgentRuntimePermissionRequest,
-    type AgentRuntimePermissionResponse,
-    type AgentTaskRuntime,
-    type AgentTaskRuntimeTurnResult,
-    type ModeDecl,
-    type PersistedAgentRuntimeState,
-    type TaskSkillExposure
-} from '../agents/common.js';
+import { type AgentDecl, type ModeDecl, type TaskSkillExposure } from '../agents/common.js';
 import { AgentRegistry } from '../agents/registry.js';
-import { AgentRuntimeTurnController } from '../agents/runtime.js';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { TaskExtensionManager } from '../task-extension.js';
 import type { TaskManagerState } from '../task/manager.js';
@@ -285,10 +274,6 @@ export class TaskState {
     activeModeId?: string;
 
     private _agentId: string | undefined = AgentRegistry.getMainAgent().agentId;
-    /** Durable protocol-neutral state for non-native Agent runtimes. */
-    agent_runtime?: PersistedAgentRuntimeState;
-    private _agentTaskRuntime?: { agentId: string; runtime: AgentTaskRuntime };
-    private _agentRuntimeAbortController?: AbortController;
 
     /**
      * 由当前 AgentDecl 和 Mode 生成的 prompt。运行时派生，不单独触发持久化。
@@ -310,8 +295,9 @@ export class TaskState {
 
     set agentId(agentId: string | undefined) {
         if (this._agentId === agentId) return;
-        this.disposeAgentTaskRuntime();
+        const previousAgentId = this._agentId;
         this._agentId = agentId;
+        this.extensions.notifyLifecycle({ type: 'agent_changed', previousAgentId, nextAgentId: agentId });
         this.agent_system_prompt = undefined;
         this.updateEffectiveSystemPrompt();
         if (this.task_manager_state.tasks.includes(this)) {
@@ -1588,181 +1574,6 @@ export class TaskState {
         return filePath;
     }
 
-    private getAgentTaskRuntime(): AgentTaskRuntime | undefined {
-        const agent = this.getAgent();
-        if (this._agentTaskRuntime?.agentId === agent.agentId) {
-            return this._agentTaskRuntime.runtime;
-        }
-        this.disposeAgentTaskRuntime();
-        const runtime = agent.createTaskRuntime(this);
-        if (!runtime) return undefined;
-        this._agentTaskRuntime = { agentId: agent.agentId, runtime };
-        return runtime;
-    }
-
-    private disposeAgentTaskRuntime(): void {
-        this._agentRuntimeAbortController?.abort('disposed');
-        this._agentRuntimeAbortController = undefined;
-        const runtime = this._agentTaskRuntime?.runtime;
-        this._agentTaskRuntime = undefined;
-        if (runtime?.dispose) {
-            void Promise.resolve(runtime.dispose()).catch((err) => {
-                logger.warn(`task ${this.task_id}: failed to dispose agent runtime: ${errorToMessage(err)}`);
-            });
-        }
-    }
-
-    private async requestAgentRuntimePermission(
-        request: AgentRuntimePermissionRequest
-    ): Promise<AgentRuntimePermissionResponse> {
-        const provider = this.harnessContext.permissionPrompt;
-        const rejectOption = request.options.find(
-            (option) => option.kind === 'reject_once' || option.kind === 'reject_always'
-        );
-        if (!provider) {
-            return rejectOption ? { outcome: 'selected', optionId: rejectOption.id } : { outcome: 'cancelled' };
-        }
-
-        const resourcePath = request.locations?.[0]?.path || `agent-runtime://${request.toolCallId}`;
-        const resourceType = request.resourceType ?? (request.locations?.length ? 'file' : '*');
-        const action = request.action ?? '*';
-        const response = await provider.prompt(
-            [{ resourceType, action, resourcePath }],
-            request.title,
-            [{ label: resourcePath, pattern: escapeGlobLiteralPath(resourcePath) }],
-            {
-                taskId: this.parent_id ?? this.task_id,
-                taskName: this.task_name,
-                workspace: this.getWorkspace(),
-                sourceTaskId: this.task_id,
-                sourceTaskName: this.task_name,
-                parentTaskId: this.parent_id
-            },
-            {
-                toolCallId: request.toolCallId,
-                input: request.rawInput
-            }
-        );
-        const desiredKind =
-            response.decision === 'allow'
-                ? response.rememberScope === 'none'
-                    ? 'allow_once'
-                    : 'allow_always'
-                : response.rememberScope === 'none'
-                  ? 'reject_once'
-                  : 'reject_always';
-        const selected = request.options.find((option) => option.kind === desiredKind);
-        if (selected) {
-            return { outcome: 'selected', optionId: selected.id };
-        }
-        return { outcome: 'cancelled' };
-    }
-
-    private submitAgentRuntimeMessage(
-        runtime: AgentTaskRuntime,
-        message: string,
-        options: SubmitUserMessageOptions
-    ): { status: 'ok' } {
-        this.task_status = 'running';
-        const generation = ++this._turnGeneration;
-        this._activeModelRequestOptions = options.modelRequestOptions;
-        this.clearRuntimeInterruptForNewTurn();
-        this.recordTaskInteraction();
-        this.started_at = new Date();
-        this.updated_at = new Date();
-        this.stop_requested_by_user = false;
-        this.finished_at = undefined;
-        this.task_manager_state.moveTaskToEnd(this);
-        this.persistLater();
-        this.task_manager_state.publishTaskListUpdate();
-
-        if (this.task_name === null) {
-            this.name_pending = false;
-            this.task_name = message.length > 30 ? `${message.substring(0, 30)}...` : message;
-        }
-
-        const abortController = new AbortController();
-        this._agentRuntimeAbortController?.abort('superseded');
-        this._agentRuntimeAbortController = abortController;
-        void this.processAgentRuntimeTurn(runtime, message, options.imageDataUris, generation, abortController);
-        return { status: 'ok' };
-    }
-
-    private async processAgentRuntimeTurn(
-        runtime: AgentTaskRuntime,
-        message: string,
-        imageDataUris: string[] | undefined,
-        generation: number,
-        abortController: AbortController
-    ): Promise<void> {
-        this._turnRunning = true;
-        const turn = new AgentRuntimeTurnController({
-            chatContext: this.chat_context,
-            publishUserMessage: () => this.sendSubscriptionFeedback(),
-            publishAssistantPart: (partIndex) => this.sendSubscriptionFeedback(partIndex)
-        });
-
-        try {
-            await turn.start(message, imageDataUris);
-            const persistedState = this.agent_runtime?.kind === runtime.kind ? this.agent_runtime.state : undefined;
-            const result = await runtime.runTurn({
-                taskId: this.task_id,
-                prompt: message,
-                imageDataUris,
-                workspace: this.getWorkspace(),
-                persistedState,
-                signal: abortController.signal,
-                onUpdate: (update) => turn.apply(update),
-                checkpoint: async (state) => {
-                    this.agent_runtime = { kind: runtime.kind, state };
-                    this.persistLater();
-                },
-                requestPermission: (request) => this.requestAgentRuntimePermission(request)
-            });
-            const currentState =
-                this.agent_runtime?.kind === runtime.kind ? this.agent_runtime.state : ({} as Record<string, unknown>);
-            this.agent_runtime = {
-                kind: runtime.kind,
-                state: result.state ?? currentState,
-                lastTurnStopReason: result.stopReason
-            };
-        } catch (err) {
-            const currentState =
-                this.agent_runtime?.kind === runtime.kind ? this.agent_runtime.state : ({} as Record<string, unknown>);
-            const lastTurnStopReason: AgentTaskRuntimeTurnResult['stopReason'] = abortController.signal.aborted
-                ? 'cancelled'
-                : 'error';
-            this.agent_runtime = {
-                kind: runtime.kind,
-                state: currentState,
-                lastTurnStopReason
-            };
-            if (!abortController.signal.aborted) {
-                await turn.apply({
-                    type: 'error',
-                    title: t('agentRuntime.errorTitle'),
-                    message: errorToMessage(err)
-                });
-                logger.error(`task ${this.task_id}: agent runtime failed: ${errorToMessage(err)}`);
-            }
-        } finally {
-            await turn.ensureOutputPart();
-            turn.finish();
-            if (this._turnGeneration === generation) {
-                this.task_status = 'stopped';
-                this.finished_at = new Date();
-                this._turnRunning = false;
-                this._activeModelRequestOptions = undefined;
-                if (this._agentRuntimeAbortController === abortController) {
-                    this._agentRuntimeAbortController = undefined;
-                }
-                this.persistLater();
-                await this.sendSubscriptionFeedback();
-                this.task_manager_state.publishTaskListUpdate();
-            }
-        }
-    }
-
     /**
      * Submit a message to the task
      */
@@ -1786,10 +1597,6 @@ export class TaskState {
         await this.task_manager_state.refreshLazyTaskSystemPrompt(this);
         const extensionInputResult = await this.extensions.handleUserMessage(message, options.imageDataUris);
         if (extensionInputResult) return extensionInputResult;
-        const agentRuntime = this.getAgentTaskRuntime();
-        if (agentRuntime) {
-            return this.submitAgentRuntimeMessage(agentRuntime, message, options);
-        }
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
         this._currentTurnInteractive = options.interactive === true;
@@ -1983,7 +1790,7 @@ export class TaskState {
      */
     cleanup() {
         this.cancelPendingTaskReview();
-        this.disposeAgentTaskRuntime();
+        this.extensions.notifyLifecycle({ type: 'dispose' });
         const taskDirectory = getTaskDirectory();
         const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
 
@@ -2035,13 +1842,7 @@ export class TaskState {
         const alreadyStopped = this.task_status === 'stopped';
 
         if (!alreadyStopped) {
-            this._agentRuntimeAbortController?.abort(reason);
-            const agentRuntime = this._agentTaskRuntime?.runtime;
-            if (agentRuntime) {
-                void Promise.resolve(agentRuntime.cancel(reason)).catch((err) => {
-                    logger.warn(`task ${this.task_id}: failed to cancel agent runtime: ${errorToMessage(err)}`);
-                });
-            }
+            this.extensions.notifyLifecycle({ type: 'stop', reason });
             this.task_status = 'stopped';
             this._pluginAbortController.abort();
             this.stop_requested_by_user = reason === 'user';
@@ -2104,6 +1905,7 @@ export class TaskState {
         const alreadyStopped = this.task_status === 'stopped';
 
         if (!alreadyStopped) {
+            this.extensions.notifyLifecycle({ type: 'stop', reason: 'user' });
             this.task_status = 'stopped';
             this.stop_requested_by_user = true;
             this.finished_at = new Date();
@@ -2143,6 +1945,7 @@ export class TaskState {
     async interruptRunningTurn(options: InterruptRunningTurnOptions): Promise<void> {
         // 与 stop() 同理：确保任务已完全加载，防止访问空的 chat_context
         this.ensureLoaded();
+        this.extensions.notifyLifecycle({ type: 'stop', reason: options.userInitiated === true ? 'user' : 'system' });
         this._pluginAbortController.abort();
         const requestedAt = new Date().toISOString();
         this.runtimeInterrupt = {

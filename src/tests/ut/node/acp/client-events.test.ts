@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { AcpEventJournal } from '../../../../main/aikernel/agents/acp/journal.js';
-import { AcpSessionUpdateMapper } from '../../../../main/aikernel/agents/acp/mapper.js';
+import { AcpEventJournal } from '../../../../main/applications/acpmgr/runtime/journal.js';
+import { AcpSessionUpdateMapper } from '../../../../main/applications/acpmgr/runtime/mapper.js';
 
 test('ACP event journal appends ordered recoverable JSONL records', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-journal-'));

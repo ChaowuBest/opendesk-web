@@ -10,18 +10,17 @@
  */
 
 import type { McpServer } from '@agentclientprotocol/sdk';
-import {
-    AgentDecl,
-    type AgentTaskRuntime,
-    type AgentType,
-    type ModeDecl,
-    type TaskContext
-} from '../../aikernel/agents/common.js';
-import { AcpTaskRuntime } from '../../aikernel/agents/acp/runtime.js';
-import { AcpEnvironmentVariableError } from '../../../common/acp.js';
+import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../../aikernel/agents/common.js';
+import { AcpTaskRuntime } from './runtime/session.js';
+import { createDefaultAcpConnectionFactory, type AcpConnectionFactory } from './runtime/connection.js';
 import { t } from '../../../locale/index.js';
 import type { McpServerConfig } from '../mcpmgr/common.js';
-import { resolveAcpTemplate, resolveAcpTemplateRecord, type AcpAgentProfile } from './common.js';
+import {
+    AcpEnvironmentVariableError,
+    resolveAcpTemplate,
+    resolveAcpTemplateRecord,
+    type AcpAgentProfile
+} from './common.js';
 
 export type AcpMcpResolver = (profile: AcpAgentProfile) => Promise<McpServer[]>;
 
@@ -42,13 +41,10 @@ export class AcpAgentDecl extends AgentDecl {
     readonly dispatchable: boolean;
     readonly whenToUse: string;
 
-    get displayName(): string {
-        return `ACP · ${this.profile.name}`;
-    }
-
     constructor(
         readonly profile: AcpAgentProfile,
         private readonly resolveMcpServers: AcpMcpResolver,
+        private readonly createConnection: AcpConnectionFactory,
         dispatchBlocked: boolean = false
     ) {
         super();
@@ -69,17 +65,23 @@ export class AcpAgentDecl extends AgentDecl {
         return '';
     }
 
-    createTaskRuntime(_taskCtx: TaskContext): AgentTaskRuntime {
-        return new AcpTaskRuntime(this.profile, { resolveMcpServers: this.resolveMcpServers });
+    createAcpTaskRuntime(): AcpTaskRuntime {
+        return new AcpTaskRuntime(this.profile, {
+            createConnection: this.createConnection,
+            resolveMcpServers: this.resolveMcpServers
+        });
     }
 }
 
 export function createAcpAgentDeclarations(
     profiles: AcpAgentProfile[],
     resolveMcpServers: AcpMcpResolver,
-    blockedProfileIds: ReadonlySet<string> = new Set()
+    blockedProfileIds: ReadonlySet<string> = new Set(),
+    createConnection: AcpConnectionFactory = createDefaultAcpConnectionFactory()
 ): AcpAgentDecl[] {
-    return profiles.map((profile) => new AcpAgentDecl(profile, resolveMcpServers, blockedProfileIds.has(profile.id)));
+    return profiles.map(
+        (profile) => new AcpAgentDecl(profile, resolveMcpServers, createConnection, blockedProfileIds.has(profile.id))
+    );
 }
 
 export function resolveAcpMcpServers(

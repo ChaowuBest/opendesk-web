@@ -60,28 +60,6 @@ function inferCreatedAt(taskJson: any, chatContext: ChatContext): Date {
     );
 }
 
-function normalizeAgentRuntimeState(value: unknown): TaskState['agent_runtime'] {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    const runtime = value as Record<string, unknown>;
-    if (typeof runtime.kind !== 'string' || !runtime.state || typeof runtime.state !== 'object') {
-        return undefined;
-    }
-    if (Array.isArray(runtime.state)) return undefined;
-    const lastTurnStopReason =
-        runtime.lastTurnStopReason === 'completed' ||
-        runtime.lastTurnStopReason === 'cancelled' ||
-        runtime.lastTurnStopReason === 'max_tokens' ||
-        runtime.lastTurnStopReason === 'refusal' ||
-        runtime.lastTurnStopReason === 'error'
-            ? runtime.lastTurnStopReason
-            : undefined;
-    return {
-        kind: runtime.kind,
-        state: runtime.state as Record<string, unknown>,
-        ...(lastTurnStopReason ? { lastTurnStopReason } : {})
-    };
-}
-
 // ═══════════════════ Serialization ═══════════════════
 
 /**
@@ -111,7 +89,6 @@ export function serializeTask(task: TaskState): object {
         model: task.model,
         reasoningEffort: task.reasoningEffort,
         agentId: task.agentId ?? null,
-        agent_runtime: task.agent_runtime,
         custom_system_prompt: task.custom_system_prompt ?? null,
         chat_context: task.chat_context.toJSON(),
         tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
@@ -233,7 +210,6 @@ function applyTaskJson(task: TaskState, task_json: any): void {
             : task_json.agentId === null
               ? undefined
               : AgentRegistry.getMainAgent().agentId;
-    task.agent_runtime = normalizeAgentRuntimeState(task_json.agent_runtime);
     task.chat_context = ChatContext.assign(task_json.chat_context);
     task.restoreSystemPromptState(task_json.custom_system_prompt);
     // ⚠️ 顺序依赖：chat_context 赋值必须在 extensions.restore() 之前。

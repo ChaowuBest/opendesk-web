@@ -16,8 +16,8 @@ export {
     createSafeAcpProfileSnapshot,
     resolveAcpTemplate,
     resolveAcpTemplateRecord
-} from '../../../common/acp.js';
-export type { SafeAcpProfileSnapshot } from '../../../common/acp.js';
+} from './runtime/profile.js';
+export type { SafeAcpProfileSnapshot } from './runtime/profile.js';
 
 const EnvironmentRecordSchema = z.record(z.string(), z.string()).default({});
 

@@ -20,14 +20,10 @@ import {
     type SessionNotification,
     type StopReason
 } from '@agentclientprotocol/sdk';
-import type {
-    AgentRuntimePermissionRequest,
-    AgentTaskRuntime,
-    AgentTaskRuntimeTurnRequest,
-    AgentTaskRuntimeTurnResult
-} from '../common.js';
+import type { AcpTaskRuntimeTurnRequest, AcpTaskRuntimeTurnResult } from './types.js';
 import { t } from '../../../../locale/index.js';
-import { createSafeAcpProfileSnapshot, type AcpAgentProfile } from '../../../../common/acp.js';
+import type { AcpAgentProfile } from '../common.js';
+import { createSafeAcpProfileSnapshot } from './profile.js';
 import { getTaskArtifactDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { AcpEventJournal } from './journal.js';
@@ -101,27 +97,7 @@ function restoreCheckpoint(profile: AcpAgentProfile, value: unknown, lastSequenc
     };
 }
 
-function permissionAccess(
-    request: RequestPermissionRequest
-): Pick<AgentRuntimePermissionRequest, 'resourceType' | 'action'> {
-    switch (request.toolCall.kind) {
-        case 'read':
-        case 'search':
-            return { resourceType: 'file', action: 'read' };
-        case 'edit':
-        case 'delete':
-        case 'move':
-            return { resourceType: 'file', action: 'write' };
-        case 'execute':
-            return { resourceType: 'file', action: 'execute' };
-        case 'fetch':
-            return { resourceType: 'network', action: 'access' };
-        default:
-            return { resourceType: '*', action: '*' };
-    }
-}
-
-function mapStopReason(stopReason: StopReason): AgentTaskRuntimeTurnResult['stopReason'] {
+function mapStopReason(stopReason: StopReason): AcpTaskRuntimeTurnResult['stopReason'] {
     switch (stopReason) {
         case 'cancelled':
             return 'cancelled';
@@ -141,8 +117,7 @@ function imageContentBlock(dataUri: string): ContentBlock | undefined {
     return { type: 'image', mimeType: match[1], data: match[2] };
 }
 
-export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
-    readonly kind = 'acp';
+export class AcpTaskRuntime implements AcpClientHandlers {
     private readonly createConnection: AcpConnectionFactory;
     private readonly artifactDirectory: (taskId: string) => string;
     private readonly resolveMcpServers: (profile: AcpAgentProfile) => Promise<McpServer[]>;
@@ -150,7 +125,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
     private readonly log: NonNullable<AcpTaskRuntimeDependencies['log']>;
     private handle?: AcpConnectionHandle;
     private connection?: AcpClientConnection;
-    private activeRequest?: AgentTaskRuntimeTurnRequest;
+    private activeRequest?: AcpTaskRuntimeTurnRequest;
     private checkpoint?: AcpRuntimeCheckpoint;
     private journal?: AcpEventJournal;
     private mapper = new AcpSessionUpdateMapper();
@@ -171,7 +146,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         this.log = dependencies.log ?? logger;
     }
 
-    async runTurn(request: AgentTaskRuntimeTurnRequest): Promise<AgentTaskRuntimeTurnResult> {
+    async runTurn(request: AcpTaskRuntimeTurnRequest): Promise<AcpTaskRuntimeTurnResult> {
         if (!this.profile.enabled) {
             throw new Error(t('acpmgr.error.agentDisabled', { name: this.profile.name }));
         }
@@ -268,26 +243,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         if (!this.activeRequest || this.activeRequest.signal.aborted) {
             return { outcome: { outcome: 'cancelled' } };
         }
-        const rawInput = isRecord(params.toolCall.rawInput) ? params.toolCall.rawInput : undefined;
-        const response = await this.activeRequest.requestPermission({
-            toolCallId: params.toolCall.toolCallId,
-            title: params.toolCall.title ?? params.toolCall.name ?? params.toolCall.toolCallId,
-            rawInput,
-            locations: params.toolCall.locations?.map((location) => ({
-                path: location.path,
-                ...(typeof location.line === 'number' ? { line: location.line } : {})
-            })),
-            options: params.options.map((option) => ({
-                id: option.optionId,
-                label: option.name,
-                kind: option.kind
-            })),
-            ...permissionAccess(params)
-        });
-        const outcome: RequestPermissionResponse =
-            response.outcome === 'selected' && response.optionId
-                ? { outcome: { outcome: 'selected', optionId: response.optionId } }
-                : { outcome: { outcome: 'cancelled' } };
+        const outcome = await this.activeRequest.requestPermission(params);
         this.record('outbound', 'session/request_permission/result', outcome);
         return outcome;
     }
@@ -303,7 +259,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         await this.resetConnection();
     }
 
-    private async ensureConnected(request: AgentTaskRuntimeTurnRequest, recoveryPhase: AcpPhase): Promise<void> {
+    private async ensureConnected(request: AcpTaskRuntimeTurnRequest, recoveryPhase: AcpPhase): Promise<void> {
         if (this.connection && this.sessionId) return;
         await this.connectWithRetry(request.workspace);
         const connection = this.requireConnection();
@@ -467,7 +423,7 @@ export class AcpTaskRuntime implements AgentTaskRuntime, AcpClientHandlers {
         }
     }
 
-    private buildPrompt(request: AgentTaskRuntimeTurnRequest): ContentBlock[] {
+    private buildPrompt(request: AcpTaskRuntimeTurnRequest): ContentBlock[] {
         const prompt: ContentBlock[] = [{ type: 'text', text: request.prompt }];
         for (const dataUri of request.imageDataUris ?? []) {
             const image = imageContentBlock(dataUri);

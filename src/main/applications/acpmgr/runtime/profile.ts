@@ -9,42 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export type AcpStdioTransport = {
-    type: 'stdio';
-    command: string;
-    args: string[];
-    cwd: 'workspace' | 'fixed';
-    fixedCwd?: string;
-    env: Record<string, string>;
-    inheritEnv: boolean;
-};
-
-export type AcpStreamableHttpTransport = {
-    type: 'streamableHttp';
-    url: string;
-    headers: Record<string, string>;
-    cookies: 'include' | 'omit';
-};
-
-export type AcpAgentProfile = {
-    id: string;
-    name: string;
-    enabled: boolean;
-    dispatchable: boolean;
-    whenToUse: string;
-    transport: AcpStdioTransport | AcpStreamableHttpTransport;
-    session: {
-        modeId?: string;
-        configOptions: Record<string, string | boolean>;
-        mcpServerIds: string[];
-    };
-    reconnect: {
-        enabled: boolean;
-        maxAttempts: number;
-        initialDelayMs: number;
-        maxDelayMs: number;
-    };
-};
+import type { AcpAgentProfile } from '../common.js';
 
 export type SafeAcpProfileSnapshot = {
     id: string;

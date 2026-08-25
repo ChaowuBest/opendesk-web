@@ -26,12 +26,8 @@ import {
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import path from 'node:path';
-import {
-    AcpEnvironmentVariableError,
-    resolveAcpTemplate,
-    resolveAcpTemplateRecord,
-    type AcpAgentProfile
-} from '../../../../common/acp.js';
+import { AcpEnvironmentVariableError, resolveAcpTemplate, resolveAcpTemplateRecord } from './profile.js';
+import type { AcpAgentProfile } from '../common.js';
 import { t } from '../../../../locale/index.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { logger } from '../../../utils/logger.js';

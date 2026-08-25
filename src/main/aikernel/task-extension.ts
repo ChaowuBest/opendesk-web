@@ -31,6 +31,17 @@ export interface TaskExtensionInputResult {
     messageArgs?: Record<string, unknown>;
 }
 
+export interface TaskExtensionSubTaskCompletionResult {
+    success: boolean;
+    result: string;
+    status?: 'success' | 'fail' | 'ask';
+}
+
+export type TaskExtensionLifecycleEvent =
+    | { type: 'stop'; reason: 'user' | 'system' }
+    | { type: 'agent_changed'; previousAgentId?: string; nextAgentId?: string }
+    | { type: 'dispose' };
+
 export interface TaskExtension {
     readonly key: string;
     restore?(raw: Record<string, unknown>, wasRunningAtShutdown: boolean): void;
@@ -46,6 +57,8 @@ export interface TaskExtension {
     onTurnIterationFailed?(reason: string, skipIfRuntimeInterrupted: boolean): void;
     onTurnSettled?(): void;
     afterTurnFinished?(): void;
+    onTaskLifecycle?(event: TaskExtensionLifecycleEvent): void;
+    getSubTaskCompletionResult?(): TaskExtensionSubTaskCompletionResult | undefined;
 }
 
 export type TaskExtensionFactory = (task: TaskState) => TaskExtension;
@@ -192,6 +205,18 @@ export class TaskExtensionManager {
         for (const extension of this.extensions.values()) {
             extension.afterTurnFinished?.();
         }
+    }
+
+    notifyLifecycle(event: TaskExtensionLifecycleEvent): void {
+        for (const extension of this.extensions.values()) extension.onTaskLifecycle?.(event);
+    }
+
+    getSubTaskCompletionResult(): TaskExtensionSubTaskCompletionResult | undefined {
+        for (const extension of this.extensions.values()) {
+            const result = extension.getSubTaskCompletionResult?.();
+            if (result) return result;
+        }
+        return undefined;
     }
 
     private collect(

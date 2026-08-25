@@ -18,7 +18,8 @@ import {
     createDefaultAcpConnectionFactory,
     getActiveAcpProfileIds,
     type AcpConnectionFactory
-} from '../../aikernel/agents/acp/connection.js';
+} from './runtime/connection.js';
+import './runtime/task-extension.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
@@ -66,7 +67,8 @@ export class AcpMgrApplication extends BaseApplication {
         return createAcpAgentDeclarations(
             config.agents,
             (profile) => this.resolveMcpServers(profile),
-            getActiveAcpProfileIds()
+            getActiveAcpProfileIds(),
+            this.createConnection
         );
     }
 
@@ -175,7 +177,7 @@ export class AcpMgrApplication extends BaseApplication {
                 const registered = AgentRegistry.getApplicationAgent(this.bundleName, agentName);
                 await AgentRegistry.removeApplicationAgent(this.bundleName, agentName);
                 this.log.info(
-                    `[ACP] agent removed: profile=${agentName} name=${JSON.stringify(registered?.displayName ?? agentName)}`
+                    `[ACP] agent removed: profile=${agentName} name=${JSON.stringify(registered?.agentName ?? agentName)}`
                 );
             }
         }
@@ -190,7 +192,7 @@ export class AcpMgrApplication extends BaseApplication {
             }
             await AgentRegistry.replaceApplicationAgent(this.bundleName, agent);
             this.log.info(
-                `[ACP] agent registration completed: agent=${agent.agentId} name=${JSON.stringify(agent.displayName)} ` +
+                `[ACP] agent registration completed: agent=${agent.agentId} name=${JSON.stringify(profile?.name ?? agent.agentName)} ` +
                     `enabled=${profile?.enabled ?? true} dispatchable=${agent.dispatchable}`
             );
         }
