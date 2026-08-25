@@ -33,8 +33,8 @@ plugins/
 ```
 
 直接把插件目录或 `.js`、`.mjs`、`.cjs` 文件放进 `plugins/`，重启 OpenDesk
-即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；
-本地插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
+即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；直接放入目录的本地
+插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
 
 > 例外：`@bitclub.ai/opendesk-plugin-sdk`（含 `./package` 子路径）和其运行时
 > 依赖 `zod` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
@@ -601,7 +601,7 @@ Node.js 可以直接运行的 `.js`、`.mjs` 或 `.cjs` 文件。
 ## 安装和管理
 
 通过 GUI“插件中心”或 CLI 显式安装时，`pluginmgr` 会把插件安装到 `plugins/` 目录下的独立容器；
-npm spec 由 npm 安装，ZIP 和 TGZ 则只在声明了运行时依赖时调用 npm：
+npm spec 由 npm 安装，本地目录、ZIP 和 TGZ 则只在声明了运行时依赖时调用 npm：
 
 ```bash
 opendesk plugins install opendesk-plugin-review-helper@latest
@@ -616,11 +616,10 @@ opendesk plugins uninstall review-helper
 `externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
 
 CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk.plugin.json` 或
-`package.json#opendesk` 声明的插件目录，不要求 `package.json`，也不会执行 npm；目录插件依赖的
-第三方包需要已经位于该目录的 `node_modules` 中。目录内容会直接复制到 `plugins/<插件ID>/`，
-不会增加额外的 `plugin/` 中间层。ZIP 和 TGZ 位于同一归档层：统一下载、解压和校验；如果根目录
-`package.json` 声明了 `dependencies` 或 `peerDependencies`，再安装这些运行时依赖，无运行时依赖的
-归档不要求 npm。
+`package.json#opendesk` 声明的插件目录，不要求 `package.json`。目录内容会直接复制到
+`plugins/<插件ID>/`，不会增加额外的 `plugin/` 中间层。目录、ZIP 和 TGZ 共用运行时依赖安装规则：
+如果根目录 `package.json` 声明了 `dependencies` 或 `peerDependencies`，就在插件暂存目录安装这些
+依赖；无运行时依赖的插件不要求 npm。ZIP 和 TGZ 位于同一归档层，统一下载、解压和校验。
 所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
 可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载适用于 `plugins/` 目录中的全部插件，
 包括手工放入的插件文件或目录；内置插件不能卸载，外部目录插件应从 `externalPaths` 移除。

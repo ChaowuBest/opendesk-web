@@ -13,7 +13,11 @@ import {
     verifyInstalledPlugin
 } from '../../../main/applications/pluginmgr/management/manager.js';
 import { discoverPlugins } from '../../../main/applications/pluginmgr/discovery/discovery.js';
-import { getPluginsDirectory, getPluginTrashDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
+import {
+    getPluginsDirectory,
+    getPluginStagingDirectory,
+    getPluginTrashDirectory
+} from '../../../main/applications/pluginmgr/management/paths.js';
 import { getPluginRecord, upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 
 async function writePluginTgz(archivePath: string, pluginDirectory: string): Promise<void> {
@@ -164,9 +168,10 @@ describe('pluginmgr managed installation', () => {
         );
     });
 
-    test('直接安装带 package.json 的插件目录仍不调用 npm', async () => {
+    test('直接安装带运行时依赖的插件目录会安装依赖', async () => {
         const sourceDirectory = path.join(configDirectory, 'local-package-plugin');
         let npmCalled = false;
+        let npmCwd = '';
         fs.mkdirSync(sourceDirectory, { recursive: true });
         fs.writeFileSync(
             path.join(sourceDirectory, 'package.json'),
@@ -192,13 +197,18 @@ describe('pluginmgr managed installation', () => {
 
         const result = await installPlugin(sourceDirectory, {
             configDirectory,
-            runNpm: async () => {
+            runNpm: async (args, cwd) => {
                 npmCalled = true;
+                npmCwd = cwd;
+                expect(args).toContain('--omit=dev');
+                expect(args).toContain('--no-optional');
+                expect(args).toContain('--ignore-scripts');
             }
         });
 
         expect(result).toEqual({ success: true, id: 'local-package-plugin' });
-        expect(npmCalled).toBe(false);
+        expect(npmCalled).toBe(true);
+        expect(path.dirname(npmCwd)).toBe(getPluginStagingDirectory(configDirectory));
     });
 
     test('从本地 ZIP 安装插件并去除压缩包根目录层级', async () => {

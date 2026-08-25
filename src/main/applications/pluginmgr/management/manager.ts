@@ -251,7 +251,7 @@ function installedPackageName(stagingDirectory: string): string {
     return names[0];
 }
 
-const ARCHIVE_RUNTIME_DEPENDENCY_INSTALL_ARGS = [
+const RUNTIME_DEPENDENCY_INSTALL_ARGS = [
     'install',
     '--save-exact',
     '--install-links=true',
@@ -263,7 +263,7 @@ const ARCHIVE_RUNTIME_DEPENDENCY_INSTALL_ARGS = [
     '--package-lock=false'
 ];
 
-async function installArchivePluginDependencies(
+async function installPluginDependencies(
     pluginDirectory: string,
     runNpm: (args: string[], cwd: string) => Promise<void>
 ): Promise<void> {
@@ -275,7 +275,7 @@ async function installArchivePluginDependencies(
         return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
     });
     if (!hasRuntimeDependencies) return;
-    await runNpm([...ARCHIVE_RUNTIME_DEPENDENCY_INSTALL_ARGS], pluginDirectory);
+    await runNpm([...RUNTIME_DEPENDENCY_INSTALL_ARGS], pluginDirectory);
 }
 
 function packageDirectory(prefix: string, packageName: string): string {
@@ -367,11 +367,9 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
             copyPluginContents(extractedDirectory, pluginDirectory);
             stage = 'validate';
             validated = validateOpenDeskPluginDirectory(pluginDirectory);
-            if (archiveFormat) {
-                stage = 'install';
-                await installArchivePluginDependencies(pluginDirectory, runNpm);
-                stage = 'validate';
-            }
+            stage = 'install';
+            await installPluginDependencies(pluginDirectory, runNpm);
+            stage = 'validate';
             managedPath = directManagedPath(validated.id);
         } else {
             fs.writeFileSync(
