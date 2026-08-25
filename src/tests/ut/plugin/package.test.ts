@@ -36,7 +36,7 @@ describe('OpenDesk plugin package validator', () => {
                 schemaVersion: 1,
                 apiVersion: 1,
                 capabilities: ['skill', 'mcp'],
-                contributions: {
+                resources: {
                     skills: ['./skills/review-code'],
                     mcpServers: [
                         {
@@ -165,7 +165,7 @@ describe('OpenDesk plugin package validator', () => {
         );
     });
 
-    test('拒绝未声明对应 capability 的 contribution', () => {
+    test('拒绝未声明对应 capability 的静态资源', () => {
         fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
         fs.writeFileSync(
             path.join(root, 'package.json'),
@@ -177,7 +177,7 @@ describe('OpenDesk plugin package validator', () => {
                     schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: [],
-                    contributions: {
+                    resources: {
                         skills: ['./skills']
                     }
                 }
@@ -185,7 +185,7 @@ describe('OpenDesk plugin package validator', () => {
         );
 
         expect(() => validateOpenDeskPluginPackage(root)).toThrow(
-            'plugin skill contribution requires the skill capability'
+            'plugin skill resource requires the skill capability'
         );
     });
 
@@ -200,7 +200,7 @@ describe('OpenDesk plugin package validator', () => {
                     schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: ['skill'],
-                    contributions: {
+                    resources: {
                         skills: ['../outside']
                     }
                 }

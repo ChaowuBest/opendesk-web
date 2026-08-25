@@ -12,6 +12,7 @@ export {
 } from '../../../../packages/plugin-sdk/src/index.js';
 export type {
     OpenDeskPlugin,
+    AgentDefinition,
     PluginApplicationEvent,
     PluginApplicationEventCallback,
     PluginApplicationEventFilter,
@@ -36,7 +37,7 @@ export type {
     PluginRegistration,
     PluginSetupResult,
     PluginSkillDefinition,
-    PluginStaticContributions,
+    PluginStaticResources,
     PluginMcpRemoteServerDefinition,
     PluginMcpServerDefinition,
     PluginMcpStdioServerDefinition

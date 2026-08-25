@@ -130,7 +130,7 @@ describe('pluginmgr managed installation', () => {
                 entry: './index.mjs',
                 apiVersion: 1,
                 capabilities: ['skill'],
-                contributions: {
+                resources: {
                     skills: ['./skills/review']
                 }
             })

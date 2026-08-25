@@ -32,6 +32,9 @@ export class AgentRegistry {
     /** 已加载的应用 Agent 实例，用于 reload 时 dispose */
     private static applicationAgentInstances: AgentDecl[] = [];
 
+    /** 已加载的插件 Agent 实例，用于 reload 时 dispose */
+    private static pluginAgentInstances: AgentDecl[] = [];
+
     /**
      * 注册一个 Agent。agentId 不可重复，重复注册将抛出异常。
      */
@@ -109,27 +112,7 @@ export class AgentRegistry {
      */
     static async replaceApplicationAgents(applications: readonly ApplicationAgents[]): Promise<void> {
         await this.unloadApplicationAgents();
-
-        let loaded = 0;
-        for (const application of applications) {
-            for (const agent of application.agents) {
-                agent.bindApplicationScope(application.bundleName);
-                if (this.agents.has(agent.agentId)) {
-                    logger.warn(
-                        `AgentRegistry: agent "${agent.agentId}" already registered, skipping application agent`
-                    );
-                    await agent.dispose();
-                    continue;
-                }
-                this.registerAgent(agent);
-                this.applicationAgentInstances.push(agent);
-                loaded++;
-            }
-        }
-
-        if (loaded > 0) {
-            logger.info(`AgentRegistry: registered ${loaded} agent(s) from applications`);
-        }
+        await this.replaceScopedAgents(applications, this.applicationAgentInstances);
     }
 
     static async replaceApplicationAgent(bundleName: string, agent: AgentDecl): Promise<void> {
@@ -155,18 +138,62 @@ export class AgentRegistry {
     }
 
     /**
+     * 替换由插件提供的 Agent。
+     *
+     * 与应用 Agent 共用同一注册表但维护独立的实例列表，
+     * 因此插件 reload / 卸载不会影响应用 Agent，反之亦然。
+     */
+    static async replacePluginAgents(plugins: readonly ApplicationAgents[]): Promise<void> {
+        await this.unloadPluginAgents();
+        await this.replaceScopedAgents(plugins, this.pluginAgentInstances);
+    }
+
+    static async unloadPluginAgents(): Promise<void> {
+        await this.unloadScopedAgents(this.pluginAgentInstances);
+        this.pluginAgentInstances = [];
+    }
+
+    /**
      * 卸载所有已加载的应用 Agent，释放资源（MCP 连接、SkillProvider 注册等）。
      */
     static async unloadApplicationAgents(): Promise<void> {
-        for (const agent of this.applicationAgentInstances) {
+        await this.unloadScopedAgents(this.applicationAgentInstances);
+        this.applicationAgentInstances = [];
+    }
+
+    private static async replaceScopedAgents(
+        sources: readonly ApplicationAgents[],
+        instances: AgentDecl[]
+    ): Promise<void> {
+        let loaded = 0;
+        for (const source of sources) {
+            for (const agent of source.agents) {
+                agent.bindApplicationScope(source.bundleName);
+                if (this.agents.has(agent.agentId)) {
+                    logger.warn(`AgentRegistry: agent "${agent.agentId}" already registered, skipping scoped agent`);
+                    await agent.dispose();
+                    continue;
+                }
+                this.registerAgent(agent);
+                instances.push(agent);
+                loaded++;
+            }
+        }
+
+        if (loaded > 0) {
+            logger.info(`AgentRegistry: registered ${loaded} scoped agent(s)`);
+        }
+    }
+
+    private static async unloadScopedAgents(instances: AgentDecl[]): Promise<void> {
+        for (const agent of instances) {
             try {
                 await agent.dispose();
             } catch (err) {
-                logger.warn(`AgentRegistry: error disposing application agent "${agent.agentId}": ${err}`);
+                logger.warn(`AgentRegistry: error disposing scoped agent "${agent.agentId}": ${err}`);
             }
             this.agents.delete(agent.agentId);
         }
-        this.applicationAgentInstances = [];
     }
 
     /**

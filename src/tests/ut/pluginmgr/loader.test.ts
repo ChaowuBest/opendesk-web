@@ -2,10 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { OPENDESK_RUNTIME_VERSION, resolvePluginEntry } from '../../../main/applications/pluginmgr/discovery/loader.js';
-import {
-    loadPluginContributions,
-    readPluginManifest
-} from '../../../main/applications/pluginmgr/discovery/manifest.js';
+import { loadPluginResources, readPluginManifest } from '../../../main/applications/pluginmgr/discovery/manifest.js';
 
 describe('OpenDesk plugin loader', () => {
     let root: string;
@@ -135,7 +132,7 @@ Review the current changes.`
                 id: 'contributor',
                 apiVersion: 1,
                 capabilities: ['skill', 'mcp'],
-                contributions: {
+                resources: {
                     skills: ['./skills'],
                     mcpServers: [
                         {
@@ -151,9 +148,9 @@ Review the current changes.`
         );
 
         const manifest = readPluginManifest(entry, root);
-        const contributions = loadPluginContributions(manifest, root);
+        const resources = loadPluginResources(manifest, root);
 
-        expect(contributions.skills).toEqual([
+        expect(resources.skills).toEqual([
             expect.objectContaining({
                 name: 'review-code',
                 description: 'Review code changes',
@@ -164,7 +161,7 @@ Review the current changes.`
                 modelInvocable: true
             })
         ]);
-        expect(contributions.mcpServers).toEqual([
+        expect(resources.mcpServers).toEqual([
             {
                 name: 'project-files',
                 transport: 'stdio',
@@ -184,14 +181,12 @@ Review the current changes.`
             JSON.stringify({
                 apiVersion: 1,
                 capabilities: ['skill'],
-                contributions: { skills: ['../outside'] }
+                resources: { skills: ['../outside'] }
             })
         );
 
         const manifest = readPluginManifest(entry, root);
-        expect(() => loadPluginContributions(manifest, root)).toThrow(
-            'plugin.manifest_skill_path_invalid:outside_root'
-        );
+        expect(() => loadPluginResources(manifest, root)).toThrow('plugin.manifest_skill_path_invalid:outside_root');
     });
 
     test('manifest contribution 必须声明对应 capability', () => {
@@ -202,11 +197,11 @@ Review the current changes.`
             JSON.stringify({
                 apiVersion: 1,
                 capabilities: [],
-                contributions: { skills: ['./skills'] }
+                resources: { skills: ['./skills'] }
             })
         );
 
-        expect(() => readPluginManifest(entry, root)).toThrow('plugin.manifest_contribution_capability_missing:skill');
+        expect(() => readPluginManifest(entry, root)).toThrow('plugin.manifest_resource_capability_missing:skill');
     });
 
     test('拒绝未知的 capability 声明', () => {

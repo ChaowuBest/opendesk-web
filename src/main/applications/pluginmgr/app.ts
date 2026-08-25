@@ -15,7 +15,7 @@ import { disposePluginHost, initializePluginHost, reloadPluginHost } from './run
 import { discoverPlugins } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
 import { resolvePluginEntry } from './discovery/loader.js';
-import { loadPluginContributions, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
+import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
 import {
     installPlugin,
     listInstalledPlugins,
@@ -136,6 +136,12 @@ export class PluginMgrApplication extends BaseApplication {
             if (!contributions.some((candidate) => candidate.name === hook.name)) contributions.push(hook);
             hooksByPlugin.set(hook.pluginId, contributions);
         }
+        const agentsByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listAgents']>>();
+        for (const agent of getPluginHost().listAgents()) {
+            const contributions = agentsByPlugin.get(agent.pluginId) ?? [];
+            contributions.push(agent);
+            agentsByPlugin.set(agent.pluginId, contributions);
+        }
         const ids = new Set([...runtimeById.keys(), ...records.map((record) => record.id), ...candidatesById.keys()]);
         return Array.from(ids)
             .sort()
@@ -147,6 +153,7 @@ export class PluginMgrApplication extends BaseApplication {
                 const source = rawSource === 'managed' ? 'local' : rawSource;
                 let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
+                let agents = agentsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let manifest: PluginManifest | undefined;
                 const rootDirectory =
                     record?.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
@@ -161,10 +168,11 @@ export class PluginMgrApplication extends BaseApplication {
                     try {
                         const resolved = resolvePluginEntry(spec, configDirectory);
                         manifest = readPluginManifest(resolved.entry, resolved.rootDir);
-                        if (skills.length === 0 && mcpServers.length === 0) {
-                            const contributions = loadPluginContributions(manifest, resolved.rootDir);
-                            skills = contributions.skills ?? [];
-                            mcpServers = contributions.mcpServers ?? [];
+                        if (skills.length === 0 && mcpServers.length === 0 && agents.length === 0) {
+                            const resources = loadPluginResources(manifest, resolved.rootDir);
+                            skills = resources.skills ?? [];
+                            mcpServers = resources.mcpServers ?? [];
+                            agents = resources.agents ?? [];
                         }
                     } catch {
                         // Runtime diagnostics already describe malformed or unavailable plugins.
@@ -210,7 +218,13 @@ export class PluginMgrApplication extends BaseApplication {
                         name: definition.name,
                         description: definition.description
                     })),
-                    hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name }))
+                    hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name })),
+                    agents: agents.map((definition) => ({
+                        name: definition.name,
+                        whenToUse: definition.whenToUse,
+                        dispatchable: definition.dispatchable,
+                        body: definition.body
+                    }))
                 };
             })
             .filter((entry) => entry !== undefined);

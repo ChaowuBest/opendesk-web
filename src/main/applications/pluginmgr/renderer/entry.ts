@@ -17,6 +17,7 @@ import {
     type SkillDetailCard,
     type SkillDetailCardModel
 } from '../../../../renderer/components/skills/skill-detail-card.ts';
+import { renderSafeMarkdown } from '../../../../renderer/utils/markdown.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
@@ -30,6 +31,13 @@ interface PluginRuntimeEntry {
     apiVersion: number;
     capabilities: string[];
     diagnostics: Array<{ stage: string; code: string; detail?: string }>;
+}
+
+interface PluginAgentInfo {
+    name: string;
+    whenToUse: string;
+    dispatchable?: boolean;
+    body: string;
 }
 
 interface PluginListEntry {
@@ -72,6 +80,7 @@ interface PluginListEntry {
     hooks?: Array<{
         name: string;
     }>;
+    agents?: PluginAgentInfo[];
 }
 
 type InstallDialogMode = 'npm' | 'url';
@@ -434,6 +443,7 @@ button:hover { background: #f4f5f7; }
 .contribution-pill.mcp { color: #4a9b63; background: #e7f6ea; }
 .contribution-pill.tool { color: #8b6fd6; background: #f1ecfb; }
 .contribution-pill.hook { color: #c07a2d; background: #fdf3e7; }
+.contribution-pill.agent { color: #2f7fbf; background: #e8f1fb; }
 .card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .card-footer button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
 .plugin-toggle {
@@ -508,6 +518,7 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) .add-dropdown-section + .add-dropdown-section { border-top-color: rgba(255, 255, 255, .1); }
 :host([data-theme="dark"]) .item-name { color: #e5e7eb; }
 :host([data-theme="dark"]) .item-hint { color: #858990; }
+:host([data-theme="dark"]) .contribution-pill.agent { color: #8bc2f2; background: rgba(47, 127, 191, .22); }
 :host([data-theme="dark"]) .empty {
     color: #a4a7ad;
     background: #242426;
@@ -535,6 +546,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private installSpec = '';
     private installProgress?: InstallProgressState;
     private selectedPluginId?: string;
+    private selectedAgentName?: string;
+    private returningFromAgent = false;
     private notice?: { text: string; error: boolean };
     private t = createRendererTranslator();
     private readonly onPluginsChanged = () => void this.load();
@@ -739,6 +752,11 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 ? `<span class="contribution-pill hook">${escapeHtml(
                       this.t('plugin.center.hookCount', { count: entry.hooks.length })
                   )}</span>`
+                : '',
+            entry.agents?.length
+                ? `<span class="contribution-pill agent">${escapeHtml(
+                      this.t('plugin.center.agentCount', { count: entry.agents.length })
+                  )}</span>`
                 : ''
         ].filter(Boolean);
         return `<article class="card" data-plugin-id="${escapeHtml(entry.id)}" role="button" tabindex="0">
@@ -835,19 +853,35 @@ export class PluginMgrEntryWidget extends HTMLElement {
         </section>`;
     }
 
-    private renderPluginDetail(): void {
-        if (!this.selectedPluginId) return;
-        const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
-        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
-        if (!entry || !detail) return;
-        const status = this.statusOf(entry);
-        const capabilities = entry.runtime?.capabilities.length
-            ? entry.runtime.capabilities
-            : (entry.manifest?.capabilities ?? []);
+    private renderAgentsList(entry: PluginListEntry, name: string, status: string, capabilities: string[]): void {
+        const agents = entry.agents ?? [];
+        const agentItems = agents.length
+            ? agents
+                  .map((agent) => {
+                      const pastel = getSkillPastel(agent.name);
+                      return `<div class="agent-row" data-agent-name="${escapeHtml(agent.name)}" role="button" tabindex="0">
+                        <div class="agent-avatar" style="background:${pastel.bg};color:${pastel.text}">${escapeHtml(
+                            getSkillInitial(agent.name)
+                        )}</div>
+                        <div class="agent-row-info">
+                            <div class="agent-row-name">${escapeHtml(agent.name)}</div>
+                            <div class="agent-row-usage">${escapeHtml(agent.whenToUse)}</div>
+                        </div>
+                        ${
+                            agent.dispatchable === false
+                                ? `<span class="agent-flag">${escapeHtml(this.t('plugin.center.detail.agentNotDispatchable'))}</span>`
+                                : ''
+                        }
+                        <svg class="agent-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </div>`;
+                  })
+                  .join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noAgents'))}</div>`;
         const model: SkillDetailCardModel = {
             id: entry.id,
-            name: entry.runtime?.displayName || entry.manifest?.displayName || entry.id,
+            name,
             closeLabel: this.t('plugin.center.detail.close'),
+            transition: this.returningFromAgent ? 'back' : undefined,
             metadataLabel: this.t('plugin.center.detail.basicInfo'),
             metadata: [
                 { label: this.t('plugin.center.detail.status'), value: this.t(`plugin.runtime.status.${status}`) },
@@ -860,16 +894,15 @@ export class PluginMgrEntryWidget extends HTMLElement {
                     value: String(entry.runtime?.apiVersion ?? entry.manifest?.apiVersion ?? '-')
                 },
                 { label: this.t('plugin.center.source'), value: this.t(`plugin.center.source.${entry.source}`) },
-                {
-                    label: this.t('plugin.center.detail.path'),
-                    value: entry.path || entry.runtime?.origin || '-'
-                },
-                {
-                    label: this.t('plugin.settings.capabilities'),
-                    value: capabilities.join(', ') || '-'
-                }
+                { label: this.t('plugin.center.detail.path'), value: entry.path || entry.runtime?.origin || '-' },
+                { label: this.t('plugin.settings.capabilities'), value: capabilities.join(', ') || '-' }
             ],
-            extraSectionsHtml: this.renderContributionDetails(entry),
+            extraSectionsHtml: agentItems
+                ? `<section class="detail-section">
+                    <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.agents'))}</div>
+                    <div class="agent-list">${agentItems}</div>
+                </section>${this.renderContributionDetails(entry)}`
+                : this.renderContributionDetails(entry),
             actions: [
                 {
                     id: 'toggle',
@@ -887,28 +920,93 @@ export class PluginMgrEntryWidget extends HTMLElement {
                     : [])
             ]
         };
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (detail) {
+            detail.model = model;
+            // 返回动画只应作用于这一次渲染
+            this.returningFromAgent = false;
+            if (agents.length > 0) {
+                detail.shadowRoot?.querySelectorAll<HTMLElement>('[data-agent-name]').forEach((row) => {
+                    const open = () => {
+                        const agentName = row.dataset.agentName;
+                        if (!agentName) return;
+                        this.selectedAgentName = agentName;
+                        this.returningFromAgent = false;
+                        // 仅切换 detail 视图，不重建组件树，保持弹窗位置与尺寸稳定
+                        this.renderAgentDetail(entry);
+                    };
+                    row.addEventListener('click', open);
+                    row.addEventListener('keydown', (event) => {
+                        const keyboardEvent = event as KeyboardEvent;
+                        if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+                        keyboardEvent.preventDefault();
+                        open();
+                    });
+                });
+            }
+        }
+    }
+
+    private renderAgentDetail(entry: PluginListEntry): void {
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (!detail) return;
+        const agent = entry.agents?.find((candidate) => candidate.name === this.selectedAgentName);
+        if (!agent) {
+            this.selectedAgentName = undefined;
+            return;
+        }
+        const meta = [
+            { label: this.t('plugin.center.detail.agentId'), value: `${entry.id}:${agent.name}` },
+            {
+                label: this.t('plugin.center.detail.dispatchable'),
+                value: this.t(agent.dispatchable === false ? 'plugin.center.detail.no' : 'plugin.center.detail.yes')
+            }
+        ];
+        if (agent.whenToUse) {
+            meta.push({ label: this.t('plugin.center.detail.whenToUse'), value: agent.whenToUse });
+        }
+        const model: SkillDetailCardModel = {
+            id: `${entry.id}:${agent.name}`,
+            name: agent.name,
+            subtitle: entry.id,
+            closeLabel: this.t('plugin.center.detail.close'),
+            backLabel: this.t('plugin.center.detail.back'),
+            transition: 'forward',
+            descriptionLabel: this.t('plugin.center.detail.agents'),
+            bodyHtml: renderSafeMarkdown(agent.body),
+            bodyLabel: this.t('plugin.center.detail.agentsMd'),
+            metadataLabel: this.t('plugin.center.detail.agentInfo'),
+            metadata: meta,
+            actions: []
+        };
         detail.model = model;
-        const theme =
+    }
+
+    private renderPluginDetail(): void {
+        if (!this.selectedPluginId) return;
+        const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
+        if (!entry) return;
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (!detail) return;
+        const status = this.statusOf(entry);
+        const capabilities = entry.runtime?.capabilities.length
+            ? entry.runtime.capabilities
+            : (entry.manifest?.capabilities ?? []);
+        const name = entry.runtime?.displayName || entry.manifest?.displayName || entry.id;
+        const detailTheme =
             this.dataset.theme ||
             document.documentElement.dataset.theme ||
             this.closest('[data-theme]')?.getAttribute('data-theme');
-        if (theme) detail.dataset.theme = theme;
-        detail.addEventListener('skill-detail-action', (event) => {
-            const action = (event as CustomEvent<{ id: string }>).detail.id;
-            if (action === 'close') {
-                this.selectedPluginId = undefined;
-                this.render();
-            } else if (action === 'toggle') {
-                void this.run(
-                    () => getAPI().callMainWorld('setEnabled', entry.id, !entry.enabled),
-                    entry.enabled ? 'plugin.disable.success' : 'plugin.enable.success'
-                );
-            } else if (action === 'uninstall') {
-                void this.confirmAndUninstall(entry.id, () => {
-                    this.selectedPluginId = undefined;
-                });
+        if (detailTheme) detail.dataset.theme = detailTheme;
+        if (this.selectedAgentName) {
+            if (!entry.agents?.some((candidate) => candidate.name === this.selectedAgentName)) {
+                this.selectedAgentName = undefined;
+            } else {
+                this.renderAgentDetail(entry);
+                return;
             }
-        });
+        }
+        this.renderAgentsList(entry, name, status, capabilities);
     }
 
     private renderInstalledPanel(): string {
@@ -1026,6 +1124,37 @@ export class PluginMgrEntryWidget extends HTMLElement {
             ${this.selectedPluginId ? '<skill-detail-card id="plugin-detail-card"></skill-detail-card>' : ''}`;
         this.bindEvents();
         this.renderPluginDetail();
+        this.bindDetailActions();
+    }
+
+    private bindDetailActions(): void {
+        const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
+        if (!detail) return;
+        const entry = this.entries.find((candidate) => candidate.id === this.selectedPluginId);
+        if (!entry) return;
+        // 避免重复绑定：每次 render() 重新创建 detail 元素，直接使用新引用即可
+        detail.addEventListener('skill-detail-action', (event) => {
+            const action = (event as CustomEvent<{ id: string }>).detail.id;
+            if (action === 'close') {
+                this.selectedPluginId = undefined;
+                this.selectedAgentName = undefined;
+                this.render();
+            } else if (action === 'back') {
+                this.selectedAgentName = undefined;
+                this.returningFromAgent = true;
+                this.renderPluginDetail();
+            } else if (action === 'toggle') {
+                void this.run(
+                    () => getAPI().callMainWorld('setEnabled', entry.id, !entry.enabled),
+                    entry.enabled ? 'plugin.disable.success' : 'plugin.enable.success'
+                );
+            } else if (action === 'uninstall') {
+                void this.confirmAndUninstall(entry.id, () => {
+                    this.selectedPluginId = undefined;
+                    this.selectedAgentName = undefined;
+                });
+            }
+        });
     }
 
     private bindEvents(): void {
@@ -1076,6 +1205,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 const id = card.dataset.pluginId;
                 if (!id) return;
                 this.selectedPluginId = id;
+                this.selectedAgentName = undefined;
+                this.returningFromAgent = false;
                 this.render();
             };
             card.addEventListener('click', open);

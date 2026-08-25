@@ -15,8 +15,8 @@ function readPrimaryText(message: ChatMessage): string {
 }
 
 describe('OpenDesk plugin chat contract', () => {
-    test('does not expose agent as a plugin capability', () => {
-        expect(OPENDESK_PLUGIN_CAPABILITIES).not.toContain('agent');
+    test('exposes agent as a plugin capability for declaring subagents', () => {
+        expect(OPENDESK_PLUGIN_CAPABILITIES).toContain('agent');
     });
 
     test('uses separate hooks for headers and model parameters', () => {

@@ -39,6 +39,7 @@ import type {
     PermissionRequest,
     PermissionResourceType,
     PermissionRule,
+    AgentDefinition,
     ReasoningEffort,
     ToolDefinition,
     ToolExecutionContext,
@@ -78,6 +79,7 @@ export type {
     PermissionRequest,
     PermissionResourceType,
     PermissionRule,
+    AgentDefinition,
     ReasoningEffort,
     ToolDefinition,
     ToolExecutionContext,
@@ -90,7 +92,7 @@ export type {
 
 export const OPENDESK_PLUGIN_API_VERSION = 1;
 
-export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'command', 'event'] as const;
+export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'command', 'event', 'agent'] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
@@ -223,9 +225,15 @@ export interface PluginMcpRemoteServerDefinition extends PluginMcpServerBase {
 
 export type PluginMcpServerDefinition = PluginMcpStdioServerDefinition | PluginMcpRemoteServerDefinition;
 
-export interface PluginStaticContributions {
+/**
+ * 插件在 manifest 中声明的静态资源。
+ *
+ * 这些资源无需执行 setup() 即可由宿主直接从插件目录加载并注册。
+ */
+export interface PluginStaticResources {
     skills?: PluginSkillDefinition[];
     mcpServers?: PluginMcpServerDefinition[];
+    agents?: AgentDefinition[];
 }
 
 export interface PluginHookMap {
@@ -409,6 +417,18 @@ export interface PluginContext {
     };
     readonly mcps: {
         registerServer(definition: PluginMcpServerDefinition): PluginRegistration;
+    };
+    readonly agents: {
+        register(definition: AgentDefinition): PluginRegistration;
+        /**
+         * 扫描插件目录下的 agent 目录并批量注册。
+         *
+         * @param relativePath 相对插件根目录（manifest 所在目录）的路径。
+         *   该路径自身包含 agents.md 时按单个 agent 处理；
+         *   否则扫描其一级子目录，注册其中包含 agents.md 的目录。
+         * @returns 统一的 PluginRegistration，释放时会移除本次注册的全部 agent。
+         */
+        registerDirectory(relativePath: string): PluginRegistration;
     };
     readonly commands: {
         register(definition: PluginCommandDefinition): PluginRegistration;

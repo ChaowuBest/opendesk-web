@@ -5,6 +5,9 @@
 
 import { GlobalHooks, MAX_HOOK_PRIORITY } from '../../../aikernel/hooks.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
+import { AgentRegistry } from '../../../aikernel/agents/registry.js';
+import type { ApplicationAgents } from '../../../aikernel/agents/registry.js';
+import type { AgentDefinition } from '../../../aikernel/types/agent.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
@@ -25,6 +28,7 @@ import {
     runPluginShellEnv
 } from './hooks.js';
 import { applyPluginToolDefinitions } from './tool-provider.js';
+import { PluginAgent } from './agent.js';
 import { disposePluginContributions, initializePluginContributions, PLUGIN_SKILL_BUNDLE } from './contributions.js';
 import {
     disposePluginMcpProvider,
@@ -100,6 +104,24 @@ function configuredCandidates(): ResolvedCandidate[] {
 
 function isMissingDeclaration(error: unknown): boolean {
     return error instanceof Error && error.message === 'plugin.entry_not_declared';
+}
+
+/**
+ * 将所有已激活插件贡献的 agent 按插件分组注册到 AIKernel。
+ * 以插件 id 作为作用域，完整 agentId 为 `<插件 id>:<agent 名>`。
+ */
+async function syncPluginAgentsWithRegistry(): Promise<void> {
+    const grouped = new Map<string, AgentDefinition[]>();
+    for (const { pluginId, definition } of getPluginHost().listAgents()) {
+        const agents = grouped.get(pluginId) ?? [];
+        agents.push(definition);
+        grouped.set(pluginId, agents);
+    }
+    const sources: ApplicationAgents[] = Array.from(grouped, ([bundleName, agents]) => ({
+        bundleName,
+        agents: agents.map((definition) => new PluginAgent(definition))
+    }));
+    await AgentRegistry.replacePluginAgents(sources);
 }
 
 async function initialize(): Promise<void> {
@@ -185,6 +207,7 @@ async function initialize(): Promise<void> {
     for (const candidate of candidates) {
         await loadCandidate(host, candidate, configDir);
     }
+    await syncPluginAgentsWithRegistry();
     notifyPluginMcpServersChanged();
 }
 
@@ -224,7 +247,7 @@ async function loadCandidate(
             hostVersion: OPENDESK_RUNTIME_VERSION,
             integrity: candidate.integrity,
             pluginDir: loaded.rootDir,
-            contributions: loaded.contributions
+            resources: loaded.resources
         });
     } catch (error) {
         if (candidate.requireDeclaration && isMissingDeclaration(error)) return;
@@ -254,6 +277,7 @@ export async function disposePluginHost(): Promise<void> {
     disposePluginMcpProvider();
     await getPluginHost().dispose();
     await disposePluginMcpRuntime();
+    await AgentRegistry.unloadPluginAgents();
     disposePluginContributions();
     disposeApplicationEventBridge?.();
     disposeApplicationEventBridge = undefined;
@@ -266,8 +290,13 @@ export async function reloadPluginHost(): Promise<void> {
     notifyPluginSkillsChanged();
     const globalState = GlobalState.getCurrentInstance();
     if (!globalState) return;
+    // 仅刷新已完全加载（正在使用/运行）任务的工具集。懒加载任务未在内存中运行，
+    // 其 toolsets 为空，下一次被实际使用时 buildToolsets 会按最新插件配置重建，
+    // 无需在此刻强制 ensureLoaded() 触发全量磁盘读取（否则会批量打印
+    // "chat_context accessed on not-fully-loaded task" 防御性加载警告）。
+    const fullyLoadedTasks = globalState.taskManagerState.tasks.filter((task) => task._fullyLoaded);
     const refreshes = await Promise.allSettled(
-        globalState.taskManagerState.tasks.map(async (task) => {
+        fullyLoadedTasks.map(async (task) => {
             await task.refreshToolsets();
         })
     );
@@ -275,7 +304,7 @@ export async function reloadPluginHost(): Promise<void> {
         const result = refreshes[index];
         if (result.status === 'rejected') {
             logger.error(
-                `Failed to refresh tools after plugin reload: ${globalState.taskManagerState.tasks[index]?.task_id}`,
+                `Failed to refresh tools after plugin reload: ${fullyLoadedTasks[index]?.task_id}`,
                 result.reason
             );
         }

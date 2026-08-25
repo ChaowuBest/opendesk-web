@@ -54,9 +54,10 @@ const McpServerSchema = z.discriminatedUnion('transport', [
     })
 ]);
 
-const PluginContributionsSchema = z.object({
+const PluginResourcesSchema = z.object({
     skills: z.array(z.string().min(1)).optional(),
-    mcpServers: z.array(McpServerSchema).optional()
+    mcpServers: z.array(McpServerSchema).optional(),
+    agents: z.array(z.string().min(1)).optional()
 });
 
 export const OpenDeskPluginManifestSchema = z.object({
@@ -73,7 +74,7 @@ export const OpenDeskPluginManifestSchema = z.object({
     platforms: z.array(z.enum(OPENDESK_PLUGIN_PLATFORMS)).optional(),
     minOpenDeskVersion: z.string().min(1).optional(),
     maxOpenDeskVersion: z.string().min(1).optional(),
-    contributions: PluginContributionsSchema.optional()
+    resources: PluginResourcesSchema.optional()
 });
 
 const PackagePluginDeclarationSchema = OpenDeskPluginManifestSchema.omit({ entry: true }).extend({
@@ -216,7 +217,7 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
             `plugin entry not found: ${declaration.entry}`
         );
     }
-    for (const skillPath of declaration.contributions?.skills ?? []) {
+    for (const skillPath of declaration.resources?.skills ?? []) {
         assertSafeRelativePath(skillPath);
         const skillDirectory = path.resolve(directory, skillPath);
         if (!fs.existsSync(skillDirectory) || !fs.statSync(skillDirectory).isDirectory()) {
@@ -226,23 +227,39 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
             );
         }
     }
-    for (const server of declaration.contributions?.mcpServers ?? []) {
+    for (const agentPath of declaration.resources?.agents ?? []) {
+        assertSafeRelativePath(agentPath);
+        const agentDirectory = path.resolve(directory, agentPath);
+        if (!fs.existsSync(agentDirectory) || !fs.statSync(agentDirectory).isDirectory()) {
+            throw new OpenDeskPluginPackageError(
+                'plugin_structure_invalid',
+                `plugin agent path not found: ${agentPath}`
+            );
+        }
+    }
+    for (const server of declaration.resources?.mcpServers ?? []) {
         if (server.transport !== 'stdio') continue;
         if (server.command.startsWith('./') || server.command.startsWith('../')) {
             assertSafeRelativePath(server.command);
         }
         if (server.cwd) assertSafeRelativePath(server.cwd);
     }
-    if (declaration.contributions?.skills?.length && !declaration.capabilities.includes('skill')) {
+    if (declaration.resources?.skills?.length && !declaration.capabilities.includes('skill')) {
         throw new OpenDeskPluginPackageError(
             'plugin_manifest_invalid',
-            'plugin skill contribution requires the skill capability'
+            'plugin skill resource requires the skill capability'
         );
     }
-    if (declaration.contributions?.mcpServers?.length && !declaration.capabilities.includes('mcp')) {
+    if (declaration.resources?.mcpServers?.length && !declaration.capabilities.includes('mcp')) {
         throw new OpenDeskPluginPackageError(
             'plugin_manifest_invalid',
-            'plugin MCP contribution requires the mcp capability'
+            'plugin MCP resource requires the mcp capability'
+        );
+    }
+    if (declaration.resources?.agents?.length && !declaration.capabilities.includes('agent')) {
+        throw new OpenDeskPluginPackageError(
+            'plugin_manifest_invalid',
+            'plugin agent resource requires the agent capability'
         );
     }
     const packageName = typeof packageJson.name === 'string' && packageJson.name ? packageJson.name : undefined;

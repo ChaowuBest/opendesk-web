@@ -5,9 +5,14 @@ import { jest } from '@jest/globals';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { ChatContext } from '../../../main/aikernel/messages.js';
 import { SkillRegistry } from '../../../main/aikernel/skill.js';
+import { AgentRegistry } from '../../../main/aikernel/agents/registry.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
-import { disposePluginHost, initializePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
+import {
+    disposePluginHost,
+    initializePluginHost,
+    reloadPluginHost
+} from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
 import { setRuntimePluginDirectories } from '../../../main/applications/pluginmgr/management/config.js';
 import { PLUGIN_SKILL_BUNDLE } from '../../../main/applications/pluginmgr/runtime/contributions.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
@@ -15,6 +20,9 @@ import { logger } from '../../../main/utils/logger.js';
 import { installPlugin } from '../../../main/applications/pluginmgr/management/manager.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
+import { GlobalState } from '../../../main/aikernel/states/global.js';
+import { TaskState } from '../../../main/aikernel/states/tasks.js';
+import { TaskManagerState } from '../../../main/aikernel/task/manager.js';
 
 describe('OpenDesk plugin bootstrap', () => {
     let configDirectory: string;
@@ -141,7 +149,7 @@ describe('OpenDesk plugin bootstrap', () => {
                 entry: './index.mjs',
                 apiVersion: 1,
                 capabilities: ['skill', 'mcp'],
-                contributions: {
+                resources: {
                     skills: ['./skills/review-notes'],
                     mcpServers: [
                         {
@@ -486,7 +494,7 @@ Review the current changes.`
                 entry: './index.mjs',
                 apiVersion: 1,
                 capabilities: ['skill', 'mcp'],
-                contributions: {
+                resources: {
                     skills: ['./skills'],
                     mcpServers: [
                         {
@@ -592,5 +600,77 @@ Review the current changes.`
         } finally {
             warnSpy.mockRestore();
         }
+    });
+
+    test('插件贡献的 agent 经初始化后以插件 id 为作用域注册到 AgentRegistry', async () => {
+        const pluginDirectory = path.join(getPluginsDirectory(configDirectory), 'team-agents');
+        const agentDirectory = path.join(pluginDirectory, 'agents', 'reviewer');
+        fs.mkdirSync(agentDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'team-agents',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: ['agent'],
+                resources: {
+                    agents: ['./agents']
+                }
+            })
+        );
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), `export default { id: 'team-agents', setup() {} };`);
+        fs.writeFileSync(path.join(agentDirectory, 'agents.md'), `# Reviewer\n\nReviews plugin contributions.`);
+        fs.writeFileSync(
+            path.join(agentDirectory, 'agent.json'),
+            JSON.stringify({ name: 'code-reviewer', when_to_use: 'Reviewing plugin code.', dispatchable: false })
+        );
+
+        await initializePluginHost();
+
+        const registered = AgentRegistry.getAgent('team-agents:code-reviewer');
+        expect(registered).toBeDefined();
+        expect(registered?.whenToUse).toBe('Reviewing plugin code.');
+        // dispatchable: false → 不出现在可调度列表
+        expect(registered?.dispatchable).toBe(false);
+        expect(AgentRegistry.getAgentFrontmatterXml()).not.toContain('team-agents:code-reviewer');
+
+        await disposePluginHost();
+        expect(AgentRegistry.getAgent('team-agents:code-reviewer')).toBeUndefined();
+    });
+
+    test('reloadPluginHost 跳过懒加载任务（不触发 chat_context 防御性全量加载）', async () => {
+        await initializePluginHost();
+
+        // 模拟正在使用/运行中、已完全加载的任务
+        const loadedTask = Object.assign(Object.create(TaskState.prototype), {
+            task_id: 'task-reload-loaded',
+            _fullyLoaded: true
+        }) as TaskState;
+        // 模拟仅从索引恢复、未在内存中运行的懒加载任务
+        const lazyTask = Object.assign(Object.create(TaskState.prototype), {
+            task_id: 'task-reload-lazy',
+            _fullyLoaded: false
+        }) as TaskState;
+
+        const globalStateSpy = jest.spyOn(GlobalState, 'getCurrentInstance').mockReturnValue({
+            taskManagerState: { tasks: [loadedTask, lazyTask] }
+        } as unknown as GlobalState);
+        const loadedRefresh = jest.spyOn(loadedTask, 'refreshToolsets').mockResolvedValue(undefined);
+        const lazyRefresh = jest.spyOn(lazyTask, 'refreshToolsets').mockResolvedValue(undefined);
+
+        // 确认 spy 生效（reloadPluginHost 依赖 getCurrentInstance 返回 mock 的 task manager）
+        expect((globalStateSpy as jest.Mock).mock.calls).toHaveLength(0);
+
+        await reloadPluginHost();
+
+        // 只有已加载任务的工具集需要即时刷新；懒加载任务不得被强制 ensureLoaded
+        expect(loadedRefresh).toHaveBeenCalledTimes(1);
+        expect(lazyRefresh).not.toHaveBeenCalled();
+        expect(lazyTask._fullyLoaded).toBe(false);
+
+        globalStateSpy.mockRestore();
+        loadedRefresh.mockRestore();
+        lazyRefresh.mockRestore();
     });
 });

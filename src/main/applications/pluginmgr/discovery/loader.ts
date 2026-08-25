@@ -10,9 +10,9 @@ import { logger } from '../../../utils/logger.js';
 import type {
     OpenDeskPlugin,
     PluginCapability,
-    PluginStaticContributions
+    PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
-import { applyPluginManifest, loadPluginContributions, readPluginManifest, type PluginManifest } from './manifest.js';
+import { applyPluginManifest, loadPluginResources, readPluginManifest, type PluginManifest } from './manifest.js';
 
 const INDEX_FILES = ['index.js', 'index.mjs', 'index.cjs'];
 const RUNNABLE_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
@@ -32,7 +32,7 @@ export interface LoadedPlugin {
     manifest?: PluginManifest;
     entry: string;
     rootDir: string;
-    contributions: PluginStaticContributions;
+    resources: PluginStaticResources;
     candidate: PluginCandidate;
 }
 
@@ -143,7 +143,7 @@ export async function loadPlugin(
 ): Promise<LoadedPlugin> {
     const resolved = resolvePluginEntry(candidate.spec, baseDirectory, options);
     const manifest = readPluginManifest(resolved.entry, resolved.rootDir);
-    const contributions = loadPluginContributions(manifest, resolved.rootDir);
+    const resources = loadPluginResources(manifest, resolved.rootDir);
     const entry = resolved.entry;
     const url = `${pathToFileURL(entry).href}?opendesk=${Date.now()}`;
     logger.info(`Loading OpenDesk plugin: ${candidate.origin}`);
@@ -153,7 +153,7 @@ export async function loadPlugin(
         manifest,
         entry,
         rootDir: resolved.rootDir,
-        contributions,
+        resources,
         candidate
     };
 }

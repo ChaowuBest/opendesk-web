@@ -10,6 +10,7 @@ import { REASONING_EFFORT_VALUES, type ToolDefinition } from '../../../aikernel/
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import type {
+    AgentDefinition,
     OpenDeskPlugin,
     PluginCapability,
     PluginCommandContext,
@@ -27,7 +28,7 @@ import type {
     PluginRegistration,
     PluginSkillDefinition,
     PluginMcpServerDefinition,
-    PluginStaticContributions
+    PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import {
     OPENDESK_PLUGIN_API_VERSION,
@@ -35,6 +36,7 @@ import {
     OPENDESK_PLUGIN_HOOK_NAMES
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
+import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { qualifyPluginToolName } from './tool-names.js';
 
 export type PluginStatus = 'active' | 'error' | 'disabled';
@@ -68,7 +70,7 @@ export interface ActivatePluginOptions {
     hostVersion?: string;
     integrity?: string;
     pluginDir?: string;
-    contributions?: PluginStaticContributions;
+    resources?: PluginStaticResources;
 }
 
 export interface RecordPluginErrorOptions extends ActivatePluginOptions {
@@ -345,6 +347,7 @@ export class PluginHost {
     private readonly skills = new Map<string, ContributionRecord<PluginSkillDefinition>>();
     private readonly mcpServers = new Map<string, ContributionRecord<PluginMcpServerDefinition>>();
     private readonly commands = new Map<string, ContributionRecord<PluginCommandDefinition>>();
+    private readonly agents = new Map<string, ContributionRecord<AgentDefinition>>();
     private readonly applicationEvents: ApplicationEventRecord[] = [];
     private readonly mcpRemovalListeners = new Set<(id: string) => void | Promise<void>>();
 
@@ -384,6 +387,10 @@ export class PluginHost {
 
     listCommands(): VisiblePluginContribution<PluginCommandDefinition>[] {
         return this.listContributions(this.commands);
+    }
+
+    listAgents(): VisiblePluginContribution<AgentDefinition>[] {
+        return this.listContributions(this.agents);
     }
 
     async runCommand(id: string, args: string, context: PluginCommandContext): Promise<PluginCommandResult> {
@@ -566,11 +573,14 @@ export class PluginHost {
         this.entries.set(entry.key, entry);
         const context = this.createContext(entry, { ...options, options: pluginOptions });
         try {
-            for (const skill of options.contributions?.skills ?? []) {
+            for (const skill of options.resources?.skills ?? []) {
                 context.skills.register(skill);
             }
-            for (const server of options.contributions?.mcpServers ?? []) {
+            for (const server of options.resources?.mcpServers ?? []) {
                 context.mcps.registerServer(server);
+            }
+            for (const agent of options.resources?.agents ?? []) {
+                context.agents.register(agent);
             }
             const teardown = await plugin.setup(context);
             if (typeof teardown === 'function') {
@@ -649,6 +659,22 @@ export class PluginHost {
         const track = (registration: PluginRegistration) => {
             entry.registrations.push(registration);
             return registration;
+        };
+        const registerAgent = (definition: AgentDefinition): PluginRegistration => {
+            this.validateNamedContribution('agent', definition.name, definition.whenToUse);
+            addCapability('agent');
+            if (typeof definition.body !== 'string' || !definition.body.trim()) {
+                throw new Error(`plugin.agent_body_invalid:${definition.name}`);
+            }
+            const normalized: AgentDefinition = {
+                ...definition,
+                name: definition.name.trim(),
+                whenToUse: definition.whenToUse.trim(),
+                body: definition.body,
+                dispatchable: definition.dispatchable ?? true
+            };
+            // agent 以 `<插件 id>:<name>` 作为完整 agentId，因此重名约束是插件内唯一而非全局唯一
+            return this.registerContribution(this.agents, entry, normalized, normalized.name, track, undefined, true);
         };
 
         return {
@@ -751,6 +777,37 @@ export class PluginHost {
                     );
                 }
             },
+            agents: {
+                register: (definition: AgentDefinition) => registerAgent(definition),
+                registerDirectory: (relativePath: string) => {
+                    if (typeof relativePath !== 'string' || !relativePath.trim()) {
+                        throw new Error('plugin.agent_directory_invalid:empty');
+                    }
+                    addCapability('agent');
+                    const definitions = loadAgentsFromDirectory(
+                        path.resolve(options.pluginDir ?? options.configDir ?? getOpendeskDirectory()),
+                        relativePath.trim(),
+                        AGENT_RUNTIME_ERROR_CODES
+                    );
+                    // 目录内任一 agent 注册失败时回滚本次已注册的部分，避免留下半套 agent
+                    const registrations: PluginRegistration[] = [];
+                    try {
+                        for (const definition of definitions) {
+                            registrations.push(registerAgent(definition));
+                        }
+                    } catch (error) {
+                        for (const registration of registrations.reverse()) {
+                            void registration.dispose();
+                        }
+                        throw error;
+                    }
+                    return new HostRegistration(async () => {
+                        for (const registration of registrations.reverse()) {
+                            await registration.dispose();
+                        }
+                    });
+                }
+            },
             commands: {
                 register: (definition: PluginCommandDefinition) => {
                     this.validateNamedContribution('command', definition.name, definition.description);
@@ -833,10 +890,13 @@ export class PluginHost {
         definition: T,
         name: string,
         track: (registration: PluginRegistration) => PluginRegistration,
-        afterRemove?: (id: string) => void | Promise<void>
+        afterRemove?: (id: string) => void | Promise<void>,
+        scopeAware = false
     ): PluginRegistration {
+        // scopeAware: 仅约束同一插件内唯一（如 agent）；默认全局限定名唯一（如 skill/mcp/command）
         const collides = Array.from(records.values()).some(
-            (record) => (record.definition as { name: string }).name === name
+            (record) =>
+                (!scopeAware || record.pluginKey === entry.key) && (record.definition as { name: string }).name === name
         );
         if (collides) throw new Error(`Plugin contribution already registered: ${name}`);
         const id = `${entry.key}:${name}`;

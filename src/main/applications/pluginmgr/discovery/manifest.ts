@@ -14,12 +14,14 @@ import {
     type PluginCapability,
     type PluginMcpServerDefinition,
     type PluginPlatform,
-    type PluginStaticContributions
+    type PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
+import { AGENT_MANIFEST_ERROR_CODES, loadAgentsFromDirectory } from './agent-resource.js';
 
-export interface PluginManifestContributions {
+export interface PluginManifestResources {
     skills?: string[];
     mcpServers?: PluginMcpServerDefinition[];
+    agents?: string[];
 }
 
 export interface PluginManifest {
@@ -33,7 +35,7 @@ export interface PluginManifest {
     platforms?: PluginPlatform[];
     minOpenDeskVersion?: string;
     maxOpenDeskVersion?: string;
-    contributions?: PluginManifestContributions;
+    resources?: PluginManifestResources;
 }
 
 const capabilitySet = new Set<string>(OPENDESK_PLUGIN_CAPABILITIES);
@@ -127,18 +129,20 @@ function parseMcpServer(value: unknown): PluginMcpServerDefinition {
     };
 }
 
-function parseContributions(value: unknown): PluginManifestContributions | undefined {
+function parseResources(value: unknown): PluginManifestResources | undefined {
     if (value === undefined) return undefined;
-    if (!isRecord(value)) throw new Error('plugin.manifest_invalid_contributions');
+    if (!isRecord(value)) throw new Error('plugin.manifest_invalid_resources');
     const skills = optionalStringArray(value.skills, 'plugin.manifest_invalid_skills');
     let mcpServers: PluginMcpServerDefinition[] | undefined;
     if (value.mcpServers !== undefined) {
         if (!Array.isArray(value.mcpServers)) throw new Error('plugin.manifest_invalid_mcp_servers');
         mcpServers = value.mcpServers.map(parseMcpServer);
     }
+    const agents = optionalStringArray(value.agents, 'plugin.manifest_invalid_agents');
     return {
         skills,
-        mcpServers
+        mcpServers,
+        agents
     };
 }
 
@@ -154,12 +158,15 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     if (id && !pluginIdPattern.test(id)) throw new Error('plugin.manifest_invalid_id');
     const capabilities = parseCapabilities(value.capabilities);
     const platforms = parsePlatforms(value.platforms);
-    const contributions = parseContributions(value.contributions);
-    if (capabilities && contributions?.skills?.length && !capabilities.includes('skill')) {
-        throw new Error('plugin.manifest_contribution_capability_missing:skill');
+    const resources = parseResources(value.resources);
+    if (capabilities && resources?.skills?.length && !capabilities.includes('skill')) {
+        throw new Error('plugin.manifest_resource_capability_missing:skill');
     }
-    if (capabilities && contributions?.mcpServers?.length && !capabilities.includes('mcp')) {
-        throw new Error('plugin.manifest_contribution_capability_missing:mcp');
+    if (capabilities && resources?.mcpServers?.length && !capabilities.includes('mcp')) {
+        throw new Error('plugin.manifest_resource_capability_missing:mcp');
+    }
+    if (capabilities && resources?.agents?.length && !capabilities.includes('agent')) {
+        throw new Error('plugin.manifest_resource_capability_missing:agent');
     }
     return {
         schemaVersion: 1,
@@ -172,7 +179,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         platforms,
         minOpenDeskVersion: optionalString(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
         maxOpenDeskVersion: optionalString(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
-        contributions
+        resources
     };
 }
 
@@ -196,7 +203,7 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
         capabilities: declaration.capabilities,
         minOpenDeskVersion: declaration.minOpenDeskVersion,
         maxOpenDeskVersion: declaration.maxOpenDeskVersion,
-        contributions: declaration.contributions
+        resources: declaration.resources
     };
     return parsePluginManifest(manifestFields);
 }
@@ -304,19 +311,20 @@ function resolveManifestMcpServer(rootDir: string, definition: PluginMcpServerDe
     };
 }
 
-export function loadPluginContributions(
-    manifest: PluginManifest | undefined,
-    rootDir: string
-): PluginStaticContributions {
-    const skills = manifest?.contributions?.skills?.flatMap((declaredPath) =>
+export function loadPluginResources(manifest: PluginManifest | undefined, rootDir: string): PluginStaticResources {
+    const skills = manifest?.resources?.skills?.flatMap((declaredPath) =>
         findManifestSkillDirectories(rootDir, declaredPath).map(loadManifestSkill)
     );
-    const mcpServers = manifest?.contributions?.mcpServers?.map((definition) =>
+    const mcpServers = manifest?.resources?.mcpServers?.map((definition) =>
         resolveManifestMcpServer(rootDir, definition)
+    );
+    const agents = manifest?.resources?.agents?.flatMap((declaredPath) =>
+        loadAgentsFromDirectory(rootDir, declaredPath, AGENT_MANIFEST_ERROR_CODES)
     );
     return {
         skills,
-        mcpServers
+        mcpServers,
+        agents
     };
 }
 
