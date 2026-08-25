@@ -82,7 +82,7 @@ test('EvidenceCard ledger records tool calls only when evidence_card is enabled'
         evidencecard_state: createEvidenceCardState(false)
     };
     const toolCall = {
-        tool_name: 'terminal-exec',
+        tool_name: 'terminal-executePowerShell',
         status: 'success',
         args_object: {
             command: 'Get-Content src/main/aikernel/states/tasks.ts',
@@ -124,7 +124,7 @@ test('EvidenceCard ledger records tool calls only when evidence_card is enabled'
     assert.equal(task.evidencecard_state.ledger[0]?.source, 'tool');
 });
 
-test('EvidenceCard ledger records the effective tool inside a Skill wrapper', () => {
+test('EvidenceCard ledger records a file read inside a Skill wrapper', () => {
     Setting.updateInstanceData({
         task_config: {
             auto_retry: true,
@@ -138,26 +138,26 @@ test('EvidenceCard ledger records the effective tool inside a Skill wrapper', ()
         evidencecard_state: createEvidenceCardState(true)
     };
     const toolCall = {
-        id: 'call-skill-click',
+        id: 'call-skill-read',
         tool_name: 'skill-manager-CallSkillTool',
         status: 'success',
         args_object: {
-            bundleName: 'builtin',
-            skillName: 'use-harmony',
-            toolName: 'clickRef',
-            toolArgs: '{"snapshotId":"s12","ref":"e5","position":"center"}'
+            bundleName: 'example',
+            skillName: 'coding',
+            toolName: 'readFile',
+            toolArgs: '{"file_path":"/repo/a.ts"}'
         },
         args_string:
-            '{"bundleName":"builtin","skillName":"use-harmony","toolName":"clickRef","toolArgs":"{\\"snapshotId\\":\\"s12\\",\\"ref\\":\\"e5\\",\\"position\\":\\"center\\"}"}',
-        result: 'ok'
+            '{"bundleName":"example","skillName":"coding","toolName":"readFile","toolArgs":"{\\"file_path\\":\\"/repo/a.ts\\"}"}',
+        result: 'export const value = 1;'
     } as any;
 
     recordEvidenceCardToolCall(task, toolCall);
 
     assert.equal(task.evidencecard_state.ledger.length, 1);
-    assert.equal(task.evidencecard_state.ledger[0]?.target, 'ui:clickRef:s12/e5:center');
-    assert.equal(task.evidencecard_state.ledger[0]?.evidence_kind, 'ui_action');
-    assert.equal(task.evidencecard_state.ledger[0]?.phase, 'act');
+    assert.equal(task.evidencecard_state.ledger[0]?.target, 'file:read:/repo/a.ts:full');
+    assert.equal(task.evidencecard_state.ledger[0]?.evidence_kind, 'full_file');
+    assert.equal(task.evidencecard_state.ledger[0]?.phase, 'inspect');
     assert.equal(task.evidencecard_state.ledger[0]?.repeated_evidence, false);
 });
 
@@ -187,7 +187,31 @@ test('successful stable reads and searches are repeated only after the first mat
     assert.equal(task.evidencecard_state.repeated_evidence_count, 2);
 });
 
-test('state observations, actions, verification, interaction, planning, and edits never become repeated', () => {
+test('EvidenceCard records only file and explicit shell read or search tools', () => {
+    enableEvidenceCard();
+    const task = {
+        enableEvidenceCard: true,
+        evidencecard_state: createEvidenceCardState(true)
+    };
+    const calls = [
+        makeToolCall('filemgr-readFile', { file_path: '/repo/a.ts' }),
+        makeToolCall('filemgr-editFile', { filePath: '/repo/a.ts', oldString: 'a', newString: 'b' }),
+        makeToolCall('terminal-executeBash', { command: 'npm test' }),
+        makeToolCall('browser-navigate', { url: 'https://example.com' }),
+        makeToolCall('future-tools-readSomething', { resourceId: 'resource-1' })
+    ];
+
+    for (const call of calls) {
+        recordEvidenceCardToolCall(task, call);
+    }
+
+    assert.deepEqual(
+        task.evidencecard_state.ledger.map((entry) => entry.tool_name),
+        ['filemgr-readFile']
+    );
+});
+
+test('state observations, actions, verification, interaction, planning, and edits are not recorded', () => {
     enableEvidenceCard();
     const task = {
         enableEvidenceCard: true,
@@ -237,36 +261,25 @@ test('state observations, actions, verification, interaction, planning, and edit
         recordEvidenceCardToolCall(task, call);
     }
 
-    assert.equal(task.evidencecard_state.ledger.length, calls.length * 2);
-    assert.ok(task.evidencecard_state.ledger.every((entry) => entry.repeated_evidence === false));
-    assert.ok(task.evidencecard_state.ledger.every((entry) => entry.decision !== 'reuse'));
-    assert.ok(task.evidencecard_state.ledger.every((entry) => entry.target.length > 0));
-    assert.ok(task.evidencecard_state.ledger.every((entry) => entry.status === 'success'));
+    assert.equal(task.evidencecard_state.ledger.length, 0);
+    assert.equal(task.evidencecard_state.total_tool_tokens, 0);
     assert.equal(task.evidencecard_state.repeated_evidence_count, 0);
     assert.deepEqual(task.evidencecard_state.target_counts, {});
 });
 
-test('never-repeat tools can still be compressed when their result exceeds budget', () => {
+test('large recognized reads can still be compressed when their result exceeds budget', () => {
     enableEvidenceCard();
     const task = {
         enableEvidenceCard: true,
         evidencecard_state: createEvidenceCardState(true)
     };
-    const call = makeToolCall(
-        'filemgr-editFile',
-        { filePath: '/repo/a.ts', oldString: 'a', newString: 'b' },
-        { result: 'x'.repeat(20_000) }
-    );
+    const call = makeToolCall('filemgr-readFile', { file_path: '/repo/a.ts' }, { result: 'x'.repeat(20_000) });
 
     recordEvidenceCardToolCall(task, call);
-    recordEvidenceCardToolCall(task, call);
 
-    assert.deepEqual(
-        task.evidencecard_state.ledger.map((entry) => entry.decision),
-        ['compress', 'compress']
-    );
-    assert.ok(task.evidencecard_state.ledger.every((entry) => entry.repeated_evidence === false));
-    assert.deepEqual(task.evidencecard_state.target_counts, {});
+    assert.equal(task.evidencecard_state.ledger[0]?.decision, 'compress');
+    assert.equal(task.evidencecard_state.ledger[0]?.repeated_evidence, false);
+    assert.equal(task.evidencecard_state.target_counts['file:read:/repo/a.ts:full'], 1);
 });
 
 test('a failed stable read does not make a successful retry repeated', () => {

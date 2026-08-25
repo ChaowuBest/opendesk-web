@@ -2,20 +2,21 @@
 
 ## 背景
 
-EvidenceCard 最初用于减少 Coding 任务中的重复读取、重复搜索和无效证据消耗。当前实现对所有工具使用同一判定：
+EvidenceCard 用于减少 Coding 任务中的重复读取、重复搜索和无效证据消耗。此前的 OpenDesk 适配为大量工具建立了 target、证据类型和阶段语义，并让所有工具进入 ledger。这个实现虽然解决了类型化工具参数无法识别的问题，但带来了新的扩展性成本：
 
-```text
-repeated_evidence = state.target_counts[target] > 0
-```
+- EvidenceCard 需要理解 GUI、浏览器、MCP、设备、任务、知识库等所有工具。
+- 新增或修改业务工具时，往往还要同步修改 EvidenceCard 解析器。
+- EvidenceCard 的收益主要来自高 token 的 Coding 读取和搜索，记录其他工具没有明确收益。
 
-该判定仅比较 target，不区分稳定证据读取、状态观察、验证和会改变外部状态的动作。对 GUI、后台进程、浏览器和交互任务，相同参数不代表相同结果，第二次调用也不代表重复证据。
+因此 V2 将 EvidenceCard 从“通用工具语义解析器”收缩为“Coding 读取证据白名单”。
 
 ## 目标
 
-- 所有状态观察、动作、验证、交互和计划操作不再判定为 repeated evidence。
-- 仅对明确的稳定证据读取和搜索启用 target 重复判定。
-- 新增工具默认不参与 repeated，避免因遗漏分类影响任务完成。
-- 保留所有工具的 ledger、token、phase、evidence kind 和 target 记录。
+- 只记录本地文件读取、文件搜索以及明确的 Shell 读取或搜索。
+- 未命中白名单的工具不解析，也不写入 ledger、token、phase、target 或重复索引。
+- 新增工具默认忽略，不要求同步扩展 EvidenceCard。
+- 只有成功的白名单调用写入重复索引。
+- 保留类型化参数和 CallSkillTool 包装器内参数的必要解析能力。
 
 ## 非目标
 
@@ -23,122 +24,107 @@ repeated_evidence = state.target_counts[target] > 0
 
 - 证据债务算法。
 - 预算、token 估算和工具结果压缩。
-- target 生成规则。
-- EvidenceCard ledger 的整体数据结构。
-- 基于文件修改世代或 GUI 状态版本的精细失效机制。
+- EvidenceCard ledger 和运行时提示的数据结构。
+- 文件修改后的证据失效机制。
+- GUI、浏览器、MCP、设备、工作流、知识库等工具的通用语义分类。
 
-## 设计原则
+## 白名单
 
-### 默认不参与
+### 文件读取和搜索
 
-EvidenceCard 应使用 allowlist，而不是持续扩展工具名黑名单。
+只识别 filemgr 中以下工具：
 
-`EvidenceToolSemantics` 增加重复策略：
+| 工具           | 类别 | phase    | evidence kind        |
+| -------------- | ---- | -------- | -------------------- |
+| readFile       | 读取 | inspect  | 按范围和文件类型确定 |
+| extractText    | 读取 | inspect  | full_file            |
+| globFiles      | 搜索 | localize | repo_map             |
+| grepFiles      | 搜索 | localize | symbol_signature     |
+| semanticSearch | 搜索 | localize | search_result        |
 
-```ts
-repeatPolicy: 'never' | 'target';
-```
+文件编辑、写入、补丁、图片读取和其他 filemgr 工具均忽略。
 
-- `never`：默认值，不读写 `target_counts`，不产生 `decision=reuse`。
-- `target`：仅用于已确认的稳定证据读取和搜索。
+### Shell 读取和搜索
 
-将来如果引入状态世代，可扩展 `epoch` 策略，但不在本次范围内。
+只检查以下终端工具：
 
-### 只有成功调用才能成为重复证据
+- terminal-executeBash
+- terminal-executeZsh
+- terminal-executePowerShell
 
-失败、取消或未完成的调用不写入重复索引。失败后使用相同参数重试应被视为新的尝试。
+命令还必须明确以只读或搜索命令开头。
 
-## 分类规则
+搜索命令包括：
 
-### 不参与 repeated
+- rg、ripgrep、grep、find、findstr、fd
+- ls、dir、Get-ChildItem、Select-String
+- git ls-files、git grep
 
-| 类别           | operation  | 示例                                                            |
-| -------------- | ---------- | --------------------------------------------------------------- |
-| 状态观察       | `observe`  | 后台进程状态、UI/browser snapshot、tabs、窗口和应用列表         |
-| 状态动作       | `act`      | navigate、click、input、scroll、hover、pressKey、MCP 和设备命令 |
-| 文件及数据修改 | `edit`     | editFile、writeFile、applyPatch、知识库增删改                   |
-| 通用执行       | `execute`  | 可能有副作用的 Shell 命令、Workflow                             |
-| 验证           | `verify`   | test/build、visualAssert、waitFor                               |
-| 交互           | `interact` | askUser、exitPlanMode                                           |
-| 计划和任务状态 | `plan`     | Todo 更新、Task/Pool/Planning 操作                              |
+读取命令包括：
 
-以下工具明确使用 `never`：
+- Get-Content、cat、nl、type、head、tail
+- 仅只读模式的 sed
+- git show、git log、git blame
 
-- `checkShellStatus`，包括轮询和 kill。
-- 浏览器导航和元素操作。
-- UI snapshot、screenshot、clickRef、坐标点击、input、findElement、getElementState。
-- visualAssert 和 waitFor。
-- Todo 更新和用户提问。
-- 失败的文件读取、搜索或其他工具调用。
+以下情况即使包含上述命令也忽略：
 
-`findElement` 即使携带 snapshotId，本次也使用 `never`。当前 snapshotId 可能退化为 `current`，尚不能保证引用的是不可变快照。
+- 测试、构建和普通执行命令。
+- git diff、git status 等状态性命令。
+- 输出重定向。
+- &&、||、;、命令替换等复合执行。
+- tee、xargs、文件修改命令或将输出交给 Shell/解释器执行。
 
-### 参与 target repeated
+Shell 判断采用保守白名单。无法明确确认只读时直接忽略。
 
-`target` 策略只显式赋给：
+### Skill 包装器
 
-- 文件完整读取、分段读取和文本提取。
-- 文件 glob、grep 和语义搜索。
-- 被明确识别为读取或搜索的终端命令。
-- Skill 定义加载。
-- Web 搜索和 Web 内容读取。
-- 知识库 retrieve/ask 等只读检索。
-- MCP 工具定义搜索和读取。
+对 skill-manager-CallSkillTool 只做一层最小解包：
 
-未在上述 allowlist 中明确标记的工具，即使名称以 `read`、`get`或 `search` 开头，也默认使用 `never`。
+1. 读取内部 toolName。
+2. 只有内部工具名属于文件或 Shell 白名单时，才解析 toolArgs。
+3. 继续应用与直接调用相同的参数校验和 Shell 命令校验。
+4. 其他 Skill 工具直接忽略。
+
+EvidenceCard 不解析 Skill 的业务语义，也不为 GUI 等内部工具生成 target。
 
 ## 记录逻辑
 
-```text
-eligible = semantics.repeatPolicy == target AND toolCall.status == success
-previousTargetCount = eligible ? state.target_counts[target] ?? 0 : 0
-repeated = eligible AND previousTargetCount > 0
+    semantics = resolveAllowlistedEvidence(toolCall)
 
-if eligible:
-    state.target_counts[target] = previousTargetCount + 1
+    if semantics is absent:
+        return
 
-decision = repeated
-    ? reuse
-    : actualTokens > plannedBudget
-        ? compress
-        : collect
-```
+    successful = toolCall.status == success
+    previousTargetCount = successful ? state.target_counts[target] ?? 0 : 0
+    repeated = successful AND previousTargetCount > 0
 
-`never` 工具仍然追加 ledger，但：
+    if successful:
+        state.target_counts[target] = previousTargetCount + 1
 
-- `repeated_evidence=false`。
-- 不增加 `repeated_evidence_count`。
-- 不写入 `target_counts`。
-- 不会因 target 相同得到 `decision=reuse`。
+    append ledger entry
 
-## 已知限制
+失败的白名单调用仍进入 ledger，并标记为错误证据，但不会写入重复索引。因此失败后使用相同参数重试，首次成功调用不会被判定为 repeated。
 
-- 修改文件后重新读取同一文件，当前仍可能被视为 repeated。后续可通过文件版本或全局 mutation epoch 失效旧读取证据。
-- 相同 Web 或知识库查询可能随外部状态变化。本次仍将其视为任务期间的弱稳定证据。
-- `checkShellStatus` 当前 target 未完整纳入 pid/kill。本次通过 `never` 避免误报，target 精度后续单独修正。
+## 扩展规则
 
-## 测试计划
+新增业务工具默认不进入 EvidenceCard，不需要修改 EvidenceCard。
 
-### 正向重复证据
+只有同时满足以下条件时，才考虑扩展白名单：
 
-- 连续成功读取同一文件：第一次 false，第二次 true。
-- 连续成功执行同一文件搜索：第一次 false，第二次 true。
+- 工具主要服务于 Coding 证据定位或读取。
+- 工具结果通常消耗较多上下文 token。
+- 相同 target 在任务期间具有足够稳定的含义。
+- 重复调用可以安全地提示复用先前证据。
 
-### 不参与重复证据
+扩展时只增加该工具的白名单识别和 target 生成，不增加通用工具语义解析。
 
-- 同一 pid 连续查询后台进程：始终 false。
-- 重复 navigate、snapshot、clickRef、input、findElement 和 visualAssert：始终 false。
-- 重复 Todo 更新和 askUser：始终 false。
-- 重复文件编辑、写入、补丁和通用 Shell 执行：始终 false。
-- 相同测试或构建命令在修改前后重跑：始终 false。
-- 第一次稳定读取失败、第二次成功：第二次仍为 false。
+## 测试范围
 
-### 状态与决策
-
-- `never` 工具不增加 `target_counts` 和 `repeated_evidence_count`。
-- `never` 工具仍进入 ledger 并记录 token、phase、target 和 status。
-- `never` 工具在超过预算时仍可得到 `decision=compress`，但不得到 `decision=reuse`。
-
-## 实施边界
-
-实施时应仅修改 EvidenceCard 语义分类、repeated 索引与相关单元测试。不同时调整证据债务、预算、target 格式或其他 EvidenceCard 策略。
+- 文件完整读取、分段读取和各类文件搜索能够生成稳定 target。
+- 文件修改、图片读取和参数不完整的文件工具被忽略。
+- Bash、Zsh、PowerShell 中明确的读取或搜索被记录。
+- 测试、构建、状态观察、重定向、复合或可能修改状态的 Shell 命令被忽略。
+- Skill 包装的文件或 Shell 白名单工具能够解析，其他 Skill 工具被忽略。
+- GUI、浏览器、Todo、用户交互和未知工具不写入任何 EvidenceCard 状态。
+- 连续成功读取相同 target 时，第二次才判定为 repeated。
+- 失败读取不污染重复索引。
