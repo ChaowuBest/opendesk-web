@@ -97,6 +97,39 @@ describe('plugin manager application renderer', () => {
                                 description: 'Review a release.'
                             }
                         ],
+                        mcpServers: [],
+                        agents: [
+                            {
+                                name: 'code-reviewer',
+                                whenToUse: 'Reviewing code changes and pull requests.',
+                                dispatchable: true,
+                                body: '# Code Reviewer\n\nYou review code changes.'
+                            },
+                            {
+                                name: 'ghost',
+                                whenToUse: 'A hidden agent.',
+                                dispatchable: false,
+                                body: '# Ghost\n\nNot dispatchable.'
+                            }
+                        ]
+                    },
+                    {
+                        id: 'localized-plugin',
+                        source: 'local',
+                        path: '/plugins/localized',
+                        removable: true,
+                        enabled: true,
+                        runtime: {
+                            id: 'localized-plugin',
+                            displayName: { en: 'Localized En Name', zh: '本地化中文名' },
+                            version: '1.0.0',
+                            status: 'active',
+                            origin: '/plugins/localized',
+                            apiVersion: 1,
+                            capabilities: [],
+                            diagnostics: []
+                        },
+                        skills: [],
                         mcpServers: []
                     }
                 ];
@@ -128,7 +161,7 @@ describe('plugin manager application renderer', () => {
 
         expect(widget.shadowRoot.innerHTML).toContain('&lt;local-plugin&gt;');
         expect(widget.shadowRoot.querySelector('local-plugin')).toBeNull();
-        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(2);
+        expect(widget.shadowRoot.querySelectorAll('[data-action="uninstall"]')).toHaveLength(3);
         expect(widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]')).not.toBeNull();
     });
 
@@ -326,5 +359,131 @@ describe('plugin manager application renderer', () => {
         expect(detail.shadowRoot.innerHTML).toContain('2.0.0');
         expect(detail.shadowRoot.innerHTML).toContain('command, skill');
         expect(detail.shadowRoot.innerHTML).toContain('release-review');
+    });
+
+    test('lists mounted sub-agents on the plugin card and first detail screen', async () => {
+        const widget = await createWidget();
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]');
+
+        // 卡片上显示 agent 数量
+        expect(card.innerHTML).toContain('2 个子 Agent');
+
+        card.dispatchEvent(new Event('click'));
+
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        const html = detail.shadowRoot.innerHTML;
+        // 首屏列出 agent 名字与使用场景
+        expect(html).toContain('子 Agent');
+        expect(html).toContain('code-reviewer');
+        expect(html).toContain('Reviewing code changes and pull requests.');
+        expect(html).toContain('ghost');
+        // 不可调度的 agent 带标记，但仍是点击项
+        expect(html).toContain('不可调度');
+        // agent 行可点击
+        expect(detail.shadowRoot.querySelectorAll('[data-agent-name]')).toHaveLength(2);
+        // 首屏无返回按钮、无 markdown 正文渲染
+        expect(html).not.toContain('You review code changes.');
+    });
+
+    test('opens an agent detail page with animated forward transition and back button', async () => {
+        const widget = await createWidget();
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]');
+        card.dispatchEvent(new Event('click'));
+
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        const reviewerRow = detail.shadowRoot.querySelector('[data-agent-name="code-reviewer"]');
+        reviewerRow.dispatchEvent(new Event('click'));
+
+        // 同一个模态窗口内切换：detail 元素不被重建
+        expect(widget.shadowRoot.querySelector('skill-detail-card')).toBe(detail);
+
+        const html = detail.shadowRoot.innerHTML;
+        // agent 详情展示完整 id、使用场景、可调度性与 agents.md 正文
+        expect(html).toContain('installed-plugin:code-reviewer');
+        expect(html).toContain('Reviewing code changes and pull requests.');
+        expect(html).toContain('是');
+        expect(html).toContain('code-reviewer');
+        expect(html).toContain('You review code changes.');
+        // 内容区前进动画，遮罩与窗口框架不重建
+        expect(detail.shadowRoot.querySelector('.detail-body').className).toContain('body-switch-forward');
+        expect(detail.shadowRoot.querySelector('.detail-overlay').className).not.toMatch(/overlay-enter/);
+        // 左上角返回按钮
+        expect(detail.shadowRoot.querySelector('.detail-back')?.hasAttribute('hidden')).toBe(false);
+        // agent 详情无操作按钮
+        expect(detail.shadowRoot.querySelector('.detail-footer')?.hasAttribute('hidden')).toBe(true);
+    });
+
+    test('back button returns from agent detail to plugin overview with back animation', async () => {
+        const widget = await createWidget();
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]');
+        card.dispatchEvent(new Event('click'));
+
+        let detail = widget.shadowRoot.querySelector('skill-detail-card');
+        detail.shadowRoot.querySelector('[data-agent-name="ghost"]').dispatchEvent(new Event('click'));
+
+        detail = widget.shadowRoot.querySelector('skill-detail-card');
+        // ghost 不可调度，agent 详情显示"否"
+        expect(detail.shadowRoot.innerHTML).toContain('否');
+
+        detail.shadowRoot.querySelector('.detail-back').dispatchEvent(new Event('click'));
+
+        detail = widget.shadowRoot.querySelector('skill-detail-card');
+        const html = detail.shadowRoot.innerHTML;
+        // 返回插件首屏，内容区带返回动画，返回按钮重新隐藏
+        expect(detail.shadowRoot.querySelector('.detail-body').className).toContain('body-switch-back');
+        expect(detail.shadowRoot.querySelector('.detail-back')?.hasAttribute('hidden')).toBe(true);
+        // 首屏仍列出两个 agent
+        expect(detail.shadowRoot.querySelectorAll('[data-agent-name]')).toHaveLength(2);
+    });
+
+    test('displays the localized displayName for the current language on cards and details', async () => {
+        const widget = await createWidget();
+        // 测试环境 navigator 固定为 zh-CN，应显示中文翻译
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+        expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="localized-plugin"]');
+        card.dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        expect(detail.shadowRoot.innerHTML).toContain('本地化中文名');
+    });
+
+    test('switches localized display names when the main window notifies a locale change', async () => {
+        const widget = await createWidget();
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+
+        const event = new Event('message');
+        Object.defineProperty(event, 'data', {
+            value: { type: 'LOCALE_CHANGED', locale: 'en-US' }
+        });
+        window.dispatchEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('Localized En Name');
+        expect(widget.shadowRoot.innerHTML).not.toContain('本地化中文名');
+
+        const back = new Event('message');
+        Object.defineProperty(back, 'data', {
+            value: { type: 'LOCALE_CHANGED', locale: 'zh-CN' }
+        });
+        window.dispatchEvent(back);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+    });
+
+    test('ignores locale messages without the LOCALE_CHANGED type', async () => {
+        const widget = await createWidget();
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+
+        const event = new Event('message');
+        Object.defineProperty(event, 'data', {
+            value: { locale: 'en-US' }
+        });
+        window.dispatchEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
+        expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
     });
 });

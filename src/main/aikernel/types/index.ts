@@ -43,6 +43,7 @@ export type {
 } from './permissions.js';
 export { REASONING_EFFORT_VALUES } from './reasoning.js';
 export type { ReasoningEffort } from './reasoning.js';
+export type { AgentDefinition } from './agent.js';
 export type {
     ToolDefinition,
     ToolExecutionContext,

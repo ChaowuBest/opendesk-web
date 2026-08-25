@@ -4,6 +4,8 @@
  */
 
 import { Skill, SkillRegistry, type SkillFrontmatter, type SkillProvider } from '../../../aikernel/skill.js';
+import { getLocale } from '../../../../locale/index.js';
+import { resolvePluginDisplayName } from '../../../../../packages/plugin-sdk/src/index.js';
 import { getPluginHost } from './host.js';
 
 export const PLUGIN_SKILL_BUNDLE = 'pluginMgr';
@@ -28,7 +30,8 @@ class PluginSkillProvider implements SkillProvider {
                 skill.readOnly = true;
                 skill.attribution = {
                     sourceId: pluginId,
-                    sourceName: getPluginHost().get(pluginId)?.displayName ?? pluginId
+                    sourceName:
+                        resolvePluginDisplayName(getPluginHost().get(pluginId)?.displayName, getLocale()) ?? pluginId
                 };
                 return skill;
             });

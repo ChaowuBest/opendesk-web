@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
+import { logger } from '../../../utils/logger.js';
 import { computePluginIntegrity } from './integrity.js';
 import type { PluginCandidate } from './loader.js';
 import { ensurePluginDirectories, getBuiltinPluginsDirectory, getPluginsDirectory } from '../management/paths.js';
@@ -159,6 +160,9 @@ export function discoverPlugins(
     const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
     const records = listPluginRecords(configDirectory);
     const builtinCandidates = scanDirectory(builtinDirectory, 'builtin');
+    logger.info(
+        `OpenDesk builtin plugins directory: ${builtinDirectory} (exists: ${fs.existsSync(builtinDirectory)}, found: ${builtinCandidates.length})`
+    );
     const builtinIds = new Set(builtinCandidates.map((candidate) => candidate.id));
     // Registry records inside the plugins directory start with their container
     // entry (directory or single plugin file); skip those during the loose scan.

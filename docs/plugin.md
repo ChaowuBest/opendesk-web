@@ -36,6 +36,13 @@ plugins/
 即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；
 本地插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
 
+> 例外：`@bitclub.ai/opendesk-plugin-sdk`（含 `./package` 子路径）和其运行时
+> 依赖 `zod` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
+> `import` 这些包时，先按插件自己的 `node_modules` 解析（尊重插件声明的版本）；
+> 解析失败时回退到宿主内置的同名包。因此插件即使省略 SDK 的
+> `node_modules`（例如鸿蒙端安装的目录插件无法执行 npm install）也能正常
+> 加载。其他第三方依赖仍必须由插件自带。
+
 还可以在 `setting.json` 中配置不复制到全局目录的外部插件路径：
 
 ```json
@@ -291,6 +298,33 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`。声明静态 Skill 或 MCP 时，
 必须同时声明对应的 `skill` 或 `mcp` capability。
 
+### displayName 本地化
+
+`displayName` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk` 和插件入口对象均适用：
+
+- 简单字符串：所有语言下显示同一名称；
+- 本地化对象：按语言声明名称，键为 BCP 47 语言标签（如 `en`、`zh`、`zh-CN`），
+  值为该语言下的显示名称。
+
+```json
+{
+    "schemaVersion": 1,
+    "id": "locale-demo",
+    "displayName": {
+        "en": "Locale Demo",
+        "zh": "本地化示例插件"
+    },
+    "entry": "./index.js",
+    "apiVersion": 1,
+    "capabilities": []
+}
+```
+
+解析时只比较语言主标签（请求 `zh-CN` 时 `zh-CN` 与 `zh-TW` 等键都视为中文条目）；
+没有匹配语言的条目时回退到对象中声明的第一个翻译；对象中的每个值都必须是非空字符串。
+插件中心按当前界面语言显示插件名称，并在应用切换语言后实时更新；
+未声明 `displayName` 时回退到插件 ID。
+
 ### Skill 路径
 
 `contributions.skills` 中每一项都必须是插件根目录内的目录，不能直接指向
@@ -308,7 +342,7 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 插件根目录内；上例通过将 `cwd` 设为 `"."`，让 Node 从插件根目录解析相对参数。
 
 插件贡献的 MCP 会出现在 GUI 的 MCP 管理器中，来源优先显示插件的
-`displayName`，未声明时回退到插件 ID。
+`displayName`（支持本地化对象形式，按当前界面语言解析），未声明时回退到插件 ID。
 这类配置由插件拥有，因此在 MCP 管理器中只读；应通过插件中心启停插件或修改插件配置。
 
 ## 使用 package.json#opendesk
@@ -342,7 +376,7 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
         }
     },
     "dependencies": {
-        "@bitclub.ai/opendesk-plugin-sdk": "^0.1.0"
+        "@bitclub.ai/opendesk-plugin-sdk": "^0.3.4"
     }
 }
 ```

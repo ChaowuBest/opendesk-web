@@ -39,6 +39,7 @@ import type {
     PermissionRequest,
     PermissionResourceType,
     PermissionRule,
+    AgentDefinition,
     ReasoningEffort,
     ToolDefinition,
     ToolExecutionContext,
@@ -78,6 +79,7 @@ export type {
     PermissionRequest,
     PermissionResourceType,
     PermissionRule,
+    AgentDefinition,
     ReasoningEffort,
     ToolDefinition,
     ToolExecutionContext,
@@ -90,7 +92,7 @@ export type {
 
 export const OPENDESK_PLUGIN_API_VERSION = 1;
 
-export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'command', 'event'] as const;
+export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'command', 'event', 'agent'] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
@@ -223,9 +225,15 @@ export interface PluginMcpRemoteServerDefinition extends PluginMcpServerBase {
 
 export type PluginMcpServerDefinition = PluginMcpStdioServerDefinition | PluginMcpRemoteServerDefinition;
 
-export interface PluginStaticContributions {
+/**
+ * 插件在 manifest 中声明的静态资源。
+ *
+ * 这些资源无需执行 setup() 即可由宿主直接从插件目录加载并注册。
+ */
+export interface PluginStaticResources {
     skills?: PluginSkillDefinition[];
     mcpServers?: PluginMcpServerDefinition[];
+    agents?: AgentDefinition[];
 }
 
 export interface PluginHookMap {
@@ -410,6 +418,18 @@ export interface PluginContext {
     readonly mcps: {
         registerServer(definition: PluginMcpServerDefinition): PluginRegistration;
     };
+    readonly agents: {
+        register(definition: AgentDefinition): PluginRegistration;
+        /**
+         * 扫描插件目录下的 agent 目录并批量注册。
+         *
+         * @param relativePath 相对插件根目录（manifest 所在目录）的路径。
+         *   该路径自身包含 agents.md 时按单个 agent 处理；
+         *   否则扫描其一级子目录，注册其中包含 agents.md 的目录。
+         * @returns 统一的 PluginRegistration，释放时会移除本次注册的全部 agent。
+         */
+        registerDirectory(relativePath: string): PluginRegistration;
+    };
     readonly commands: {
         register(definition: PluginCommandDefinition): PluginRegistration;
     };
@@ -423,7 +443,7 @@ export interface PluginContext {
 
 export interface OpenDeskPlugin {
     id: string;
-    displayName?: string;
+    displayName?: PluginDisplayName;
     version?: string;
     apiVersion?: number;
     capabilities?: PluginCapability[];
@@ -433,6 +453,45 @@ export interface OpenDeskPlugin {
     configSchema?: z.ZodType;
     failureMode?: PluginFailureMode;
     setup(context: PluginContext): Promise<PluginSetupResult> | PluginSetupResult;
+}
+
+/** 本地化显示名称：语言主标签到名称的映射，如 { "en": "...", "zh": "..." } */
+export type PluginDisplayNameMap = Record<string, string>;
+
+/**
+ * 插件显示名称：支持简单字符串或按语言声明的对象。
+ * 对象键使用 BCP 47 语言标签（如 en、zh、zh-CN），解析时取主语言标签匹配。
+ */
+export type PluginDisplayName = string | PluginDisplayNameMap;
+
+/** 取语言标签的主子标签（如 zh-CN -> zh），用于本地化名称匹配 */
+export function localePrimaryTag(value: string): string {
+    return value.trim().toLowerCase().replace(/_/g, '-').split('-')[0] ?? '';
+}
+
+/**
+ * 按目标语言解析插件显示名称。
+ * 字符串形式原样返回；对象形式优先匹配与目标语言同主语言的条目，
+ * 无匹配时回退到第一个可用翻译。
+ */
+export function resolvePluginDisplayName(
+    displayName: PluginDisplayName | undefined,
+    locale: string
+): string | undefined {
+    if (displayName === undefined) return undefined;
+    if (typeof displayName !== 'object') {
+        const trimmed = displayName.trim();
+        return trimmed || undefined;
+    }
+    const entries = Object.entries(displayName)
+        .map(([key, value]): readonly [string, string] => [
+            localePrimaryTag(key),
+            typeof value === 'string' ? value.trim() : ''
+        ])
+        .filter(([tag, value]) => tag.length > 0 && value.length > 0);
+    if (entries.length === 0) return undefined;
+    const preferred = localePrimaryTag(locale ?? '');
+    return entries.find(([tag]) => tag === preferred)?.[1] ?? entries[0][1];
 }
 
 export function definePlugin(plugin: OpenDeskPlugin): OpenDeskPlugin {

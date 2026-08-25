@@ -333,7 +333,7 @@ describe('PluginHost', () => {
             {
                 origin: 'test:static-contributor',
                 pluginDir,
-                contributions: {
+                resources: {
                     skills: [
                         {
                             name: 'static-review',

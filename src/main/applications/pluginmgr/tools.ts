@@ -10,7 +10,8 @@
  */
 
 import { z } from 'zod';
-import { t } from '../../../locale/index.js';
+import { getLocale, t } from '../../../locale/index.js';
+import { resolvePluginDisplayName, type PluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
 
 import { BaseTool } from '../../aikernel/tool.js';
 import type { PermissionRequest } from '../../aikernel/types/index.js';
@@ -29,13 +30,13 @@ interface PluginView {
     removable?: boolean;
     enabled?: boolean;
     manifest?: {
-        displayName?: string;
+        displayName?: PluginDisplayName;
         version?: string;
         apiVersion?: number;
         capabilities?: string[];
     };
     runtime?: {
-        displayName?: string;
+        displayName?: PluginDisplayName;
         version?: string;
         apiVersion?: number;
         status?: string;
@@ -52,10 +53,34 @@ function asPluginViews(value: unknown): PluginView[] {
     return Array.isArray(value) ? value.filter(isPluginView) : [];
 }
 
+/** 按当前语言解析插件显示名：runtime 优先，其次 manifest，最后回退插件 ID */
+function resolvedDisplayName(plugin: PluginView): string {
+    const locale = getLocale();
+    return (
+        resolvePluginDisplayName(plugin.runtime?.displayName, locale) ??
+        resolvePluginDisplayName(plugin.manifest?.displayName, locale) ??
+        plugin.id
+    );
+}
+
+/** 将 view 中 manifest/runtime 声明的本地化 displayName 就地解析为当前语言的字符串 */
+function withResolvedDisplayNames(plugin: PluginView): PluginView {
+    const locale = getLocale();
+    const asString = (value?: PluginDisplayName) =>
+        value === undefined ? undefined : resolvePluginDisplayName(value, locale);
+    return {
+        ...plugin,
+        manifest: plugin.manifest
+            ? { ...plugin.manifest, displayName: asString(plugin.manifest.displayName) }
+            : undefined,
+        runtime: plugin.runtime ? { ...plugin.runtime, displayName: asString(plugin.runtime.displayName) } : undefined
+    };
+}
+
 function summarizePlugin(plugin: PluginView): Record<string, unknown> {
     return {
         id: plugin.id,
-        displayName: plugin.manifest?.displayName ?? plugin.runtime?.displayName ?? plugin.id,
+        displayName: resolvedDisplayName(plugin),
         source: plugin.source,
         removable: plugin.removable ?? false,
         enabled: plugin.enabled ?? true,
@@ -120,7 +145,7 @@ export class GetPluginDetailsTool extends BaseTool<typeof GetPluginDetailsArgsSc
     private async get(args: z.output<typeof GetPluginDetailsArgsSchema>): Promise<string> {
         const plugin = asPluginViews(await this.pluginApp.list()).find((entry) => entry.id === args.id);
         if (!plugin) throw new Error(t('plugin.notFound', { id: args.id }));
-        return serialize({ plugin });
+        return serialize({ plugin: withResolvedDisplayNames(plugin) });
     }
 }
 

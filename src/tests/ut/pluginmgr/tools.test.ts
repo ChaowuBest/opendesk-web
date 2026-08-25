@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { setRuntimeLocale } from '../../../locale/index.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
 import {
     GetPluginDetailsTool,
@@ -189,5 +190,110 @@ describe('PluginMgr management tools', () => {
         expect(tool.getDeclaredPermissions({})).toEqual([
             { resourceType: 'plugin', action: 'execute', resourcePath: '**' }
         ]);
+    });
+
+    test('listPlugins resolves a localized displayName to the current language string', async () => {
+        setRuntimeLocale('en-US');
+        try {
+            const app = createPluginApp({
+                list: jest.fn(async () => [
+                    {
+                        id: 'localized-plugin',
+                        source: 'local',
+                        removable: true,
+                        enabled: true,
+                        manifest: {
+                            displayName: { en: 'Helper EN', zh: '助手中文' },
+                            version: '1.0.0',
+                            apiVersion: 1,
+                            capabilities: []
+                        },
+                        runtime: { status: 'active' },
+                        skills: [],
+                        mcpServers: []
+                    }
+                ])
+            });
+            const tool = new ListPluginsTool(app as any);
+
+            const result = await tool.execute({});
+
+            expect(JSON.parse(result.result)).toEqual({
+                plugins: [
+                    expect.objectContaining({
+                        id: 'localized-plugin',
+                        displayName: 'Helper EN'
+                    })
+                ]
+            });
+        } finally {
+            setRuntimeLocale(null);
+        }
+    });
+
+    test('listPlugins prefers the runtime displayName over the manifest one', async () => {
+        setRuntimeLocale('en-US');
+        try {
+            const app = createPluginApp({
+                list: jest.fn(async () => [
+                    {
+                        id: 'localized-plugin',
+                        source: 'local',
+                        removable: true,
+                        enabled: true,
+                        manifest: {
+                            displayName: { en: 'Manifest EN', zh: '清单中文' },
+                            version: '1.0.0',
+                            apiVersion: 1,
+                            capabilities: []
+                        },
+                        runtime: { status: 'active', displayName: { en: 'Runtime EN', zh: '运行时中文' } },
+                        skills: [],
+                        mcpServers: []
+                    }
+                ])
+            });
+            const tool = new ListPluginsTool(app as any);
+
+            const result = await tool.execute({});
+
+            expect(JSON.parse(result.result).plugins[0].displayName).toBe('Runtime EN');
+        } finally {
+            setRuntimeLocale(null);
+        }
+    });
+
+    test('getPluginDetails resolves localized display names to the current language string', async () => {
+        setRuntimeLocale('en-US');
+        try {
+            const app = createPluginApp({
+                list: jest.fn(async () => [
+                    {
+                        id: 'localized-plugin',
+                        source: 'local',
+                        removable: true,
+                        enabled: true,
+                        manifest: {
+                            displayName: { en: 'Manifest EN', zh: '清单中文' },
+                            version: '1.0.0',
+                            apiVersion: 1,
+                            capabilities: []
+                        },
+                        runtime: { status: 'active', displayName: { en: 'Runtime EN', zh: '运行时中文' } },
+                        skills: [],
+                        mcpServers: []
+                    }
+                ])
+            });
+            const tool = new GetPluginDetailsTool(app as any);
+
+            const result = await tool.execute({ id: 'localized-plugin' });
+
+            const parsed = JSON.parse(result.result);
+            expect(parsed.plugin.manifest.displayName).toBe('Manifest EN');
+            expect(parsed.plugin.runtime.displayName).toBe('Runtime EN');
+        } finally {
+            setRuntimeLocale(null);
+        }
     });
 });

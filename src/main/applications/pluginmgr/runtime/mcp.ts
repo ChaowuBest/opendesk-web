@@ -16,7 +16,11 @@ import { logger } from '../../../utils/logger.js';
 import { notifyMcpServerProvidersChanged, registerMcpServerProvider } from '../../mcpmgr/provider.js';
 import type { McpServerState } from '../../mcpmgr/common.js';
 import { getPluginHost, type VisiblePluginContribution } from './host.js';
-import type { PluginMcpServerDefinition } from '../../../../../packages/plugin-sdk/src/index.js';
+import { getLocale } from '../../../../locale/index.js';
+import {
+    resolvePluginDisplayName,
+    type PluginMcpServerDefinition
+} from '../../../../../packages/plugin-sdk/src/index.js';
 import { sanitizeModelToolName } from './tool-names.js';
 
 interface DiscoveredTool {
@@ -103,7 +107,9 @@ class PluginMcpRuntime {
         await Promise.all(contributions.map((contribution) => this.ensureConnected(contribution)));
         return contributions.map((contribution) => {
             const definition = contribution.definition;
-            const pluginName = getPluginHost().get(contribution.pluginId)?.displayName ?? contribution.pluginId;
+            const pluginName =
+                resolvePluginDisplayName(getPluginHost().get(contribution.pluginId)?.displayName, getLocale()) ??
+                contribution.pluginId;
             const connection = this.connections.get(contribution.id);
             const status = connection?.connecting
                 ? 'connecting'
