@@ -818,6 +818,10 @@ export const enUs: Record<string, string> = {
     'config.model.field.context_length.placeholder': 'Leave empty to estimate automatically',
     'config.model.field.max_output_tokens': 'Max Output Tokens (leave empty for auto)',
     'config.model.field.max_output_tokens.placeholder': 'Leave empty to estimate automatically',
+    'config.model.field.timeout': 'Request Timeout (leave empty for 60s)',
+    'config.model.field.timeout.placeholder': 'In seconds',
+    'config.model.field.timeout_hint':
+        'A request is treated as timed out when no data arrives within this period, which triggers an automatic retry',
     'config.model.field.vision': 'Vision Support',
     'config.model.vision.auto': 'Auto-detect',
     'config.model.vision.supported': 'Supported',
@@ -841,6 +845,7 @@ export const enUs: Record<string, string> = {
     'config.model.validation.provider_not_found': 'Provider configuration not found',
     'config.model.validation.context_length_invalid': 'Context length must be a non-negative integer',
     'config.model.validation.max_output_tokens_invalid': 'Max output tokens must be a non-negative integer',
+    'config.model.validation.timeout_invalid': 'Request timeout must be a positive integer in seconds',
     'config.model.validation.alias_exists': 'Model alias already exists',
     'config.model.delete.default.title': 'Cannot delete',
     'config.model.delete.default.message': 'This model is set as a default model. Change the default model first.',

@@ -529,7 +529,9 @@ export class OpenAIAdapter {
                 requestOptions
             );
 
-            for await (const chunk of withStreamIdleTimeout(stream, undefined, () => stream.controller?.abort())) {
+            for await (const chunk of withStreamIdleTimeout(stream, this.modelInstance.getTimeoutMs(), () =>
+                stream.controller?.abort()
+            )) {
                 const parsed = OpenAIAdapter.parseResponse(chunk);
                 if (parsed.usage) {
                     finalUsage = parsed.usage;

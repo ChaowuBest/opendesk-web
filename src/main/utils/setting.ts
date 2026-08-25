@@ -16,7 +16,7 @@ import os from 'os';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
-import { parseTokenCount } from '../../utils/model.js';
+import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 import {
     getHarmonyRuntimeEnvironment,
     getHarmonyWorkspaceDirectory
@@ -97,7 +97,13 @@ const ModelBaseSchema = z.object({
     custom_headers: z
         .record(z.string(), z.string())
         .optional()
-        .describe('自定义 HTTP 请求头，在向模型服务器发送请求时携带')
+        .describe('自定义 HTTP 请求头，在向模型服务器发送请求时携带'),
+    timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('模型请求超时时间(秒，不填则默认 60 秒)，超时后进入自动重试流程')
 });
 
 const ChatModelSchema = ModelBaseSchema.extend({
@@ -454,6 +460,8 @@ export class ModelInstance {
     provider_type: ProviderType;
     model_type: ModelType;
     provider_name: string;
+    /** 模型请求超时时间（秒）；undefined 表示使用系统默认超时 */
+    timeout?: number;
 
     /**
      * @param model_name 模型名称
@@ -470,6 +478,7 @@ export class ModelInstance {
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
      * @param model_type 模型类型，旧配置留空时按对话模型处理
      * @param provider_name 提供商名称（如 "openrouter", "deepseek"），用于展示
+     * @param timeout 用户配置的请求超时时间（秒，>0 时覆盖系统默认 60 秒）
      */
     constructor(
         model_name: string,
@@ -485,7 +494,8 @@ export class ModelInstance {
         custom_headers?: Record<string, string>,
         provider_type: ProviderType | '' | undefined = 'openai',
         model_type: ModelType | 'embed' | '' | undefined = 'chat',
-        provider_name: string = ''
+        provider_name: string = '',
+        timeout?: number
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
@@ -501,6 +511,12 @@ export class ModelInstance {
         this.provider_type = normalizeProviderType(provider_type);
         this.model_type = normalizeModelType(model_type);
         this.provider_name = provider_name;
+        this.timeout = timeout && timeout > 0 ? timeout : undefined;
+    }
+
+    /** 模型请求空闲超时时间（毫秒）；未配置时返回系统默认值 */
+    getTimeoutMs(): number {
+        return this.timeout && this.timeout > 0 ? this.timeout * 1000 : DEFAULT_MODEL_TIMEOUT_SECONDS * 1000;
     }
 
     getProviderType(): NormalizedProviderType {
@@ -770,7 +786,8 @@ export class Setting {
             modelRef.custom_headers,
             provider.provider_type,
             modelRef.model_type,
-            provider.name
+            provider.name,
+            modelRef.timeout
         );
     }
 

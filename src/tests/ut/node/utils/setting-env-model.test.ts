@@ -9,7 +9,12 @@ import {
     ENV_DEFAULT_PROVIDER_TYPE,
     ENV_DEFAULT_PROVIDER_API_KEY
 } from '../../../../main/utils/setting.js';
-import { parseTokenCount, isInvalidTokenCount } from '../../../../utils/model.js';
+import {
+    parseTokenCount,
+    isInvalidTokenCount,
+    parseTimeoutSeconds,
+    isInvalidTimeoutSeconds
+} from '../../../../utils/model.js';
 
 /** 临时设置一组环境变量，测试结束后恢复原值；值为 undefined 表示删除该变量 */
 function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
@@ -70,6 +75,30 @@ test('isInvalidTokenCount 空值/空白合法，非空非法格式报错', () =>
     assert.equal(isInvalidTokenCount('12.5'), true);
     assert.equal(isInvalidTokenCount('12x'), true);
     assert.equal(isInvalidTokenCount('abc'), true);
+});
+
+test('parseTimeoutSeconds 仅接受正整数秒', () => {
+    assert.equal(parseTimeoutSeconds('60'), 60);
+    assert.equal(parseTimeoutSeconds(' 120 '), 120);
+    assert.equal(parseTimeoutSeconds(90), 90);
+    assert.equal(parseTimeoutSeconds('0'), undefined);
+    assert.equal(parseTimeoutSeconds('-5'), undefined);
+    assert.equal(parseTimeoutSeconds('1.5'), undefined);
+    assert.equal(parseTimeoutSeconds('60s'), undefined);
+    assert.equal(parseTimeoutSeconds(''), undefined);
+    assert.equal(parseTimeoutSeconds(undefined), undefined);
+    assert.equal(parseTimeoutSeconds(null), undefined);
+});
+
+test('isInvalidTimeoutSeconds 空值合法，非正整数非法', () => {
+    assert.equal(isInvalidTimeoutSeconds(undefined), false);
+    assert.equal(isInvalidTimeoutSeconds(''), false);
+    assert.equal(isInvalidTimeoutSeconds('   '), false);
+    assert.equal(isInvalidTimeoutSeconds('60'), false);
+    assert.equal(isInvalidTimeoutSeconds('0'), true);
+    assert.equal(isInvalidTimeoutSeconds('-1'), true);
+    assert.equal(isInvalidTimeoutSeconds('1.5'), true);
+    assert.equal(isInvalidTimeoutSeconds('abc'), true);
 });
 
 test('OPENDESK_* 环境变量完整配置时构造默认对话模型', () => {

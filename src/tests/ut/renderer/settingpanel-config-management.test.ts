@@ -308,6 +308,48 @@ describe('setting-panel config management', () => {
         });
     });
 
+    test('saving model stores the timeout in seconds and omits it when empty', async () => {
+        const panel = createPanel();
+        panel.currentData.providers = [{ name: 'p1', base_url: 'https://example.com/v1', api_key: '' }];
+        panel.render();
+        panel.closeModal = jest.fn();
+        panel.refreshVisionSupport = jest.fn(async () => undefined);
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'timeout-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = '120';
+        await panel.saveModel();
+
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'default-timeout-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = '';
+        await panel.saveModel();
+
+        expect(panel.currentData.models[0].timeout).toBe(120);
+        expect(panel.currentData.models[1].timeout).toBeUndefined();
+    });
+
+    test.each(['0', '-5', '1.5', '60s'])('rejects invalid timeout %s with an inline error', async (value) => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+        (panel.querySelector('#model-alias-input') as HTMLInputElement).value = 'timeout-model';
+        (panel.querySelector('#model-name-input') as HTMLInputElement).value = 'gpt-4o';
+        (panel.querySelector('#model-timeout-input') as HTMLInputElement).value = value;
+
+        await panel.saveModel();
+
+        expect(window.notificationAPI.sendNotification).not.toHaveBeenCalled();
+        const group = panel.querySelector('#model-timeout-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('请求超时必须为正整数（单位：秒）');
+        expect(panel.currentData.models).toHaveLength(0);
+    });
+
     test('rejects invalid k-format context length', async () => {
         const panel = createPanel();
         panel.render();

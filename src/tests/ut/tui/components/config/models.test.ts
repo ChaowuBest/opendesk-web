@@ -295,4 +295,72 @@ describe('ModelConfigPage', () => {
         expect(data.models).toHaveLength(1);
         expect(data.models[0].vision).toBe(expected);
     });
+
+    test('renders the timeout field for both chat and embedding models', () => {
+        for (const modelType of ['chat', 'embedding']) {
+            const page = openEditForm({
+                alias: '',
+                provider_name: 'provider-a',
+                model_name: '',
+                model_type: modelType
+            });
+
+            const timeoutField = getFormItems(page).find((item) => item.key === 'timeout');
+            expect(timeoutField).toBeDefined();
+            expect(timeoutField.visible).toBeUndefined();
+            expect(stripAnsi(page.render(100).join('\n'))).toContain('Request Timeout (leave empty for 60s)');
+        }
+    });
+
+    test('saves the timeout in seconds and leaves it unset when empty', () => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'timeout-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '',
+            max_output_tokens: '',
+            timeout: '120',
+            auto_parse_think_tags: false
+        });
+
+        (page as unknown as { editingIndex: number }).editingIndex = -1;
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'default-timeout-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '',
+            max_output_tokens: '',
+            timeout: '',
+            auto_parse_think_tags: false
+        });
+
+        const data = Setting.getInstance().getData() as any;
+        expect(data.models[0].timeout).toBe(120);
+        expect(data.models[1].timeout).toBeUndefined();
+    });
+
+    test.each(['0', '-5', '1.5', '60s'])('rejects an invalid timeout %s and does not save', (value) => {
+        const page = openEditForm({ alias: '', provider_name: 'provider-a', model_name: '', model_type: 'chat' });
+
+        (page as unknown as { saveModel: (values: Record<string, any>) => void }).saveModel({
+            alias: 'timeout-model',
+            provider_name: 'provider-a',
+            model_name: 'gpt-4o',
+            model_type: 'chat',
+            reasoning_effort: '',
+            context_length: '',
+            max_output_tokens: '',
+            timeout: value,
+            auto_parse_think_tags: false
+        });
+
+        expect(openDeskTUI.inputArea.showPromptWidget).toHaveBeenCalled();
+        expect((Setting.getInstance().getData() as any).models).toHaveLength(0);
+    });
 });

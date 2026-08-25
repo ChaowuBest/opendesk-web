@@ -205,6 +205,36 @@ describe('设置 schema', () => {
         expect(setting.models[0].reasoning_effort).toBe('');
     });
 
+    test('模型 timeout 缺省时为 undefined（按默认 60 秒处理）', () => {
+        const setting = Setting.getSettingSchema().parse({
+            models: [{ alias: 'chat', provider_name: 'p', model_name: 'm', model_type: 'chat' }]
+        });
+
+        expect(setting.models[0].timeout).toBeUndefined();
+    });
+
+    test('模型 timeout 支持正整数秒，嵌入模型同样可配置', () => {
+        const setting = Setting.getSettingSchema().parse({
+            models: [
+                { alias: 'chat', provider_name: 'p', model_name: 'm', model_type: 'chat', timeout: 120 },
+                { alias: 'embed', provider_name: 'p', model_name: 'm', model_type: 'embedding', timeout: 30 }
+            ]
+        });
+
+        expect(setting.models[0].timeout).toBe(120);
+        expect(setting.models[1].timeout).toBe(30);
+    });
+
+    test('模型 timeout 非正整数时解析失败', () => {
+        for (const timeout of [0, -1, 1.5]) {
+            expect(() =>
+                Setting.getSettingSchema().parse({
+                    models: [{ alias: 'chat', provider_name: 'p', model_name: 'm', model_type: 'chat', timeout }]
+                })
+            ).toThrow();
+        }
+    });
+
     test('默认嵌入模型只接受 embedding 类型', () => {
         Setting.clearCache();
         Setting.updateInstanceData({
