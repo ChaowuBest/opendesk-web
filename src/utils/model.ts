@@ -10,6 +10,11 @@
  */
 
 /**
+ * 模型请求默认超时时间（秒）。用户未在模型配置中填写 timeout 时使用该值。
+ */
+export const DEFAULT_MODEL_TIMEOUT_SECONDS = 60;
+
+/**
  * 解析 token 数输入：支持纯数字（如 128000）或整数带 k/K 后缀（如 128k、256K，按 ×1000 计算）。
  * 空字符串/空白或非法格式返回 undefined（调用方按"自动估算"处理）。
  */
@@ -33,4 +38,29 @@ export function isInvalidTokenCount(raw: string | undefined | null): boolean {
     const trimmed = raw.trim();
     if (!trimmed) return false;
     return parseTokenCount(trimmed) === undefined;
+}
+
+/**
+ * 解析模型请求超时时间输入（单位：秒），只接受正整数。
+ * 空字符串/空白或非法格式返回 undefined（调用方按默认超时处理）。
+ */
+export function parseTimeoutSeconds(raw: string | number | undefined | null): number | undefined {
+    if (raw === undefined || raw === null) return undefined;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return undefined;
+    if (!/^\d+$/.test(trimmed)) return undefined;
+    const seconds = parseInt(trimmed, 10);
+    if (seconds <= 0 || !Number.isSafeInteger(seconds)) return undefined;
+    return seconds;
+}
+
+/**
+ * 判断超时时间输入是否非法。空值/空白视为合法（调用方按默认超时处理），
+ * 非空但无法解析为正整数秒时返回 true。
+ */
+export function isInvalidTimeoutSeconds(raw: string | number | undefined | null): boolean {
+    if (raw === undefined || raw === null) return false;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return false;
+    return parseTimeoutSeconds(trimmed) === undefined;
 }

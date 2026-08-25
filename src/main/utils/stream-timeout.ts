@@ -9,11 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
+
 /**
- * 流式响应空闲超时（毫秒）。当模型 API 超过此时间未输出任何 token 时，
+ * 流式响应空闲超时（毫秒）默认值。当模型 API 超过此时间未输出任何 token 时，
  * 抛出超时错误，进入正常的错误处理和重试流程。
+ * 模型配置中填写 timeout 时按该模型的配置覆盖。
  */
-export const STREAM_IDLE_TIMEOUT_MS = 60_000;
+export const STREAM_IDLE_TIMEOUT_MS = DEFAULT_MODEL_TIMEOUT_SECONDS * 1000;
 
 /**
  * 当流式响应在指定时间内未收到任何数据时抛出此错误。

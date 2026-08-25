@@ -1,0 +1,9 @@
+{
+    "schemaVersion": 1,
+    "id": "hm-compat",
+    "displayName": "HarmonyOS Compat",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["hook"],
+    "platforms": ["openharmony"]
+}

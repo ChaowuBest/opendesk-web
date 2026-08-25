@@ -290,3 +290,89 @@ describe('Anthropic adapter stream idle timeout', () => {
         );
     });
 });
+
+/* ------------------------------------------------------------------ */
+/* Per-model timeout configuration                                     */
+/* ------------------------------------------------------------------ */
+
+function createModelInstanceWithTimeout(timeout?: number): ModelInstance {
+    return new ModelInstance(
+        'demo-model',
+        'http://127.0.0.1/v1',
+        'test-key',
+        true,
+        false,
+        '',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'openai',
+        'chat',
+        'demo-provider',
+        timeout
+    );
+}
+
+describe('ModelInstance timeout', () => {
+    test('falls back to the default timeout when unset or non-positive', () => {
+        expect(createModelInstanceWithTimeout(undefined).getTimeoutMs()).toBe(STREAM_IDLE_TIMEOUT_MS);
+        expect(createModelInstanceWithTimeout(0).getTimeoutMs()).toBe(STREAM_IDLE_TIMEOUT_MS);
+        expect(createModelInstanceWithTimeout(0).timeout).toBeUndefined();
+    });
+
+    test('converts the configured seconds into milliseconds', () => {
+        expect(createModelInstanceWithTimeout(15).getTimeoutMs()).toBe(15_000);
+    });
+});
+
+describe('adapters honour the per-model timeout', () => {
+    beforeEach(() => {
+        Setting.clearCache();
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        Setting.clearCache();
+        jest.useRealTimers();
+    });
+
+    test('OpenAI adapter times out at the configured timeout instead of the default', async () => {
+        const adapter = new OpenAIAdapter(createModelInstanceWithTimeout(5));
+        (adapter as any).client = {
+            chat: { completions: { create: jest.fn(async () => createHangingAsyncIterable()) } }
+        };
+
+        const chunks: AssistantResponse[] = [];
+        const consumePromise = (async () => {
+            for await (const chunk of adapter.streamComplete(createChatContext(), false)) {
+                chunks.push(chunk);
+            }
+        })();
+
+        await jest.advanceTimersByTimeAsync(6_000);
+        await consumePromise;
+
+        const errorPart = chunks[0]?.content.content.find((p): p is ErrorMessagePart => p.type === 'error');
+        expect(errorPart?.message).toBe('Model stream idle timeout: no data was received for 5000 ms');
+    });
+
+    test('Anthropic adapter times out at the configured timeout instead of the default', async () => {
+        setPlatform(new HangingStreamPlatform());
+        const adapter = new AnthropicAdapter(createModelInstanceWithTimeout(5));
+
+        const chunks: AssistantResponse[] = [];
+        const consumePromise = (async () => {
+            for await (const chunk of adapter.streamComplete(createChatContext(), false)) {
+                chunks.push(chunk);
+            }
+        })();
+
+        await jest.advanceTimersByTimeAsync(6_000);
+        await consumePromise;
+
+        const errorPart = chunks[0]?.content.content.find((p): p is ErrorMessagePart => p.type === 'error');
+        expect(errorPart?.message).toBe('Model stream idle timeout: no data was received for 5000 ms');
+    });
+});

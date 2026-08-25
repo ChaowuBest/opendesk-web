@@ -12,7 +12,12 @@
 import { type Component, SelectList, type TUI } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
-import { parseTokenCount, isInvalidTokenCount } from '../../../../utils/model.js';
+import {
+    parseTokenCount,
+    isInvalidTokenCount,
+    parseTimeoutSeconds,
+    isInvalidTimeoutSeconds
+} from '../../../../utils/model.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import { InfoOverlay } from '../notice.js';
 import type { OpenDeskTUI } from '../../entry.js';
@@ -32,6 +37,7 @@ interface ModelData {
     vision?: boolean;
     auto_parse_think_tags?: boolean;
     custom_headers?: Record<string, string>;
+    timeout?: number;
 }
 
 interface HeaderItem {
@@ -213,6 +219,13 @@ export class ModelConfigPage implements Component {
         });
 
         fields.push({
+            type: 'text',
+            key: 'timeout',
+            label: t('config.model.field.timeout'),
+            value: model.timeout ? String(model.timeout) : ''
+        });
+
+        fields.push({
             type: 'select',
             key: 'vision',
             label: t('config.model.field.vision'),
@@ -325,7 +338,8 @@ export class ModelConfigPage implements Component {
             context_length: values.context_length ? parseTokenCount(values.context_length) : undefined,
             max_output_tokens: values.max_output_tokens ? parseTokenCount(values.max_output_tokens) : undefined,
             vision: values.vision === 'true' ? true : values.vision === 'false' ? false : undefined,
-            auto_parse_think_tags: values.auto_parse_think_tags ?? false
+            auto_parse_think_tags: values.auto_parse_think_tags ?? false,
+            timeout: parseTimeoutSeconds(values.timeout)
         };
         this.savedFormValues = undefined;
         this.showEditForm(model);
@@ -451,6 +465,25 @@ export class ModelConfigPage implements Component {
             return;
         }
 
+        // 校验 timeout 为正整数秒（与 GUI 行为一致）
+        const timeoutRaw = (values.timeout ?? '').toString().trim();
+        const parsedTimeout = parseTimeoutSeconds(timeoutRaw);
+        if (isInvalidTimeoutSeconds(timeoutRaw)) {
+            this.form?.deactivate();
+            const info = new InfoOverlay(this.openDeskTUI, {
+                title: t('config.model.validation.timeout_invalid'),
+                message: chalk.red(timeoutRaw),
+                type: 'error',
+                allowDuringConfig: true,
+                closeLabel: t('common.close')
+            });
+            info.show(() => {
+                this.form?.activate();
+                this.tui.requestRender();
+            });
+            return;
+        }
+
         // 从 headers 数组构建 custom_headers 对象
         const custom_headers: Record<string, string> = {};
         for (const h of this.headers) {
@@ -478,7 +511,8 @@ export class ModelConfigPage implements Component {
                     ? values.vision === 'true'
                     : undefined,
             auto_parse_think_tags: values.auto_parse_think_tags ?? false,
-            custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined
+            custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined,
+            timeout: parsedTimeout
         };
 
         if (this.editingIndex >= 0) {

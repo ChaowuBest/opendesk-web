@@ -19,7 +19,12 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
-import { parseTokenCount, isInvalidTokenCount } from '../../utils/model.ts';
+import {
+    parseTokenCount,
+    isInvalidTokenCount,
+    parseTimeoutSeconds,
+    isInvalidTimeoutSeconds
+} from '../../utils/model.ts';
 
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -2966,6 +2971,7 @@ class SettingPanel extends HTMLElement {
                   reasoning_effort: '',
                   context_length: undefined,
                   max_output_tokens: undefined,
+                  timeout: undefined,
                   custom_headers: undefined
               };
         model.model_type = this.normalizeModelType(model.model_type);
@@ -3054,6 +3060,11 @@ class SettingPanel extends HTMLElement {
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.max_output_tokens'))}</label>
                         <input id="model-max-output-tokens-input" type="text" inputmode="numeric" pattern="[0-9]+[kK]?" value="${model.max_output_tokens || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.max_output_tokens.placeholder'))}">
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.timeout'))}</label>
+                        <input id="model-timeout-input" type="text" inputmode="numeric" pattern="[0-9]+" value="${model.timeout || ''}" class="od-sp-fi" placeholder="${this.escapeHtml(this._t('config.model.field.timeout.placeholder'))}">
+                        <p class="od-sp-hint">${this.escapeHtml(this._t('config.model.field.timeout_hint'))}</p>
                     </div>
                     <div class="chat-model-field od-sp-fg">
                         <label class="od-sp-fl">${this.escapeHtml(this._t('config.model.field.vision'))}</label>
@@ -3409,6 +3420,8 @@ class SettingPanel extends HTMLElement {
         const contextLengthNum = parseTokenCount(contextLengthRaw);
         const maxOutputTokensRaw = this.querySelector('#model-max-output-tokens-input')?.value?.trim();
         const maxOutputTokensNum = parseTokenCount(maxOutputTokensRaw);
+        const timeoutRaw = this.querySelector('#model-timeout-input')?.value?.trim();
+        const timeoutNum = parseTimeoutSeconds(timeoutRaw);
         const visionRaw = this.querySelector('#model-vision-input')?.value;
         const vision = visionRaw === 'true' ? true : visionRaw === 'false' ? false : undefined;
         const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
@@ -3435,6 +3448,14 @@ class SettingPanel extends HTMLElement {
             this.showFieldError(
                 this.querySelector('#model-max-output-tokens-input'),
                 this._t('config.model.validation.max_output_tokens_invalid')
+            );
+            return;
+        }
+
+        if (isInvalidTimeoutSeconds(timeoutRaw)) {
+            this.showFieldError(
+                this.querySelector('#model-timeout-input'),
+                this._t('config.model.validation.timeout_invalid')
             );
             return;
         }
@@ -3476,6 +3497,9 @@ class SettingPanel extends HTMLElement {
         }
         if (model_type === 'chat' && vision !== undefined) {
             model.vision = vision;
+        }
+        if (timeoutNum && timeoutNum > 0) {
+            model.timeout = timeoutNum;
         }
         if (Object.keys(custom_headers).length > 0) {
             model.custom_headers = custom_headers;

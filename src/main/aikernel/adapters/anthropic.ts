@@ -730,7 +730,7 @@ export class AnthropicAdapter {
             let buffer = '';
 
             while (true) {
-                const { done, value } = await readWithIdleTimeout(reader);
+                const { done, value } = await readWithIdleTimeout(reader, this.modelInstance.getTimeoutMs());
                 if (done) {
                     break;
                 }
