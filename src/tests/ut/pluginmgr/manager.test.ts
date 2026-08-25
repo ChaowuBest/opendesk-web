@@ -30,13 +30,19 @@ async function writePluginTgz(archivePath: string, pluginDirectory: string): Pro
 describe('pluginmgr managed installation', () => {
     let configDirectory: string;
     let npmArgs: string[];
+    let previousBuiltinDirectory: string | undefined;
 
     beforeEach(() => {
         configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-install-'));
         npmArgs = [];
+        // 隔离内置插件目录，避免发现到仓库里真实的内置插件
+        previousBuiltinDirectory = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = path.join(configDirectory, 'builtin-empty');
     });
 
     afterEach(() => {
+        if (previousBuiltinDirectory === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previousBuiltinDirectory;
         fs.rmSync(configDirectory, { recursive: true, force: true });
     });
 

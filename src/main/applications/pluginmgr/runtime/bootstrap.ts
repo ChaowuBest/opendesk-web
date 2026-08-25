@@ -12,6 +12,7 @@ import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost } from './host.js';
 import type { PluginChatRequestInput, PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
+import { registerSdkPackageMapping } from './package-mapping.js';
 import { loadPlugin, OPENDESK_RUNTIME_VERSION, type PluginCandidate } from '../discovery/loader.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord } from '../discovery/discovery.js';
@@ -125,6 +126,8 @@ async function syncPluginAgentsWithRegistry(): Promise<void> {
 }
 
 async function initialize(): Promise<void> {
+    // 让缺少 node_modules 的插件也能从宿主解析到 Plugin SDK（鸿蒙等平台不执行 npm install）
+    registerSdkPackageMapping();
     initializePluginContributions();
     initializePluginMcpProvider();
     disposeAikernelHooks.forEach((dispose) => dispose());

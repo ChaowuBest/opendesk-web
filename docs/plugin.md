@@ -36,6 +36,13 @@ plugins/
 即可被发现，也可以在插件中心执行重新加载。扫描过程不会执行 `npm install`；
 本地插件必须已经包含自身所需依赖，并能从自己的 `node_modules` 中解析它们。
 
+> 例外：`@bitclub.ai/opendesk-plugin-sdk`（含 `./package` 子路径）和其运行时
+> 依赖 `zod` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
+> `import` 这些包时，先按插件自己的 `node_modules` 解析（尊重插件声明的版本）；
+> 解析失败时回退到宿主内置的同名包。因此插件即使省略 SDK 的
+> `node_modules`（例如鸿蒙端安装的目录插件无法执行 npm install）也能正常
+> 加载。其他第三方依赖仍必须由插件自带。
+
 还可以在 `setting.json` 中配置不复制到全局目录的外部插件路径：
 
 ```json
@@ -342,7 +349,7 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
         }
     },
     "dependencies": {
-        "@bitclub.ai/opendesk-plugin-sdk": "^0.1.0"
+        "@bitclub.ai/opendesk-plugin-sdk": "^0.3.4"
     }
 }
 ```
