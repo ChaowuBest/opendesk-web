@@ -26,7 +26,8 @@ export function getBuiltinPluginsDirectory(): string {
         return path.join(electronProcess.resourcesPath, 'plugins');
     }
 
-    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
+    // chunk 位于 dist/main/chunks/，内置插件由 build-builtin-plugins 输出到 dist/plugins/
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'plugins');
 }
 
 export function getPluginManagerDirectory(configDirectory: string = getOpendeskDirectory()): string {
