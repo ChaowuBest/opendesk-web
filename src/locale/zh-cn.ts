@@ -206,6 +206,7 @@ export const zhCn: Record<string, string> = {
     'plugin.command.run.description': '执行一个插件命令',
     'plugin.command.empty': '当前没有可用的插件命令。',
     'plugin.command.notFound': '未找到插件命令：${name}',
+    'plugin.command.workspaceNotFound': '工作空间不存在：${path}',
     'plugin.tool.list.description': '列出当前进程已加载的插件工具',
     'plugin.tool.call.description': '直接调用插件工具并执行工具 Hook',
     'plugin.tool.empty': '当前没有可用的插件工具。',

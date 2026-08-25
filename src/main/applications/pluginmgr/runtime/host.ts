@@ -43,6 +43,12 @@ import { comparePluginVersions } from '../discovery/manifest.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { matchesHintUrlPrefix, normalizeHintAddress, validateBrowserHint } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
+import {
+    parsePluginCommandArguments,
+    preparePluginCommandDefinition,
+    type PluginCommandInvocation,
+    type PluginCommandRunOutcome
+} from './command-arguments.js';
 
 export type PluginStatus = 'active' | 'error' | 'disabled';
 
@@ -144,14 +150,16 @@ class HostRegistration implements PluginRegistration {
     }
 }
 
-function normalizeToolName(pluginId: string, name: string): string {
-    const trimmed = name.trim();
-    if (trimmed.startsWith(`${pluginId}.`)) return trimmed;
-    return `${pluginId}.${trimmed}`;
+function qualifyPluginCommandName(pluginId: string, localName: string): string {
+    return `${pluginId}.${localName}`;
 }
 
 function validatePluginId(id: string): boolean {
     return /^[a-zA-Z][a-zA-Z0-9._-]*$/.test(id);
+}
+
+function validatePluginCommandLocalName(name: string): void {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`plugin.command_name_invalid:${name}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -442,10 +450,20 @@ export class PluginHost {
         return hints;
     }
 
-    async runCommand(id: string, args: string, context: PluginCommandContext): Promise<PluginCommandResult> {
+    async runCommand(
+        id: string,
+        invocation: PluginCommandInvocation,
+        context: PluginCommandContext
+    ): Promise<PluginCommandRunOutcome> {
         const record = this.commands.get(id);
         if (!record) throw new Error('plugin.command_not_found');
-        return await record.definition.execute(args, context);
+        const parsed = parsePluginCommandArguments(record.definition, invocation);
+        if (parsed.status !== 'parsed') return parsed;
+        const execute = record.definition.execute as (
+            args: unknown,
+            commandContext: PluginCommandContext
+        ) => PluginCommandResult | Promise<PluginCommandResult>;
+        return { status: 'success', result: await execute(parsed.args, context) };
     }
 
     publishApplicationEvent(event: PluginApplicationEvent): void {
@@ -860,18 +878,15 @@ export class PluginHost {
             commands: {
                 register: (definition: PluginCommandDefinition) => {
                     this.validateNamedContribution('command', definition.name, definition.description);
+                    validatePluginCommandLocalName(definition.name);
                     addCapability('command');
                     if (typeof definition.execute !== 'function') {
                         throw new Error(`plugin.command_execute_invalid:${definition.name}`);
                     }
-                    const normalized = normalizeToolName(entry.id, definition.name);
-                    return this.registerContribution(
-                        this.commands,
-                        entry,
-                        { ...definition, name: normalized },
-                        normalized,
-                        track
-                    );
+                    const normalized = qualifyPluginCommandName(entry.id, definition.name);
+                    const normalizedDefinition = { ...definition, name: normalized } as PluginCommandDefinition;
+                    preparePluginCommandDefinition(normalizedDefinition);
+                    return this.registerContribution(this.commands, entry, normalizedDefinition, normalized, track);
                 }
             },
             events: {

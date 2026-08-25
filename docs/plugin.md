@@ -210,6 +210,9 @@ export default definePlugin({
 
 ### Command 插件
 
+Command 支持纯文本和结构化参数两种模式。未声明 `args` 时，命令名称之后的内容会作为一个完整字符串
+传给 `execute`，适合简单的 Slash Command：
+
 ```js
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
 
@@ -229,6 +232,88 @@ export default definePlugin({
         });
     }
 });
+```
+
+Command 的本地名称必须使用小写 kebab-case，只能包含小写字母、数字和 `-`，且必须以字母开头。
+插件只填写本地名称，不要自行增加插件 ID 前缀。OpenDesk 注册时会自动增加插件 ID 前缀，上例的
+完整命令名是 `command-example.plugin-status`。可以通过 CLI 或 TUI/GUI Slash Command 执行：
+
+```bash
+opendesk plugins run command-example.plugin-status hello world
+```
+
+```text
+/command-example.plugin-status hello world
+```
+
+纯文本模式的 `execute` 接收 `args: string`，不进行类型转换和参数校验。需要必填参数、选项、默认值
+或类型校验时，声明结构化 `args`：
+
+```js
+import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'deploy-example',
+    capabilities: ['command'],
+    setup(ctx) {
+        ctx.commands.register({
+            name: 'deploy',
+            description: '部署项目',
+            args(command) {
+                command
+                    .argument('<environment>', '目标环境')
+                    .option('-f, --force', '强制部署')
+                    .option('-r, --replicas <count>', '副本数量', {
+                        type: 'number',
+                        defaultValue: 1
+                    })
+                    .option('--format <format>', '输出格式', {
+                        choices: ['text', 'json'],
+                        defaultValue: 'text'
+                    });
+            },
+            execute(args, context) {
+                return {
+                    title: '部署参数',
+                    output: JSON.stringify({ args, workspace: context.workspace }, null, 2)
+                };
+            }
+        });
+    }
+});
+```
+
+```bash
+opendesk plugins run deploy-example.deploy production --replicas 3 --force
+```
+
+结构化回调收到：
+
+```js
+{
+    environment: 'production',
+    force: true,
+    replicas: 3,
+    format: 'text'
+}
+```
+
+`argument()` 与 Commander 一样使用 `<name>`、`[name]`、`<name...>` 和 `[name...]` 表示必填、可选
+及可变长位置参数；第三个参数可声明 `string`/`number` 转换、默认值和候选值。`option()` 支持长短
+选项、布尔开关、带值或可变长选项、默认值及候选值；必须出现的选项使用 `requiredOption()`。
+OpenDesk 会拒绝未知选项、缺失的必填参数、无效数字和候选值，并在 CLI、TUI、GUI 中显示错误及
+自动生成的 usage；解析失败时不会调用插件的 `execute`。
+
+OpenDesk 全局参数应写在 `plugins` 之前：
+
+```bash
+opendesk --workspace D:/project plugins run deploy-example.deploy production --force
+```
+
+如果插件命令需要使用与 OpenDesk 全局参数同名的选项，在插件参数前增加 `--`：
+
+```bash
+opendesk --workspace D:/project plugins run deploy-example.deploy -- --workspace staging
 ```
 
 ### Event 插件
