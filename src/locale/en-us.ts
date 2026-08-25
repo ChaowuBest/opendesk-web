@@ -66,6 +66,15 @@ export const enUs: Record<string, string> = {
     'renderer.workspacePicker.home': 'Home',
     'renderer.workspacePicker.sandbox': 'App sandbox',
 
+    // Renderer - Plugin command result
+    'renderer.pluginCommand.output': 'Output',
+    'renderer.pluginCommand.copy': 'Copy output',
+    'renderer.pluginCommand.copied': 'Copied',
+    'renderer.pluginCommand.close': 'Close',
+    'renderer.pluginCommand.help': 'Command help',
+    'renderer.pluginCommand.invalidArguments': 'Invalid command arguments',
+    'renderer.pluginCommand.failed': 'Command failed',
+
     // Renderer - File Selector (used by workspace picker)
     'renderer.fileSelector.emptyDrive': 'No drives detected',
     'renderer.fileSelector.emptyDir': 'Empty',

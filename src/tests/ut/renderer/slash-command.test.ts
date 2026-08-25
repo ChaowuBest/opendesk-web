@@ -2,9 +2,14 @@ import { describe, expect, jest, test, beforeEach } from '@jest/globals';
 import { enUs } from '../../../locale/en-us.js';
 
 const showConfirmModal = jest.fn();
+const showCommandResultDialog = jest.fn();
 
 jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
     showConfirmModal
+}));
+
+jest.unstable_mockModule('../../../renderer/components/commandResultDialog.js', () => ({
+    showCommandResultDialog
 }));
 
 // 锁定 en-US locale，使测试不依赖运行环境的 navigator.language
@@ -25,9 +30,10 @@ jest.unstable_mockModule('../../../renderer/locale.js', () => {
 });
 
 describe('renderer slash commands', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         showConfirmModal.mockReset();
         showConfirmModal.mockResolvedValue(true);
+        showCommandResultDialog.mockReset();
         const storage = new Map<string, string>();
         Object.assign(globalThis, {
             window: {
@@ -47,6 +53,8 @@ describe('renderer slash commands', () => {
                 })
             }
         });
+        const { setPluginSlashCommands } = await import('../../../renderer/components/slash-command');
+        setPluginSlashCommands([]);
     });
 
     test('GUI slash command list exposes goal', async () => {
@@ -56,6 +64,121 @@ describe('renderer slash commands', () => {
         expect(goalCommand).toBeDefined();
         expect(goalCommand?.acceptsArgs).toBe(true);
         expect(filterSlashCommands('go').map((cmd) => cmd.name)).toEqual(['goal']);
+    });
+
+    test('loads and executes plugin commands through the application registry bridge', async () => {
+        const callMainWorld = jest
+            .fn()
+            .mockResolvedValueOnce([{ name: 'demo.deploy', description: 'Deploy a project', acceptsArgs: true }])
+            .mockResolvedValueOnce({
+                status: 'success',
+                result: { title: 'Deployment', output: 'Started production' }
+            });
+        Object.assign(window, {
+            applicationRegistryAPI: { callMainWorld }
+        });
+        const { executeSlashCommand, getSlashCommands, refreshPluginSlashCommands } =
+            await import('../../../renderer/components/slash-command');
+
+        await refreshPluginSlashCommands();
+        expect(getSlashCommands()).toContainEqual(
+            expect.objectContaining({ name: 'demo.deploy', description: 'Deploy a project', acceptsArgs: true })
+        );
+
+        const result = await executeSlashCommand(
+            'demo.deploy',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {},
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            'production --force'
+        );
+
+        expect(callMainWorld).toHaveBeenLastCalledWith(
+            'pluginmgr',
+            'runCommandForUI',
+            'demo.deploy',
+            'production --force',
+            'task-1'
+        );
+        expect(showCommandResultDialog).toHaveBeenCalledWith({
+            commandName: 'demo.deploy',
+            title: 'Deployment',
+            output: 'Started production',
+            variant: 'success'
+        });
+        expect(result).toEqual({ inputDisposition: 'clear' });
+    });
+
+    test('reports plugin argument errors and preserves GUI input', async () => {
+        const callMainWorld = jest.fn().mockResolvedValue({
+            status: 'invalid_arguments',
+            code: 'commander.missingArgument',
+            message: "missing required argument 'environment'",
+            usage: 'Usage: demo.deploy <environment>'
+        });
+        Object.assign(window, {
+            applicationRegistryAPI: { callMainWorld }
+        });
+        const { executeSlashCommand, setPluginSlashCommands } =
+            await import('../../../renderer/components/slash-command');
+        setPluginSlashCommands([{ name: 'demo.deploy', description: 'Deploy', acceptsArgs: true }]);
+
+        const result = await executeSlashCommand(
+            'demo.deploy',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {},
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            ''
+        );
+
+        expect(showCommandResultDialog).toHaveBeenCalledWith({
+            commandName: 'demo.deploy',
+            title: 'Invalid command arguments',
+            output: "missing required argument 'environment'\n\nUsage: demo.deploy <environment>",
+            variant: 'error'
+        });
+        expect(result).toEqual({ inputDisposition: 'preserve' });
+    });
+
+    test('renders plugin help in the command result dialog', async () => {
+        const callMainWorld = jest.fn().mockResolvedValue({
+            status: 'help',
+            text: 'Usage: demo.deploy <environment>'
+        });
+        Object.assign(window, {
+            applicationRegistryAPI: { callMainWorld }
+        });
+        const { executeSlashCommand, setPluginSlashCommands } =
+            await import('../../../renderer/components/slash-command');
+        setPluginSlashCommands([{ name: 'demo.deploy', description: 'Deploy', acceptsArgs: true }]);
+
+        const result = await executeSlashCommand(
+            'demo.deploy',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {},
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '--help'
+        );
+
+        expect(showCommandResultDialog).toHaveBeenCalledWith({
+            commandName: 'demo.deploy',
+            title: 'Command help',
+            output: 'Usage: demo.deploy <environment>',
+            variant: 'info'
+        });
+        expect(result).toEqual({ inputDisposition: 'clear' });
     });
 
     test('bare goal shows help and does not create a goal', async () => {
