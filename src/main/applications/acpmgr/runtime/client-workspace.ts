@@ -36,6 +36,7 @@ const MAX_OUTPUT_BYTE_LIMIT = 16 * 1024 * 1024;
 const MAX_READ_BYTES = 1024 * 1024;
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
 const MAX_TERMINALS = 8;
+const MAX_DIRECTORY_ENTRIES = 10_000;
 
 export interface ClientWorkspaceOperation {
     kind: 'read' | 'write' | 'execute';
@@ -47,6 +48,11 @@ export interface ClientWorkspaceOperation {
 export interface ClientWorkspaceRuntimeOptions {
     root: string;
     authorize(operation: ClientWorkspaceOperation): Promise<boolean>;
+}
+
+export interface ClientWorkspaceDirectoryEntry {
+    name: string;
+    type: 'file' | 'directory' | 'other';
 }
 
 interface TerminalRecord {
@@ -142,6 +148,24 @@ export class ClientWorkspaceRuntime {
         await this.authorize({ kind: 'write', path: filePath });
         await fs.writeFile(filePath, params.content, 'utf8');
         return {};
+    }
+
+    async listDirectory(sessionId: string, input: string = this.root): Promise<ClientWorkspaceDirectoryEntry[]> {
+        this.assertSession(sessionId);
+        const directoryPath = await this.resolveExistingPath(input);
+        await this.authorize({ kind: 'read', path: directoryPath });
+        const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+        if (entries.length > MAX_DIRECTORY_ENTRIES) throw new Error(t('acpmgr.error.localDirectoryTooLarge'));
+        return entries
+            .map((entry) => ({
+                name: entry.name,
+                type: entry.isFile()
+                    ? ('file' as const)
+                    : entry.isDirectory()
+                      ? ('directory' as const)
+                      : ('other' as const)
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name));
     }
 
     async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {

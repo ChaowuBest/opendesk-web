@@ -125,12 +125,28 @@ const ClientWorkspaceSchema = z
         }
     });
 
+const AgentSessionCwdSchema = z
+    .object({
+        path: z.string().trim().min(1),
+        platform: RemotePlatformSchema.default('posix')
+    })
+    .superRefine((value, context) => {
+        if (!isAbsoluteForPlatform(value.path, value.platform)) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['path'],
+                message: 'Agent session cwd must be absolute'
+            });
+        }
+    });
+
 export const AcpExecutionSchema = z.discriminatedUnion('location', [
     z.object({ location: z.literal('agent'), workspace: AgentWorkspaceSchema }),
     z.object({
         location: z.literal('client'),
         workspace: ClientWorkspaceSchema,
-        compatibility: z.enum(['preferred', 'required']).default('preferred')
+        compatibility: z.enum(['preferred', 'required']).default('preferred'),
+        agentSessionCwd: AgentSessionCwdSchema.optional()
     })
 ]);
 
@@ -153,6 +169,7 @@ export const AcpAgentProfileSchema = z
         enabled: z.boolean().default(true),
         dispatchable: z.boolean().default(false),
         whenToUse: z.string().default(''),
+        protocolVersion: z.union([z.literal(1), z.literal(2)]).default(1),
         transport: AcpTransportSchema,
         execution: AcpExecutionSchema.optional(),
         session: AcpSessionSchema.optional(),
@@ -164,6 +181,20 @@ export const AcpAgentProfileSchema = z
                 maxDelayMs: z.number().int().min(0).max(300_000).default(5_000)
             })
             .default({ enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5_000 })
+    })
+    .superRefine((profile, context) => {
+        if (
+            profile.protocolVersion === 2 &&
+            profile.transport.type === 'streamableHttp' &&
+            profile.execution?.location === 'client' &&
+            !profile.execution.agentSessionCwd
+        ) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['execution', 'agentSessionCwd'],
+                message: 'ACP v2 Client-hosted execution requires an Agent session cwd'
+            });
+        }
     })
     .transform((profile) => ({
         ...profile,

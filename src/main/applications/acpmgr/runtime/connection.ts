@@ -37,6 +37,15 @@ import {
     MemoryAcpCookieStore,
     type AcpCookieStore
 } from '@agentclientprotocol/sdk/experimental/http-client';
+import {
+    ndJsonStream as ndJsonStreamV2,
+    type ConnectMcpRequest as ConnectMcpRequestV2,
+    type ConnectMcpResponse as ConnectMcpResponseV2,
+    type DisconnectMcpRequest as DisconnectMcpRequestV2,
+    type DisconnectMcpResponse as DisconnectMcpResponseV2,
+    type MessageMcpNotification as MessageMcpNotificationV2,
+    type MessageMcpRequest as MessageMcpRequestV2
+} from '@agentclientprotocol/sdk/experimental/v2';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import path from 'node:path';
@@ -45,6 +54,8 @@ import type { AcpAgentProfile } from '../common.js';
 import { t } from '../../../../locale/index.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { logger } from '../../../utils/logger.js';
+import type { AcpMcpPeer } from './client-hosted-mcp.js';
+import { createV2ConnectionHandle } from './connection-v2.js';
 
 export interface AcpClientHandlers {
     sessionUpdate(params: SessionNotification): Promise<void>;
@@ -56,6 +67,11 @@ export interface AcpClientHandlers {
     releaseTerminal?(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse>;
     waitForTerminalExit?(params: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse>;
     killTerminal?(params: KillTerminalRequest): Promise<KillTerminalResponse>;
+    clientMcpServer?: { name: string; serverId: string };
+    connectMcp?(params: ConnectMcpRequestV2, peer: AcpMcpPeer): Promise<ConnectMcpResponseV2>;
+    messageMcp?(params: MessageMcpRequestV2): Promise<unknown>;
+    notifyMcp?(params: MessageMcpNotificationV2): Promise<void>;
+    disconnectMcp?(params: DisconnectMcpRequestV2): Promise<DisconnectMcpResponseV2>;
 }
 
 export type AcpClientConnection = Pick<
@@ -182,26 +198,40 @@ function createStdioHandle(
         if (message) logger.warn(`[ACP ${profile.name}] ${message.slice(0, 4_096)}`);
     });
 
-    const stream = ndJsonStream(
-        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
-    );
-    const connection = new ClientSideConnection(() => createLegacyClient(profile, handlers), stream);
+    const output = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+    const input = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
+    let protocolHandle: AcpConnectionHandle;
+    if (profile.protocolVersion === 2) {
+        protocolHandle = createV2ConnectionHandle(profile, handlers, ndJsonStreamV2(output, input));
+    } else {
+        const stream = ndJsonStream(output, input);
+        const connection = new ClientSideConnection(() => createLegacyClient(profile, handlers), stream);
+        protocolHandle = {
+            connection,
+            closed: connection.closed,
+            close: async () => {
+                try {
+                    await stream.writable.close();
+                } catch {
+                    // The stream may already be closed after an agent disconnect.
+                }
+            }
+        };
+    }
     const processClosed = new Promise<void>((resolve) => {
         child.once('close', () => resolve());
         child.once('error', () => resolve());
     });
     return {
-        connection,
-        closed: Promise.race([connection.closed, processClosed]),
+        connection: protocolHandle.connection,
+        closed: Promise.race([protocolHandle.closed, processClosed]),
         close: async () => {
             try {
-                await stream.writable.close();
-            } catch {
-                // The stream may already be closed after an agent disconnect.
-            }
-            if (child.exitCode === null && child.signalCode === null) {
-                child.kill();
+                await protocolHandle.close();
+            } finally {
+                if (child.exitCode === null && child.signalCode === null) {
+                    child.kill();
+                }
             }
         }
     };
@@ -226,6 +256,9 @@ function createHttpHandle(
             return getPlatform().fetch(target, init, { forceEnvironmentProxy: true });
         }) as typeof globalThis.fetch
     });
+    if (profile.protocolVersion === 2) {
+        return createV2ConnectionHandle(profile, handlers, stream);
+    }
     const connection = new ClientSideConnection(() => createLegacyClient(profile, handlers), stream);
     return {
         connection,

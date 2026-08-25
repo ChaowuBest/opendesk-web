@@ -14,6 +14,7 @@ import type { AcpAgentProfile } from '../common.js';
 export type SafeAcpProfileSnapshot = {
     id: string;
     name: string;
+    protocolVersion: 1 | 2;
     execution: AcpAgentProfile['execution'];
     transport:
         | {
@@ -63,6 +64,7 @@ export function createSafeAcpProfileSnapshot(profile: AcpAgentProfile): SafeAcpP
         return {
             id: profile.id,
             name: profile.name,
+            protocolVersion: profile.protocolVersion,
             execution: structuredClone(profile.execution),
             transport: {
                 type: 'stdio',
@@ -77,6 +79,7 @@ export function createSafeAcpProfileSnapshot(profile: AcpAgentProfile): SafeAcpP
     return {
         id: profile.id,
         name: profile.name,
+        protocolVersion: profile.protocolVersion,
         execution: structuredClone(profile.execution),
         transport: {
             type: 'streamableHttp',

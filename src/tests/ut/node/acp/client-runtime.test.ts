@@ -9,6 +9,7 @@ import type {
     PromptRequest,
     RequestPermissionRequest
 } from '@agentclientprotocol/sdk';
+import * as acpV2 from '@agentclientprotocol/sdk/experimental/v2';
 import type { AcpTaskRuntimeTurnRequest } from '../../../../main/applications/acpmgr/runtime/types.js';
 import type {
     AcpClientConnection,
@@ -16,6 +17,7 @@ import type {
     AcpConnectionHandle
 } from '../../../../main/applications/acpmgr/runtime/connection.js';
 import { AcpTaskRuntime } from '../../../../main/applications/acpmgr/runtime/session.js';
+import { createV2ConnectionHandle } from '../../../../main/applications/acpmgr/runtime/connection-v2.js';
 import { AcpAgentProfileSchema } from '../../../../main/applications/acpmgr/common.js';
 
 const profile = AcpAgentProfileSchema.parse({
@@ -187,6 +189,104 @@ test('ACP HTTP Client execution advertises v1 filesystem and terminal capabiliti
         assert.equal(session.cwd, directory);
         assert.equal(typeof connection.handlers?.readTextFile, 'function');
         assert.equal(typeof connection.handlers?.createTerminal, 'function');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP v2 runtime serves the local workspace to a remote Agent through MCP-over-ACP', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-v2-runtime-'));
+    const file = path.join(directory, 'message.txt');
+    fs.writeFileSync(file, 'hello from OpenDesk');
+    let mcpConnectionId = '';
+    try {
+        const v2Profile = AcpAgentProfileSchema.parse({
+            ...profile,
+            protocolVersion: 2,
+            transport: { type: 'streamableHttp', url: 'https://agent.example.com/acp' },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required',
+                agentSessionCwd: { path: '/agent/workspace', platform: 'posix' }
+            },
+            session: { configOptions: {}, mcpBindings: [] }
+        });
+        const agent = acpV2
+            .agent({ name: 'workspace-reader' })
+            .onRequest(acpV2.methods.agent.initialize, () => ({
+                protocolVersion: 2,
+                info: { name: 'workspace-reader', version: '1.0.0' },
+                capabilities: { session: { mcp: { acp: {} } } }
+            }))
+            .onRequest(acpV2.methods.agent.session.new, async (context) => {
+                const workspaceServer = context.params.mcpServers?.find((server) => server.type === 'acp') as
+                    | acpV2.McpServerAcp
+                    | undefined;
+                assert.ok(workspaceServer);
+                const connected = await context.client.request(acpV2.methods.client.mcp.connect, {
+                    serverId: workspaceServer.serverId
+                });
+                mcpConnectionId = connected.connectionId;
+                await context.client.request(acpV2.methods.client.mcp.message, {
+                    connectionId: mcpConnectionId,
+                    method: 'initialize',
+                    params: {
+                        protocolVersion: '2025-11-25',
+                        capabilities: {},
+                        clientInfo: { name: 'workspace-reader', version: '1.0.0' }
+                    }
+                });
+                await context.client.notify(acpV2.methods.client.mcp.message, {
+                    connectionId: mcpConnectionId,
+                    method: 'notifications/initialized'
+                });
+                return { sessionId: 'session-v2', configOptions: [] };
+            })
+            .onRequest(acpV2.methods.agent.session.prompt, async (context) => {
+                const result = (await context.client.request(acpV2.methods.client.mcp.message, {
+                    connectionId: mcpConnectionId,
+                    method: 'tools/call',
+                    params: { name: 'read_text_file', arguments: { path: 'message.txt' } }
+                })) as any;
+                await context.client.notify(acpV2.methods.client.session.update, {
+                    sessionId: context.params.sessionId,
+                    update: {
+                        sessionUpdate: 'agent_message_chunk',
+                        messageId: 'message-v2',
+                        content: { type: 'text', text: result.content[0].text }
+                    }
+                });
+                await context.client.notify(acpV2.methods.client.session.update, {
+                    sessionId: context.params.sessionId,
+                    update: { sessionUpdate: 'state_update', state: 'idle', stopReason: 'end_turn' }
+                });
+                return {};
+            })
+            .onRequest(acpV2.methods.agent.session.setConfigOption, () => ({ configOptions: [] }))
+            .onRequest(acpV2.methods.agent.session.resume, () => ({ configOptions: [] }))
+            .onRequest(acpV2.methods.agent.session.close, () => ({}))
+            .onNotification(acpV2.methods.agent.session.cancel, () => undefined);
+        const runtime = new AcpTaskRuntime(v2Profile, {
+            artifactDirectory: () => directory,
+            createConnection: async (configuredProfile, handlers) =>
+                createV2ConnectionHandle(configuredProfile, handlers, agent),
+            resolveMcpServers: async () => []
+        });
+        const request = makeRequest({
+            workspace: directory,
+            requestPermission: async (permission) => ({
+                outcome: { outcome: 'selected', optionId: permission.options[0].optionId }
+            })
+        });
+
+        const result = await runtime.runTurn(request);
+
+        assert.equal(result.stopReason, 'completed');
+        assert.deepEqual(request.updates, [
+            { type: 'message_delta', text: 'hello from OpenDesk', messageId: 'message-v2' }
+        ]);
+        await runtime.dispose();
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

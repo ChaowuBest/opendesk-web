@@ -28,6 +28,7 @@ export interface AcpAgentPresetDraft {
     enabled: boolean;
     dispatchable: boolean;
     whenToUse: string;
+    protocolVersion: 1;
     transport: {
         type: 'stdio';
         command: string;
@@ -165,6 +166,7 @@ export function createAcpAgentPresetDraft(
         enabled: true,
         dispatchable: true,
         whenToUse: translate(preset.whenToUseKey),
+        protocolVersion: 1,
         transport: {
             type: 'stdio',
             command: isWindows ? 'cmd.exe' : preset.transport.command,

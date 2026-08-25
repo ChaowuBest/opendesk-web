@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { PROTOCOL_VERSION, type McpServer } from '@agentclientprotocol/sdk';
+import type { McpServer } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
 import type { AgentDecl } from '../../aikernel/agents/common.js';
@@ -27,6 +27,7 @@ import type { McpMgrApplication } from '../mcpmgr/app.js';
 import { createAcpAgentDeclarations, resolveAcpMcpServers } from './agent.js';
 import { AcpAgentProfileSchema, AcpMgrConfigSchema, type AcpAgentProfile, type AcpMgrConfig } from './common.js';
 import { ClientWorkspaceRuntime } from './runtime/client-workspace.js';
+import { ClientHostedWorkspaceMcp } from './runtime/client-hosted-mcp.js';
 import { resolveAcpWorkspace } from './runtime/workspace.js';
 
 function parseConfig(value: unknown): AcpMgrConfig {
@@ -129,7 +130,20 @@ export class AcpMgrApplication extends BaseApplication {
         const resolvedWorkspace = resolveAcpWorkspace(profile, effectiveWorkspace);
         const clientWorkspaceRuntime =
             resolvedWorkspace.executionLocation === 'client'
-                ? new ClientWorkspaceRuntime({ root: resolvedWorkspace.sessionCwd, authorize: async () => false })
+                ? new ClientWorkspaceRuntime({
+                      root: resolvedWorkspace.clientWorkspace ?? resolvedWorkspace.sessionCwd,
+                      authorize: async () => false
+                  })
+                : undefined;
+        const localMcpSessionId = `client-mcp-test:${crypto.randomUUID()}`;
+        if (profile.protocolVersion === 2) clientWorkspaceRuntime?.setSessionId(localMcpSessionId);
+        const clientHostedMcp =
+            profile.protocolVersion === 2 && clientWorkspaceRuntime
+                ? new ClientHostedWorkspaceMcp({
+                      serverId: `opendesk-workspace-test:${profile.id}:${crypto.randomUUID()}`,
+                      workspace: clientWorkspaceRuntime,
+                      sessionId: localMcpSessionId
+                  })
                 : undefined;
         const handle = await this.createConnection(
             profile,
@@ -146,6 +160,15 @@ export class AcpMgrApplication extends BaseApplication {
                           waitForTerminalExit: (params) => clientWorkspaceRuntime.waitForTerminalExit(params),
                           killTerminal: (params) => clientWorkspaceRuntime.killTerminal(params)
                       }
+                    : {}),
+                ...(clientHostedMcp
+                    ? {
+                          clientMcpServer: clientHostedMcp.descriptor,
+                          connectMcp: (params, peer) => clientHostedMcp.connect(params, peer),
+                          messageMcp: (params) => clientHostedMcp.message(params),
+                          notifyMcp: (params) => clientHostedMcp.notify(params),
+                          disconnectMcp: (params) => clientHostedMcp.disconnect(params)
+                      }
                     : {})
             },
             effectiveWorkspace
@@ -153,7 +176,7 @@ export class AcpMgrApplication extends BaseApplication {
         let sessionId: string | undefined;
         try {
             const initializeResponse = await handle.connection.initialize({
-                protocolVersion: PROTOCOL_VERSION,
+                protocolVersion: profile.protocolVersion,
                 clientCapabilities:
                     resolvedWorkspace.executionLocation === 'client'
                         ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
@@ -165,7 +188,7 @@ export class AcpMgrApplication extends BaseApplication {
                 mcpServers: []
             });
             sessionId = sessionResponse.sessionId;
-            clientWorkspaceRuntime?.setSessionId(sessionId);
+            if (profile.protocolVersion === 1) clientWorkspaceRuntime?.setSessionId(sessionId);
             return {
                 protocolVersion: initializeResponse.protocolVersion,
                 agentInfo: initializeResponse.agentInfo ?? null,
@@ -180,6 +203,7 @@ export class AcpMgrApplication extends BaseApplication {
                 await handle.connection.closeSession({ sessionId });
             }
             await handle.close();
+            await clientHostedMcp?.close();
             await clientWorkspaceRuntime?.close();
         }
     }

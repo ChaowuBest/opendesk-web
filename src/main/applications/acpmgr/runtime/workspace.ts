@@ -18,6 +18,7 @@ export interface ResolvedAcpWorkspace {
     executionLocation: 'agent' | 'client';
     sessionCwd: string;
     localWorkspace: string;
+    clientWorkspace?: string;
     remoteWorkspace?: string;
     legacy: boolean;
 }
@@ -30,10 +31,20 @@ export function resolveAcpWorkspace(profile: AcpAgentProfile, taskWorkspace: str
     const localWorkspace = taskWorkspace;
     const execution = profile.execution;
     if (execution.location === 'client') {
-        const sessionCwd = path.resolve(
+        const clientWorkspace = path.resolve(
             execution.workspace.strategy === 'fixed' ? execution.workspace.path : taskWorkspace
         );
-        return { executionLocation: 'client', sessionCwd, localWorkspace, legacy: false };
+        const sessionCwd =
+            profile.protocolVersion === 2 && execution.agentSessionCwd
+                ? execution.agentSessionCwd.path
+                : clientWorkspace;
+        return {
+            executionLocation: 'client',
+            sessionCwd,
+            localWorkspace,
+            clientWorkspace,
+            legacy: false
+        };
     }
 
     if (execution.workspace.strategy === 'legacy') {
@@ -85,10 +96,12 @@ export function createAcpExecutionFingerprint(profile: AcpAgentProfile, workspac
         .update(
             JSON.stringify({
                 profileId: profile.id,
+                protocolVersion: profile.protocolVersion,
                 transport: profile.transport.type,
                 execution: profile.execution,
                 executionLocation: workspace.executionLocation,
                 sessionCwd: workspace.sessionCwd,
+                clientWorkspace: workspace.clientWorkspace,
                 mcpBindings: bindings
             })
         )

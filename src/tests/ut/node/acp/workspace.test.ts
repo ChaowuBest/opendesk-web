@@ -59,6 +59,23 @@ test('ACP workspace resolver keeps Client-hosted execution in the local task wor
     assert.equal(resolved.remoteWorkspace, undefined);
 });
 
+test('ACP v2 Client-hosted execution separates Agent cwd from the local MCP workspace', () => {
+    const localWorkspace = path.resolve('fixtures', 'project');
+    const profile = httpProfile({
+        location: 'client',
+        workspace: { strategy: 'task' },
+        compatibility: 'required',
+        agentSessionCwd: { path: '/srv/agent-session', platform: 'posix' }
+    });
+    const resolved = resolveAcpWorkspace(
+        AcpAgentProfileSchema.parse({ ...profile, protocolVersion: 2 }),
+        localWorkspace
+    );
+
+    assert.equal(resolved.sessionCwd, '/srv/agent-session');
+    assert.equal(resolved.clientWorkspace, localWorkspace);
+});
+
 test('ACP execution fingerprints change with workspace placement and MCP bindings', () => {
     const profile = httpProfile({
         location: 'agent',

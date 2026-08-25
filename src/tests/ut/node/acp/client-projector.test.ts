@@ -69,3 +69,24 @@ test('ACP message projector records errors as local assistant content', async ()
     assert.equal(assistant.content[0].type, 'error');
     assert.equal((assistant.content[0] as any).message, 'Connection closed');
 });
+
+test('ACP message projector replaces a v2 message snapshot by message id', async () => {
+    const chatContext = new ChatContext();
+    const publishedParts: number[] = [];
+    const turn = new AcpMessageProjector({
+        chatContext,
+        publishUserMessage: async () => undefined,
+        publishAssistantPart: async (partIndex) => publishedParts.push(partIndex)
+    });
+
+    await turn.start('Run it');
+    await turn.apply({ type: 'message_delta', messageId: 'message-1', text: 'draft' });
+    await turn.apply({ type: 'tool_call', toolCallId: 'call-1', title: 'Work', status: 'completed' });
+    await turn.apply({ type: 'message_replace', messageId: 'message-1', text: 'final' });
+
+    const assistant = chatContext.messages[1] as AssistantMessage;
+    assert.equal(assistant.content[0].type, 'text');
+    assert.equal((assistant.content[0] as any).text, 'final');
+    assert.equal(assistant.content[1].type, 'tool_call');
+    assert.deepEqual(publishedParts, [0, 1, 0]);
+});

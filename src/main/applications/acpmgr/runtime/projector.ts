@@ -13,6 +13,8 @@ import {
     AssistantMessage,
     ChatContext,
     ImageMessagePart,
+    ReasoningMessagePart,
+    TextMessagePart,
     ToolCall,
     ToolCallMessagePart,
     UserMessage
@@ -52,6 +54,8 @@ function mapToolStatus(status: AcpProjectedToolStatus): ToolCall['status'] {
 export class AcpMessageProjector {
     private assistant?: AssistantMessage;
     private readonly toolCalls = new Map<string, { call: ToolCall; partIndex: number }>();
+    private readonly messageParts = new Map<string, number>();
+    private readonly thoughtParts = new Map<string, number>();
 
     constructor(private readonly host: AcpMessageProjectorHost) {}
 
@@ -73,12 +77,16 @@ export class AcpMessageProjector {
         const assistant = this.requireAssistant();
         switch (update.type) {
             case 'message_delta':
-                assistant.appendText(update.text);
-                await this.publishLastPart();
+                await this.applyMessageText(update.text, update.messageId, false, false);
+                return;
+            case 'message_replace':
+                await this.applyMessageText(update.text, update.messageId, false, true);
                 return;
             case 'thought_delta':
-                assistant.appendReasoningContent(update.text);
-                await this.publishLastPart();
+                await this.applyMessageText(update.text, update.messageId, true, false);
+                return;
+            case 'thought_replace':
+                await this.applyMessageText(update.text, update.messageId, true, true);
                 return;
             case 'tool_call':
                 await this.applyToolCall(update);
@@ -152,6 +160,39 @@ export class AcpMessageProjector {
     private async publishLastPart(): Promise<void> {
         const assistant = this.requireAssistant();
         await this.host.publishAssistantPart(assistant.content.length - 1);
+    }
+
+    private async applyMessageText(
+        text: string,
+        messageId: string | undefined,
+        thought: boolean,
+        replace: boolean
+    ): Promise<void> {
+        const assistant = this.requireAssistant();
+        if (!messageId) {
+            if (thought) assistant.appendReasoningContent(text);
+            else assistant.appendText(text);
+            await this.publishLastPart();
+            return;
+        }
+        const parts = thought ? this.thoughtParts : this.messageParts;
+        let partIndex = parts.get(messageId);
+        if (partIndex === undefined) {
+            const part = thought ? new ReasoningMessagePart(text, 'reasoning_content') : new TextMessagePart(text);
+            assistant.content.push(part);
+            partIndex = assistant.content.length - 1;
+            parts.set(messageId, partIndex);
+        } else {
+            const part = assistant.content[partIndex];
+            if (thought && part?.type === 'reasoning') {
+                part.content = replace ? text : part.content + text;
+                part.invalidateRender();
+            } else if (!thought && part?.type === 'text') {
+                part.text = replace ? text : part.text + text;
+                part.invalidateRender();
+            }
+        }
+        await this.host.publishAssistantPart(partIndex);
     }
 
     private requireAssistant(): AssistantMessage {

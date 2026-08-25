@@ -290,6 +290,46 @@ describe('setting-panel config management', () => {
         expect(next.execution).toEqual(profile.execution);
     });
 
+    test('preserves stdio when selecting experimental ACP v2 in the Agent settings form', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Local ACP v2',
+            enabled: true,
+            protocolVersion: 2,
+            transport: {
+                type: 'stdio',
+                command: 'agent',
+                args: [],
+                cwd: 'workspace',
+                env: {},
+                inheritEnv: true
+            },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required'
+            },
+            session: { configOptions: {}, mcpBindings: [] },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = { acpmgr: { agents: [profile] } };
+
+        panel.showAcpAgentEditModal(0);
+
+        const protocol = panel.querySelector('#acp-agent-protocol-version') as HTMLSelectElement;
+        const transport = panel.querySelector('#acp-agent-transport') as HTMLSelectElement;
+        Array.from(protocol.options).forEach((option) => (option.selected = option.value === '1'));
+        protocol.dispatchEvent(new Event('change'));
+        Array.from(protocol.options).forEach((option) => (option.selected = option.value === '2'));
+        protocol.dispatchEvent(new Event('change'));
+
+        expect(transport.value).toBe('stdio');
+        expect(panel._readAcpAgentForm(profile.id).protocolVersion).toBe(2);
+        expect(panel._readAcpAgentForm(profile.id).transport.type).toBe('stdio');
+        expect(panel._readAcpAgentForm(profile.id).execution.agentSessionCwd).toBeUndefined();
+    });
+
     test('discovers ACP session options and writes a selected model to the profile JSON', async () => {
         const panel = createPanel();
         const profile = {

@@ -21,6 +21,16 @@ type ToolSnapshot = {
     rawOutput?: unknown;
 };
 
+function mapToolStatus(status: string | null | undefined, fallback: AcpProjectedToolStatus): AcpProjectedToolStatus {
+    return status === 'pending' ||
+        status === 'in_progress' ||
+        status === 'completed' ||
+        status === 'failed' ||
+        status === 'cancelled'
+        ? status
+        : fallback;
+}
+
 function mapLocations(
     locations: ToolCall['locations'] | ToolCallUpdate['locations']
 ): AcpProjectedToolLocation[] | undefined {
@@ -37,19 +47,45 @@ function metadataUpdate(update: SessionUpdate): AcpProjectedUpdate {
     return { type: 'metadata', data };
 }
 
+function messageMetadata(update: SessionUpdate): { messageId?: string; replace: boolean } {
+    const meta = update._meta;
+    return {
+        ...(typeof meta?.['opendesk/messageId'] === 'string' ? { messageId: meta['opendesk/messageId'] } : {}),
+        replace: meta?.['opendesk/replace'] === true
+    };
+}
+
 export class AcpSessionUpdateMapper {
     private readonly tools = new Map<string, ToolSnapshot>();
 
     map(update: SessionUpdate): AcpProjectedUpdate[] {
         switch (update.sessionUpdate) {
-            case 'agent_message_chunk':
-                return update.content.type === 'text'
-                    ? [{ type: 'message_delta', text: update.content.text }]
-                    : [metadataUpdate(update)];
-            case 'agent_thought_chunk':
-                return update.content.type === 'text'
-                    ? [{ type: 'thought_delta', text: update.content.text }]
-                    : [metadataUpdate(update)];
+            case 'agent_message_chunk': {
+                if (update.content.type !== 'text') return [metadataUpdate(update)];
+                const message = messageMetadata(update);
+                return message.replace && message.messageId
+                    ? [{ type: 'message_replace', text: update.content.text, messageId: message.messageId }]
+                    : [
+                          {
+                              type: 'message_delta',
+                              text: update.content.text,
+                              ...(message.messageId ? { messageId: message.messageId } : {})
+                          }
+                      ];
+            }
+            case 'agent_thought_chunk': {
+                if (update.content.type !== 'text') return [metadataUpdate(update)];
+                const thought = messageMetadata(update);
+                return thought.replace && thought.messageId
+                    ? [{ type: 'thought_replace', text: update.content.text, messageId: thought.messageId }]
+                    : [
+                          {
+                              type: 'thought_delta',
+                              text: update.content.text,
+                              ...(thought.messageId ? { messageId: thought.messageId } : {})
+                          }
+                      ];
+            }
             case 'user_message_chunk':
                 return [];
             case 'tool_call':
@@ -76,7 +112,7 @@ export class AcpSessionUpdateMapper {
         const snapshot: ToolSnapshot = {
             toolCallId: update.toolCallId,
             title: update.title,
-            status: update.status ?? 'pending',
+            status: mapToolStatus(update.status, 'pending'),
             ...(update.locations ? { locations: mapLocations(update.locations) } : {}),
             ...(update.rawInput !== undefined ? { rawInput: update.rawInput } : {}),
             ...(update.rawOutput !== undefined ? { rawOutput: update.rawOutput } : {})
@@ -92,7 +128,7 @@ export class AcpSessionUpdateMapper {
         const snapshot: ToolSnapshot = {
             toolCallId: update.toolCallId,
             title: update.title ?? previous?.title ?? update.name ?? update.toolCallId,
-            status: update.status ?? previous?.status ?? 'pending',
+            status: mapToolStatus(update.status, previous?.status ?? 'pending'),
             ...(update.locations
                 ? { locations: mapLocations(update.locations) }
                 : previous?.locations

@@ -10,7 +10,6 @@
  */
 
 import {
-    PROTOCOL_VERSION,
     type AgentCapabilities,
     type ClientCapabilities,
     type ContentBlock,
@@ -35,6 +34,14 @@ import {
     type WriteTextFileRequest,
     type WriteTextFileResponse
 } from '@agentclientprotocol/sdk';
+import type {
+    ConnectMcpRequest as ConnectMcpRequestV2,
+    ConnectMcpResponse as ConnectMcpResponseV2,
+    DisconnectMcpRequest as DisconnectMcpRequestV2,
+    DisconnectMcpResponse as DisconnectMcpResponseV2,
+    MessageMcpNotification as MessageMcpNotificationV2,
+    MessageMcpRequest as MessageMcpRequestV2
+} from '@agentclientprotocol/sdk/experimental/v2';
 import type { AcpTaskRuntimeTurnRequest, AcpTaskRuntimeTurnResult } from './types.js';
 import { t } from '../../../../locale/index.js';
 import type { AcpAgentProfile } from '../common.js';
@@ -51,6 +58,7 @@ import {
     type AcpConnectionHandle
 } from './connection.js';
 import { ClientWorkspaceRuntime, type ClientWorkspaceOperation } from './client-workspace.js';
+import { ClientHostedWorkspaceMcp, type AcpMcpPeer } from './client-hosted-mcp.js';
 import { createAcpExecutionFingerprint, resolveAcpWorkspace, type ResolvedAcpWorkspace } from './workspace.js';
 
 type AcpPhase = 'connecting' | 'idle' | 'running' | 'uncertain' | 'cancelled';
@@ -161,6 +169,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     private resolvedWorkspace?: ResolvedAcpWorkspace;
     private executionFingerprint?: string;
     private clientWorkspaceRuntime?: ClientWorkspaceRuntime;
+    private clientHostedMcp?: ClientHostedWorkspaceMcp;
 
     constructor(
         private readonly profile: AcpAgentProfile,
@@ -322,6 +331,26 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         return this.requireClientWorkspaceRuntime().killTerminal(params);
     }
 
+    get clientMcpServer(): { name: string; serverId: string } | undefined {
+        return this.clientHostedMcp?.descriptor;
+    }
+
+    async connectMcp(params: ConnectMcpRequestV2, peer: AcpMcpPeer): Promise<ConnectMcpResponseV2> {
+        return this.requireClientHostedMcp().connect(params, peer);
+    }
+
+    async messageMcp(params: MessageMcpRequestV2): Promise<unknown> {
+        return this.requireClientHostedMcp().message(params);
+    }
+
+    async notifyMcp(params: MessageMcpNotificationV2): Promise<void> {
+        return this.requireClientHostedMcp().notify(params);
+    }
+
+    async disconnectMcp(params: DisconnectMcpRequestV2): Promise<DisconnectMcpResponseV2> {
+        return this.requireClientHostedMcp().disconnect(params);
+    }
+
     async cancel(_reason: 'user' | 'system'): Promise<void> {
         if (!this.connection || !this.sessionId) return;
         this.record('outbound', 'session/cancel', { sessionId: this.sessionId });
@@ -331,6 +360,8 @@ export class AcpTaskRuntime implements AcpClientHandlers {
 
     async dispose(): Promise<void> {
         await this.resetConnection();
+        await this.clientHostedMcp?.close();
+        this.clientHostedMcp = undefined;
         await this.clientWorkspaceRuntime?.close();
         this.clientWorkspaceRuntime = undefined;
     }
@@ -394,7 +425,9 @@ export class AcpTaskRuntime implements AcpClientHandlers {
             this.sessionId = response.sessionId;
             this.sessionConfigOptions = response.configOptions ?? undefined;
         }
-        this.clientWorkspaceRuntime?.setSessionId(this.requireSessionId());
+        if (this.profile.protocolVersion === 1) {
+            this.clientWorkspaceRuntime?.setSessionId(this.requireSessionId());
+        }
         await this.saveCheckpoint({ sessionId: this.sessionId, phase: 'idle' });
         await this.applySessionSettings();
     }
@@ -411,14 +444,22 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 this.watchConnectionClosure(this.handle);
                 this.connection = this.handle.connection;
                 const clientCapabilities = this.clientCapabilities();
-                this.record('outbound', 'initialize', { protocolVersion: PROTOCOL_VERSION, clientCapabilities });
+                this.record('outbound', 'initialize', {
+                    protocolVersion: this.profile.protocolVersion,
+                    clientCapabilities
+                });
                 const response = await this.connection.initialize({
-                    protocolVersion: PROTOCOL_VERSION,
+                    protocolVersion: this.profile.protocolVersion,
                     clientCapabilities,
                     clientInfo: { name: 'OpenDesk', version: '0.3.4' }
                 });
-                if (this.profile.execution.location === 'client' && response.protocolVersion !== 1) {
-                    throw new Error(t('acpmgr.error.clientRuntimeRequiresV1'));
+                if (response.protocolVersion !== this.profile.protocolVersion) {
+                    throw new Error(
+                        t('acpmgr.error.protocolVersionMismatch', {
+                            expected: this.profile.protocolVersion,
+                            actual: response.protocolVersion
+                        })
+                    );
                 }
                 this.record('inbound', 'initialize/result', response);
                 this.capabilities = response.agentCapabilities;
@@ -458,6 +499,8 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         if (this.handle !== handle) return;
         this.handle = undefined;
         this.connection = undefined;
+        void this.clientHostedMcp?.close();
+        this.clientHostedMcp = undefined;
         void this.clientWorkspaceRuntime?.close();
     }
 
@@ -554,8 +597,13 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         return this.clientWorkspaceRuntime;
     }
 
+    private requireClientHostedMcp(): ClientHostedWorkspaceMcp {
+        if (!this.clientHostedMcp) throw new Error(t('acpmgr.error.clientMcpUnavailable'));
+        return this.clientHostedMcp;
+    }
+
     private clientCapabilities(): ClientCapabilities {
-        return this.profile.execution.location === 'client'
+        return this.profile.protocolVersion === 1 && this.profile.execution.location === 'client'
             ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
             : {};
     }
@@ -574,8 +622,22 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         this.executionFingerprint = fingerprint;
         if (resolved.executionLocation === 'client' && !this.clientWorkspaceRuntime) {
             this.clientWorkspaceRuntime = new ClientWorkspaceRuntime({
-                root: resolved.sessionCwd,
+                root: resolved.clientWorkspace ?? resolved.sessionCwd,
                 authorize: (operation) => this.authorizeClientOperation(operation)
+            });
+        }
+        if (
+            resolved.executionLocation === 'client' &&
+            this.profile.protocolVersion === 2 &&
+            this.clientWorkspaceRuntime &&
+            !this.clientHostedMcp
+        ) {
+            const localSessionId = `client-mcp:${crypto.randomUUID()}`;
+            this.clientWorkspaceRuntime.setSessionId(localSessionId);
+            this.clientHostedMcp = new ClientHostedWorkspaceMcp({
+                serverId: `opendesk-workspace:${this.profile.id}:${crypto.randomUUID()}`,
+                workspace: this.clientWorkspaceRuntime,
+                sessionId: localSessionId
             });
         }
         if (resolved.legacy) {
@@ -645,6 +707,8 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         const handle = this.handle;
         this.handle = undefined;
         this.connection = undefined;
+        await this.clientHostedMcp?.close();
+        this.clientHostedMcp = undefined;
         await this.clientWorkspaceRuntime?.close();
         if (handle) await handle.close();
     }

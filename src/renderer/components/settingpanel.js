@@ -991,6 +991,7 @@ class SettingPanel extends HTMLElement {
                             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                                 <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(agent.name)}</h3>
                                 <span class="sp-tag sp-tag-neutral">${isHttp ? 'Streamable HTTP' : 'stdio'}</span>
+                                <span class="sp-tag sp-tag-neutral">ACP v${agent.protocolVersion === 2 ? '2' : '1'}</span>
                                 <span class="sp-tag sp-tag-neutral">${
                                     executionLocation === 'client'
                                         ? this._t('sp.agents.execution.client')
@@ -1112,6 +1113,7 @@ class SettingPanel extends HTMLElement {
             enabled: this.querySelector('#acp-agent-enabled')?.checked === true,
             dispatchable: this.querySelector('#acp-agent-dispatchable')?.checked === true,
             whenToUse: this.querySelector('#acp-agent-when-to-use')?.value || '',
+            protocolVersion: this.querySelector('#acp-agent-protocol-version')?.value || '1',
             transportType: this.querySelector('#acp-agent-transport')?.value || 'stdio',
             command: this.querySelector('#acp-agent-command')?.value || '',
             argsJson: this.querySelector('#acp-agent-args')?.value || '[]',
@@ -1134,6 +1136,8 @@ class SettingPanel extends HTMLElement {
             clientWorkspaceStrategy: this.querySelector('#acp-agent-client-workspace-strategy')?.value || 'task',
             clientFixedCwd: this.querySelector('#acp-agent-client-fixed-cwd')?.value || '',
             clientCompatibility: this.querySelector('#acp-agent-client-compatibility')?.value || 'preferred',
+            clientAgentCwd: this.querySelector('#acp-agent-client-agent-cwd')?.value || '',
+            clientAgentPlatform: this.querySelector('#acp-agent-client-agent-platform')?.value || 'posix',
             reconnectEnabled: this.querySelector('#acp-agent-reconnect')?.checked === true,
             maxAttempts: this.querySelector('#acp-agent-max-attempts')?.value || '',
             initialDelayMs: this.querySelector('#acp-agent-initial-delay')?.value || '',
@@ -1222,6 +1226,14 @@ class SettingPanel extends HTMLElement {
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.whenToUse')}</label>
                         <textarea id="acp-agent-when-to-use" class="od-sp-fi" placeholder="${this._t('sp.agents.field.whenToUse.placeholder')}">${this.escapeHtml(profile?.whenToUse || '')}</textarea>
+                    </div>
+                    <div class="od-sp-fg">
+                        <label class="od-sp-fl">${this._t('sp.agents.field.protocolVersion')}</label>
+                        <select id="acp-agent-protocol-version" class="od-sp-fi">
+                            <option value="1" ${profile?.protocolVersion === 2 ? '' : 'selected'}>ACP v1</option>
+                            <option value="2" ${profile?.protocolVersion === 2 ? 'selected' : ''}>ACP v2 (${this._t('sp.agents.protocol.experimental')})</option>
+                        </select>
+                        <div class="od-sp-hint">${this._t('sp.agents.field.protocolVersion.hint')}</div>
                     </div>
 
                     <div id="acp-agent-stdio-fields" ${isHttp ? 'hidden' : ''}>
@@ -1349,6 +1361,22 @@ class SettingPanel extends HTMLElement {
                             <label class="od-sp-fl">${this._t('sp.agents.field.clientFixedCwd')}</label>
                             <input id="acp-agent-client-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(clientWorkspace.strategy === 'fixed' ? clientWorkspace.path : '')}">
                         </div>
+                        <div id="acp-agent-v2-session-cwd-fields" ${profile?.protocolVersion === 2 && isHttp ? '' : 'hidden'}>
+                            <div class="od-sp-two-col">
+                                <div class="od-sp-fg">
+                                    <label class="od-sp-fl">${this._t('sp.agents.field.v2AgentSessionCwd')}</label>
+                                    <input id="acp-agent-client-agent-cwd" class="od-sp-fi" value="${this.escapeHtml(execution.location === 'client' ? execution.agentSessionCwd?.path || '' : '')}" placeholder="/workspace">
+                                </div>
+                                <div class="od-sp-fg">
+                                    <label class="od-sp-fl">${this._t('sp.agents.field.remotePlatform')}</label>
+                                    <select id="acp-agent-client-agent-platform" class="od-sp-fi">
+                                        <option value="posix" ${execution.location === 'client' && execution.agentSessionCwd?.platform === 'windows' ? '' : 'selected'}>POSIX</option>
+                                        <option value="windows" ${execution.location === 'client' && execution.agentSessionCwd?.platform === 'windows' ? 'selected' : ''}>Windows</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.v2AgentSessionCwd.hint')}</div>
+                        </div>
                         <div class="od-sp-hint">${this._t('sp.agents.execution.client.hint')}</div>
                     </div>
 
@@ -1409,6 +1437,11 @@ class SettingPanel extends HTMLElement {
             </div>
         `);
 
+        const updateV2SessionCwdFields = () => {
+            const v2 = this.querySelector('#acp-agent-protocol-version')?.value === '2';
+            const http = this.querySelector('#acp-agent-transport')?.value === 'streamableHttp';
+            this.querySelector('#acp-agent-v2-session-cwd-fields').hidden = !v2 || !http;
+        };
         const updateExecutionFields = () => {
             const agent = this.querySelector('#acp-agent-execution-location')?.value === 'agent';
             this.querySelector('#acp-agent-agent-execution-fields').hidden = !agent;
@@ -1431,12 +1464,17 @@ class SettingPanel extends HTMLElement {
                 this.querySelector('#acp-agent-execution-location').value = http ? 'agent' : 'client';
                 updateExecutionFields();
             }
+            updateV2SessionCwdFields();
+        };
+        const updateProtocolFields = () => {
+            updateV2SessionCwdFields();
         };
         const updateCwdField = () => {
             this.querySelector('#acp-agent-fixed-cwd-field').hidden =
                 this.querySelector('#acp-agent-cwd')?.value !== 'fixed';
         };
         this.querySelector('#acp-agent-transport')?.addEventListener('change', () => updateTransportFields(true));
+        this.querySelector('#acp-agent-protocol-version')?.addEventListener('change', updateProtocolFields);
         this.querySelector('#acp-agent-cwd')?.addEventListener('change', updateCwdField);
         this.querySelector('#acp-agent-execution-location')?.addEventListener('change', updateExecutionFields);
         this.querySelector('#acp-agent-agent-workspace-strategy')?.addEventListener(

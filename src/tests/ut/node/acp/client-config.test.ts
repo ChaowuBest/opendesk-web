@@ -31,6 +31,7 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
     });
 
     assert.equal(stdio.enabled, true);
+    assert.equal(stdio.protocolVersion, 1);
     assert.equal(stdio.dispatchable, false);
     assert.equal(stdio.transport.cwd, 'workspace');
     assert.deepEqual(stdio.execution, {
@@ -50,6 +51,39 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
         location: 'agent',
         workspace: { strategy: 'legacy' }
     });
+});
+
+test('ACP agent profiles accept an explicit experimental v2 protocol version', () => {
+    const parsed = AcpAgentProfileSchema.parse({
+        id: profileId,
+        name: 'ACP v2 Agent',
+        protocolVersion: 2,
+        transport: { type: 'stdio', command: 'agent' },
+        execution: {
+            location: 'client',
+            workspace: { strategy: 'task' },
+            compatibility: 'required'
+        }
+    });
+
+    assert.equal(parsed.protocolVersion, 2);
+    assert.equal(parsed.transport.type, 'stdio');
+    assert.equal(parsed.execution.location, 'client');
+    assert.equal('agentSessionCwd' in parsed.execution, false);
+});
+
+test('ACP v2 HTTP Client-hosted profiles require an Agent-side session cwd', () => {
+    assert.throws(
+        () =>
+            AcpAgentProfileSchema.parse({
+                id: profileId,
+                name: 'Broken v2 Client host',
+                protocolVersion: 2,
+                transport: { type: 'streamableHttp', url: 'https://agents.example.com/acp' },
+                execution: { location: 'client', workspace: { strategy: 'task' }, compatibility: 'required' }
+            }),
+        /session cwd|会话|agentSessionCwd/i
+    );
 });
 
 test('ACP HTTP profiles model fixed and mapped Agent workspaces explicitly', () => {
@@ -157,6 +191,7 @@ test('ACP transport templates resolve environment values without persisting them
     assert.deepEqual(createSafeAcpProfileSnapshot(profile), {
         id: profileId,
         name: 'Remote Agent',
+        protocolVersion: 1,
         execution: {
             location: 'agent',
             workspace: { strategy: 'legacy' }

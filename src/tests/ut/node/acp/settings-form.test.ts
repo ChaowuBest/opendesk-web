@@ -11,6 +11,7 @@ function baseForm() {
         enabled: true,
         dispatchable: false,
         whenToUse: '',
+        protocolVersion: '1',
         transportType: 'stdio',
         command: 'codex',
         argsJson: '["acp"]',
@@ -33,6 +34,8 @@ function baseForm() {
         clientWorkspaceStrategy: 'task',
         clientFixedCwd: '',
         clientCompatibility: 'preferred',
+        clientAgentCwd: '',
+        clientAgentPlatform: 'posix',
         reconnectEnabled: true,
         maxAttempts: '3',
         initialDelayMs: '500',
@@ -49,6 +52,7 @@ test('ACP agent settings build a stdio profile without resolving secret template
         enabled: true,
         dispatchable: false,
         whenToUse: '',
+        protocolVersion: 1,
         transport: {
             type: 'stdio',
             command: 'codex',
@@ -110,12 +114,37 @@ test('ACP agent settings build a Streamable HTTP profile', () => {
     assert.equal(profile.id, profileId);
 });
 
+test('ACP agent settings build an experimental v2 stdio Client-hosted MCP profile', () => {
+    const profile = buildAcpAgentProfile(
+        {
+            ...baseForm(),
+            protocolVersion: '2',
+            executionLocation: 'client'
+        },
+        () => profileId
+    );
+
+    assert.equal(profile.protocolVersion, 2);
+    assert.equal(profile.transport.type, 'stdio');
+    assert.equal(profile.execution.location, 'client');
+    assert.equal('agentSessionCwd' in profile.execution, false);
+});
+
 test('ACP agent settings return stable validation codes for invalid fields', () => {
     const cases = [
         [{ ...baseForm(), name: '' }, 'nameRequired'],
         [{ ...baseForm(), argsJson: '{}' }, 'argsInvalid'],
         [{ ...baseForm(), envJson: '{"TOKEN":1}' }, 'envInvalid'],
         [{ ...baseForm(), cwd: 'fixed', fixedCwd: '' }, 'fixedCwdRequired'],
+        [
+            {
+                ...baseForm(),
+                protocolVersion: '2',
+                transportType: 'streamableHttp',
+                url: 'https://agent.example.com/acp'
+            },
+            'remoteCwdRequired'
+        ],
         [{ ...baseForm(), transportType: 'streamableHttp', url: 'file:///tmp/agent' }, 'urlInvalid'],
         [
             {

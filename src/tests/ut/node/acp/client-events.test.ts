@@ -121,3 +121,24 @@ test('ACP update mapper retains plans and session metadata for local checkpoints
         ]
     );
 });
+
+test('ACP update mapper preserves v2 message identity and replacement semantics', () => {
+    const mapper = new AcpSessionUpdateMapper();
+
+    assert.deepEqual(
+        mapper.map({
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'draft' },
+            _meta: { 'opendesk/messageId': 'message-1' }
+        }),
+        [{ type: 'message_delta', text: 'draft', messageId: 'message-1' }]
+    );
+    assert.deepEqual(
+        mapper.map({
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'final' },
+            _meta: { 'opendesk/messageId': 'message-1', 'opendesk/replace': true }
+        }),
+        [{ type: 'message_replace', text: 'final', messageId: 'message-1' }]
+    );
+});

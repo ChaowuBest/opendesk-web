@@ -19,8 +19,10 @@ export interface AcpProjectedToolLocation {
 }
 
 export type AcpProjectedUpdate =
-    | { type: 'message_delta'; text: string }
-    | { type: 'thought_delta'; text: string }
+    | { type: 'message_delta'; text: string; messageId?: string }
+    | { type: 'message_replace'; text: string; messageId: string }
+    | { type: 'thought_delta'; text: string; messageId?: string }
+    | { type: 'thought_replace'; text: string; messageId: string }
     | {
           type: 'tool_call';
           toolCallId: string;

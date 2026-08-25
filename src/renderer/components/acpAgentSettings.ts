@@ -37,6 +37,7 @@ export type AcpAgentFormValues = {
     enabled: boolean;
     dispatchable: boolean;
     whenToUse: string;
+    protocolVersion: string;
     transportType: string;
     command: string;
     argsJson: string;
@@ -59,6 +60,8 @@ export type AcpAgentFormValues = {
     clientWorkspaceStrategy: string;
     clientFixedCwd: string;
     clientCompatibility: string;
+    clientAgentCwd: string;
+    clientAgentPlatform: string;
     reconnectEnabled: boolean;
     maxAttempts: string;
     initialDelayMs: string;
@@ -71,6 +74,7 @@ export type AcpAgentSettingsProfile = {
     enabled: boolean;
     dispatchable: boolean;
     whenToUse: string;
+    protocolVersion: 1 | 2;
     transport:
         | {
               type: 'stdio';
@@ -108,6 +112,7 @@ export type AcpAgentSettingsProfile = {
               location: 'client';
               workspace: { strategy: 'task' } | { strategy: 'fixed'; path: string };
               compatibility: 'preferred' | 'required';
+              agentSessionCwd?: { path: string; platform: 'posix' | 'windows' };
           };
     reconnect: {
         enabled: boolean;
@@ -173,6 +178,7 @@ export function buildAcpAgentProfile(
 ): AcpAgentSettingsProfile {
     const name = form.name.trim();
     if (!name) throw new AcpAgentFormError('nameRequired');
+    const protocolVersion = form.protocolVersion === '2' ? 2 : 1;
 
     let transport: AcpAgentSettingsProfile['transport'];
     if (form.transportType === 'streamableHttp') {
@@ -246,8 +252,23 @@ export function buildAcpAgentProfile(
         execution = {
             location: 'client',
             workspace: strategy === 'fixed' ? { strategy, path: fixedPath } : { strategy },
-            compatibility: form.clientCompatibility === 'required' ? 'required' : 'preferred'
+            compatibility: form.clientCompatibility === 'required' ? 'required' : 'preferred',
+            ...(protocolVersion === 2 && transport.type === 'streamableHttp'
+                ? {
+                      agentSessionCwd: {
+                          path: form.clientAgentCwd.trim(),
+                          platform: form.clientAgentPlatform === 'windows' ? ('windows' as const) : ('posix' as const)
+                      }
+                  }
+                : {})
         };
+        if (protocolVersion === 2 && transport.type === 'streamableHttp') {
+            const agentSessionCwd = execution.agentSessionCwd;
+            if (!agentSessionCwd?.path) throw new AcpAgentFormError('remoteCwdRequired');
+            if (!isAbsoluteRemotePath(agentSessionCwd.path, agentSessionCwd.platform)) {
+                throw new AcpAgentFormError('workspacePathInvalid');
+            }
+        }
     }
     return {
         id: form.id?.trim() || idFactory(),
@@ -255,6 +276,7 @@ export function buildAcpAgentProfile(
         enabled: form.enabled,
         dispatchable: form.dispatchable,
         whenToUse: form.whenToUse.trim(),
+        protocolVersion,
         transport,
         execution,
         session: {
