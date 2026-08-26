@@ -55,6 +55,19 @@ describe('renderer fully-loaded guards', () => {
         expect(initializeGlobalStateIndex).toBeLessThan(registerTaskHandlersIndex);
     });
 
+    test('has a fallback to show the main window after did-finish-load', () => {
+        const createWindowSource = mainSource.slice(mainSource.indexOf('const createWindow = () =>'));
+        const readyToShowIndex = createWindowSource.indexOf("mainWindow.once('ready-to-show'");
+        const finishLoadIndex = createWindowSource.indexOf("mainWindow.webContents.once('did-finish-load'");
+        const showIndex = createWindowSource.indexOf('mainWindow.show();');
+
+        expect(readyToShowIndex).toBeGreaterThanOrEqual(0);
+        expect(finishLoadIndex).toBeGreaterThan(readyToShowIndex);
+        expect(createWindowSource).toContain('MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS');
+        expect(createWindowSource).toContain('ready-to-show 未触发，使用 did-finish-load 兜底显示主窗口');
+        expect(showIndex).toBeGreaterThanOrEqual(0);
+    });
+
     test('waits only when opening task and application resources', () => {
         const openTaskSource = sourceBetween(
             rendererHtml,

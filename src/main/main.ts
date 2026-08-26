@@ -542,6 +542,7 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
 
 const DEFAULT_WINDOW_WIDTH = 1600;
 const DEFAULT_WINDOW_HEIGHT = 1080;
+const MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS = 1000;
 
 /**
  * 检查保存的窗口 bounds 是否在某个屏幕可见范围内（至少 100px 可见）。
@@ -634,22 +635,45 @@ const createWindow = () => {
         }
     });
 
-    // 就绪后显示窗口，避免白屏
-    mainWindow.once('ready-to-show', () => {
+    let mainWindowShown = false;
+    let mainWindowShowFallbackTimer: NodeJS.Timeout | undefined;
+    const clearMainWindowShowFallback = () => {
+        if (!mainWindowShowFallbackTimer) return;
+        clearTimeout(mainWindowShowFallbackTimer);
+        mainWindowShowFallbackTimer = undefined;
+    };
+    const showMainWindow = (reason: 'ready-to-show' | 'did-finish-load fallback') => {
+        if (mainWindow.isDestroyed() || mainWindowShown || mainWindow.isVisible()) return;
         // per-monitor DPI 下 BrowserWindow 构造时的 bounds 可能被错误缩放，
         // 在窗口已确定最终显示器（DPI 已就绪）后用 setBounds 精确修正
         if (savedBounds) {
             mainWindow.setBounds(savedBounds);
         }
         if (isHuaweiStartupAuthPending) {
-            restoreHuaweiLoginForWorkbenchWindow('workbench ready-to-show');
+            restoreHuaweiLoginForWorkbenchWindow(`workbench ${reason}`);
             return;
         }
+        mainWindowShown = true;
         mainWindow.show();
-        logger.info('[startup] 主窗口已显示 (ready-to-show)');
+        logger.info(`[startup] 主窗口已显示 (${reason})`);
+    };
+
+    // 就绪后显示窗口，避免白屏；did-finish-load 兜底处理 Electron 偶发丢失 ready-to-show 的情况。
+    mainWindow.once('ready-to-show', () => {
+        clearMainWindowShowFallback();
+        showMainWindow('ready-to-show');
     });
 
     mainWindow.setMenu(null);
+    mainWindow.webContents.once('did-finish-load', () => {
+        mainWindowShowFallbackTimer = setTimeout(() => {
+            mainWindowShowFallbackTimer = undefined;
+            if (mainWindowShown || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+            logger.warn('[startup] ready-to-show 未触发，使用 did-finish-load 兜底显示主窗口');
+            showMainWindow('did-finish-load fallback');
+        }, MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS);
+    });
+    mainWindow.once('closed', clearMainWindowShowFallback);
     installWebviewHostHandlers(mainWindow);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
