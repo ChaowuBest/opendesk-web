@@ -120,7 +120,13 @@ async function syncPluginAgentsWithRegistry(): Promise<void> {
     }
     const sources: ApplicationAgents[] = Array.from(grouped, ([bundleName, agents]) => ({
         bundleName,
-        agents: agents.map((definition) => new PluginAgent(definition))
+        agents: agents.map((definition) => {
+            // 目录装载的 agent 定义（ExternalAgentDefinition）携带安装位置，
+            // 交给 PluginAgent 在 system prompt 中声明；内联注册的定义则无此字段
+            const location =
+                'location' in definition && typeof definition.location === 'string' ? definition.location : undefined;
+            return new PluginAgent(definition, location);
+        })
     }));
     await AgentRegistry.replacePluginAgents(sources);
 }
