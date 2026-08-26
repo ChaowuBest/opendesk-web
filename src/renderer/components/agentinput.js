@@ -16,7 +16,12 @@ import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
 import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
-import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
+import {
+    getSlashCommands,
+    filterSlashCommands,
+    executeSlashCommand,
+    refreshPluginSlashCommands
+} from './slash-command.ts';
 
 const fallbackSupportedFileExtensions = [
     'doc',
@@ -294,6 +299,7 @@ class AgentInput extends HTMLElement {
             this.loadModes(),
             this.loadExecutionNodes(),
             this.loadSkills(),
+            refreshPluginSlashCommands(),
             this.loadAttachmentFileSupport(),
             this.checkSpeechAvailable()
         ]).then(() => {
@@ -331,11 +337,26 @@ class AgentInput extends HTMLElement {
         this._unsubExecutionNodesChanged = window.nodeAPI?.onExecutionNodesChanged?.(() => {
             this.loadExecutionNodes().then(() => this.render());
         });
+        void window.applicationRegistryAPI
+            ?.ensureFullyLoaded?.()
+            .then(() =>
+                window.applicationRegistryAPI?.subscribeEvent?.(
+                    'pluginmgr',
+                    'pluginsChanged',
+                    () => void refreshPluginSlashCommands()
+                )
+            )
+            .then((unsubscribe) => {
+                if (this.isConnected) this._unsubPluginCommandsChanged = unsubscribe;
+                else unsubscribe?.();
+            })
+            .catch((error) => console.warn('Failed to subscribe plugin commands:', error));
     }
 
     disconnectedCallback() {
         this._unsubSettingChanged?.();
         this._unsubExecutionNodesChanged?.();
+        this._unsubPluginCommandsChanged?.();
     }
 
     async loadSettings() {
@@ -2035,11 +2056,11 @@ class AgentInput extends HTMLElement {
     _parseSlashCommandInput(message) {
         const trimmed = message.trim();
         if (!trimmed.startsWith('/')) return null;
-        const match = trimmed.match(/^\/([a-z0-9][-a-z0-9]*)(?:\s+([\s\S]*))?$/i);
+        const match = trimmed.match(/^\/([a-z0-9][a-z0-9._-]*)(?:\s+([\s\S]*))?$/i);
         if (!match) return null;
-        const name = match[1].toLowerCase();
-        if (!getSlashCommands().some((cmd) => cmd.name === name)) return null;
-        return { name, args: match[2] || '' };
+        const command = getSlashCommands().find((candidate) => candidate.name.toLowerCase() === match[1].toLowerCase());
+        if (!command) return null;
+        return { name: command.name, args: match[2] || '' };
     }
 
     /**
@@ -2051,7 +2072,7 @@ class AgentInput extends HTMLElement {
         const textBefore = value.substring(0, cursorPos);
 
         // 检测 / 技能补全：行首的 / 或者前面是空白的 /
-        const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+        const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][a-z0-9._-]*?)$|(?:^|\s)(\/)$/);
         if (slashMatch) {
             const prefix = slashMatch[1] || slashMatch[2];
             const nameFilter = prefix.slice(1).toLowerCase();
@@ -2390,7 +2411,7 @@ class AgentInput extends HTMLElement {
         if (this.autocompleteMode === 'slash') {
             if (item.isCommand) {
                 if (item.acceptsArgs) {
-                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][a-z0-9._-]*?)$|(?:^|\s)(\/)$/);
                     if (slashMatch) {
                         const matchStr = slashMatch[1] || slashMatch[2];
                         const matchStart = cursorPos - matchStr.length;
@@ -2411,7 +2432,7 @@ class AgentInput extends HTMLElement {
                 return;
             }
             // Skill（slash 模式下）：替换 /prefix 为 /skillname + 空格
-            const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+            const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][a-z0-9._-]*?)$|(?:^|\s)(\/)$/);
             if (slashMatch) {
                 const matchStr = slashMatch[1] || slashMatch[2];
                 const matchStart = cursorPos - matchStr.length;

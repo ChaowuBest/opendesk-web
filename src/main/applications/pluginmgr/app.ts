@@ -10,10 +10,12 @@ import { BaseApplication, type EventDecl } from '../base.js';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { registerPluginsCommand } from '../../tui/subcommands/plugins.js';
-import { getOpendeskDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
+import { GlobalState } from '../../aikernel/states/global.js';
 import { disposePluginHost, initializePluginHost, reloadPluginHost } from './runtime/bootstrap.js';
 import { discoverPlugins } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
+import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
 import { resolvePluginEntry } from './discovery/loader.js';
 import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
 import {
@@ -310,6 +312,35 @@ export class PluginMgrApplication extends BaseApplication {
                     (this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined)?.externalPaths ?? []
             })
         };
+    }
+
+    async listCommandsForUI() {
+        await initializePluginHost();
+        return getPluginHost()
+            .listCommands()
+            .map(({ definition }) => ({
+                name: definition.name,
+                description: definition.description,
+                acceptsArgs: pluginCommandAcceptsArgs(definition)
+            }));
+    }
+
+    async runCommandForUI(name: string, rawArgs: string, taskId?: string) {
+        await initializePluginHost();
+        const contribution = getPluginHost()
+            .listCommands()
+            .find((candidate) => candidate.definition.name === name);
+        if (!contribution) throw new Error(translate('plugin.command.notFound', { name }));
+        const task = taskId ? GlobalState.getInstance().taskManagerState.getTask(taskId) : undefined;
+        return await getPluginHost().runCommand(
+            contribution.id,
+            { raw: typeof rawArgs === 'string' ? rawArgs : '' },
+            {
+                taskId: task?.task_id,
+                workspace: task?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace(),
+                abort: task?.getAbortSignal() ?? new AbortController().signal
+            }
+        );
     }
 
     async beforeExit(): Promise<void> {

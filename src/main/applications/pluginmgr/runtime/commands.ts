@@ -20,11 +20,24 @@ export function syncPluginTuiCommands(tui: OpenDeskTUI, previous: ReadonlySet<st
             source: contribution.pluginId,
             execute: async (args) => {
                 const task = tui.getActiveTask();
-                const result = await getPluginHost().runCommand(contribution.id, args, {
-                    taskId: task?.task_id,
-                    workspace: task?.getWorkspace() || tui.workspace || undefined,
-                    abort: task?.getAbortSignal() ?? fallbackAbortSignal
-                });
+                const outcome = await getPluginHost().runCommand(
+                    contribution.id,
+                    { raw: args },
+                    {
+                        taskId: task?.task_id,
+                        workspace: task?.getWorkspace() || tui.workspace || undefined,
+                        abort: task?.getAbortSignal() ?? fallbackAbortSignal
+                    }
+                );
+                if (outcome.status === 'invalid_arguments') {
+                    tui.showTextPage(definition.name, `${outcome.message}\n\n${outcome.usage}`);
+                    return;
+                }
+                if (outcome.status === 'help') {
+                    tui.showTextPage(definition.name, outcome.text);
+                    return;
+                }
+                const result = outcome.result;
                 if (typeof result === 'string') {
                     tui.showTextPage(definition.name, result);
                 } else if (result) {

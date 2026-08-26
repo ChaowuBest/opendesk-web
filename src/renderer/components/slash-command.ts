@@ -15,6 +15,7 @@
  */
 
 import { showConfirmModal } from './confirmModal.js';
+import { showCommandResultDialog } from './commandResultDialog.js';
 import { createRendererTranslator } from '../locale.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import {
@@ -45,6 +46,12 @@ export interface SlashCommandDef {
     danger?: boolean;
     /** 是否需要在命令后继续输入参数 */
     acceptsArgs?: boolean;
+}
+
+export interface PluginSlashCommandSummary {
+    name: string;
+    description: string;
+    acceptsArgs: boolean;
 }
 
 export interface SlashCommandContext {
@@ -408,20 +415,109 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     }
 ];
 
+let pluginSlashCommands: SlashCommandDef[] = [];
+
+export function setPluginSlashCommands(commands: readonly PluginSlashCommandSummary[]): void {
+    pluginSlashCommands = commands.map((command) => ({
+        name: command.name,
+        description: command.description,
+        acceptsArgs: command.acceptsArgs,
+        icon: 'fa-solid fa-puzzle-piece',
+        iconBg: CMD_COLORS.bg,
+        iconColor: CMD_COLORS.text
+    }));
+}
+
+export async function refreshPluginSlashCommands(): Promise<void> {
+    const api = (window as any).applicationRegistryAPI;
+    if (!api?.callMainWorld) {
+        setPluginSlashCommands([]);
+        return;
+    }
+    try {
+        await api.ensureFullyLoaded?.();
+        const commands = (await api.callMainWorld('pluginmgr', 'listCommandsForUI')) as PluginSlashCommandSummary[];
+        setPluginSlashCommands(commands);
+    } catch (error) {
+        setPluginSlashCommands([]);
+        console.warn('Failed to load plugin slash commands:', error);
+    }
+}
+
 /**
  * 获取所有 GUI slash command 的定义列表
  */
 export function getSlashCommands(): SlashCommandDef[] {
-    return SLASH_COMMANDS;
+    return [...SLASH_COMMANDS, ...pluginSlashCommands];
 }
 
 /**
  * 根据用户输入的前缀过滤匹配的命令
  */
 export function filterSlashCommands(prefix: string): SlashCommandDef[] {
-    if (!prefix) return SLASH_COMMANDS;
+    const commands = getSlashCommands();
+    if (!prefix) return commands;
     const lower = prefix.toLowerCase();
-    return SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().startsWith(lower));
+    return commands.filter((cmd) => cmd.name.toLowerCase().startsWith(lower));
+}
+
+async function executePluginSlashCommand(
+    command: SlashCommandDef,
+    ctx: SlashCommandContext,
+    args: string
+): Promise<SlashCommandExecutionResult> {
+    try {
+        const outcome = await (window as any).applicationRegistryAPI.callMainWorld(
+            'pluginmgr',
+            'runCommandForUI',
+            command.name,
+            args,
+            ctx.currentTaskId
+        );
+        if (outcome.status === 'invalid_arguments') {
+            showCommandResultDialog({
+                commandName: command.name,
+                title: t('renderer.pluginCommand.invalidArguments'),
+                output: `${outcome.message}\n\n${outcome.usage}`,
+                variant: 'error'
+            });
+            return SLASH_PRESERVE_INPUT;
+        }
+        if (outcome.status === 'help') {
+            showCommandResultDialog({
+                commandName: command.name,
+                title: t('renderer.pluginCommand.help'),
+                output: outcome.text,
+                variant: 'info'
+            });
+            return SLASH_CLEAR_INPUT;
+        }
+        const result = outcome.result;
+        if (typeof result === 'string') {
+            showCommandResultDialog({
+                commandName: command.name,
+                output: result,
+                variant: 'success'
+            });
+        } else if (result) {
+            showCommandResultDialog({
+                commandName: command.name,
+                title: result.title,
+                output: result.output,
+                variant: 'success'
+            });
+        }
+        return SLASH_CLEAR_INPUT;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        showCommandResultDialog({
+            commandName: command.name,
+            title: t('renderer.pluginCommand.failed'),
+            output: message,
+            variant: 'error'
+        });
+        return SLASH_PRESERVE_INPUT;
+    }
 }
 
 /**
@@ -432,6 +528,9 @@ export async function executeSlashCommand(
     ctx: SlashCommandContext,
     args = ''
 ): Promise<SlashCommandExecutionResult> {
+    const pluginCommand = pluginSlashCommands.find((command) => command.name.toLowerCase() === name.toLowerCase());
+    if (pluginCommand) return executePluginSlashCommand(pluginCommand, ctx, args);
+
     switch (name) {
         case 'new':
             ctx.globalControlAPI?.openHomePage();

@@ -65,6 +65,15 @@ export const zhCn: Record<string, string> = {
     'renderer.workspacePicker.home': '家目录',
     'renderer.workspacePicker.sandbox': '应用沙箱',
 
+    // Renderer - 插件命令结果
+    'renderer.pluginCommand.output': '输出',
+    'renderer.pluginCommand.copy': '复制输出',
+    'renderer.pluginCommand.copied': '已复制',
+    'renderer.pluginCommand.close': '关闭',
+    'renderer.pluginCommand.help': '命令帮助',
+    'renderer.pluginCommand.invalidArguments': '命令参数无效',
+    'renderer.pluginCommand.failed': '命令执行失败',
+
     // Renderer - 文件选择器（工作空间选择器内部使用）
     'renderer.fileSelector.emptyDrive': '未检测到磁盘',
     'renderer.fileSelector.emptyDir': '空目录',
@@ -206,6 +215,7 @@ export const zhCn: Record<string, string> = {
     'plugin.command.run.description': '执行一个插件命令',
     'plugin.command.empty': '当前没有可用的插件命令。',
     'plugin.command.notFound': '未找到插件命令：${name}',
+    'plugin.command.workspaceNotFound': '工作空间不存在：${path}',
     'plugin.tool.list.description': '列出当前进程已加载的插件工具',
     'plugin.tool.call.description': '直接调用插件工具并执行工具 Hook',
     'plugin.tool.empty': '当前没有可用的插件工具。',

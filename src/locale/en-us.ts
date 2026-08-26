@@ -66,6 +66,15 @@ export const enUs: Record<string, string> = {
     'renderer.workspacePicker.home': 'Home',
     'renderer.workspacePicker.sandbox': 'App sandbox',
 
+    // Renderer - Plugin command result
+    'renderer.pluginCommand.output': 'Output',
+    'renderer.pluginCommand.copy': 'Copy output',
+    'renderer.pluginCommand.copied': 'Copied',
+    'renderer.pluginCommand.close': 'Close',
+    'renderer.pluginCommand.help': 'Command help',
+    'renderer.pluginCommand.invalidArguments': 'Invalid command arguments',
+    'renderer.pluginCommand.failed': 'Command failed',
+
     // Renderer - File Selector (used by workspace picker)
     'renderer.fileSelector.emptyDrive': 'No drives detected',
     'renderer.fileSelector.emptyDir': 'Empty',
@@ -212,6 +221,7 @@ export const enUs: Record<string, string> = {
     'plugin.command.run.description': 'Run a plugin command',
     'plugin.command.empty': 'No plugin commands are available.',
     'plugin.command.notFound': 'Plugin command not found: ${name}',
+    'plugin.command.workspaceNotFound': 'Workspace does not exist: ${path}',
     'plugin.tool.list.description': 'List plugin tools loaded in the current process',
     'plugin.tool.call.description': 'Call a plugin tool directly and run its tool hooks',
     'plugin.tool.empty': 'No plugin tools are available.',

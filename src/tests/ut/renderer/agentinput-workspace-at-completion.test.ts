@@ -55,7 +55,8 @@ describe('agent-input @ file completion follows workspace switch', () => {
         await jest.unstable_mockModule('../../../renderer/components/slash-command.ts', () => ({
             getSlashCommands: jest.fn(() => []),
             filterSlashCommands: jest.fn(() => []),
-            executeSlashCommand: jest.fn()
+            executeSlashCommand: jest.fn(),
+            refreshPluginSlashCommands: jest.fn(async () => {})
         }));
 
         await import('../../../renderer/components/agentinput.js');

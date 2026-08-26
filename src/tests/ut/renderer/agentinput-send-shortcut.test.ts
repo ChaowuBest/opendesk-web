@@ -65,7 +65,8 @@ describe('agent-input send shortcut', () => {
         await jest.unstable_mockModule('../../../renderer/components/slash-command.ts', () => ({
             getSlashCommands: jest.fn(() => []),
             filterSlashCommands: jest.fn(() => []),
-            executeSlashCommand
+            executeSlashCommand,
+            refreshPluginSlashCommands: jest.fn(async () => {})
         }));
 
         await import('../../../renderer/components/agentinput.js');

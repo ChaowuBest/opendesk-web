@@ -33,6 +33,8 @@ import { resolvePluginDisplayName } from '../../../../packages/plugin-sdk/src/in
 import { getLocale, t } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import process from 'process';
+import fs from 'fs';
+import path from 'path';
 
 function applyGlobalOptions(command: Command): void {
     const configDirectory = command.optsWithGlobals().configDirectory;
@@ -44,6 +46,14 @@ function applyGlobalOptions(command: Command): void {
 function getWorkspaceOption(command: Command): string | undefined {
     const workspace = command.optsWithGlobals().workspace;
     return typeof workspace === 'string' && workspace ? workspace : undefined;
+}
+
+function resolveCommandWorkspace(command: Command): string | undefined {
+    const workspace = getWorkspaceOption(command);
+    if (!workspace) return undefined;
+    const resolved = path.resolve(workspace);
+    if (!fs.existsSync(resolved)) throw new Error(t('plugin.command.workspaceNotFound', { path: resolved }));
+    return resolved;
 }
 
 function parseCapabilities(values: string[]): PluginCapability[] {
@@ -230,21 +240,36 @@ export function registerPluginsCommand(prog: Command): void {
     pluginsCmd
         .command('run <name> [args...]')
         .description(t('plugin.command.run.description'))
+        .allowUnknownOption()
+        .helpOption(false)
         .action(async (name: string, args: string[], _options: unknown, command: Command) => {
             useCliTransport();
             applyGlobalOptions(command);
-            const workspace = command.optsWithGlobals().workspace;
-            const effectiveWorkspace = typeof workspace === 'string' ? workspace : undefined;
+            const effectiveWorkspace = resolveCommandWorkspace(command);
             try {
                 await initializePluginHost();
                 const contribution = getPluginHost()
                     .listCommands()
                     .find((candidate) => candidate.definition.name === name);
                 if (!contribution) throw new Error(t('plugin.command.notFound', { name }));
-                const result = await getPluginHost().runCommand(contribution.id, args.join(' '), {
-                    workspace: effectiveWorkspace,
-                    abort: new AbortController().signal
-                });
+                const outcome = await getPluginHost().runCommand(
+                    contribution.id,
+                    { raw: args.join(' '), argv: args },
+                    {
+                        workspace: effectiveWorkspace,
+                        abort: new AbortController().signal
+                    }
+                );
+                if (outcome.status === 'invalid_arguments') {
+                    console.error(`${outcome.message}\n\n${outcome.usage}`);
+                    process.exitCode = 1;
+                    return;
+                }
+                if (outcome.status === 'help') {
+                    console.log(outcome.text.trimEnd());
+                    return;
+                }
+                const result = outcome.result;
                 if (typeof result === 'string') console.log(result);
                 else if (result) console.log(result.output);
             } finally {

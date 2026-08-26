@@ -185,11 +185,44 @@ export type PluginCommandResult =
           output: string;
       };
 
-export interface PluginCommandDefinition {
+export type PluginCommandArgumentValueType = 'string' | 'number';
+
+export interface PluginCommandValueOptions<Value extends string | number | boolean = string | number | boolean> {
+    choices?: readonly Extract<Value, string | number>[];
+    defaultValue?: Value | readonly Exclude<Value, boolean>[];
+}
+
+export interface PluginCommandArgumentOptions extends PluginCommandValueOptions<string | number> {
+    type?: PluginCommandArgumentValueType;
+}
+
+export interface PluginCommandOptionOptions extends PluginCommandValueOptions {
+    type?: PluginCommandArgumentValueType | 'boolean';
+}
+
+export interface PluginCommandArgsBuilder {
+    argument(flags: string, description?: string, options?: PluginCommandArgumentOptions): this;
+    option(flags: string, description?: string, options?: PluginCommandOptionOptions): this;
+    requiredOption(flags: string, description?: string, options?: PluginCommandOptionOptions): this;
+}
+
+export type PluginParsedCommandArgs = Record<string, unknown>;
+
+export interface PluginTextCommandDefinition {
     name: string;
     description: string;
+    args?: undefined;
     execute(args: string, context: PluginCommandContext): PluginCommandResult | Promise<PluginCommandResult>;
 }
+
+export interface PluginStructuredCommandDefinition<Args extends PluginParsedCommandArgs = PluginParsedCommandArgs> {
+    name: string;
+    description: string;
+    args(builder: PluginCommandArgsBuilder): void;
+    execute(args: Args, context: PluginCommandContext): PluginCommandResult | Promise<PluginCommandResult>;
+}
+
+export type PluginCommandDefinition = PluginTextCommandDefinition | PluginStructuredCommandDefinition;
 
 export interface PluginApplicationEvent {
     application: string;
@@ -507,7 +540,10 @@ export interface PluginContext {
         registerDirectory(relativePath: string): PluginRegistration;
     };
     readonly commands: {
-        register(definition: PluginCommandDefinition): PluginRegistration;
+        register(definition: PluginTextCommandDefinition): PluginRegistration;
+        register<Args extends PluginParsedCommandArgs>(
+            definition: PluginStructuredCommandDefinition<Args>
+        ): PluginRegistration;
     };
     readonly browser: {
         readonly hint: {

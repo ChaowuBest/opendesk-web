@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { jest } from '@jest/globals';
 import { PluginHookError, PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 
@@ -75,6 +76,31 @@ describe('PluginHost', () => {
         expect(host.listCommands()).toEqual([]);
         expect(await host.trigger('chat.headers', {}, { headers: {} })).toEqual({ headers: {} });
     });
+
+    test.each(['Deploy', 'deploy_status', 'group.deploy', 'command-names.deploy'])(
+        'Command 本地名称只接受小写 kebab-case：%s',
+        async (name) => {
+            const host = new PluginHost();
+            const entry = await host.activate(
+                definePlugin({
+                    id: 'command-names',
+                    setup(ctx) {
+                        ctx.commands.register({ name, description: 'Invalid command name', execute() {} });
+                    }
+                }),
+                { origin: 'test:command-names' }
+            );
+
+            expect(entry.status).toBe('error');
+            expect(entry.diagnostics).toContainEqual(
+                expect.objectContaining({
+                    code: 'plugin.setup_failed',
+                    detail: `plugin.command_name_invalid:${name}`
+                })
+            );
+            expect(host.listCommands()).toEqual([]);
+        }
+    );
 
     test('按插件激活顺序执行 hook，并共享 output 修改', async () => {
         const host = new PluginHost();
@@ -480,16 +506,54 @@ describe('PluginHost', () => {
         const contribution = host.listCommands()[0];
         expect(contribution.definition.name).toBe('workspace-command.status');
         await expect(
-            host.runCommand(contribution.id, 'verbose', {
-                workspace: '/workspace/one',
-                abort
-            })
-        ).resolves.toBe('/workspace/one:verbose:true');
+            host.runCommand(
+                contribution.id,
+                { raw: 'verbose', argv: ['verbose'] },
+                {
+                    workspace: '/workspace/one',
+                    abort
+                }
+            )
+        ).resolves.toEqual({ status: 'success', result: '/workspace/one:verbose:true' });
 
         await host.deactivate('workspace-command');
-        await expect(host.runCommand(contribution.id, '', { workspace: '/workspace/one', abort })).rejects.toThrow(
-            'plugin.command_not_found'
+        await expect(
+            host.runCommand(contribution.id, { raw: '', argv: [] }, { workspace: '/workspace/one', abort })
+        ).rejects.toThrow('plugin.command_not_found');
+    });
+
+    test('structured command parses input before execution and skips callback on failure', async () => {
+        const host = new PluginHost();
+        const execute = jest.fn((args: unknown) => JSON.stringify(args));
+        await host.activate(
+            definePlugin({
+                id: 'structured-command',
+                setup(ctx) {
+                    ctx.commands.register({
+                        name: 'deploy',
+                        description: 'Deploy',
+                        args(command) {
+                            command.argument('<environment>').option('-f, --force');
+                        },
+                        execute
+                    });
+                }
+            }),
+            { origin: 'test:structured-command' }
         );
+        const contribution = host.listCommands()[0];
+        const context = { workspace: '/workspace/one', abort: new AbortController().signal };
+
+        await expect(
+            host.runCommand(contribution.id, { raw: 'production --force', argv: ['production', '--force'] }, context)
+        ).resolves.toMatchObject({ status: 'success' });
+        expect(execute).toHaveBeenCalledWith({ environment: 'production', force: true }, context);
+
+        execute.mockClear();
+        await expect(host.runCommand(contribution.id, { raw: '', argv: [] }, context)).resolves.toMatchObject({
+            status: 'invalid_arguments'
+        });
+        expect(execute).not.toHaveBeenCalled();
     });
 
     test('application event subscription 支持过滤、故障隔离和撤销', async () => {
