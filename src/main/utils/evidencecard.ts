@@ -9,12 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { jsonrepair } from 'jsonrepair';
 import {
     AssistantMessage,
-    ChatContext,
     CompactSeparatorMessage,
-    ToolCall,
     UserMessage,
+    type ChatContext,
+    type ToolCall,
     type UsageFields
 } from '../aikernel/messages.js';
 import type { ToolResultPreviewOptions } from '../aikernel/compaction/tool-results.js';
@@ -35,7 +38,304 @@ export type EvidenceCardEvidenceKind =
     | 'full_file'
     | 'multi_file_context'
     | 'llm_context'
+    | 'search_result'
     | 'tool_observation';
+
+type EvidenceToolCall = Pick<ToolCall, 'tool_name' | 'args_string' | 'args_object' | 'tool' | 'status'>;
+
+interface RelevantEvidenceToolInvocation {
+    kind: 'file' | 'shell';
+    toolName: string;
+    args: Record<string, unknown>;
+}
+
+interface EvidenceToolSemantics {
+    target: string;
+    evidenceKind: EvidenceCardEvidenceKind;
+    phase: EvidenceCardPhase;
+}
+
+const FILE_EVIDENCE_TOOL_NAMES = new Set(['readfile', 'extracttext', 'globfiles', 'grepfiles', 'semanticsearch']);
+const SHELL_EVIDENCE_TOOL_NAMES = new Set(['executebash', 'executezsh', 'executepowershell']);
+const CONFIG_FILE_PATTERN = /(?:^|\/)(?:package\.json|pyproject\.toml|dockerfile|[^/]+\.(?:ya?ml|toml|ini|cfg|conf))$/i;
+const SHELL_SEARCH_COMMAND_PATTERN =
+    /^(?:rg|ripgrep|grep|find|findstr|fd|ls|dir|get-childitem|select-string|git\s+(?:ls-files|grep))\b/i;
+const SHELL_READ_COMMAND_PATTERN =
+    /^(?:get-content|cat|nl|type|head|tail|git\s+(?:show|log|blame))\b|^sed\s+(?:-[a-z]*n\b|--quiet\b|--silent\b)/i;
+const SHELL_CONTROL_OR_REDIRECT_PATTERN = /&&|\|\||;|[\r\n]|\$\(|`|>{1,2}|(?:^|[^&])&(?!&)/;
+const MUTATING_FIND_PATTERN = /^find\b.*(?:-delete|-exec|-execdir|-ok|-okdir)\b/i;
+const SHELL_READONLY_PIPE_COMMANDS = new Set([
+    'rg',
+    'ripgrep',
+    'grep',
+    'findstr',
+    'select-string',
+    'get-content',
+    'cat',
+    'nl',
+    'type',
+    'head',
+    'tail',
+    'sed',
+    'sort',
+    'uniq',
+    'wc',
+    'cut',
+    'tr',
+    'select-object',
+    'where-object',
+    'sort-object',
+    'format-table',
+    'out-string',
+    'measure-object'
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseEvidenceObject(value: unknown): Record<string, unknown> {
+    if (value === undefined || value === null) return {};
+    if (isRecord(value)) return value;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return {};
+        const parsed = JSON.parse(jsonrepair(trimmed)) as unknown;
+        if (parsed === null) return {};
+        if (isRecord(parsed)) return parsed;
+    }
+    throw new Error('证据工具参数无法解析为对象');
+}
+
+function readString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value.trim();
+        }
+    }
+    return undefined;
+}
+
+function readNumber(record: Record<string, unknown>, ...keys: string[]): number | undefined {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return undefined;
+}
+
+function stableSerialize(value: unknown, seen: Set<object> = new Set()): string {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+    if (typeof value !== 'object') return JSON.stringify(String(value));
+    if (seen.has(value)) return '"[Circular]"';
+    seen.add(value);
+    if (Array.isArray(value)) {
+        const result = '[' + value.map((item) => stableSerialize(item, seen)).join(',') + ']';
+        seen.delete(value);
+        return result;
+    }
+    const record = value as Record<string, unknown>;
+    const result =
+        '{' +
+        Object.keys(record)
+            .sort()
+            .map((key) => JSON.stringify(key) + ':' + stableSerialize(record[key], seen))
+            .join(',') +
+        '}';
+    seen.delete(value);
+    return result;
+}
+
+function digestEvidenceValue(value: unknown): string {
+    return createHash('sha256').update(stableSerialize(value), 'utf8').digest('hex').slice(0, 16);
+}
+
+function limitTarget(target: string): string {
+    if (target.length <= 240) return target;
+    return target.slice(0, 215) + ':hash=' + digestEvidenceValue(target);
+}
+
+function normalizePath(value: string): string {
+    const slashed = value.trim().replace(/\\/g, '/');
+    const isUncPath = slashed.startsWith('//');
+    const normalized = path.posix.normalize(slashed);
+    const withUncPrefix = isUncPath && !normalized.startsWith('//') ? '/' + normalized : normalized;
+    return withUncPrefix.replace(/^([a-z]):/i, (_match, drive: string) => drive.toUpperCase() + ':');
+}
+
+function parseEvidenceToolCallArgs(toolCall: EvidenceToolCall): Record<string, unknown> {
+    if (isRecord(toolCall.args_object)) {
+        if (Object.keys(toolCall.args_object).length > 0 || !toolCall.args_string) {
+            return toolCall.args_object;
+        }
+    }
+    if (!toolCall.args_string) return {};
+    try {
+        return parseEvidenceObject(toolCall.args_string);
+    } catch {
+        return {};
+    }
+}
+
+function hasUnsafeShellComposition(command: string): boolean {
+    if (SHELL_CONTROL_OR_REDIRECT_PATTERN.test(command) || MUTATING_FIND_PATTERN.test(command)) {
+        return true;
+    }
+    return command
+        .split('|')
+        .slice(1)
+        .some((segment) => {
+            const commandName = segment
+                .trim()
+                .match(/^([a-z][\w-]*)/i)?.[1]
+                .toLowerCase();
+            return !commandName || !SHELL_READONLY_PIPE_COMMANDS.has(commandName);
+        });
+}
+
+function isQualifiedTool(toolCall: EvidenceToolCall, toolsetName: string, toolName: string): boolean {
+    const qualifiedName = toolCall.tool_name?.trim().toLowerCase();
+    const expectedName = `${toolsetName}-${toolName}`.toLowerCase();
+    if (qualifiedName === expectedName) return true;
+    return qualifiedName === toolName.toLowerCase() && toolCall.tool?.name.toLowerCase() === toolName.toLowerCase();
+}
+
+function resolveRelevantEvidenceToolInvocation(toolCall: EvidenceToolCall): RelevantEvidenceToolInvocation | undefined {
+    const args = parseEvidenceToolCallArgs(toolCall);
+
+    for (const toolName of FILE_EVIDENCE_TOOL_NAMES) {
+        if (isQualifiedTool(toolCall, 'filemgr', toolName)) {
+            return { kind: 'file', toolName, args };
+        }
+    }
+    for (const toolName of SHELL_EVIDENCE_TOOL_NAMES) {
+        if (isQualifiedTool(toolCall, 'terminal', toolName)) {
+            return { kind: 'shell', toolName, args };
+        }
+    }
+
+    if (!isQualifiedTool(toolCall, 'skill-manager', 'callskilltool')) {
+        return undefined;
+    }
+    const innerToolName = readString(args, 'toolName')?.toLowerCase();
+    if (
+        !innerToolName ||
+        (!FILE_EVIDENCE_TOOL_NAMES.has(innerToolName) && !SHELL_EVIDENCE_TOOL_NAMES.has(innerToolName))
+    ) {
+        return undefined;
+    }
+    let innerArgs: Record<string, unknown>;
+    try {
+        innerArgs = parseEvidenceObject(args.toolArgs);
+    } catch {
+        return undefined;
+    }
+    return {
+        kind: FILE_EVIDENCE_TOOL_NAMES.has(innerToolName) ? 'file' : 'shell',
+        toolName: innerToolName,
+        args: innerArgs
+    };
+}
+
+function resolveFileEvidenceSemantics(invocation: RelevantEvidenceToolInvocation): EvidenceToolSemantics | undefined {
+    const args = invocation.args;
+    const rawPath = readString(args, 'file_path', 'filePath');
+    const filePath = rawPath ? normalizePath(rawPath) : undefined;
+
+    if (invocation.toolName === 'readfile') {
+        if (!filePath) return undefined;
+        const offset = readNumber(args, 'offset');
+        const limit = readNumber(args, 'limit');
+        const range =
+            offset !== undefined || limit !== undefined
+                ? `lines=${offset ?? 1}..${limit !== undefined ? (offset ?? 1) + limit - 1 : 'end'}`
+                : 'full';
+        return {
+            target: limitTarget(`file:read:${filePath}:${range}`),
+            evidenceKind:
+                range !== 'full' ? 'function_body' : CONFIG_FILE_PATTERN.test(filePath) ? 'config_block' : 'full_file',
+            phase: 'inspect'
+        };
+    }
+    if (invocation.toolName === 'extracttext') {
+        if (!filePath) return undefined;
+        return {
+            target: limitTarget(`file:extractText:${filePath}:full`),
+            evidenceKind: 'full_file',
+            phase: 'inspect'
+        };
+    }
+    if (invocation.toolName === 'globfiles') {
+        const pattern = readString(args, 'pattern');
+        if (!pattern) return undefined;
+        const root = readString(args, 'path');
+        return {
+            target: limitTarget(
+                `file:glob:${root ? normalizePath(root) : 'workspace'}:query=${digestEvidenceValue(args)}`
+            ),
+            evidenceKind: 'repo_map',
+            phase: 'localize'
+        };
+    }
+    if (invocation.toolName === 'grepfiles' || invocation.toolName === 'semanticsearch') {
+        const query = readString(args, invocation.toolName === 'grepfiles' ? 'pattern' : 'query');
+        if (!query) return undefined;
+        const root = readString(args, 'path');
+        return {
+            target: limitTarget(
+                `file:${invocation.toolName}:${root ? normalizePath(root) : 'workspace'}:query=${digestEvidenceValue(args)}`
+            ),
+            evidenceKind: invocation.toolName === 'grepfiles' ? 'symbol_signature' : 'search_result',
+            phase: 'localize'
+        };
+    }
+    return undefined;
+}
+
+function resolveShellEvidenceSemantics(invocation: RelevantEvidenceToolInvocation): EvidenceToolSemantics | undefined {
+    const command = readString(invocation.args, 'command');
+    if (!command || hasUnsafeShellComposition(command)) {
+        return undefined;
+    }
+    const normalizedCommand = command.trim();
+    const isSearch = SHELL_SEARCH_COMMAND_PATTERN.test(normalizedCommand);
+    const isRead = !isSearch && SHELL_READ_COMMAND_PATTERN.test(normalizedCommand);
+    if (!isSearch && !isRead) {
+        return undefined;
+    }
+    const cwd = readString(invocation.args, 'workingDirectory', 'cwd');
+    return {
+        target: limitTarget(
+            `shell:${invocation.toolName}:cwd=${cwd ? normalizePath(cwd) : 'default'}:command=${digestEvidenceValue(command)}`
+        ),
+        evidenceKind: isSearch
+            ? /^(?:rg|ripgrep|grep|findstr|select-string|git\s+grep)\b/i.test(normalizedCommand)
+                ? 'symbol_signature'
+                : 'repo_map'
+            : 'tool_observation',
+        phase: isSearch ? 'localize' : 'inspect'
+    };
+}
+
+export function resolveEvidenceToolSemantics(toolCall: EvidenceToolCall): EvidenceToolSemantics | undefined {
+    const invocation = resolveRelevantEvidenceToolInvocation(toolCall);
+    if (!invocation) return undefined;
+
+    const semantics =
+        invocation.kind === 'file'
+            ? resolveFileEvidenceSemantics(invocation)
+            : resolveShellEvidenceSemantics(invocation);
+    if (!semantics || toolCall.status !== 'error') {
+        return semantics;
+    }
+    return { ...semantics, evidenceKind: 'error_trace', phase: 'localize' };
+}
 
 export type EvidenceCardLedgerSource = 'tool' | 'llm';
 export type EvidenceCardDecision = 'collect' | 'reuse' | 'compress' | 'stop' | 'replan';
@@ -130,6 +430,7 @@ const ALLOWED_EVIDENCE_KINDS: EvidenceCardEvidenceKind[] = [
     'full_file',
     'multi_file_context',
     'llm_context',
+    'search_result',
     'tool_observation'
 ];
 
@@ -459,23 +760,6 @@ function truncateText(text: string, maxChars: number): string {
     return normalized.slice(0, Math.max(0, maxChars - 3)) + '...';
 }
 
-function parseArgsObject(toolCall: ToolCall): Record<string, unknown> {
-    if (toolCall.args_object && typeof toolCall.args_object === 'object') {
-        const argsObject = toolCall.args_object as Record<string, unknown>;
-        if (Object.keys(argsObject).length > 0 || !toolCall.args_string) {
-            return argsObject;
-        }
-    }
-    if (!toolCall.args_string) {
-        return {};
-    }
-    try {
-        return JSON.parse(toolCall.args_string) as Record<string, unknown>;
-    } catch {
-        return {};
-    }
-}
-
 function getCommand(args: Record<string, unknown>): string {
     const command = args.command;
     return typeof command === 'string' ? command : '';
@@ -491,117 +775,6 @@ function summarizeArgs(args: Record<string, unknown>): string {
     } catch {
         return '';
     }
-}
-
-function isLikelyAnswerArtifactCommand(command: string): boolean {
-    const normalized = command.toLowerCase();
-    return (
-        /answer\.(json|txt|md|yaml|yml)/.test(normalized) &&
-        /(cat\s*>|set-content|out-file|write-output|echo\s+)/.test(normalized)
-    );
-}
-
-function classifyEvidenceKind(args: Record<string, unknown>, resultText: string): EvidenceCardEvidenceKind {
-    const command = getCommand(args).toLowerCase();
-    const result = resultText.toLowerCase();
-
-    if (/git\s+diff|apply_patch|patch\s+-p|diff\s+-u/.test(command)) {
-        return 'edit_region';
-    }
-    if (
-        /\b(pytest|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|test\.sh)\b/.test(
-            command
-        )
-    ) {
-        return /traceback|assertionerror|\berror\b|\bfailed\b|\bfailing\b|exception/.test(result)
-            ? 'error_trace'
-            : 'failing_test';
-    }
-    if (/traceback|assertionerror|\berror\b|\bfailed\b|\bfailing\b|exception/.test(result)) {
-        return 'error_trace';
-    }
-    if (/rg\s+--files|git\s+ls-files|get-childitem|\bls\b|\bfind\b/.test(command)) {
-        return 'repo_map';
-    }
-    if (/\brg\b|grep|select-string|ripgrep/.test(command)) {
-        if (/caller|callee|references|usages|call sites|callers/.test(command)) {
-            return 'caller_callee';
-        }
-        return 'symbol_signature';
-    }
-    if (/package\.json|pyproject\.toml|dockerfile|compose\.ya?ml|\.ya?ml|\.toml|\.ini|\.cfg|\.conf/.test(command)) {
-        return 'config_block';
-    }
-    if (/get-content|\bcat\b|\bsed\b|\bnl\b|\btype\b|\bhead\b|\btail\b/.test(command)) {
-        if (/head|tail|select-object|-totalcount|-first|-last|sed\s+-n|nl\s+-ba/.test(command)) {
-            return 'function_body';
-        }
-        return 'full_file';
-    }
-    return 'tool_observation';
-}
-
-function classifyPhase(
-    evidenceKind: EvidenceCardEvidenceKind,
-    args: Record<string, unknown>,
-    resultText: string
-): EvidenceCardPhase {
-    const command = getCommand(args).toLowerCase();
-    const result = resultText.toLowerCase();
-    if (evidenceKind === 'edit_region' || /git\s+diff|apply_patch|patch\s+-p/.test(command)) {
-        return 'patch';
-    }
-    if (
-        evidenceKind === 'failing_test' ||
-        evidenceKind === 'error_trace' ||
-        /\b(pytest|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|test\.sh)\b/.test(
-            command
-        )
-    ) {
-        return /pass|passed|success/.test(result) && !/fail|failed|error/.test(result) ? 'verify' : 'localize';
-    }
-    if (evidenceKind === 'repo_map' || evidenceKind === 'symbol_signature') {
-        return 'localize';
-    }
-    if (
-        evidenceKind === 'function_body' ||
-        evidenceKind === 'caller_callee' ||
-        evidenceKind === 'config_block' ||
-        evidenceKind === 'full_file'
-    ) {
-        return 'inspect';
-    }
-    return 'other';
-}
-
-function extractPathLikeTarget(command: string): string | undefined {
-    const patterns = [
-        /(?:Get-Content|cat|type|nl\s+-ba)\s+(?:-Path\s+|-LiteralPath\s+)?['"]?([^\s'"]+)/i,
-        /(?:head|tail)\s+(?:-n\s+\d+\s+|-\d+\s+)?['"]?([^\s'"]+)/i,
-        /sed\s+-n\s+['"]?[^\s'"]+['"]?\s+['"]?([^\s'"]+)/i,
-        /(?:rg|grep|Select-String).*?\s+['"]?([^\s'"]+\.(?:ts|tsx|js|jsx|py|java|go|rs|cpp|c|h|hpp|cs|rb|php|json|ya?ml|toml|ini|cfg|conf))['"]?/i,
-        /find\s+['"]?([^\s'"]+)['"]?\s+/i
-    ];
-    for (const pattern of patterns) {
-        const match = command.match(pattern);
-        if (match?.[1] && !/^[-\d]+$/.test(match[1])) {
-            return match[1];
-        }
-    }
-    return undefined;
-}
-
-function extractTarget(args: Record<string, unknown>, evidenceKind: EvidenceCardEvidenceKind): string {
-    const command = getCommand(args);
-    const workingDirectory = typeof args.workingDirectory === 'string' ? args.workingDirectory : '';
-    const pathTarget = extractPathLikeTarget(command);
-    if (pathTarget) {
-        return pathTarget;
-    }
-    if (evidenceKind === 'repo_map' && workingDirectory) {
-        return workingDirectory;
-    }
-    return truncateText(command || workingDirectory || 'unknown', 180);
 }
 
 function estimatePlannedBudget(phase: EvidenceCardPhase, evidenceKind: EvidenceCardEvidenceKind): number {
@@ -752,27 +925,31 @@ function appendLedgerEntry(
 }
 
 export function recordEvidenceCardToolCall(
-    task: { evidencecard_state?: EvidenceCardState; enableEvidenceCard?: boolean },
+    task: {
+        evidencecard_state?: EvidenceCardState;
+        enableEvidenceCard?: boolean;
+    },
     toolCall: ToolCall
 ): void {
     if (!isTaskEvidenceCardEnabled(task)) {
+        return;
+    }
+    const semantics = resolveEvidenceToolSemantics(toolCall);
+    if (!semantics) {
         return;
     }
     const settings = getEvidenceCardSettings(true);
     const state = ensureEvidenceCardState(task);
     state.enabled = true;
 
-    const args = parseArgsObject(toolCall);
-    const command = getCommand(args);
-    if (isLikelyAnswerArtifactCommand(command)) {
-        return;
-    }
-
+    const args = parseEvidenceToolCallArgs(toolCall);
     const resultText = typeof toolCall.result === 'string' ? toolCall.result : '';
-    const evidenceKind = classifyEvidenceKind(args, resultText);
-    const phase = classifyPhase(evidenceKind, args, resultText);
-    const target = extractTarget(args, evidenceKind);
-    const previousTargetCount = state.target_counts[target] ?? 0;
+    const evidenceKind = semantics.evidenceKind;
+    const phase = semantics.phase;
+    const target = semantics.target;
+    const repeatEligible = toolCall.status === 'success';
+    const previousTargetCount = repeatEligible ? (state.target_counts[target] ?? 0) : 0;
+    const repeatedEvidence = repeatEligible && previousTargetCount > 0;
     const argsSummary = summarizeArgs(args);
     const originalChars = toolCall.result_storage?.original_chars ?? resultText.length;
     const visibleChars = resultText.length;
@@ -788,7 +965,9 @@ export function recordEvidenceCardToolCall(
         0,
         state.total_original_tool_result_chars - state.total_visible_tool_result_chars
     );
-    state.target_counts[target] = previousTargetCount + 1;
+    if (repeatEligible) {
+        state.target_counts[target] = previousTargetCount + 1;
+    }
 
     appendLedgerEntry(state, settings, {
         id: 'ec_' + String(state.ledger.length + 1) + '_' + Date.now().toString(36),
@@ -801,8 +980,8 @@ export function recordEvidenceCardToolCall(
         planned_budget_tokens: plannedBudget,
         actual_tokens: actualTokens,
         evidence_score: evidenceScore,
-        decision: previousTargetCount > 0 ? 'reuse' : actualTokens > plannedBudget ? 'compress' : 'collect',
-        repeated_evidence: previousTargetCount > 0,
+        decision: repeatedEvidence ? 'reuse' : actualTokens > plannedBudget ? 'compress' : 'collect',
+        repeated_evidence: repeatedEvidence,
         stop_rule: inferStopRule(phase, evidenceKind),
         args_summary: argsSummary,
         tool_name: toolCall.tool_name,
