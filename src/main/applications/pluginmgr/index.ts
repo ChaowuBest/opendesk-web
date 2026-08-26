@@ -6,13 +6,19 @@
 export {
     definePlugin,
     tool,
+    actionHint,
+    textHint,
     OPENDESK_PLUGIN_API_VERSION,
     OPENDESK_PLUGIN_CAPABILITIES,
     OPENDESK_PLUGIN_HOOK_NAMES
 } from '../../../../packages/plugin-sdk/src/index.js';
 export type {
     OpenDeskPlugin,
+    ActionHint,
     AgentDefinition,
+    BrowserContext,
+    BrowserHint,
+    BrowserHintGenerator,
     PluginApplicationEvent,
     PluginApplicationEventCallback,
     PluginApplicationEventFilter,
@@ -40,7 +46,8 @@ export type {
     PluginStaticResources,
     PluginMcpRemoteServerDefinition,
     PluginMcpServerDefinition,
-    PluginMcpStdioServerDefinition
+    PluginMcpStdioServerDefinition,
+    TextHint
 } from '../../../../packages/plugin-sdk/src/index.js';
 export { PluginHost, getPluginHost } from './runtime/host.js';
 export type {

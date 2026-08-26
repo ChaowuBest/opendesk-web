@@ -36,6 +36,7 @@ import {
     BrowserGoForwardTool,
     BrowserReloadTool,
     BrowserEvaluateTool,
+    BrowserTriggerTool,
     BrowserTabsTool,
     BrowserWaitForTool,
     BrowserDropHistoryTool
@@ -45,8 +46,10 @@ import {
     BrowserManager,
     CDPSessionManager,
     captureSnapshot,
+    collectSnapshotPrefix,
     makeCallBrowserScript,
-    makeExecuteScriptOnBrowser
+    makeExecuteScriptOnBrowser,
+    renderSnapshotText
 } from '../../../common/embedBrowserUse/main';
 import type { CDPSession } from '../../../common/embedBrowserUse/main';
 import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
@@ -614,6 +617,7 @@ class BrowserApplication extends BaseApplication {
             new BrowserGoForwardTool(this),
             new BrowserReloadTool(this),
             new BrowserEvaluateTool(this),
+            new BrowserTriggerTool(this),
             new BrowserTabsTool(this),
             new BrowserWaitForTool(this)
         ]) {
@@ -705,33 +709,37 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
+     * Resolve a CDP session for the given webContents id.
+     * 导出快照需要同一个 session 既抓快照又求值前缀段落，因此单独抽出。
+     */
+    private async _requireSnapshotSession(webContentsId: number): Promise<CDPSession> {
+        if (!Number.isInteger(webContentsId) || webContentsId <= 0) {
+            throw new Error('Invalid webContentsId');
+        }
+        return this._snapshotSessionManager.getSession(webContentsId);
+    }
+
+    /**
      * Capture an ARIA snapshot for the given webContents id.
      * Used by browser renderer UI (tool menu debug action).
      */
     async captureSnapshotByWebContentsId(webContentsId: number): Promise<PageSnapshot> {
-        if (!Number.isInteger(webContentsId) || webContentsId <= 0) {
-            throw new Error('Invalid webContentsId');
-        }
-        const session = await this._snapshotSessionManager.getSession(webContentsId);
-        return captureSnapshot(session);
+        return captureSnapshot(await this._requireSnapshotSession(webContentsId));
     }
 
     /**
      * Capture snapshot and export it to a text file via native save dialog.
+     *
+     * 输出格式与 agent 的 snapshot 工具一致，包含插件注册的 Browser Hints。
      */
     async exportSnapshotByWebContentsId(
         webContentsId: number
     ): Promise<{ canceled: boolean; filePath: string | null }> {
-        const snapshot = await this.captureSnapshotByWebContentsId(webContentsId);
-        const lines: string[] = [];
-        lines.push(`- Page URL: ${snapshot.url}`);
-        if (snapshot.title) lines.push(`- Page Title: ${snapshot.title}`);
-        lines.push(`- Viewport: ${snapshot.viewport.width}x${snapshot.viewport.height}`);
-        if (snapshot.scroll.x || snapshot.scroll.y) lines.push(`- Scroll: ${snapshot.scroll.x},${snapshot.scroll.y}`);
-        lines.push('');
-        lines.push('[Accessibility Snapshot]');
-        lines.push(snapshot.ariaSnapshot);
-        const content = lines.join('\n');
+        const session = await this._requireSnapshotSession(webContentsId);
+        const snapshot = await captureSnapshot(session);
+        const content = renderSnapshotText(snapshot, {
+            prefixLines: await collectSnapshotPrefix(snapshot, session)
+        });
 
         const { BrowserWindow } = await import('electron');
         const win =

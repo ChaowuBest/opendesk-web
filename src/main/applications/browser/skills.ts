@@ -73,7 +73,7 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 ## 操作后自动快照
 
-所有控制类工具（navigate、click、type、uploadFile、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
+所有控制类工具（navigate、click、type、uploadFile、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、trigger、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
 
 - \`snapshot: true\` — 操作成功后自动等待 0.5 秒获取页面快照，结果以 \`snapshot\` 字段返回
 - \`snapshot: false\`（默认）— 不自动快照，与原有行为一致
@@ -90,6 +90,30 @@ click({ target: "e8", snapshot: true })
 // 输入并提交搜索后自动获取快照
 type({ target: "e3", text: "关键词", submit: true, snapshot: true })
 \`\`\`
+
+## 页面提示（Browser Hints）
+
+快照结果的**最前面**可能出现 \`## Browser Hints\` 段落，它由插件针对当前站点注册，用于告诉你这个页面的额外信息：
+
+- **### Text Hints** — 针对本页面的约束或说明，你应当遵守（例如"本站搜索只支持英文关键词"）
+- **### Action Hints** — 本页面可用的快捷动作，形如 \`ActionName(arg1, arg2): 说明\`
+
+Action 只在匹配的页面上可用，且**必须**通过 \`trigger\` 工具调用，不要试图用 evaluate 手工复现。
+
+## 触发动作
+
+使用 **trigger** 调用快照中列出的 Action Hint：
+- \`action\`：动作名称（来自 Action Hints 列表）
+- \`args\`：参数对象，键名与该动作声明的参数一致
+- \`tabId\`：在指定标签页触发（默认当前活动标签页）
+- \`snapshot\`：触发后是否自动获取快照
+
+示例：
+\`\`\`
+trigger({ action: "Search", args: { keyword: "OpenHarmony" }, snapshot: true })
+\`\`\`
+
+一个 Action 通常等价于"填表单 + 点按钮"等一串操作，优先使用它而不是自己逐步 type / click。
 
 ## 导航
 

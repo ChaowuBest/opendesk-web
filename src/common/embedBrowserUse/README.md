@@ -300,6 +300,37 @@ BrowserManager.bind(ipcMain, myHooks);
 > 脚本（查找 DOM 元素、调用方法、执行 webview 脚本）由库自身的 `makeCallBrowserScript`
 > 和 `makeExecuteScriptOnBrowser` 函数提供，不与任何特定 UI 框架耦合。
 
+#### 注入快照前缀段落（`SnapshotPrefixProvider`）
+
+快照文本由 `renderSnapshotText` 统一拼装：可选前缀段落 → 页面信息（URL / 标题 / viewport /
+滚动位置）→ `[Accessibility Snapshot]` 与 ARIA 正文。库本身不感知宿主的扩展体系，宿主可以
+通过 `setSnapshotPrefixProvider` 注入一个回调，在快照正文前追加自定义段落。
+
+```typescript
+export type BrowserPageEvaluator = (expression: string) => Promise<unknown>;
+
+export type SnapshotPrefixProvider = (
+    snapshot: PageSnapshot,
+    evaluate: BrowserPageEvaluator
+) => Promise<string[]> | string[];
+```
+
+provider 收到当前快照与一个页面求值器，返回要置于正文前的文本行。求值器按需使用：
+不调用就不产生额外的页面通信。provider 缺失或抛错时前缀降级为空，不影响快照本身。
+
+`exportSnapshot` IPC handler 内部调用 `collectSnapshotPrefix`，因此注入一次即可让库自带的
+「导出 Snapshot」也带上前缀段落。
+
+```typescript
+// src/main/main.ts — OpenDesk 用它把插件注册的 Browser Hints 注入快照
+import { setSnapshotPrefixProvider } from '../common/embedBrowserUse/main';
+import { browserHintsSnapshotPrefixProvider } from './applications/browser/hints.js';
+
+setSnapshotPrefixProvider(browserHintsSnapshotPrefixProvider);
+```
+
+不注入 provider 时，快照文本与此前完全一致。
+
 ### 4. Main Process — 使用 BrowserController
 
 Agent 工具或业务代码通过 `BrowserManager` 获取控制器，然后调用其方法：
@@ -655,6 +686,7 @@ embedBrowserUse 的设计原则是各文件严格按 Electron 进程边界分离
 | 窗口事件转发              | protocol / preload / main   | 无 — DOM CustomEvent 是 renderer 侧标准模式                          |
 | 截图改用原生 API          | `main.ts` handler 内部      | 降低耦合 — 去除 CDP debugger attach，避免触发反调试检测              |
 | `BrowserScriptGenerators` | `main.ts` 接口 + 消费者注入 | 无 — 通过依赖注入，库不依赖特定 UI 框架的 DOM 结构                   |
+| `SnapshotPrefixProvider`  | `main.ts` 接口 + 消费者注入 | 无 — 同上。库不感知宿主扩展体系，只提供页面信息与求值能力            |
 | Snapshot 可见性修复       | `cdp/snapshot.ts` 内部      | 无                                                                   |
 | option value 修复         | `cdp/snapshot.ts` 内部      | 无                                                                   |
 

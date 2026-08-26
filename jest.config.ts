@@ -6,6 +6,8 @@ const shared: Config = {
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
         '^.+\\.css(?:\\?raw)?$': '<rootDir>/src/tests/ut/__mocks__/raw-style.ts',
+        // 内置插件源码按裸包名引入 SDK；测试环境直接解析到 SDK 源码，避免依赖构建产物
+        '^@bitclub\\.ai/opendesk-plugin-sdk$': '<rootDir>/packages/plugin-sdk/src/index.ts',
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@earendil-works/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
     },

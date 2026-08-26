@@ -23,12 +23,18 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { BrowserManager, BrowserController } from '../../../common/embedBrowserUse/main';
+import {
+    ACCESSIBILITY_SNAPSHOT_HEADING,
+    BrowserManager,
+    BrowserController,
+    renderSnapshotText
+} from '../../../common/embedBrowserUse/main';
 import type { TaskState } from '../../aikernel/states/tasks';
 import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
+import { makeActionInvokeExpression, renderBrowserHintsFor, resolveActionHint } from './hints.js';
 import { cleanPathInput, fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -125,8 +131,11 @@ async function withSnapshot(
             if (urlBefore !== undefined && urlBefore !== snapshot.url) {
                 lines.push(`- Page Changed: yes (${urlBefore} → ${snapshot.url})`);
             }
+            // 插件贡献的页面提示放在快照正文之前，让 agent 先看到可用动作与约束
+            const hintLines = await renderBrowserHintsFor(ctrl, snapshot);
+            if (hintLines.length > 0) lines.push('', ...hintLines);
             lines.push('');
-            lines.push('[Accessibility Snapshot]');
+            lines.push(ACCESSIBILITY_SNAPSHOT_HEADING);
             lines.push(snapshot.ariaSnapshot);
         } catch {
             // snapshot 失败不影响原操作结果
@@ -251,17 +260,11 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
             const ctrl = getController(this.browserApp, taskId);
             const snapshot = await ctrl.snapshot({ mode: args.mode, viewportOnly: args.viewportOnly, ref: args.ref });
 
-            const lines: string[] = [];
-            lines.push('- Page URL: ' + snapshot.url);
-            if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
-            lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
-            if (snapshot.scroll.x || snapshot.scroll.y)
-                lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
-            if (args.mode === 'diff') lines.push('- Mode: diff (仅展示变化部分)');
-            lines.push('');
-            lines.push('[Accessibility Snapshot]');
-            lines.push(snapshot.ariaSnapshot);
-            return lines.join('\n');
+            // 插件贡献的页面提示置于快照最前面，作为本页可用动作与约束的说明
+            return renderSnapshotText(snapshot, {
+                prefixLines: await renderBrowserHintsFor(ctrl, snapshot),
+                infoLines: args.mode === 'diff' ? ['- Mode: diff (仅展示变化部分)'] : []
+            });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -895,6 +898,72 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.evaluate(args.expression, args.iframeRef);
             return ok({ result });
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== trigger ==========
+
+const BrowserTriggerArgsSchema = z.object({
+    action: z.string().describe('要触发的动作名称，来自快照 Browser Hints 中的 Action Hints 列表'),
+    args: z
+        .record(z.string(), z.unknown())
+        .default({})
+        .describe('动作参数对象，键名与该动作声明的参数一致，例如 { "keyword": "OpenHarmony" }'),
+    tabId: z.number().int().optional().describe('在指定标签页中触发（默认当前活动标签页）。会先切换到该标签页'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
+});
+
+export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'trigger',
+            '触发当前页面的 Action Hint（由插件为该站点注册的快捷动作）。动作列表见 snapshot 返回的 Browser Hints / Action Hints 小节，动作只在匹配的页面上可用。',
+            BrowserTriggerArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.action) body.push(chalk.dim('  动作: ') + chalk.yellow(truncText(String(args.action), width - 16)));
+        if (args?.args && Object.keys(args.args).length > 0)
+            body.push(chalk.dim('  参数: ') + chalk.cyan(truncText(JSON.stringify(args.args), width - 16)));
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在触发…'));
+        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已触发'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '🎯', title: '触发动作', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserTriggerArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const ctrl = getController(this.browserApp, taskId);
+            // action 由页面 URL 决定，因此先切到目标标签页再解析可用动作
+            if (args.tabId !== undefined) await ctrl.tabs('switch', args.tabId);
+            const page = await ctrl.getPageInfo();
+            const { hint, available } = await resolveActionHint(ctrl, page, args.action);
+            if (!hint) {
+                return fail(
+                    available.length > 0
+                        ? `动作 ${args.action} 在当前页面不可用。可用动作：${available.join(', ')}`
+                        : `动作 ${args.action} 在当前页面不可用：该页面没有任何 Action Hint`
+                );
+            }
+            const result = await ctrl.evaluate(makeActionInvokeExpression(hint, args.args));
+            return withSnapshot(ctrl, args.snapshot, { action: hint.name, result });
         } catch (err: any) {
             return fail(err.message || String(err));
         }

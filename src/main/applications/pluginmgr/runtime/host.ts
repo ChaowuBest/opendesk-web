@@ -11,6 +11,9 @@ import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import type {
     AgentDefinition,
+    BrowserContext,
+    BrowserHint,
+    BrowserHintGenerator,
     OpenDeskPlugin,
     PluginCapability,
     PluginCommandContext,
@@ -38,13 +41,14 @@ import {
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
+import { matchesHintUrlPrefix, normalizeHintAddress, validateBrowserHint } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
 
 export type PluginStatus = 'active' | 'error' | 'disabled';
 
 export interface PluginDiagnostic {
     code: string;
-    stage: 'resolve' | 'load' | 'validate' | 'setup' | 'hook' | 'mcp' | 'event' | 'dispose';
+    stage: 'resolve' | 'load' | 'validate' | 'setup' | 'hook' | 'mcp' | 'event' | 'dispose' | 'browser';
     detail?: string;
 }
 
@@ -100,6 +104,14 @@ interface ContributionRecord<T> {
     pluginKey: string;
     pluginId: string;
     definition: T;
+}
+
+interface BrowserHintRecord {
+    pluginKey: string;
+    pluginId: string;
+    /** 归一化后的地址前缀（不含协议） */
+    urlPrefix: string;
+    generator: BrowserHintGenerator;
 }
 
 export interface VisiblePluginContribution<T> {
@@ -349,6 +361,7 @@ export class PluginHost {
     private readonly mcpServers = new Map<string, ContributionRecord<PluginMcpServerDefinition>>();
     private readonly commands = new Map<string, ContributionRecord<PluginCommandDefinition>>();
     private readonly agents = new Map<string, ContributionRecord<AgentDefinition>>();
+    private readonly browserHints: BrowserHintRecord[] = [];
     private readonly applicationEvents: ApplicationEventRecord[] = [];
     private readonly mcpRemovalListeners = new Set<(id: string) => void | Promise<void>>();
 
@@ -392,6 +405,41 @@ export class PluginHost {
 
     listAgents(): VisiblePluginContribution<AgentDefinition>[] {
         return this.listContributions(this.agents);
+    }
+
+    listBrowserHintPrefixes(): Array<{ pluginId: string; urlPrefix: string }> {
+        return this.browserHints.map((record) => ({ pluginId: record.pluginId, urlPrefix: record.urlPrefix }));
+    }
+
+    /**
+     * 汇总所有 urlPrefix 命中当前页面的插件 hint。
+     *
+     * 单个生成器失败只记录诊断并跳过，不影响其他插件与快照本身。
+     */
+    async getBrowserHints(context: BrowserContext): Promise<BrowserHint[]> {
+        const address = normalizeHintAddress(context.address || context.url);
+        const hints: BrowserHint[] = [];
+        for (const record of [...this.browserHints]) {
+            const entry = this.entries.get(record.pluginKey);
+            if (!entry) continue;
+            if (!matchesHintUrlPrefix(address, record.urlPrefix)) continue;
+            try {
+                const produced = await record.generator(context);
+                if (!Array.isArray(produced)) throw new Error('plugin.browser_hints_invalid');
+                for (const hint of produced) {
+                    validateBrowserHint(hint);
+                    hints.push(hint);
+                }
+            } catch (error) {
+                entry.diagnostics.push({
+                    code: 'plugin.browser_hint_failed',
+                    stage: 'browser',
+                    detail: error instanceof Error ? error.message : String(error)
+                });
+                logger.error(`Plugin browser hint failed: ${record.pluginId}:${record.urlPrefix}`, error);
+            }
+        }
+        return hints;
     }
 
     async runCommand(id: string, args: string, context: PluginCommandContext): Promise<PluginCommandResult> {
@@ -843,6 +891,31 @@ export class PluginHost {
                             if (index !== -1) this.applicationEvents.splice(index, 1);
                         })
                     );
+                }
+            },
+            browser: {
+                hint: {
+                    register: (urlPrefix: string, generator: BrowserHintGenerator) => {
+                        addCapability('browser');
+                        const normalized = normalizeHintAddress(typeof urlPrefix === 'string' ? urlPrefix : '');
+                        if (!normalized) throw new Error('plugin.browser_hint_url_prefix_invalid');
+                        if (typeof generator !== 'function') {
+                            throw new Error(`plugin.browser_hint_generator_invalid:${normalized}`);
+                        }
+                        const record: BrowserHintRecord = {
+                            pluginKey: entry.key,
+                            pluginId: entry.id,
+                            urlPrefix: normalized,
+                            generator
+                        };
+                        this.browserHints.push(record);
+                        return track(
+                            new HostRegistration(() => {
+                                const index = this.browserHints.indexOf(record);
+                                if (index !== -1) this.browserHints.splice(index, 1);
+                            })
+                        );
+                    }
                 }
             }
         };
