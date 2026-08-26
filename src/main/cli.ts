@@ -39,6 +39,7 @@ import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
+import { startReporter } from './utils/reporter.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -419,6 +420,9 @@ async function main(args: CommandLineArgs) {
 
     const { initTempDir } = await import('./utils/temp.js');
     initTempDir();
+
+    // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）
+    startReporter('cli');
 
     (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();

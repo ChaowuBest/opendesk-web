@@ -94,6 +94,7 @@ import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
 import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
+import { startReporter } from './utils/reporter.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
@@ -3256,6 +3257,8 @@ async function startApplication(): Promise<void> {
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
         startProxyEnvRefreshScheduler();
+        // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）
+        startReporter('desktop');
 
         await initializePluginHost();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
