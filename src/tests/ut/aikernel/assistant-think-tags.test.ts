@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { AssistantMessage, ReasoningMessagePart, TextMessagePart } from '../../../main/aikernel/messages';
 import { LLM } from '../../../main/aikernel/llm';
 
@@ -302,5 +303,22 @@ describe('AssistantMessage think tag parsing', () => {
         expect((message.content[0] as ReasoningMessagePart).content).toContain('需要什么帮助。');
         expect(message.content[1].type).toBe('text');
         expect((message.content[1] as TextMessagePart).text).toBe('收到。有什么具体需要帮忙的吗？');
+    });
+});
+
+describe('AssistantMessage turn timing', () => {
+    test('persists the wall-clock duration for the complete assistant turn', () => {
+        const dateNow = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+        try {
+            const message = new AssistantMessage();
+
+            dateNow.mockReturnValue(461_000);
+            message.finalizeTurnTiming();
+
+            expect(message.elapsedSeconds).toBe(460);
+            expect(message.toRenderJSON()).toMatchObject({ elapsedSeconds: 460 });
+        } finally {
+            dateNow.mockRestore();
+        }
     });
 });

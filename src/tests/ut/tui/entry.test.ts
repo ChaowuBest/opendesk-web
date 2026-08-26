@@ -190,6 +190,61 @@ describe('OpenDeskTUI active task view state', () => {
         }
     });
 
+    test('cycles the current task output display without persisting configuration', () => {
+        Setting.clearCache();
+        Setting.updateInstanceData({
+            cli_config: {
+                output_display: 'minimal',
+                show_all_reasoning: false
+            }
+        });
+        const setOutputDisplayLevel = jest.fn();
+        const updateStatusBar = jest.fn();
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: 'task-1',
+            taskOutputDisplayLevels: new Map([['task-1', 'minimal']]),
+            taskView: {
+                getOutputDisplayLevel: jest.fn(() => 'minimal'),
+                setOutputDisplayLevel
+            },
+            inputArea: { statusBar: { update: updateStatusBar } },
+            tui: { requestRender }
+        }) as any;
+
+        expect(tui.cycleOutputDisplayLevel()).toBe('verbose');
+        expect(setOutputDisplayLevel).toHaveBeenCalledWith('verbose');
+        expect(updateStatusBar).toHaveBeenCalledWith({ outputDisplayLevel: 'verbose' });
+        expect(tui.taskOutputDisplayLevels.get('task-1')).toBe('verbose');
+        expect(Setting.getInstance().getData().cli_config?.output_display).toBe('minimal');
+        expect(requestRender).toHaveBeenCalled();
+    });
+
+    test('preserves a task temporary level while new tasks use the persisted default', () => {
+        Setting.clearCache();
+        Setting.updateInstanceData({
+            cli_config: {
+                output_display: 'minimal',
+                show_all_reasoning: false
+            }
+        });
+        const setOutputDisplayLevel = jest.fn();
+        const updateStatusBar = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            taskOutputDisplayLevels: new Map([['task-1', 'verbose']]),
+            taskView: { setOutputDisplayLevel },
+            inputArea: { statusBar: { update: updateStatusBar } }
+        }) as any;
+
+        tui.bindOutputDisplayLevelToTask('task-1');
+        tui.bindOutputDisplayLevelToTask('task-2');
+
+        expect(setOutputDisplayLevel).toHaveBeenNthCalledWith(1, 'verbose');
+        expect(setOutputDisplayLevel).toHaveBeenNthCalledWith(2, 'minimal');
+        expect(updateStatusBar).toHaveBeenNthCalledWith(1, { outputDisplayLevel: 'verbose' });
+        expect(updateStatusBar).toHaveBeenNthCalledWith(2, { outputDisplayLevel: 'minimal' });
+    });
+
     test('syncs input status from the current task instead of forcing idle', () => {
         const task = { task_id: 'task-1', task_status: 'running' };
         const setStatus = jest.fn();

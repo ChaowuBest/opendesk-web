@@ -2457,7 +2457,9 @@ export class TaskState {
                     provisional: last_message.isImplicitThinkCandidatePart(updated_part_index)
                         ? 'implicit_think_close_candidate'
                         : undefined,
-                    usage: last_message.usage
+                    usage: last_message.usage,
+                    elapsedSeconds: last_message.elapsedSeconds,
+                    timestamp: last_message.timestamp
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
                 return;
@@ -2517,7 +2519,8 @@ export class TaskState {
                 message_id: assistantMessage.message_id,
                 parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
                 usage: assistantMessage.usage,
-                timestamp: assistantMessage.timestamp
+                timestamp: assistantMessage.timestamp,
+                elapsedSeconds: assistantMessage.elapsedSeconds
             };
             this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {
@@ -2612,6 +2615,7 @@ export class TaskState {
         const profilerToken = this.profiler?.beginTool(tool_call.tool_name, this._currentTurn);
 
         tool_call.setTool(tool);
+        tool_call.startTiming();
         // 进入执行阶段的标志：只要 beforeToolCall（执行阶段入口）被触发，
         // 无论 execute 成功/失败/抛错，afterToolCall 都必须成对触发
         let execEntered = false;
@@ -2722,6 +2726,7 @@ export class TaskState {
             tool_call.status = 'error';
             tool_call.result = `工具运行错误: ${err}`;
         } finally {
+            tool_call.finalizeTiming();
             if (profilerToken !== undefined) {
                 this.profiler?.endTool(profilerToken, { status: tool_call.status });
             }
@@ -3116,6 +3121,10 @@ export class TaskState {
                     }
                     if (this._turnGeneration !== myGeneration) return;
                     const completedAt = new Date();
+                    const completedMessage = this.chat_context.lastMessage();
+                    if (completedMessage instanceof AssistantMessage) {
+                        completedMessage.finalizeTurnTiming(completedAt.getTime());
+                    }
                     this.finished_at = completedAt;
                     if (shouldScheduleSessionMemoryUpdate) {
                         this.recordMicrocompactAssistantCompleted(completedAt);

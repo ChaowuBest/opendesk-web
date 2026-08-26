@@ -4,6 +4,7 @@ import { SlashCommandRegistry } from '../../../../main/tui/commands/base';
 import { HelpOverlay } from '../../../../main/tui/components/help';
 import { Setting } from '../../../../main/utils/setting';
 import { setRuntimeLocale } from '../../../../locale/index';
+import stripAnsi from 'strip-ansi';
 
 function createHarness(registry: SlashCommandRegistry) {
     let draft = 'existing draft';
@@ -82,5 +83,15 @@ describe('HelpOverlay command selection', () => {
 
         expect(getDraft()).toBe('existing draft');
         expect(tui.inputArea.input.setText).not.toHaveBeenCalled();
+    });
+
+    test('lists Ctrl+O as the output display shortcut', () => {
+        const registry = new SlashCommandRegistry();
+        const { tui } = createHarness(registry);
+        const overlay = new HelpOverlay(tui);
+
+        const row = (overlay as any).shortcutTable.innerRows.find((item: any) => item.value === 'output_display');
+
+        expect(row.labels.map(stripAnsi)).toEqual(['Switch Output Display', 'Ctrl+O']);
     });
 });

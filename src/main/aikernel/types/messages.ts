@@ -113,10 +113,7 @@ export interface BaseToolCallMessagePart {
 export type UserMessagePart = BaseTextMessagePart | BaseImageMessagePart | BaseFileMessagePart;
 
 export type AssistantMessagePart =
-    | BaseTextMessagePart
-    | BaseReasoningMessagePart
-    | BaseToolCallMessagePart
-    | BaseErrorMessagePart;
+    BaseTextMessagePart | BaseReasoningMessagePart | BaseToolCallMessagePart | BaseErrorMessagePart;
 
 export interface BaseUsage {
     prompt_tokens?: number;
@@ -150,6 +147,7 @@ export interface BaseAssistantMessage {
     usage?: BaseUsage;
     metadata?: RuntimeMetadata;
     timestamp?: number;
+    elapsedSeconds?: number;
 }
 
 export interface CompactSummarizedRange {

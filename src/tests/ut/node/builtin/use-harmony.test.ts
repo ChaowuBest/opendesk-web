@@ -32,7 +32,9 @@ import {
     SnapshotTool,
     SystemDialogTool,
     UninstallAppTool,
-    WaitForTool
+    WaitForTool,
+    listDevices,
+    resolveDeviceId
 } from '../../../../main/applications/builtin/skills/use-harmony/tools.js';
 
 test('use-harmony skill loader preserves metadata, instructions, and toolset wiring', () => {
@@ -507,6 +509,41 @@ test('dropFixture injects a File through the OpenDesk WebView drop path', { conc
         process.env.PATH = originalPath;
         if (originalArgsLog === undefined) delete process.env.HDC_ARGS_LOG;
         else process.env.HDC_ARGS_LOG = originalArgsLog;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('listDevices parses both new and legacy hdc target output formats', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-use-harmony-hdc-targets-'));
+    const fakeHdcPath = path.join(tempDir, 'hdc');
+    const targetsFilePath = path.join(tempDir, 'hdc-targets.txt');
+    const originalPath = process.env.PATH;
+    const originalTargetsFile = process.env.HDC_TARGETS_FILE;
+    try {
+        fs.writeFileSync(
+            fakeHdcPath,
+            ['#!/bin/sh', 'if [ "$1" = "list" ] && [ "$2" = "targets" ]; then', '  cat "$HDC_TARGETS_FILE"', 'fi'].join(
+                '\n'
+            ),
+            { mode: 0o755 }
+        );
+        process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ''}`;
+        process.env.HDC_TARGETS_FILE = targetsFilePath;
+
+        // 新版 hdc (3.2.0d) 输出：id / 连接类型 / 连接状态 / host
+        fs.writeFileSync(targetsFilePath, '7QK0126131000031\tUSB\tConnected\tlocalhost\n');
+        let devices = await listDevices();
+        assert.deepEqual(devices, [{ id: '7QK0126131000031', status: 'Connected', type: 'localhost' }]);
+        assert.equal(await resolveDeviceId(), '7QK0126131000031');
+
+        // 旧版输出：id / 连接状态 / 设备类型
+        fs.writeFileSync(targetsFilePath, '127.0.0.1:5555  Connected  HarmonyOS Device\n');
+        devices = await listDevices();
+        assert.deepEqual(devices, [{ id: '127.0.0.1:5555', status: 'Connected', type: 'HarmonyOS Device' }]);
+    } finally {
+        process.env.PATH = originalPath;
+        if (originalTargetsFile === undefined) delete process.env.HDC_TARGETS_FILE;
+        else process.env.HDC_TARGETS_FILE = originalTargetsFile;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });

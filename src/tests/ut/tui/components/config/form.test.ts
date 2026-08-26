@@ -40,4 +40,30 @@ describe('ConfigForm field changes', () => {
         expect(onFieldChange).toHaveBeenNthCalledWith(1, { enabled: true, mode: 'none' });
         expect(onFieldChange).toHaveBeenNthCalledWith(2, { enabled: true, mode: 'custom' });
     });
+
+    test('skips disabled fields and does not toggle them', () => {
+        const form = new ConfigForm(
+            createTuiMock(),
+            'Display',
+            [
+                { type: 'boolean', key: 'first', label: 'First', value: false },
+                { type: 'boolean', key: 'locked', label: 'Locked', value: false, disabled: true },
+                { type: 'select', key: 'mode', label: 'Mode', value: 'minimal', options: ['minimal', 'full'] }
+            ],
+            [],
+            jest.fn(),
+            jest.fn()
+        );
+        const handleInput = (data: string) =>
+            (
+                form as unknown as {
+                    handleKeyInput: (input: string) => { consume?: boolean; data?: string } | undefined;
+                }
+            ).handleKeyInput(data);
+
+        handleInput(Key.down);
+        handleInput(Key.enter);
+
+        expect(form.getValues()).toEqual({ first: false, locked: false, mode: 'full' });
+    });
 });

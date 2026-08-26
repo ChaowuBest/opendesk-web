@@ -110,6 +110,8 @@ export interface TaskUpdateAssistantChunk {
     last_part: AssistantMessagePart;
     provisional?: 'implicit_think_close_candidate';
     usage?: Usage;
+    elapsedSeconds?: number;
+    timestamp?: number;
 }
 
 export interface TaskUpdateAssistantReplaceChunk {
@@ -120,6 +122,7 @@ export interface TaskUpdateAssistantReplaceChunk {
     parts: AssistantMessagePart[];
     usage?: Usage;
     timestamp?: number;
+    elapsedSeconds?: number;
 }
 
 export interface TaskUpdateUserReplaceChunk {

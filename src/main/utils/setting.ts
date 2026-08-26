@@ -212,6 +212,11 @@ const GUIConfigSchema = z.object({
         .optional()
         .default('inline')
         .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
+    output_mode: z
+        .enum(['minimal', 'detailed'])
+        .optional()
+        .default('minimal')
+        .describe('GUI 输出模式: minimal=极简, detailed=详细'),
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
@@ -240,14 +245,18 @@ const ShortcutsSchema = z.object({
     list_tasks: z.string().default(DEFAULT_SHORTCUTS.list_tasks).describe('显示任务列表')
 });
 
-/** 思考区显示模式；兼容旧配置 on/off */
-const ReasonDisplaySchema = z.preprocess(
-    (val: unknown) => {
-        if (val === 'on') return 'full';
-        if (val === 'off') return 'partial';
-        return val;
+const LegacyReasonDisplaySchema = z.preprocess(
+    (value: unknown) => {
+        if (value === 'on') return 'full';
+        if (value === 'off') return 'partial';
+        return value;
     },
     z.enum(['full', 'partial']).default('partial')
+);
+
+const OutputDisplaySchema = z.preprocess(
+    (value: unknown) => (value === 'full' ? 'verbose' : value),
+    z.enum(['minimal', 'verbose']).default('minimal')
 );
 
 const TerminalCliSchema = z.object({
@@ -261,8 +270,10 @@ const TerminalCliSchema = z.object({
     }).describe('快捷键配置'),
     use_isolated_python: z.boolean().default(true).describe('是否在终端命令中使用 OpenDesk 隔离 Python 环境'),
     inherit_venv: z.boolean().default(true).describe('是否自动继承启动 OpenDesk 时的 Python 虚拟环境'),
-    reason_display: ReasonDisplaySchema.describe(
-        '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
+    output_display: OutputDisplaySchema.describe('TUI 输出显示: minimal=聚合过程, verbose=详细时间线'),
+    show_all_reasoning: z.boolean().default(false).describe('是否在 verbose 输出显示下展示全部 Reason 内容'),
+    reason_display: LegacyReasonDisplaySchema.describe(
+        'TUI Reason 显示配置，兼容旧版配置并参与 verbose 输出显示判断'
     ).default('partial')
 });
 
@@ -452,6 +463,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             floating_window_position: 'bottom-right',
             sidebar_width: 320,
             gui_reason_display: 'inline',
+            output_mode: 'minimal',
             floating_window_mode: 'card'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
@@ -465,6 +477,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             },
             use_isolated_python: true,
             inherit_venv: true,
+            output_display: 'minimal',
+            show_all_reasoning: false,
             reason_display: 'partial'
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({

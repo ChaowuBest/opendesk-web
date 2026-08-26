@@ -53,6 +53,58 @@ describe('TaskStatusBar', () => {
         expect(line).not.toContain('previous message');
     });
 
+    test('does not show the output display shortcut in the task status bar', () => {
+        const statusBar = new TaskStatusBar();
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).not.toContain('Ctrl+O');
+    });
+
+    test.each([
+        ['minimal', 'Minimal'],
+        ['verbose', 'Detailed']
+    ] as const)('shows the current %s output level without a label or shortcut', (level, expected) => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ outputDisplayLevel: level });
+
+        const line = stripAnsi(statusBar.render(120).join('\n'));
+
+        expect(line).toContain(expected);
+        expect(line).not.toContain('Display:');
+        expect(line).not.toContain('Ctrl+O');
+    });
+
+    test('localizes the output level shown in the task status bar', () => {
+        setRuntimeLocale('zh-CN');
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ outputDisplayLevel: 'minimal' });
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('极简');
+
+        statusBar.update({ outputDisplayLevel: 'verbose' });
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细');
+    });
+
+    test('adds vertical breathing room around the regular editor', () => {
+        const tui = new TUI(new TestTerminal());
+        const inputArea = new AgentInputArea({
+            tui,
+            workspace: process.cwd(),
+            isInputBlocked: () => false,
+            isModelNotConfiguredMode: () => false,
+            isActiveGoalRunningForInput: () => false,
+            isGoalClearStoppingForInput: () => false
+        } as any);
+        inputArea.input.setText('roomier input');
+
+        const lines = inputArea.render(120).map((line) => stripAnsi(line));
+        const inputLine = lines.findIndex((line) => line.includes('roomier input'));
+
+        expect(inputLine).toBeGreaterThan(0);
+        expect(lines[inputLine - 1].trim()).toBe('');
+        expect(lines[inputLine + 1].trim()).toBe('');
+    });
+
     test('submits ordinary messages as supplemental context while an active goal is running', async () => {
         const tui = new TUI(new TestTerminal());
         const inputArea = new AgentInputArea({

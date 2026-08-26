@@ -65,6 +65,7 @@ describe('task artifacts goal disclosure state', () => {
         (window as any).clearTimeout = nativeClearTimeout;
         (window as any).setInterval = nativeSetInterval;
         (window as any).clearInterval = nativeClearInterval;
+        (window as any).taskManagerAPI = {};
 
         await jest.unstable_mockModule('../../../renderer/components/fileExplorer.ts', () => ({
             FileExplorer: class {
@@ -73,6 +74,7 @@ describe('task artifacts goal disclosure state', () => {
                 mount() {}
                 refresh() {}
                 softRefresh() {}
+                setTaskId() {}
                 selectFile(filePath: string) {
                     this.onWorkspaceFocusLayoutChange?.({ active: filePath.endsWith('.pptx'), fullscreen: true });
                 }
@@ -203,6 +205,41 @@ describe('task artifacts goal disclosure state', () => {
             ':host([data-workspace-focus-fullscreen]) .tab-header'
         );
         expect(focusStates).toEqual([{ active: true, fullscreen: true }]);
+    });
+
+    test('opens the changes tab and focuses the requested file diff', async () => {
+        (window as any).taskManagerAPI.getTaskChanges = jest.fn(async () => ({
+            totalFiles: 2,
+            totalAdded: 3,
+            totalRemoved: 1,
+            files: [
+                {
+                    filePath: 'src/other.ts',
+                    totalAdded: 1,
+                    totalRemoved: 0,
+                    changes: []
+                },
+                {
+                    filePath: 'src/setting.ts',
+                    totalAdded: 2,
+                    totalRemoved: 1,
+                    changes: []
+                }
+            ]
+        }));
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            setTaskId: (taskId: string) => void;
+            openFileChanges: (filePath: string) => Promise<void>;
+        };
+        artifacts.setTaskId('task-1');
+
+        await artifacts.openFileChanges('/workspace/OpenDesk/src/setting.ts');
+
+        const focused = artifacts.shadowRoot?.querySelector('.changes-file-item.is-focused');
+        expect(focused?.querySelector('.changes-file-name')?.textContent).toBe('setting.ts');
+        expect(
+            artifacts.shadowRoot?.querySelector<HTMLElement>('.tab-content[data-tab="changes"]')?.style.display
+        ).toBe('');
     });
 
     test('activates focus layout when browser becomes active and restores on destroy', () => {

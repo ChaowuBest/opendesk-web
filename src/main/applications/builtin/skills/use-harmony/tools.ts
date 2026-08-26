@@ -126,22 +126,29 @@ export class DeviceResolutionError extends Error {}
  *
  * Output rows look like:
  *   `127.0.0.1:5555  Connected  HarmonyOS Device`
- * Columns are whitespace separated (id / status / type). Rows without a
- * parseable id are skipped, so `[Empty]` naturally yields an empty list.
+ * Newer hdc versions (e.g. 3.2.0d) insert a transport type column:
+ *   `7QK0126131000031  USB  Connected  localhost`
+ * Columns are whitespace separated (id / [transport] / status / type). Rows
+ * without a parseable id are skipped, so `[Empty]` naturally yields an empty
+ * list.
  */
 export async function listDevices(): Promise<HdcDevice[]> {
     const output = await runHdc(['list', 'targets', '-v'], 5000);
     const devices: HdcDevice[] = [];
+    const stateWords = new Set(['Connected', 'Disconnected', 'Offline']);
     for (const line of output.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed === '[Empty]') continue;
         const parts = trimmed.split(/\s+/);
         const id = parts[0];
         if (!id || !/^[0-9a-zA-Z._:-]+$/.test(id)) continue;
+        // 兼容两种格式：若第二列即连接状态词（旧格式），状态列索引为 1；
+        // 否则第二列是传输类型（USB/Network），状态列顺延到索引 2。
+        const stateIndex = stateWords.has(parts[1] ?? '') ? 1 : 2;
         devices.push({
             id,
-            status: parts[1] ?? 'unknown',
-            type: parts.slice(2).join(' ') || 'unknown'
+            status: parts[stateIndex] ?? 'unknown',
+            type: parts.slice(stateIndex + 1).join(' ') || 'unknown'
         });
     }
     return devices;

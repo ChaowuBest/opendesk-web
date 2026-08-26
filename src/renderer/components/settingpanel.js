@@ -2223,6 +2223,7 @@ class SettingPanel extends HTMLElement {
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
         const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
+        const guiOutputMode = this.currentData?.gui_config?.output_mode || 'minimal';
         const ctrlEnterSend = this.currentData?.gui_config?.ctrl_enter_send || false;
         const onMainWindowClose = this.currentData?.gui_config?.on_mainwindow_close;
         const rawFloatingWindowMode = this.currentData?.gui_config?.floating_window_mode;
@@ -2299,6 +2300,13 @@ class SettingPanel extends HTMLElement {
                     <select id="gui-reason-display-select" class="sp-form-input">
                         <option value="inline"${guiReasonDisplay === 'inline' ? ' selected' : ''}>${this._t('sp.general.reasoningDisplay.inline')}</option>
                         <option value="bubble"${guiReasonDisplay === 'bubble' ? ' selected' : ''}>${this._t('sp.general.reasoningDisplay.bubble')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('sp.general.outputMode')}</label>
+                    <select id="gui-output-mode-select" class="sp-form-input">
+                        <option value="minimal"${guiOutputMode === 'minimal' ? ' selected' : ''}>${this._t('sp.general.outputMode.minimal')}</option>
+                        <option value="detailed"${guiOutputMode === 'detailed' ? ' selected' : ''}>${this._t('sp.general.outputMode.detailed')}</option>
                     </select>
                 </div>
             </div>
@@ -3446,6 +3454,12 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
             if (!this.currentData.gui_config) this.currentData.gui_config = {};
             this.currentData.gui_config.gui_reason_display = e.target.value;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#gui-output-mode-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.output_mode = e.target.value;
             this.saveImmediately();
         });
 
@@ -4814,6 +4828,16 @@ class SettingPanel extends HTMLElement {
                         console.warn('[setting] theme setPreference failed', err);
                     }
                 }
+                this.saveImmediately();
+            });
+            this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.gui_reason_display = e.target.value;
+                this.saveImmediately();
+            });
+            this.querySelector('#gui-output-mode-select')?.addEventListener('change', (e) => {
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.output_mode = e.target.value;
                 this.saveImmediately();
             });
             this.querySelector('#send-shortcut-select')?.addEventListener('change', (e) => {

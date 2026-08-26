@@ -644,6 +644,16 @@ export class DashboardBar implements Component {
         this.setVisible(!this.visible);
     }
 
+    private buildShortcutCell(): string {
+        const shortcuts = getShortcuts();
+        const fmtKey = (key: string) => SlashCommandRegistry.formatKeyLabel(key);
+        return `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost(
+            '•'
+        )} Ctrl+O ${t('input.statusbar.switchDisplay')} ${C.ghost('•')} ${fmtKey(shortcuts.show_help)} ${t(
+            'input.statusbar.help'
+        )}`;
+    }
+
     private async refresh(): Promise<void> {
         const cells: string[] = [];
 
@@ -662,12 +672,8 @@ export class DashboardBar implements Component {
         const weekdayName = t(weekdayKey);
         cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
-        // 快捷键提示（Ctrl+K 切换模式、Ctrl+H 帮助）
-        const shortcuts = getShortcuts();
-        const fmtKey = (k: string) => SlashCommandRegistry.formatKeyLabel(k);
-        cells.push(
-            `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost('•')} ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}`
-        );
+        // 快捷键提示（Ctrl+K 切换模式、Ctrl+O 切换显示、Ctrl+H 帮助）
+        cells.push(this.buildShortcutCell());
 
         // 通知角标
         const badge = getNotificationBadge();

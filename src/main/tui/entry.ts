@@ -75,6 +75,7 @@ import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
 import { resolveTaskMode } from '../aikernel/task/mode.js';
 import { syncPluginTuiCommands } from '../applications/pluginmgr/index.js';
+import { getConfiguredOutputDisplayLevel, persistOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -120,6 +121,8 @@ export class OpenDeskTUI {
     private pluginCommandNames = new Set<string>();
 
     public activeTaskId?: string;
+    private taskOutputDisplayLevels = new Map<string, OutputDisplayLevel>();
+    private lastConfiguredOutputDisplayLevel: OutputDisplayLevel = getConfiguredOutputDisplayLevel();
 
     /** 在尚未创建任务时通过 /rename 预设的任务名称 */
     public pendingTaskName: string | null = null;
@@ -217,9 +220,11 @@ export class OpenDeskTUI {
         this.tui = new TUI(terminal);
         this.tui.setClearOnShrink(false);
         this.taskView = new TaskView(this.tui, args.renderInterval);
+        this.taskView.setOutputDisplayLevel(this.lastConfiguredOutputDisplayLevel);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this);
+        this.inputArea.statusBar.update({ outputDisplayLevel: this.lastConfiguredOutputDisplayLevel });
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
         this.sharedAskUserProvider = new TUIAskUserProvider(this);
@@ -502,6 +507,35 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
+    public setOutputDisplayLevel(level: OutputDisplayLevel, options: { persist?: boolean } = {}): OutputDisplayLevel {
+        if (options.persist) {
+            persistOutputDisplayLevel(level);
+            this.lastConfiguredOutputDisplayLevel = level;
+        }
+        if (this.activeTaskId) {
+            this.taskOutputDisplayLevels ??= new Map<string, OutputDisplayLevel>();
+            this.taskOutputDisplayLevels.set(this.activeTaskId, level);
+        }
+        this.taskView.setOutputDisplayLevel?.(level);
+        this.inputArea.statusBar.update({ outputDisplayLevel: level });
+        this.tui.requestRender();
+        return level;
+    }
+
+    public cycleOutputDisplayLevel(): OutputDisplayLevel | undefined {
+        if (!this.activeTaskId) return undefined;
+        const next = this.taskView.getOutputDisplayLevel() === 'minimal' ? 'verbose' : 'minimal';
+        return this.setOutputDisplayLevel(next);
+    }
+
+    private bindOutputDisplayLevelToTask(taskId: string): void {
+        this.taskOutputDisplayLevels ??= new Map<string, OutputDisplayLevel>();
+        const level = this.taskOutputDisplayLevels.get(taskId) ?? getConfiguredOutputDisplayLevel();
+        this.taskOutputDisplayLevels.set(taskId, level);
+        this.taskView.setOutputDisplayLevel?.(level);
+        this.inputArea.statusBar.update({ outputDisplayLevel: level });
+    }
+
     public syncInputStatusFromTask(taskId: string): boolean {
         if (this.activeTaskId !== taskId) return false;
         const task = this.taskManagerState.getTask(taskId);
@@ -703,12 +737,19 @@ export class OpenDeskTUI {
     }
 
     private handleConfigChange(): void {
+        const configuredOutputDisplay = getConfiguredOutputDisplayLevel();
+        if (configuredOutputDisplay !== this.lastConfiguredOutputDisplayLevel) {
+            this.lastConfiguredOutputDisplayLevel = configuredOutputDisplay;
+            this.setOutputDisplayLevel(configuredOutputDisplay);
+        }
         const currentDefault = Setting.getInstance().getData().default_model || '';
         const previousDefault = this.lastGlobalDefaultModel;
         if (currentDefault !== previousDefault) {
             this.handleGlobalDefaultModelChanged(previousDefault, currentDefault);
             return;
         }
+        this.taskView.invalidate();
+        this.tui.requestRender();
         this.resolveModelInfo();
     }
 
@@ -1053,6 +1094,7 @@ export class OpenDeskTUI {
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
+        this.bindOutputDisplayLevelToTask(task.task_id);
         this.taskView.clearMessages();
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
@@ -1083,6 +1125,7 @@ export class OpenDeskTUI {
         this.todoList.clear();
         if (this.activeTaskId) {
             this.goalEvaluationInProgressByTask.delete(this.activeTaskId);
+            this.taskOutputDisplayLevels?.delete(this.activeTaskId);
         }
         this.activeTaskId = undefined;
         this.inputArea.clearGoalSupplementQueuedHint();
@@ -1120,6 +1163,7 @@ export class OpenDeskTUI {
         // 切换到新任务
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
+        this.bindOutputDisplayLevelToTask(task.task_id);
         this.taskView.clearMessages();
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
@@ -1230,6 +1274,7 @@ export class OpenDeskTUI {
     public followRunningTask(task: TaskState): void {
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
+        this.bindOutputDisplayLevelToTask(task.task_id);
         this.taskView.clearMessages();
         this.taskView.rebuildFromHistory();
         this.updateGoalPanelFromTask(task);
@@ -1390,6 +1435,7 @@ export class OpenDeskTUI {
 
         const taskId = this.taskView.taskState.task_id;
         this.activeTaskId = taskId;
+        this.bindOutputDisplayLevelToTask(taskId);
         this.syncTaskName();
         this.undoStacks?.delete(taskId);
 
@@ -2253,6 +2299,11 @@ export class OpenDeskTUI {
                 !this.inputArea.hasPromptWidget()
             ) {
                 const shortcuts = getShortcuts();
+
+                if (matchesKey(data, Key.ctrl('o'))) {
+                    this.cycleOutputDisplayLevel();
+                    return { consume: true };
+                }
 
                 // 模式切换
                 if (matchesKey(data, shortcuts.switch_mode)) {

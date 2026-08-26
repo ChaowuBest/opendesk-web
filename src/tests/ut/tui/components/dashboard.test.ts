@@ -1,11 +1,25 @@
 import {
+    DashboardBar,
     getPythonEnvironmentPrompt,
     shouldShowPythonEnvironmentPrompt,
     shouldShowDashboardStatusBlock
 } from '../../../../main/tui/components/dashboard';
 import { Setting } from '../../../../main/utils/setting';
+import { setRuntimeLocale } from '../../../../locale/index';
+import stripAnsi from 'strip-ansi';
 
 describe('DashboardBar status filters', () => {
+    beforeEach(() => {
+        Setting.clearCache();
+        Setting.updateInstanceData({});
+        setRuntimeLocale('en-US');
+    });
+
+    afterEach(() => {
+        setRuntimeLocale(null);
+        Setting.clearCache();
+    });
+
     test('formats venv prompt from active Python environment', () => {
         expect(getPythonEnvironmentPrompt({ VIRTUAL_ENV: '/workspace/project/venv' })).toBe('(venv: venv)');
         expect(getPythonEnvironmentPrompt({ VIRTUAL_ENV: '/workspace/project/.venv/' })).toBe('(venv: .venv)');
@@ -56,5 +70,14 @@ describe('DashboardBar status filters', () => {
                 })
             )
         ).toBe(false);
+    });
+
+    test('shows the Ctrl+O display shortcut beside Ctrl+K', async () => {
+        const dashboard = new DashboardBar(() => undefined);
+        await (dashboard as any).refresh();
+
+        const output = stripAnsi(dashboard.render(200).join('\n'));
+        expect(output).toContain('Ctrl+K switch mode • Ctrl+O switch display • Ctrl+H help');
+        expect(output).not.toContain('Display: Minimal');
     });
 });

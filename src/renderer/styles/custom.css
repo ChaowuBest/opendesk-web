@@ -3440,6 +3440,700 @@ agent-input[hide-disclaimer] .agent-input-footer {
     margin-bottom: 6px;
 }
 
+/* Assistant output modes: shared process timeline for minimal and detailed views. */
+.od-assistant-output-flow {
+    display: block;
+    min-width: 0;
+}
+
+.od-completed-process {
+    min-width: 0;
+    margin: 0 0 14px;
+    border-bottom: 1px solid var(--od-border);
+}
+
+.od-completed-process-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 4px 0 8px;
+    border: 0;
+    background: transparent;
+    color: var(--od-text-muted);
+    cursor: pointer;
+    font-size: var(--fs-md);
+    text-align: left;
+}
+
+.od-completed-process-summary:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: 2px;
+}
+
+.od-completed-process-chevron {
+    display: inline-block;
+    color: var(--od-text-faint);
+    transition: transform 140ms ease;
+}
+
+.od-completed-process.is-expanded .od-completed-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-completed-process-detail {
+    display: none;
+    max-height: min(420px, 56vh);
+    padding: 2px 4px 8px 0;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+    scrollbar-color: #9aa3ad transparent;
+    scrollbar-width: thin;
+}
+
+.od-completed-process-detail.is-open {
+    display: block;
+}
+
+.od-completed-process-detail::-webkit-scrollbar {
+    width: 8px;
+}
+
+.od-completed-process-detail::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.od-completed-process-detail::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 5px;
+    background: #9aa3ad;
+    background-clip: padding-box;
+}
+
+.od-process-segment {
+    min-width: 0;
+    margin-bottom: 10px;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.od-process-summary,
+.od-process-entry-summary {
+    width: 100%;
+    border: 0;
+    color: var(--od-text);
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.od-process-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    margin: 0;
+    padding: 6px 0;
+    border-bottom: 0;
+    border-radius: 0;
+}
+
+.od-process-summary:hover .od-process-action,
+.od-process-summary:focus-visible .od-process-action {
+    color: var(--chat-green);
+}
+
+.od-process-entry-summary:hover {
+    background: var(--od-bg-muted);
+}
+
+.od-process-summary:focus-visible,
+.od-process-entry-summary:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: -2px;
+}
+
+.od-process-main-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--chat-green);
+    font-size: 14px;
+    line-height: 1;
+}
+
+.od-process-main-icon.is-incomplete {
+    color: #c44752;
+}
+
+.od-process-summary-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--od-text-muted);
+    font-size: var(--fs-md);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.od-process-action {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    color: var(--chat-green);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+}
+
+.od-process-entry-time {
+    color: var(--od-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.od-process-chevron {
+    display: inline-block;
+    color: var(--od-text-disabled);
+    font-size: var(--fs-lg);
+    font-weight: 400;
+    line-height: 1;
+    transform: rotate(0deg);
+    transition: transform 150ms ease;
+}
+
+[aria-expanded='true'] > .od-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-process-summary[aria-expanded='true'] .od-process-chevron {
+    transform: rotate(90deg);
+}
+
+.od-process-detail {
+    display: none;
+    box-sizing: border-box;
+    max-height: 280px;
+    overflow-y: auto;
+    overscroll-behavior: auto;
+    scrollbar-gutter: stable;
+    margin: 2px 0 0;
+    padding: 6px 0 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.od-process-detail.is-open {
+    display: block;
+}
+
+.od-process-entry {
+    min-width: 0;
+}
+
+.od-process-entry-summary {
+    align-items: center;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    background: transparent;
+}
+
+.od-process-entry-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    font-size: var(--fs-md);
+    font-weight: 650;
+}
+
+.od-process-reason,
+.od-process-tool {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.od-process-reason .od-process-entry-summary,
+.od-process-tool .od-process-entry-summary {
+    padding-left: 2px;
+    padding-right: 2px;
+}
+
+.od-process-reason {
+    margin-top: 0;
+    margin-bottom: 11px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--od-border);
+    border-radius: 6px;
+    color: var(--od-text-muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+}
+
+.od-process-reason.is-expanded {
+    border-bottom-color: transparent;
+    background: var(--od-bg-subtle);
+}
+
+.od-process-reason .od-process-entry-summary {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) auto 12px;
+    gap: 6px;
+    min-height: 30px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    color: #b45309;
+    font-size: var(--fs-md);
+    font-weight: 650;
+}
+
+.od-process-reason.is-expanded .od-process-entry-kind,
+.od-process-reason.is-expanded .od-process-entry-icon {
+    color: #d26300;
+}
+
+.od-process-reason:not(.is-expanded) .od-process-entry-kind,
+.od-process-reason:not(.is-expanded) .od-process-entry-icon {
+    color: #71839a;
+}
+
+.od-process-reason .od-process-entry-text {
+    color: var(--od-text-muted);
+    font-weight: 500;
+}
+
+.od-process-tool {
+    margin-top: 0;
+    margin-bottom: 11px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--od-border);
+    border-radius: 6px;
+}
+
+.od-process-tool:last-child {
+    margin-bottom: 3px;
+    border-bottom: 0;
+}
+
+.od-process-tool.is-expanded {
+    border-bottom-color: transparent;
+    background: var(--od-bg-subtle);
+}
+
+.od-process-tool .od-process-entry-summary {
+    display: grid;
+    grid-template-columns: 58px auto minmax(0, 1fr) auto 12px;
+    gap: 6px;
+    min-height: 30px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    color: var(--od-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--fs-md);
+}
+
+.od-process-tool .od-process-entry-time {
+    grid-column: 4;
+}
+
+.od-process-tool .od-process-chevron {
+    grid-column: 5;
+}
+
+.od-process-tool .od-process-entry-kind,
+.od-process-tool .od-process-entry-icon {
+    color: #71839a;
+}
+
+.od-process-reason .od-process-entry-kind,
+.od-process-tool .od-process-entry-kind {
+    font-family: var(--font-sans);
+}
+
+.od-process-entry-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--od-text);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.od-process-tool .od-process-entry-label {
+    max-width: 240px;
+}
+
+.od-process-resource-link {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #16805d;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 2px;
+    transition:
+        color 120ms ease,
+        text-decoration-color 120ms ease;
+}
+
+.od-process-resource-link:hover {
+    color: #0d6b4c;
+    text-decoration-color: currentColor;
+}
+
+.od-process-resource-link:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--chat-green) 55%, transparent);
+    outline-offset: 2px;
+}
+
+.od-process-entry-text {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--od-text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.od-process-tool-args,
+.od-process-tool-status {
+    font-family: var(--font-mono);
+    font-size: var(--fs-md);
+}
+
+.od-process-tool-status {
+    margin-left: 6px;
+    color: var(--od-text-disabled);
+    font-family: var(--font-sans);
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.od-process-tool-status.is-success {
+    color: #16805d;
+}
+
+.od-process-tool-status.is-error {
+    color: #c2413a;
+}
+
+.od-process-entry-detail {
+    display: none;
+    box-sizing: border-box;
+    max-height: 148px;
+    overflow-y: auto;
+    overscroll-behavior: auto;
+    scrollbar-gutter: stable;
+    margin: 0;
+    padding: 2px 4px 9px 30px;
+    color: var(--od-text-muted);
+    background: var(--od-bg-subtle) !important;
+    border: 0;
+    border-radius: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    white-space: normal;
+}
+
+.od-process-reason .od-process-entry-detail {
+    padding: 0 10px 9px;
+}
+
+task-view .od-process-reason .od-process-entry-detail.markdown-body {
+    color: var(--od-text-muted) !important;
+    font-size: var(--fs-sm) !important;
+    line-height: 1.65 !important;
+}
+
+.od-process-entry-detail.is-open {
+    display: block;
+}
+
+.od-process-entry-detail pre {
+    max-width: 100%;
+    margin: 0;
+    padding: 3px 0 7px;
+    overflow-x: auto;
+    color: var(--od-text);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.od-process-entry-detail pre:last-child {
+    margin-bottom: 0;
+}
+
+task-view .od-process-markdown-result.markdown-body {
+    padding: 3px 0 7px;
+    color: var(--od-text);
+    font-size: var(--fs-sm);
+    line-height: 1.55;
+}
+
+task-view .od-process-markdown-result.markdown-body > :first-child {
+    margin-top: 0;
+}
+
+task-view .od-process-markdown-result.markdown-body > :last-child {
+    margin-bottom: 0;
+}
+
+.od-process-tool-execution-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 7px;
+    padding-bottom: 6px;
+    color: var(--od-text-muted);
+    border-bottom: 1px solid var(--od-border);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: 650;
+}
+
+.od-process-tool-execution-status {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    color: var(--od-text-disabled);
+    font-weight: 600;
+}
+
+.od-process-tool-execution-status.is-success {
+    color: #16805d;
+}
+
+.od-process-tool-execution-status.is-running {
+    color: #2563a8;
+}
+
+.od-process-tool-execution-status.is-error {
+    color: #c2413a;
+}
+
+.od-process-tool-execution-status.is-cancelled,
+.od-process-tool-execution-status.is-interrupted {
+    color: #a16207;
+}
+
+.od-process-tool-field,
+.od-process-tool-output {
+    margin-bottom: 7px;
+}
+
+.od-process-tool-field.is-command pre::before {
+    color: #3b82a5;
+    content: '$ ';
+    user-select: none;
+}
+
+.od-process-tool-rendered {
+    min-width: 0;
+}
+
+.od-process-tool-rendered > :first-child {
+    margin-top: 0 !important;
+}
+
+.od-process-tool-rendered > :last-child {
+    margin-bottom: 0 !important;
+}
+
+.od-process-detail-label {
+    color: var(--od-text-muted);
+    margin: 3px 0 2px;
+    font-size: var(--fs-sm);
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.od-process-detail,
+.od-process-entry-detail {
+    scrollbar-color: #9aa3ad transparent;
+    scrollbar-width: thin;
+}
+
+.od-process-detail::-webkit-scrollbar {
+    width: 8px;
+}
+
+.od-process-entry-detail::-webkit-scrollbar {
+    width: 7px;
+}
+
+.od-process-detail::-webkit-scrollbar-track,
+.od-process-entry-detail::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.od-process-detail::-webkit-scrollbar-thumb,
+.od-process-entry-detail::-webkit-scrollbar-thumb {
+    border: 2px solid var(--od-bg-elevated);
+    border-radius: 5px;
+    background: #9aa3ad;
+}
+
+.od-process-entry-detail::-webkit-scrollbar-thumb {
+    border-color: var(--od-bg-subtle);
+}
+
+html[data-theme='dark'] .od-process-detail,
+html[data-theme='dark'] .od-process-entry-detail {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb,
+html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.od-stage-body,
+.od-final-result {
+    min-width: 0;
+    background: transparent !important;
+}
+
+.od-stage-body {
+    margin: 9px 4px 12px;
+}
+
+.od-final-result-label {
+    margin: 0 0 5px;
+    color: var(--od-text-muted);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.od-stage-error {
+    color: #c2413a;
+}
+
+.od-running-status {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+    min-width: 0;
+    min-height: 34px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--od-text);
+    cursor: pointer;
+    font-size: var(--fs-md);
+    text-align: left;
+}
+
+.od-running-status:hover .od-running-status-line,
+.od-running-status:focus-visible .od-running-status-line {
+    color: var(--od-text);
+    text-decoration: underline;
+    text-decoration-color: var(--od-border-strong);
+    text-underline-offset: 3px;
+}
+
+.od-running-status:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
+    outline-offset: 2px;
+}
+
+.od-running-status-icon {
+    flex: none;
+    color: var(--chat-green);
+}
+
+.od-running-status-viewport {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    overflow: hidden;
+}
+
+.od-running-status-line {
+    display: block;
+    height: 26px;
+    animation: od-status-roll-in 180ms ease-out;
+}
+
+.od-running-status-line > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@keyframes od-status-roll-in {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 640px) {
+    .od-process-summary {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .od-process-action {
+        width: auto;
+        margin-left: auto;
+    }
+
+    .od-process-tool .od-process-entry-summary {
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 6px;
+    }
+
+    .od-process-tool .od-process-entry-time {
+        display: none;
+    }
+
+    .od-process-tool .od-process-entry-text {
+        flex-basis: calc(100% - 128px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .od-completed-process-chevron,
+    .od-process-chevron,
+    .od-running-status-line {
+        animation: none;
+        transition: none;
+    }
+}
+
 .waiting-usage-placeholder {
     animation: od-thinking-enter 160ms ease-out;
 }

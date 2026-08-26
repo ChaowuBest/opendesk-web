@@ -166,6 +166,35 @@ describe('设置 schema', () => {
 
         expect(setting.cli_config.use_isolated_python).toBe(true);
         expect(setting.cli_config.inherit_venv).toBe(true);
+        expect(setting.cli_config.output_display).toBe('minimal');
+        expect(setting.cli_config.show_all_reasoning).toBe(false);
+    });
+
+    test('终端输出显示统一使用 verbose 并迁移旧 full 配置', () => {
+        const verboseSetting = Setting.getSettingSchema().parse({
+            cli_config: { output_display: 'verbose' }
+        });
+        const legacySetting = Setting.getSettingSchema().parse({
+            cli_config: { output_display: 'full' }
+        });
+
+        expect(verboseSetting.cli_config.output_display).toBe('verbose');
+        expect(legacySetting.cli_config.output_display).toBe('verbose');
+    });
+
+    test('GUI 输出模式默认极简且只接受极简和详细', () => {
+        const defaultSetting = Setting.getSettingSchema().parse({});
+        const detailedSetting = Setting.getSettingSchema().parse({
+            gui_config: { output_mode: 'detailed' }
+        });
+
+        expect(defaultSetting.gui_config.output_mode).toBe('minimal');
+        expect(detailedSetting.gui_config.output_mode).toBe('detailed');
+        expect(() =>
+            Setting.getSettingSchema().parse({
+                gui_config: { output_mode: 'full' }
+            })
+        ).toThrow();
     });
 
     test('网络配置缺省时默认使用系统代理', () => {

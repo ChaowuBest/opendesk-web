@@ -67,7 +67,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             if (hasTrailingSpace || parts.length >= 2) {
                 // effort 子命令：补全 effort 值（按默认模型支持的档位过滤）
                 // pi-tui 会用 item.value 替换「第一个空格后的整段 argumentText」，
-                // 不能只返回第二段 token，否则 `/reason display on` 会变成 `/reason on`。
+                // 因此补全值需要保留 effort 子命令前缀。
                 if (subCommand === 'effort') {
                     return getSupportedEffortTokens()
                         .filter((opt) => opt.startsWith(subArg))
@@ -97,7 +97,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             if (!subCommand) {
                 // 显示当前配置
                 const setting = Setting.getInstance();
-                const currentDisplay = setting.data.cli_config?.reason_display || 'partial';
+                const cliConfig = setting.data.cli_config;
+                const currentDisplay =
+                    cliConfig?.show_all_reasoning === true || cliConfig?.reason_display === 'full' ? 'full' : 'partial';
                 const currentModelAlias = setting.data.default_model;
                 const currentModel = setting.data.models.find((m) => m.alias === currentModelAlias);
                 const currentEffort = currentModel?.reasoning_effort || '';
@@ -177,12 +179,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 // 更新模型的 reasoning_effort
                 setting.data.models[modelIndex].reasoning_effort = effortValue as
-                    | ''
-                    | 'none'
-                    | 'low'
-                    | 'medium'
-                    | 'high'
-                    | 'max';
+                    '' | 'none' | 'low' | 'medium' | 'high' | 'max';
                 setting.save();
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue, t);
@@ -219,10 +216,21 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     return;
                 }
 
+                if (subArg === 'full' && tui.activeTaskId && tui.taskView.getOutputDisplayLevel?.() === 'minimal') {
+                    const info = new InfoOverlay(tui, {
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.full.requires.output')),
+                        closeLabel: t('common.close')
+                    });
+                    info.show();
+                    return;
+                }
+
                 const setting = Setting.getInstance();
                 const oldDisplay = setting.data.cli_config?.reason_display || 'partial';
+                const showAllReasoning = setting.data.cli_config?.show_all_reasoning === true;
 
-                if (oldDisplay === subArg) {
+                if (oldDisplay === subArg && showAllReasoning === (subArg === 'full')) {
                     const info = new InfoOverlay(tui, {
                         title: t('reason.display.already'),
                         message: chalk.dim(
@@ -234,11 +242,11 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     return;
                 }
 
-                // 更新 reason_display
                 if (!setting.data.cli_config) {
                     setting.data.cli_config = {} as typeof setting.data.cli_config;
                 }
                 setting.data.cli_config.reason_display = subArg as 'full' | 'partial';
+                setting.data.cli_config.show_all_reasoning = subArg === 'full';
                 setting.save();
 
                 const info = new InfoOverlay(tui, {
@@ -247,7 +255,6 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     closeLabel: t('common.close')
                 });
                 info.show(() => {
-                    // 刷新当前会话的渲染效果
                     tui.taskView.invalidate();
                     tui.tui.requestRender();
                 });

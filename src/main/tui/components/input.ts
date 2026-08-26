@@ -31,6 +31,7 @@ import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { t } from '../../../locale/index.js';
+import type { OutputDisplayLevel } from '../display.js';
 
 type AgentInputStatus = 'idle' | 'running';
 type AutocompleteOptions = Parameters<AutocompleteProvider['getSuggestions']>[3];
@@ -45,6 +46,8 @@ export interface TaskStatusBarData {
     modeDisplay?: string;
     /** 当前模式的颜色 (如 '#00E5FF') */
     modeColor?: string;
+    /** 当前任务的输出显示模式 */
+    outputDisplayLevel?: OutputDisplayLevel;
     /**
      * 任务名称，用于在状态栏右侧显示。
      * - undefined: 没有活跃任务，显示"新任务"
@@ -174,6 +177,7 @@ export class TaskStatusBar implements Component {
             shellMode,
             modeDisplay,
             modeColor,
+            outputDisplayLevel,
             taskName,
             workspace
         } = this.data;
@@ -186,6 +190,12 @@ export class TaskStatusBar implements Component {
         if (modeDisplay) {
             const colorFn = modeColor ? chalk.hex(modeColor) : chalk.hex(colors.fg);
             leftCells.push({ text: colorFn(modeDisplay) });
+        }
+
+        if (outputDisplayLevel) {
+            leftCells.push({
+                text: chalk.hex(colors.fgDim)(t(`display.level.${outputDisplayLevel}`))
+            });
         }
 
         if (shellMode) {
@@ -723,6 +733,24 @@ export class InlineResultPanel implements Component {
 
 export type ShellResultPanel = InlineResultPanel;
 
+class VerticallyPaddedComponent implements Component {
+    constructor(
+        private readonly child: Component,
+        private readonly padding: number
+    ) {}
+
+    invalidate() {
+        this.child.invalidate?.();
+    }
+
+    render(width: number): string[] {
+        const lines = this.child.render(width);
+        if (lines.length === 0) return [];
+        const paddingLines = Array(this.padding).fill(' '.repeat(width));
+        return [...paddingLines, ...lines, ...paddingLines];
+    }
+}
+
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
  *
@@ -737,6 +765,7 @@ export class AgentInputArea implements Component {
 
     private openDeskTUI: OpenDeskTUI;
     private layout: Box;
+    private inputFrame: Component;
     private status: AgentInputStatus = 'idle';
     private hintText: Text = new Text('');
 
@@ -755,11 +784,12 @@ export class AgentInputArea implements Component {
         this.openDeskTUI = openDeskTUI;
         this.layout = new Box(0, 0);
         this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
+        this.inputFrame = new VerticallyPaddedComponent(this.input, 1);
         this.defaultBorderColor = this.input.borderColor;
         this.layout.addChild(this.hintText);
         this.layout.addChild(this.btwResultPanel);
         this.layout.addChild(this.shellResultPanel);
-        this.layout.addChild(this.input);
+        this.layout.addChild(this.inputFrame);
         this.layout.addChild(this.statusBar);
         this.statusBar.setTUI(this.openDeskTUI.tui);
 
@@ -1154,7 +1184,7 @@ export class AgentInputArea implements Component {
         if (current) {
             this.layout.removeChild(current);
         } else {
-            this.layout.removeChild(this.input);
+            this.layout.removeChild(this.inputFrame);
         }
         this.promptWidgets.push(widget);
         this.layout.addChild(widget);
@@ -1198,7 +1228,7 @@ export class AgentInputArea implements Component {
         if (previous) {
             this.layout.addChild(previous);
         } else {
-            this.layout.addChild(this.input);
+            this.layout.addChild(this.inputFrame);
         }
         this.layout.addChild(this.statusBar);
         this.openDeskTUI.syncInputAreaPromptHost();

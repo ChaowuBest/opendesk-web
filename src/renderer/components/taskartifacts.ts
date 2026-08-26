@@ -611,6 +611,33 @@ class TaskArtifacts extends HTMLElement {
         }
     }
 
+    async openFileChanges(filePath: string): Promise<void> {
+        this._switchTab('changes');
+        await this.refreshChanges();
+        const panel = this.shadowRoot?.querySelector<HTMLElement>('.tab-content[data-tab="changes"]');
+        if (!panel) return;
+        const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/$/, '');
+        const requestedPath = normalizePath(filePath);
+        const header = Array.from(panel.querySelectorAll<HTMLElement>('.changes-file-header')).find((candidate) => {
+            const candidatePath = normalizePath(candidate.dataset.filePath || '');
+            return (
+                candidatePath === requestedPath ||
+                candidatePath.endsWith(`/${requestedPath}`) ||
+                requestedPath.endsWith(`/${candidatePath}`)
+            );
+        });
+        if (!header) return;
+        panel.querySelectorAll('.changes-file-item.is-focused').forEach((item) => item.classList.remove('is-focused'));
+        const item = header.closest('.changes-file-item');
+        item?.classList.add('is-focused');
+        const collapseId = header.dataset.collapseId;
+        const body = collapseId ? panel.querySelector<HTMLElement>(`#${collapseId}`) : null;
+        if (body) body.style.display = '';
+        const chevron = header.querySelector<HTMLElement>('.changes-chevron');
+        if (chevron) chevron.style.transform = 'rotate(0deg)';
+        header.scrollIntoView?.({ block: 'nearest' });
+    }
+
     private _renderChangesPanel(): void {
         const root = this.shadowRoot;
         if (!root) return;
@@ -678,7 +705,7 @@ class TaskArtifacts extends HTMLElement {
                     .join('');
 
                 return `<div class="changes-file-item">
-                <div class="changes-file-header" data-collapse-id="${collapseId}" role="button" tabindex="0">
+                <div class="changes-file-header" data-collapse-id="${collapseId}" data-file-path="${escapeHtml(file.filePath)}" role="button" tabindex="0">
                     <svg class="changes-chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                     </svg>
@@ -2038,6 +2065,10 @@ class TaskArtifacts extends HTMLElement {
             .changes-file-item {
                 border-bottom: 1px solid #f1f5f9;
             }
+            .changes-file-item.is-focused .changes-file-header {
+                background: #ecfdf5;
+                box-shadow: inset 3px 0 #10b981;
+            }
             .changes-file-header {
                 display: flex;
                 align-items: center;
@@ -2304,6 +2335,10 @@ class TaskArtifacts extends HTMLElement {
             }
             :host([data-theme="dark"]) .changes-file-header:hover {
                 background: #252526 !important;
+            }
+            :host([data-theme="dark"]) .changes-file-item.is-focused .changes-file-header {
+                background: #14372d !important;
+                box-shadow: inset 3px 0 #34d399;
             }
             :host([data-theme="dark"]) .changes-chevron {
                 color: #787878 !important;
