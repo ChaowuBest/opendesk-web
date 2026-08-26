@@ -31,14 +31,21 @@ class FakeConnection implements AcpClientConnection {
     calls: Array<{ method: string; params: unknown }> = [];
     handlers?: AcpClientHandlers;
     capabilities: any = { sessionCapabilities: { resume: {} }, loadSession: true };
+    authMethods: any[] = [];
 
     async initialize(params: InitializeRequest): Promise<any> {
         this.calls.push({ method: 'initialize', params });
         return {
             protocolVersion: 1,
             agentCapabilities: this.capabilities,
+            authMethods: this.authMethods,
             agentInfo: { name: 'fake-agent', version: '1.0.0' }
         };
+    }
+
+    async authenticate(params: any): Promise<any> {
+        this.calls.push({ method: 'authenticate', params });
+        return {};
     }
 
     async newSession(params: NewSessionRequest): Promise<any> {
@@ -153,7 +160,7 @@ test('ACP HTTP Agent execution uses the configured remote cwd and advertises no 
 
         const initialize = connection.calls.find((call) => call.method === 'initialize')?.params as InitializeRequest;
         const session = connection.calls.find((call) => call.method === 'session/new')?.params as NewSessionRequest;
-        assert.deepEqual(initialize.clientCapabilities, {});
+        assert.deepEqual(initialize.clientCapabilities, { session: { configOptions: { boolean: {} } } });
         assert.equal(session.cwd, '/srv/workspaces/project');
         assert.equal((result.state as any).executionLocation, 'agent');
         assert.equal((result.state as any).sessionCwd, '/srv/workspaces/project');
@@ -184,7 +191,8 @@ test('ACP HTTP Client execution advertises v1 filesystem and terminal capabiliti
         const session = connection.calls.find((call) => call.method === 'session/new')?.params as NewSessionRequest;
         assert.deepEqual(initialize.clientCapabilities, {
             fs: { readTextFile: true, writeTextFile: true },
-            terminal: true
+            terminal: true,
+            session: { configOptions: { boolean: {} } }
         });
         assert.equal(session.cwd, directory);
         assert.equal(typeof connection.handlers?.readTextFile, 'function');
@@ -324,6 +332,75 @@ test('ACP runtime creates a session, applies configured parameters, and checkpoi
         assert.ok(logs.some((message) => message.includes('dispatch started') && message.includes(profile.id)));
         assert.ok(logs.some((message) => message.includes('dispatch completed') && message.includes('task-1')));
         assert.ok(logs.every((message) => !message.includes(request.prompt)));
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime authenticates with the configured protocol method before creating a session', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-auth-'));
+    try {
+        const connection = new FakeConnection();
+        connection.authMethods = [{ id: 'agent-login', name: 'Agent login' }];
+        const authenticatedProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            session: { ...profile.session, authMethodId: 'agent-login' }
+        });
+        const runtime = createRuntime(directory, connection, [], authenticatedProfile);
+
+        await runtime.runTurn(makeRequest());
+
+        assert.deepEqual(
+            connection.calls.slice(0, 3).map((call) => call.method),
+            ['initialize', 'authenticate', 'session/new']
+        );
+        assert.deepEqual(connection.calls[1].params, { methodId: 'agent-login' });
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime times out connection initialization', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-connect-timeout-'));
+    try {
+        const connection = new FakeConnection();
+        connection.initialize = async (params) => {
+            connection.calls.push({ method: 'initialize', params });
+            return new Promise(() => undefined);
+        };
+        const timeoutProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            reconnect: { enabled: false, maxAttempts: 0, initialDelayMs: 0, maxDelayMs: 0 },
+            timeouts: { connectMs: 100, promptMs: 1000 }
+        });
+        const runtime = createRuntime(directory, connection, [], timeoutProfile);
+
+        await assert.rejects(runtime.runTurn(makeRequest()), /timed out|超时/i);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP runtime cancels a prompt that exceeds its configured timeout', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-prompt-timeout-'));
+    try {
+        const connection = new FakeConnection();
+        connection.prompt = async (params) => {
+            connection.calls.push({ method: 'session/prompt', params });
+            return new Promise(() => undefined);
+        };
+        const timeoutProfile = AcpAgentProfileSchema.parse({
+            ...profile,
+            reconnect: { enabled: false, maxAttempts: 0, initialDelayMs: 0, maxDelayMs: 0 },
+            timeouts: { connectMs: 1000, promptMs: 100 }
+        });
+        const runtime = createRuntime(directory, connection, [], timeoutProfile);
+
+        await assert.rejects(runtime.runTurn(makeRequest()), /timed out|超时/i);
+        assert.equal(
+            connection.calls.some((call) => call.method === 'session/cancel'),
+            true
+        );
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -562,6 +639,60 @@ test('ACP runtime reconnects before the next turn when an idle transport closes'
         );
         assert.equal(connections[0].calls.filter((call) => call.method === 'session/prompt').length, 1);
         assert.equal(connections[1].calls.filter((call) => call.method === 'session/prompt').length, 1);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('ACP v2 reconnect rebuilds the Client-hosted MCP runtime after initialization failure', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-acp-v2-retry-mcp-'));
+    try {
+        const v2Profile = AcpAgentProfileSchema.parse({
+            ...profile,
+            protocolVersion: 2,
+            transport: { type: 'streamableHttp', url: 'https://agent.example.com/acp' },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required',
+                agentSessionCwd: { path: '/agent/workspace', platform: 'posix' }
+            },
+            reconnect: { enabled: true, maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0 },
+            timeouts: { connectMs: 1000, promptMs: 1000 }
+        });
+        let attempt = 0;
+        const hostedServers: unknown[] = [];
+        const runtime = new AcpTaskRuntime(v2Profile, {
+            artifactDirectory: () => directory,
+            sleep: async () => undefined,
+            createConnection: async (_configuredProfile, handlers): Promise<AcpConnectionHandle> => {
+                attempt += 1;
+                hostedServers.push(handlers.clientMcpServer);
+                const connection = new FakeConnection();
+                connection.initialize = async (params) => {
+                    connection.calls.push({ method: 'initialize', params });
+                    if (attempt === 1) throw new Error('retry initialization');
+                    return {
+                        protocolVersion: 2,
+                        agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } }
+                    };
+                };
+                connection.handlers = handlers;
+                return {
+                    connection,
+                    closed: new Promise(() => undefined),
+                    close: async () => undefined
+                };
+            },
+            resolveMcpServers: async () => []
+        });
+
+        await runtime.runTurn(makeRequest({ workspace: directory }));
+
+        assert.equal(attempt, 2);
+        assert.ok(hostedServers[0]);
+        assert.ok(hostedServers[1]);
+        assert.notEqual((hostedServers[0] as any).serverId, (hostedServers[1] as any).serverId);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }

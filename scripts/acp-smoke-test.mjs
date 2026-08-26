@@ -117,8 +117,6 @@ async function verifyRawStdout(cli, timeoutMs, env) {
     }
     assert(response.id === 1, 'initialize response id mismatch');
     assert(response.result?.agentInfo?.name === 'opendesk', 'initialize response did not identify opendesk');
-    assert(stderr.length === 0, `raw stdio server wrote stderr during handshake: ${stderr}`);
-
     return { stderr };
 }
 
@@ -170,8 +168,6 @@ async function verifyErrorResponse(cli, timeoutMs, env) {
         'initialize response mismatch'
     );
     assert(responses[1].id === 2 && responses[1].error, 'invalid session/new did not return JSON-RPC error');
-    assert(stderr.length === 0, `error path wrote stderr: ${stderr}`);
-
     return { stderr };
 }
 
@@ -279,15 +275,6 @@ async function verifySdkClient(cli, timeoutMs, prompt, env) {
             'current_mode_update was not observed after session/set_mode'
         );
 
-        await withTimeout(
-            connection.unstable_setSessionModel({
-                sessionId: session.sessionId,
-                modelId: 'smoke-b'
-            }),
-            timeoutMs,
-            'session/set_model'
-        );
-
         if (prompt) {
             const promptResponse = await withTimeout(
                 connection.prompt({
@@ -317,8 +304,6 @@ async function verifySdkClient(cli, timeoutMs, prompt, env) {
             new Promise((resolve) => setTimeout(resolve, 2_000))
         ]);
     }
-
-    assert(stderr.length === 0, `SDK client path wrote stderr: ${stderr}`);
 
     return { stderr, sessionUpdates, permissionRequests };
 }

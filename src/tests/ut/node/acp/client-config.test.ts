@@ -45,6 +45,7 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
         initialDelayMs: 500,
         maxDelayMs: 5000
     });
+    assert.deepEqual(stdio.timeouts, { connectMs: 30_000, promptMs: 1_800_000 });
     assert.equal(http.transport.type, 'streamableHttp');
     assert.equal(http.transport.cookies, 'include');
     assert.deepEqual(http.execution, {
@@ -70,6 +71,29 @@ test('ACP agent profiles accept an explicit experimental v2 protocol version', (
     assert.equal(parsed.transport.type, 'stdio');
     assert.equal(parsed.execution.location, 'client');
     assert.equal('agentSessionCwd' in parsed.execution, false);
+});
+
+test('ACP profiles persist protocol authentication and bounded timeouts', () => {
+    const parsed = AcpAgentProfileSchema.parse({
+        id: profileId,
+        name: 'Authenticated Agent',
+        transport: { type: 'stdio', command: 'agent' },
+        session: { authMethodId: 'agent-login' },
+        timeouts: { connectMs: 12_000, promptMs: 240_000 }
+    });
+
+    assert.equal(parsed.session.authMethodId, 'agent-login');
+    assert.deepEqual(parsed.timeouts, { connectMs: 12_000, promptMs: 240_000 });
+    assert.throws(
+        () =>
+            AcpAgentProfileSchema.parse({
+                id: profileId,
+                name: 'Invalid timeout',
+                transport: { type: 'stdio', command: 'agent' },
+                timeouts: { connectMs: 0, promptMs: 240_000 }
+            }),
+        /greater than|connectMs|timeout/i
+    );
 });
 
 test('ACP v2 HTTP Client-hosted profiles require an Agent-side session cwd', () => {

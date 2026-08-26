@@ -22,6 +22,7 @@ export type AcpAgentFormErrorCode =
     | 'clientFixedCwdRequired'
     | 'workspacePathInvalid'
     | 'configOptionsInvalid'
+    | 'timeoutInvalid'
     | 'reconnectInvalid';
 
 export class AcpAgentFormError extends Error {
@@ -62,6 +63,9 @@ export type AcpAgentFormValues = {
     clientCompatibility: string;
     clientAgentCwd: string;
     clientAgentPlatform: string;
+    authMethodId: string;
+    connectTimeoutMs: string;
+    promptTimeoutMs: string;
     reconnectEnabled: boolean;
     maxAttempts: string;
     initialDelayMs: string;
@@ -92,6 +96,7 @@ export type AcpAgentSettingsProfile = {
               cookies: 'include' | 'omit';
           };
     session: {
+        authMethodId?: string;
         modeId?: string;
         configOptions: Record<string, string | boolean>;
         mcpBindings: Array<{ serverId: string; location: 'agent' | 'client' }>;
@@ -119,6 +124,10 @@ export type AcpAgentSettingsProfile = {
         maxAttempts: number;
         initialDelayMs: number;
         maxDelayMs: number;
+    };
+    timeouts: {
+        connectMs: number;
+        promptMs: number;
     };
 };
 
@@ -160,6 +169,14 @@ function parseReconnectInteger(value: string, minimum: number, maximum: number):
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
         throw new AcpAgentFormError('reconnectInvalid');
+    }
+    return parsed;
+}
+
+function parseTimeout(value: string, maximum: number): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 100 || parsed > maximum) {
+        throw new AcpAgentFormError('timeoutInvalid');
     }
     return parsed;
 }
@@ -219,6 +236,7 @@ export function buildAcpAgentProfile(
     }
 
     const modeId = form.modeId.trim();
+    const authMethodId = form.authMethodId.trim();
     let execution: AcpAgentSettingsProfile['execution'];
     if (form.executionLocation === 'agent') {
         const platform = form.remotePlatform === 'windows' ? 'windows' : 'posix';
@@ -280,6 +298,7 @@ export function buildAcpAgentProfile(
         transport,
         execution,
         session: {
+            ...(authMethodId ? { authMethodId } : {}),
             ...(modeId ? { modeId } : {}),
             configOptions: parseConfigOptions(form.configOptionsJson),
             mcpBindings: form.mcpServerIds
@@ -293,6 +312,10 @@ export function buildAcpAgentProfile(
             maxAttempts: parseReconnectInteger(form.maxAttempts, 0, 20),
             initialDelayMs: parseReconnectInteger(form.initialDelayMs, 0, 60_000),
             maxDelayMs: parseReconnectInteger(form.maxDelayMs, 0, 300_000)
+        },
+        timeouts: {
+            connectMs: parseTimeout(form.connectTimeoutMs, 300_000),
+            promptMs: parseTimeout(form.promptTimeoutMs, 86_400_000)
         }
     };
 }

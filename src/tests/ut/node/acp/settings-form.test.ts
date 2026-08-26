@@ -36,6 +36,9 @@ function baseForm() {
         clientCompatibility: 'preferred',
         clientAgentCwd: '',
         clientAgentPlatform: 'posix',
+        authMethodId: '',
+        connectTimeoutMs: '30000',
+        promptTimeoutMs: '1800000',
         reconnectEnabled: true,
         maxAttempts: '3',
         initialDelayMs: '500',
@@ -78,7 +81,8 @@ test('ACP agent settings build a stdio profile without resolving secret template
             maxAttempts: 3,
             initialDelayMs: 500,
             maxDelayMs: 5000
-        }
+        },
+        timeouts: { connectMs: 30000, promptMs: 1800000 }
     });
 });
 
@@ -130,6 +134,21 @@ test('ACP agent settings build an experimental v2 stdio Client-hosted MCP profil
     assert.equal('agentSessionCwd' in profile.execution, false);
 });
 
+test('ACP agent settings persist authentication and timeout choices', () => {
+    const profile = buildAcpAgentProfile(
+        {
+            ...baseForm(),
+            authMethodId: 'agent-login',
+            connectTimeoutMs: '15000',
+            promptTimeoutMs: '600000'
+        },
+        () => profileId
+    );
+
+    assert.equal(profile.session.authMethodId, 'agent-login');
+    assert.deepEqual(profile.timeouts, { connectMs: 15000, promptMs: 600000 });
+});
+
 test('ACP agent settings return stable validation codes for invalid fields', () => {
     const cases = [
         [{ ...baseForm(), name: '' }, 'nameRequired'],
@@ -169,7 +188,9 @@ test('ACP agent settings return stable validation codes for invalid fields', () 
             'workspacePathInvalid'
         ],
         [{ ...baseForm(), configOptionsJson: '{"count":2}' }, 'configOptionsInvalid'],
-        [{ ...baseForm(), maxAttempts: '21' }, 'reconnectInvalid']
+        [{ ...baseForm(), maxAttempts: '21' }, 'reconnectInvalid'],
+        [{ ...baseForm(), connectTimeoutMs: '0' }, 'timeoutInvalid'],
+        [{ ...baseForm(), promptTimeoutMs: '1.5' }, 'timeoutInvalid']
     ] as const;
 
     for (const [form, code] of cases) {

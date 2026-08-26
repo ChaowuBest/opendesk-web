@@ -152,6 +152,7 @@ export const AcpExecutionSchema = z.discriminatedUnion('location', [
 
 const AcpSessionSchema = z
     .object({
+        authMethodId: z.string().trim().min(1).optional(),
         modeId: z.string().trim().min(1).optional(),
         configOptions: z.record(z.string(), SessionValueSchema).default({}),
         mcpBindings: z.array(AcpMcpBindingSchema).optional(),
@@ -161,6 +162,13 @@ const AcpSessionSchema = z
         ...session,
         mcpBindings: mcpBindings ?? mcpServerIds.map((serverId) => ({ serverId, location: 'agent' as const }))
     }));
+
+const AcpTimeoutsSchema = z
+    .object({
+        connectMs: z.number().int().min(100).max(300_000).default(30_000),
+        promptMs: z.number().int().min(100).max(86_400_000).default(1_800_000)
+    })
+    .default({ connectMs: 30_000, promptMs: 1_800_000 });
 
 export const AcpAgentProfileSchema = z
     .object({
@@ -173,6 +181,7 @@ export const AcpAgentProfileSchema = z
         transport: AcpTransportSchema,
         execution: AcpExecutionSchema.optional(),
         session: AcpSessionSchema.optional(),
+        timeouts: AcpTimeoutsSchema,
         reconnect: z
             .object({
                 enabled: z.boolean().default(true),

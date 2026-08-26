@@ -36,7 +36,7 @@ export type AcpProjectedUpdate =
           type: 'plan';
           entries: Array<{
               content: string;
-              status: 'pending' | 'in_progress' | 'completed';
+              status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
               priority?: 'low' | 'medium' | 'high';
           }>;
       }

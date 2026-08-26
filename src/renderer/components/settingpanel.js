@@ -63,6 +63,9 @@ textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 
 .od-sp-fi.od-sp-fi-error, .od-sp-fi.od-sp-fi-error:focus { border-color: var(--mc-red); }
 .od-sp-field-error { margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--mc-red); }
 .od-sp-fr { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.od-sp-stack { display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; padding: 10px; border: 1px solid var(--sp-color-border); border-radius: 6px; }
+.od-sp-stack .od-sp-fc { min-width: 0; margin-bottom: 0; flex-wrap: wrap; font-size: 13px; color: var(--mc-ink2); }
+.od-sp-stack .od-sp-fc span { min-width: 0; overflow-wrap: anywhere; }
 .od-sp-key-wrap { position: relative; }
 .od-sp-key-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: none; background: transparent; cursor: pointer; color: var(--mc-ink3); padding: 2px; transition: color 0.15s; }
 .od-sp-key-toggle:hover { color: var(--mc-ink2); }
@@ -1126,7 +1129,12 @@ class SettingPanel extends HTMLElement {
             cookies: this.querySelector('#acp-agent-cookies')?.value || 'include',
             modeId: this.querySelector('#acp-agent-mode')?.value || '',
             configOptionsJson: this.querySelector('#acp-agent-config-options')?.value || '{}',
-            mcpServerIds: this.querySelector('#acp-agent-mcp-servers')?.value || '',
+            mcpServerIds: this.querySelector('#acp-agent-mcp-server-choices')
+                ? Array.from(this.querySelectorAll('[data-acp-mcp-server-id]:checked'))
+                      .map((input) => input.dataset.acpMcpServerId)
+                      .filter(Boolean)
+                      .join(',')
+                : this.querySelector('#acp-agent-mcp-servers')?.value || '',
             executionLocation: this.querySelector('#acp-agent-execution-location')?.value || 'client',
             agentWorkspaceStrategy: this.querySelector('#acp-agent-agent-workspace-strategy')?.value || 'fixed',
             remotePlatform: this.querySelector('#acp-agent-remote-platform')?.value || 'posix',
@@ -1138,6 +1146,9 @@ class SettingPanel extends HTMLElement {
             clientCompatibility: this.querySelector('#acp-agent-client-compatibility')?.value || 'preferred',
             clientAgentCwd: this.querySelector('#acp-agent-client-agent-cwd')?.value || '',
             clientAgentPlatform: this.querySelector('#acp-agent-client-agent-platform')?.value || 'posix',
+            authMethodId: this.querySelector('#acp-agent-auth-method')?.value || '',
+            connectTimeoutMs: this.querySelector('#acp-agent-connect-timeout')?.value || '30000',
+            promptTimeoutMs: this.querySelector('#acp-agent-prompt-timeout')?.value || '1800000',
             reconnectEnabled: this.querySelector('#acp-agent-reconnect')?.checked === true,
             maxAttempts: this.querySelector('#acp-agent-max-attempts')?.value || '',
             initialDelayMs: this.querySelector('#acp-agent-initial-delay')?.value || '',
@@ -1172,6 +1183,7 @@ class SettingPanel extends HTMLElement {
             initialDelayMs: 500,
             maxDelayMs: 5000
         };
+        const timeouts = profile?.timeouts || { connectMs: 30000, promptMs: 1800000 };
         const session = profile?.session || { configOptions: {}, mcpServerIds: [] };
         const isHttp = transport.type === 'streamableHttp';
         const execution =
@@ -1184,6 +1196,23 @@ class SettingPanel extends HTMLElement {
         const clientWorkspace = executionLocation === 'client' ? execution.workspace : { strategy: 'task' };
         const mcpBindings =
             session.mcpBindings || (session.mcpServerIds || []).map((serverId) => ({ serverId, location: 'agent' }));
+        const selectedMcpIds = new Set(
+            mcpBindings.filter((binding) => binding.location === 'agent').map((binding) => binding.serverId)
+        );
+        const configuredMcpServers = Array.isArray(this.currentData.applications?.mcpmgr?.servers)
+            ? this.currentData.applications.mcpmgr.servers
+            : [];
+        const mcpChoices = [
+            ...configuredMcpServers.map((server) => ({
+                id: server.id,
+                name: server.name || server.id,
+                enabled: server.enabled
+            })),
+            ...[...selectedMcpIds]
+                .filter((id) => !configuredMcpServers.some((server) => server.id === id))
+                .map((id) => ({ id, name: id, enabled: false }))
+        ];
+        const savedAuthMethodId = session.authMethodId || '';
         const dispatchableChecked = isEdit ? profile?.dispatchable === true : profile?.dispatchable !== false;
         const json = (value) => this.escapeHtml(JSON.stringify(value || {}, null, 2));
 
@@ -1276,6 +1305,7 @@ class SettingPanel extends HTMLElement {
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.url')}</label>
                             <input id="acp-agent-url" class="od-sp-fi" value="${this.escapeHtml(isHttp ? transport.url : '')}" placeholder="https://agent.example.com/acp">
+                            <div class="od-sp-hint">${this._t('sp.agents.field.url.securityHint')}</div>
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.headers')}</label>
@@ -1346,20 +1376,17 @@ class SettingPanel extends HTMLElement {
                                 <label class="od-sp-fl">${this._t('sp.agents.field.clientWorkspaceStrategy')}</label>
                                 <select id="acp-agent-client-workspace-strategy" class="od-sp-fi">
                                     <option value="task" ${clientWorkspace.strategy === 'fixed' ? '' : 'selected'}>${this._t('sp.agents.workspace.taskLocal')}</option>
-                                    <option value="fixed" ${clientWorkspace.strategy === 'fixed' ? 'selected' : ''}>${this._t('sp.agents.cwd.fixed')}</option>
-                                </select>
-                            </div>
-                            <div class="od-sp-fg">
-                                <label class="od-sp-fl">${this._t('sp.agents.field.clientCompatibility')}</label>
-                                <select id="acp-agent-client-compatibility" class="od-sp-fi">
-                                    <option value="preferred" ${execution.compatibility === 'required' ? '' : 'selected'}>${this._t('sp.agents.compatibility.preferred')}</option>
-                                    <option value="required" ${execution.compatibility === 'required' ? 'selected' : ''}>${this._t('sp.agents.compatibility.required')}</option>
+                                    <option value="fixed" ${clientWorkspace.strategy === 'fixed' ? 'selected' : ''}>${this._t('sp.agents.workspace.fixedLocal')}</option>
                                 </select>
                             </div>
                         </div>
                         <div id="acp-agent-client-fixed-cwd-field" class="od-sp-fg" ${clientWorkspace.strategy === 'fixed' ? '' : 'hidden'}>
                             <label class="od-sp-fl">${this._t('sp.agents.field.clientFixedCwd')}</label>
                             <input id="acp-agent-client-fixed-cwd" class="od-sp-fi" value="${this.escapeHtml(clientWorkspace.strategy === 'fixed' ? clientWorkspace.path : '')}">
+                        </div>
+                        <div id="acp-agent-v2-client-mcp-status" class="od-sp-agent-preset-notice" ${profile?.protocolVersion === 2 ? '' : 'hidden'}>
+                            <i class="fas fa-plug"></i>
+                            <span>${this._t('sp.agents.v2ClientMcp.auto')}<br><span class="od-sp-hint">${this._t('sp.agents.v2ClientMcp.hint')}</span></span>
                         </div>
                         <div id="acp-agent-v2-session-cwd-fields" ${profile?.protocolVersion === 2 && isHttp ? '' : 'hidden'}>
                             <div class="od-sp-two-col">
@@ -1383,17 +1410,29 @@ class SettingPanel extends HTMLElement {
                     <div class="od-sp-fs">${this._t('sp.agents.section.session')}</div>
                     <div class="od-sp-two-col">
                         <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.authMethod')}</label>
+                            <select id="acp-agent-auth-method" class="od-sp-fi">
+                                <option value="">${this._t('sp.agents.auth.none')}</option>
+                                ${savedAuthMethodId ? `<option value="${this.escapeHtml(savedAuthMethodId)}" selected>${this.escapeHtml(savedAuthMethodId)}</option>` : ''}
+                            </select>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.authMethod.hint')}</div>
+                        </div>
+                        <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.mode')}</label>
                             <input id="acp-agent-mode" class="od-sp-fi" value="${this.escapeHtml(session.modeId || '')}" placeholder="code">
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.mcpServers')}</label>
-                            <input id="acp-agent-mcp-servers" class="od-sp-fi" value="${this.escapeHtml(
-                                mcpBindings
-                                    .filter((binding) => binding.location === 'agent')
-                                    .map((binding) => binding.serverId)
-                                    .join(', ')
-                            )}">
+                            ${
+                                mcpChoices.length > 0
+                                    ? `<div id="acp-agent-mcp-server-choices" class="od-sp-stack">${mcpChoices
+                                          .map(
+                                              (server) =>
+                                                  `<label class="od-sp-fc"><input type="checkbox" data-acp-mcp-server-id="${this.escapeHtml(server.id)}" ${selectedMcpIds.has(server.id) ? 'checked' : ''}><span>${this.escapeHtml(server.name)}</span>${server.enabled ? '' : `<span class="od-sp-hint">${this._t('sp.agents.mcp.disabled')}</span>`}</label>`
+                                          )
+                                          .join('')}</div>`
+                                    : `<div id="acp-agent-mcp-server-choices" class="od-sp-stack"><div class="od-sp-hint">${this._t('sp.agents.mcp.noneConfigured')}</div></div>`
+                            }
                             <div class="od-sp-hint">${this._t('sp.agents.field.mcpServers.hint')}</div>
                         </div>
                     </div>
@@ -1409,6 +1448,16 @@ class SettingPanel extends HTMLElement {
                     </div>
 
                     <div class="od-sp-fs">${this._t('sp.agents.section.reconnect')}</div>
+                    <div class="od-sp-two-col">
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.connectTimeout')}</label>
+                            <input id="acp-agent-connect-timeout" type="number" min="100" max="300000" class="od-sp-fi" value="${timeouts.connectMs}">
+                        </div>
+                        <div class="od-sp-fg">
+                            <label class="od-sp-fl">${this._t('sp.agents.field.promptTimeout')}</label>
+                            <input id="acp-agent-prompt-timeout" type="number" min="100" max="86400000" class="od-sp-fi" value="${timeouts.promptMs}">
+                        </div>
+                    </div>
                     <div class="od-sp-fc">
                         <input id="acp-agent-reconnect" type="checkbox" ${reconnect.enabled === false ? '' : 'checked'}>
                         <label for="acp-agent-reconnect">${this._t('sp.agents.field.reconnect')}</label>
@@ -1441,6 +1490,7 @@ class SettingPanel extends HTMLElement {
             const v2 = this.querySelector('#acp-agent-protocol-version')?.value === '2';
             const http = this.querySelector('#acp-agent-transport')?.value === 'streamableHttp';
             this.querySelector('#acp-agent-v2-session-cwd-fields').hidden = !v2 || !http;
+            this.querySelector('#acp-agent-v2-client-mcp-status').hidden = !v2;
         };
         const updateExecutionFields = () => {
             const agent = this.querySelector('#acp-agent-execution-location')?.value === 'agent';
@@ -1456,14 +1506,10 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#acp-agent-client-fixed-cwd-field').hidden =
                 this.querySelector('#acp-agent-client-workspace-strategy')?.value !== 'fixed';
         };
-        const updateTransportFields = (selectDefaultExecution = false) => {
+        const updateTransportFields = () => {
             const http = this.querySelector('#acp-agent-transport')?.value === 'streamableHttp';
             this.querySelector('#acp-agent-stdio-fields').hidden = http;
             this.querySelector('#acp-agent-http-fields').hidden = !http;
-            if (selectDefaultExecution) {
-                this.querySelector('#acp-agent-execution-location').value = http ? 'agent' : 'client';
-                updateExecutionFields();
-            }
             updateV2SessionCwdFields();
         };
         const updateProtocolFields = () => {
@@ -1473,7 +1519,7 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#acp-agent-fixed-cwd-field').hidden =
                 this.querySelector('#acp-agent-cwd')?.value !== 'fixed';
         };
-        this.querySelector('#acp-agent-transport')?.addEventListener('change', () => updateTransportFields(true));
+        this.querySelector('#acp-agent-transport')?.addEventListener('change', updateTransportFields);
         this.querySelector('#acp-agent-protocol-version')?.addEventListener('change', updateProtocolFields);
         this.querySelector('#acp-agent-cwd')?.addEventListener('change', updateCwdField);
         this.querySelector('#acp-agent-execution-location')?.addEventListener('change', updateExecutionFields);
@@ -1609,9 +1655,33 @@ class SettingPanel extends HTMLElement {
         });
     }
 
+    _renderAcpAuthMethods(authMethods) {
+        const select = this.querySelector('#acp-agent-auth-method');
+        if (!select || !Array.isArray(authMethods)) return;
+        const selected = select.value;
+        const options = authMethods
+            .map((method) => {
+                const id = method?.id || method?.methodId;
+                if (!id) return '';
+                const type = method.type || 'agent';
+                const supported = type === 'agent';
+                const label = `${method.name || id}${supported ? '' : ` (${this._t('sp.agents.auth.external', { type })})`}`;
+                return `<option value="${this.escapeHtml(id)}" ${id === selected ? 'selected' : ''} ${supported ? '' : 'disabled'}>${this.escapeHtml(label)}</option>`;
+            })
+            .filter(Boolean)
+            .join('');
+        const selectedMissing =
+            selected && !authMethods.some((method) => (method?.id || method?.methodId) === selected)
+                ? `<option value="${this.escapeHtml(selected)}" selected>${this.escapeHtml(selected)}</option>`
+                : '';
+        select.innerHTML = `<option value="">${this._t('sp.agents.auth.none')}</option>${selectedMissing}${options}`;
+    }
+
     async _testAcpAgent(profileId) {
         const result = this.querySelector('#acp-agent-test-result');
+        const button = this.querySelector('#test-acp-agent-btn');
         try {
+            if (button) button.disabled = true;
             const profile = this._readAcpAgentForm(profileId);
             const discoveredConfig = this.querySelector('#acp-agent-discovered-config');
             const discoveredControls = this.querySelector('#acp-agent-discovered-config-controls');
@@ -1624,10 +1694,17 @@ class SettingPanel extends HTMLElement {
             const agentName = response?.agentInfo?.name || profile.name;
             const configOptions = Array.isArray(response?.configOptions) ? response.configOptions : [];
             this._renderAcpSessionConfigOptions(configOptions);
-            result.className = 'od-sp-verify-result od-sp-verify-success';
-            const messages = [this._t('sp.agents.test.success', { name: agentName, count: configOptions.length })];
-            if (configOptions.length === 0) messages.push(this._t('sp.agents.test.noOptions'));
             const authMethods = Array.isArray(response?.authMethods) ? response.authMethods : [];
+            this._renderAcpAuthMethods(authMethods);
+            result.className = response?.authenticationRequired
+                ? 'od-sp-verify-result od-sp-verify-info'
+                : 'od-sp-verify-result od-sp-verify-success';
+            const messages = [
+                response?.authenticationRequired
+                    ? this._t('sp.agents.test.authenticationRequired', { name: agentName })
+                    : this._t('sp.agents.test.success', { name: agentName, count: configOptions.length })
+            ];
+            if (configOptions.length === 0) messages.push(this._t('sp.agents.test.noOptions'));
             if (authMethods.length > 0) {
                 const methods = authMethods
                     .map((method) => method?.description || method?.name || method?.id)
@@ -1644,6 +1721,8 @@ class SettingPanel extends HTMLElement {
             result.hidden = false;
             result.className = 'od-sp-verify-result od-sp-verify-error';
             result.textContent = this._t('sp.agents.test.failed', { message: error.message });
+        } finally {
+            if (button) button.disabled = false;
         }
     }
 

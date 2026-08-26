@@ -48,6 +48,7 @@ test('ACP preset drafts use platform-specific npx launchers and safe defaults', 
         initialDelayMs: 500,
         maxDelayMs: 5000
     });
+    assert.deepEqual(unixDraft.timeouts, { connectMs: 30_000, promptMs: 1_800_000 });
 });
 
 test('ACP preset lookups reject unknown ids and return immutable catalog data', () => {

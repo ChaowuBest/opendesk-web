@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { McpServer } from '@agentclientprotocol/sdk';
+import { RequestError, type AuthMethod, type McpServer } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import { BaseApplication, type EventDecl } from '../base.js';
 import type { AgentDecl } from '../../aikernel/agents/common.js';
@@ -29,9 +29,14 @@ import { AcpAgentProfileSchema, AcpMgrConfigSchema, type AcpAgentProfile, type A
 import { ClientWorkspaceRuntime } from './runtime/client-workspace.js';
 import { ClientHostedWorkspaceMcp } from './runtime/client-hosted-mcp.js';
 import { resolveAcpWorkspace } from './runtime/workspace.js';
+import { withAcpTimeout } from './runtime/timeout.js';
 
 function parseConfig(value: unknown): AcpMgrConfig {
     return AcpMgrConfigSchema.parse(value ?? {});
+}
+
+function authMethodType(method: AuthMethod): string {
+    return 'type' in method && typeof method.type === 'string' ? method.type : 'agent';
 }
 
 interface AcpMgrLog {
@@ -174,19 +179,72 @@ export class AcpMgrApplication extends BaseApplication {
             effectiveWorkspace
         );
         let sessionId: string | undefined;
+        let initializeResponse: Awaited<ReturnType<typeof handle.connection.initialize>> | undefined;
         try {
-            const initializeResponse = await handle.connection.initialize({
-                protocolVersion: profile.protocolVersion,
-                clientCapabilities:
-                    resolvedWorkspace.executionLocation === 'client'
-                        ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
-                        : {},
-                clientInfo: { name: 'OpenDesk', version: '0.3.4' }
-            });
-            const sessionResponse = await handle.connection.newSession({
-                cwd: resolvedWorkspace.sessionCwd,
-                mcpServers: []
-            });
+            initializeResponse = await withAcpTimeout(
+                handle.connection.initialize({
+                    protocolVersion: profile.protocolVersion,
+                    clientCapabilities:
+                        profile.protocolVersion === 1
+                            ? {
+                                  session: { configOptions: { boolean: {} } },
+                                  ...(resolvedWorkspace.executionLocation === 'client'
+                                      ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
+                                      : {})
+                              }
+                            : {},
+                    clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                }),
+                profile.timeouts.connectMs,
+                t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
+            );
+            if (initializeResponse.protocolVersion !== profile.protocolVersion) {
+                throw new Error(
+                    t('acpmgr.error.protocolVersionMismatch', {
+                        expected: profile.protocolVersion,
+                        actual: initializeResponse.protocolVersion
+                    })
+                );
+            }
+            const authMethods = initializeResponse.authMethods ?? [];
+            if (profile.session.authMethodId) {
+                const method = authMethods.find((candidate) => candidate.id === profile.session.authMethodId);
+                if (!method)
+                    throw new Error(t('acpmgr.error.authMethodUnavailable', { id: profile.session.authMethodId }));
+                const type = authMethodType(method);
+                if (type !== 'agent') throw new Error(t('acpmgr.error.authMethodInteractiveUnsupported', { type }));
+                await withAcpTimeout(
+                    handle.connection.authenticate({ methodId: profile.session.authMethodId }),
+                    profile.timeouts.connectMs,
+                    t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
+                );
+            }
+            const mcpServers = await this.resolveMcpServers(profile);
+            let sessionResponse: Awaited<ReturnType<typeof handle.connection.newSession>>;
+            try {
+                sessionResponse = await withAcpTimeout(
+                    handle.connection.newSession({
+                        cwd: resolvedWorkspace.sessionCwd,
+                        mcpServers
+                    }),
+                    profile.timeouts.connectMs,
+                    t('acpmgr.error.connectTimeout', { milliseconds: profile.timeouts.connectMs })
+                );
+            } catch (error) {
+                if (error instanceof RequestError && error.code === -32_000 && authMethods.length > 0) {
+                    return {
+                        protocolVersion: initializeResponse.protocolVersion,
+                        agentInfo: initializeResponse.agentInfo ?? null,
+                        agentCapabilities: initializeResponse.agentCapabilities ?? {},
+                        authMethods,
+                        authenticationRequired: true,
+                        sessionId: null,
+                        modes: null,
+                        configOptions: []
+                    };
+                }
+                throw error;
+            }
             sessionId = sessionResponse.sessionId;
             if (profile.protocolVersion === 1) clientWorkspaceRuntime?.setSessionId(sessionId);
             return {
@@ -199,12 +257,24 @@ export class AcpMgrApplication extends BaseApplication {
                 configOptions: sessionResponse.configOptions ?? []
             };
         } finally {
-            if (sessionId && handle.connection.closeSession) {
-                await handle.connection.closeSession({ sessionId });
+            const supportsClose =
+                profile.protocolVersion === 2 || !!initializeResponse?.agentCapabilities?.sessionCapabilities?.close;
+            const cleanupResults =
+                sessionId && supportsClose && handle.connection.closeSession
+                    ? await Promise.allSettled([handle.connection.closeSession({ sessionId }).then(() => undefined)])
+                    : [];
+            cleanupResults.push(
+                ...(await Promise.allSettled([
+                    handle.close(),
+                    clientHostedMcp?.close() ?? Promise.resolve(),
+                    clientWorkspaceRuntime?.close() ?? Promise.resolve()
+                ]))
+            );
+            for (const result of cleanupResults) {
+                if (result.status === 'rejected') {
+                    this.log.error(`[ACP] test cleanup failed: ${result.reason}`);
+                }
             }
-            await handle.close();
-            await clientHostedMcp?.close();
-            await clientWorkspaceRuntime?.close();
         }
     }
 

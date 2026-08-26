@@ -24,10 +24,19 @@ import type { AcpClientConnection, AcpClientHandlers, AcpConnectionHandle } from
 import { t } from '../../../../locale/index.js';
 
 type V2Target = acpV2.Stream | acpV2.AgentApp;
+const MAX_TOOL_CONTENT_ITEMS = 10_000;
+const MAX_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 interface PromptWaiter {
     resolve(stopReason: string): void;
     reject(error: unknown): void;
+}
+
+interface V2TerminalSnapshot {
+    command?: string;
+    cwd?: string;
+    output: Buffer;
+    exited: boolean;
 }
 
 function textContent(blocks: acpV2.ContentBlock[] | null | undefined): string {
@@ -35,6 +44,13 @@ function textContent(blocks: acpV2.ContentBlock[] | null | undefined): string {
         .filter((block): block is acpV2.TextContent & { type: 'text' } => block.type === 'text')
         .map((block) => block.text)
         .join('');
+}
+
+function appendTerminalOutput(previous: Buffer, next: Buffer): Buffer {
+    const output = Buffer.concat([previous, next]);
+    return output.length <= MAX_TERMINAL_OUTPUT_BYTES
+        ? output
+        : output.subarray(output.length - MAX_TERMINAL_OUTPUT_BYTES);
 }
 
 function directMcpServer(server: McpServer): acpV2.McpServer {
@@ -113,6 +129,8 @@ export function createV2ConnectionHandle(
     if (profile.protocolVersion !== 2) throw new Error(t('acpmgr.error.v2ProfileRequired'));
     let capabilities: acpV2.AgentCapabilities | undefined;
     const promptWaiters = new Map<string, PromptWaiter[]>();
+    const toolContent = new Map<string, acpV2.ToolCallContent[]>();
+    const terminals = new Map<string, V2TerminalSnapshot>();
 
     const finishPrompt = (sessionId: string, stopReason: string): void => {
         const queue = promptWaiters.get(sessionId);
@@ -142,6 +160,7 @@ export function createV2ConnectionHandle(
             case 'agent_message':
             case 'agent_thought':
             case 'user_message': {
+                if (update.content === undefined) return undefined;
                 const next = textContent(update.content);
                 const sessionUpdate =
                     update.sessionUpdate === 'agent_message'
@@ -162,9 +181,99 @@ export function createV2ConnectionHandle(
                     }
                 } as SessionNotification;
             }
-            case 'tool_call_update':
-                return params as unknown as SessionNotification;
+            case 'tool_call_content_chunk': {
+                const content = [...(toolContent.get(update.toolCallId) ?? []), update.content].slice(
+                    -MAX_TOOL_CONTENT_ITEMS
+                );
+                toolContent.set(update.toolCallId, content);
+                return {
+                    sessionId: params.sessionId,
+                    update: {
+                        sessionUpdate: 'tool_call_update',
+                        toolCallId: update.toolCallId,
+                        rawOutput: content
+                    }
+                } as SessionNotification;
+            }
+            case 'tool_call_update': {
+                if (update.content !== undefined) toolContent.set(update.toolCallId, update.content ?? []);
+                return {
+                    sessionId: params.sessionId,
+                    update: {
+                        sessionUpdate: 'tool_call_update',
+                        toolCallId: update.toolCallId,
+                        ...(update.name != null ? { name: update.name } : {}),
+                        ...(update.title != null ? { title: update.title } : {}),
+                        ...(update.status != null ? { status: update.status } : {}),
+                        ...(update.locations != null ? { locations: update.locations } : {}),
+                        ...(update.rawInput !== undefined ? { rawInput: update.rawInput } : {}),
+                        ...(update.rawOutput !== undefined
+                            ? { rawOutput: update.rawOutput }
+                            : toolContent.has(update.toolCallId)
+                              ? { rawOutput: toolContent.get(update.toolCallId) }
+                              : {})
+                    }
+                } as SessionNotification;
+            }
+            case 'terminal_update': {
+                const previous = terminals.get(update.terminalId) ?? { output: Buffer.alloc(0), exited: false };
+                const next: V2TerminalSnapshot = {
+                    command: update.command === undefined ? previous.command : (update.command ?? undefined),
+                    cwd: update.cwd === undefined ? previous.cwd : (update.cwd ?? undefined),
+                    output:
+                        update.output === undefined
+                            ? previous.output
+                            : appendTerminalOutput(Buffer.alloc(0), Buffer.from(update.output?.data ?? '', 'base64')),
+                    exited: update.exitStatus === undefined ? previous.exited : update.exitStatus !== null
+                };
+                terminals.set(update.terminalId, next);
+                return {
+                    sessionId: params.sessionId,
+                    update: {
+                        sessionUpdate: 'tool_call_update',
+                        toolCallId: `terminal:${update.terminalId}`,
+                        title: next.command || t('acpmgr.v2.terminalTitle'),
+                        status: next.exited ? 'completed' : 'in_progress',
+                        rawInput: { command: next.command, cwd: next.cwd },
+                        rawOutput: next.output.toString('utf8')
+                    }
+                } as SessionNotification;
+            }
+            case 'terminal_output_chunk': {
+                const previous = terminals.get(update.terminalId) ?? { output: Buffer.alloc(0), exited: false };
+                previous.output = appendTerminalOutput(previous.output, Buffer.from(update.data, 'base64'));
+                terminals.set(update.terminalId, previous);
+                return {
+                    sessionId: params.sessionId,
+                    update: {
+                        sessionUpdate: 'tool_call_update',
+                        toolCallId: `terminal:${update.terminalId}`,
+                        title: previous.command || t('acpmgr.v2.terminalTitle'),
+                        status: previous.exited ? 'completed' : 'in_progress',
+                        rawInput: { command: previous.command, cwd: previous.cwd },
+                        rawOutput: previous.output.toString('utf8')
+                    }
+                } as SessionNotification;
+            }
             case 'plan_update':
+                if (update.plan.type === 'markdown') {
+                    return {
+                        sessionId: params.sessionId,
+                        update: {
+                            sessionUpdate: 'plan',
+                            entries: [{ content: update.plan.content, priority: 'medium', status: 'in_progress' }]
+                        }
+                    };
+                }
+                if (update.plan.type === 'file') {
+                    return {
+                        sessionId: params.sessionId,
+                        update: {
+                            sessionUpdate: 'plan',
+                            entries: [{ content: update.plan.uri, priority: 'medium', status: 'in_progress' }]
+                        }
+                    };
+                }
                 if (update.plan.type !== 'items') return params as unknown as SessionNotification;
                 return {
                     sessionId: params.sessionId,
@@ -175,12 +284,14 @@ export function createV2ConnectionHandle(
                             priority: ['low', 'medium', 'high'].includes(entry.priority)
                                 ? (entry.priority as 'low' | 'medium' | 'high')
                                 : 'medium',
-                            status: ['pending', 'in_progress', 'completed'].includes(entry.status)
-                                ? (entry.status as 'pending' | 'in_progress' | 'completed')
+                            status: ['pending', 'in_progress', 'completed', 'cancelled'].includes(entry.status)
+                                ? (entry.status as 'pending' | 'in_progress' | 'completed' | 'cancelled')
                                 : 'pending'
                         }))
                     }
                 };
+            case 'plan_removed':
+                return { sessionId: params.sessionId, update: { sessionUpdate: 'plan', entries: [] } };
             case 'state_update':
                 if (update.state === 'idle') finishPrompt(params.sessionId, update.stopReason ?? 'end_turn');
                 return undefined;
@@ -271,6 +382,10 @@ export function createV2ConnectionHandle(
                 agentInfo: result.info,
                 authMethods: normalizeAuthMethods(result.authMethods)
             };
+        },
+        authenticate: async (params) => {
+            await agent.request(acpV2.methods.agent.auth.login, { methodId: params.methodId });
+            return {};
         },
         newSession: async (params) => {
             const result = await agent.request(acpV2.methods.agent.session.new, {

@@ -77,6 +77,7 @@ export interface AcpClientHandlers {
 export type AcpClientConnection = Pick<
     Agent,
     | 'initialize'
+    | 'authenticate'
     | 'newSession'
     | 'loadSession'
     | 'resumeSession'
@@ -274,12 +275,23 @@ function createHttpHandle(
 }
 
 export function createDefaultAcpConnectionFactory(): AcpConnectionFactory {
-    const cookieStore = new MemoryAcpCookieStore();
+    const cookieStores = new Map<string, AcpCookieStore>();
     return async (profile, handlers, workspace) => {
         try {
+            const cookieStore =
+                profile.transport.type === 'streamableHttp'
+                    ? (() => {
+                          const key = `${profile.id}:${new URL(profile.transport.url).origin}`;
+                          const existing = cookieStores.get(key);
+                          if (existing) return existing;
+                          const created = new MemoryAcpCookieStore();
+                          cookieStores.set(key, created);
+                          return created;
+                      })()
+                    : undefined;
             return profile.transport.type === 'stdio'
                 ? createStdioHandle(profile, handlers, workspace)
-                : createHttpHandle(profile, handlers, cookieStore);
+                : createHttpHandle(profile, handlers, cookieStore as AcpCookieStore);
         } catch (error) {
             if (error instanceof AcpEnvironmentVariableError) {
                 throw new Error(t('acpmgr.error.missingEnvironment', { name: error.variableName }));

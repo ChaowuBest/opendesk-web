@@ -52,6 +52,10 @@ export interface AcpAgentPresetDraft {
         initialDelayMs: number;
         maxDelayMs: number;
     };
+    timeouts: {
+        connectMs: number;
+        promptMs: number;
+    };
 }
 
 type Translate = (key: string) => string;
@@ -189,6 +193,10 @@ export function createAcpAgentPresetDraft(
             maxAttempts: 3,
             initialDelayMs: 500,
             maxDelayMs: 5000
+        },
+        timeouts: {
+            connectMs: 30_000,
+            promptMs: 1_800_000
         }
     };
 }

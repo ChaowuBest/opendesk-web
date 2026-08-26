@@ -102,6 +102,7 @@ export function createAcpExecutionFingerprint(profile: AcpAgentProfile, workspac
                 executionLocation: workspace.executionLocation,
                 sessionCwd: workspace.sessionCwd,
                 clientWorkspace: workspace.clientWorkspace,
+                authMethodId: profile.session.authMethodId,
                 mcpBindings: bindings
             })
         )

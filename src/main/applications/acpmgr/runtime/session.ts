@@ -11,6 +11,7 @@
 
 import {
     type AgentCapabilities,
+    type AuthMethod,
     type ClientCapabilities,
     type ContentBlock,
     type CreateTerminalRequest,
@@ -60,6 +61,7 @@ import {
 import { ClientWorkspaceRuntime, type ClientWorkspaceOperation } from './client-workspace.js';
 import { ClientHostedWorkspaceMcp, type AcpMcpPeer } from './client-hosted-mcp.js';
 import { createAcpExecutionFingerprint, resolveAcpWorkspace, type ResolvedAcpWorkspace } from './workspace.js';
+import { AcpTimeoutError, withAcpTimeout } from './timeout.js';
 
 type AcpPhase = 'connecting' | 'idle' | 'running' | 'uncertain' | 'cancelled';
 
@@ -163,6 +165,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     private journal?: AcpEventJournal;
     private mapper = new AcpSessionUpdateMapper();
     private capabilities?: AgentCapabilities;
+    private authMethods: AuthMethod[] = [];
     private sessionConfigOptions?: SessionConfigOption[];
     private sessionId?: string;
     private replaying = false;
@@ -240,7 +243,11 @@ export class AcpTaskRuntime implements AcpClientHandlers {
             const prompt = this.buildPrompt(request);
             this.record('outbound', 'session/prompt', { sessionId, prompt, promptId });
             try {
-                const response = await connection.prompt({ sessionId, prompt });
+                const response = await withAcpTimeout(
+                    connection.prompt({ sessionId, prompt }),
+                    this.profile.timeouts.promptMs,
+                    t('acpmgr.error.promptTimeout', { milliseconds: this.profile.timeouts.promptMs })
+                );
                 this.record('inbound', 'session/prompt/result', response);
                 await this.saveCheckpoint({
                     phase: response.stopReason === 'cancelled' ? 'cancelled' : 'idle',
@@ -256,6 +263,10 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     state: this.snapshot()
                 };
             } catch (error) {
+                if (error instanceof AcpTimeoutError) {
+                    this.record('outbound', 'session/cancel', { sessionId, reason: 'prompt_timeout' });
+                    await Promise.race([connection.cancel({ sessionId }).catch(() => undefined), this.sleep(1_000)]);
+                }
                 this.record('lifecycle', 'prompt/uncertain', {
                     promptId,
                     error: error instanceof Error ? error.message : String(error)
@@ -437,10 +448,15 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         let lastError: unknown;
         for (let attempt = 0; attempt < attempts; attempt++) {
             try {
+                if (attempt > 0) await this.prepareWorkspace(workspace);
                 if (!this.checkpoint?.sessionId) {
                     await this.saveCheckpoint({ phase: 'connecting' });
                 }
-                this.handle = await this.createConnection(this.profile, this, workspace);
+                this.handle = await withAcpTimeout(
+                    this.createConnection(this.profile, this, workspace),
+                    this.profile.timeouts.connectMs,
+                    t('acpmgr.error.connectTimeout', { milliseconds: this.profile.timeouts.connectMs })
+                );
                 this.watchConnectionClosure(this.handle);
                 this.connection = this.handle.connection;
                 const clientCapabilities = this.clientCapabilities();
@@ -448,11 +464,15 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                     protocolVersion: this.profile.protocolVersion,
                     clientCapabilities
                 });
-                const response = await this.connection.initialize({
-                    protocolVersion: this.profile.protocolVersion,
-                    clientCapabilities,
-                    clientInfo: { name: 'OpenDesk', version: '0.3.4' }
-                });
+                const response = await withAcpTimeout(
+                    this.connection.initialize({
+                        protocolVersion: this.profile.protocolVersion,
+                        clientCapabilities,
+                        clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                    }),
+                    this.profile.timeouts.connectMs,
+                    t('acpmgr.error.connectTimeout', { milliseconds: this.profile.timeouts.connectMs })
+                );
                 if (response.protocolVersion !== this.profile.protocolVersion) {
                     throw new Error(
                         t('acpmgr.error.protocolVersionMismatch', {
@@ -463,6 +483,8 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                 }
                 this.record('inbound', 'initialize/result', response);
                 this.capabilities = response.agentCapabilities;
+                this.authMethods = response.authMethods ?? [];
+                await this.authenticateIfConfigured();
                 await this.saveCheckpoint({
                     protocolVersion: response.protocolVersion,
                     agentInfo: isRecord(response.agentInfo) ? response.agentInfo : undefined,
@@ -499,9 +521,15 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         if (this.handle !== handle) return;
         this.handle = undefined;
         this.connection = undefined;
-        void this.clientHostedMcp?.close();
+        this.capabilities = undefined;
+        this.authMethods = [];
+        this.sessionConfigOptions = undefined;
+        const clientHostedMcp = this.clientHostedMcp;
         this.clientHostedMcp = undefined;
-        void this.clientWorkspaceRuntime?.close();
+        const clientWorkspaceRuntime = this.clientWorkspaceRuntime;
+        this.clientWorkspaceRuntime = undefined;
+        void clientHostedMcp?.close();
+        void clientWorkspaceRuntime?.close();
     }
 
     private async applySessionSettings(): Promise<void> {
@@ -603,9 +631,31 @@ export class AcpTaskRuntime implements AcpClientHandlers {
     }
 
     private clientCapabilities(): ClientCapabilities {
-        return this.profile.protocolVersion === 1 && this.profile.execution.location === 'client'
-            ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
-            : {};
+        if (this.profile.protocolVersion !== 1) return {};
+        return {
+            session: { configOptions: { boolean: {} } },
+            ...(this.profile.execution.location === 'client'
+                ? { fs: { readTextFile: true, writeTextFile: true }, terminal: true }
+                : {})
+        };
+    }
+
+    private async authenticateIfConfigured(): Promise<void> {
+        const methodId = this.profile.session.authMethodId;
+        if (!methodId) return;
+        const method = this.authMethods.find((candidate) => candidate.id === methodId);
+        if (!method) throw new Error(t('acpmgr.error.authMethodUnavailable', { id: methodId }));
+        const methodType = 'type' in method && typeof method.type === 'string' ? method.type : 'agent';
+        if (methodType !== 'agent') {
+            throw new Error(t('acpmgr.error.authMethodInteractiveUnsupported', { type: methodType }));
+        }
+        this.record('outbound', 'authenticate', { methodId });
+        await withAcpTimeout(
+            this.requireConnection().authenticate({ methodId }),
+            this.profile.timeouts.connectMs,
+            t('acpmgr.error.connectTimeout', { milliseconds: this.profile.timeouts.connectMs })
+        );
+        this.record('inbound', 'authenticate/result', {});
     }
 
     private async prepareWorkspace(taskWorkspace: string): Promise<void> {
@@ -707,9 +757,17 @@ export class AcpTaskRuntime implements AcpClientHandlers {
         const handle = this.handle;
         this.handle = undefined;
         this.connection = undefined;
-        await this.clientHostedMcp?.close();
+        this.capabilities = undefined;
+        this.authMethods = [];
+        this.sessionConfigOptions = undefined;
+        const clientHostedMcp = this.clientHostedMcp;
         this.clientHostedMcp = undefined;
-        await this.clientWorkspaceRuntime?.close();
-        if (handle) await handle.close();
+        const clientWorkspaceRuntime = this.clientWorkspaceRuntime;
+        this.clientWorkspaceRuntime = undefined;
+        await Promise.allSettled([
+            clientHostedMcp?.close() ?? Promise.resolve(),
+            clientWorkspaceRuntime?.close() ?? Promise.resolve(),
+            handle?.close() ?? Promise.resolve()
+        ]);
     }
 }

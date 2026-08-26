@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { RequestError } from '@agentclientprotocol/sdk';
 import { AgentRegistry } from '../../../../main/aikernel/agents/registry.js';
 import {
     ACP_ACTIVE_PROFILE_IDS_ENV,
@@ -126,7 +127,7 @@ test('ACP agent test creates a disposable session and exposes its configuration'
                     calls.push('initialize');
                     return {
                         protocolVersion: 1,
-                        agentCapabilities: {},
+                        agentCapabilities: { sessionCapabilities: { close: {} } },
                         authMethods: [{ id: 'login', name: 'Login', description: 'Run login' }],
                         agentInfo: { name: 'Fake Agent', version: '1.0.0' }
                     };
@@ -170,6 +171,128 @@ test('ACP agent test creates a disposable session and exposes its configuration'
         'session/close:temporary-session',
         'transport/close'
     ]);
+});
+
+test('ACP agent test skips unsupported session close and always releases resources', async () => {
+    const calls: string[] = [];
+    const application = new AcpMgrApplication({
+        createConnection: async () => ({
+            connection: {
+                initialize: async () => ({ protocolVersion: 1, agentCapabilities: {} }),
+                newSession: async () => ({ sessionId: 'baseline-session' }),
+                closeSession: async () => {
+                    calls.push('session/close');
+                    throw new Error('must not be called');
+                }
+            } as any,
+            closed: new Promise(() => undefined),
+            close: async () => {
+                calls.push('transport/close');
+            }
+        }),
+        log: { info: () => undefined, error: () => undefined }
+    });
+
+    const result = await application.testAgent(enabledProfile, process.cwd());
+
+    assert.equal(result.sessionId, 'baseline-session');
+    assert.deepEqual(calls, ['transport/close']);
+});
+
+test('ACP agent test releases the transport when supported session close fails', async () => {
+    const calls: string[] = [];
+    const application = new AcpMgrApplication({
+        createConnection: async () => ({
+            connection: {
+                initialize: async () => ({
+                    protocolVersion: 1,
+                    agentCapabilities: { sessionCapabilities: { close: {} } }
+                }),
+                newSession: async () => ({ sessionId: 'close-failure-session' }),
+                closeSession: async () => {
+                    calls.push('session/close');
+                    throw new Error('cleanup failure');
+                }
+            } as any,
+            closed: new Promise(() => undefined),
+            close: async () => {
+                calls.push('transport/close');
+            }
+        }),
+        log: { info: () => undefined, error: () => undefined }
+    });
+
+    const result = await application.testAgent(enabledProfile, process.cwd());
+
+    assert.equal(result.sessionId, 'close-failure-session');
+    assert.deepEqual(calls, ['session/close', 'transport/close']);
+});
+
+test('ACP agent test authenticates and validates configured MCP servers', async () => {
+    const calls: Array<{ method: string; params?: any }> = [];
+    const application = new AcpMgrApplication({
+        createConnection: async () => ({
+            connection: {
+                initialize: async () => ({
+                    protocolVersion: 1,
+                    agentCapabilities: {},
+                    authMethods: [{ id: 'agent-login', name: 'Agent login' }]
+                }),
+                authenticate: async (params: any) => {
+                    calls.push({ method: 'authenticate', params });
+                    return {};
+                },
+                newSession: async (params: any) => {
+                    calls.push({ method: 'session/new', params });
+                    return { sessionId: 'authenticated-session' };
+                }
+            } as any,
+            closed: new Promise(() => undefined),
+            close: async () => undefined
+        }),
+        log: { info: () => undefined, error: () => undefined }
+    });
+    (application as any).resolveMcpServers = async () => [
+        { name: 'filesystem', command: 'node', args: ['server.js'], env: [] }
+    ];
+    const authenticatedProfile = AcpAgentProfileSchema.parse({
+        ...enabledProfile,
+        session: {
+            authMethodId: 'agent-login',
+            mcpBindings: [{ serverId: 'filesystem', location: 'agent' }]
+        }
+    });
+
+    await application.testAgent(authenticatedProfile, process.cwd());
+
+    assert.deepEqual(calls[0], { method: 'authenticate', params: { methodId: 'agent-login' } });
+    assert.equal(calls[1].params.mcpServers.length, 1);
+});
+
+test('ACP agent test returns authentication choices when session creation requires login', async () => {
+    const application = new AcpMgrApplication({
+        createConnection: async () => ({
+            connection: {
+                initialize: async () => ({
+                    protocolVersion: 1,
+                    agentCapabilities: {},
+                    authMethods: [{ id: 'agent-login', name: 'Agent login' }]
+                }),
+                newSession: async () => {
+                    throw RequestError.authRequired();
+                }
+            } as any,
+            closed: new Promise(() => undefined),
+            close: async () => undefined
+        }),
+        log: { info: () => undefined, error: () => undefined }
+    });
+
+    const result = await application.testAgent(enabledProfile, process.cwd());
+
+    assert.equal(result.authenticationRequired, true);
+    assert.equal(result.sessionId, null);
+    assert.equal((result.authMethods as any[])[0].id, 'agent-login');
 });
 
 test('selected MCP manager entries are converted to ACP SDK server shapes', () => {
