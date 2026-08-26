@@ -28,3 +28,14 @@ export interface AgentDefinition {
     /** 是否可被主 Agent 作为子任务执行者调度，缺省为 true */
     dispatchable?: boolean;
 }
+
+/**
+ * 从插件目录装载的外部 agent 定义：在基础声明之上保留安装位置。
+ *
+ * location 不是插件作者的声明内容，而是目录装载的产物，因此只出现在
+ * 该子类型上；运行时据此在 system prompt 中声明 agent 的实际安装目录。
+ */
+export interface ExternalAgentDefinition extends AgentDefinition {
+    /** agent 实际安装目录；prompt 组装时用于声明该路径 */
+    location: string;
+}

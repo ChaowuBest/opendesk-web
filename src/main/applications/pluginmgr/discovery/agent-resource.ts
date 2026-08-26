@@ -11,7 +11,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import type { AgentDefinition } from '../../../aikernel/types/agent.js';
+import type { ExternalAgentDefinition } from '../../../aikernel/types/agent.js';
 
 export const AGENTS_MD_FILENAME = 'agents.md';
 const AGENT_META_FILENAME = 'agent.json';
@@ -96,7 +96,7 @@ export const AGENT_RUNTIME_ERROR_CODES: AgentResourceErrorCodes = {
 };
 
 /**
- * 从单个 agent 目录读取 AgentDefinition。
+ * 从单个 agent 目录读取 ExternalAgentDefinition（含安装位置 location）。
  *
  * 目录格式与 OpenDesk 自定义子 Agent 一致：
  * - agents.md   - system prompt 指令体（必需且非空）
@@ -104,7 +104,7 @@ export const AGENT_RUNTIME_ERROR_CODES: AgentResourceErrorCodes = {
  *
  * 缺失字段的推断规则：name 取目录名，whenToUse 取 agents.md 首行标题，dispatchable 默认 true。
  */
-export function loadAgentFromDirectory(directory: string, codes: AgentResourceErrorCodes): AgentDefinition {
+export function loadAgentFromDirectory(directory: string, codes: AgentResourceErrorCodes): ExternalAgentDefinition {
     const body = fs.readFileSync(path.join(directory, AGENTS_MD_FILENAME), 'utf-8').trim();
     const directoryName = path.basename(directory);
     if (body.length === 0) {
@@ -123,6 +123,7 @@ export function loadAgentFromDirectory(directory: string, codes: AgentResourceEr
         name: optionalMetaString(meta.name, `${directoryName}:name`, codes.metaInvalid) ?? directoryName,
         whenToUse: optionalMetaString(meta.when_to_use, `${directoryName}:when_to_use`, codes.metaInvalid) ?? firstLine,
         body,
+        location: directory,
         dispatchable: meta.dispatchable ?? true
     };
 }
@@ -148,14 +149,14 @@ export function findAgentDirectories(rootDir: string, declaredPath: string, code
 }
 
 /**
- * 扫描插件目录下声明的相对路径，返回其中所有 agent 定义。
+ * 扫描插件目录下声明的相对路径，返回其中所有 agent 定义（携带安装位置）。
  * 供 manifest 静态资源与 ctx.agents.registerDirectory 复用。
  */
 export function loadAgentsFromDirectory(
     rootDir: string,
     declaredPath: string,
     codes: AgentResourceErrorCodes
-): AgentDefinition[] {
+): ExternalAgentDefinition[] {
     return findAgentDirectories(rootDir, declaredPath, codes).map((directory) =>
         loadAgentFromDirectory(directory, codes)
     );

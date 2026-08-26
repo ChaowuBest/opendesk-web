@@ -41,12 +41,14 @@ export class PluginAgent extends AgentDecl {
     readonly dispatchable: boolean;
 
     private readonly body: string;
+    private readonly location?: string;
 
-    constructor(definition: AgentDefinition) {
+    constructor(definition: AgentDefinition, location?: string) {
         super();
         this.agentName = definition.name;
         this.whenToUse = definition.whenToUse;
         this.body = definition.body;
+        this.location = location;
         this.dispatchable = definition.dispatchable ?? true;
     }
 
@@ -76,6 +78,10 @@ export class PluginAgent extends AgentDecl {
 
         const parts = [
             this.body,
+            // 声明 agent 实际安装目录：随 agent 分发的脚本等文件可确定性定位
+            ...(this.location
+                ? ['', `本 agent 的路径：\`${this.location}\`。引用随本 agent 分发的文件时，以该目录为基准。`]
+                : []),
             '',
             `当前日期：${currentDate}`,
             `重要提示：现在是 ${year} 年。当用户询问"最近"、"今年"、"最新"等时间相关问题时，请搜索 ${year} 年的相关内容。`,
