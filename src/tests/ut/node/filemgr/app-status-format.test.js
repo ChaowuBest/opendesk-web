@@ -1,8 +1,3 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- */
-
 import assert from 'node:assert/strict';
 import { FileMgrApplication, formatStorageStatusBlock } from '../../../../main/applications/filemgr/app.js';
 import { ApplicationRegistry } from '../../../../main/applications/registry.js';
