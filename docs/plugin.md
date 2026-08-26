@@ -80,7 +80,8 @@ resources/plugins/
     └── helper.mjs
 ```
 
-执行 `npm run build:plugins`、`npm run build` 或 `npm run build-cli` 时，OpenDesk 会将每个内置插件
+执行 `npm run build:plugins`、`npm run build` 或 `npm run build-cli` 时，OpenDesk 会先重建
+`packages/plugin-sdk` 的产物（`npm run build:plugin-sdk`），再将每个内置插件
 复制到只读运行时目录：
 
 ```text
@@ -92,6 +93,11 @@ dist/plugins/
 
 内置插件入口必须是可直接运行的 `.js`、`.mjs` 或 `.cjs` 文件；构建流程不会编译 TypeScript。
 当前内置插件构建流程只负责复制插件目录；内置 Skill 和 MCP 的独立构建规则尚未纳入该流程。
+
+内置插件按裸包名 `@bitclub.ai/opendesk-plugin-sdk` 引入 SDK，运行时解析到
+`packages/plugin-sdk/dist`。该产物由独立的 rollup 构建生成，不在 electron-vite / esbuild
+的编译图中，因此改动 SDK 源码后必须重新执行上述任一构建命令；否则新增的导出在运行时不存在，
+插件会以 `does not provide an export named ...` 加载失败。
 
 Electron 打包时，`dist/plugins` 会作为只读资源复制到 `process.resourcesPath/plugins`；独立
 CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发环境也加载 `dist/plugins`，
@@ -245,6 +251,60 @@ export default definePlugin({
 `{ application: 'bundle-name', event: 'event-name' }` 限制到一个应用或事件名称，具体名称由对应
 Application 定义。
 
+### Browser 插件
+
+`browser` capability 让插件为特定网站向 `use-browser` 注入页面提示（Browser Hints）：
+
+```js
+import { actionHint, definePlugin, textHint } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'browser-hint-example',
+    capabilities: ['browser'],
+    setup(ctx) {
+        // urlPrefix 不含协议部分，按前缀匹配页面地址
+        ctx.browser.hint.register('www.example.com', async (context) => [
+            textHint('This site only supports English keywords.'),
+            actionHint(
+                'Search',
+                'Fill the keyword and submit the search form in one step',
+                { keyword: 'The keyword to search' },
+                '(args) => { document.querySelector("#q").value = args.keyword; document.querySelector("#go").click(); }'
+            )
+        ]);
+    }
+});
+```
+
+- 生成器签名为 `(context: BrowserContext) => BrowserHint[] | Promise<BrowserHint[]>`。
+- `BrowserContext` 提供 `url`（含协议）、`domain`、`address`（去掉协议的地址，即与 `urlPrefix`
+  匹配的字段）、`title`，以及按需拉取原始 DOM 的 `dom()`；不调用 `dom()` 就不会产生额外页面通信。
+- `textHint(content)` 产生 `TextHint`，作为一段约束或说明附加到快照上。
+- `actionHint(name, description, args, functionStr)` 产生 `ActionHint`。`functionStr` 是页面内可
+  `eval` 为函数的 JS 源码，模型通过 browser 的 `trigger` 工具调用，宿主以 `fn(args)` 形式执行它。
+- 同一个 `urlPrefix` 可以注册多次，多个插件的 hint 会被合并；单个生成器抛错只记录插件诊断，
+  不影响其他插件与快照本身。
+
+快照会在最前面按分类输出命中的提示：
+
+```text
+## Browser Hints
+
+### Text Hints
+
+- This site only supports English keywords.
+
+### Action Hints
+
+Actions are only available in this page and should be invoked by the 'trigger' tool.
+
+- Search(keyword): Fill the keyword and submit the search form in one step
+  - keyword: The keyword to search
+```
+
+Browser 插件的最小实现参考见 `src/tests/ut/applications/browser-hint-tools.test.ts`
+中的内联 fixture（注册、快照渲染、trigger 执行的完整链路）。
+
 ## 使用 opendesk.plugin.json
 
 推荐的本地插件结构：
@@ -270,7 +330,7 @@ review-helper/
     "entry": "./index.js",
     "apiVersion": 1,
     "capabilities": ["skill", "mcp"],
-    "contributions": {
+    "resources": {
         "skills": ["./skills/review-code"],
         "mcpServers": [
             {
@@ -295,8 +355,8 @@ export default {
 ```
 
 manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities` 可使用：
-`hook`、`tool`、`skill`、`mcp`、`command`、`event`。声明静态 Skill 或 MCP 时，
-必须同时声明对应的 `skill` 或 `mcp` capability。
+`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`。声明静态 Skill、MCP
+或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
 ### displayName 本地化
 
@@ -327,7 +387,7 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 
 ### Skill 路径
 
-`contributions.skills` 中每一项都必须是插件根目录内的目录，不能直接指向
+`resources.skills` 中每一项都必须是插件根目录内的目录，不能直接指向
 `SKILL.md` 文件：
 
 - `SKILL.md` 就在插件根目录：`"skills": ["."]`
@@ -362,7 +422,7 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
         "displayName": "Review Helper",
         "apiVersion": 1,
         "capabilities": ["skill", "mcp"],
-        "contributions": {
+        "resources": {
             "skills": ["./skills/review-code"],
             "mcpServers": [
                 {
@@ -398,7 +458,7 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 
 ## 在 setup 中动态注册 Skill 和 MCP
 
-不使用静态 contributions 时，也可以完全在 `setup` 中注册：
+不使用静态 resources 声明时，也可以完全在 `setup` 中注册：
 
 ```ts
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
@@ -515,11 +575,11 @@ GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设
 discover
   -> resolve entry
   -> validate path containment and recorded integrity
-  -> read manifest and static contributions
+  -> read manifest and static resources
   -> verify the entry is directly runnable
   -> import plugin
   -> validate API version, capability grants and options
-  -> register static contributions
+  -> register static resources
   -> setup(ctx)
 ```
 

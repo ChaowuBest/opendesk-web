@@ -92,7 +92,16 @@ export type {
 
 export const OPENDESK_PLUGIN_API_VERSION = 1;
 
-export const OPENDESK_PLUGIN_CAPABILITIES = ['hook', 'tool', 'skill', 'mcp', 'command', 'event', 'agent'] as const;
+export const OPENDESK_PLUGIN_CAPABILITIES = [
+    'hook',
+    'tool',
+    'skill',
+    'mcp',
+    'command',
+    'event',
+    'agent',
+    'browser'
+] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
 
@@ -234,6 +243,73 @@ export interface PluginStaticResources {
     skills?: PluginSkillDefinition[];
     mcpServers?: PluginMcpServerDefinition[];
     agents?: AgentDefinition[];
+}
+
+// ---------------------------------------------------------------------------
+// browser capability — 页面级 hint 注册
+// ---------------------------------------------------------------------------
+
+/**
+ * 浏览器页面上下文，作为 hint 生成器的唯一入参。
+ *
+ * 由宿主在生成页面快照时构造，插件侧只读。
+ */
+export interface BrowserContext {
+    /** 完整地址，含协议，如 https://www.bing.com/search?q=x */
+    readonly url: string;
+    /** 域名，如 www.bing.com */
+    readonly domain: string;
+    /** 去掉协议与 `//` 后的地址，如 www.bing.com/search?q=x；urlPrefix 即与此字段做前缀匹配 */
+    readonly address: string;
+    /** 页面标题 */
+    readonly title: string;
+    /**
+     * 读取页面原始 DOM 树（documentElement.outerHTML）。
+     *
+     * 按需拉取：大多数 hint 只依赖 URL，不调用则不产生任何页面通信开销。
+     */
+    dom(): Promise<string>;
+}
+
+/** 文本提示：直接作为一段说明附加到快照上，用于约束或提示模型的页面操作方式 */
+export interface TextHint {
+    readonly kind: 'text';
+    readonly content: string;
+}
+
+/**
+ * 动作提示：向模型暴露一个页面内可执行的动作。
+ *
+ * 模型通过 browser 的 `trigger` 工具调用；宿主会在页面中 eval `functionStr`
+ * 得到函数对象后以 `fn(args)` 形式调用。
+ */
+export interface ActionHint {
+    readonly kind: 'action';
+    readonly name: string;
+    readonly description: string;
+    /** 参数名 → 参数说明；模型据此构造 trigger 的 args */
+    readonly args: Readonly<Record<string, string>>;
+    /** 页面内可 eval 为函数的 JS 源码，如 `(args) => { ... }` */
+    readonly functionStr: string;
+}
+
+export type BrowserHint = TextHint | ActionHint;
+
+export type BrowserHintGenerator = (context: BrowserContext) => BrowserHint[] | Promise<BrowserHint[]>;
+
+/** 构造文本提示 */
+export function textHint(content: string): TextHint {
+    return { kind: 'text', content };
+}
+
+/** 构造动作提示 */
+export function actionHint(
+    name: string,
+    description: string,
+    args: Record<string, string>,
+    functionStr: string
+): ActionHint {
+    return { kind: 'action', name, description, args: { ...args }, functionStr };
 }
 
 export interface PluginHookMap {
@@ -432,6 +508,17 @@ export interface PluginContext {
     };
     readonly commands: {
         register(definition: PluginCommandDefinition): PluginRegistration;
+    };
+    readonly browser: {
+        readonly hint: {
+            /**
+             * 为匹配的页面注册 hint 生成器。
+             *
+             * @param urlPrefix 页面地址前缀，不含协议部分（如 `www.bing.com/search`）。
+             * @param generator 生成器函数，接收 BrowserContext 返回 hint 列表。
+             */
+            register(urlPrefix: string, generator: BrowserHintGenerator): PluginRegistration;
+        };
     };
     readonly events: {
         onApplication(

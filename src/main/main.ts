@@ -119,8 +119,9 @@ import {
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
 import { LLM } from './aikernel/llm.js';
-import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
+import { BrowserManager, setCDPLogger, setSnapshotPrefixProvider } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
+import { browserHintsSnapshotPrefixProvider } from './applications/browser/hints.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
 import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
@@ -969,6 +970,9 @@ const registerModeAPIHandlers = () => {
 const registerBrowserAPIHandlers = () => {
     BrowserManager.setMainWindow(globalMainWindow);
     BrowserManager.bind(ipcMain, openDeskScriptGenerators);
+    // 让「导出 Snapshot」（任务浏览器标签与浏览器应用）与 agent 的 snapshot 工具输出一致：
+    // 都带上插件注册的 Browser Hints。
+    setSnapshotPrefixProvider(browserHintsSnapshotPrefixProvider);
 
     // 下载管理 IPC — 委托给 BrowserApplication
     const browserApp = ApplicationRegistry.getApplication('browser') as any;

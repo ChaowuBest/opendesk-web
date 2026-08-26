@@ -82,6 +82,9 @@ interface PluginListEntry {
     hooks?: Array<{
         name: string;
     }>;
+    browserHints?: Array<{
+        urlPrefix: string;
+    }>;
     agents?: PluginAgentInfo[];
 }
 
@@ -446,6 +449,7 @@ button:hover { background: #f4f5f7; }
 .contribution-pill.tool { color: #8b6fd6; background: #f1ecfb; }
 .contribution-pill.hook { color: #c07a2d; background: #fdf3e7; }
 .contribution-pill.agent { color: #2f7fbf; background: #e8f1fb; }
+.contribution-pill.browser { color: #c05a8a; background: #fbeaf2; }
 .card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .card-footer button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
 .plugin-toggle {
@@ -521,6 +525,7 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) .item-name { color: #e5e7eb; }
 :host([data-theme="dark"]) .item-hint { color: #858990; }
 :host([data-theme="dark"]) .contribution-pill.agent { color: #8bc2f2; background: rgba(47, 127, 191, .22); }
+:host([data-theme="dark"]) .contribution-pill.browser { color: #efa6c6; background: rgba(192, 90, 138, .22); }
 :host([data-theme="dark"]) .empty {
     color: #a4a7ad;
     background: #242426;
@@ -786,6 +791,11 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 ? `<span class="contribution-pill agent">${escapeHtml(
                       this.t('plugin.center.agentCount', { count: entry.agents.length })
                   )}</span>`
+                : '',
+            entry.browserHints?.length
+                ? `<span class="contribution-pill browser">${escapeHtml(
+                      this.t('plugin.center.browserHintCount', { count: entry.browserHints.length })
+                  )}</span>`
                 : ''
         ].filter(Boolean);
         return `<article class="card" data-plugin-id="${escapeHtml(entry.id)}" role="button" tabindex="0">
@@ -864,6 +874,10 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const hookItems = hooks.length
             ? hooks.map((hook) => `<span class="hook-pill">${escapeHtml(hook.name)}</span>`).join('')
             : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noHooks'))}</div>`;
+        const browserHints = entry.browserHints ?? [];
+        const browserHintItems = browserHints.length
+            ? browserHints.map((hint) => `<span class="hook-pill">${escapeHtml(hint.urlPrefix)}</span>`).join('')
+            : `<div class="detail-tool-no-params">${escapeHtml(this.t('plugin.center.detail.noBrowserHints'))}</div>`;
         return `<section class="detail-section">
             <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.skills'))}</div>
             <div class="detail-tools-list">${skillItems}</div>
@@ -879,6 +893,10 @@ export class PluginMgrEntryWidget extends HTMLElement {
         <section class="detail-section">
             <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.hooks'))}</div>
             <div class="hook-list">${hookItems}</div>
+        </section>
+        <section class="detail-section">
+            <div class="detail-section-label">${escapeHtml(this.t('plugin.center.detail.browserHints'))}</div>
+            <div class="hook-list">${browserHintItems}</div>
         </section>`;
     }
 

@@ -73,6 +73,87 @@ export interface BrowserScriptGenerators {
     beforeCallRenderer: Array<(id: string) => string>;
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot text rendering
+// ---------------------------------------------------------------------------
+
+/** 在页面中求值一段 JS 表达式并取回其值 */
+export type BrowserPageEvaluator = (expression: string) => Promise<unknown>;
+
+/**
+ * 快照前缀段落提供者。
+ *
+ * embedBrowserUse 不感知宿主的扩展体系（如 OpenDesk 的插件系统）。宿主通过
+ * `setSnapshotPrefixProvider` 注入本回调，即可在快照正文前追加自定义段落，
+ * 库本身只负责把页面信息与求值能力传进来。
+ */
+export type SnapshotPrefixProvider = (
+    snapshot: PageSnapshot,
+    evaluate: BrowserPageEvaluator
+) => Promise<string[]> | string[];
+
+let _snapshotPrefixProvider: SnapshotPrefixProvider | undefined;
+
+/** 注入快照前缀段落提供者；传入 undefined 可移除。 */
+export function setSnapshotPrefixProvider(provider?: SnapshotPrefixProvider): void {
+    _snapshotPrefixProvider = provider;
+}
+
+/** 以 CDP 会话为后端构造页面求值器。 */
+export function makeSessionEvaluator(session: CDPSession): BrowserPageEvaluator {
+    return async (expression: string) => {
+        const result = await session.send('Runtime.evaluate', {
+            expression,
+            returnByValue: true,
+            awaitPromise: true
+        });
+        if (result.exceptionDetails) {
+            throw new Error(
+                result.exceptionDetails.text || result.exceptionDetails.exception?.description || 'Evaluation error'
+            );
+        }
+        return result.result.value;
+    };
+}
+
+/**
+ * 运行已注入的前缀提供者，返回要置于快照正文前的段落。
+ * 提供者缺失或抛错时返回空数组：前缀属于附加信息，不应影响快照本身。
+ */
+export async function collectSnapshotPrefix(snapshot: PageSnapshot, session: CDPSession): Promise<string[]> {
+    if (!_snapshotPrefixProvider) return [];
+    try {
+        return await _snapshotPrefixProvider(snapshot, makeSessionEvaluator(session));
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * 将快照渲染为统一的文本文档：可选前缀段落 → 页面信息 → ARIA 正文。
+ *
+ * snapshot 工具、任务浏览器标签导出与浏览器应用导出共用该格式，
+ * 避免同一份文本结构在多处各自拼装而逐渐漂移。
+ */
+export function renderSnapshotText(
+    snapshot: PageSnapshot,
+    options: { prefixLines?: readonly string[]; infoLines?: readonly string[] } = {}
+): string {
+    const lines: string[] = [...(options.prefixLines ?? [])];
+    lines.push(`- Page URL: ${snapshot.url}`);
+    if (snapshot.title) lines.push(`- Page Title: ${snapshot.title}`);
+    lines.push(`- Viewport: ${snapshot.viewport.width}x${snapshot.viewport.height}`);
+    if (snapshot.scroll.x || snapshot.scroll.y) lines.push(`- Scroll: ${snapshot.scroll.x},${snapshot.scroll.y}`);
+    lines.push(...(options.infoLines ?? []));
+    lines.push('');
+    lines.push(ACCESSIBILITY_SNAPSHOT_HEADING);
+    lines.push(snapshot.ariaSnapshot);
+    return lines.join('\n');
+}
+
+/** ARIA 正文的段落标题，快照文本与操作后追加快照共用。 */
+export const ACCESSIBILITY_SNAPSHOT_HEADING = '[Accessibility Snapshot]';
+
 export interface BrowserUploadFileResult {
     target: string;
     tag: string;
@@ -1143,6 +1224,15 @@ export class BrowserController {
     /** URL of the most recent snapshot, or undefined if none taken yet. */
     getLastUrl(): string | undefined {
         return this._lastUrl;
+    }
+
+    /** Read the active page's URL and title without capturing a snapshot. */
+    async getPageInfo(): Promise<{ url: string; title: string }> {
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const info = await this.readPageInfo(session);
+            return { url: info.url, title: info.title };
+        });
     }
 
     /**
@@ -2324,17 +2414,9 @@ export class BrowserManager {
                 const sessionMgr = new CDPSessionManager();
                 const session = await sessionMgr.getSession(webContentsId);
                 const snapshot: PageSnapshot = await captureSnapshot(session);
-
-                const lines: string[] = [];
-                lines.push(`- Page URL: ${snapshot.url}`);
-                if (snapshot.title) lines.push(`- Page Title: ${snapshot.title}`);
-                lines.push(`- Viewport: ${snapshot.viewport.width}x${snapshot.viewport.height}`);
-                if (snapshot.scroll.x || snapshot.scroll.y)
-                    lines.push(`- Scroll: ${snapshot.scroll.x},${snapshot.scroll.y}`);
-                lines.push('');
-                lines.push('[Accessibility Snapshot]');
-                lines.push(snapshot.ariaSnapshot);
-                const content = lines.join('\n');
+                const content = renderSnapshotText(snapshot, {
+                    prefixLines: await collectSnapshotPrefix(snapshot, session)
+                });
 
                 const win =
                     BrowserWindow.getFocusedWindow() ??

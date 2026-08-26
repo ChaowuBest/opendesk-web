@@ -142,6 +142,15 @@ export class PluginMgrApplication extends BaseApplication {
             contributions.push(agent);
             agentsByPlugin.set(agent.pluginId, contributions);
         }
+        const browserHintsByPlugin = new Map<
+            string,
+            ReturnType<ReturnType<typeof getPluginHost>['listBrowserHintPrefixes']>
+        >();
+        for (const hint of getPluginHost().listBrowserHintPrefixes()) {
+            const contributions = browserHintsByPlugin.get(hint.pluginId) ?? [];
+            contributions.push(hint);
+            browserHintsByPlugin.set(hint.pluginId, contributions);
+        }
         const ids = new Set([...runtimeById.keys(), ...records.map((record) => record.id), ...candidatesById.keys()]);
         return Array.from(ids)
             .sort()
@@ -219,6 +228,7 @@ export class PluginMgrApplication extends BaseApplication {
                         description: definition.description
                     })),
                     hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name })),
+                    browserHints: (browserHintsByPlugin.get(id) ?? []).map(({ urlPrefix }) => ({ urlPrefix })),
                     agents: agents.map((definition) => ({
                         name: definition.name,
                         whenToUse: definition.whenToUse,
