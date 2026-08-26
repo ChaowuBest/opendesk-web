@@ -366,9 +366,11 @@ describe('setting-panel config management', () => {
         expect(
             panel.querySelector('#acp-agent-client-workspace-strategy')?.closest('.od-sp-fg')?.textContent
         ).not.toContain('Client 工作区');
-        expect(panel.querySelector('#acp-agent-mcp-server-choices')?.closest('.od-sp-fg')?.textContent).toContain(
-            '外部 MCP Server（可选）'
+        expect(panel.querySelector('#acp-agent-mcp-policy')?.closest('.od-sp-fg')?.textContent).toContain(
+            '外部 MCP 策略'
         );
+        expect((panel.querySelector('#acp-agent-mcp-policy') as HTMLSelectElement).value).toBe('none');
+        expect((panel.querySelector('#acp-agent-custom-mcp-fields') as HTMLElement).hidden).toBe(true);
         expect(panel.querySelector('#acp-agent-v2-client-mcp-status')?.textContent).toContain(
             'MCP-over-ACP（自动提供）'
         );
@@ -392,6 +394,7 @@ describe('setting-panel config management', () => {
             execution: { location: 'client', workspace: { strategy: 'task' }, compatibility: 'preferred' },
             session: {
                 authMethodId: 'agent-login',
+                mcpPolicy: 'custom',
                 configOptions: {},
                 mcpBindings: [{ serverId: 'filesystem', location: 'agent' }]
             },
@@ -427,7 +430,31 @@ describe('setting-panel config management', () => {
         const next = panel._readAcpAgentForm(profile.id);
         expect(next.session.authMethodId).toBe('agent-login');
         expect(next.session.mcpBindings).toEqual([{ serverId: 'filesystem', location: 'agent' }]);
+        expect(next.session.mcpPolicy).toBe('custom');
         expect(next.timeouts).toEqual({ connectMs: 15000, promptMs: 600000 });
+    });
+
+    test('defaults external MCP forwarding to none and only shows server choices for custom policy', () => {
+        const panel = createPanel();
+        panel.currentData.applications = {
+            acpmgr: { agents: [] },
+            mcpmgr: { servers: [{ id: 'filesystem', name: 'Filesystem', enabled: true }] }
+        };
+
+        panel.showAcpAgentEditModal(-1);
+
+        const policy = panel.querySelector('#acp-agent-mcp-policy') as HTMLSelectElement;
+        const customFields = panel.querySelector('#acp-agent-custom-mcp-fields') as HTMLElement;
+        expect(policy.value).toBe('none');
+        expect(customFields.hidden).toBe(true);
+
+        Array.from(policy.options).forEach((option) => (option.selected = option.value === 'enabled'));
+        policy.dispatchEvent(new Event('change'));
+        expect(customFields.hidden).toBe(true);
+
+        Array.from(policy.options).forEach((option) => (option.selected = option.value === 'custom'));
+        policy.dispatchEvent(new Event('change'));
+        expect(customFields.hidden).toBe(false);
     });
 
     test('discovers ACP session options and writes a selected model to the profile JSON', async () => {

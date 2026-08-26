@@ -85,7 +85,11 @@ test('ACP execution fingerprints change with workspace placement and MCP binding
     const first = createAcpExecutionFingerprint(profile, workspace);
     const nextProfile = AcpAgentProfileSchema.parse({
         ...profile,
-        session: { ...profile.session, mcpBindings: [{ serverId: 'github', location: 'agent' }] }
+        session: {
+            ...profile.session,
+            mcpPolicy: 'custom',
+            mcpBindings: [{ serverId: 'github', location: 'agent' }]
+        }
     });
 
     assert.notEqual(first, createAcpExecutionFingerprint(nextProfile, workspace));

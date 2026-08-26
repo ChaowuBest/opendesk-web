@@ -155,13 +155,18 @@ const AcpSessionSchema = z
         authMethodId: z.string().trim().min(1).optional(),
         modeId: z.string().trim().min(1).optional(),
         configOptions: z.record(z.string(), SessionValueSchema).default({}),
+        mcpPolicy: z.enum(['none', 'enabled', 'custom']).optional(),
         mcpBindings: z.array(AcpMcpBindingSchema).optional(),
         mcpServerIds: z.array(z.string()).default([])
     })
-    .transform(({ mcpServerIds, mcpBindings, ...session }) => ({
-        ...session,
-        mcpBindings: mcpBindings ?? mcpServerIds.map((serverId) => ({ serverId, location: 'agent' as const }))
-    }));
+    .transform(({ mcpServerIds, mcpBindings, mcpPolicy, ...session }) => {
+        const bindings = mcpBindings ?? mcpServerIds.map((serverId) => ({ serverId, location: 'agent' as const }));
+        return {
+            ...session,
+            mcpPolicy: mcpPolicy ?? (bindings.length > 0 ? ('custom' as const) : ('none' as const)),
+            mcpBindings: bindings
+        };
+    });
 
 const AcpTimeoutsSchema = z
     .object({
@@ -207,7 +212,7 @@ export const AcpAgentProfileSchema = z
     })
     .transform((profile) => ({
         ...profile,
-        session: profile.session ?? { configOptions: {}, mcpBindings: [] },
+        session: profile.session ?? { configOptions: {}, mcpPolicy: 'none' as const, mcpBindings: [] },
         execution:
             profile.execution ??
             (profile.transport.type === 'stdio'

@@ -24,7 +24,8 @@ function baseForm() {
         cookies: 'include',
         modeId: '',
         configOptionsJson: '{"reasoning_effort":"high","sandbox":true}',
-        mcpServerIds: 'filesystem, browser',
+        mcpPolicy: 'none',
+        mcpServerIds: '',
         executionLocation: 'client',
         agentWorkspaceStrategy: 'fixed',
         remotePlatform: 'posix',
@@ -65,11 +66,9 @@ test('ACP agent settings build a stdio profile without resolving secret template
             inheritEnv: true
         },
         session: {
+            mcpPolicy: 'none',
             configOptions: { reasoning_effort: 'high', sandbox: true },
-            mcpBindings: [
-                { serverId: 'filesystem', location: 'agent' },
-                { serverId: 'browser', location: 'agent' }
-            ]
+            mcpBindings: []
         },
         execution: {
             location: 'client',
@@ -147,6 +146,22 @@ test('ACP agent settings persist authentication and timeout choices', () => {
 
     assert.equal(profile.session.authMethodId, 'agent-login');
     assert.deepEqual(profile.timeouts, { connectMs: 15000, promptMs: 600000 });
+});
+
+test('ACP agent settings persist enabled and custom external MCP policies', () => {
+    const inherited = buildAcpAgentProfile({ ...baseForm(), mcpPolicy: 'enabled' }, () => profileId);
+    const custom = buildAcpAgentProfile(
+        { ...baseForm(), mcpPolicy: 'custom', mcpServerIds: 'filesystem, browser' },
+        () => profileId
+    );
+
+    assert.equal(inherited.session.mcpPolicy, 'enabled');
+    assert.deepEqual(inherited.session.mcpBindings, []);
+    assert.equal(custom.session.mcpPolicy, 'custom');
+    assert.deepEqual(custom.session.mcpBindings, [
+        { serverId: 'filesystem', location: 'agent' },
+        { serverId: 'browser', location: 'agent' }
+    ]);
 });
 
 test('ACP agent settings return stable validation codes for invalid fields', () => {

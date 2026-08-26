@@ -1400,11 +1400,19 @@ export const enUs: Record<string, string> = {
         'Test the connection to discover protocol authentication methods. Complete terminal and environment authentication outside the Agent connection first.',
     'sp.agents.auth.none': 'Do not authenticate automatically',
     'sp.agents.auth.external': 'external setup required: ${type}',
-    'sp.agents.field.mcpServers': 'External MCP servers (optional)',
+    'sp.agents.field.mcpPolicy': 'External MCP policy',
+    'sp.agents.field.mcpPolicy.hint':
+        'Applies when creating or resuming a session. The v2 workspace MCP-over-ACP server is still provided automatically according to the runtime setting above.',
+    'sp.agents.field.mcpPolicy.securityHint':
+        'Forwarding sends complete MCP connection details, which may include resolved environment variables and header secrets.',
+    'sp.agents.mcpPolicy.none': 'Do not forward external MCP',
+    'sp.agents.mcpPolicy.enabled': 'Forward MCP enabled in this workspace',
+    'sp.agents.mcpPolicy.custom': 'Custom',
+    'sp.agents.field.mcpServers': 'Custom MCP servers',
     'sp.agents.mcp.disabled': 'disabled or unavailable',
     'sp.agents.mcp.noneConfigured': 'Add servers in MCP Manager first.',
     'sp.agents.field.mcpServers.hint':
-        'These standard MCP configurations are sent to the Agent in session/new and are separate from the automatically provided workspace MCP-over-ACP server below. stdio MCP commands run on the Agent host; resolved environment and header secrets are transmitted to it.',
+        'Only selected, enabled servers are sent to the Agent in session/new. stdio MCP commands run on the Agent host; resolved environment and header secrets are transmitted to it.',
     'sp.agents.field.executionLocation': 'Execution environment',
     'sp.agents.field.executionLocation.hint':
         'Choose whether files and commands run on the Agent host or through the OpenDesk Client workspace runtime.',

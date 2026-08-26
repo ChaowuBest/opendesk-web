@@ -1357,11 +1357,18 @@ export const zhCn: Record<string, string> = {
         '测试连接后可选择 Agent 公布的协议认证方式；终端和环境变量认证需先在 Agent 外部完成。',
     'sp.agents.auth.none': '不主动认证',
     'sp.agents.auth.external': '需外部完成：${type}',
-    'sp.agents.field.mcpServers': '外部 MCP Server（可选）',
+    'sp.agents.field.mcpPolicy': '外部 MCP 策略',
+    'sp.agents.field.mcpPolicy.hint':
+        '创建或恢复会话时按此策略转发外部 MCP；v2 工作区 MCP-over-ACP 始终按上方运行环境自动提供。',
+    'sp.agents.field.mcpPolicy.securityHint': '转发的是完整 MCP 连接配置，可能包含解析后的环境变量和 Header 密钥。',
+    'sp.agents.mcpPolicy.none': '不转发外部 MCP',
+    'sp.agents.mcpPolicy.enabled': '转发工作区已启用的 MCP',
+    'sp.agents.mcpPolicy.custom': '自定义',
+    'sp.agents.field.mcpServers': '自定义 MCP Server',
     'sp.agents.mcp.disabled': '已停用或未找到',
     'sp.agents.mcp.noneConfigured': '请先在 MCP 管理器中添加 Server。',
     'sp.agents.field.mcpServers.hint':
-        '这些标准 MCP 配置会通过 session/new 发送给 Agent，与下方自动提供的工作区 MCP-over-ACP 不同。stdio MCP 命令在 Agent 主机运行，解析后的环境变量和 Header 密钥也会传给 Agent。',
+        '仅选中的已启用 Server 会通过 session/new 发送给 Agent。stdio MCP 命令在 Agent 主机运行，解析后的环境变量和 Header 密钥也会传给 Agent。',
     'sp.agents.field.executionLocation': '执行环境',
     'sp.agents.field.executionLocation.hint':
         '选择文件和命令在 Agent 主机运行，还是通过 OpenDesk Client 工作区运行时执行。',

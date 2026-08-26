@@ -1129,6 +1129,7 @@ class SettingPanel extends HTMLElement {
             cookies: this.querySelector('#acp-agent-cookies')?.value || 'include',
             modeId: this.querySelector('#acp-agent-mode')?.value || '',
             configOptionsJson: this.querySelector('#acp-agent-config-options')?.value || '{}',
+            mcpPolicy: this.querySelector('#acp-agent-mcp-policy')?.value || 'none',
             mcpServerIds: this.querySelector('#acp-agent-mcp-server-choices')
                 ? Array.from(this.querySelectorAll('[data-acp-mcp-server-id]:checked'))
                       .map((input) => input.dataset.acpMcpServerId)
@@ -1184,7 +1185,7 @@ class SettingPanel extends HTMLElement {
             maxDelayMs: 5000
         };
         const timeouts = profile?.timeouts || { connectMs: 30000, promptMs: 1800000 };
-        const session = profile?.session || { configOptions: {}, mcpServerIds: [] };
+        const session = profile?.session || { configOptions: {}, mcpPolicy: 'none', mcpServerIds: [] };
         const isHttp = transport.type === 'streamableHttp';
         const execution =
             profile?.execution ||
@@ -1196,6 +1197,7 @@ class SettingPanel extends HTMLElement {
         const clientWorkspace = executionLocation === 'client' ? execution.workspace : { strategy: 'task' };
         const mcpBindings =
             session.mcpBindings || (session.mcpServerIds || []).map((serverId) => ({ serverId, location: 'agent' }));
+        const mcpPolicy = session.mcpPolicy || (mcpBindings.length > 0 ? 'custom' : 'none');
         const selectedMcpIds = new Set(
             mcpBindings.filter((binding) => binding.location === 'agent').map((binding) => binding.serverId)
         );
@@ -1422,19 +1424,29 @@ class SettingPanel extends HTMLElement {
                             <input id="acp-agent-mode" class="od-sp-fi" value="${this.escapeHtml(session.modeId || '')}" placeholder="code">
                         </div>
                         <div class="od-sp-fg">
-                            <label class="od-sp-fl">${this._t('sp.agents.field.mcpServers')}</label>
-                            ${
-                                mcpChoices.length > 0
-                                    ? `<div id="acp-agent-mcp-server-choices" class="od-sp-stack">${mcpChoices
-                                          .map(
-                                              (server) =>
-                                                  `<label class="od-sp-fc"><input type="checkbox" data-acp-mcp-server-id="${this.escapeHtml(server.id)}" ${selectedMcpIds.has(server.id) ? 'checked' : ''}><span>${this.escapeHtml(server.name)}</span>${server.enabled ? '' : `<span class="od-sp-hint">${this._t('sp.agents.mcp.disabled')}</span>`}</label>`
-                                          )
-                                          .join('')}</div>`
-                                    : `<div id="acp-agent-mcp-server-choices" class="od-sp-stack"><div class="od-sp-hint">${this._t('sp.agents.mcp.noneConfigured')}</div></div>`
-                            }
-                            <div class="od-sp-hint">${this._t('sp.agents.field.mcpServers.hint')}</div>
+                            <label class="od-sp-fl">${this._t('sp.agents.field.mcpPolicy')}</label>
+                            <select id="acp-agent-mcp-policy" class="od-sp-fi">
+                                <option value="none" ${mcpPolicy === 'none' ? 'selected' : ''}>${this._t('sp.agents.mcpPolicy.none')}</option>
+                                <option value="enabled" ${mcpPolicy === 'enabled' ? 'selected' : ''}>${this._t('sp.agents.mcpPolicy.enabled')}</option>
+                                <option value="custom" ${mcpPolicy === 'custom' ? 'selected' : ''}>${this._t('sp.agents.mcpPolicy.custom')}</option>
+                            </select>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.mcpPolicy.hint')}</div>
+                            <div class="od-sp-hint">${this._t('sp.agents.field.mcpPolicy.securityHint')}</div>
                         </div>
+                    </div>
+                    <div id="acp-agent-custom-mcp-fields" class="od-sp-fg" ${mcpPolicy === 'custom' ? '' : 'hidden'}>
+                        <label class="od-sp-fl">${this._t('sp.agents.field.mcpServers')}</label>
+                        ${
+                            mcpChoices.length > 0
+                                ? `<div id="acp-agent-mcp-server-choices" class="od-sp-stack">${mcpChoices
+                                      .map(
+                                          (server) =>
+                                              `<label class="od-sp-fc"><input type="checkbox" data-acp-mcp-server-id="${this.escapeHtml(server.id)}" ${selectedMcpIds.has(server.id) ? 'checked' : ''}><span>${this.escapeHtml(server.name)}</span>${server.enabled ? '' : `<span class="od-sp-hint">${this._t('sp.agents.mcp.disabled')}</span>`}</label>`
+                                      )
+                                      .join('')}</div>`
+                                : `<div id="acp-agent-mcp-server-choices" class="od-sp-stack"><div class="od-sp-hint">${this._t('sp.agents.mcp.noneConfigured')}</div></div>`
+                        }
+                        <div class="od-sp-hint">${this._t('sp.agents.field.mcpServers.hint')}</div>
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.configOptions')}</label>
@@ -1519,9 +1531,14 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#acp-agent-fixed-cwd-field').hidden =
                 this.querySelector('#acp-agent-cwd')?.value !== 'fixed';
         };
+        const updateMcpPolicyFields = () => {
+            this.querySelector('#acp-agent-custom-mcp-fields').hidden =
+                this.querySelector('#acp-agent-mcp-policy')?.value !== 'custom';
+        };
         this.querySelector('#acp-agent-transport')?.addEventListener('change', updateTransportFields);
         this.querySelector('#acp-agent-protocol-version')?.addEventListener('change', updateProtocolFields);
         this.querySelector('#acp-agent-cwd')?.addEventListener('change', updateCwdField);
+        this.querySelector('#acp-agent-mcp-policy')?.addEventListener('change', updateMcpPolicyFields);
         this.querySelector('#acp-agent-execution-location')?.addEventListener('change', updateExecutionFields);
         this.querySelector('#acp-agent-agent-workspace-strategy')?.addEventListener(
             'change',

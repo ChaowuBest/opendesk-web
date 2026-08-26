@@ -358,6 +358,44 @@ test('selected MCP manager entries are converted to ACP SDK server shapes', () =
     ]);
 });
 
+test('external MCP policy defaults to none and can inherit all enabled workspace servers', () => {
+    const servers = [
+        {
+            id: 'enabled-stdio',
+            name: 'enabled',
+            enabled: true,
+            transport: 'stdio' as const,
+            command: 'node',
+            args: ['server.js'],
+            env: {},
+            headers: {}
+        },
+        {
+            id: 'disabled-http',
+            name: 'disabled',
+            enabled: false,
+            transport: 'streamableHttp' as const,
+            url: 'https://mcp.example.com',
+            args: [],
+            env: {},
+            headers: {}
+        }
+    ];
+    const none = AcpAgentProfileSchema.parse({
+        ...enabledProfile,
+        session: { mcpPolicy: 'none', mcpBindings: [{ serverId: 'enabled-stdio', location: 'agent' }] }
+    });
+    const inherited = AcpAgentProfileSchema.parse({
+        ...enabledProfile,
+        session: { mcpPolicy: 'enabled' }
+    });
+
+    assert.deepEqual(resolveAcpMcpServers(none, servers), []);
+    assert.deepEqual(resolveAcpMcpServers(inherited, servers), [
+        { name: 'enabled', command: 'node', args: ['server.js'], env: [] }
+    ]);
+});
+
 test('Client-side MCP bindings are rejected until an OpenDesk proxy transport exists', () => {
     const profile = AcpAgentProfileSchema.parse({
         ...enabledProfile,

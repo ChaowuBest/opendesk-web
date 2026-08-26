@@ -503,7 +503,11 @@ test('ACP runtime starts a new session when the persisted execution fingerprint 
                 workspace: { strategy: 'fixed', path: directory },
                 compatibility: 'required'
             },
-            session: { ...profile.session, mcpBindings: [{ serverId: 'new-mcp', location: 'agent' }] }
+            session: {
+                ...profile.session,
+                mcpPolicy: 'custom',
+                mcpBindings: [{ serverId: 'new-mcp', location: 'agent' }]
+            }
         });
         const nextRuntime = createRuntime(directory, nextConnection, [], changedProfile);
         await nextRuntime.runTurn(makeRequest({ workspace: directory, persistedState: firstResult.state }));

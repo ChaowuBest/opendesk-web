@@ -89,6 +89,7 @@ export function resolveAcpMcpServers(
     configuredServers: McpServerConfig[],
     environ: NodeJS.ProcessEnv = process.env
 ): McpServer[] {
+    if (profile.session.mcpPolicy === 'none') return [];
     const clientBindings = profile.session.mcpBindings.filter((binding) => binding.location === 'client');
     if (clientBindings.length > 0) {
         throw new Error(t('acpmgr.error.mcpClientProxyUnsupported'));
@@ -98,7 +99,9 @@ export function resolveAcpMcpServers(
     );
     try {
         return configuredServers
-            .filter((server) => server.enabled && selectedIds.has(server.id))
+            .filter(
+                (server) => server.enabled && (profile.session.mcpPolicy === 'enabled' || selectedIds.has(server.id))
+            )
             .map((server): McpServer => {
                 if (server.transport === 'stdio') {
                     if (!server.command) {

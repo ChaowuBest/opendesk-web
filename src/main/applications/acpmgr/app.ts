@@ -321,7 +321,12 @@ export class AcpMgrApplication extends BaseApplication {
     }
 
     private async resolveMcpServers(profile: AcpAgentProfile): Promise<McpServer[]> {
-        if (profile.session.mcpBindings.length === 0) return [];
+        if (
+            profile.session.mcpPolicy === 'none' ||
+            (profile.session.mcpPolicy === 'custom' && profile.session.mcpBindings.length === 0)
+        ) {
+            return [];
+        }
         const mcpManager = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
         if (!mcpManager) throw new Error(t('acpmgr.error.mcpManagerUnavailable'));
         const environ = {

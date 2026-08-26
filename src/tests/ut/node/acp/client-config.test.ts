@@ -39,6 +39,7 @@ test('ACP agent profile schema supports stdio and Streamable HTTP transports', (
         workspace: { strategy: 'task' },
         compatibility: 'preferred'
     });
+    assert.equal(stdio.session.mcpPolicy, 'none');
     assert.deepEqual(stdio.reconnect, {
         enabled: true,
         maxAttempts: 3,
@@ -151,7 +152,27 @@ test('ACP profile schema migrates legacy MCP ids into Agent-side bindings', () =
         { serverId: 'filesystem', location: 'agent' },
         { serverId: 'browser', location: 'agent' }
     ]);
+    assert.equal(parsed.session.mcpPolicy, 'custom');
     assert.equal('mcpServerIds' in parsed.session, false);
+});
+
+test('ACP profile schema keeps explicit external MCP forwarding policies', () => {
+    const inherited = AcpAgentProfileSchema.parse({
+        id: profileId,
+        name: 'Inherited MCP profile',
+        transport: { type: 'stdio', command: 'agent' },
+        session: { mcpPolicy: 'enabled' }
+    });
+    const custom = AcpAgentProfileSchema.parse({
+        id: '22222222-2222-4222-8222-222222222222',
+        name: 'Custom MCP profile',
+        transport: { type: 'stdio', command: 'agent' },
+        session: { mcpPolicy: 'custom', mcpBindings: [{ serverId: 'browser', location: 'agent' }] }
+    });
+
+    assert.equal(inherited.session.mcpPolicy, 'enabled');
+    assert.deepEqual(inherited.session.mcpBindings, []);
+    assert.equal(custom.session.mcpPolicy, 'custom');
 });
 
 test('ACP settings reject incomplete and unsafe transport configuration', () => {

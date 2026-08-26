@@ -51,6 +51,7 @@ export type AcpAgentFormValues = {
     cookies: string;
     modeId: string;
     configOptionsJson: string;
+    mcpPolicy: string;
     mcpServerIds: string;
     executionLocation: string;
     agentWorkspaceStrategy: string;
@@ -99,6 +100,7 @@ export type AcpAgentSettingsProfile = {
         authMethodId?: string;
         modeId?: string;
         configOptions: Record<string, string | boolean>;
+        mcpPolicy: 'none' | 'enabled' | 'custom';
         mcpBindings: Array<{ serverId: string; location: 'agent' | 'client' }>;
     };
     execution:
@@ -237,6 +239,7 @@ export function buildAcpAgentProfile(
 
     const modeId = form.modeId.trim();
     const authMethodId = form.authMethodId.trim();
+    const mcpPolicy = form.mcpPolicy === 'enabled' ? 'enabled' : form.mcpPolicy === 'custom' ? 'custom' : 'none';
     let execution: AcpAgentSettingsProfile['execution'];
     if (form.executionLocation === 'agent') {
         const platform = form.remotePlatform === 'windows' ? 'windows' : 'posix';
@@ -301,6 +304,7 @@ export function buildAcpAgentProfile(
             ...(authMethodId ? { authMethodId } : {}),
             ...(modeId ? { modeId } : {}),
             configOptions: parseConfigOptions(form.configOptionsJson),
+            mcpPolicy,
             mcpBindings: form.mcpServerIds
                 .split(',')
                 .map((entry) => entry.trim())

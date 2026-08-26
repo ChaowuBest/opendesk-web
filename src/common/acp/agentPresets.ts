@@ -38,6 +38,7 @@ export interface AcpAgentPresetDraft {
         inheritEnv: boolean;
     };
     session: {
+        mcpPolicy: 'none';
         configOptions: Record<string, string | boolean>;
         mcpBindings: Array<{ serverId: string; location: 'agent' | 'client' }>;
     };
@@ -180,6 +181,7 @@ export function createAcpAgentPresetDraft(
             inheritEnv: true
         },
         session: {
+            mcpPolicy: 'none',
             configOptions: {},
             mcpBindings: []
         },
