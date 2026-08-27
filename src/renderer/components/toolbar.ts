@@ -19,6 +19,8 @@ interface Button {
     iconSvg?: string;
     label: string;
     labelStayVisible?: boolean;
+    /** 追加到按钮元素上的额外 class，用于单个按钮的样式变体 */
+    className?: string;
     /** spread 布局下，悬停时在图标右侧展开文本 label */
     expandLabel?: boolean;
     active?: boolean;
@@ -217,13 +219,14 @@ export class ElasticToolbarWidget extends HTMLElement {
                 const labelStayVisible = !!button.labelStayVisible;
                 const labelCls = labelStayVisible ? 'elastic-label elastic-label--visible' : 'elastic-label';
                 const activeCls = button.active ? ' navbar-active' : '';
+                const extraCls = button.className ? ` ${button.className}` : '';
                 const iconHTML = button.iconSvg
                     ? `<span class="elastic-icon-wrap">${button.iconSvg}</span>`
                     : `<i class="fa-solid ${button.icon}"></i>`;
                 return `
             <button id='${button.id}-${this.uid}' class="elastic-capsule-btn flex items-center px-2 py-2 rounded-full
                         bg-transparent
-                        text-gray-700${activeCls}"
+                        text-gray-700${activeCls}${extraCls}"
                 title="${button.label}">
                 ${iconHTML}
                 <span class="${labelCls}">

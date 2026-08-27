@@ -71,6 +71,18 @@ export function getSidebarRecentTasks(tasks: SidebarTask[], limit: number): Side
     return sortTasks(tasks.filter((task) => task.internal !== true && isSidebarTaskVisible(task))).slice(0, limit);
 }
 
+/**
+ * 取最近的根任务列表，口径与侧边栏「按时间」分组完全对齐：
+ * 仅根任务（子任务并入父任务，不单独出现）、排除自动化任务、按活动时间降序。
+ * 供反馈弹窗等需要「让用户从最近任务里挑一个」的场景使用。
+ */
+export function getSidebarRecentRootTasks(tasks: SidebarTask[], limit: number, now: Date = new Date()): SidebarTask[] {
+    return buildSidebarTaskGroups(tasks.filter(isSidebarTaskVisible), 'time', now)
+        .filter((group) => group.id !== 'automatic')
+        .flatMap((group) => group.items.map((item) => item.task))
+        .slice(0, limit);
+}
+
 function timestamp(value?: string): number {
     if (!value) return 0;
     const parsed = Date.parse(value);

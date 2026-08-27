@@ -1026,6 +1026,9 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        // 提交用户反馈（feature / bug）。附件由 main 侧按勾选读取并截断，
+        // renderer 只传是否勾选与当前任务 id。
+        submitFeedback: (submission) => ipcRenderer.invoke('feedback:submit', submission),
         exportLogEntries: async (options) => {
             const result = await ipcRenderer.invoke('setting:exportLogEntries', options);
             if (result.status !== 'ok') {

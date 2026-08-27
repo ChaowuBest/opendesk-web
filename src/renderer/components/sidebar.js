@@ -12,6 +12,7 @@
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal, bindOverlayDismiss } from './confirmModal.ts';
+import { showFeedbackModal } from './feedbackModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import {
@@ -40,6 +41,7 @@ const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
 const THEME_SUN_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
 const THEME_MOON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
 const THEME_CONTRAST_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18V3z" fill="currentColor" stroke="none"/></svg>`;
+const FEEDBACK_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.4V15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h9.6"/><circle class="sb-feedback-dot" cx="19.4" cy="5.6" r="2.9" stroke="none"/></svg>`;
 const THEME_ICON_MAP = { light: THEME_SUN_SVG, dark: THEME_MOON_SVG, system: THEME_CONTRAST_SVG };
 const THEME_CYCLE = ['light', 'dark', 'system'];
 const THEME_LABEL_KEY = {
@@ -663,6 +665,18 @@ class SideBar extends HTMLElement {
             label: this._t('renderer.toolbar.personalCenter'),
             action: () => {
                 window.globalControlAPI.openPersonalCenter();
+            }
+        });
+        // 反馈按钮：文字常显 + 品牌红强调，点击弹出反馈入口选择弹窗
+        buttons.push({
+            id: 'open-feedback-btn',
+            icon: '',
+            iconSvg: FEEDBACK_SVG,
+            label: this._t('renderer.sidebar.feedback'),
+            labelStayVisible: true,
+            className: 'sb-feedback-btn',
+            action: () => {
+                showFeedbackModal(this._t);
             }
         });
         return buttons;

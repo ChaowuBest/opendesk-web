@@ -276,6 +276,17 @@ async function writeRequestBody(request: http.ClientRequest, body: BodyInit | nu
             request.end(body.toString());
             return;
         }
+        if (typeof FormData !== 'undefined' && body instanceof FormData) {
+            // Node 全局 fetch 会为 FormData 自动生成 boundary；native transport 需借助标准 Request
+            // 将 FormData 编码为 multipart 流，并取回带 boundary 的 Content-Type 头。
+            const encoded = new Request('http://opendesk.invalid', { method: 'POST', body });
+            const contentType = encoded.headers.get('content-type');
+            if (contentType) {
+                request.setHeader('Content-Type', contentType);
+            }
+            await writeIterableBody(request, encoded.body as unknown as AsyncIterable<Uint8Array>);
+            return;
+        }
         if (body instanceof ArrayBuffer) {
             request.end(Buffer.from(body));
             return;

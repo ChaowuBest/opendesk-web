@@ -212,6 +212,7 @@ export class Markdown extends Text {}
 export class Input extends Component {
     focused = false;
     private value = '';
+    onSubmit?: (value: string) => void;
 
     getValue() {
         return this.value;
@@ -219,6 +220,12 @@ export class Input extends Component {
 
     setValue(value: string) {
         this.value = value;
+    }
+
+    handleInput(data: string) {
+        if (data.length === 1 && data >= ' ') {
+            this.value += data;
+        }
     }
 
     render(_width: number): string[] {
@@ -245,6 +252,15 @@ export class Editor extends Markdown {
 
     getText() {
         return this.value;
+    }
+
+    getExpandedText() {
+        return this.value;
+    }
+
+    getCursor() {
+        const line = this.value.split('\n').length - 1;
+        return { line, col: 0 };
     }
 
     addToHistory(_text: string) {}

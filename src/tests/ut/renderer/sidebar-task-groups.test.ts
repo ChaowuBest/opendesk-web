@@ -2,6 +2,7 @@ import {
     buildSidebarFavoritesResults,
     buildSidebarSearchResults,
     buildSidebarTaskGroups,
+    getSidebarRecentRootTasks,
     getSidebarRecentTasks,
     getSidebarRunningTasks,
     isRootTask,
@@ -408,5 +409,61 @@ describe('sidebar recent tasks (chat quick menu)', () => {
         const recent = getSidebarRecentTasks(tasks, 10);
 
         expect(recent.map((t) => t.task_id)).toEqual(['regular']);
+    });
+});
+
+describe('getSidebarRecentRootTasks', () => {
+    test('与按时间分组的列表对齐：仅根任务、排除自动化任务、按活动时间降序', () => {
+        const tasks = [
+            task('newest', '2026-07-29T11:00:00'),
+            task('child-of-newest', '2026-07-29T11:30:00', { parent_id: 'newest' }),
+            task('automatic', '2026-07-29T11:50:00', { internal: true }),
+            task('older', '2026-07-20T09:00:00'),
+            task('oldest', '2026-06-01T09:00:00')
+        ];
+
+        const recent = getSidebarRecentRootTasks(tasks, 10, now);
+
+        expect(recent.map((t) => t.task_id)).toEqual(['newest', 'older', 'oldest']);
+    });
+
+    test('结果与时间视图分组展开后的顺序一致', () => {
+        const tasks = [
+            task('today-a', '2026-07-29T11:00:00'),
+            task('today-b', '2026-07-29T09:00:00'),
+            task('week-a', '2026-07-26T09:00:00'),
+            task('earlier-a', '2026-06-01T09:00:00'),
+            task('automatic', '2026-07-29T11:50:00', { internal: true })
+        ];
+
+        const groups = buildSidebarTaskGroups(tasks, 'time', now);
+        const flattened = groups
+            .filter((group) => group.id !== 'automatic')
+            .flatMap((group) => group.items.map((item) => item.task.task_id));
+
+        expect(getSidebarRecentRootTasks(tasks, 10, now).map((t) => t.task_id)).toEqual(flattened);
+    });
+
+    test('按 limit 截断', () => {
+        const tasks = [
+            task('a', '2026-07-29T11:00:00'),
+            task('b', '2026-07-29T10:00:00'),
+            task('c', '2026-07-29T09:00:00')
+        ];
+
+        expect(getSidebarRecentRootTasks(tasks, 2, now).map((t) => t.task_id)).toEqual(['a', 'b']);
+    });
+
+    test('排除无名称且未在命名中的任务', () => {
+        const tasks = [
+            task('named', '2026-07-29T10:00:00'),
+            task('unnamed', '2026-07-29T11:00:00', { task_name: null })
+        ];
+
+        expect(getSidebarRecentRootTasks(tasks, 10, now).map((t) => t.task_id)).toEqual(['named']);
+    });
+
+    test('无可见任务时返回空数组', () => {
+        expect(getSidebarRecentRootTasks([], 10, now)).toEqual([]);
     });
 });
