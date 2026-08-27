@@ -2528,6 +2528,154 @@ describe('task-view message queue', () => {
         }
     });
 
+    test('finalizes active reasoning blocks when interrupting a running turn to send a queued message immediately', async () => {
+        // 复现：思考过程中插队发新消息，后端 _turnRunning=true 时不发送 stopped 订阅反馈，
+        // 旧回合收尾又因 _turnGeneration 被新回合取代而跳过 feedback，前端状态一直 running，
+        // 旧 reasoning 块若不 finalize 会与新一轮思考块同时活跃、同时计时。
+        jest.useFakeTimers();
+        try {
+            const TaskViewClass = customElements.get('task-view') as any;
+            const interruptForNewMessage = jest.fn(async () => undefined);
+            window.taskManagerAPI = {
+                submitMessage,
+                interruptForNewMessage
+            };
+
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                task_status: string;
+                messageQueue: Array<{
+                    id: string;
+                    message: string;
+                    attachedFilePaths: string[];
+                    attachedImages: string[];
+                    selectedExecutionNodeId?: string | null;
+                }>;
+                _handleRunningGoalInput: jest.Mock;
+                _updateMessageQueuePanel: jest.Mock;
+                sendQueueMessageImmediately: (id: string) => Promise<void>;
+            };
+            taskView.task_id = 'task-1';
+            taskView.task_status = 'running';
+            taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+            const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+            // 构造正在流式输出、正在计时的 reasoning 块
+            historyContainer.insertAdjacentHTML(
+                'beforeend',
+                TaskViewClass.createReasoningPartHtml('thinking...', true)
+            );
+            const reasoningEl = historyContainer.querySelector('.reasoning-block-od') as HTMLElement & {
+                _reasoningTimeInterval: ReturnType<typeof setInterval> | null;
+            };
+            TaskViewClass.updateReasoningPreview(reasoningEl, 'thinking...');
+            expect(reasoningEl.classList.contains('reasoning-active')).toBe(true);
+            expect(reasoningEl._reasoningTimeInterval).not.toBeNull();
+
+            taskView.messageQueue = [
+                {
+                    id: 'queue-1',
+                    message: 'send now',
+                    attachedFilePaths: [],
+                    attachedImages: []
+                }
+            ];
+            taskView._handleRunningGoalInput = jest.fn(async () => 'not-goal');
+            taskView._updateMessageQueuePanel = jest.fn();
+
+            await taskView.sendQueueMessageImmediately('queue-1');
+
+            // 中断后旧回合的思考块必须立即完成计时，而不是继续运行
+            expect(interruptForNewMessage).toHaveBeenCalledWith('task-1');
+            expect(submitMessage).toHaveBeenCalledWith('task-1', {
+                message: 'send now',
+                attachedFilePaths: [],
+                attachedImages: [],
+                selectedModel: undefined,
+                reasoningEffort: undefined,
+                selectedExecutionNodeId: null
+            });
+            expect(reasoningEl.classList.contains('reasoning-completed')).toBe(true);
+            expect(reasoningEl._reasoningTimeInterval).toBeNull();
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('does not restart the timer when stale progress arrives after a reasoning block is finalized', () => {
+        // 防御：插队后旧回合晚到的残余 progress 不得让已 finalize 的思考块重启计时器。
+        jest.useFakeTimers();
+        try {
+            const TaskViewClass = customElements.get('task-view') as any;
+            const el = document.createElement('div');
+            el.innerHTML = TaskViewClass.createReasoningPartHtml('', true);
+            const block = el.querySelector('.reasoning-block-od') as HTMLElement & {
+                _reasoningTimeInterval: ReturnType<typeof setInterval> | null;
+            };
+            TaskViewClass.updateReasoningPreview(block, 'thinking...');
+            expect(block._reasoningTimeInterval).not.toBeNull();
+
+            TaskViewClass.finalizeReasoningBlock(block);
+            expect(block._reasoningTimeInterval).toBeNull();
+            const timeEl = block.querySelector('.reasoning-time') as HTMLElement;
+            const frozenTime = timeEl.textContent;
+
+            // 模拟旧回合晚到的残余 progress
+            TaskViewClass.updateReasoningPreview(block, 'more thinking...');
+            expect(block._reasoningTimeInterval).toBeNull();
+            expect(timeEl.textContent).toBe(frozenTime);
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('finalizes active reasoning blocks when a new user message starts the next turn', () => {
+        // 覆盖直接提交路径：任何新用户消息（新回合开始信号）都会兜底结束旧回合
+        // 活跃 reasoning 块的计时，即使后端未发送 stopped 订阅反馈。
+        jest.useFakeTimers();
+        try {
+            const TaskViewClass = customElements.get('task-view') as any;
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            };
+            taskView.task_id = 'task-1';
+            taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+            const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+            // 旧回合的活跃（计时中）reasoning 块
+            historyContainer.insertAdjacentHTML(
+                'beforeend',
+                TaskViewClass.createReasoningPartHtml('thinking...', true)
+            );
+            const reasoningEl = historyContainer.querySelector('.reasoning-block-od') as HTMLElement & {
+                _reasoningTimeInterval: ReturnType<typeof setInterval> | null;
+            };
+            TaskViewClass.updateReasoningPreview(reasoningEl, 'thinking...');
+            expect(reasoningEl._reasoningTimeInterval).not.toBeNull();
+
+            // 新回合开始：收到用户消息 progress
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'user-2',
+                    rawText: '继续',
+                    isLastPart: true,
+                    timestamp: Date.now(),
+                    last_part: { type: 'text', rendered: '继续' },
+                    parts: [{ type: 'text', rendered: '继续' }]
+                },
+                historyContainer
+            );
+
+            expect(reasoningEl.classList.contains('reasoning-completed')).toBe(true);
+            expect(reasoningEl._reasoningTimeInterval).toBeNull();
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
     test('browser app events force the right sidebar to the browser tab', () => {
         const TaskViewClass = customElements.get('task-view') as any;
         TaskViewClass.rightSidebarExpanded = true;
@@ -2577,10 +2725,6 @@ describe('task-view message queue', () => {
 
         taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
         expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
-        expect(sidebar.openFilePreview).toHaveBeenCalledWith(
-            '/workspace/deck.pptx',
-            undefined,
-            onSwitchBlocked
-        );
+        expect(sidebar.openFilePreview).toHaveBeenCalledWith('/workspace/deck.pptx', undefined, onSwitchBlocked);
     });
 });
