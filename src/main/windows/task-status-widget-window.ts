@@ -47,6 +47,8 @@ const WIDGET_HEIGHT = 215;
 const WIDGET_COLLAPSED_WIDTH = 240;
 const WIDGET_COLLAPSED_HEIGHT = 44;
 const WIDGET_MARGIN = 28;
+/** 浮窗专用 session partition，用于把页面缩放状态与主窗口隔离。 */
+const WIDGET_PARTITION = 'task-status-widget';
 
 /** 悬浮窗显示位置（与设置 gui_config.floating_window_position 对齐）。 */
 type FloatingWindowPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -260,7 +262,12 @@ function ensureWidgetWindow(): BrowserWindow | null {
             nodeIntegration: false,
             contextIsolation: true,
             backgroundThrottling: false,
-            preload: host.getPreloadPath()
+            preload: host.getPreloadPath(),
+            // Chromium 的页面缩放按 session + host 存储：主窗口应用用户缩放
+            // （设置里的 scale_factor、Ctrl+{+,-,0}）会连带放大同 session 同 origin
+            // 的浮窗，而浮窗外壳尺寸固定，放大后内容溢出出现滚动条。使用独立 session
+            // partition 让浮窗的缩放状态与主窗口隔离，恒定保持 100%。
+            partition: WIDGET_PARTITION
         }
     });
 
@@ -269,6 +276,9 @@ function ensureWidgetWindow(): BrowserWindow | null {
     // （见 electron/electron#26350）。仅保持「在所有工作区可见」。
     win.setVisibleOnAllWorkspaces(true);
     win.setMenu(null);
+
+    // 禁止浮窗内的捏合缩放，保证固定外壳内的布局不被破坏。
+    win.webContents.setVisualZoomLevelLimits(1, 1);
 
     win.on('closed', () => {
         widgetWindow = null;

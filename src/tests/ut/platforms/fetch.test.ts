@@ -380,6 +380,45 @@ describe('Platform fetch 抽象层', () => {
             }
         });
 
+        test('Node 传输支持 FormData 请求体并携带 multipart boundary', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            let receivedType: string | undefined;
+            let receivedBody = '';
+            const server = http.createServer((req, res) => {
+                receivedType = req.headers['content-type'];
+                req.on('data', (chunk: Buffer) => {
+                    receivedBody += chunk.toString('utf8');
+                });
+                req.on('end', () => {
+                    res.end('upload-ok');
+                });
+            });
+            const port = await listenLocalServer(server);
+
+            try {
+                const form = new FormData();
+                form.append('type', 'bug');
+                form.append('content', '点击按钮无响应');
+                form.append('attachments', new Blob(['line1\nline2'], { type: 'text/plain' }), 'trace.txt');
+                const response = await fetchWithResolvedProxy(
+                    `http://127.0.0.1:${port}/upload`,
+                    { method: 'POST', body: form },
+                    { bypassProxy: true }
+                );
+
+                await expect(response.text()).resolves.toBe('upload-ok');
+                expect(receivedType).toMatch(/^multipart\/form-data; boundary=/);
+                expect(receivedBody).toContain('name="type"');
+                expect(receivedBody).toContain('bug');
+                expect(receivedBody).toContain('name="content"');
+                expect(receivedBody).toContain('点击按钮无响应');
+                expect(receivedBody).toContain('filename="trace.txt"');
+                expect(receivedBody).toContain('line1\nline2');
+            } finally {
+                await closeLocalTcpServer(server);
+            }
+        });
+
         test.each([
             ['gzip', 'gzip', (body: Buffer) => zlib.gzipSync(body)],
             ['deflate', 'deflate', (body: Buffer) => zlib.deflateSync(body)],
