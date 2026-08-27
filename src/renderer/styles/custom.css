@@ -48,6 +48,25 @@ body {
     opacity: 1;
     margin-top: 2px;
 }
+/* 展开的思考块内容滚动条：不设置会导致 WebKit 使用系统默认宽度（明显变粗），
+   与深色主题下其它细滚动条保持一致。 */
+.reasoning-block-od .reasoning-full-area::-webkit-scrollbar,
+.reasoning-block-od .reasoning-preview-area::-webkit-scrollbar {
+    width: 4px;
+}
+.reasoning-block-od .reasoning-full-area::-webkit-scrollbar-track,
+.reasoning-block-od .reasoning-preview-area::-webkit-scrollbar-track {
+    background: transparent;
+}
+.reasoning-block-od .reasoning-full-area::-webkit-scrollbar-thumb,
+.reasoning-block-od .reasoning-preview-area::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+html[data-theme='dark'] .reasoning-block-od .reasoning-full-area::-webkit-scrollbar-thumb,
+html[data-theme='dark'] .reasoning-block-od .reasoning-preview-area::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
 .reasoning-block-od .reasoning-toggle {
     transition: color 0.15s;
 }
@@ -3228,8 +3247,26 @@ agent-input[hide-disclaimer] .agent-input-footer {
     flex-direction: column;
     gap: 20px;
 }
+/* 历史区域浅色主题滚动条：深色主题在 theme-dark.css 中定义了 6px 细滚动条，
+   浅色主题此前没有对应规则，一旦历史内容溢出就会回退到系统默认宽度的粗滚动条。 */
+#taskview-chat-history::-webkit-scrollbar {
+    width: 6px;
+}
+#taskview-chat-history::-webkit-scrollbar-track {
+    background: transparent;
+}
+#taskview-chat-history::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.14);
+    border-radius: 3px;
+}
+#taskview-chat-history::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.24);
+}
 #taskview-chat-history > * {
     overflow-anchor: none;
+    /* flex column 子项默认 min-width:auto，内容（宽图片/长文本/表格）超宽时
+       会把历史容器撑出横向滚动条；限制为 0 让内容在容器内折行或由子元素自身滚动。 */
+    min-width: 0;
 }
 #taskview-chat-history::after {
     content: '';
@@ -3316,6 +3353,8 @@ agent-input[hide-disclaimer] .agent-input-footer {
 .od-assistant-msg-container {
     margin-top: 0 !important;
     margin-bottom: 0 !important;
+    /* 与 .od-user-msg-container 一致：flex 子项允许收缩，避免宽内容撑出横向滚动条 */
+    min-width: 0;
 }
 
 .od-user-msg-container {

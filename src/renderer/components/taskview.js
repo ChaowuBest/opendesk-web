@@ -838,6 +838,10 @@ class TaskView extends HTMLElement {
      */
     static updateReasoningPreview(el, text) {
         if (!el) return;
+        // 已完成（finalize 过）的块不再接受流式更新：插队中断后旧回合的
+        // 残余 progress 可能晚到，若在此重新启动计时器，已 finalize 的
+        // 思考块会继续计时，出现"两个思考块同时活跃同时计时"。
+        if (el.classList.contains('reasoning-completed')) return;
         el._reasoningTextLength = (text || '').length;
 
         // Time display refresh (created once per element)
@@ -2025,6 +2029,11 @@ class TaskView extends HTMLElement {
     }
 
     _renderUserProgress(progress, history_container) {
+        // 新用户消息 = 新回合开始信号：旧回合可能因插队/直接提交被新 turn 取代，
+        // 后端不会发送 stopped 订阅反馈（_turnRunning=true 时中断不发送、旧 turn
+        // 收尾时 _turnGeneration 已递增而跳过 feedback），这里兜底结束所有活跃
+        // reasoning 块的计时，避免新旧思考块同时活跃同时计时。幂等，重复调用无副作用。
+        this._cleanupStreamingState();
         const isGoalEditReminder = isGoalEditReminderMessage(progress);
         this._consumeGoalEditReminder(progress);
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
@@ -2331,45 +2340,11 @@ class TaskView extends HTMLElement {
                         }
                         this.task_status = 'stopped';
                         this.emitTaskStatusChanged(this.task_status);
-                        // 手动停止后立即完成所有活跃 reasoning 块的计时，
-                        // 避免因后端 _turnRunning=true 时延迟发送的
-                        // sendSubscriptionFeedback 被 _handleTaskStatusUpdate
-                        // 跳过（前端 status 已为 'stopped'）而导致计时器永久运行。
-                        const historyContainer = this.getHistoryContainer();
-                        if (historyContainer) {
-                            historyContainer
-                                .querySelectorAll('.reasoning-block-od.reasoning-active')
-                                .forEach((el) => TaskView.finalizeReasoningBlock(el));
-                            // 手动停止后移除等待占位和 spinner，
-                            // 避免因前端提前设置 stopped 导致后续
-                            // _handleTaskStatusUpdate 返回 false 而跳过清理。
-                            const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
-                            if (waitingPlaceholder) waitingPlaceholder.remove();
-                            historyContainer.querySelectorAll('.usage-spinner').forEach((el) => {
-                                el.style.display = 'none';
-                            });
-                            // 移除流式光标
-                            historyContainer.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
-                            // 为最后一条 assistant 消息追加时间戳与 hover 菜单
-                            const assistantContainers =
-                                historyContainer.querySelectorAll('.od-assistant-msg-container');
-                            const lastAssistantWrapper = assistantContainers[assistantContainers.length - 1];
-                            if (lastAssistantWrapper) {
-                                const msgContainer = lastAssistantWrapper.querySelector('[id^="message-container-"]');
-                                if (msgContainer && !msgContainer.querySelector('.od-msg-meta-row')) {
-                                    const msgId = msgContainer.id.replace('message-container-', '');
-                                    const metaRowHtml = TaskView.buildMsgMetaRow('assistant', Date.now(), msgId);
-                                    if (metaRowHtml) {
-                                        const usageEl = msgContainer.querySelector('.message-usage');
-                                        if (usageEl) {
-                                            usageEl.insertAdjacentHTML('beforebegin', metaRowHtml);
-                                        } else {
-                                            msgContainer.insertAdjacentHTML('beforeend', metaRowHtml);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // 手动停止后立即结束所有活跃 reasoning 块的计时并清理流式状态，
+                        // 避免因后端 _turnRunning=true 时延迟发送的 sendSubscriptionFeedback
+                        // 被 _handleTaskStatusUpdate 跳过（前端 status 已为 'stopped'）
+                        // 而导致计时器永久运行。
+                        this._cleanupStreamingState();
                         this.updateStopButtonVisibility();
                         // 手动停止后启动浏览器空闲回收定时器，
                         // 避免因状态已提前设为 stopped 导致订阅回调跳过定时器启动
@@ -2428,6 +2403,49 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 结束所有活跃 reasoning 块的计时并清理流式残留状态
+     * （等待占位、usage spinner、流式光标、最后一条 assistant 消息的元信息行）。
+     * 用于任务手动停止、插队中断、流式结束等任何"当前回合终止"的场景：
+     * 后端在 _turnRunning=true 时被中断（如 interruptForNewMessage）不会发送
+     * stopped 订阅反馈，前端状态可能一直停留在 running，导致 4065 的流式
+     * 结束分支被 _handleTaskStatusUpdate 短路跳过、活跃 reasoning 块永不 finalize。
+     */
+    _cleanupStreamingState(timestamp = Date.now()) {
+        const historyContainer = this.getHistoryContainer();
+        if (!historyContainer) return;
+        // 完成所有活跃 reasoning 块的计时（清除每秒计时器、定格耗时）
+        historyContainer
+            .querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
+        // 移除等待占位和 spinner
+        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        if (waitingPlaceholder) waitingPlaceholder.remove();
+        historyContainer.querySelectorAll('.usage-spinner').forEach((el) => {
+            el.style.display = 'none';
+        });
+        // 移除流式光标
+        historyContainer.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+        // 为最后一条 assistant 消息追加时间戳与 hover 菜单
+        const assistantContainers = historyContainer.querySelectorAll('.od-assistant-msg-container');
+        const lastAssistantWrapper = assistantContainers[assistantContainers.length - 1];
+        if (lastAssistantWrapper) {
+            const msgContainer = lastAssistantWrapper.querySelector('[id^="message-container-"]');
+            if (msgContainer && !msgContainer.querySelector('.od-msg-meta-row')) {
+                const msgId = msgContainer.id.replace('message-container-', '');
+                const metaRowHtml = TaskView.buildMsgMetaRow('assistant', timestamp, msgId);
+                if (metaRowHtml) {
+                    const usageEl = msgContainer.querySelector('.message-usage');
+                    if (usageEl) {
+                        usageEl.insertAdjacentHTML('beforebegin', metaRowHtml);
+                    } else {
+                        msgContainer.insertAdjacentHTML('beforeend', metaRowHtml);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * 立即发送队列中的消息（中断当前任务，正在执行的子任务转为后台继续运行）
      * @param {string} id 消息 ID
      */
@@ -2460,6 +2478,12 @@ class TaskView extends HTMLElement {
                 this._immediateQueueSending = false;
                 return;
             }
+            // 插队中断后立即结束旧回合的思考计时：后端在 _turnRunning=true 时
+            // 不会发送 stopped 订阅反馈，旧 turn 收尾时又因 _turnGeneration 已被
+            // 新 turn 取代而跳过 sendSubscriptionFeedback，前端 task_status 始终
+            // 为 running，流式结束分支不会触发，活跃 reasoning 块会一直计时。
+            // 手动停止（2338）已做同样处理，这里补上插队场景。
+            this._cleanupStreamingState();
         }
 
         try {
@@ -4063,38 +4087,9 @@ class TaskView extends HTMLElement {
                     }
 
                     if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
-                        // 流式结束：移除等待占位，隐藏 spinner
-                        const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
-                        if (waitingPlaceholder) waitingPlaceholder.remove();
-                        history_container.querySelectorAll('.usage-spinner').forEach((el) => {
-                            el.style.display = 'none';
-                        });
-                        this.getHistoryContainer()
-                            .querySelectorAll('.reasoning-block-od.reasoning-active')
-                            .forEach((el) => {
-                                TaskView.finalizeReasoningBlock(el);
-                            });
-                        // 移除流式光标
-                        history_container.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+                        // 流式结束：结束活跃 reasoning 块计时并清理等待占位/spinner/流式光标，
                         // 为最后一条 assistant 消息追加时间戳与 hover 菜单
-                        const assistantContainers = history_container.querySelectorAll('.od-assistant-msg-container');
-                        const lastAssistantWrapper = assistantContainers[assistantContainers.length - 1];
-                        if (lastAssistantWrapper) {
-                            const msgContainer = lastAssistantWrapper.querySelector('[id^="message-container-"]');
-                            if (msgContainer && !msgContainer.querySelector('.od-msg-meta-row')) {
-                                const msgId = msgContainer.id.replace('message-container-', '');
-                                const ts = progress.timestamp || Date.now();
-                                const metaRowHtml = TaskView.buildMsgMetaRow('assistant', ts, msgId);
-                                if (metaRowHtml) {
-                                    const usageEl = msgContainer.querySelector('.message-usage');
-                                    if (usageEl) {
-                                        usageEl.insertAdjacentHTML('beforebegin', metaRowHtml);
-                                    } else {
-                                        msgContainer.insertAdjacentHTML('beforeend', metaRowHtml);
-                                    }
-                                }
-                            }
-                        }
+                        this._cleanupStreamingState(progress.timestamp || Date.now());
                         // 任务结束时也清理过渡中的 supplement 卡片
                         this.resolvePendingGoalSupplements();
                         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
