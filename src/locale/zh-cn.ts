@@ -1374,6 +1374,8 @@ export const zhCn: Record<string, string> = {
         '选择文件和命令在 Agent 主机运行，还是通过 OpenDesk Client 工作区运行时执行。',
     'sp.agents.execution.agent': 'Agent 主机',
     'sp.agents.execution.client': 'OpenDesk Client 主机',
+    'sp.agents.execution.client.compatibilityWarning':
+        'Client-hosted 运行模式依赖当前 Agent 支持 ACP 的 Client 文件系统和终端能力。当前 Agent 不一定支持此模式；远程 HTTP Agent 请先确认兼容性。',
     'sp.agents.execution.client.hint':
         'ACP v1 使用 Client 文件系统与终端方法；ACP v2 使用实验性的 MCP-over-ACP。文件内容和命令输出会按需发送给 Agent。',
     'sp.agents.execution.legacyWarning':

@@ -413,7 +413,10 @@ describe('setting-panel config management', () => {
 
         panel.showAcpAgentEditModal(0);
 
-        expect(panel.querySelector('#acp-agent-client-compatibility')).toBeNull();
+        expect(panel.querySelector('#acp-agent-client-runtime-warning')?.textContent).toContain(
+            'Client-hosted 运行模式依赖'
+        );
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(false);
         expect((panel.querySelector('#acp-agent-auth-method') as HTMLSelectElement).value).toBe('agent-login');
         expect((panel.querySelector('#acp-agent-connect-timeout') as HTMLInputElement).value).toBe('15000');
         expect((panel.querySelector('#acp-agent-prompt-timeout') as HTMLInputElement).value).toBe('600000');
@@ -425,6 +428,15 @@ describe('setting-panel config management', () => {
         Array.from(transport.options).forEach((option) => (option.selected = option.value === 'streamableHttp'));
         transport.dispatchEvent(new Event('change'));
         expect((panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement).value).toBe('client');
+
+        const executionLocation = panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement;
+        Object.defineProperty(executionLocation, 'value', { configurable: true, value: 'agent' });
+        executionLocation.dispatchEvent(new Event('change'));
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(true);
+
+        Object.defineProperty(executionLocation, 'value', { configurable: true, value: 'client' });
+        executionLocation.dispatchEvent(new Event('change'));
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(false);
 
         Array.from(transport.options).forEach((option) => (option.selected = option.value === 'stdio'));
         const next = panel._readAcpAgentForm(profile.id);

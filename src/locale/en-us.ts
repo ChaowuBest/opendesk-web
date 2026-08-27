@@ -1418,6 +1418,8 @@ export const enUs: Record<string, string> = {
         'Choose whether files and commands run on the Agent host or through the OpenDesk Client workspace runtime.',
     'sp.agents.execution.agent': 'Agent host',
     'sp.agents.execution.client': 'OpenDesk Client host',
+    'sp.agents.execution.client.compatibilityWarning':
+        'Client-hosted execution depends on the Agent supporting ACP Client filesystem and terminal capabilities. The current Agent may not support this mode; confirm compatibility before using it with a remote HTTP Agent.',
     'sp.agents.execution.client.hint':
         'ACP v1 uses Client filesystem and terminal methods. ACP v2 uses experimental MCP-over-ACP. File contents and command output are sent to the Agent on demand.',
     'sp.agents.execution.legacyWarning':

@@ -1331,6 +1331,10 @@ class SettingPanel extends HTMLElement {
                             <option value="client" ${executionLocation === 'client' ? 'selected' : ''}>${this._t('sp.agents.execution.client')}</option>
                         </select>
                         <div class="od-sp-hint">${this._t('sp.agents.field.executionLocation.hint')}</div>
+                        <div id="acp-agent-client-runtime-warning" class="od-sp-agent-preset-notice" ${executionLocation === 'client' ? '' : 'hidden'}>
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <span>${this._t('sp.agents.execution.client.compatibilityWarning')}</span>
+                        </div>
                     </div>
                     <div id="acp-agent-agent-execution-fields" ${executionLocation === 'agent' ? '' : 'hidden'}>
                         ${
@@ -1508,6 +1512,8 @@ class SettingPanel extends HTMLElement {
             const agent = this.querySelector('#acp-agent-execution-location')?.value === 'agent';
             this.querySelector('#acp-agent-agent-execution-fields').hidden = !agent;
             this.querySelector('#acp-agent-client-execution-fields').hidden = agent;
+            const clientRuntimeWarning = this.querySelector('#acp-agent-client-runtime-warning');
+            if (clientRuntimeWarning) clientRuntimeWarning.hidden = agent;
         };
         const updateAgentWorkspaceFields = () => {
             const mapped = this.querySelector('#acp-agent-agent-workspace-strategy')?.value === 'mapped';
