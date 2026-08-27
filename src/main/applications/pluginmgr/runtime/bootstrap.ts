@@ -26,6 +26,7 @@ import {
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
     runPluginBeforePermissionAsk,
+    runPluginConversationReview,
     runPluginShellEnv
 } from './hooks.js';
 import { applyPluginToolDefinitions } from './tool-provider.js';
@@ -193,6 +194,12 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.push(
         GlobalHooks.afterToolsetBuild(async ({ toolsets, task }) => {
             await applyPluginToolDefinitions(toolsets, task);
+        })
+    );
+    disposeAikernelHooks.push(
+        GlobalHooks.onTaskReview(async ({ task, startMessageIndex }) => {
+            if (task.parent_id !== null || task.internal === true) return;
+            await runPluginConversationReview(task, startMessageIndex);
         })
     );
     disposeAikernelHooks.push(

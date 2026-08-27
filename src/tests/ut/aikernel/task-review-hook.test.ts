@@ -87,6 +87,17 @@ describe('onTaskReview hook', () => {
         expect(calls).toEqual(['task', 'global', 'task-again']);
     });
 
+    test('onTaskReview returns a disposer that unregisters the callback', async () => {
+        const task = new TaskState(new TaskManagerState());
+        const callback = jest.fn();
+        const dispose = GlobalHooks.onTaskReview(callback);
+
+        dispose();
+        await task.hooks.noticeOnTaskReview({ task, startMessageIndex: 0 });
+
+        expect(callback).not.toHaveBeenCalled();
+    });
+
     test('preserves the earliest review start index across interactions in the same idle window', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();
