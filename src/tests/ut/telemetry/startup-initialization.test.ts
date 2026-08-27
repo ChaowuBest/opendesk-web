@@ -20,9 +20,10 @@ describe('telemetry startup initialization', () => {
     });
 
     test('initializes GUI telemetry after the main window is shown', () => {
-        expect(mainSource).toContain("globalMainWindow.once('ready-to-show', triggerTelemetryInitialization)");
+        expect(mainSource).toContain('void mainWindowShown.then(() => void ensureTelemetryReady())');
+        expect(mainSource).not.toContain("globalMainWindow.once('ready-to-show', triggerTelemetryInitialization)");
         expect(mainSource.indexOf('createWindow();')).toBeLessThan(
-            mainSource.indexOf("globalMainWindow.once('ready-to-show', triggerTelemetryInitialization)")
+            mainSource.indexOf('void mainWindowShown.then(() => void ensureTelemetryReady())')
         );
     });
 
