@@ -11,6 +11,7 @@ import { getPluginHost, PluginHookError } from './host.js';
 import type {
     PluginChatRequestInput,
     PluginChatParams,
+    PluginSkillListItem,
     PluginShellType,
     PluginSkillInstallAfterContext,
     PluginSkillInstallBeforeOutput,
@@ -70,6 +71,17 @@ export async function runPluginAfterSkillLoad(input: PluginSkillLoadContext): Pr
     } catch (error) {
         if (!(error instanceof PluginHookError)) {
             logger.error(`Plugin after-skill-load hook failed: ${input.bundleName}/${input.skillName}`, error);
+        }
+    }
+}
+
+export async function runPluginAfterSkillList(skills: readonly PluginSkillListItem[]): Promise<void> {
+    try {
+        const snapshot = Object.freeze(skills.map((skill) => Object.freeze({ ...skill })));
+        await getPluginHost().trigger('skill.list.after', Object.freeze({ skills: snapshot }), {});
+    } catch (error) {
+        if (!(error instanceof PluginHookError)) {
+            logger.error('Plugin after-skill-list hook failed', error);
         }
     }
 }

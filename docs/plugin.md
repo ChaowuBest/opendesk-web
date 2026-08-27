@@ -699,6 +699,11 @@ Hook 按插件激活顺序串行执行。默认 `failureMode: 'open'` 会记录�
 区分 `directory`、`zip`、`url` 和 `registry`，并按来源提供 `path`、`url`、`skillRelPath`、`force`
 或 `customName`。
 
+`skill.list.after` 在 SkillMgr 首次完成本地技能加载，以及技能安装、删除、启停或刷新后触发。
+输入中的 `skills` 只包含用户提供的本地技能，不包含 Application、Soul 或插件贡献的技能；每项包含
+`name`、绝对 `directory`、`source`（`installed`、`config` 或 `mounted`）和最终的 `enabled` 状态。
+该 Hook 是只读通知。
+
 GUI 单项安装使用以下调用链，实际下载、解压、状态更新和 Registry 同步仍由既有 Worker 完成：
 
 ```text
@@ -717,6 +722,7 @@ GUI callMainWorld
 - `chat.params`：在当前模型请求前调整推理强度和最大输出 token。
 - `skill.load.before`：在 Agent 明确加载某个 Skill 时触发，可通过 `output.operation = 'deny'` 拒绝本次加载。
 - `skill.load.after`：某个 Skill 成功加载并生成完整正文后触发，仅用于观测和审计。
+- `skill.list.after`：SkillMgr 本地技能列表首次加载或发生变化后触发，仅用于观测。
 - `skill.install.before`：用户 Skill 安装前触发，可拒绝安装。
 - `skill.install.after`：用户 Skill 安装成功后触发，仅用于观测和审计。
 - `tool.definition`：调整工具在模型侧可见的描述和参数 Schema。

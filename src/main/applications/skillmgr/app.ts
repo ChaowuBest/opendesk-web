@@ -49,8 +49,12 @@ import fs from 'fs';
 import { skillRegistry } from './utils/skill-registry.js';
 import { skillInstallManager } from './utils/skill-installer.js';
 import { SkillExternalPathsConfigSchema } from './skill-schema.js';
-import { runPluginAfterSkillInstall, runPluginBeforeSkillInstall } from '../pluginmgr/runtime/hooks.js';
-import type { PluginSkillInstallContext } from '../../../../packages/plugin-sdk/src/index.js';
+import {
+    runPluginAfterSkillInstall,
+    runPluginAfterSkillList,
+    runPluginBeforeSkillInstall
+} from '../pluginmgr/runtime/hooks.js';
+import type { PluginSkillInstallContext, PluginSkillListItem } from '../../../../packages/plugin-sdk/src/index.js';
 import { getHarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
@@ -108,9 +112,36 @@ function shouldRegisterHarmonyLocalRuntimeSkills(): boolean {
     return isHarmonyosRuntime && getHarmonyLocalRuntimeState()?.variant === 'pc';
 }
 
+function buildSkillListHookSnapshot(): PluginSkillListItem[] {
+    return skillRegistry.listSkills().flatMap((skill) => {
+        const source = skill.source;
+        if (source !== 'installed' && source !== 'config' && source !== 'mounted') {
+            return [];
+        }
+
+        const id = typeof skill.id === 'string' ? skill.id : '';
+        if (!id) return [];
+
+        const cached = skillRegistry.getSkillBody(id);
+        if (!cached?.skillDir) return [];
+
+        const name = typeof skill.name === 'string' && skill.name ? skill.name : id;
+
+        return [
+            {
+                name,
+                directory: cached.skillDir,
+                source,
+                enabled: getSkillStatus(id) && !isBlacklisted('skillmgr', name)
+            }
+        ];
+    });
+}
+
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
     private static refreshListeners: Array<() => void> = [];
+    private skillListInitialization?: Promise<void>;
 
     /** 应用标识（静态属性，供 CLI 参数注册使用） */
     static bundleName: string = 'skillmgr';
@@ -140,6 +171,9 @@ export class SkillMgrApplication extends BaseApplication {
     static notifySkillsChanged(bundleName: string = 'skillmgr'): void {
         AISkillRegistry.getInstance().clearCache(bundleName);
         SkillMgrApplication.notifyRefreshListeners();
+        if (bundleName === 'skillmgr') {
+            void runPluginAfterSkillList(buildSkillListHookSnapshot());
+        }
     }
 
     notifyExternalSkillsChanged(bundleName: string): void {
@@ -533,6 +567,13 @@ export class SkillMgrApplication extends BaseApplication {
 
     listSkills() {
         return skillRegistry.listSkills();
+    }
+
+    async ensureLoaded(): Promise<void> {
+        this.skillListInitialization ??= Promise.resolve().then(async () => {
+            await runPluginAfterSkillList(buildSkillListHookSnapshot());
+        });
+        await this.skillListInitialization;
     }
 
     async getSkillDetailForReference(bundleName: string, skillName: string) {

@@ -136,6 +136,19 @@ export interface PluginSkillLoadContext {
     frontmatter: Record<string, unknown>;
 }
 
+export type PluginSkillListSource = 'installed' | 'config' | 'mounted';
+
+export interface PluginSkillListItem {
+    readonly name: string;
+    readonly directory: string;
+    readonly source: PluginSkillListSource;
+    readonly enabled: boolean;
+}
+
+export interface PluginSkillListAfterInput {
+    readonly skills: readonly PluginSkillListItem[];
+}
+
 export type PluginSkillLoadBeforeOutput = {
     operation: 'allow' | 'deny';
     message?: string;
@@ -362,6 +375,10 @@ export interface PluginHookMap {
         input: PluginSkillLoadContext;
         output: Record<string, never>;
     };
+    'skill.list.after': {
+        input: PluginSkillListAfterInput;
+        output: Record<string, never>;
+    };
     'skill.install.before': {
         input: PluginSkillInstallContext;
         output: PluginSkillInstallBeforeOutput;
@@ -487,6 +504,7 @@ export const OPENDESK_PLUGIN_HOOK_NAMES = [
     'chat.params',
     'skill.load.before',
     'skill.load.after',
+    'skill.list.after',
     'skill.install.before',
     'skill.install.after',
     'permission.ask',

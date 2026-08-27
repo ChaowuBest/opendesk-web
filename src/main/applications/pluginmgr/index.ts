@@ -28,6 +28,9 @@ export type {
     PluginChatParams,
     PluginSkillLoadContext,
     PluginSkillLoadBeforeOutput,
+    PluginSkillListSource,
+    PluginSkillListItem,
+    PluginSkillListAfterInput,
     PluginSkillInstallContext,
     PluginSkillInstallBeforeOutput,
     PluginSkillInstallAfterContext,
@@ -93,6 +96,7 @@ export type { PluginRegistryData, PluginRegistryRecord, PluginSourceKind } from 
 export {
     runPluginChatHeaders,
     runPluginChatParams,
+    runPluginAfterSkillList,
     runPluginBeforeSkillInstall,
     runPluginAfterSkillInstall
 } from './runtime/hooks.js';
