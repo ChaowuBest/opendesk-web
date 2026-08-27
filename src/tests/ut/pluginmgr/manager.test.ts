@@ -211,6 +211,89 @@ describe('pluginmgr managed installation', () => {
         expect(path.dirname(npmCwd)).toBe(getPluginStagingDirectory(configDirectory));
     });
 
+    test('仅依赖宿主 SDK 的插件目录安装时不调用 npm', async () => {
+        const sourceDirectory = path.join(configDirectory, 'sdk-only-plugin');
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'package.json'),
+            JSON.stringify({
+                name: 'hello-plugin',
+                version: '0.1.0',
+                type: 'module',
+                dependencies: {
+                    '@bitclub.ai/opendesk-plugin-sdk': '^0.1.0'
+                }
+            })
+        );
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'hello-plugin',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'index.mjs'),
+            "export default { id: 'hello-plugin', setup() {} };\n"
+        );
+
+        const result = await installPlugin(sourceDirectory, {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm should not run when a plugin only depends on the host-provided SDK');
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'hello-plugin' });
+    });
+
+    test('依赖 SDK 与第三方包的插件目录只安装第三方依赖', async () => {
+        const sourceDirectory = path.join(configDirectory, 'sdk-plus-deps-plugin');
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'package.json'),
+            JSON.stringify({
+                name: 'hello-plugin',
+                version: '0.1.0',
+                type: 'module',
+                dependencies: {
+                    '@bitclub.ai/opendesk-plugin-sdk': '^0.1.0',
+                    'runtime-dependency': '1.0.0'
+                }
+            })
+        );
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'hello-plugin',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: []
+            })
+        );
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'index.mjs'),
+            "export default { id: 'hello-plugin', setup() {} };\n"
+        );
+
+        const npmArgsResult: string[] = [];
+        const result = await installPlugin(sourceDirectory, {
+            configDirectory,
+            runNpm: async (args) => {
+                npmArgsResult.push(...args);
+            }
+        });
+
+        expect(result).toEqual({ success: true, id: 'hello-plugin' });
+        expect(npmArgsResult).toContain('runtime-dependency@1.0.0');
+        expect(npmArgsResult).not.toContain('@bitclub.ai/opendesk-plugin-sdk@^0.1.0');
+        expect(npmArgsResult).toContain('--no-save');
+    });
+
     test('从本地 ZIP 安装插件并去除压缩包根目录层级', async () => {
         const zipPath = path.join(configDirectory, 'review-helper.zip');
         const archive = new AdmZip();
@@ -257,14 +340,15 @@ describe('pluginmgr managed installation', () => {
         expect(installedZipDependencies).toBe(true);
         expect(npmArgs).toEqual([
             'install',
-            '--save-exact',
+            '--no-save',
             '--install-links=true',
             '--no-bin-links',
             '--omit=dev',
             '--no-optional',
             '--audit=false',
             '--ignore-scripts',
-            '--package-lock=false'
+            '--package-lock=false',
+            'runtime-dependency@1.0.0'
         ]);
         expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'zip-review-helper', 'index.mjs'))).toBe(
             true
@@ -386,14 +470,15 @@ describe('pluginmgr managed installation', () => {
         expect(result).toEqual({ success: true, id: 'tgz-review-helper' });
         expect(npmArgs).toEqual([
             'install',
-            '--save-exact',
+            '--no-save',
             '--install-links=true',
             '--no-bin-links',
             '--omit=dev',
             '--no-optional',
             '--audit=false',
             '--ignore-scripts',
-            '--package-lock=false'
+            '--package-lock=false',
+            'runtime-dependency@1.0.0'
         ]);
         expect(path.basename(dependencyInstallDirectory)).toMatch(/^install-/);
         expect(getPluginRecord('tgz-review-helper', configDirectory)).toMatchObject({

@@ -25,6 +25,20 @@ const HOST_PACKAGE_SPECIFIERS = [
     'zod'
 ] as const;
 
+/**
+ * 从模块 specifier 提取 npm 包名（scoped 包取 `@scope/name`，其余取第一段）。
+ * dependencies 中声明的是包名，而 HOST_PACKAGE_SPECIFIERS 可能包含子路径。
+ */
+function packageNameOf(specifier: string): string {
+    const segments = specifier.split('/');
+    return specifier.startsWith('@') && segments.length >= 2 ? `${segments[0]}/${segments[1]}` : segments[0];
+}
+
+/** 判断一个 npm 包名是否由宿主直接提供（安装插件时无需从 registry 安装）。 */
+export function isHostMappedPackageName(packageName: string): boolean {
+    return HOST_PACKAGE_SPECIFIERS.some((specifier) => packageNameOf(specifier) === packageName);
+}
+
 let mappingRegistered = false;
 let cachedRequire: ReturnType<typeof createRequire> | undefined;
 

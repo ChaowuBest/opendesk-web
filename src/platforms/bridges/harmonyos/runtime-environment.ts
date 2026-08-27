@@ -106,7 +106,12 @@ export function createHarmonyRuntimeEnvironment(
         return null;
     }
 
-    const variantValue = requireField(source, RUNTIME_FIELDS.variant);
+    // 鸿蒙平台但缺少注入的构建元数据（如 CLI 直接运行、无 ArkTS 宿主）时，
+    // 不合成运行时，与其它平台保持一致，让调用方走通用路径回退。
+    const variantValue = readField(source, RUNTIME_FIELDS.variant);
+    if (!variantValue) {
+        return null;
+    }
     if (variantValue !== 'pc' && variantValue !== 'tablet') {
         throw new Error(`Invalid Harmony build variant: ${variantValue}`);
     }

@@ -123,3 +123,42 @@ test('non-Harmony runtimes do not synthesize a Harmony path context', () => {
         null
     );
 });
+
+test('Harmony runtime without injected metadata behaves like non-Harmony platforms', () => {
+    // CLI 直接运行等无 ArkTS 宿主注入的场景：不合成运行时，返回 null，走通用路径回退
+    assert.equal(
+        createHarmonyRuntimeEnvironment({
+            platform: 'openharmony',
+            argv: ['node', 'dist/cli/opendesk'],
+            environment: { HOME: '/storage/Users/currentUser' }
+        }),
+        null
+    );
+    assert.equal(
+        createHarmonyRuntimeEnvironment({
+            platform: 'openharmony',
+            argv: ['node', 'dist/cli/opendesk'],
+            environment: {}
+        }),
+        null
+    );
+});
+
+test('Harmony runtime with injected metadata still requires complete sandbox paths', () => {
+    // 注入完整元数据时正常创建
+    assert.deepEqual(
+        createHarmonyRuntimeEnvironment({
+            platform: 'openharmony',
+            argv: PC_ARGS,
+            environment: {}
+        }),
+        {
+            variant: 'pc',
+            deviceType: '2in1',
+            appDataDir: '/data/storage/el2/base/files',
+            tempDir: '/data/storage/el2/base/temp',
+            cacheDir: '/data/storage/el2/base/cache',
+            userHomeDir: '/storage/Users/currentUser'
+        }
+    );
+});
