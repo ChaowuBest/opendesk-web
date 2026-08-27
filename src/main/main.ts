@@ -32,6 +32,7 @@ import {
     getOpendeskDirectory,
     getTaskDirectory,
     getTaskArtifactDirectory,
+    getLogDirectory,
     isDeveloperModeEnabled
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
@@ -43,7 +44,7 @@ import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs } from './utils/logger.js';
+import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs, getLogFilename } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
@@ -95,6 +96,7 @@ import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
 import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
 import { startReporter } from './utils/reporter.js';
+import { submitFeedback } from './utils/feedback.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
@@ -2564,6 +2566,34 @@ const registerSettingAPIHandlers = () => {
         }));
     ipcMain.handle('setting:getLogEntries', (_event: any, options: any) => {
         return { status: 'ok', data: LogStream.getStream().getEntries(options || {}) };
+    });
+    // 用户反馈上报：在 main 侧读取日志/任务文件并经 Platform fetch 提交，
+    // 以继承代理与 no_ssl 配置，同时规避 renderer file:// 跨源的 CORS 限制。
+    ipcMain.handle('feedback:submit', async (_event: any, submission: any) => {
+        try {
+            const result = await submitFeedback(
+                {
+                    type: submission?.type,
+                    content: String(submission?.content ?? ''),
+                    includeSystemLog: submission?.includeSystemLog === true,
+                    includeTaskJson: submission?.includeTaskJson === true,
+                    taskId: typeof submission?.taskId === 'string' ? submission.taskId : null
+                },
+                {
+                    fetchImpl: (input, init) => getPlatform().fetch(input as string | URL, init),
+                    resolveLogPath: () => path.join(getLogDirectory(), getLogFilename()),
+                    resolveTaskPath: (taskId) => path.join(getTaskDirectory(), `${taskId}.json`),
+                    onWarn: (message) => logger.warn(message),
+                    onInfo: (message) => logger.info(message)
+                }
+            );
+            return result.ok
+                ? { status: 'ok', data: { id: result.id ?? null } }
+                : { status: 'error', message: result.message };
+        } catch (error: any) {
+            logger.error('submitting feedback failed', error);
+            return { status: 'error', message: error.message };
+        }
     });
     ipcMain.handle('setting:exportLogEntries', async (_event: any, options: any) => {
         try {

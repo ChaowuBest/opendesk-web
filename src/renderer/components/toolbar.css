@@ -227,6 +227,41 @@ html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-b
     background: rgba(232, 86, 63, 0.16) !important;
 }
 
+/* ===== 反馈按钮：并入底部工具栏末位 · 文字常显 · 墨灰图标 + 品牌红点缀（设计稿 S5 / N2） ===== */
+/* 图标主体沿用 currentColor（与相邻导航图标同为墨灰），仅角标圆点与文字走品牌红 */
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn {
+    /* 文字常显，故图标与文字之间需要固定间距（其余按钮 gap 为 0，靠 hover 展开） */
+    padding-right: 8px !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .sb-feedback-dot {
+    fill: #df4436;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .elastic-label {
+    color: #df4436 !important;
+    font-weight: 500 !important;
+    max-width: 56px !important;
+    opacity: 1 !important;
+    padding-right: 0 !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn:hover {
+    background: #fdeeec !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .sb-feedback-dot {
+    fill: #e8563f;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .elastic-label {
+    color: #e8563f !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn:hover {
+    background: rgba(232, 86, 63, 0.16) !important;
+}
+
 /* ===== 邮箱头部工具栏变体：与侧边栏底部一致的扁平悬停效果 ===== */
 elastic-toolbar-widget.mailbox-header header {
     height: auto !important;
