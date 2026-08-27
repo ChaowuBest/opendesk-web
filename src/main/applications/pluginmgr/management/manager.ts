@@ -19,6 +19,7 @@ import { logger } from '../../../utils/logger.js';
 import { buildChildProcessEnv } from '../../../utils/shellExec.js';
 import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
+import { isHostMappedPackageName } from '../runtime/package-mapping.js';
 import {
     ensurePluginDirectories,
     getBuiltinPluginsDirectory,
@@ -253,7 +254,7 @@ function installedPackageName(stagingDirectory: string): string {
 
 const RUNTIME_DEPENDENCY_INSTALL_ARGS = [
     'install',
-    '--save-exact',
+    '--no-save',
     '--install-links=true',
     '--no-bin-links',
     '--omit=dev',
@@ -263,6 +264,26 @@ const RUNTIME_DEPENDENCY_INSTALL_ARGS = [
     '--package-lock=false'
 ];
 
+/**
+ * 收集插件声明且需要从 registry 安装的运行时依赖（name@range）。
+ * 被宿主映射的包（@bitclub.ai/opendesk-plugin-sdk、zod）由 package-mapping
+ * 在运行时兜底解析，无需（也不应）安装——否则会因声明的版本与 npm 已发布
+ * 版本不匹配（如官网示例的 ^0.1.0）导致 npm ETARGET，整个插件安装失败。
+ */
+function collectRuntimeDependencySpecs(packageJson: Record<string, unknown>): string[] {
+    const specs: string[] = [];
+    for (const field of ['dependencies', 'peerDependencies']) {
+        const value = packageJson[field];
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        for (const [name, range] of Object.entries(value as Record<string, unknown>)) {
+            if (isHostMappedPackageName(name)) continue;
+            if (typeof range !== 'string' || !range) continue;
+            specs.push(`${name}@${range}`);
+        }
+    }
+    return specs;
+}
+
 async function installPluginDependencies(
     pluginDirectory: string,
     runNpm: (args: string[], cwd: string) => Promise<void>
@@ -270,12 +291,9 @@ async function installPluginDependencies(
     const packageJsonPath = path.join(pluginDirectory, 'package.json');
     if (!fs.existsSync(packageJsonPath)) return;
     const packageJson = readJson(packageJsonPath);
-    const hasRuntimeDependencies = ['dependencies', 'peerDependencies'].some((field) => {
-        const value = packageJson[field];
-        return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
-    });
-    if (!hasRuntimeDependencies) return;
-    await runNpm([...RUNTIME_DEPENDENCY_INSTALL_ARGS], pluginDirectory);
+    const dependencySpecs = collectRuntimeDependencySpecs(packageJson);
+    if (dependencySpecs.length === 0) return;
+    await runNpm([...RUNTIME_DEPENDENCY_INSTALL_ARGS, ...dependencySpecs], pluginDirectory);
 }
 
 function packageDirectory(prefix: string, packageName: string): string {
