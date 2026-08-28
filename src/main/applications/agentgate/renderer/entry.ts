@@ -190,6 +190,15 @@ const T: Record<string, { zh: string; en: string }> = {
         zh: '拦截后做 LLM 归因、会话结束弹窗提示、允许加入黑名单。关闭后不再产生新黑名单，已拉黑的技能仍被拦截。',
         en: 'LLM attribution after interception, end-of-session prompt, and blacklisting. When off, no new blacklist entries are created; already-blacklisted skills remain blocked.'
     },
+    multiSessionTitle: { zh: '多 Session 分析', en: 'Multi-Session Analysis' },
+    multiSessionEnable: {
+        zh: '启用跨会话组合链分析',
+        en: 'Enable cross-session combo-chain analysis'
+    },
+    multiSessionDesc: {
+        zh: '跨会话关联 AgentGate 存储的历史动作，检测跨 session 组合攻击链（如 A 会话建监听、B 会话执行扫描）。纯规则/图分析，不调用 LLM、不产生额外 token 消耗。开启会增加每次分析数毫秒~几十毫秒的本地计算与内存占用。',
+        en: 'Correlate historical actions stored by AgentGate across sessions to detect cross-session combo attack chains (e.g. session A opens a listener, session B runs a scan). Pure rule/graph analysis — no LLM calls, no extra token cost. Enabling adds a few to tens of milliseconds of local compute and memory per analysis.'
+    },
     securityTitle: { zh: '安全拦截策略', en: 'Security Interception Policy' },
     securityLevel: { zh: '拦截程度', en: 'Interception Level' },
     securityLevelLow: { zh: '低 — 仅弹窗提醒，不拦截', en: 'Low — Warning only, no interception' },
@@ -1410,6 +1419,17 @@ function configHTML(): string {
     <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('llmApplyHint')}</div>
     <div style="margin-top:10px;text-align:right;">
         <button id="ag-llm-apply" class="ag-btn ag-btn-primary ag-btn-sm">${tr('llmApplyBtn')}</button>
+    </div>
+</div>
+
+<div class="ag-card">
+    <h3 class="ag-section-title" style="margin-top:0;">${tr('multiSessionTitle')}</h3>
+    <div class="ag-toggle-row">
+        <div>
+            <span class="ag-toggle-row-label">${tr('multiSessionEnable')}</span>
+            <div style="font-size: var(--fs-md);color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('multiSessionDesc')}</div>
+        </div>
+        <button id="ag-multisession-toggle" class="ag-toggle" role="switch" aria-checked="false"><span class="ag-toggle-knob"></span></button>
     </div>
 </div>
 
@@ -2941,6 +2961,31 @@ class AgentGateEntryWidget extends HTMLElement {
             });
         }
 
+        // 多 session 分析 toggle（初始化从后端读真实状态；改动会重启 agent-gate/agent-moss，弹窗提醒）
+        const msess = this.shadow.querySelector('#ag-multisession-toggle') as HTMLElement;
+        if (msess) {
+            try {
+                const msOn = await (window as any).applicationAPI?.callMainWorld('getMultiSessionAnalysis');
+                _tog(msess, msOn !== false);
+            } catch {}
+            msess.addEventListener('click', async () => {
+                const on = !msess.classList.contains('on');
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-diagram-project',
+                    title: on ? tr('multiSessionEnable') : tr('multiSessionTitle'),
+                    message: tr('multiSessionDesc'),
+                    confirmText: on ? tr('confirm') : tr('cancel'),
+                    cancelText: tr('cancel'),
+                    variant: on ? 'info' : 'danger'
+                });
+                // 关闭方向不用额外确认（开关已表达意图），仅开启时提示
+                _tog(msess, on);
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setMultiSessionAnalysis', on);
+                } catch {}
+            });
+        }
+
         // 恶意技能检测 toggle（初始化从后端读真实状态，避免硬编码默认）
         const ms2 = this.shadow.querySelector('#ag-malskill-toggle') as HTMLElement;
         if (ms2) {
@@ -3058,6 +3103,8 @@ class AgentGateEntryWidget extends HTMLElement {
                     if (ms) _tog(ms, agCfg.enabled === true);
                     // 同步恶意技能检测开关
                     if (ms2) _tog(ms2, agCfg.maliciousSkillDetection !== false);
+                    // 同步多 session 分析开关
+                    if (msess) _tog(msess, agCfg.multiSessionAnalysis === true);
                 });
                 // 存储 unsub 以便 disconnectedCallback 时清理
                 this._settingUnsub = unsub;

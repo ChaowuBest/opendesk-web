@@ -77,7 +77,13 @@ class AgentGateApplication extends BaseApplication {
             maliciousSkillDetection: z
                 .boolean()
                 .default(true)
-                .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）')
+                .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）'),
+            multiSessionAnalysis: z
+                .boolean()
+                .default(false)
+                .describe(
+                    '多 session 分析：让 AgentMoss 跨会话组合 AgentGate 存储的历史动作，检测跨会话组合攻击链（纯规则分析，无 LLM 调用）'
+                )
         });
     }
 
@@ -188,6 +194,18 @@ class AgentGateApplication extends BaseApplication {
     /** 设置恶意技能检测开关（不启停服务，仅控制恶意 skill 分析链路） */
     setMaliciousSkillDetection(enabled: boolean): void {
         this._updateAppConfig({ maliciousSkillDetection: enabled });
+    }
+
+    /** 获取多 session 分析开关状态（默认 false） */
+    getMultiSessionAnalysis(): boolean {
+        const cfg = this.getConfig() as any;
+        return cfg?.multiSessionAnalysis === true;
+    }
+
+    /** 设置多 session 分析开关（触发 bridge updateConfig 重启子进程生效） */
+    setMultiSessionAnalysis(enabled: boolean): void {
+        this._updateAppConfig({ multiSessionAnalysis: enabled });
+        this._syncBridgeState();
     }
 
     /**

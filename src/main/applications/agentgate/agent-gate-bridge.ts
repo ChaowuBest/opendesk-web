@@ -662,8 +662,14 @@ class AgentGateBridge {
                       }
                       // sqlite 模式不设 AGENT_GATE_STORAGE（agent-gate 默认 sqlite）
                       // --db-path 已在上方的 gateArgs 中添加
+                      // 多 session 分析开关：agent-gate 据此组装跨会话 session_history
+                      // 并控制 stateful_incremental 注入（见 AgentGate ts/src/shared/normalizer.ts）。
+                      // 关闭时不传（缺省单 session），开启时设 1。
+                      if (appCfg?.multiSessionAnalysis === true) {
+                          gateEnv['AGENT_GATE_MULTI_SESSION'] = '1';
+                      }
                       logger.info(
-                          `[AgentGateBridge] Storage: ${storageType}, data dir: ${gateEnv['AGENT_GATE_DATA_DIR'] || '(sqlite default)'}`
+                          `[AgentGateBridge] Storage: ${storageType}, data dir: ${gateEnv['AGENT_GATE_DATA_DIR'] || '(sqlite default)'}, multiSession: ${appCfg?.multiSessionAnalysis === true ? 'on' : 'off'}`
                       );
                       return gateEnv;
                   })()
