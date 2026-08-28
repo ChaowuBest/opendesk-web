@@ -18,8 +18,8 @@ function tools(start: number, count: number) {
             index: start + offset - 1,
             tool_name: `Tool${start + offset}`,
             status: 'success',
-            args_string: `{"index":${start + offset}}`,
-            result: `result ${start + offset}`,
+            detail_available: true,
+            presentation: { displayName: `Tool${start + offset}` },
             elapsedSeconds: 0.2
         }))
     };
@@ -97,6 +97,20 @@ describe('GUI assistant output model', () => {
         ).toEqual(['status']);
     });
 
+    test('running output does not append a finalizing status after visible text starts', () => {
+        const items = buildAssistantOutputItems([reasoning('分析'), tools(1, 1), text('最终正文')], {
+            isRunning: true
+        });
+
+        expect(
+            getVisibleAssistantOutputItems(items, {
+                mode: 'minimal',
+                isRunning: true,
+                parts: [reasoning('分析'), tools(1, 1), text('最终正文')]
+            }).map((item) => item.type)
+        ).toEqual(['process', 'body']);
+    });
+
     test('minimal output preserves the alternating flow when execution ends and marks the last body final', () => {
         const parts = [reasoning('分析'), tools(1, 2), text('阶段正文'), tools(3, 1), text('最终正文')];
         const runningItems = buildAssistantOutputItems(parts, { isRunning: true });
@@ -104,7 +118,7 @@ describe('GUI assistant output model', () => {
 
         expect(
             getVisibleAssistantOutputItems(runningItems, { mode: 'minimal', isRunning: true }).map((item) => item.type)
-        ).toEqual(['process', 'body', 'process', 'body', 'status']);
+        ).toEqual(['process', 'body', 'process', 'body']);
         expect(
             getVisibleAssistantOutputItems(completedItems, { mode: 'minimal', isRunning: false }).map(
                 (item) => item.type
@@ -119,7 +133,7 @@ describe('GUI assistant output model', () => {
 
         const visible = getVisibleAssistantOutputItems(items, { mode: 'detailed', isRunning: true });
 
-        expect(visible.map((item) => item.type)).toEqual(['process', 'body', 'status']);
+        expect(visible.map((item) => item.type)).toEqual(['process', 'body']);
     });
 
     test('process defaults differ by mode while inner detail remains user controlled', () => {

@@ -1859,12 +1859,12 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).toContain('visible answer');
         expect(taskView.querySelector('.od-process-segment')).not.toBeNull();
         expect(taskView.querySelector('[data-process-toggle]')?.getAttribute('aria-expanded')).toBe('false');
-        expect(taskView.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
-        expect(taskView.querySelectorAll('.od-running-status')).toHaveLength(1);
+        expect(taskView.querySelector('[data-running-output-toggle]')).toBeNull();
+        expect(taskView.querySelectorAll('.od-running-status')).toHaveLength(0);
         expect(
             taskView
                 .querySelector('#message-content-assistant-1 .od-assistant-output-flow')
-                ?.lastElementChild?.classList.contains('od-running-status')
+                ?.lastElementChild?.classList.contains('od-stage-body')
         ).toBe(true);
         expect((taskView as any)._assistantPartsByMessage.get('assistant-1')).toHaveLength(2);
     });
@@ -1926,7 +1926,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
 
-        expect(taskView.querySelector('#message-content-assistant-missing-index .od-running-status')).not.toBeNull();
+        expect(taskView.querySelector('#message-content-assistant-missing-index .od-running-status')).toBeNull();
         expect(taskView.querySelector('#message-content-assistant-missing-index')?.textContent).toContain(
             'safe output'
         );
@@ -1968,7 +1968,7 @@ describe('task-view message queue', () => {
             )
         ).toBe(true);
 
-        expect(taskView.querySelector('#message-content-assistant-2 .od-running-status')).not.toBeNull();
+        expect(taskView.querySelector('#message-content-assistant-2 .od-running-status')).toBeNull();
         expect(taskView.querySelector('#message-content-assistant-2')?.textContent).toContain('new output');
         // 新消息流式期间立即出现按 chars/4 估算的胶囊（'new output' 11 chars → 3 词），
         // 同时按「仅保留最新一条胶囊」的既有规则移除旧消息上的 usage

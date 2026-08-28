@@ -323,18 +323,6 @@ export class ConfigForm implements Component {
         item.disabledHint = disabledHint;
     }
 
-    setItemValue(key: string, value: unknown) {
-        const item = this.items.find((candidate) => candidate.key === key);
-        if (!item || item.type === 'action') return;
-        if (item.type === 'text') {
-            item.input.setValue(String(value ?? ''));
-        } else if (item.type === 'boolean') {
-            item.value = value === true;
-        } else if (typeof value === 'string' && item.options.includes(value)) {
-            item.value = value;
-        }
-    }
-
     invalidate() {}
 
     render(width: number): string[] {

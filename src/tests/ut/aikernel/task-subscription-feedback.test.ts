@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { AssistantMessage, ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
+import { AssistantMessage, ChatContext, TextMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
 import {
     BaseTaskUpdateSubscriber,
     TaskManagerState,
@@ -33,6 +33,10 @@ class CollectingSubscriber extends BaseTaskUpdateSubscriber {
     send(chunkUpdate: TaskUpdateChunk): void {
         this.chunks.push(chunkUpdate);
     }
+}
+
+class HtmlCollectingSubscriber extends CollectingSubscriber {
+    wantsHtmlRender = true;
 }
 
 class ThrowingSendSubscriber extends BaseTaskUpdateSubscriber {
@@ -181,6 +185,77 @@ describe('task subscription feedback', () => {
         expect(chunks[0].type).toBe('assistant');
         if (chunks[0].type !== 'assistant') return;
         expect(chunks[0].provisional).toBe('implicit_think_close_candidate');
+    });
+
+    test('defers Markdown rendering for the active streaming assistant part', async () => {
+        class ElectronTestPlatform extends TestPlatform {
+            getName(): string {
+                return 'electron';
+            }
+        }
+
+        setPlatform(new ElectronTestPlatform());
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+        const assistant = new AssistantMessage();
+        const textPart = new TextMessagePart('streaming **markdown**');
+        const renderSpy = jest.spyOn(textPart, 'render');
+        assistant.content.push(textPart);
+        task.chat_context.appendMessage(assistant);
+
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new HtmlCollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback(0);
+
+        expect(renderSpy).not.toHaveBeenCalled();
+        expect(chunks).toHaveLength(1);
+        expect((chunks[0] as any).streaming).toBe(true);
+        expect(textPart.rendered).toBeUndefined();
+
+        task.task_status = 'stopped';
+        await task.sendSubscriptionFeedback(0);
+
+        expect(renderSpy).toHaveBeenCalledTimes(1);
+        expect(chunks[1].type).toBe('assistant_replace');
+        expect(textPart.rendered).toContain('<strong>markdown</strong>');
+    });
+
+    test('terminal assistant feedback replaces the renderer with the complete message snapshot', async () => {
+        class ElectronTestPlatform extends TestPlatform {
+            getName(): string {
+                return 'electron';
+            }
+        }
+
+        setPlatform(new ElectronTestPlatform());
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+        const assistant = new AssistantMessage();
+        assistant.appendReasoningContent('complete reasoning', 'reasoning_content');
+        assistant.content.push(new TextMessagePart('intermediate text'));
+        assistant.content.push(new TextMessagePart('complete final'));
+        task.chat_context.appendMessage(assistant);
+
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new HtmlCollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback(0);
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0].type).toBe('assistant');
+
+        task.task_status = 'stopped';
+        await task.sendSubscriptionFeedback();
+
+        expect(chunks).toHaveLength(2);
+        expect(chunks[1].type).toBe('assistant_replace');
+        if (chunks[1].type !== 'assistant_replace') return;
+        expect(chunks[1].parts).toHaveLength(3);
+        expect(chunks[1].parts.map((part) => part.type)).toEqual(['reasoning', 'text', 'text']);
+        expect((chunks[1].parts[2] as TextMessagePart).text).toBe('complete final');
+        expect((chunks[1].parts[2] as TextMessagePart).rendered).toContain('complete final');
     });
 
     test('does not throw when retry feedback subscribers fail', async () => {

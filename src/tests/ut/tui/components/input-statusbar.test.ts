@@ -60,7 +60,7 @@ describe('TaskStatusBar', () => {
     });
 
     test.each([
-        ['minimal', 'Minimal'],
+        ['minimal', 'Minimal display'],
         ['verbose', 'Detailed']
     ] as const)('shows the current %s output level without a label or shortcut', (level, expected) => {
         const statusBar = new TaskStatusBar();
@@ -78,7 +78,7 @@ describe('TaskStatusBar', () => {
         const statusBar = new TaskStatusBar();
         statusBar.update({ outputDisplayLevel: 'minimal' });
 
-        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('极简');
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('极简显示');
 
         statusBar.update({ outputDisplayLevel: 'verbose' });
 

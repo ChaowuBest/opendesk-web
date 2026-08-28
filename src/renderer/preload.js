@@ -287,9 +287,28 @@ function exposeTaskManagerAPI() {
             }
             const subscriptionId = result.data;
             console.info('task update subscribed for task', taskId, subscriptionId);
-            ipcRenderer.on(`taskManager:taskUpdate:${subscriptionId}`, (event, ...args) => {
-                callback(...args);
+            const channel = `taskManager:taskUpdate:${subscriptionId}`;
+            ipcRenderer.on(channel, (event, ...args) => {
+                try {
+                    callback(...args);
+                } finally {
+                    const streamSequence = args[0]?.stream_sequence;
+                    if (Number.isSafeInteger(streamSequence)) {
+                        ipcRenderer.send('taskManager:ackTaskUpdate', taskId, subscriptionId, streamSequence);
+                    }
+                }
             });
+            try {
+                const syncResult = await ipcRenderer.invoke('taskManager:syncTaskUpdate', taskId, subscriptionId);
+                if (syncResult.status !== 'ok') {
+                    console.error('syncing task update failed', syncResult.message);
+                    throw new Error(syncResult.message);
+                }
+            } catch (error) {
+                ipcRenderer.removeAllListeners(channel);
+                await ipcRenderer.invoke('taskManager:unsubscribeTaskUpdate', taskId, subscriptionId).catch(() => {});
+                throw error;
+            }
             return subscriptionId;
         },
         unsubscribeTaskUpdate: async (taskId, subscriptionId) => {

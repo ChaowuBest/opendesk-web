@@ -342,8 +342,6 @@ const LARGE_ARGS_THRESHOLD = 500;
 
 export const TOOL_RESULT_STORAGE_VERSION = 1;
 export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
-export const TOOL_CALL_ARGS_PREVIEW_MAX_CHARS = 2048;
-
 export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
@@ -367,6 +365,7 @@ export class ToolCall implements BaseChatToolCall {
     /** 本地 microcompact 后的持久化元数据 */
     microcompact?: ToolCallMicrocompactMetadata;
     metadata?: RuntimeMetadata;
+    presentation?: ToolCallPresentation;
     elapsedSeconds?: number;
     private _startedAt?: number;
 
@@ -441,23 +440,23 @@ export class ToolCall implements BaseChatToolCall {
 
     /** 序列化时显式排除 tool，避免运行时引用被持久化后反序列化为纯对象导致渲染/执行异常 */
     toJSON(): object {
-        const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
-        return rest;
+        const { tool: _tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
+        return {
+            ...rest,
+            presentation: this.getPresentation()
+        };
     }
 
-    /** 仅返回渲染摘要；完整参数和结果由详情 IPC 按需读取。 */
+    /** 仅返回渲染摘要；执行结果和经工具显式声明的自定义详情由 IPC 按需读取。 */
     toRenderJSON(): object {
-        const argsString = typeof this.args_string === 'string' ? this.args_string : '';
-        const argsPreview = argsString.slice(0, TOOL_CALL_ARGS_PREVIEW_MAX_CHARS);
+        const presentation = this.getPresentation();
         return {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
             status: this.status,
-            args_preview: argsPreview,
-            args_truncated: argsPreview.length < argsString.length,
-            detail_available: Boolean(argsString || this.result || this.rendered),
-            presentation: this.getPresentation(),
+            detail_available: Boolean(this.result || (this.rendered && presentation.detailMode === 'custom')),
+            presentation,
             elapsedSeconds: this.elapsedSeconds
         };
     }
@@ -465,12 +464,19 @@ export class ToolCall implements BaseChatToolCall {
     getPresentation(): ToolCallPresentation {
         try {
             if (this.tool && typeof this.tool.getToolCallPresentation === 'function') {
-                return sanitizeToolCallPresentation(this.tool.getToolCallPresentation(this), this.tool_name);
+                this.presentation = sanitizeToolCallPresentation(
+                    this.tool.getToolCallPresentation(this),
+                    this.tool_name
+                );
+                return this.presentation;
             }
         } catch (error) {
             logger.error(`Error creating tool presentation for ${this.tool_name}: ${error}`);
         }
-        return getDefaultToolCallPresentation(this);
+        this.presentation = this.presentation
+            ? sanitizeToolCallPresentation(this.presentation, this.tool_name)
+            : getDefaultToolCallPresentation(this);
+        return this.presentation;
     }
 
     static normalizeResultStorage(
@@ -723,6 +729,7 @@ export class ToolCall implements BaseChatToolCall {
         Object.defineProperty(tc, '_startedAt', { value: undefined, writable: true, enumerable: false });
         tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
         tc.microcompact = ToolCall.normalizeMicrocompact(tc.microcompact);
+        tc.presentation = tc.presentation ? sanitizeToolCallPresentation(tc.presentation, tc.tool_name) : undefined;
         return tc;
     }
 }

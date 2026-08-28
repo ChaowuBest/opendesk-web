@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../aikernel/tool';
+import { SearchPresentationTool } from './presentation.js';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -62,7 +62,7 @@ const ARXIV_TO_DBLP_PREFIX_MAP: Record<string, string> = {
 /** arXiv 特有的语法前缀，DBLP 完全不支持，需清洗 */
 const ARXIV_ONLY_PREFIXES = ['cat:', 'abs:', 'all:', 'jr:', 'rn:', 'co:'];
 
-export class AcademicSearchTool extends BaseTool<typeof AcademicSearchArgsSchema> {
+export class AcademicSearchTool extends SearchPresentationTool<typeof AcademicSearchArgsSchema> {
     private channel: AcademicSearchChannel;
     private delegate: BaseAcademicSearchEngine;
 

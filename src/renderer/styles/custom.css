@@ -4032,6 +4032,11 @@ html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
     margin: 9px 4px 12px;
 }
 
+.od-streaming-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 .od-final-result-label {
     margin: 0 0 5px;
     color: var(--od-text-muted);

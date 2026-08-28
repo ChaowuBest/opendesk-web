@@ -73,6 +73,8 @@ const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
 const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
 
 type TaskViewMessage = UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView | GoalPanel;
+type AssistantMessageLifecycle = 'active' | 'sealed' | 'terminal';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -699,7 +701,7 @@ export class AssistantMessageView implements Component {
     private lastWidth?: number;
     private cachedOutput?: string[];
     private outputDisplayProvider: () => OutputDisplayLevel = getConfiguredOutputDisplayLevel;
-    private taskComplete = true;
+    private lifecycle: AssistantMessageLifecycle = 'terminal';
     private startedAt = Date.now();
     private completedAt?: number;
     private partObservedAt = new Map<number, number>();
@@ -716,19 +718,23 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    setTaskComplete(complete: boolean, completedAt?: number): void {
-        if (complete && this.completedAt === undefined) {
+    setLifecycle(lifecycle: AssistantMessageLifecycle, completedAt?: number): void {
+        if (lifecycle !== 'active' && this.completedAt === undefined) {
             this.completedAt =
                 typeof completedAt === 'number' && Number.isFinite(completedAt) ? completedAt : Date.now();
-        } else if (!complete) {
+        } else if (lifecycle === 'active') {
             this.completedAt = undefined;
         }
-        this.taskComplete = complete;
+        this.lifecycle = lifecycle;
         this.invalidated = true;
     }
 
-    isTaskComplete(): boolean {
-        return this.taskComplete;
+    seal(completedAt?: number): void {
+        if (this.lifecycle === 'active') this.setLifecycle('sealed', completedAt);
+    }
+
+    isActive(): boolean {
+        return this.lifecycle === 'active';
     }
 
     setStartedAt(timestamp?: number): void {
@@ -860,7 +866,6 @@ export class AssistantMessageView implements Component {
             return;
         }
         this.currentMessageId = chunkUpdate.message_id;
-        this.setTaskComplete(false);
 
         if (!isValidPartIndex(chunkUpdate.last_part_index) || !isAssistantMessagePartLike(chunkUpdate.last_part)) {
             logger.warn(
@@ -888,7 +893,6 @@ export class AssistantMessageView implements Component {
         this.box.clear();
         this.parts = [];
         this.partObservedAt.clear();
-        this.completedAt = undefined;
         this.invalidated = true;
     }
 
@@ -980,9 +984,10 @@ export class AssistantMessageView implements Component {
         const textPartIndexes = this.parts.flatMap((part, index) =>
             part instanceof TextMessagePartView ? [index] : []
         );
-        const finalTextPartIndex = this.taskComplete ? textPartIndexes[textPartIndexes.length - 1] : undefined;
-        const bodyCount = this.taskComplete ? Math.max(0, textPartIndexes.length - 1) : textPartIndexes.length;
-        const showPhaseSummaries = !this.taskComplete || bodyCount > 1;
+        const isTerminal = this.lifecycle === 'terminal';
+        const finalTextPartIndex = isTerminal ? textPartIndexes[textPartIndexes.length - 1] : undefined;
+        const bodyCount = isTerminal ? Math.max(0, textPartIndexes.length - 1) : textPartIndexes.length;
+        const showPhaseSummaries = !isTerminal || bodyCount > 1;
         const hasReasoning = this.parts.some((part) => part instanceof ReasoningMessagePartView);
         const hasError = this.parts.some((part) => part instanceof ErrorMessagePartView);
         const hasActiveToolCall = allToolCalls.some(
@@ -1040,11 +1045,13 @@ export class AssistantMessageView implements Component {
             }
         }
 
-        if (this.taskComplete) {
+        if (isTerminal) {
             flushPendingTools(this.completedAt ?? Date.now());
             if (!completionRendered) {
                 appendBlock([this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)]);
             }
+        } else if (this.lifecycle === 'sealed') {
+            flushPendingTools(this.completedAt ?? Date.now());
         } else if (hasActiveToolCall || !isStreamingText) {
             appendBlock([this.renderMinimalRunning(allToolCalls, width)]);
         }
@@ -1108,11 +1115,8 @@ class IncrementalBox implements Component {
         for (const child of this.children) {
             const lines = child.render(width);
             let start = 0;
-            if (
-                previousChild instanceof AssistantMessageView &&
-                child instanceof AssistantMessageView &&
-                childLines.at(-1)?.trim() === ''
-            ) {
+            if (previousChild instanceof AssistantMessageView && child instanceof AssistantMessageView) {
+                while (childLines.length > 0 && childLines.at(-1)?.trim() === '') childLines.pop();
                 while (start < lines.length && lines[start].trim() === '') start += 1;
             }
             for (let index = start; index < lines.length; index += 1) childLines.push(lines[index]);
@@ -1256,12 +1260,12 @@ export class TaskView implements Component {
     }
 
     private createAssistantView(
-        options: { complete?: boolean; startedAt?: number; completedAt?: number } = {}
+        options: { lifecycle?: AssistantMessageLifecycle; startedAt?: number; completedAt?: number } = {}
     ): AssistantMessageView {
         const view = new AssistantMessageView();
         view.setOutputDisplayProvider(() => this.outputDisplayLevel);
         view.setStartedAt(options.startedAt ?? this.streamingStartedAt);
-        view.setTaskComplete(options.complete ?? false, options.completedAt);
+        view.setLifecycle(options.lifecycle ?? 'active', options.completedAt);
         return view;
     }
 
@@ -1366,7 +1370,7 @@ export class TaskView implements Component {
         this._streaming = false;
         this._lastRenderMs = 0;
         this._lastRenderDurationMs = 0;
-        this.getLastAssistantView()?.setTaskComplete(true);
+        this.getLastAssistantView()?.setLifecycle('terminal');
         this.invalidated = true;
     }
 
@@ -1639,7 +1643,7 @@ export class TaskView implements Component {
     }
 
     private async showLocalSubmitError(messageKey: string, messageArgs?: Record<string, unknown>): Promise<void> {
-        const view = this.createAssistantView({ complete: true });
+        const view = this.createAssistantView({ lifecycle: 'terminal' });
         view.setMessageId(`local-submit-error-${crypto.randomUUID()}`);
         await view.updateErrorPart(
             0,
@@ -1704,7 +1708,8 @@ export class TaskView implements Component {
                 }
             } else {
                 if (!view) {
-                    view = this.createAssistantView();
+                    this.getLastAssistantView()?.seal();
+                    view = this.createAssistantView({ startedAt: chunkUpdate.timestamp });
                     view.setMessageId(chunkUpdate.message_id);
                     this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                     this.messages.push(view);
@@ -1732,7 +1737,8 @@ export class TaskView implements Component {
             if (!hasMessageId(chunkUpdate, 'assistant')) return;
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {
-                view = this.createAssistantView();
+                this.getLastAssistantView()?.seal();
+                view = this.createAssistantView({ startedAt: chunkUpdate.timestamp });
                 view.setMessageId(chunkUpdate.message_id);
                 this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                 this.messages.push(view);
@@ -1792,13 +1798,18 @@ export class TaskView implements Component {
                 this.appendUserMessageView(msg);
             } else if (msg instanceof AssistantMessage) {
                 const isRunningTail = this.taskState.task_status === 'running' && messageIndex === messages.length - 1;
-                const completedAt = isRunningTail ? undefined : Date.now();
+                const lifecycle: AssistantMessageLifecycle = isRunningTail
+                    ? 'active'
+                    : messages[messageIndex + 1] instanceof AssistantMessage
+                      ? 'sealed'
+                      : 'terminal';
+                const completedAt = lifecycle === 'active' ? undefined : Date.now();
                 const elapsedSeconds =
                     typeof msg.elapsedSeconds === 'number' && Number.isFinite(msg.elapsedSeconds)
                         ? Math.max(0, msg.elapsedSeconds)
                         : 0;
                 const view = this.createAssistantView({
-                    complete: !isRunningTail,
+                    lifecycle,
                     startedAt: completedAt === undefined ? msg.timestamp : completedAt - elapsedSeconds * 1000,
                     completedAt
                 });
@@ -1903,11 +1914,7 @@ export class TaskView implements Component {
         }
         this.cachedOutput = this.messageLayout.render(width);
         const lastAssistant = this.getLastAssistantView();
-        if (
-            this._streaming &&
-            this.outputDisplayLevel === 'minimal' &&
-            (!lastAssistant || lastAssistant.isTaskComplete())
-        ) {
+        if (this._streaming && this.outputDisplayLevel === 'minimal' && (!lastAssistant || !lastAssistant.isActive())) {
             const meta = t('display.minimal.running.meta.many', {
                 count: 0,
                 elapsed: formatMinimalElapsed(this.streamingStartedAt)

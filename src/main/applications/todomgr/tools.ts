@@ -24,6 +24,7 @@ import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
+import type { ToolCallPresentation } from '../../aikernel/tool-presentation.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -41,6 +42,10 @@ function cronLabels(): CronDescribeLabels {
     };
 }
 
+function todoToolPresentation(displayNameKey: string): ToolCallPresentation {
+    return { displayName: { key: displayNameKey } };
+}
+
 export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema> {
     constructor() {
         super(
@@ -49,6 +54,10 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
             GetCurrentTimeArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return todoToolPresentation('tools.getCurrentTime.name');
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -336,6 +345,10 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return todoToolPresentation('renderer.taskview.output.toolName.todoWrite');
     }
 
     private getTaskTodos(taskId: string): TaskTodo[] {

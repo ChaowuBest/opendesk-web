@@ -48,6 +48,7 @@ const EXPORT_WEBPAGE_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const EXPORT_JSON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
+const TOOL_DETAIL_CACHE_MAX_ENTRIES = 20;
 
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
@@ -91,6 +92,7 @@ import {
     buildAssistantOutputItems,
     getDefaultProcessExpanded,
     getVisibleAssistantOutputItems,
+    mergeGuiAssistantProgressPart,
     normalizeGuiOutputMode
 } from './taskview-output.js';
 
@@ -383,6 +385,10 @@ class TaskView extends HTMLElement {
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
+        /** @type {Array<object>} reload 重建 DOM 期间到达、待重放的任务更新。 */
+        this._deferredTaskUpdates = [];
+        /** @type {((progress: object) => void) | null} 当前订阅的统一更新处理器。 */
+        this._taskUpdateHandler = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
         /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
@@ -1137,42 +1143,9 @@ class TaskView extends HTMLElement {
         return formatOutputElapsed(seconds, taskViewT);
     }
 
-    static _parseToolArguments(tool) {
-        const raw = String(tool?.args_string ?? tool?.args_preview ?? '');
-        if (!raw) return undefined;
-        try {
-            const args = JSON.parse(raw);
-            return args && typeof args === 'object' && !Array.isArray(args) ? args : undefined;
-        } catch {
-            return undefined;
-        }
-    }
-
-    static _toolKind(tool) {
-        return String(tool?.tool_name || '')
-            .split(/[-./:]/)
-            .pop()
-            .replace(/Tool$/i, '')
-            .toLowerCase();
-    }
-
     static _toolBasename(value) {
         const normalized = String(value || '').replace(/[\\/]+$/, '');
         return normalized.split(/[\\/]/).pop() || normalized;
-    }
-
-    static _renderedToolTitle(tool) {
-        const rendered = String(tool?.rendered || '');
-        if (!rendered) return '';
-        const container = document.createElement('div');
-        container.innerHTML = rendered;
-        const inline = container.querySelector('.od-inline-toolcall-container');
-        if (!inline) return '';
-        for (const span of inline.querySelectorAll('span')) {
-            const text = (span.textContent || '').replace(/\s+/g, ' ').trim();
-            if (text) return text;
-        }
-        return '';
     }
 
     static _toolPresentationText(value) {
@@ -1184,25 +1157,11 @@ class TaskView extends HTMLElement {
     static _toolDisplayName(tool) {
         const displayName = TaskView._toolPresentationText(tool?.presentation?.displayName);
         if (displayName) return displayName;
-        return TaskView._renderedToolTitle(tool) || tool?.tool_name || taskViewT('renderer.taskview.output.tool');
+        return tool?.tool_name || taskViewT('renderer.taskview.output.tool');
     }
 
     static _toolPurpose(tool) {
-        const summary = TaskView._toolPresentationText(tool?.presentation?.summary);
-        if (summary) return summary;
-        const raw = String(tool?.args_string ?? tool?.args_preview ?? '');
-        const args = TaskView._parseToolArguments(tool);
-        if (!args) return raw;
-
-        for (const key of ['description', 'purpose', 'task']) {
-            if (typeof args[key] === 'string' && args[key].trim()) return args[key].trim();
-        }
-
-        for (const key of ['query', 'pattern', 'url', 'command', 'path', 'file_path']) {
-            if (args[key] !== undefined) return String(args[key]);
-        }
-        const trimmedRaw = raw.trim();
-        return trimmedRaw.startsWith('{') && trimmedRaw.endsWith('}') ? '' : raw;
+        return TaskView._toolPresentationText(tool?.presentation?.summary);
     }
 
     static _toolFileAction(tool) {
@@ -1245,20 +1204,22 @@ class TaskView extends HTMLElement {
         if (action) {
             const name = TaskView._toolBasename(action.filePath);
             const nameOffset = purpose.indexOf(name);
-            if (!name || nameOffset < 0) return escapeHtml(purpose);
+            if (!name) return escapeHtml(purpose);
             const dataAttribute = action.type === 'preview' ? 'data-open-preview' : 'data-open-changes';
             const labelKey =
                 action.type === 'preview'
                     ? 'renderer.taskview.output.action.previewFile'
                     : 'renderer.taskview.output.action.viewChanges';
             const label = taskViewT(labelKey, { name });
-            return `${escapeHtml(purpose.slice(0, nameOffset))}<button type="button" class="od-process-resource-link od-process-file-link"
-                ${dataAttribute}="${escapeHtml(action.filePath)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${escapeHtml(name)}</button>${escapeHtml(purpose.slice(nameOffset + name.length))}`;
+            const link = `<button type="button" class="od-process-resource-link od-process-file-link"
+                ${dataAttribute}="${escapeHtml(action.filePath)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${escapeHtml(name)}</button>`;
+            return nameOffset < 0
+                ? `${escapeHtml(purpose)}${purpose ? ' · ' : ''}${link}`
+                : `${escapeHtml(purpose.slice(0, nameOffset))}${link}${escapeHtml(purpose.slice(nameOffset + name.length))}`;
         }
 
         const resource = tool?.presentation?.resource;
-        const args = TaskView._parseToolArguments(tool);
-        const browserUrl = TaskView._browserUrl(resource?.type === 'url' ? resource.value : args?.url);
+        const browserUrl = TaskView._browserUrl(resource?.type === 'url' ? resource.value : undefined);
         const urlOffset = browserUrl ? purpose.indexOf(browserUrl) : -1;
         if (!browserUrl || urlOffset < 0) return escapeHtml(purpose);
         return `${escapeHtml(purpose.slice(0, urlOffset))}${TaskView._renderBrowserLink(browserUrl, TaskView._compactBrowserUrl(browserUrl))}${escapeHtml(purpose.slice(urlOffset + browserUrl.length))}`;
@@ -1315,52 +1276,10 @@ class TaskView extends HTMLElement {
         return TaskView._truncateProcessSummary(summary);
     }
 
-    static _toolFieldLabel(key) {
-        const labels = {
-            command: 'command',
-            description: 'description',
-            workingDirectory: 'workingDirectory',
-            cwd: 'workingDirectory',
-            path: 'path',
-            file_path: 'path',
-            query: 'query',
-            pattern: 'pattern',
-            url: 'url',
-            timeout: 'timeout'
-        };
-        const label = labels[key];
-        return label ? taskViewT(`renderer.taskview.output.field.${label}`) : key;
-    }
-
     static _readableToolValue(value) {
         if (typeof value === 'string') return value;
         if (value === undefined) return '';
         return JSON.stringify(value, null, 2);
-    }
-
-    static _renderToolArgumentFields(raw) {
-        if (!raw) return '';
-        let parsed;
-        try {
-            parsed = JSON.parse(raw);
-        } catch {
-            parsed = undefined;
-        }
-        const entries =
-            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-                ? Object.entries(parsed)
-                : [[taskViewT('renderer.taskview.output.parameters'), parsed === undefined ? raw : parsed]];
-        return entries
-            .map(([key, value]) => {
-                const displayValue = TaskView._readableToolValue(value);
-                if (!displayValue) return '';
-                const commandClass = key === 'command' ? ' is-command' : '';
-                return `<div class="od-process-tool-field${commandClass}">
-                    <div class="od-process-detail-label">${escapeHtml(TaskView._toolFieldLabel(key))}</div>
-                    <pre>${escapeHtml(displayValue)}</pre>
-                </div>`;
-            })
-            .join('');
     }
 
     static _formatToolResult(result) {
@@ -1448,140 +1367,6 @@ class TaskView extends HTMLElement {
         return container.innerHTML;
     }
 
-    static _renderCompactToolField(labelKey, value) {
-        const readable = TaskView._readableToolValue(value);
-        if (!readable) return '';
-        return `<div class="od-process-tool-field">
-            <div class="od-process-detail-label">${taskViewT(labelKey)}</div>
-            <pre>${escapeHtml(readable)}</pre>
-        </div>`;
-    }
-
-    static _skillInnerToolAction(toolName) {
-        const normalized = String(toolName || '')
-            .split(/[-./:]/)
-            .pop()
-            .replace(/Tool$/i, '')
-            .toLowerCase();
-        const actions = {
-            navigate: 'openWebPage',
-            open: 'openWebPage',
-            click: 'clickElement',
-            type: 'enterText',
-            fill: 'enterText',
-            input: 'enterText',
-            screenshot: 'capturePage',
-            capture: 'capturePage',
-            snapshot: 'readPage',
-            read: 'readPage',
-            scroll: 'scrollPage',
-            wait: 'waitForPage',
-            search: 'searchPage'
-        };
-        const action = actions[normalized];
-        return action
-            ? taskViewT(`renderer.taskview.output.skillAction.${action}`)
-            : taskViewT('renderer.taskview.output.skillAction.runTool', {
-                  name: String(toolName || taskViewT('renderer.taskview.output.tool'))
-              });
-    }
-
-    static _toolExecutionTitle(tool) {
-        const kind = TaskView._toolKind(tool);
-        const args = TaskView._parseToolArguments(tool);
-        if (!args?.skillName) return taskViewT('renderer.taskview.output.executionDetails');
-        if (kind === 'loadskill') {
-            return taskViewT('renderer.taskview.output.execution.loadSkill', { skill: args.skillName });
-        }
-        if (kind === 'callskill') {
-            return taskViewT('renderer.taskview.output.execution.callSkill', {
-                skill: args.skillName,
-                action: TaskView._skillInnerToolAction(args.toolName)
-            });
-        }
-        return taskViewT('renderer.taskview.output.executionDetails');
-    }
-
-    static _skillCallEntrySummary(tool) {
-        if (TaskView._toolKind(tool) !== 'callskill') return undefined;
-        const args = TaskView._parseToolArguments(tool);
-        if (!args?.skillName) return undefined;
-        return {
-            label: taskViewT('renderer.taskview.output.toolName.callSkill'),
-            purpose: TaskView._toolExecutionTitle(tool)
-        };
-    }
-
-    static _renderSkillToolParameters(toolArgs) {
-        if (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs)) {
-            return TaskView._renderCompactToolField('renderer.taskview.output.parameters', toolArgs);
-        }
-        const labels = {
-            url: 'targetUrl',
-            targeturl: 'targetUrl',
-            waituntil: 'waitCondition',
-            selector: 'targetElement',
-            ref: 'targetElement',
-            element: 'targetElement',
-            text: 'inputContent',
-            value: 'inputContent',
-            key: 'keyboardKey',
-            direction: 'scrollDirection'
-        };
-        const values = {
-            load: 'pageLoaded',
-            domcontentloaded: 'contentLoaded',
-            networkidle: 'networkIdle'
-        };
-        return Object.entries(toolArgs)
-            .map(([key, value]) => {
-                const readable = TaskView._readableToolValue(value);
-                if (!readable) return '';
-                const label = labels[key.toLowerCase()];
-                const displayLabel = label
-                    ? taskViewT(`renderer.taskview.output.field.${label}`)
-                    : TaskView._toolFieldLabel(key);
-                const translatedValue = values[String(value).toLowerCase()];
-                const displayValue = translatedValue
-                    ? taskViewT(`renderer.taskview.output.value.${translatedValue}`)
-                    : readable;
-                const browserUrl = label === 'targetUrl' ? TaskView._browserUrl(displayValue) : '';
-                return `<div class="od-process-tool-field">
-                    <div class="od-process-detail-label">${escapeHtml(displayLabel)}</div>
-                    <pre>${browserUrl ? TaskView._renderBrowserLink(browserUrl) : escapeHtml(displayValue)}</pre>
-                </div>`;
-            })
-            .join('');
-    }
-
-    static _renderSkillToolDetail(tool) {
-        const kind = TaskView._toolKind(tool);
-        if (kind !== 'loadskill' && kind !== 'callskill') return '';
-        const args = TaskView._parseToolArguments(tool);
-        if (!args) return '';
-
-        if (kind === 'loadskill') {
-            const source = TaskView._renderCompactToolField('renderer.taskview.output.field.source', args.bundleName);
-            return source;
-        }
-
-        let toolArgs = args.toolArgs;
-        if (typeof toolArgs === 'string') {
-            try {
-                toolArgs = JSON.parse(toolArgs);
-            } catch {
-                // Keep the original string when the nested arguments are not valid JSON.
-            }
-        }
-        const parameters = TaskView._renderSkillToolParameters(toolArgs);
-        const result = TaskView._renderToolResult(tool.result);
-        return `${parameters}${
-            result
-                ? `<div class="od-process-tool-output"><div class="od-process-detail-label">${taskViewT('renderer.taskview.output.executionResult')}</div><pre>${result}</pre></div>`
-                : ''
-        }`;
-    }
-
     static _structuredToolRender(tool) {
         const rendered = String(tool?.rendered || '');
         if (!rendered) return '';
@@ -1600,22 +1385,28 @@ class TaskView extends HTMLElement {
     }
 
     static _renderToolExecutionDetail(tool) {
-        const args = tool.args_string || '';
         const result = tool.result || '';
-        const fallback = !args && !result ? tool.rendered || '' : '';
-        const compactSkillDetail = TaskView._renderSkillToolDetail(tool);
-        const structuredRender = compactSkillDetail ? '' : TaskView._structuredToolRender(tool);
-        const readableArguments =
-            compactSkillDetail || structuredRender ? '' : TaskView._renderToolArgumentFields(args);
+        const fallback = !result ? tool.rendered || '' : '';
+        const resultTruncated = Boolean(tool.truncation?.result);
+        const renderedTruncated = Boolean(tool.truncation?.rendered);
+        const structuredRender = renderedTruncated ? '' : TaskView._structuredToolRender(tool);
         const markdownResult =
-            compactSkillDetail || structuredRender || !TaskView._toolResultUsesMarkdown(tool)
+            structuredRender || resultTruncated || !TaskView._toolResultUsesMarkdown(tool)
                 ? ''
                 : TaskView._renderMarkdownToolResult(result);
         const readableResult =
-            compactSkillDetail || structuredRender || markdownResult ? '' : TaskView._renderToolResult(result);
+            structuredRender || markdownResult
+                ? ''
+                : resultTruncated
+                  ? escapeHtml(result)
+                  : TaskView._renderToolResult(result);
         const status = tool.status || 'pending';
         const statusText = taskViewT(`renderer.taskview.output.toolStatus.${status}`);
-        const executionTitle = TaskView._toolExecutionTitle(tool);
+        const executionTitle = taskViewT('renderer.taskview.output.executionDetails');
+        const truncationNotice =
+            resultTruncated || renderedTruncated
+                ? `<div class="od-process-tool-detail-status">${escapeHtml(taskViewT('renderer.taskview.output.detailTruncated'))}</div>`
+                : '';
         return `
             <div class="od-process-tool-execution-header">
                 <span>${escapeHtml(executionTitle)}</span>
@@ -1624,9 +1415,8 @@ class TaskView extends HTMLElement {
                     ${escapeHtml(statusText)}
                 </span>
             </div>
-            ${compactSkillDetail}
+            ${truncationNotice}
             ${structuredRender ? `<div class="od-process-tool-rendered">${structuredRender}</div>` : ''}
-            ${readableArguments}
             ${
                 markdownResult
                     ? `<div class="od-process-tool-output is-markdown"><div class="od-process-detail-label">${taskViewT('renderer.taskview.output.result')}</div><div class="od-process-markdown-result markdown-body">${markdownResult}</div></div>`
@@ -1651,6 +1441,16 @@ class TaskView extends HTMLElement {
         enhanceToolPreviewCards(detail);
     }
 
+    _cacheToolDetail(detailKey, detail) {
+        this._toolDetailCache.delete(detailKey);
+        this._toolDetailCache.set(detailKey, detail);
+        while (this._toolDetailCache.size > TOOL_DETAIL_CACHE_MAX_ENTRIES) {
+            const oldestKey = this._toolDetailCache.keys().next().value;
+            if (oldestKey === undefined) break;
+            this._toolDetailCache.delete(oldestKey);
+        }
+    }
+
     _findToolDetailElement(detailKey) {
         return Array.from(this.querySelectorAll('[data-tool-detail-key]')).find(
             (element) => element.dataset.toolDetailKey === detailKey
@@ -1665,15 +1465,6 @@ class TaskView extends HTMLElement {
         const cached = this._toolDetailCache.get(detailKey);
         if (cached) {
             this._setToolDetailContent(detail, { ...source.tool, ...cached });
-            return;
-        }
-
-        const hasInlineDetail =
-            Object.prototype.hasOwnProperty.call(source.tool, 'args_string') ||
-            Object.prototype.hasOwnProperty.call(source.tool, 'result');
-        if (hasInlineDetail) {
-            this._toolDetailCache.set(detailKey, source.tool);
-            this._setToolDetailContent(detail, source.tool);
             return;
         }
 
@@ -1697,7 +1488,7 @@ class TaskView extends HTMLElement {
         }
         void request
             .then((loaded) => {
-                this._toolDetailCache.set(detailKey, loaded);
+                this._cacheToolDetail(detailKey, loaded);
                 const current = this._findToolDetailElement(detailKey);
                 if (current) this._setToolDetailContent(current, { ...source.tool, ...loaded });
             })
@@ -1724,9 +1515,15 @@ class TaskView extends HTMLElement {
         const expanded = disclosureState?.get(entryKey) === true;
         const detailId = `od-${this.widget_id}-${entryKey}-detail`;
         if (entry.type === 'reasoning') {
-            const content = entry.part?.rendered || '';
-            const summary =
-                TaskView._plainTextFromHtml(content) || taskViewT('renderer.taskview.output.reasoningSummary');
+            const streaming = entry.part?.streaming === true;
+            const streamingText = String(entry.part?.text || '');
+            const content = streaming
+                ? `<div class="od-streaming-text" data-streaming-part-index="${entry.partIndex}">${renderSafeMarkdown(streamingText)}</div>`
+                : entry.part?.rendered || '';
+            const summary = streaming
+                ? streamingText.replace(/\s+/g, ' ').trim().slice(0, 160) ||
+                  taskViewT('renderer.taskview.output.reasoningSummary')
+                : TaskView._plainTextFromHtml(content) || taskViewT('renderer.taskview.output.reasoningSummary');
             const duration = TaskView._formatOutputDuration(entry.part?.elapsedSeconds);
             return `
                 <div class="od-process-entry od-process-reason${expanded ? ' is-expanded' : ''}">
@@ -1736,7 +1533,7 @@ class TaskView extends HTMLElement {
                             <i class="fa-regular fa-lightbulb od-process-entry-icon" aria-hidden="true"></i>
                             <span>${taskViewT('renderer.taskview.output.reasoning')}</span>
                         </span>
-                        <span class="od-process-entry-text">${escapeHtml(summary)}</span>
+                        <span class="od-process-entry-text"${streaming ? ` data-streaming-summary-part-index="${entry.partIndex}"` : ''}>${escapeHtml(summary)}</span>
                         ${duration ? `<span class="od-process-entry-time">${escapeHtml(duration)}</span>` : ''}
                         <span class="od-process-chevron" aria-hidden="true">&gt;</span>
                     </button>
@@ -1748,19 +1545,16 @@ class TaskView extends HTMLElement {
 
         const tool = entry.tool || {};
         const detailKey = this._toolDetailKey(messageId, entry);
-        this._toolDetailSources.set(detailKey, {
-            messageId,
-            partIndex: entry.partIndex,
-            toolIndex: entry.toolIndex ?? 0,
-            tool
-        });
-        const skillCallSummary = TaskView._skillCallEntrySummary(tool);
-        const name = skillCallSummary?.label || TaskView._toolDisplayName(tool);
-        const argumentSummary = skillCallSummary
-            ? escapeHtml(skillCallSummary.purpose)
-            : TaskView._renderToolPurpose(tool);
+        const name = TaskView._toolDisplayName(tool);
+        const argumentSummary = TaskView._renderToolPurpose(tool);
         const duration = TaskView._formatOutputDuration(tool.elapsedSeconds);
         const status = tool.status || 'pending';
+        const resourceOnly =
+            status === 'success' &&
+            tool.presentation?.detailMode === 'resource' &&
+            TaskView._toolFileAction(tool) !== undefined;
+        const detailAvailable = tool.detail_available === true;
+        const expandable = !resourceOnly && detailAvailable;
         const statusText = taskViewT(`renderer.taskview.output.toolStatus.${status}`);
         const statusHtml =
             status && status !== 'success'
@@ -1768,11 +1562,23 @@ class TaskView extends HTMLElement {
                 : '';
         const cachedDetail = this._toolDetailCache.get(detailKey);
         const executionDetail =
-            expanded && cachedDetail ? TaskView._renderToolExecutionDetail({ ...tool, ...cachedDetail }) : '';
+            expandable && expanded && cachedDetail
+                ? TaskView._renderToolExecutionDetail({ ...tool, ...cachedDetail })
+                : '';
+        if (!expandable) {
+            this._toolDetailSources.delete(detailKey);
+            this._toolDetailCache.delete(detailKey);
+        } else {
+            this._toolDetailSources.set(detailKey, {
+                messageId,
+                partIndex: entry.partIndex,
+                toolIndex: entry.toolIndex ?? 0,
+                tool
+            });
+        }
         return `
-            <div class="od-process-entry od-process-tool${expanded ? ' is-expanded' : ''}">
-                <div class="od-process-entry-summary" role="button" tabindex="0" data-process-entry-toggle="tool"
-                    data-disclosure-key="${escapeHtml(entryKey)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailId)}">
+            <div class="od-process-entry od-process-tool${expandable && expanded ? ' is-expanded' : ''}${resourceOnly ? ' is-resource-only' : !expandable ? ' is-static' : ''}">
+                <div class="od-process-entry-summary"${expandable ? ` role="button" tabindex="0" data-process-entry-toggle="tool" data-disclosure-key="${escapeHtml(entryKey)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailId)}"` : ''}>
                     <span class="od-process-entry-kind">
                         <i class="fa-solid fa-wrench od-process-entry-icon" aria-hidden="true"></i>
                         <span>${taskViewT('renderer.taskview.output.tool')}</span>
@@ -1780,12 +1586,14 @@ class TaskView extends HTMLElement {
                     <span class="od-process-entry-label">${escapeHtml(name)}${statusHtml}</span>
                     ${argumentSummary ? `<span class="od-process-entry-text od-process-tool-args">${argumentSummary}</span>` : ''}
                     ${duration ? `<span class="od-process-entry-time">${escapeHtml(duration)}</span>` : ''}
-                    <span class="od-process-chevron" aria-hidden="true">&gt;</span>
-                </div>
-                <div id="${escapeHtml(detailId)}" class="od-process-entry-detail${expanded ? ' is-open' : ''}"
-                    data-tool-detail-key="${escapeHtml(detailKey)}" data-detail-state="${executionDetail ? 'loaded' : 'unloaded'}">
-                    ${executionDetail}
-                </div>
+                        ${expandable ? '<span class="od-process-chevron" aria-hidden="true">&gt;</span>' : ''}
+                    </div>
+                ${
+                    expandable
+                        ? `<div id="${escapeHtml(detailId)}" class="od-process-entry-detail${expanded ? ' is-open' : ''}"
+                    data-tool-detail-key="${escapeHtml(detailKey)}" data-detail-state="${executionDetail ? 'loaded' : 'unloaded'}">${executionDetail}</div>`
+                        : ''
+                }
             </div>`;
     }
 
@@ -1834,9 +1642,6 @@ class TaskView extends HTMLElement {
             icon = 'fa-wrench';
             const name = TaskView._toolDisplayName(item.tool);
             action = taskViewT('renderer.taskview.output.status.tool', { name });
-        } else if (item.kind === 'finalizing') {
-            icon = 'fa-wand-magic-sparkles';
-            action = taskViewT('renderer.taskview.output.status.finalizing');
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
             action = taskViewT('renderer.taskview.output.status.working');
@@ -1884,10 +1689,16 @@ class TaskView extends HTMLElement {
                 const label = showFinalLabel
                     ? `<div class="od-final-result-label">${taskViewT('renderer.taskview.output.finalResult')}</div>`
                     : '';
-                return `${label}<div class="od-final-result markdown-body">${item.part.rendered || ''}</div>`;
+                const content = item.part.rendered
+                    ? item.part.rendered
+                    : `<div class="od-streaming-text">${renderSafeMarkdown(String(item.part.text || ''))}</div>`;
+                return `${label}<div class="od-final-result markdown-body">${content}</div>`;
             }
             const className = item.type === 'error' ? 'od-stage-body od-stage-error' : 'od-stage-body';
-            return `<div class="${className} markdown-body">${item.part.rendered || ''}</div>`;
+            const content = item.part.streaming
+                ? `<div class="od-streaming-text" data-streaming-part-index="${item.partIndex}">${renderSafeMarkdown(String(item.part.text || ''))}</div>`
+                : item.part.rendered || '';
+            return `<div class="${className} markdown-body" data-output-part-index="${item.partIndex}">${content}</div>`;
         };
 
         let html;
@@ -2230,7 +2041,12 @@ class TaskView extends HTMLElement {
         if (!Array.isArray(message.content)) {
             message.content = [];
         }
-        message.content[getProgressPartIndex(progress)] = progress.last_part;
+        const partIndex = getProgressPartIndex(progress);
+        message.content[partIndex] = mergeGuiAssistantProgressPart(
+            message.content[partIndex],
+            progress.last_part,
+            progress.streaming === true
+        );
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
@@ -2342,6 +2158,10 @@ class TaskView extends HTMLElement {
     }
 
     handleAssistantReplace(progress) {
+        const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
+        if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
+            return;
+        }
         const history_container = this.getHistoryContainer();
         let message_container =
             this._messageContainerCache.get(progress.message_id) ||
@@ -2434,6 +2254,11 @@ class TaskView extends HTMLElement {
     _renderAssistantProgress(progress, history_container) {
         if (!progress.last_part) return false;
 
+        const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
+        if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
+            return false;
+        }
+
         let message_container =
             this._messageContainerCache.get(progress.message_id) ||
             this.querySelector(`#message-container-${progress.message_id}`);
@@ -2457,20 +2282,67 @@ class TaskView extends HTMLElement {
 
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
-        parts[partIndex] = progress.last_part;
+        const previousPart = parts[partIndex];
+        const streamingDelta =
+            progress.streaming === true && typeof progress.last_part?.text_delta === 'string'
+                ? progress.last_part.text_delta
+                : null;
+        const canPatchStreamingPart =
+            streamingDelta !== null &&
+            previousPart?.streaming === true &&
+            previousPart.type === progress.last_part.type;
+        parts[partIndex] = mergeGuiAssistantProgressPart(previousPart, progress.last_part, progress.streaming === true);
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning: progress.task_status === 'running',
             elapsedSeconds: progress.elapsedSeconds
         });
-        const disclosureState = this._captureProcessDisclosureState(message_content);
-        const outputHtml = this._renderAssistantOutputHtml(parts, {
-            isRunning: progress.task_status === 'running',
-            messageId: progress.message_id,
-            disclosureState,
-            elapsedSeconds: progress.elapsedSeconds
-        });
-        if (message_content.innerHTML !== outputHtml) {
-            TaskView.morphDomChildren(message_content, outputHtml);
+        let patchedStreamingPart = false;
+        if (canPatchStreamingPart) {
+            const targets = message_content.querySelectorAll(`[data-streaming-part-index="${partIndex}"]`);
+            if (targets.length > 0) {
+                targets.forEach((target) => {
+                    TaskView.morphDomChildren(target, renderSafeMarkdown(String(parts[partIndex].text || '')));
+                });
+                message_content
+                    .querySelectorAll(`[data-streaming-summary-part-index="${partIndex}"]`)
+                    .forEach((summary) => {
+                        summary.textContent =
+                            String(parts[partIndex].text || '')
+                                .replace(/\s+/g, ' ')
+                                .trim()
+                                .slice(0, 160) || taskViewT('renderer.taskview.output.reasoningSummary');
+                    });
+                patchedStreamingPart = true;
+            } else if (progress.last_part.type === 'reasoning') {
+                // Collapsed minimal mode does not mount reasoning details while streaming.
+                patchedStreamingPart = true;
+            }
+        }
+        if (!patchedStreamingPart) {
+            const disclosureState = this._captureProcessDisclosureState(message_content);
+            const isTerminal = progress.task_status !== 'running';
+            const outputHtml = this._renderAssistantOutputHtml(parts, {
+                isRunning: !isTerminal,
+                messageId: progress.message_id,
+                disclosureState,
+                elapsedSeconds: progress.elapsedSeconds
+            });
+            if (isTerminal) {
+                // Completion changes the output hierarchy from a streaming timeline to a
+                // collapsed process plus final result. Preview enhancers may also have
+                // inserted nodes that are absent from outputHtml, so index-based morphing
+                // cannot safely reconcile this structural transition.
+                message_content.innerHTML = outputHtml;
+            } else if (message_content.innerHTML !== outputHtml) {
+                TaskView.morphDomChildren(message_content, outputHtml);
+            }
+        }
+        if (!patchedStreamingPart) {
+            message_content.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                el.scrollTop = el.scrollHeight;
+            });
+            enhanceCodeBlocks(message_content);
+            enhanceToolPreviewCards(message_content);
         }
         message_content.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
             el.scrollTop = el.scrollHeight;
@@ -2963,6 +2835,7 @@ class TaskView extends HTMLElement {
             // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
             if (version === this._reloadVersion) {
                 this._reloading = false;
+                this._flushDeferredTaskUpdates();
                 if (shouldAutoSendQueuedMessage) {
                     this._autoSendQueueMessages();
                 }
@@ -3098,9 +2971,11 @@ class TaskView extends HTMLElement {
         }
         const messageId = String(progress.message_id ?? '');
         const partChars =
-            partType === 'reasoning'
-                ? String(progress.last_part.content ?? '').length
-                : String(progress.last_part.text ?? '').length;
+            typeof progress.last_part.text_length === 'number'
+                ? progress.last_part.text_length
+                : partType === 'reasoning'
+                  ? String(progress.last_part.content ?? '').length
+                  : String(progress.last_part.text ?? '').length;
         const usageTokens = TaskView.getUsageDisplayTokens(progress.usage);
         const hasUsage = usageTokens.completionTokens > 0 || usageTokens.totalTokens > 0;
 
@@ -3597,6 +3472,25 @@ class TaskView extends HTMLElement {
 
     _shouldSuppressIncrementalRender() {
         return this._reloading || this.style.display === 'none' || this.hasAttribute('data-background');
+    }
+
+    _deferTaskUpdateDuringReload(progress) {
+        this._deferredTaskUpdates.push(progress);
+    }
+
+    _flushDeferredTaskUpdates() {
+        if (
+            this._reloading ||
+            this.style.display === 'none' ||
+            this.hasAttribute('data-background') ||
+            typeof this._taskUpdateHandler !== 'function' ||
+            this._deferredTaskUpdates.length === 0
+        ) {
+            return;
+        }
+
+        const updates = this._deferredTaskUpdates.splice(0);
+        updates.forEach((progress) => this._taskUpdateHandler(progress));
     }
 
     /**
@@ -5490,7 +5384,7 @@ class TaskView extends HTMLElement {
                         this._expandRightSidebar(artifacts, resizer);
                     }
                 }
-                const subscriptionId = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                const handleTaskUpdate = (progress) => {
                     if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
                         return;
                     }
@@ -5502,6 +5396,9 @@ class TaskView extends HTMLElement {
                     // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                     // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
                     if (this._shouldSuppressIncrementalRender()) {
+                        if (this._reloading) {
+                            this._deferTaskUpdateDuringReload(progress);
+                        }
                         this._assistantProgressBuffer.clear();
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
@@ -5599,7 +5496,9 @@ class TaskView extends HTMLElement {
                     }
 
                     this.tryScrollToEnd();
-                });
+                };
+                this._taskUpdateHandler = handleTaskUpdate;
+                const subscriptionId = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, handleTaskUpdate);
                 if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
                     await window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, subscriptionId);
                     return;
@@ -5620,6 +5519,8 @@ class TaskView extends HTMLElement {
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
+        this._deferredTaskUpdates = [];
+        this._taskUpdateHandler = null;
         const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
         if (artifacts && typeof artifacts.setTaskTodos === 'function') {
             artifacts.setTaskTodos([]);

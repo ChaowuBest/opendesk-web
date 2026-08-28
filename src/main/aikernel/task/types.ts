@@ -108,6 +108,8 @@ export interface TaskUpdateAssistantChunk {
     message_id: string;
     last_part_index: number;
     last_part: AssistantMessagePart;
+    /** Active text/reasoning parts are sent to Electron as coalesced plain-text deltas. */
+    streaming?: boolean;
     provisional?: 'implicit_think_close_candidate';
     usage?: Usage;
     elapsedSeconds?: number;

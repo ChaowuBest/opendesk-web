@@ -244,6 +244,37 @@ test('searchReplace diff渲染 - 对齐验证', async () => {
 
 // ========== GrepFilesTool 测试 ==========
 
+test('grepFiles - GUI 详情仅渲染经选择的参数和受限匹配结果', async () => {
+    const tool = new GrepFilesTool();
+    const result = [
+        '在 1 个文件中找到 6 处匹配:',
+        '> 1 | first <script>alert(1)</script>',
+        '> 2 | second',
+        '> 3 | third',
+        '> 4 | fourth',
+        '> 5 | fifth',
+        '> 6 | sixth'
+    ].join('\n');
+
+    const html = await tool.renderToolCall(
+        makeToolCall(
+            'grepFiles',
+            { pattern: 'install|download', path: '/workspace/tool-results/result.txt', secret: 'do-not-render' },
+            'success',
+            result
+        )
+    );
+
+    assert.match(html || '', /class="[^"]*tool-card/);
+    assert.match(html || '', /install\|download/);
+    assert.match(html || '', /\/workspace\/tool-results\/result\.txt/);
+    assert.match(html || '', /在 1 个文件中找到 6 处匹配/);
+    assert.match(html || '', /first &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(html || '', /fifth/);
+    assert.doesNotMatch(html || '', /sixth/);
+    assert.doesNotMatch(html || '', /do-not-render/);
+});
+
 test('grepFiles - 按文件分组且行号对齐', async () => {
     const dir = makeTempDir();
     try {

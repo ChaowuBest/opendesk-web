@@ -19,6 +19,11 @@
 
 import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
+import {
+    getToolCallPresentationArgs,
+    type ToolCallPresentation,
+    type ToolPresentationText
+} from '../../aikernel/tool-presentation.js';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
@@ -91,6 +96,45 @@ async function validateUploadFiles(filePaths: string[]): Promise<void> {
         if (!stat.isFile()) {
             throw new Error(`Upload path is not a file: ${filePath}`);
         }
+    }
+}
+
+function normalizePresentationUrl(value: unknown): string | undefined {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    try {
+        const url = new URL(value.trim());
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+abstract class BrowserPresentationTool<T extends z.ZodType> extends BaseTool<T> {
+    getToolCallPresentation(toolcall: ToolCall): ToolCallPresentation {
+        const args = getToolCallPresentationArgs(toolcall);
+        const kind = toolcall.tool_name
+            .split(/[-./:]/)
+            .pop()
+            ?.replace(/Tool$/i, '')
+            .toLowerCase();
+        const url = normalizePresentationUrl(args.url);
+        let summary: ToolPresentationText | undefined;
+        for (const key of ['description', 'purpose', 'task']) {
+            const value = args[key];
+            if (typeof value === 'string' && value.trim()) {
+                summary = value.trim();
+                break;
+            }
+        }
+        if (!summary && url) {
+            summary = { key: 'renderer.taskview.output.purpose.openUrl', params: { url } };
+        }
+        return {
+            displayName:
+                kind === 'navigate' ? { key: 'renderer.taskview.output.toolName.navigate' } : toolcall.tool_name,
+            summary,
+            resource: url ? { type: 'url', value: url } : undefined
+        };
     }
 }
 
@@ -168,7 +212,7 @@ const BrowserNavigateArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSchema> {
+export class BrowserNavigateTool extends BrowserPresentationTool<typeof BrowserNavigateArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -240,7 +284,7 @@ const BrowserSnapshotArgsSchema = z.object({
         )
 });
 
-export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSchema> {
+export class BrowserSnapshotTool extends BrowserPresentationTool<typeof BrowserSnapshotArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -311,7 +355,7 @@ const BrowserExploreArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('展开后是否再获取一次完整页面快照（默认 false，仅返回该 ref 的子树）')
 });
 
-export class BrowserExploreTool extends BaseTool<typeof BrowserExploreArgsSchema> {
+export class BrowserExploreTool extends BrowserPresentationTool<typeof BrowserExploreArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -372,7 +416,7 @@ const BrowserClickArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
+export class BrowserClickTool extends BrowserPresentationTool<typeof BrowserClickArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -434,7 +478,7 @@ const BrowserTypeArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
+export class BrowserTypeTool extends BrowserPresentationTool<typeof BrowserTypeArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -501,7 +545,7 @@ const BrowserUploadFileArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgsSchema> {
+export class BrowserUploadFileTool extends BrowserPresentationTool<typeof BrowserUploadFileArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -588,7 +632,7 @@ const BrowserHoverArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
+export class BrowserHoverTool extends BrowserPresentationTool<typeof BrowserHoverArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -646,7 +690,7 @@ const BrowserPressKeyArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSchema> {
+export class BrowserPressKeyTool extends BrowserPresentationTool<typeof BrowserPressKeyArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -698,7 +742,7 @@ const BrowserSelectOptionArgsSchema = z.object({
     values: z.array(z.string()).describe('要选择的 option value 值列表')
 });
 
-export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOptionArgsSchema> {
+export class BrowserSelectOptionTool extends BrowserPresentationTool<typeof BrowserSelectOptionArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -758,7 +802,7 @@ const BrowserScrollToArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSchema> {
+export class BrowserScrollToTool extends BrowserPresentationTool<typeof BrowserScrollToArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -809,7 +853,7 @@ export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSche
 
 const BrowserGoBackArgsSchema = z.object({});
 
-export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> {
+export class BrowserGoBackTool extends BrowserPresentationTool<typeof BrowserGoBackArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -855,7 +899,7 @@ const BrowserGoForwardArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSchema> {
+export class BrowserGoForwardTool extends BrowserPresentationTool<typeof BrowserGoForwardArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -901,7 +945,7 @@ const BrowserReloadArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> {
+export class BrowserReloadTool extends BrowserPresentationTool<typeof BrowserReloadArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -952,7 +996,7 @@ const BrowserEvaluateArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSchema> {
+export class BrowserEvaluateTool extends BrowserPresentationTool<typeof BrowserEvaluateArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -1011,7 +1055,7 @@ const BrowserTriggerArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema> {
+export class BrowserTriggerTool extends BrowserPresentationTool<typeof BrowserTriggerArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -1082,7 +1126,7 @@ const BrowserTabsArgsSchema = z.object({
     url: z.string().optional().describe('新标签页的 URL（action=new 时使用）')
 });
 
-export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
+export class BrowserTabsTool extends BrowserPresentationTool<typeof BrowserTabsArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -1219,7 +1263,7 @@ const BrowserWaitForArgsSchema = z.object({
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema> {
+export class BrowserWaitForTool extends BrowserPresentationTool<typeof BrowserWaitForArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
@@ -1284,7 +1328,7 @@ const BrowserDropHistoryArgsSchema = z.object({
         .describe('要删除的域名列表，如 ["google.com", "baidu.com"]，匹配精确域名及其子域名')
 });
 
-export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryArgsSchema> {
+export class BrowserDropHistoryTool extends BrowserPresentationTool<typeof BrowserDropHistoryArgsSchema> {
     constructor() {
         super(
             'dropHistory',

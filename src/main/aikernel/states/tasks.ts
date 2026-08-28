@@ -173,6 +173,8 @@ export class BaseTaskUpdateSubscriber {
     send(_chunkUpdate: TaskUpdateChunk) {
         throw new Error('send not implemented');
     }
+
+    dispose(): void {}
 }
 
 class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -720,8 +722,13 @@ export class TaskState {
     retainAvailableTaskUpdateSubscribers(context: string): void {
         this.subscribers = this.subscribers.filter((subscriber) => {
             try {
-                return subscriber.isAvailable();
+                const available = subscriber.isAvailable();
+                if (!available) {
+                    subscriber.dispose();
+                }
+                return available;
             } catch (err) {
+                subscriber.dispose();
                 logger.error(
                     `task update subscriber availability check failed for ${context} (${subscriber.subscription_id}): ${errorToMessage(err)}`
                 );
@@ -2401,6 +2408,11 @@ export class TaskState {
             return;
         }
 
+        if (last_message instanceof AssistantMessage && this.task_status !== 'running' && this.needsHtmlRender) {
+            await this.sendAssistantMessageReplace(last_message);
+            return;
+        }
+
         this.retainAvailableTaskUpdateSubscribers('subscription feedback');
         if (this.subscribers.length === 0) return;
 
@@ -2444,7 +2456,11 @@ export class TaskState {
                     );
                     return;
                 }
-                if (this.needsHtmlRender) {
+                const streaming =
+                    this.task_status === 'running' &&
+                    updated_part_index === content.length - 1 &&
+                    (last_part.type === 'text' || last_part.type === 'reasoning');
+                if (this.needsHtmlRender && !streaming) {
                     await last_part.render();
                 }
                 chunkUpdate = {
@@ -2454,6 +2470,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    streaming: streaming || undefined,
                     provisional: last_message.isImplicitThinkCandidatePart(updated_part_index)
                         ? 'implicit_think_close_candidate'
                         : undefined,
@@ -3133,7 +3150,7 @@ export class TaskState {
                     }
                     this.extensions.onTurnSettled();
                     this.persistLater();
-                    this.sendSubscriptionFeedback();
+                    await this.sendSubscriptionFeedback();
                     this.task_manager_state.publishTaskListUpdate();
                     this.extensions.afterTurnFinished();
                     if (shouldScheduleSessionMemoryUpdate) {
@@ -3179,6 +3196,7 @@ export class TaskState {
         }
 
         this.subscribers = this.subscribers.filter((s) => s.subscription_id !== subscription_id);
+        subscriber.dispose();
         logger.info('task update subscriber removed for task', this.task_id);
         return true;
     }

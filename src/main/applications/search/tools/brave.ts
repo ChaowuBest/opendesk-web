@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../aikernel/tool';
+import { SearchPresentationTool } from './presentation.js';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -53,7 +53,7 @@ const BraveSearchArgsSchema = z.object({
         .describe('时效过滤: pd=24小时内, pw=7天内, pm=31天内, py=1年内')
 });
 
-export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
+export class BraveSearchTool extends SearchPresentationTool<typeof BraveSearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {

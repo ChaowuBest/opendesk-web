@@ -27,6 +27,7 @@ import { cleanPathInput } from '../../../utils/path.js';
 import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
 import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
+import { getFileToolCallPresentation } from './tool-presentation.js';
 import fs from 'fs';
 import path from 'path';
 import readline from 'node:readline';
@@ -345,7 +346,7 @@ function renderToolCard(opts: {
     body: string;
 }): string {
     return `
-    <div class="rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-1">
+    <div class="tool-card rounded-md border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-1">
         <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
             <span class="text-lg">${opts.icon}</span>
             <span class="font-medium text-slate-700">${escapeHtml(opts.title)}</span>
@@ -868,6 +869,10 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('readFile', toolcall);
+    }
+
     getDeclaredPermissions(args: z.output<typeof readFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const p = sanitizePath(args.file_path || '', basePath);
@@ -1239,6 +1244,10 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
         this.setUniversalExecutor(this.executeCommand);
     }
 
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('readImage', toolcall);
+    }
+
     async isAvailable(taskState?: TaskState): Promise<boolean> {
         const model = currentTaskModel(taskState);
         if (!model) return false;
@@ -1308,6 +1317,10 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
             askImageSchema
         );
         this.setExecutor(this.executeCommand);
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('askImage', toolcall);
     }
 
     async isAvailable(taskState?: TaskState): Promise<boolean> {
@@ -1464,6 +1477,10 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
 
         this.extractDelegate = extractDelegate;
         this.setExecutor(this.executeCommand);
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('extractText', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof extractTextSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1707,6 +1724,10 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         this.serialExecution = true;
     }
 
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('writeFile', toolcall);
+    }
+
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const p = sanitizePath(args.path, getWorkingDirectory(taskState));
         if (!p) return [];
@@ -1876,6 +1897,10 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
         this.setExecutor(this.executeCommand);
         this.serialExecution = true;
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('editFile', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2078,6 +2103,10 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
         this.setExecutor(this.executeCommand);
         this.serialExecution = true;
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('searchReplace', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2388,6 +2417,10 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         this.serialExecution = true;
     }
 
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('applyPatch', toolcall);
+    }
+
     getDeclaredPermissions(args: z.output<typeof applyPatchSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const ops = parsePatch(args.patch);
@@ -2605,6 +2638,10 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('globFiles', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2934,6 +2971,10 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('grepFiles', toolcall);
+    }
+
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
@@ -3010,23 +3051,49 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
-
-        let detail = pattern ? escapeHtml(String(pattern)) : '';
-        if (searchPath) {
-            detail += ` · ${escapeHtml(String(searchPath))}`;
+        const filePattern = toolcall.args_object?.['filePattern'];
+        const ignoreCase = toolcall.args_object?.['ignoreCase'];
+        const fields: string[] = [];
+        const appendField = (labelKey: string, value: unknown, maxWidth: number) => {
+            if (value === undefined || value === null || value === '') return;
+            fields.push(`<div class="grid grid-cols-[96px_minmax(0,1fr)] gap-3 py-1">
+                <dt class="text-xs text-slate-500">${escapeHtml(t(labelKey))}</dt>
+                <dd class="text-xs text-slate-700 break-all">${escapeHtml(truncText(String(value), maxWidth))}</dd>
+            </div>`);
+        };
+        appendField('renderer.taskview.output.field.pattern', pattern, 512);
+        appendField('renderer.taskview.output.field.path', searchPath, 1024);
+        appendField('renderer.taskview.output.field.filePattern', filePattern, 512);
+        if (ignoreCase === false) {
+            appendField(
+                'renderer.taskview.output.field.caseSensitive',
+                t('renderer.taskview.output.value.enabled'),
+                64
+            );
         }
-        if (toolcall.status === 'success' && toolcall.result) {
-            const summaryMatch = toolcall.result.match(/在 (\d+) 个文件中找到 (\d+) 处匹配/);
-            if (summaryMatch) {
-                detail += ` · ${summaryMatch[1]} 文件 / ${summaryMatch[2]} 处匹配`;
-            }
-        }
 
-        return renderInlineTool({
-            icon: 'fas fa-code',
+        const resultLines = typeof toolcall.result === 'string' ? toolcall.result.split('\n') : [];
+        const summary = resultLines[0] ? truncText(resultLines[0], 512) : '';
+        const matches = resultLines.filter((line) => line.startsWith('> ')).slice(0, 5);
+        const resultHtml =
+            summary || matches.length > 0
+                ? `<div class="mt-2 border-t border-slate-100 pt-2">
+                    ${summary ? `<div class="text-xs text-slate-600">${escapeHtml(summary)}</div>` : ''}
+                    ${
+                        matches.length > 0
+                            ? `<pre class="mt-1 max-h-[220px] overflow-auto text-xs whitespace-pre-wrap break-words">${matches
+                                  .map((line) => escapeHtml(truncText(line, 500)))
+                                  .join('\n')}</pre>`
+                            : ''
+                    }
+                </div>`
+                : '';
+
+        return renderToolCard({
+            icon: '🔎',
             title: t('filemgr.grep.name'),
             status: toolcall.status,
-            detail
+            body: `<dl>${fields.join('')}</dl>${resultHtml}`
         });
     }
 
@@ -3446,6 +3513,10 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
     // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽
     isAvailable(_taskState?: TaskState): boolean {
         return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getFileToolCallPresentation('semanticSearch', toolcall);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {

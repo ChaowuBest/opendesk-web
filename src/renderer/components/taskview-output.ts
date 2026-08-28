@@ -16,12 +16,7 @@ export interface GuiToolCall {
     index?: number;
     tool_name?: string;
     status?: string;
-    args_string?: string;
-    args_preview?: string;
-    args_truncated?: boolean;
     detail_available?: boolean;
-    result?: string;
-    rendered?: string;
     elapsedSeconds?: number;
 }
 
@@ -29,6 +24,10 @@ export interface GuiAssistantPart {
     type?: string;
     rendered?: string;
     text?: string;
+    text_delta?: string;
+    text_length?: number;
+    stream_reset?: boolean;
+    streaming?: boolean;
     elapsedSeconds?: number;
     toolcalls?: GuiToolCall[];
 }
@@ -65,7 +64,7 @@ export interface GuiBodyItem {
 export interface GuiStatusItem {
     type: 'status';
     key: 'running-status';
-    kind: 'reasoning' | 'tool' | 'finalizing' | 'working';
+    kind: 'reasoning' | 'tool' | 'working';
     part?: GuiAssistantPart;
     tool?: GuiToolCall;
     toolCount: number;
@@ -80,6 +79,45 @@ export function normalizeGuiOutputMode(value: unknown): GuiOutputMode {
 
 export function getDefaultProcessExpanded(mode: GuiOutputMode): boolean {
     return mode === 'detailed';
+}
+
+function previousStreamingText(part: GuiAssistantPart | undefined, type: string | undefined): string {
+    if (!part || part.type !== type) return '';
+    if (typeof part.text === 'string') return part.text;
+    if (type === 'reasoning' && typeof part.rendered === 'string') return part.rendered;
+    return '';
+}
+
+export function mergeGuiAssistantProgressPart(
+    previousPart: GuiAssistantPart | undefined,
+    incomingPart: GuiAssistantPart,
+    streaming: boolean
+): GuiAssistantPart {
+    if (!streaming || typeof incomingPart.text_delta !== 'string') {
+        return incomingPart;
+    }
+
+    const previousText = previousStreamingText(previousPart, incomingPart.type);
+    const reset = incomingPart.stream_reset === true;
+    const expectedLength = incomingPart.text_length;
+    let text = reset ? incomingPart.text_delta : previousText + incomingPart.text_delta;
+
+    if (!reset && typeof expectedLength === 'number') {
+        if (previousText.length === expectedLength) {
+            text = previousText;
+        } else if (previousText.length > expectedLength) {
+            text = previousText;
+        }
+    }
+
+    return {
+        ...previousPart,
+        type: incomingPart.type,
+        text,
+        rendered: undefined,
+        streaming: true,
+        ...(typeof incomingPart.elapsedSeconds === 'number' ? { elapsedSeconds: incomingPart.elapsedSeconds } : {})
+    };
 }
 
 function hasVisibleContent(part: GuiAssistantPart): boolean {
@@ -192,7 +230,7 @@ export function buildAssistantOutputItems(
     return items;
 }
 
-function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem {
+function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem | undefined {
     let toolCount = 0;
     for (const part of parts) {
         if (part?.type === 'tool_call') {
@@ -204,7 +242,7 @@ function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem {
         const part = parts[index];
         if (!part) continue;
         if (part.type === 'text' && hasVisibleContent(part)) {
-            return { type: 'status', key: 'running-status', kind: 'finalizing', part, toolCount };
+            return undefined;
         }
         if (part.type === 'tool_call') {
             const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
@@ -234,11 +272,18 @@ export function getVisibleAssistantOutputItems(
         options.parts ??
         items.flatMap((item) => {
             if (item.type === 'process') {
-                return item.entries.flatMap((entry) => (entry.part ? [entry.part] : []));
+                return item.entries.flatMap((entry) => {
+                    if (entry.part) return [entry.part];
+                    if (entry.type === 'tool' && entry.tool) {
+                        return [{ type: 'tool_call', toolcalls: [entry.tool] }];
+                    }
+                    return [];
+                });
             }
             return [item.part];
         });
     const status = buildRunningStatus(parts);
+    if (!status) return items;
     if (!options.parts) {
         status.toolCount = items.reduce((count, item) => count + (item.type === 'process' ? item.toolCount : 0), 0);
     }

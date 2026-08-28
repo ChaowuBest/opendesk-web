@@ -21,12 +21,12 @@ import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAs
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import { switchTaskMode } from '../main/aikernel/task/mode.js';
-import { serializeTaskUpdateForRender } from '../main/aikernel/task/update-render.js';
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
 import { safeSendToWebContents, safeSendToWebFrame } from '../main/utils/electron-ipc.js';
-import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
+import { ElectronTaskUpdateBuffer } from './electron-task-update-buffer.js';
+import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { getHarmonyOSSystemProxy } from './bridges/harmonyos/proxy.js';
 import { Setting } from '../main/utils/setting.js';
 import type { PlatformFetchOptions } from './base.js';
@@ -105,6 +105,7 @@ async function getElectronFetchSession(options: ElectronFetchSessionOptions): Pr
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     senderFrame: Electron.WebFrameMain;
+    private readonly updateBuffer: ElectronTaskUpdateBuffer;
 
     /**
      * A subscriber for task update
@@ -113,6 +114,9 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
         super();
         this.senderFrame = senderFrame;
         this.wantsHtmlRender = true;
+        this.updateBuffer = new ElectronTaskUpdateBuffer((payload) =>
+            safeSendToWebFrame(this.senderFrame, `taskManager:taskUpdate:${this.subscription_id}`, payload)
+        );
     }
 
     isAvailable() {
@@ -124,11 +128,15 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
      * @param chunkUpdate the chunk update to send
      */
     send(chunkUpdate: TaskUpdateChunk) {
-        safeSendToWebFrame(
-            this.senderFrame,
-            `taskManager:taskUpdate:${this.subscription_id}`,
-            serializeTaskUpdateForRender(chunkUpdate)
-        );
+        this.updateBuffer.enqueue(chunkUpdate);
+    }
+
+    acknowledge(sequence: number): void {
+        this.updateBuffer.acknowledge(sequence);
+    }
+
+    dispose(): void {
+        this.updateBuffer.dispose();
     }
 }
 

@@ -33,6 +33,7 @@ import dotenv from 'dotenv';
 import format from 'string-template';
 import { parseJsonWithRepair } from '../../utils/json.js';
 import { ToolCall } from './messages';
+import { getToolCallPresentationArgs, type ToolCallPresentation } from './tool-presentation.js';
 import chalk from 'chalk';
 import { statusDisplay } from '../tui/components/toolcall';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -382,10 +383,26 @@ const LoadSkillSchema = z.object({
     skillName: z.string().describe('要读取的Skill的名称(name)')
 });
 
+function getSkillToolCallPresentation(toolcall: ToolCall, displayNameKey: string): ToolCallPresentation {
+    const args = getToolCallPresentationArgs(toolcall);
+    const explicitSummary = [args.description, args.purpose, args.task].find(
+        (value): value is string => typeof value === 'string' && Boolean(value.trim())
+    );
+    const skillName = typeof args.skillName === 'string' ? args.skillName.trim() : '';
+    return {
+        displayName: { key: displayNameKey },
+        summary: explicitSummary?.trim() || skillName || undefined
+    };
+}
+
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
         super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema);
         this.setExecutor(this.loadSkill.bind(this));
+    }
+
+    getToolCallPresentation(toolcall: ToolCall) {
+        return getSkillToolCallPresentation(toolcall, 'renderer.taskview.output.toolName.loadSkill');
     }
 
     getDeclaredPermissions(args: z.output<typeof LoadSkillSchema>): PermissionRequest[] {
@@ -658,7 +675,6 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                     } else {
                         unknownKeys++;
                     }
-                }
                 if (unknownKeys > 0 || requiredHits === 0) {
                     continue;
                 }

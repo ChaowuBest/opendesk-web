@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../aikernel/tool';
+import { SearchPresentationTool } from './presentation.js';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -106,7 +106,7 @@ const BochaSearchArgsSchema = z.object({
     exclude: z.string().optional().describe('排除搜索的网站范围，多个域名使用|或,分隔')
 });
 
-export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
+export class BochaSearchTool extends SearchPresentationTool<typeof BochaSearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {

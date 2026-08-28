@@ -26,6 +26,14 @@ function createToolPart(id: number, filePath: string, customOutput = `CUSTOM TOO
     const part = new ToolCallMessagePart();
     const toolCall = new ToolCall(id, `tool-${id}`, 'filemgr-readFile', JSON.stringify({ file_path: filePath }));
     toolCall.args_object = { file_path: filePath };
+    toolCall.presentation = {
+        displayName: { key: 'filemgr.readFile.name' },
+        summary: {
+            key: 'renderer.taskview.output.purpose.readFile',
+            params: { name: filePath.split('/').pop() || filePath }
+        },
+        activity: { key: 'display.minimal.running.reading', params: { path: filePath } }
+    };
     toolCall.status = 'success';
     toolCall.setTool({
         renderToolCallCli: jest.fn(() => [customOutput])
@@ -43,6 +51,14 @@ function createRunningToolPart(id: number, filePath: string): ToolCallMessagePar
 function createNamedToolPart(id: number, toolName: string): ToolCallMessagePart {
     const part = createToolPart(id, `src/${id}.ts`);
     part.toolcalls[0].tool_name = toolName;
+    const displayNameKeys: Record<string, string> = {
+        'filemgr-readFile': 'filemgr.readFile.name',
+        'search-webSearch': 'renderer.taskview.output.toolName.webSearch',
+        'todomgr-TodoWrite': 'renderer.taskview.output.toolName.todoWrite'
+    };
+    part.toolcalls[0].presentation = {
+        displayName: displayNameKeys[toolName] ? { key: displayNameKeys[toolName] } : toolName
+    };
     return part;
 }
 
@@ -218,6 +234,56 @@ describe('TaskView chunk handling', () => {
         taskView.rebuildFromHistory();
 
         expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Complete · Elapsed 2s');
+    });
+
+    test('rebuilds earlier assistant messages as sealed phases and only completes the final message', () => {
+        jest.spyOn(Date, 'now').mockReturnValue(100_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        const first = new AssistantMessage([createToolPart(1, 'src/one.ts')]);
+        first.elapsedSeconds = 2;
+        const second = new AssistantMessage([new TextMessagePart('Final response')]);
+        second.elapsedSeconds = 3;
+        chatContext.appendMessage(first);
+        chatContext.appendMessage(second);
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+        expect(output).toContain('Final response');
+        expect(output.match(/Complete ·/g)).toHaveLength(1);
+        expect(output).not.toMatch(/[✣✤✥✦]/);
+    });
+
+    test('rebuilds the final assistant message of each user turn as terminal', () => {
+        jest.spyOn(Date, 'now').mockReturnValue(100_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        const first = new AssistantMessage([new TextMessagePart('First turn response')]);
+        first.elapsedSeconds = 2;
+        const second = new AssistantMessage([new TextMessagePart('Second turn response')]);
+        second.elapsedSeconds = 3;
+        chatContext.appendMessage(first);
+        chatContext.appendMessage(new UserMessage('Next question'));
+        chatContext.appendMessage(second);
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('First turn response');
+        expect(output).toContain('Second turn response');
+        expect(output.match(/Complete ·/g)).toHaveLength(2);
     });
 
     test('rebuilds assistant errors with a failed terminal status', () => {
@@ -437,6 +503,46 @@ describe('TaskView chunk handling', () => {
         expect(output).not.toMatch(/[✣✤✥✦]/);
     });
 
+    test('minimal mode seals the previous assistant message when a new message starts', async () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            timestamp: 1_000,
+            last_part_index: 0,
+            last_part: createToolPart(1, 'src/one.ts')
+        });
+        now.mockReturnValue(3_000);
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_2',
+            timestamp: 3_000,
+            last_part_index: 0,
+            last_part: new TextMessagePart('Final response')
+        });
+        now.mockReturnValue(5_000);
+        taskView.clearStreamThrottle();
+
+        let output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+        expect(output).toContain('Final response');
+        expect(output.match(/Complete ·/g)).toHaveLength(1);
+        expect(output).not.toMatch(/[✣✤✥✦]/);
+
+        now.mockReturnValue(20_000);
+        taskView.invalidate();
+        output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+    });
+
     test('minimal mode updates elapsed time before the first assistant event', () => {
         const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
@@ -527,7 +633,7 @@ describe('TaskView chunk handling', () => {
         expect(statusLine - bodyLine).toBe(2);
     });
 
-    test('minimal mode collapses duplicate spacing between consecutive assistant messages', () => {
+    test('minimal mode removes spacing between consecutive assistant messages', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         const chatContext = new ChatContext();
         const first = new AssistantMessage([createToolPart(1, 'src/one.ts'), new TextMessagePart('First final')]);
@@ -548,7 +654,50 @@ describe('TaskView chunk handling', () => {
             (line, index) => index > firstBodyLine && line.includes('Complete ·')
         );
         expect(firstBodyLine).toBeGreaterThanOrEqual(0);
-        expect(secondSummaryLine - firstBodyLine).toBe(2);
+        expect(secondSummaryLine - firstBodyLine).toBe(1);
+    });
+
+    test('verbose mode removes spacing between consecutive assistant messages', () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('verbose');
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new AssistantMessage([new TextMessagePart('First response')]));
+        chatContext.appendMessage(new AssistantMessage([new TextMessagePart('Second response')]));
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
+        const firstLine = renderedLines.findIndex((line) => line.includes('First response'));
+        const secondLine = renderedLines.findIndex((line) => line.includes('Second response'));
+        expect(firstLine).toBeGreaterThanOrEqual(0);
+        expect(secondLine - firstLine).toBe(1);
+    });
+
+    test('minimal mode keeps user-to-assistant message spacing', () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('User prompt'));
+        chatContext.appendMessage(
+            new AssistantMessage([createToolPart(1, 'src/one.ts'), new TextMessagePart('Assistant final')])
+        );
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
+        const userLine = renderedLines.findIndex((line) => line.includes('User prompt'));
+        const assistantSummaryLine = renderedLines.findIndex((line) => line.includes('Complete ·'));
+        expect(userLine).toBeGreaterThanOrEqual(0);
+        expect(assistantSummaryLine - userLine).toBe(2);
     });
 
     test('minimal tool summary shows localized reasoning, readable tool names, and elapsed time', async () => {

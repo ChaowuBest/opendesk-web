@@ -14,10 +14,6 @@ import { Setting } from '../utils/setting.js';
 export const OUTPUT_DISPLAY_LEVELS = ['minimal', 'verbose'] as const;
 export type OutputDisplayLevel = (typeof OUTPUT_DISPLAY_LEVELS)[number];
 
-export function isOutputDisplayLevel(value: unknown): value is OutputDisplayLevel {
-    return typeof value === 'string' && OUTPUT_DISPLAY_LEVELS.includes(value as OutputDisplayLevel);
-}
-
 export function getConfiguredOutputDisplayLevel(): OutputDisplayLevel {
     return Setting.getInstance().getData().cli_config?.output_display ?? 'minimal';
 }
@@ -39,10 +35,4 @@ export function persistOutputDisplayLevel(level: OutputDisplayLevel): void {
 export function isReasoningDisplayFullConfigured(): boolean {
     const cliConfig = Setting.getInstance().getData().cli_config;
     return cliConfig?.show_all_reasoning === true || cliConfig?.reason_display === 'full';
-}
-
-/** Returns whether persisted settings alone permit full reasoning output. */
-export function shouldShowAllReasoning(): boolean {
-    const cliConfig = Setting.getInstance().getData().cli_config;
-    return cliConfig?.output_display === 'verbose' && isReasoningDisplayFullConfigured();
 }

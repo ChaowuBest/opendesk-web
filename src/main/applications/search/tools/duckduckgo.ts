@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../aikernel/tool';
+import { SearchPresentationTool } from './presentation.js';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -60,7 +60,7 @@ const DuckDuckGoSearchArgsSchema = z.object({
     count: z.number().optional().describe('期望返回的搜索结果数量，默认为15')
 });
 
-export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSchema> {
+export class DuckDuckGoSearchTool extends SearchPresentationTool<typeof DuckDuckGoSearchArgsSchema> {
     constructor() {
         super(
             'duckduckgoSearch',

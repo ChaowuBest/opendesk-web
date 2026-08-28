@@ -21,12 +21,17 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
 import type { TaskManagerState } from './manager.js';
 import type { TaskState } from '../states/tasks.js';
+import type { ToolCallPresentation } from '../tool-presentation.js';
 
 // ═══════════════════ Helpers ═══════════════════
 
 /** 当工具参数中这些字段的值过大时，将其替换为占位符以避免信息过载 */
 const LARGE_CONTENT_FIELDS = ['content', 'file_content', 'new_content', 'new_string', 'contents'];
 const CONTENT_TRUNCATE_THRESHOLD = 200;
+
+function taskToolPresentation(displayNameKey: string): ToolCallPresentation {
+    return { displayName: { key: displayNameKey } };
+}
 
 function sanitizeToolArgs(args: any): any {
     if (!args || typeof args !== 'object') return args;
@@ -88,6 +93,10 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
         );
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return taskToolPresentation('tools.listRecentTasks.name');
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -225,6 +234,10 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
         super('askFromTask', '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题', AskFromTaskSchema);
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return taskToolPresentation('tools.askFromTask.name');
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -368,6 +381,10 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
         this.setExecutor(this.handleExecute.bind(this));
     }
 
+    getToolCallPresentation() {
+        return taskToolPresentation('tools.getTaskHistory.name');
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as z.output<typeof GetTaskHistorySchema> | undefined;
         const body: string[] = [];
@@ -501,6 +518,10 @@ class DeleteTasksTool extends BaseTool<typeof DeleteTasksSchema> {
         super('deleteTasks', '删除指定的一个或多个任务（含子任务）。删除后自动通知前端刷新任务列表', DeleteTasksSchema);
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return taskToolPresentation('tools.deleteTasks.name');
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

@@ -127,6 +127,50 @@ describe('PluginToolsetProvider', () => {
         expect(receivedAbort?.aborted).toBe(true);
     });
 
+    test('forwards structured presentation declared by a plugin tool', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'presentation-demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'inspect',
+                        description: 'inspect an artifact',
+                        parameters: z.object({ path: z.string() }),
+                        presentation(context) {
+                            const args = context.args as { path: string };
+                            return {
+                                displayName: 'Inspect artifact',
+                                summary: args.path,
+                                resource: { type: 'preview', value: args.path }
+                            };
+                        },
+                        async execute() {
+                            return 'ok';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:presentation-demo' }
+        );
+
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('presentation-demo-inspect');
+        const call = new ToolCall(
+            0,
+            'call-presentation',
+            'presentation-demo-inspect',
+            '{"path":"/workspace/report.md"}'
+        );
+        call.args_object = { path: '/workspace/report.md' };
+
+        expect(tool?.getToolCallPresentation(call)).toEqual({
+            displayName: 'Inspect artifact',
+            summary: '/workspace/report.md',
+            resource: { type: 'preview', value: '/workspace/report.md' }
+        });
+    });
+
     test('tool.definition 可以改写插件工具描述', async () => {
         const host = new PluginHost();
         await host.activate(

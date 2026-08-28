@@ -33,6 +33,11 @@ import { t } from '../../../locale/index.js';
 import { defaultMarkdownTheme } from '../../tui/theme.js';
 import chalk from 'chalk';
 import format from 'string-template';
+import type { ToolCallPresentation } from '../tool-presentation.js';
+
+function planningToolPresentation(displayNameKey: string): ToolCallPresentation {
+    return { displayName: { key: displayNameKey } };
+}
 
 const SUBTASK_USER_MESSAGE_TEMPLATE = `
 请按照下面的要求执行任务，完成后通过 planning-attemptCompletion 工具提交结果。你的所有待提交的结果都要通过
@@ -511,6 +516,10 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
+    getToolCallPresentation() {
+        return planningToolPresentation('tools.createSubTask.name');
+    }
+
     static renderProgressCli(progress: SubTaskProgressInfo | undefined, width: number): string[] {
         const lines: string[] = [];
         if (!progress || (progress.tools.length === 0 && !progress.lastText)) return lines;
@@ -860,6 +869,10 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
+    getToolCallPresentation() {
+        return planningToolPresentation('tools.waitSubTask.name');
+    }
+
     private static getProgress(toolcall: ToolCall): SubTaskProgressInfo | undefined {
         return (toolcall.result_object as any)?.subtask_progress as SubTaskProgressInfo | undefined;
     }
@@ -1022,6 +1035,10 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
             AttachToSubTaskArgsSchema
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
+    }
+
+    getToolCallPresentation() {
+        return planningToolPresentation('tools.attachToSubTask.name');
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

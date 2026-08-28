@@ -4,7 +4,6 @@ import os from 'os';
 import path from 'path';
 import { SlashCommandRegistry } from '../../../../main/tui/commands/base.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
-import { shouldShowAllReasoning } from '../../../../main/tui/display.js';
 import { setRuntimeLocale } from '../../../../locale/index.js';
 
 const overlayShows: Array<{ title?: string; message?: string }> = [];
@@ -86,7 +85,7 @@ describe('/reason display compatibility command', () => {
         await command.execute('display full');
 
         expect(Setting.getInstance().getData().cli_config?.reason_display).toBe('full');
-        expect(shouldShowAllReasoning()).toBe(true);
+        expect(Setting.getInstance().getData().cli_config?.show_all_reasoning).toBe(true);
         expect(tui.taskView.invalidate).toHaveBeenCalledTimes(1);
         expect(tui.tui.requestRender).toHaveBeenCalledTimes(1);
         expect(overlayShows.at(-1)?.message).toContain('Full Display');
@@ -95,10 +94,9 @@ describe('/reason display compatibility command', () => {
 
         expect(Setting.getInstance().getData().cli_config?.reason_display).toBe('partial');
         expect(Setting.getInstance().getData().cli_config?.show_all_reasoning).toBe(false);
-        expect(shouldShowAllReasoning()).toBe(false);
     });
 
-    test('legacy full display remains gated by the persisted output mode', async () => {
+    test('persists the full reasoning preference without changing the configured output mode', async () => {
         Setting.updateInstanceData({
             cli_config: {
                 output_display: 'minimal',
@@ -111,7 +109,8 @@ describe('/reason display compatibility command', () => {
         await command.execute('display full');
 
         expect(Setting.getInstance().getData().cli_config?.reason_display).toBe('full');
-        expect(shouldShowAllReasoning()).toBe(false);
+        expect(Setting.getInstance().getData().cli_config?.show_all_reasoning).toBe(true);
+        expect(Setting.getInstance().getData().cli_config?.output_display).toBe('minimal');
     });
 
     test('rejects full reasoning in a minimal current task without changing the setting', async () => {
