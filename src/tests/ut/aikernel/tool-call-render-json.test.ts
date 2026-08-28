@@ -11,7 +11,6 @@ describe('ToolCall GUI render payload', () => {
         call.args_object = { command: 'npm test' };
         call.result = '6 passed';
         call.status = 'success';
-        call.elapsedSeconds = 1.4;
         call.rendered = '<div>terminal result</div>';
         call.setTool(new ExecuteZshTool());
 
@@ -24,8 +23,7 @@ describe('ToolCall GUI render payload', () => {
             presentation: {
                 displayName: 'Zsh',
                 summary: { key: 'renderer.taskview.output.purpose.shell' }
-            },
-            elapsedSeconds: 1.4
+            }
         });
     });
 
@@ -211,15 +209,5 @@ describe('ToolCall GUI render payload', () => {
         expect(tool).not.toHaveProperty('args_string');
         expect(tool).not.toHaveProperty('result');
         expect((update as any).last_part).not.toHaveProperty('rendered');
-    });
-
-    test('records elapsed execution time once finalized', () => {
-        const call = new ToolCall(0, 'call-1', 'Search', '{}');
-        call.startTiming(1_000);
-        call.finalizeTiming(2_450);
-
-        expect(call.elapsedSeconds).toBe(1.5);
-        call.finalizeTiming(9_000);
-        expect(call.elapsedSeconds).toBe(1.5);
     });
 });

@@ -22,7 +22,6 @@ describe('Electron tool call detail lookup', () => {
         firstCall.result = 'first result';
         const secondCall = new ToolCall(0, 'reused-id', 'Read', '{"path":"second"}');
         secondCall.result = 'second result';
-        secondCall.elapsedSeconds = 1.2;
         secondCall.rendered = '<div>second render</div>';
         secondCall.presentation = { displayName: 'Read', detailMode: 'custom' };
 
@@ -35,8 +34,7 @@ describe('Electron tool call detail lookup', () => {
         expect(findToolCallDetail(task, 'message-2', 0, 0, 'reused-id')).toEqual({
             result: 'second result',
             rendered: '<div>second render</div>',
-            status: 'pending',
-            elapsedSeconds: 1.2
+            status: 'pending'
         });
     });
 
@@ -82,9 +80,6 @@ describe('Electron tool call detail lookup', () => {
         message.message_id = 'message-unsafe-render';
         const task = { chat_context: { messages: [message] } };
 
-        expect(findToolCallDetail(task, 'message-unsafe-render', 0, 0, 'unsafe-render')).toEqual({
-            status: 'pending',
-            elapsedSeconds: undefined
-        });
+        expect(findToolCallDetail(task, 'message-unsafe-render', 0, 0, 'unsafe-render')).toEqual({ status: 'pending' });
     });
 });

@@ -19,7 +19,6 @@ export interface GuiToolCall {
     tool_name?: string;
     status?: string;
     detail_available?: boolean;
-    elapsedSeconds?: number;
 }
 
 export interface GuiAssistantPart {
@@ -27,7 +26,6 @@ export interface GuiAssistantPart {
     rendered?: string;
     text?: string;
     streaming?: boolean;
-    elapsedSeconds?: number;
     toolcalls?: GuiToolCall[];
 }
 

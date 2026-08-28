@@ -150,7 +150,6 @@ export interface BaseAssistantMessage {
     usage?: BaseUsage;
     metadata?: RuntimeMetadata;
     timestamp?: number;
-    elapsedSeconds?: number;
 }
 
 export interface CompactSummarizedRange {

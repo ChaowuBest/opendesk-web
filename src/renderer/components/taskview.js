@@ -95,7 +95,6 @@ import {
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
 } from './taskview-output.js';
-import { formatOutputProcessSummary, formatOutputToolActivity } from '../../common/output-process-summary.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -374,7 +373,7 @@ class TaskView extends HTMLElement {
         this._renderedUserParts = new Map();
         /** @type {Map<string, Array<object>>} 增量消息的完整 part 快照。 */
         this._assistantPartsByMessage = new Map();
-        /** @type {Map<string, {isRunning: boolean, elapsedSeconds?: number}>} assistant 输出重绘所需的渲染状态。 */
+        /** @type {Map<string, {isRunning: boolean}>} assistant 输出重绘所需的渲染状态。 */
         this._assistantRenderStateByMessage = new Map();
         /** @type {Map<string, Map<string, boolean>>} 模式切换期间不可见 disclosure 的展开状态。 */
         this._assistantDisclosureStateByMessage = new Map();
@@ -1135,19 +1134,6 @@ class TaskView extends HTMLElement {
         return (container.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
-    static _formatOutputDuration(seconds) {
-        if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '';
-        const value = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
-        return taskViewT('renderer.taskview.output.seconds', { seconds: value });
-    }
-
-    static _formatCompletedDuration(seconds) {
-        if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
-            return taskViewT('renderer.taskview.output.completedProcess');
-        }
-        return formatOutputElapsed(seconds, taskViewT);
-    }
-
     static _toolBasename(value) {
         const normalized = String(value || '').replace(/[\\/]+$/, '');
         return normalized.split(/[\\/]/).pop() || normalized;
@@ -1230,16 +1216,55 @@ class TaskView extends HTMLElement {
         return `${escapeHtml(purpose.slice(0, urlOffset))}${TaskView._renderBrowserLink(browserUrl, TaskView._compactBrowserUrl(browserUrl))}${escapeHtml(purpose.slice(urlOffset + browserUrl.length))}`;
     }
 
+    static _compactProcessPhrase(value, maxLength = 18) {
+        const plainText = TaskView._plainTextFromHtml(value);
+        const phrase = plainText.split(/[，,。！？!?；;]/, 1)[0].trim();
+        const characters = Array.from(phrase);
+        if (characters.length <= maxLength) return phrase;
+        return `${characters
+            .slice(0, maxLength - 1)
+            .join('')
+            .trim()}…`;
+    }
+
+    static _truncateProcessSummary(value, maxLength = 40) {
+        const characters = Array.from(value);
+        if (characters.length <= maxLength) return value;
+        return `${characters
+            .slice(0, maxLength - 1)
+            .join('')
+            .trim()}…`;
+    }
+
     static _processSummary(item) {
         const entries = item.entries || [];
         const tools = entries.filter((entry) => entry.type === 'tool' && entry.tool).map((entry) => entry.tool);
-        return formatOutputProcessSummary({
-            toolDisplayNames: tools.map((tool) => TaskView._toolDisplayName(tool)),
-            toolCount: item.toolCount ?? tools.length,
-            hasReasoning: item.hasReasoning === true,
-            fallback: taskViewT('output.processSummary.fallback'),
-            translate: taskViewT
-        });
+        const displayNames = Array.from(new Set(tools.map((tool) => TaskView._toolDisplayName(tool)).filter(Boolean)));
+        const toolNames = Array.from(new Set(displayNames.map((name) => TaskView._compactProcessPhrase(name, 12))));
+        let toolSummary = '';
+        const summarizeTools = (names) => {
+            const listedNames = names
+                .slice(0, 2)
+                .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
+            return taskViewT('renderer.taskview.output.processSummary.usedTools', { tools: listedNames });
+        };
+        if (toolNames.length > 0) {
+            toolSummary = summarizeTools(toolNames);
+        }
+        const reasoningSummary = item.hasReasoning ? taskViewT('renderer.taskview.output.deepReasoning') : '';
+        const combine = () =>
+            reasoningSummary && toolSummary
+                ? taskViewT('renderer.taskview.output.processSummary.combined', {
+                      reasoning: reasoningSummary,
+                      tools: toolSummary
+                  })
+                : reasoningSummary || toolSummary || taskViewT('renderer.taskview.output.processSummary');
+        let summary = combine();
+        if (Array.from(summary).length > 40 && toolNames.length > 1) {
+            toolSummary = summarizeTools(toolNames.slice(0, 1));
+            summary = combine();
+        }
+        return TaskView._truncateProcessSummary(summary);
     }
 
     static _readableToolValue(value) {
@@ -1494,7 +1519,6 @@ class TaskView extends HTMLElement {
                 ? streamingText.replace(/\s+/g, ' ').trim().slice(0, 160) ||
                   taskViewT('renderer.taskview.output.reasoningSummary')
                 : TaskView._plainTextFromHtml(content) || taskViewT('renderer.taskview.output.reasoningSummary');
-            const duration = TaskView._formatOutputDuration(entry.part?.elapsedSeconds);
             return `
                 <div class="od-process-entry od-process-reason${bubble ? ' is-bubble' : ''}${streaming ? ' is-streaming' : ''}${expanded ? ' is-expanded is-pinned' : ''}">
                     <button type="button" class="od-process-entry-summary" data-process-entry-toggle="reasoning"
@@ -1505,7 +1529,6 @@ class TaskView extends HTMLElement {
                             <span>${taskViewT('renderer.taskview.output.reasoning')}</span>
                         </span>
                         <span class="od-process-entry-text"${streaming ? ` data-streaming-summary-part-index="${entry.partIndex}"` : ''}>${escapeHtml(summary)}</span>
-                        ${duration ? `<span class="od-process-entry-time">${escapeHtml(duration)}</span>` : ''}
                         <span class="od-process-chevron" aria-hidden="true">&gt;</span>
                     </button>
                     <div id="${escapeHtml(detailId)}" class="od-process-entry-detail markdown-body${bubble ? ' od-reasoning-bubble' : ''}${detailOpen ? ' is-open' : ''}"${bubble ? ' data-reasoning-bubble' : ''}>
@@ -1518,7 +1541,6 @@ class TaskView extends HTMLElement {
         const detailKey = this._toolDetailKey(messageId, entry);
         const name = TaskView._toolDisplayName(tool);
         const argumentSummary = TaskView._renderToolPurpose(tool);
-        const duration = TaskView._formatOutputDuration(tool.elapsedSeconds);
         const status = tool.status || 'pending';
         const resourceOnly =
             status === 'success' &&
@@ -1556,7 +1578,6 @@ class TaskView extends HTMLElement {
                     </span>
                     <span class="od-process-entry-label">${escapeHtml(name)}${statusHtml}</span>
                     ${argumentSummary ? `<span class="od-process-entry-text od-process-tool-args">${argumentSummary}</span>` : ''}
-                    ${duration ? `<span class="od-process-entry-time">${escapeHtml(duration)}</span>` : ''}
                         ${expandable ? '<span class="od-process-chevron" aria-hidden="true">&gt;</span>' : ''}
                     </div>
                 ${
@@ -1611,14 +1632,8 @@ class TaskView extends HTMLElement {
         let action = taskViewT('renderer.taskview.output.status.thinking');
         if (item.kind === 'tool') {
             icon = 'fa-wrench';
-            action = formatOutputToolActivity(
-                {
-                    displayName: TaskView._toolDisplayName(item.tool),
-                    summary: TaskView._toolPurpose(item.tool),
-                    activity: TaskView._toolPresentationText(item.tool?.presentation?.activity)
-                },
-                taskViewT
-            );
+            const name = TaskView._toolDisplayName(item.tool);
+            action = taskViewT('renderer.taskview.output.status.tool', { name });
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
             action = taskViewT('renderer.taskview.output.status.working');
@@ -1685,13 +1700,12 @@ class TaskView extends HTMLElement {
             const disclosureKey = `${messageId}-completed-process`;
             const expanded = options.disclosureState?.get(disclosureKey) === true;
             const detailId = `od-${this.widget_id}-${disclosureKey}-detail`;
-            const duration = TaskView._formatCompletedDuration(options.elapsedSeconds);
             html = `
                 <section class="od-completed-process${expanded ? ' is-expanded' : ''}">
                     <button type="button" class="od-completed-process-summary" data-completed-process-toggle
                         data-disclosure-key="${escapeHtml(disclosureKey)}" aria-expanded="${expanded}"
                         aria-controls="${escapeHtml(detailId)}">
-                        <span>${escapeHtml(duration)}</span>
+                        <span>${escapeHtml(taskViewT('renderer.taskview.output.completedProcess'))}</span>
                         <span class="od-completed-process-chevron" aria-hidden="true">&gt;</span>
                     </button>
                     <div id="${escapeHtml(detailId)}" class="od-completed-process-detail${expanded ? ' is-open' : ''}">
@@ -1718,20 +1732,17 @@ class TaskView extends HTMLElement {
     _rememberAssistantOutput(messageId, parts, options = {}) {
         this._assistantPartsByMessage.set(messageId, [...parts]);
         this._assistantRenderStateByMessage.set(messageId, {
-            isRunning: options.isRunning === true,
-            ...(typeof options.elapsedSeconds === 'number' ? { elapsedSeconds: options.elapsedSeconds } : {})
+            isRunning: options.isRunning === true
         });
     }
 
     renderAssistantMessage(assistant_message, isLast = false, options = {}) {
         this._rememberAssistantOutput(assistant_message.message_id, assistant_message.content, {
-            isRunning: options.isRunning,
-            elapsedSeconds: assistant_message.elapsedSeconds
+            isRunning: options.isRunning
         });
         const content = this._renderAssistantOutputHtml(assistant_message.content, {
             isRunning: Boolean(options.isRunning),
-            messageId: assistant_message.message_id,
-            elapsedSeconds: assistant_message.elapsedSeconds
+            messageId: assistant_message.message_id
         });
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const metaRowHtml = TaskView.buildMsgMetaRow(
@@ -2179,15 +2190,13 @@ class TaskView extends HTMLElement {
         const isRunning = progress.task_status === 'running';
         const parts = progress.parts;
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning,
-            elapsedSeconds: progress.elapsedSeconds
+            isRunning
         });
         const disclosureState = this._captureProcessDisclosureState(message_content);
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
-            disclosureState,
-            elapsedSeconds: progress.elapsedSeconds
+            disclosureState
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
@@ -2264,8 +2273,7 @@ class TaskView extends HTMLElement {
         parts[partIndex] =
             progress.streaming === true ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
-            isRunning: progress.task_status === 'running',
-            elapsedSeconds: progress.elapsedSeconds
+            isRunning: progress.task_status === 'running'
         });
         let patchedStreamingPart = false;
         if (canPatchStreamingPart) {
@@ -2297,8 +2305,7 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: !isTerminal,
                 messageId: progress.message_id,
-                disclosureState,
-                elapsedSeconds: progress.elapsedSeconds
+                disclosureState
             });
             if (isTerminal) {
                 // Completion changes the output hierarchy from a streaming timeline to a
@@ -4139,8 +4146,7 @@ class TaskView extends HTMLElement {
             const outputHtml = this._renderAssistantOutputHtml(parts, {
                 isRunning: renderState.isRunning,
                 messageId,
-                disclosureState,
-                elapsedSeconds: renderState.elapsedSeconds
+                disclosureState
             });
             if (messageContent.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(messageContent, outputHtml);

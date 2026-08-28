@@ -3440,7 +3440,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     margin-bottom: 6px;
 }
 
-/* Assistant output modes: shared process timeline for minimal and detailed views. */
+/* Assistant output modes: shared process timeline for minimal and verbose views. */
 .od-assistant-output-flow {
     display: block;
     min-width: 0;
@@ -3592,14 +3592,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     font-weight: 600;
 }
 
-.od-process-entry-time {
-    color: var(--od-text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--fs-2xs);
-    font-weight: 400;
-    white-space: nowrap;
-}
-
 .od-process-chevron {
     display: inline-block;
     color: var(--od-text-disabled);
@@ -3680,6 +3672,78 @@ agent-input[hide-disclaimer] .agent-input-footer {
     line-height: 1.5;
 }
 
+.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open,
+.od-assistant-output-flow[data-reason-display='bubble'] .od-completed-process-detail.is-open {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+}
+
+.od-process-reason.is-bubble {
+    position: relative;
+    overflow: visible;
+    background: transparent;
+}
+
+.od-process-reason.is-bubble.is-expanded {
+    background: transparent;
+}
+
+.od-process-reason .od-reasoning-bubble {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 30;
+    display: block;
+    width: min(600px, calc(100% - 10px));
+    max-height: 300px;
+    margin: 0;
+    padding: 14px 16px !important;
+    overflow-y: auto;
+    overscroll-behavior: auto;
+    border: 1px solid var(--od-border-strong) !important;
+    border-radius: 8px !important;
+    color: var(--od-text-muted) !important;
+    background: var(--od-bg-elevated) !important;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.14),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition:
+        opacity 180ms ease,
+        visibility 180ms ease,
+        transform 180ms ease;
+}
+
+.od-process-reason.is-bubble:hover .od-reasoning-bubble,
+.od-process-reason.is-bubble:focus-within .od-reasoning-bubble,
+.od-process-reason.is-bubble .od-reasoning-bubble.is-open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+@media (max-width: 640px) {
+    .od-process-reason .od-reasoning-bubble {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        width: auto;
+        max-height: min(300px, 45vh);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .od-process-reason .od-reasoning-bubble {
+        transition: none;
+    }
+}
+
 .od-process-reason.is-expanded {
     border-bottom-color: transparent;
     background: var(--od-bg-subtle);
@@ -3687,7 +3751,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-reason .od-process-entry-summary {
     display: grid;
-    grid-template-columns: 58px minmax(0, 1fr) auto 12px;
+    grid-template-columns: 58px minmax(0, 1fr) 12px;
     gap: 6px;
     min-height: 26px;
     padding-top: 2px;
@@ -3732,7 +3796,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-tool .od-process-entry-summary {
     display: grid;
-    grid-template-columns: 58px auto minmax(0, 1fr) auto 12px;
+    grid-template-columns: 58px auto minmax(0, 1fr) 12px;
     gap: 6px;
     min-height: 26px;
     padding-top: 2px;
@@ -3740,14 +3804,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     color: var(--od-text-muted);
     font-family: var(--font-mono);
     font-size: var(--fs-md);
-}
-
-.od-process-tool .od-process-entry-time {
-    grid-column: 4;
-}
-
-.od-process-tool .od-process-chevron {
-    grid-column: 5;
 }
 
 .od-process-tool .od-process-entry-kind,
@@ -4130,10 +4186,6 @@ html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
         display: flex;
         flex-wrap: wrap;
         column-gap: 6px;
-    }
-
-    .od-process-tool .od-process-entry-time {
-        display: none;
     }
 
     .od-process-tool .od-process-entry-text {

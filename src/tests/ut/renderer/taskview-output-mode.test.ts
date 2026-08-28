@@ -105,21 +105,20 @@ describe('task-view GUI output modes', () => {
                 presentation: {
                     displayName: `Tool${start + offset}`,
                     summary: `echo ${start + offset}`
-                },
-                elapsedSeconds: 0.4
+                }
             }))
         };
     }
 
     function transcript() {
         return [
-            { type: 'reasoning', rendered: '分析现有结构', elapsedSeconds: 8 },
+            { type: 'reasoning', rendered: '分析现有结构' },
             toolPart(1, 10),
             { type: 'text', text: '第一段正文', rendered: '<p>第一段正文</p>' },
-            { type: 'reasoning', rendered: '实现展示方案', elapsedSeconds: 7 },
+            { type: 'reasoning', rendered: '实现展示方案' },
             toolPart(11, 10),
             { type: 'text', text: '第二段正文', rendered: '<p>第二段正文</p>' },
-            { type: 'reasoning', rendered: '验证最终结果', elapsedSeconds: 6 },
+            { type: 'reasoning', rendered: '验证最终结果' },
             toolPart(21, 10),
             { type: 'text', text: '最终正文', rendered: '<p>最终正文</p>' }
         ];
@@ -129,18 +128,17 @@ describe('task-view GUI output modes', () => {
         return new TaskViewClass() as any;
     }
 
-    test('minimal completed output collapses the full process behind one elapsed-time row', () => {
+    test('minimal completed output collapses the full process behind one process row', () => {
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-1',
             content: transcript(),
-            elapsedSeconds: 460,
             timestamp: Date.now()
         });
 
         const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
         expect(view.querySelectorAll('.od-completed-process')).toHaveLength(1);
-        expect(completedToggle.textContent).toContain('耗时 7 分钟 40 秒');
+        expect(completedToggle.textContent).toContain('查看过程');
         expect(completedToggle.getAttribute('aria-expanded')).toBe('false');
         expect(view.querySelector('.od-completed-process-detail')?.classList.contains('is-open')).toBe(false);
 
@@ -154,9 +152,9 @@ describe('task-view GUI output modes', () => {
         expect(
             Array.from(view.querySelectorAll('.od-process-summary-text')).map((element) => element.textContent)
         ).toEqual([
-            '深度思考 · 使用了 Tool1、Tool2 等 10个工具',
-            '深度思考 · 使用了 Tool11、Tool12 等 10个工具',
-            '深度思考 · 使用了 Tool21、Tool22 等 10个工具'
+            '深度思考 · 使用了 Tool1、Tool2 等工具',
+            '深度思考 · 使用了 Tool11、Tool12 等工具',
+            '深度思考 · 使用了 Tool21、Tool22 等工具'
         ]);
         expect(view.textContent).not.toContain('工具调用 · 10 个工具');
         expect(view.textContent).not.toMatch(/工具调用 \d+[–-]\d+/);
@@ -174,11 +172,10 @@ describe('task-view GUI output modes', () => {
                 { type: 'reasoning', rendered: '分析过程' },
                 { type: 'text', text: '**最终回复** <script>unsafe()</script>' }
             ],
-            elapsedSeconds: 57,
             timestamp: Date.now()
         });
 
-        expect(view.querySelector('[data-completed-process-toggle]')?.textContent).toContain('耗时 57 秒');
+        expect(view.querySelector('[data-completed-process-toggle]')?.textContent).toContain('查看过程');
         expect(view.querySelector('.od-final-result')?.textContent?.trim()).toBe('最终回复 <script>unsafe()</script>');
         expect(view.querySelector('.od-final-result strong')?.textContent).toBe('最终回复');
         expect(view.querySelector('.od-final-result script')).toBeNull();
@@ -211,7 +208,6 @@ describe('task-view GUI output modes', () => {
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-mode-switch',
             content: transcript(),
-            elapsedSeconds: 12,
             timestamp: Date.now()
         });
 
@@ -440,8 +436,8 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result')).toBeNull();
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('总耗时');
         expect(view.querySelector('.od-running-status-time')).toBeNull();
-        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在执行 echo 10…');
-        expect(view.querySelector('.od-running-status')?.textContent).not.toContain('Tool10');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用 Tool10…');
+        expect(view.querySelector('.od-running-status')?.textContent).not.toContain('echo 10');
 
         const runningStatus = view.querySelector('.od-running-status') as HTMLElement;
         expect(runningStatus.querySelector('.od-running-status-icon')).not.toBeNull();
@@ -480,12 +476,12 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.od-stage-body')).toHaveLength(1);
         expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
         expect(view.querySelector('.od-process-summary-text')?.textContent).toBe(
-            '深度思考 · 使用了 Tool1、Tool2 等 10个工具'
+            '深度思考 · 使用了 Tool1、Tool2 等工具'
         );
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在执行 echo 20…');
+        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20…');
     });
 
     test('minimal reasoning status hides reasoning content from the current-operation row', () => {
@@ -515,7 +511,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在执行 读取文件…');
+        expect(status).toContain('正在调用 读取文件…');
         expect(status).not.toContain('filemgr-readFile');
         expect(status).not.toContain('package.json');
     });
@@ -610,7 +606,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 使用了 读取文件、搜索文件内容 等 3个工具');
+        expect(summary).toBe('深度思考 · 使用了 读取文件、搜索文件内容 等工具');
         expect(summary).not.toContain('分析项目结构');
     });
 
@@ -654,7 +650,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 使用了 网页获取 等 1个工具');
+        expect(summary).toBe('深度思考 · 使用了 网页获取 等工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -679,8 +675,8 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(Array.from(summary).length).toBeLessThanOrEqual(64);
-        expect(summary).toBe('深度思考 · 使用了 very-long-s… 等 4个工具');
+        expect(Array.from(summary).length).toBeLessThanOrEqual(40);
+        expect(summary).toBe('深度思考 · 使用了 very-long-s… 等工具');
     });
 
     test('reasoning and tool rows share the same left edge and kind column width', () => {
@@ -689,14 +685,12 @@ describe('task-view GUI output modes', () => {
             '.od-process-reason.od-process-entry-summary,.od-process-tool.od-process-entry-summary{padding-left:2px;padding-right:2px;}'
         );
         expect(taskViewStyles).toMatch(
-            /\.od-process-reason\.od-process-entry-summary\{[^}]*grid-template-columns:58pxminmax\(0,1fr\)auto12px;/
+            /\.od-process-reason\.od-process-entry-summary\{[^}]*grid-template-columns:58pxminmax\(0,1fr\)12px;/
         );
         expect(taskViewStyles).toMatch(
-            /\.od-process-tool\.od-process-entry-summary\{[^}]*grid-template-columns:58pxautominmax\(0,1fr\)auto12px;/
+            /\.od-process-tool\.od-process-entry-summary\{[^}]*grid-template-columns:58pxautominmax\(0,1fr\)12px;/
         );
         expect(taskViewStyles).toContain('.od-process-tool.od-process-entry-label{max-width:240px;}');
-        expect(taskViewStyles).toContain('.od-process-tool.od-process-entry-time{grid-column:4;}');
-        expect(taskViewStyles).toContain('.od-process-tool.od-process-chevron{grid-column:5;}');
     });
 
     test('process typography and row spacing stay compact', () => {
@@ -748,8 +742,7 @@ describe('task-view GUI output modes', () => {
     test('loads lightweight tool details only after the first expansion and then reuses the cache', async () => {
         const getToolCallDetail = jest.fn(async () => ({
             result: '6 passed',
-            status: 'success',
-            elapsedSeconds: 1.4
+            status: 'success'
         }));
         window.taskManagerAPI.getToolCallDetail = getToolCallDetail;
         const view = createView();
@@ -764,8 +757,7 @@ describe('task-view GUI output modes', () => {
                     tool_name: 'terminal-executeZsh',
                     status: 'success',
                     detail_available: true,
-                    presentation: { displayName: 'Zsh', summary: '执行命令' },
-                    elapsedSeconds: 1.4
+                    presentation: { displayName: 'Zsh', summary: '执行命令' }
                 }
             ]
         };
@@ -1198,7 +1190,7 @@ describe('task-view GUI output modes', () => {
         const tool = view.querySelector('.od-process-tool') as HTMLElement;
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('任务追问');
         expect(tool.querySelector('.od-process-tool-args')).toBeNull();
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 任务追问 等 1个工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 任务追问 等工具');
     });
 
     test('load skill summaries show only the skill name instead of raw arguments', async () => {
@@ -1218,7 +1210,7 @@ describe('task-view GUI output modes', () => {
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('加载技能');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('use-browser');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).not.toContain('bundleName');
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 加载技能 等 1个工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 加载技能 等工具');
 
         const toggle = tool.querySelector('[data-process-entry-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
@@ -1251,7 +1243,7 @@ describe('task-view GUI output modes', () => {
         const tool = view.querySelector('.od-process-tool') as HTMLElement;
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('调用技能');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('use-browser');
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 调用技能 等 1个工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 调用技能 等工具');
 
         const toggle = tool.querySelector('[data-process-entry-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
@@ -1440,7 +1432,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在执行 echo 1…');
+        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool1…');
     });
 
     test('streaming text snapshots render safe Markdown in one stable part without rebuilding the assistant output', () => {
@@ -1534,8 +1526,7 @@ describe('task-view GUI output modes', () => {
             parts: [
                 { type: 'reasoning', rendered: '分析过程' },
                 { type: 'text', text: 'complete', rendered: '<p>complete</p>' }
-            ],
-            elapsedSeconds: 12
+            ]
         });
 
         view._renderAssistantProgress(
@@ -1588,8 +1579,7 @@ describe('task-view GUI output modes', () => {
                         type: 'text',
                         text: '## 最终回复\n\n终态正文',
                         rendered: '<h2>最终回复</h2><p>终态正文</p>'
-                    },
-                    elapsedSeconds: 300.4
+                    }
                 },
                 history
             );
@@ -1636,8 +1626,7 @@ describe('task-view GUI output modes', () => {
                 task_status: 'stopped',
                 message_id: 'message-reload-race',
                 last_part_index: 3,
-                last_part: { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' },
-                elapsedSeconds: 57
+                last_part: { type: 'text', text: '最终回复', rendered: '<p>最终回复</p>' }
             }
         ];
 
@@ -1650,7 +1639,7 @@ describe('task-view GUI output modes', () => {
 
         expect(view.querySelector('.od-final-result')?.textContent).toContain('最终回复');
         const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
-        expect(completedToggle?.textContent).toContain('耗时 57 秒');
+        expect(completedToggle?.textContent).toContain('查看过程');
         view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
         expect(view.querySelector('.od-completed-process-detail')?.textContent).toContain('中间结论');
     });

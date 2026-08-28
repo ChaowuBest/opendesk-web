@@ -485,11 +485,7 @@ async function prepareImage(source: string, input: Buffer): Promise<LoadedImage>
         if (error instanceof ImageSourceError) {
             throw error;
         }
-        // 临时诊断：透传原始异常细节，便于排查鸿蒙端 Jimp 缩放路径失败的真实原因
-        const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
-        const wrapped = new ImageSourceError('invalid_image', detail);
-        wrapped.name = error instanceof Error ? error.name : 'invalid_image';
-        throw wrapped;
+        throw new ImageSourceError('invalid_image');
     }
 }
 

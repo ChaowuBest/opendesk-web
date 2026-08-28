@@ -6,8 +6,8 @@ import {
     normalizeGuiReasonDisplayMode
 } from '../../../renderer/components/taskview-output.js';
 
-function reasoning(label: string, elapsedSeconds: number = 1) {
-    return { type: 'reasoning', rendered: label, elapsedSeconds };
+function reasoning(label: string) {
+    return { type: 'reasoning', rendered: label };
 }
 
 function tools(start: number, count: number) {
@@ -20,8 +20,7 @@ function tools(start: number, count: number) {
             tool_name: `Tool${start + offset}`,
             status: 'success',
             detail_available: true,
-            presentation: { displayName: `Tool${start + offset}` },
-            elapsedSeconds: 0.2
+            presentation: { displayName: `Tool${start + offset}` }
         }))
     };
 }

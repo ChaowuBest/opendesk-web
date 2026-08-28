@@ -142,7 +142,9 @@ export function getFileToolCallPresentation(kind: FileToolPresentationKind, tool
         displayName: { key: DISPLAY_NAME_KEYS[kind] },
         summary: fileSummary(kind, args, name),
         activity:
-            kind === 'readFile' && filePath ? { key: 'output.running.reading', params: { path: filePath } } : undefined,
+            kind === 'readFile' && filePath
+                ? { key: 'display.minimal.running.reading', params: { path: filePath } }
+                : undefined,
         resource,
         detailMode: resource ? 'resource' : kind === 'grepFiles' ? 'custom' : undefined
     };

@@ -82,7 +82,7 @@ describe('TaskStatusBar', () => {
 
         statusBar.update({ outputDisplayLevel: 'verbose' });
 
-        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细');
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细显示');
     });
 
     test('does not add vertical padding around the regular editor', () => {

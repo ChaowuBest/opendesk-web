@@ -1175,11 +1175,8 @@ function imageSourceErrorMessage(error: unknown, source: string): string {
                 path: source,
                 maxDimension: error.details ?? ''
             });
-        case 'invalid_image': {
-            // 临时诊断：透传 prepareImage 捕获的原始异常细节（见 image.ts），便于定位鸿蒙端真实失败点
-            const base = t('filemgr.image.error.invalid', { path: source });
-            return error.details ? `${base}\n${error.details}` : base;
-        }
+        case 'invalid_image':
+            return t('filemgr.image.error.invalid', { path: source });
     }
 }
 

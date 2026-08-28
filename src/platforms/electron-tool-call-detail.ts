@@ -20,7 +20,6 @@ export interface ToolCallDetail {
     result?: string;
     rendered?: string;
     status: 'pending' | 'running' | 'success' | 'error';
-    elapsedSeconds?: number;
     truncation?: Partial<Record<ToolCallDetailField, { originalBytes: number }>>;
 }
 
@@ -115,7 +114,6 @@ export function findToolCallDetail(
         ...(result.value !== undefined ? { result: result.value } : {}),
         ...(rendered.value !== undefined ? { rendered: rendered.value } : {}),
         status: toolCall.status,
-        ...(toolCall.elapsedSeconds !== undefined ? { elapsedSeconds: toolCall.elapsedSeconds } : {}),
         ...(Object.keys(truncation).length > 0 ? { truncation } : {})
     };
 }

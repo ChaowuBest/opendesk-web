@@ -5,7 +5,6 @@ import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import { GlobPermissionEnforcer } from '../../../main/aikernel/security/enforcer.js';
 import type { PermissionRequest } from '../../../main/aikernel/security/permission.js';
-import { TaskProfiler } from '../../../main/aikernel/profiler.js';
 import { AgentExecutionInstrumentationRegistry } from '../../../main/telemetry/agent-execution.js';
 import {
     TelemetryOperationRegistry,
@@ -66,65 +65,6 @@ describe('processToolCall: hook ordering & exec-phase pairing', () => {
         expect(toolCall.status).toBe('success');
         expect(toolCall.result).toBe('executed:/fixed-by-hook');
         expect(operations).toEqual(['hook.before_tool_call', 'tool.execute', 'hook.after_tool_call']);
-    });
-
-    test('tool elapsed time starts after validation and excludes pre-execution waiting', async () => {
-        let now = 1_000;
-        jest.spyOn(Date, 'now').mockImplementation(() => now);
-
-        const { task } = makeTask();
-        task.profiler = new TaskProfiler(task.task_id);
-        const tool = new BaseTool('slowValidation', 'slow validation', z.object({})).setExecutor(async () => {
-            now += 2_000;
-            return 'ok';
-        });
-        attachTool(task, tool);
-
-        task.hooks.beforeToolCallValidate(() => {
-            now += 10_000;
-            return { operation: 'allow' };
-        });
-
-        const toolCall = new ToolCall(0, 'call-1', 'slowValidation', '{}');
-        await task.processToolCall(toolCall, true);
-
-        expect(toolCall.elapsedSeconds).toBe(2);
-        expect(task.profiler.finish().tool_total_ms).toBe(2_000);
-    });
-
-    test('tool elapsed time excludes permission prompt waiting', async () => {
-        let now = 1_000;
-        jest.spyOn(Date, 'now').mockImplementation(() => now);
-
-        const { task } = makeTask();
-        task.harnessContext.permission = GlobPermissionEnforcer.createSync([]);
-        task.harnessContext.permissionPrompt = {
-            prompt: async () => {
-                now += 10_000;
-                return { decision: 'allow', rememberScope: 'none' };
-            }
-        } as any;
-
-        const guardedSchema = z.object({});
-        const tool = new (class extends BaseTool<typeof guardedSchema> {
-            constructor() {
-                super('permissionWait', 'permission wait', guardedSchema);
-                this.setExecutor(async () => {
-                    now += 2_000;
-                    return 'ok';
-                });
-            }
-
-            override getDeclaredPermissions(): PermissionRequest[] {
-                return [{ resourceType: 'file', action: 'read', resourcePath: '/workspace/file.txt' }];
-            }
-        })();
-        attachTool(task, tool);
-
-        const toolCall = new ToolCall(0, 'call-1', 'permissionWait', '{}');
-        await task.processToolCall(toolCall, false);
-
-        expect(toolCall.elapsedSeconds).toBe(2);
     });
 
     test('beforeToolCallValidate deny skips the whole exec phase (before/after both absent)', async () => {

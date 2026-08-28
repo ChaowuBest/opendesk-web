@@ -32,7 +32,7 @@ function createToolPart(id: number, filePath: string, customOutput = `CUSTOM TOO
             key: 'renderer.taskview.output.purpose.readFile',
             params: { name: filePath.split('/').pop() || filePath }
         },
-        activity: { key: 'output.running.reading', params: { path: filePath } }
+        activity: { key: 'display.minimal.running.reading', params: { path: filePath } }
     };
     toolCall.status = 'success';
     toolCall.setTool({
@@ -209,13 +209,11 @@ describe('TaskView chunk handling', () => {
         expect(taskView.messages).toHaveLength(2);
     });
 
-    test('rebuilds completed assistant elapsed time from the persisted duration', () => {
-        const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    test('rebuilds completed assistant output without a duration row', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         const chatContext = new ChatContext();
         const assistantMessage = new AssistantMessage([new TextMessagePart('Finished response')]);
         assistantMessage.timestamp = 1_000;
-        assistantMessage.elapsedSeconds = 2.4;
         chatContext.appendMessage(assistantMessage);
         taskView.taskState = {
             task_id: 'task_1',
@@ -225,15 +223,7 @@ describe('TaskView chunk handling', () => {
 
         taskView.rebuildFromHistory();
 
-        const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Complete · Elapsed 2s');
-        expect(output).not.toContain('Complete · Elapsed 1m 39s');
-
-        now.mockReturnValue(200_000);
-        taskView.clearMessages();
-        taskView.rebuildFromHistory();
-
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Complete · Elapsed 2s');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Complete');
     });
 
     test('rebuilds earlier assistant messages as sealed phases and only completes the final message', () => {
@@ -241,9 +231,7 @@ describe('TaskView chunk handling', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         const chatContext = new ChatContext();
         const first = new AssistantMessage([createToolPart(1, 'src/one.ts')]);
-        first.elapsedSeconds = 2;
         const second = new AssistantMessage([new TextMessagePart('Final response')]);
-        second.elapsedSeconds = 3;
         chatContext.appendMessage(first);
         chatContext.appendMessage(second);
         taskView.taskState = {
@@ -255,7 +243,7 @@ describe('TaskView chunk handling', () => {
         taskView.rebuildFromHistory();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+        expect(output).toContain('Used Read File in 1 tool call');
         expect(output).toContain('Final response');
         expect(output.match(/Complete ·/g)).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
@@ -266,9 +254,7 @@ describe('TaskView chunk handling', () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         const chatContext = new ChatContext();
         const first = new AssistantMessage([new TextMessagePart('First turn response')]);
-        first.elapsedSeconds = 2;
         const second = new AssistantMessage([new TextMessagePart('Second turn response')]);
-        second.elapsedSeconds = 3;
         chatContext.appendMessage(first);
         chatContext.appendMessage(new UserMessage('Next question'));
         chatContext.appendMessage(second);
@@ -293,7 +279,6 @@ describe('TaskView chunk handling', () => {
         const assistantMessage = new AssistantMessage([
             new ErrorMessagePart('Stream Completion Failed', 'connection refused')
         ]);
-        assistantMessage.elapsedSeconds = 2.4;
         chatContext.appendMessage(assistantMessage);
         taskView.taskState = {
             task_id: 'task_1',
@@ -304,7 +289,7 @@ describe('TaskView chunk handling', () => {
         taskView.rebuildFromHistory();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Failed · Elapsed 2s');
+        expect(output).toContain('Failed');
         expect(output).not.toContain('Complete');
     });
 
@@ -417,7 +402,7 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('Failed · Elapsed 2s');
+        expect(output).toContain('Failed');
         expect(output).not.toContain('Complete');
         expect(rawOutput).toContain(`${chalk.redBright('●')} ${chalk.redBright('Failed')}`);
     });
@@ -532,7 +517,7 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         let output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+        expect(output).toContain('Used Read File in 1 tool call');
         expect(output).toContain('Final response');
         expect(output.match(/Complete ·/g)).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
@@ -540,7 +525,7 @@ describe('TaskView chunk handling', () => {
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call · Elapsed 2s');
+        expect(output).toContain('Used Read File in 1 tool call');
     });
 
     test('minimal mode updates elapsed time before the first assistant event', () => {
@@ -552,7 +537,6 @@ describe('TaskView chunk handling', () => {
 
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output.match(/[✣✤✥✦]/g)).toHaveLength(1);
-        expect(output).toContain('Elapsed 2s');
         expect(output).toContain('Generating response…');
 
         now.mockRestore();
@@ -628,7 +612,7 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const bodyLine = renderedLines.findIndex((line) => line.includes('Body with trailing markdown breaks'));
-        const statusLine = renderedLines.findIndex((line) => line.includes('1 tool ·'));
+        const statusLine = renderedLines.findIndex((line) => line.includes('1 tool'));
         expect(bodyLine).toBeGreaterThanOrEqual(0);
         expect(statusLine - bodyLine).toBe(2);
     });
@@ -730,11 +714,11 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具 · 耗时 2 秒');
+        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具');
         expect(output).not.toContain('4个工具');
         expect(output).not.toContain('已执行工具');
         expect(rawOutput).toContain(
-            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具 · 耗时 2 秒')}`
+            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具')}`
         );
     });
 
@@ -831,14 +815,14 @@ describe('TaskView chunk handling', () => {
 
         now.mockReturnValue(20_000);
         let output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls · Elapsed 6s');
-        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call · Elapsed 4s');
+        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls');
+        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call');
 
         now.mockReturnValue(30_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls · Elapsed 6s');
-        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call · Elapsed 4s');
+        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls');
+        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call');
     });
 
     test('minimal completion suppresses a duplicate tool summary and dims its metadata', async () => {
@@ -868,12 +852,12 @@ describe('TaskView chunk handling', () => {
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
         expect(output).not.toContain('✓ 1 tool');
-        expect(output.indexOf('Complete · Deep reasoning · Used Read File in 1 tool call · Elapsed 2s')).toBeLessThan(
+        expect(output.indexOf('Complete · Deep reasoning · Used Read File in 1 tool call')).toBeLessThan(
             output.indexOf('Final output')
         );
         expect(rawOutput).toContain(
             `${chalk.greenBright('●')} ${chalk.greenBright('Complete')} ${chalk.dim(
-                '· Deep reasoning · Used Read File in 1 tool call · Elapsed 2s'
+                '· Deep reasoning · Used Read File in 1 tool call'
             )}`
         );
         expect(output).not.toContain('CUSTOM TOOL 1');
@@ -917,14 +901,14 @@ describe('TaskView chunk handling', () => {
 
         let output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File in 1 tool call · Elapsed 9s');
+        expect(output).toContain('Complete · Used Read File in 1 tool call');
         expect(output).not.toContain('body segment');
 
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File in 1 tool call · Elapsed 9s');
+        expect(output).toContain('Complete · Used Read File in 1 tool call');
         expect(output).not.toContain('body segment');
     });
 
@@ -953,8 +937,8 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output.match(/✓ Used Read File in 1 tool call ·/g)).toHaveLength(3);
-        expect(output).toContain('Complete · Used Read File in 3 tool calls ·');
+        expect(output.match(/✓ Used Read File in 1 tool call/g)).toHaveLength(3);
+        expect(output).toContain('Complete · Used Read File in 3 tool calls');
         expect(output).not.toContain('body segment');
     });
 

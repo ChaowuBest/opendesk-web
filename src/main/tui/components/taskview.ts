@@ -58,8 +58,6 @@ import {
     shouldInsertGoalSnapshotBeforeMessage
 } from './taskview-goal/history-placement.js';
 import chalk from 'chalk';
-import { formatOutputElapsed } from '../../../common/output-duration.js';
-import { formatOutputProcessSummary, formatOutputToolActivity } from '../../../common/output-process-summary.js';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
 import {
@@ -632,10 +630,6 @@ export class UserMessageView implements Component {
     }
 }
 
-function formatMinimalElapsed(startedAt: number, endedAt: number = Date.now()): string {
-    return formatOutputElapsed(Math.max(0, (endedAt - startedAt) / 1000), t);
-}
-
 const MINIMAL_RUNNING_SPINNER_FRAMES = ['✣', '✤', '✥', '✦'];
 const MINIMAL_RUNNING_SPINNER_MS = 300;
 
@@ -645,22 +639,45 @@ function getMinimalRunningIcon(): string {
 }
 
 function getMinimalToolAction(toolCall?: ToolCall): string {
-    const presentation = toolCall ? resolveToolCallPresentation(toolCall.getPresentation(), t) : undefined;
-    return formatOutputToolActivity(presentation, t);
+    if (!toolCall) return t('display.minimal.running.waiting');
+    const presentation = resolveToolCallPresentation(toolCall.getPresentation(), t);
+    if (presentation.activity) return presentation.activity;
+    return t('display.minimal.running.tool', {
+        tool: presentation.summary || presentation.displayName
+    });
+}
+
+function compactMinimalToolName(value: string, maxLength: number = 12): string {
+    const phrase = value.split(/[，,。！？!?；;]/, 1)[0].trim();
+    const characters = Array.from(phrase);
+    if (characters.length <= maxLength) return phrase;
+    return `${characters
+        .slice(0, maxLength - 1)
+        .join('')
+        .trim()}…`;
 }
 
 function getMinimalToolDisplayName(toolCall: ToolCall): string {
     return resolveToolCallPresentation(toolCall.getPresentation(), t).displayName;
 }
 
-function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean, elapsed: string): string {
-    return formatOutputProcessSummary({
-        toolDisplayNames: toolCalls.map(getMinimalToolDisplayName),
-        toolCount: toolCalls.length,
-        hasReasoning,
-        elapsed,
-        translate: t
-    });
+function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean): string {
+    const toolNames = Array.from(
+        new Set(
+            toolCalls.map((toolCall) => compactMinimalToolName(getMinimalToolDisplayName(toolCall))).filter(Boolean)
+        )
+    );
+    const listedNames = toolNames.slice(0, 2).join(t('display.minimal.tools.summary.listSeparator'));
+    const tools = listedNames
+        ? t(
+              toolCalls.length === 1
+                  ? 'display.minimal.tools.summary.usedTools.one'
+                  : 'display.minimal.tools.summary.usedTools.many',
+              { tools: listedNames, count: toolCalls.length }
+          )
+        : '';
+    const reasoning = hasReasoning ? t('display.minimal.tools.summary.reasoning') : '';
+    return reasoning && tools ? t('display.minimal.tools.summary.combined', { reasoning, tools }) : reasoning || tools;
 }
 
 function renderAssistantBody(part: TextMessagePartView, width: number): string[] {
@@ -678,9 +695,6 @@ export class AssistantMessageView implements Component {
     private cachedOutput?: string[];
     private outputDisplayProvider: () => OutputDisplayLevel = getConfiguredOutputDisplayLevel;
     private lifecycle: AssistantMessageLifecycle = 'terminal';
-    private startedAt = Date.now();
-    private completedAt?: number;
-    private partObservedAt = new Map<number, number>();
     /** 当前正在更新的 message_id，用于检测新的 AssistantMessage 并重置 parts */
     private currentMessageId?: string;
 
@@ -694,35 +708,17 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    setLifecycle(lifecycle: AssistantMessageLifecycle, completedAt?: number): void {
-        if (lifecycle !== 'active' && this.completedAt === undefined) {
-            this.completedAt =
-                typeof completedAt === 'number' && Number.isFinite(completedAt) ? completedAt : Date.now();
-        } else if (lifecycle === 'active') {
-            this.completedAt = undefined;
-        }
+    setLifecycle(lifecycle: AssistantMessageLifecycle): void {
         this.lifecycle = lifecycle;
         this.invalidated = true;
     }
 
-    seal(completedAt?: number): void {
-        if (this.lifecycle === 'active') this.setLifecycle('sealed', completedAt);
+    seal(): void {
+        if (this.lifecycle === 'active') this.setLifecycle('sealed');
     }
 
     isActive(): boolean {
         return this.lifecycle === 'active';
-    }
-
-    setStartedAt(timestamp?: number): void {
-        if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
-            this.startedAt = timestamp;
-        }
-    }
-
-    private recordPartObserved(index: number): void {
-        if (!this.partObservedAt.has(index)) {
-            this.partObservedAt.set(index, Date.now());
-        }
     }
 
     private canApplyPart(index: number, part: AssistantMessagePart, expectedType: string): boolean {
@@ -749,7 +745,6 @@ export class AssistantMessageView implements Component {
             return;
         }
 
-        this.recordPartObserved(index);
         existingPartView.setMarkdown(typeof textPart.text === 'string' ? textPart.text : '');
         this.invalidated = true;
     }
@@ -769,7 +764,6 @@ export class AssistantMessageView implements Component {
             return;
         }
 
-        this.recordPartObserved(index);
         existingPartView.setStreaming(true);
         existingPartView.setContent(typeof reasoningPart.content === 'string' ? reasoningPart.content : '');
         this.invalidated = true;
@@ -799,7 +793,6 @@ export class AssistantMessageView implements Component {
             return;
         }
 
-        this.recordPartObserved(index);
         existingPartView.setToolcalls(toolCallPart.toolcalls);
         this.invalidated = true;
     }
@@ -818,7 +811,6 @@ export class AssistantMessageView implements Component {
             return;
         }
 
-        this.recordPartObserved(index);
         existingPartView.setContent(
             typeof errorPart.title === 'string' ? errorPart.title : '',
             typeof errorPart.message === 'string' ? errorPart.message : ''
@@ -868,7 +860,6 @@ export class AssistantMessageView implements Component {
     clearParts() {
         this.box.clear();
         this.parts = [];
-        this.partObservedAt.clear();
         this.invalidated = true;
     }
 
@@ -876,7 +867,6 @@ export class AssistantMessageView implements Component {
         const parts = normalizeAssistantParts(chunkUpdate.parts, `assistant_replace message=${chunkUpdate.message_id}`);
         if (!parts) return;
         this.currentMessageId = chunkUpdate.message_id;
-        this.setStartedAt(chunkUpdate.timestamp);
         this.clearParts();
         for (let i = 0; i < parts.length; i++) {
             const part = parts[i];
@@ -912,14 +902,8 @@ export class AssistantMessageView implements Component {
         return false;
     }
 
-    private renderMinimalToolSummary(
-        toolCalls: ToolCall[],
-        hasReasoning: boolean,
-        startedAt: number,
-        endedAt: number,
-        width: number
-    ): string {
-        const summary = formatMinimalProcessSummary(toolCalls, hasReasoning, formatMinimalElapsed(startedAt, endedAt));
+    private renderMinimalToolSummary(toolCalls: ToolCall[], hasReasoning: boolean, width: number): string {
+        const summary = formatMinimalProcessSummary(toolCalls, hasReasoning);
         return truncateToWidth(`${chalk.greenBright('✓')} ${chalk.dim(summary)}`, width, '', true);
     }
 
@@ -929,11 +913,7 @@ export class AssistantMessageView implements Component {
         failed: boolean,
         width: number
     ): string {
-        const metadata = formatMinimalProcessSummary(
-            toolCalls,
-            hasReasoning,
-            formatMinimalElapsed(this.startedAt, this.completedAt)
-        );
+        const metadata = formatMinimalProcessSummary(toolCalls, hasReasoning);
         const color = failed ? chalk.redBright : chalk.greenBright;
         const label = t(failed ? 'display.minimal.failed.label' : 'display.minimal.complete.label');
         return truncateToWidth(`${color('●')} ${color(label)} ${chalk.dim(`· ${metadata}`)}`, width, '', true);
@@ -946,8 +926,7 @@ export class AssistantMessageView implements Component {
         );
         const action = getMinimalToolAction(activeToolCall);
         const meta = t(count === 1 ? 'display.minimal.running.meta.one' : 'display.minimal.running.meta.many', {
-            count,
-            elapsed: formatMinimalElapsed(this.startedAt)
+            count
         });
         return truncateToWidth(`${getMinimalRunningIcon()} ${action}  ${chalk.dim(meta)}`, width, '', true);
     }
@@ -971,7 +950,6 @@ export class AssistantMessageView implements Component {
         );
         const isStreamingText = this.parts[this.parts.length - 1] instanceof TextMessagePartView;
         let pendingToolCalls: ToolCall[] = [];
-        let segmentStartedAt = this.startedAt;
         let completionRendered = false;
 
         const appendBlock = (block: string[], separated = true) => {
@@ -986,12 +964,10 @@ export class AssistantMessageView implements Component {
             lines.push(...block.slice(start, end));
         };
 
-        const flushPendingTools = (endedAt: number) => {
+        const flushPendingTools = () => {
             if (pendingToolCalls.length === 0) return;
             if (showPhaseSummaries) {
-                appendBlock([
-                    this.renderMinimalToolSummary(pendingToolCalls, hasReasoning, segmentStartedAt, endedAt, width)
-                ]);
+                appendBlock([this.renderMinimalToolSummary(pendingToolCalls, hasReasoning, width)]);
             }
             pendingToolCalls = [];
         };
@@ -1004,10 +980,7 @@ export class AssistantMessageView implements Component {
                 continue;
             }
 
-            const observedAt = this.partObservedAt.get(index) ?? this.completedAt ?? Date.now();
-            const boundaryAt = index === finalTextPartIndex ? (this.completedAt ?? observedAt) : observedAt;
-            flushPendingTools(boundaryAt);
-            segmentStartedAt = boundaryAt;
+            flushPendingTools();
             if (part instanceof TextMessagePartView) {
                 if (index === finalTextPartIndex) {
                     appendBlock([this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)]);
@@ -1022,12 +995,12 @@ export class AssistantMessageView implements Component {
         }
 
         if (isTerminal) {
-            flushPendingTools(this.completedAt ?? Date.now());
+            flushPendingTools();
             if (!completionRendered) {
                 appendBlock([this.renderMinimalTerminal(allToolCalls, hasReasoning, hasError, width)]);
             }
         } else if (this.lifecycle === 'sealed') {
-            flushPendingTools(this.completedAt ?? Date.now());
+            flushPendingTools();
         } else if (hasActiveToolCall || !isStreamingText) {
             appendBlock([this.renderMinimalRunning(allToolCalls, width)]);
         }
@@ -1192,7 +1165,6 @@ export class TaskView implements Component {
 
     /** 流式渲染节流：在 render() 层限制消息区域的刷新频率 */
     private _streaming = false;
-    private streamingStartedAt = Date.now();
     private _lastRenderMs = 0;
     /** 上一次渲染耗时（毫秒），用于自适应节流 */
     private _lastRenderDurationMs = 0;
@@ -1235,13 +1207,10 @@ export class TaskView implements Component {
         return this.outputDisplayLevel;
     }
 
-    private createAssistantView(
-        options: { lifecycle?: AssistantMessageLifecycle; startedAt?: number; completedAt?: number } = {}
-    ): AssistantMessageView {
+    private createAssistantView(options: { lifecycle?: AssistantMessageLifecycle } = {}): AssistantMessageView {
         const view = new AssistantMessageView();
         view.setOutputDisplayProvider(() => this.outputDisplayLevel);
-        view.setStartedAt(options.startedAt ?? this.streamingStartedAt);
-        view.setLifecycle(options.lifecycle ?? 'active', options.completedAt);
+        view.setLifecycle(options.lifecycle ?? 'active');
         return view;
     }
 
@@ -1337,7 +1306,6 @@ export class TaskView implements Component {
     /** 标记流式输出开始 */
     startStreaming() {
         this._streaming = true;
-        this.streamingStartedAt = Date.now();
         this.invalidated = true;
     }
 
@@ -1685,7 +1653,7 @@ export class TaskView implements Component {
             } else {
                 if (!view) {
                     this.getLastAssistantView()?.seal();
-                    view = this.createAssistantView({ startedAt: chunkUpdate.timestamp });
+                    view = this.createAssistantView();
                     view.setMessageId(chunkUpdate.message_id);
                     this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                     this.messages.push(view);
@@ -1714,7 +1682,7 @@ export class TaskView implements Component {
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {
                 this.getLastAssistantView()?.seal();
-                view = this.createAssistantView({ startedAt: chunkUpdate.timestamp });
+                view = this.createAssistantView();
                 view.setMessageId(chunkUpdate.message_id);
                 this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                 this.messages.push(view);
@@ -1779,15 +1747,8 @@ export class TaskView implements Component {
                     : messages[messageIndex + 1] instanceof AssistantMessage
                       ? 'sealed'
                       : 'terminal';
-                const completedAt = lifecycle === 'active' ? undefined : Date.now();
-                const elapsedSeconds =
-                    typeof msg.elapsedSeconds === 'number' && Number.isFinite(msg.elapsedSeconds)
-                        ? Math.max(0, msg.elapsedSeconds)
-                        : 0;
                 const view = this.createAssistantView({
-                    lifecycle,
-                    startedAt: completedAt === undefined ? msg.timestamp : completedAt - elapsedSeconds * 1000,
-                    completedAt
+                    lifecycle
                 });
                 view.setMessageId(msg.message_id);
                 this.messageIdToAssistantView.set(msg.message_id, view);
@@ -1891,15 +1852,12 @@ export class TaskView implements Component {
         this.cachedOutput = this.messageLayout.render(width);
         const lastAssistant = this.getLastAssistantView();
         if (this._streaming && this.outputDisplayLevel === 'minimal' && (!lastAssistant || !lastAssistant.isActive())) {
-            const meta = t('display.minimal.running.meta.many', {
-                count: 0,
-                elapsed: formatMinimalElapsed(this.streamingStartedAt)
-            });
+            const meta = t('display.minimal.running.meta.many', { count: 0 });
             this.cachedOutput = [
                 ...this.cachedOutput,
                 '',
                 truncateToWidth(
-                    `${getMinimalRunningIcon()} ${t('output.running.waiting')}  ${chalk.dim(meta)}`,
+                    `${getMinimalRunningIcon()} ${t('display.minimal.running.waiting')}  ${chalk.dim(meta)}`,
                     width,
                     '',
                     true

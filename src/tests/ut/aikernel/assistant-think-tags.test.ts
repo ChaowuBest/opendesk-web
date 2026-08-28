@@ -305,20 +305,3 @@ describe('AssistantMessage think tag parsing', () => {
         expect((message.content[1] as TextMessagePart).text).toBe('收到。有什么具体需要帮忙的吗？');
     });
 });
-
-describe('AssistantMessage turn timing', () => {
-    test('persists the wall-clock duration for the complete assistant turn', () => {
-        const dateNow = jest.spyOn(Date, 'now').mockReturnValue(1_000);
-        try {
-            const message = new AssistantMessage();
-
-            dateNow.mockReturnValue(461_000);
-            message.finalizeTurnTiming();
-
-            expect(message.elapsedSeconds).toBe(460);
-            expect(message.toRenderJSON()).toMatchObject({ elapsedSeconds: 460 });
-        } finally {
-            dateNow.mockRestore();
-        }
-    });
-});

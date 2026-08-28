@@ -366,8 +366,6 @@ export class ToolCall implements BaseChatToolCall {
     microcompact?: ToolCallMicrocompactMetadata;
     metadata?: RuntimeMetadata;
     presentation?: ToolCallPresentation;
-    elapsedSeconds?: number;
-    private _startedAt?: number;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -381,19 +379,6 @@ export class ToolCall implements BaseChatToolCall {
             enumerable: false,
             configurable: true
         });
-        Object.defineProperty(this, '_startedAt', { value: undefined, writable: true, enumerable: false });
-    }
-
-    startTiming(now: number = Date.now()): void {
-        if (this._startedAt === undefined && this.elapsedSeconds === undefined) {
-            this._startedAt = now;
-        }
-    }
-
-    finalizeTiming(now: number = Date.now()): void {
-        if (this._startedAt === undefined || this.elapsedSeconds !== undefined) return;
-        this.elapsedSeconds = Math.round((Math.max(0, now - this._startedAt) / 1000) * 10) / 10;
-        this._startedAt = undefined;
     }
 
     getResultImages(): Array<{ image_url: string; media_type?: string; source?: string }> {
@@ -456,8 +441,7 @@ export class ToolCall implements BaseChatToolCall {
             tool_name: this.tool_name,
             status: this.status,
             detail_available: Boolean(this.result || (this.rendered && presentation.detailMode === 'custom')),
-            presentation,
-            elapsedSeconds: this.elapsedSeconds
+            presentation
         };
     }
 
@@ -726,7 +710,6 @@ export class ToolCall implements BaseChatToolCall {
             enumerable: false,
             configurable: true
         });
-        Object.defineProperty(tc, '_startedAt', { value: undefined, writable: true, enumerable: false });
         tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
         tc.microcompact = ToolCall.normalizeMicrocompact(tc.microcompact);
         tc.presentation = tc.presentation ? sanitizeToolCallPresentation(tc.presentation, tc.tool_name) : undefined;
@@ -1538,12 +1521,10 @@ export class AssistantMessage implements BaseAssistantMessage {
     usage?: Usage;
     metadata?: RuntimeMetadata;
     timestamp?: number;
-    elapsedSeconds?: number;
     private _insideThinkTag: boolean = false;
     private _allowThinkTagParsing: boolean = true;
     private _allowImplicitThinkClose: boolean = true;
     private _thinkRoundStartPartIndex: number = 0;
-    private _turnStartedAt?: number;
 
     constructor(content: Array<AssistantMessagePart> = [], options?: { allowThinkTagParsing?: boolean }) {
         this.content = content;
@@ -1564,11 +1545,6 @@ export class AssistantMessage implements BaseAssistantMessage {
         });
         Object.defineProperty(this, '_thinkRoundStartPartIndex', {
             value: content.length,
-            writable: true,
-            enumerable: false
-        });
-        Object.defineProperty(this, '_turnStartedAt', {
-            value: Date.now(),
             writable: true,
             enumerable: false
         });
@@ -1597,11 +1573,6 @@ export class AssistantMessage implements BaseAssistantMessage {
         });
         Object.defineProperty(assistant_message, '_thinkRoundStartPartIndex', {
             value: assistant_message.content?.length ?? 0,
-            writable: true,
-            enumerable: false
-        });
-        Object.defineProperty(assistant_message, '_turnStartedAt', {
-            value: undefined,
             writable: true,
             enumerable: false
         });
@@ -1635,15 +1606,8 @@ export class AssistantMessage implements BaseAssistantMessage {
             usage: this.usage,
             metadata: this.metadata,
             timestamp: this.timestamp,
-            elapsedSeconds: this.elapsedSeconds,
             content: this.content.map((part) => part.toRenderJSON())
         };
-    }
-
-    finalizeTurnTiming(completedAt: number = Date.now()): void {
-        if (this.elapsedSeconds !== undefined || this._turnStartedAt === undefined) return;
-        this.elapsedSeconds = Math.max(0, Math.round((completedAt - this._turnStartedAt) / 100) / 10);
-        this._turnStartedAt = undefined;
     }
 
     /**
