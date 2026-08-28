@@ -24,6 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { pruneNativeBuildFilesInDeps } = require('./package-ohos-prune.cjs');
 
 // ============================================================================
 // 参数
@@ -483,7 +484,6 @@ const JUNK_DIRS = new Set([
     'mock',
     'mocks',
     '__mocks__',
-    'deps', // C++ build 依赖源码（leveldb 等）
     'third_party' // 捆绑第三方 C/C++ 源码
 ]);
 
@@ -554,6 +554,16 @@ function pruneJunkFiles(dir) {
         const fp = path.join(dir, e.name);
         if (e.isSymbolicLink()) continue;
         if (e.isDirectory()) {
+            // deps can contain lazy-loaded runtime code, so only remove proven native build inputs file by file.
+            if (e.name === 'deps') {
+                const result = pruneNativeBuildFilesInDeps(fp);
+                if (result.removedFiles > 0) {
+                    console.log(
+                        `  [prune] ${result.packageName}/${result.relativePath}: ${result.removedFiles} 个原生构建文件`
+                    );
+                }
+                continue;
+            }
             if (JUNK_DIRS.has(e.name)) {
                 removePath(fp);
                 continue;
