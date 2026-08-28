@@ -805,7 +805,7 @@ class IMAPEmailClient extends EmailContentHelper {
     async fetchRawMessage(imap, uid) {
         return new Promise((resolve, reject) => {
             const chunks = [];
-            const fetcher = imap.fetch(uid, { bodies: '', struct: true, uid: true });
+            const fetcher = imap.fetch(uid, { bodies: '', uid: true });
             fetcher.on('message', (msg) => {
                 msg.on('body', (stream) => {
                     stream.on('data', (chunk) => chunks.push(chunk));
