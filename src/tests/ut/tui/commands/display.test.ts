@@ -32,7 +32,6 @@ describe('/display command', () => {
 
     test.each([
         ['minimal', 'minimal'],
-        ['detailed', 'verbose'],
         ['verbose', 'verbose']
     ] as const)('persists and immediately applies %s', async (commandLevel, outputLevel) => {
         let handler: any;
@@ -53,7 +52,7 @@ describe('/display command', () => {
         expect(Setting.getInstance().getData().cli_config?.output_display).toBe(outputLevel);
     });
 
-    test('offers minimal and detailed completions while keeping verbose as a compatibility alias', () => {
+    test('offers only canonical minimal and verbose completions', () => {
         let handler: any;
         const tui = {
             commandRegistry: {
@@ -68,16 +67,13 @@ describe('/display command', () => {
         expect(handler.getArgumentCompletions('')).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ value: 'minimal' }),
-                expect.objectContaining({ value: 'detailed' })
+                expect.objectContaining({ value: 'verbose' })
             ])
         );
         expect(handler.getArgumentCompletions('')).toHaveLength(2);
-        expect(handler.getArgumentCompletions('')).not.toEqual(
-            expect.arrayContaining([expect.objectContaining({ value: 'verbose' })])
-        );
     });
 
-    test('rejects the legacy full command name', async () => {
+    test.each(['detailed', 'full'])('rejects the non-canonical %s command name', async (commandLevel) => {
         let handler: any;
         const showTextPage = jest.fn();
         const tui = {
@@ -92,10 +88,10 @@ describe('/display command', () => {
         } as any;
         registerDisplayCommand(tui);
 
-        await handler.execute('full');
+        await handler.execute(commandLevel);
 
         expect(tui.setOutputDisplayLevel).not.toHaveBeenCalled();
         expect(showTextPage).toHaveBeenCalledTimes(1);
-        expect(handler.getArgumentCompletions('f')).toEqual([]);
+        expect(handler.getArgumentCompletions(commandLevel[0])).toEqual([]);
     });
 });

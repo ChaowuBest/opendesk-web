@@ -92,9 +92,10 @@ import {
     buildAssistantOutputItems,
     getDefaultProcessExpanded,
     getVisibleAssistantOutputItems,
-    mergeGuiAssistantProgressPart,
-    normalizeGuiOutputMode
+    normalizeGuiOutputMode,
+    normalizeGuiReasonDisplayMode
 } from './taskview-output.js';
+import { formatOutputProcessSummary, formatOutputToolActivity } from '../../common/output-process-summary.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -108,14 +109,18 @@ const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
 const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
 let guiOutputMode = 'minimal';
+let guiReasonDisplayMode = 'inline';
 
 function updateTaskViewTranslator(setting) {
     taskViewT = createRendererTranslator(setting);
     const nextOutputMode = normalizeGuiOutputMode(setting?.gui_config?.output_mode);
+    const nextReasonDisplayMode = normalizeGuiReasonDisplayMode(setting?.gui_config?.gui_reason_display);
     const outputModeChanged = nextOutputMode !== guiOutputMode;
+    const reasonDisplayModeChanged = nextReasonDisplayMode !== guiReasonDisplayMode;
     guiOutputMode = nextOutputMode;
-    if (outputModeChanged) {
-        document.querySelectorAll('task-view').forEach((view) => view._handleGuiOutputModeChanged?.());
+    guiReasonDisplayMode = nextReasonDisplayMode;
+    if (outputModeChanged || reasonDisplayModeChanged) {
+        document.querySelectorAll('task-view').forEach((view) => view._handleGuiDisplaySettingsChanged?.());
     }
 }
 
@@ -1225,55 +1230,16 @@ class TaskView extends HTMLElement {
         return `${escapeHtml(purpose.slice(0, urlOffset))}${TaskView._renderBrowserLink(browserUrl, TaskView._compactBrowserUrl(browserUrl))}${escapeHtml(purpose.slice(urlOffset + browserUrl.length))}`;
     }
 
-    static _compactProcessPhrase(value, maxLength = 18) {
-        const plainText = TaskView._plainTextFromHtml(value);
-        const phrase = plainText.split(/[，,。！？!?；;]/, 1)[0].trim();
-        const characters = Array.from(phrase);
-        if (characters.length <= maxLength) return phrase;
-        return `${characters
-            .slice(0, maxLength - 1)
-            .join('')
-            .trim()}…`;
-    }
-
-    static _truncateProcessSummary(value, maxLength = 40) {
-        const characters = Array.from(value);
-        if (characters.length <= maxLength) return value;
-        return `${characters
-            .slice(0, maxLength - 1)
-            .join('')
-            .trim()}…`;
-    }
-
     static _processSummary(item) {
         const entries = item.entries || [];
         const tools = entries.filter((entry) => entry.type === 'tool' && entry.tool).map((entry) => entry.tool);
-        const displayNames = Array.from(new Set(tools.map((tool) => TaskView._toolDisplayName(tool)).filter(Boolean)));
-        const toolNames = Array.from(new Set(displayNames.map((name) => TaskView._compactProcessPhrase(name, 12))));
-        let toolSummary = '';
-        const summarizeTools = (names) => {
-            const listedNames = names
-                .slice(0, 2)
-                .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
-            return taskViewT('renderer.taskview.output.processSummary.usedTools', { tools: listedNames });
-        };
-        if (toolNames.length > 0) {
-            toolSummary = summarizeTools(toolNames);
-        }
-        const reasoningSummary = item.hasReasoning ? taskViewT('renderer.taskview.output.deepReasoning') : '';
-        const combine = () =>
-            reasoningSummary && toolSummary
-                ? taskViewT('renderer.taskview.output.processSummary.combined', {
-                      reasoning: reasoningSummary,
-                      tools: toolSummary
-                  })
-                : reasoningSummary || toolSummary || taskViewT('renderer.taskview.output.processSummary');
-        let summary = combine();
-        if (Array.from(summary).length > 40 && toolNames.length > 1) {
-            toolSummary = summarizeTools(toolNames.slice(0, 1));
-            summary = combine();
-        }
-        return TaskView._truncateProcessSummary(summary);
+        return formatOutputProcessSummary({
+            toolDisplayNames: tools.map((tool) => TaskView._toolDisplayName(tool)),
+            toolCount: item.toolCount ?? tools.length,
+            hasReasoning: item.hasReasoning === true,
+            fallback: taskViewT('output.processSummary.fallback'),
+            translate: taskViewT
+        });
     }
 
     static _readableToolValue(value) {
@@ -1505,6 +1471,7 @@ class TaskView extends HTMLElement {
     _captureProcessDisclosureState(root) {
         const state = new Map();
         root?.querySelectorAll?.('[data-disclosure-key]').forEach((toggle) => {
+            if (toggle.dataset.reasoningAutoOpen === 'true') return;
             state.set(toggle.dataset.disclosureKey, toggle.getAttribute('aria-expanded') === 'true');
         });
         return state;
@@ -1516,6 +1483,9 @@ class TaskView extends HTMLElement {
         const detailId = `od-${this.widget_id}-${entryKey}-detail`;
         if (entry.type === 'reasoning') {
             const streaming = entry.part?.streaming === true;
+            const bubble = guiReasonDisplayMode === 'bubble';
+            const autoOpen = bubble && streaming && !expanded;
+            const detailOpen = expanded || autoOpen;
             const streamingText = String(entry.part?.text || '');
             const content = streaming
                 ? `<div class="od-streaming-text" data-streaming-part-index="${entry.partIndex}">${renderSafeMarkdown(streamingText)}</div>`
@@ -1526,9 +1496,10 @@ class TaskView extends HTMLElement {
                 : TaskView._plainTextFromHtml(content) || taskViewT('renderer.taskview.output.reasoningSummary');
             const duration = TaskView._formatOutputDuration(entry.part?.elapsedSeconds);
             return `
-                <div class="od-process-entry od-process-reason${expanded ? ' is-expanded' : ''}">
+                <div class="od-process-entry od-process-reason${bubble ? ' is-bubble' : ''}${streaming ? ' is-streaming' : ''}${expanded ? ' is-expanded is-pinned' : ''}">
                     <button type="button" class="od-process-entry-summary" data-process-entry-toggle="reasoning"
-                        data-disclosure-key="${escapeHtml(entryKey)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailId)}">
+                        data-disclosure-key="${escapeHtml(entryKey)}"${autoOpen ? ' data-reasoning-auto-open="true"' : ''}
+                        aria-expanded="${detailOpen}" aria-controls="${escapeHtml(detailId)}">
                         <span class="od-process-entry-kind">
                             <i class="fa-regular fa-lightbulb od-process-entry-icon" aria-hidden="true"></i>
                             <span>${taskViewT('renderer.taskview.output.reasoning')}</span>
@@ -1537,7 +1508,7 @@ class TaskView extends HTMLElement {
                         ${duration ? `<span class="od-process-entry-time">${escapeHtml(duration)}</span>` : ''}
                         <span class="od-process-chevron" aria-hidden="true">&gt;</span>
                     </button>
-                    <div id="${escapeHtml(detailId)}" class="od-process-entry-detail markdown-body${expanded ? ' is-open' : ''}">
+                    <div id="${escapeHtml(detailId)}" class="od-process-entry-detail markdown-body${bubble ? ' od-reasoning-bubble' : ''}${detailOpen ? ' is-open' : ''}"${bubble ? ' data-reasoning-bubble' : ''}>
                         ${content}
                     </div>
                 </div>`;
@@ -1640,8 +1611,14 @@ class TaskView extends HTMLElement {
         let action = taskViewT('renderer.taskview.output.status.thinking');
         if (item.kind === 'tool') {
             icon = 'fa-wrench';
-            const name = TaskView._toolDisplayName(item.tool);
-            action = taskViewT('renderer.taskview.output.status.tool', { name });
+            action = formatOutputToolActivity(
+                {
+                    displayName: TaskView._toolDisplayName(item.tool),
+                    summary: TaskView._toolPurpose(item.tool),
+                    activity: TaskView._toolPresentationText(item.tool?.presentation?.activity)
+                },
+                taskViewT
+            );
         } else if (item.kind === 'working') {
             icon = 'fa-spinner fa-spin';
             action = taskViewT('renderer.taskview.output.status.working');
@@ -1735,7 +1712,7 @@ class TaskView extends HTMLElement {
                 })
                 .join('');
         }
-        return `<div class="od-assistant-output-flow" data-output-mode="${guiOutputMode}">${html}</div>`;
+        return `<div class="od-assistant-output-flow" data-output-mode="${guiOutputMode}" data-reason-display="${guiReasonDisplayMode}">${html}</div>`;
     }
 
     _rememberAssistantOutput(messageId, parts, options = {}) {
@@ -2042,11 +2019,8 @@ class TaskView extends HTMLElement {
             message.content = [];
         }
         const partIndex = getProgressPartIndex(progress);
-        message.content[partIndex] = mergeGuiAssistantProgressPart(
-            message.content[partIndex],
-            progress.last_part,
-            progress.streaming === true
-        );
+        message.content[partIndex] =
+            progress.streaming === true ? { ...progress.last_part, streaming: true } : progress.last_part;
         if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
@@ -2283,15 +2257,12 @@ class TaskView extends HTMLElement {
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
         const previousPart = parts[partIndex];
-        const streamingDelta =
-            progress.streaming === true && typeof progress.last_part?.text_delta === 'string'
-                ? progress.last_part.text_delta
-                : null;
         const canPatchStreamingPart =
-            streamingDelta !== null &&
+            progress.streaming === true &&
             previousPart?.streaming === true &&
             previousPart.type === progress.last_part.type;
-        parts[partIndex] = mergeGuiAssistantProgressPart(previousPart, progress.last_part, progress.streaming === true);
+        parts[partIndex] =
+            progress.streaming === true ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning: progress.task_status === 'running',
             elapsedSeconds: progress.elapsedSeconds
@@ -2302,6 +2273,8 @@ class TaskView extends HTMLElement {
             if (targets.length > 0) {
                 targets.forEach((target) => {
                     TaskView.morphDomChildren(target, renderSafeMarkdown(String(parts[partIndex].text || '')));
+                    const bubble = target.closest('[data-reasoning-bubble]');
+                    if (bubble) bubble.scrollTop = bubble.scrollHeight;
                 });
                 message_content
                     .querySelectorAll(`[data-streaming-summary-part-index="${partIndex}"]`)
@@ -2971,11 +2944,9 @@ class TaskView extends HTMLElement {
         }
         const messageId = String(progress.message_id ?? '');
         const partChars =
-            typeof progress.last_part.text_length === 'number'
-                ? progress.last_part.text_length
-                : partType === 'reasoning'
-                  ? String(progress.last_part.content ?? '').length
-                  : String(progress.last_part.text ?? '').length;
+            partType === 'reasoning'
+                ? String(progress.last_part.content ?? '').length
+                : String(progress.last_part.text ?? '').length;
         const usageTokens = TaskView.getUsageDisplayTokens(progress.usage);
         const hasUsage = usageTokens.completionTokens > 0 || usageTokens.totalTokens > 0;
 
@@ -4183,7 +4154,7 @@ class TaskView extends HTMLElement {
         }
     }
 
-    _handleGuiOutputModeChanged() {
+    _handleGuiDisplaySettingsChanged() {
         if (!this.isConnected || !this.task_id) return;
         this._rerenderAssistantOutputsForModeChange();
     }
@@ -4243,8 +4214,11 @@ class TaskView extends HTMLElement {
             if (!expanded) {
                 process.querySelectorAll('[data-process-entry-toggle]').forEach((toggle) => {
                     toggle.setAttribute('aria-expanded', 'false');
+                    delete toggle.dataset.reasoningAutoOpen;
                 });
-                process.querySelectorAll('.od-process-entry').forEach((entry) => entry.classList.remove('is-expanded'));
+                process
+                    .querySelectorAll('.od-process-entry')
+                    .forEach((entry) => entry.classList.remove('is-expanded', 'is-pinned'));
                 process
                     .querySelectorAll('.od-process-entry-detail')
                     .forEach((entryDetail) => entryDetail.classList.remove('is-open'));
@@ -4258,6 +4232,21 @@ class TaskView extends HTMLElement {
         e.stopPropagation();
         const entry = entryToggle.closest('.od-process-entry');
         if (!entry) return;
+        if (entry.classList.contains('od-process-reason') && entry.classList.contains('is-bubble')) {
+            const pinned = !entry.classList.contains('is-pinned');
+            const autoOpen = !pinned && entry.classList.contains('is-streaming');
+            entry.classList.toggle('is-expanded', pinned);
+            entry.classList.toggle('is-pinned', pinned);
+            entryToggle.setAttribute('aria-expanded', String(pinned || autoOpen));
+            if (autoOpen) {
+                entryToggle.dataset.reasoningAutoOpen = 'true';
+            } else {
+                delete entryToggle.dataset.reasoningAutoOpen;
+            }
+            const bubble = Array.from(entry.children).find((child) => child.hasAttribute('data-reasoning-bubble'));
+            bubble?.classList.toggle('is-open', pinned || autoOpen);
+            return;
+        }
         const expanded = entryToggle.getAttribute('aria-expanded') !== 'true';
         entryToggle.setAttribute('aria-expanded', String(expanded));
         entry.classList.toggle('is-expanded', expanded);

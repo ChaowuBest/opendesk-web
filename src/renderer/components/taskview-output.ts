@@ -9,7 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export type GuiOutputMode = 'minimal' | 'detailed';
+import type { OutputDisplayLevel } from '../../common/output-display.js';
+
+export type GuiReasonDisplayMode = 'inline' | 'bubble';
 
 export interface GuiToolCall {
     id?: string;
@@ -24,9 +26,6 @@ export interface GuiAssistantPart {
     type?: string;
     rendered?: string;
     text?: string;
-    text_delta?: string;
-    text_length?: number;
-    stream_reset?: boolean;
     streaming?: boolean;
     elapsedSeconds?: number;
     toolcalls?: GuiToolCall[];
@@ -73,51 +72,16 @@ export interface GuiStatusItem {
 export type GuiAssistantOutputItem = GuiProcessItem | GuiBodyItem;
 export type GuiVisibleAssistantOutputItem = GuiAssistantOutputItem | GuiStatusItem;
 
-export function normalizeGuiOutputMode(value: unknown): GuiOutputMode {
-    return value === 'detailed' ? 'detailed' : 'minimal';
+export function normalizeGuiOutputMode(value: unknown): OutputDisplayLevel {
+    return value === 'verbose' ? 'verbose' : 'minimal';
 }
 
-export function getDefaultProcessExpanded(mode: GuiOutputMode): boolean {
-    return mode === 'detailed';
+export function normalizeGuiReasonDisplayMode(value: unknown): GuiReasonDisplayMode {
+    return value === 'bubble' ? 'bubble' : 'inline';
 }
 
-function previousStreamingText(part: GuiAssistantPart | undefined, type: string | undefined): string {
-    if (!part || part.type !== type) return '';
-    if (typeof part.text === 'string') return part.text;
-    if (type === 'reasoning' && typeof part.rendered === 'string') return part.rendered;
-    return '';
-}
-
-export function mergeGuiAssistantProgressPart(
-    previousPart: GuiAssistantPart | undefined,
-    incomingPart: GuiAssistantPart,
-    streaming: boolean
-): GuiAssistantPart {
-    if (!streaming || typeof incomingPart.text_delta !== 'string') {
-        return incomingPart;
-    }
-
-    const previousText = previousStreamingText(previousPart, incomingPart.type);
-    const reset = incomingPart.stream_reset === true;
-    const expectedLength = incomingPart.text_length;
-    let text = reset ? incomingPart.text_delta : previousText + incomingPart.text_delta;
-
-    if (!reset && typeof expectedLength === 'number') {
-        if (previousText.length === expectedLength) {
-            text = previousText;
-        } else if (previousText.length > expectedLength) {
-            text = previousText;
-        }
-    }
-
-    return {
-        ...previousPart,
-        type: incomingPart.type,
-        text,
-        rendered: undefined,
-        streaming: true,
-        ...(typeof incomingPart.elapsedSeconds === 'number' ? { elapsedSeconds: incomingPart.elapsedSeconds } : {})
-    };
+export function getDefaultProcessExpanded(mode: OutputDisplayLevel): boolean {
+    return mode === 'verbose';
 }
 
 function hasVisibleContent(part: GuiAssistantPart): boolean {
@@ -264,7 +228,12 @@ function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem | undefine
 
 export function getVisibleAssistantOutputItems(
     items: GuiAssistantOutputItem[],
-    options: { mode: GuiOutputMode; isRunning: boolean; showRunningDetails?: boolean; parts?: GuiAssistantPart[] }
+    options: {
+        mode: OutputDisplayLevel;
+        isRunning: boolean;
+        showRunningDetails?: boolean;
+        parts?: GuiAssistantPart[];
+    }
 ): GuiVisibleAssistantOutputItem[] {
     if (!options.isRunning) return items;
 

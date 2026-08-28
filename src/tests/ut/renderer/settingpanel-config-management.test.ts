@@ -71,6 +71,7 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#export-quickpass-btn')).toBeNull();
     });
 
+<<<<<<< HEAD
     test('renders development and debugging after telemetry as the final general section', () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();
@@ -157,7 +158,7 @@ describe('setting-panel config management', () => {
         expect(panel.saveImmediately).toHaveBeenCalled();
     });
 
-    test('adds minimal and detailed output modes without removing reasoning display', () => {
+    test('uses canonical minimal and verbose output mode values without removing reasoning display', () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();
 
@@ -167,7 +168,7 @@ describe('setting-panel config management', () => {
         );
 
         expect(outputMode).not.toBeNull();
-        expect(values).toEqual(['minimal', 'detailed']);
+        expect(values).toEqual(['minimal', 'verbose']);
         expect(panel.querySelector('#gui-reason-display-select')).not.toBeNull();
     });
 

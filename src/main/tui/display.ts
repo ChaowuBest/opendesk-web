@@ -10,9 +10,9 @@
  */
 
 import { Setting } from '../utils/setting.js';
+import { type OutputDisplayLevel } from '../../common/output-display.js';
 
-export const OUTPUT_DISPLAY_LEVELS = ['minimal', 'verbose'] as const;
-export type OutputDisplayLevel = (typeof OUTPUT_DISPLAY_LEVELS)[number];
+export { OUTPUT_DISPLAY_LEVELS, type OutputDisplayLevel } from '../../common/output-display.js';
 
 export function getConfiguredOutputDisplayLevel(): OutputDisplayLevel {
     return Setting.getInstance().getData().cli_config?.output_display ?? 'minimal';

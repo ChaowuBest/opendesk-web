@@ -59,6 +59,7 @@ import {
 } from './taskview-goal/history-placement.js';
 import chalk from 'chalk';
 import { formatOutputElapsed } from '../../../common/output-duration.js';
+import { formatOutputProcessSummary, formatOutputToolActivity } from '../../../common/output-process-summary.js';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
 import {
@@ -644,22 +645,8 @@ function getMinimalRunningIcon(): string {
 }
 
 function getMinimalToolAction(toolCall?: ToolCall): string {
-    if (!toolCall) return t('display.minimal.running.waiting');
-    const presentation = resolveToolCallPresentation(toolCall.getPresentation(), t);
-    if (presentation.activity) return presentation.activity;
-    return t('display.minimal.running.tool', {
-        tool: presentation.summary || presentation.displayName
-    });
-}
-
-function compactMinimalToolName(value: string, maxLength: number = 12): string {
-    const phrase = value.split(/[，,。！？!?；;]/, 1)[0].trim();
-    const characters = Array.from(phrase);
-    if (characters.length <= maxLength) return phrase;
-    return `${characters
-        .slice(0, maxLength - 1)
-        .join('')
-        .trim()}…`;
+    const presentation = toolCall ? resolveToolCallPresentation(toolCall.getPresentation(), t) : undefined;
+    return formatOutputToolActivity(presentation, t);
 }
 
 function getMinimalToolDisplayName(toolCall: ToolCall): string {
@@ -667,24 +654,13 @@ function getMinimalToolDisplayName(toolCall: ToolCall): string {
 }
 
 function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean, elapsed: string): string {
-    const toolNames = Array.from(
-        new Set(
-            toolCalls.map((toolCall) => compactMinimalToolName(getMinimalToolDisplayName(toolCall))).filter(Boolean)
-        )
-    );
-    const listedNames = toolNames.slice(0, 2).join(t('display.minimal.tools.summary.listSeparator'));
-    const tools = listedNames
-        ? t(
-              toolCalls.length === 1
-                  ? 'display.minimal.tools.summary.usedTools.one'
-                  : 'display.minimal.tools.summary.usedTools.many',
-              { tools: listedNames, count: toolCalls.length }
-          )
-        : '';
-    const reasoning = hasReasoning ? t('display.minimal.tools.summary.reasoning') : '';
-    const summary =
-        reasoning && tools ? t('display.minimal.tools.summary.combined', { reasoning, tools }) : reasoning || tools;
-    return summary ? t('display.minimal.tools.summary.withElapsed', { summary, elapsed }) : elapsed;
+    return formatOutputProcessSummary({
+        toolDisplayNames: toolCalls.map(getMinimalToolDisplayName),
+        toolCount: toolCalls.length,
+        hasReasoning,
+        elapsed,
+        translate: t
+    });
 }
 
 function renderAssistantBody(part: TextMessagePartView, width: number): string[] {
@@ -1923,7 +1899,7 @@ export class TaskView implements Component {
                 ...this.cachedOutput,
                 '',
                 truncateToWidth(
-                    `${getMinimalRunningIcon()} ${t('display.minimal.running.waiting')}  ${chalk.dim(meta)}`,
+                    `${getMinimalRunningIcon()} ${t('output.running.waiting')}  ${chalk.dim(meta)}`,
                     width,
                     '',
                     true

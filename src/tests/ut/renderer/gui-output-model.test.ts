@@ -2,7 +2,8 @@ import {
     buildAssistantOutputItems,
     getDefaultProcessExpanded,
     getVisibleAssistantOutputItems,
-    normalizeGuiOutputMode
+    normalizeGuiOutputMode,
+    normalizeGuiReasonDisplayMode
 } from '../../../renderer/components/taskview-output.js';
 
 function reasoning(label: string, elapsedSeconds: number = 1) {
@@ -30,11 +31,19 @@ function text(label: string) {
 }
 
 describe('GUI assistant output model', () => {
-    test('uses only minimal and detailed output modes', () => {
+    test('uses only canonical minimal and verbose output modes', () => {
         expect(normalizeGuiOutputMode('minimal')).toBe('minimal');
-        expect(normalizeGuiOutputMode('detailed')).toBe('detailed');
+        expect(normalizeGuiOutputMode('verbose')).toBe('verbose');
+        expect(normalizeGuiOutputMode('detailed')).toBe('minimal');
         expect(normalizeGuiOutputMode('full')).toBe('minimal');
         expect(normalizeGuiOutputMode(undefined)).toBe('minimal');
+    });
+
+    test('normalizes the reasoning presentation independently from the output mode', () => {
+        expect(normalizeGuiReasonDisplayMode('inline')).toBe('inline');
+        expect(normalizeGuiReasonDisplayMode('bubble')).toBe('bubble');
+        expect(normalizeGuiReasonDisplayMode('full')).toBe('inline');
+        expect(normalizeGuiReasonDisplayMode(undefined)).toBe('inline');
     });
 
     test('splits process segments at assistant body boundaries instead of tool counts', () => {
@@ -126,18 +135,18 @@ describe('GUI assistant output model', () => {
         ).toEqual(['process', 'body', 'process', 'final']);
     });
 
-    test('detailed running output preserves the same process model and includes the current text', () => {
+    test('verbose running output preserves the same process model and includes the current text', () => {
         const items = buildAssistantOutputItems([reasoning('分析'), tools(1, 2), text('当前正文')], {
             isRunning: true
         });
 
-        const visible = getVisibleAssistantOutputItems(items, { mode: 'detailed', isRunning: true });
+        const visible = getVisibleAssistantOutputItems(items, { mode: 'verbose', isRunning: true });
 
         expect(visible.map((item) => item.type)).toEqual(['process', 'body']);
     });
 
     test('process defaults differ by mode while inner detail remains user controlled', () => {
         expect(getDefaultProcessExpanded('minimal')).toBe(false);
-        expect(getDefaultProcessExpanded('detailed')).toBe(true);
+        expect(getDefaultProcessExpanded('verbose')).toBe(true);
     });
 });

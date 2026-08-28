@@ -17,6 +17,7 @@ import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
+import { OUTPUT_DISPLAY_LEVELS } from '../../common/output-display.js';
 import {
     getHarmonyRuntimeEnvironment,
     getHarmonyWorkspaceDirectory
@@ -174,6 +175,11 @@ const WindowBoundsSchema = z
     .nullable()
     .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存');
 
+const OutputDisplaySchema = z.preprocess(
+    (value: unknown) => (value === 'full' || value === 'detailed' ? 'verbose' : value),
+    z.enum(OUTPUT_DISPLAY_LEVELS).default('minimal')
+);
+
 const GUIConfigSchema = z.object({
     theme_preference: z
         .enum(['system', 'light', 'dark'])
@@ -212,11 +218,7 @@ const GUIConfigSchema = z.object({
         .optional()
         .default('inline')
         .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
-    output_mode: z
-        .enum(['minimal', 'detailed'])
-        .optional()
-        .default('minimal')
-        .describe('GUI 输出模式: minimal=极简, detailed=详细'),
+    output_mode: OutputDisplaySchema.describe('GUI 输出模式: minimal=极简, verbose=详细'),
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
@@ -254,11 +256,6 @@ const LegacyReasonDisplaySchema = z.preprocess(
         return value;
     },
     z.enum(['full', 'partial']).default('partial')
-);
-
-const OutputDisplaySchema = z.preprocess(
-    (value: unknown) => (value === 'full' || value === 'detailed' ? 'verbose' : value),
-    z.enum(['minimal', 'verbose']).default('minimal')
 );
 
 const TerminalCliSchema = z.object({

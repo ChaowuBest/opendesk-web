@@ -198,19 +198,22 @@ describe('设置 schema', () => {
         expect(legacySetting.cli_config.output_display).toBe('verbose');
     });
 
-    test('GUI 输出模式默认极简且只接受极简和详细', () => {
+    test('GUI 输出模式统一使用 verbose 并迁移旧 detailed/full 配置', () => {
         const defaultSetting = Setting.getSettingSchema().parse({});
-        const detailedSetting = Setting.getSettingSchema().parse({
+        const verboseSetting = Setting.getSettingSchema().parse({
+            gui_config: { output_mode: 'verbose' }
+        });
+        const legacyDetailedSetting = Setting.getSettingSchema().parse({
             gui_config: { output_mode: 'detailed' }
+        });
+        const legacyFullSetting = Setting.getSettingSchema().parse({
+            gui_config: { output_mode: 'full' }
         });
 
         expect(defaultSetting.gui_config.output_mode).toBe('minimal');
-        expect(detailedSetting.gui_config.output_mode).toBe('detailed');
-        expect(() =>
-            Setting.getSettingSchema().parse({
-                gui_config: { output_mode: 'full' }
-            })
-        ).toThrow();
+        expect(verboseSetting.gui_config.output_mode).toBe('verbose');
+        expect(legacyDetailedSetting.gui_config.output_mode).toBe('verbose');
+        expect(legacyFullSetting.gui_config.output_mode).toBe('verbose');
     });
 
     test('网络配置缺省时默认使用系统代理', () => {
@@ -247,7 +250,7 @@ describe('设置 schema', () => {
         expect(setting.task_config.evidence_card).toBe(false);
     });
 
-    test('TUI 详细输出接受 detailed 术语并兼容存量 verbose 值', () => {
+    test('TUI 配置迁移 detailed 术语并接受 canonical verbose 值', () => {
         const detailed = Setting.getSettingSchema().parse({ cli_config: { output_display: 'detailed' } });
         const verbose = Setting.getSettingSchema().parse({ cli_config: { output_display: 'verbose' } });
 

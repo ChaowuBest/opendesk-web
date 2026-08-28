@@ -80,7 +80,10 @@ describe('task-view GUI output modes', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' }
+        });
         window.taskManagerAPI = {
             getToolCallDetail: jest.fn(async (_taskId, _messageId, _partIndex, toolIndex) => ({
                 result: `output ${toolIndex + 1}`,
@@ -151,9 +154,9 @@ describe('task-view GUI output modes', () => {
         expect(
             Array.from(view.querySelectorAll('.od-process-summary-text')).map((element) => element.textContent)
         ).toEqual([
-            '深度思考 · 使用了 Tool1、Tool2 等工具',
-            '深度思考 · 使用了 Tool11、Tool12 等工具',
-            '深度思考 · 使用了 Tool21、Tool22 等工具'
+            '深度思考 · 使用了 Tool1、Tool2 等 10个工具',
+            '深度思考 · 使用了 Tool11、Tool12 等 10个工具',
+            '深度思考 · 使用了 Tool21、Tool22 等 10个工具'
         ]);
         expect(view.textContent).not.toContain('工具调用 · 10 个工具');
         expect(view.textContent).not.toMatch(/工具调用 \d+[–-]\d+/);
@@ -181,8 +184,8 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result script')).toBeNull();
     });
 
-    test('detailed output reuses process markup and defaults every process segment open', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'detailed' } });
+    test('verbose output reuses process markup and defaults every process segment open', () => {
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-2',
@@ -216,11 +219,11 @@ describe('task-view GUI output modes', () => {
         const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
 
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'detailed' } });
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
 
         expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
         expect(view.querySelector('#message-content-message-mode-switch')).toBe(messageContent);
-        expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-output-mode')).toBe('detailed');
+        expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-output-mode')).toBe('verbose');
         expect(view.querySelector('.od-process-summary[data-process-toggle]')?.getAttribute('aria-expanded')).toBe(
             'false'
         );
@@ -229,6 +232,197 @@ describe('task-view GUI output modes', () => {
 
         expect(view.querySelector('[data-completed-process-toggle]')?.getAttribute('aria-expanded')).toBe('true');
         view.remove();
+    });
+
+    test('bubble reasoning mode is rendered by the shared process timeline', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
+        });
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml(
+            [{ type: 'reasoning', text: '正在分析', rendered: '正在分析', streaming: true }],
+            { isRunning: true, messageId: 'message-bubble-streaming' }
+        );
+
+        const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
+        const reason = view.querySelector('.od-process-reason') as HTMLElement;
+        const toggle = reason.querySelector('[data-process-entry-toggle="reasoning"]') as HTMLElement;
+        const bubble = reason.querySelector('[data-reasoning-bubble]') as HTMLElement;
+
+        expect(flow.dataset.reasonDisplay).toBe('bubble');
+        expect(reason.classList).toContain('is-bubble');
+        expect(reason.classList).not.toContain('is-pinned');
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect(toggle.dataset.reasoningAutoOpen).toBe('true');
+        expect(bubble.classList).toContain('is-open');
+        expect(bubble.textContent).toContain('正在分析');
+        expect(view._captureProcessDisclosureState(flow).get(toggle.dataset.disclosureKey)).toBeUndefined();
+    });
+
+    test('completed bubble reasoning can be pinned and unpinned without changing the process model', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
+        });
+        const view = createView();
+        view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '完整思考内容' }], {
+            isRunning: false,
+            messageId: 'message-bubble-completed'
+        });
+
+        const reason = view.querySelector('.od-process-reason') as HTMLElement;
+        const toggle = reason.querySelector('[data-process-entry-toggle="reasoning"]') as HTMLElement;
+        const bubble = reason.querySelector('[data-reasoning-bubble]') as HTMLElement;
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        expect(bubble.classList).not.toContain('is-open');
+
+        view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
+        expect(reason.classList).toContain('is-pinned');
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect(bubble.classList).toContain('is-open');
+
+        view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
+        expect(reason.classList).not.toContain('is-pinned');
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        expect(bubble.classList).not.toContain('is-open');
+    });
+
+    test('an automatically opened streaming bubble closes when reasoning completes', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
+        });
+        const view = createView();
+        view.task_id = 'task-bubble-completion';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = view.querySelector('#taskview-chat-history');
+
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-bubble-completion',
+                last_part_index: 0,
+                streaming: true,
+                last_part: {
+                    type: 'reasoning',
+                    text: '分析中'
+                }
+            },
+            history
+        );
+
+        expect(view.querySelector('[data-reasoning-bubble]')?.classList).toContain('is-open');
+        expect(view.querySelector('[data-process-entry-toggle="reasoning"]')?.getAttribute('aria-expanded')).toBe(
+            'true'
+        );
+
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'completed',
+                message_id: 'message-bubble-completion',
+                last_part_index: 0,
+                streaming: false,
+                last_part: { type: 'reasoning', rendered: '分析完成' }
+            },
+            history
+        );
+
+        expect(view.querySelector('[data-reasoning-bubble]')?.classList).not.toContain('is-open');
+        expect(view.querySelector('[data-process-entry-toggle="reasoning"]')?.getAttribute('aria-expanded')).toBe(
+            'false'
+        );
+    });
+
+    test('streaming reasoning patches the existing bubble and keeps the newest content visible', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
+        });
+        const view = createView();
+        view.task_id = 'task-bubble-streaming';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = view.querySelector('#taskview-chat-history');
+
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-bubble-streaming-patch',
+                last_part_index: 0,
+                streaming: true,
+                last_part: {
+                    type: 'reasoning',
+                    text: '第一段'
+                }
+            },
+            history
+        );
+
+        const bubble = view.querySelector('[data-reasoning-bubble]') as HTMLElement;
+        Object.defineProperty(bubble, 'scrollHeight', { value: 240, configurable: true });
+        bubble.scrollTop = 0;
+
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-bubble-streaming-patch',
+                last_part_index: 0,
+                streaming: true,
+                last_part: { type: 'reasoning', text: '第一段第二段' }
+            },
+            history
+        );
+
+        expect(view.querySelector('[data-reasoning-bubble]')).toBe(bubble);
+        expect(bubble.textContent).toContain('第一段第二段');
+        expect(bubble.scrollTop).toBe(240);
+    });
+
+    test('reason display changes rerender mounted assistant output without reloading the task', () => {
+        const view = createView();
+        view.setAttribute('task_id', 'task-reason-display-switch');
+        view.task_id = 'task-reason-display-switch';
+        view.connectedCallback = () => {};
+        view.disconnectedCallback = () => {};
+        document.body.appendChild(view);
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-reason-display-switch',
+            content: [{ type: 'reasoning', rendered: '分析配置路径' }],
+            timestamp: Date.now()
+        });
+
+        const messageContent = view.querySelector('#message-content-message-reason-display-switch');
+        expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-reason-display')).toBe('inline');
+
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
+        });
+
+        expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
+        expect(view.querySelector('#message-content-message-reason-display-switch')).toBe(messageContent);
+        expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-reason-display')).toBe('bubble');
+        expect(view.querySelector('.od-process-reason')?.classList).toContain('is-bubble');
+        view.remove();
+    });
+
+    test('bubble reasoning styles preserve an overlay on desktop and a usable mobile surface', () => {
+        expect(taskViewStyles).toMatch(
+            /\.od-process-reason\.od-reasoning-bubble\{[^}]*position:absolute;[^}]*display:block;[^}]*width:min\(600px,calc\(100%-10px\)\);[^}]*max-height:300px;[^}]*background:var\(--od-bg-elevated\)!important;/
+        );
+        expect(taskViewStyles).toMatch(
+            /\.od-process-reason\.is-bubble:hover\.od-reasoning-bubble,[^{]*\.od-process-reason\.is-bubble:focus-within\.od-reasoning-bubble,[^{]*\.od-process-reason\.is-bubble\.od-reasoning-bubble\.is-open\{[^}]*opacity:1;[^}]*pointer-events:auto;/
+        );
+        expect(taskViewStyles).toMatch(
+            /@media\(max-width:640px\)\{[^}]*\.od-process-reason\.od-reasoning-bubble\{[^}]*position:fixed;[^}]*left:16px;[^}]*right:16px;[^}]*bottom:16px;/
+        );
+        expect(taskViewStyles).toMatch(
+            /@media\(prefers-reduced-motion:reduce\)\{[^}]*\.od-process-reason\.od-reasoning-bubble\{[^}]*transition:none;/
+        );
     });
 
     test('minimal running output shows one clickable current-operation row', () => {
@@ -246,8 +440,8 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result')).toBeNull();
         expect(view.querySelector('.od-running-status')?.textContent).not.toContain('总耗时');
         expect(view.querySelector('.od-running-status-time')).toBeNull();
-        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在调用 Tool10…');
-        expect(view.querySelector('.od-running-status')?.textContent).not.toContain('echo 10');
+        expect(view.querySelector('.od-running-status')?.textContent).toContain('正在执行 echo 10…');
+        expect(view.querySelector('.od-running-status')?.textContent).not.toContain('Tool10');
 
         const runningStatus = view.querySelector('.od-running-status') as HTMLElement;
         expect(runningStatus.querySelector('.od-running-status-icon')).not.toBeNull();
@@ -286,12 +480,12 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.od-stage-body')).toHaveLength(1);
         expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
         expect(view.querySelector('.od-process-summary-text')?.textContent).toBe(
-            '深度思考 · 使用了 Tool1、Tool2 等工具'
+            '深度思考 · 使用了 Tool1、Tool2 等 10个工具'
         );
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool20…');
+        expect(flow.lastElementChild?.textContent).toContain('正在执行 echo 20…');
     });
 
     test('minimal reasoning status hides reasoning content from the current-operation row', () => {
@@ -321,7 +515,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在调用 读取文件…');
+        expect(status).toContain('正在执行 读取文件…');
         expect(status).not.toContain('filemgr-readFile');
         expect(status).not.toContain('package.json');
     });
@@ -416,7 +610,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 使用了 读取文件、搜索文件内容 等工具');
+        expect(summary).toBe('深度思考 · 使用了 读取文件、搜索文件内容 等 3个工具');
         expect(summary).not.toContain('分析项目结构');
     });
 
@@ -460,7 +654,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 使用了 网页获取 等工具');
+        expect(summary).toBe('深度思考 · 使用了 网页获取 等 1个工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -485,8 +679,8 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(Array.from(summary).length).toBeLessThanOrEqual(40);
-        expect(summary).toBe('深度思考 · 使用了 very-long-s… 等工具');
+        expect(Array.from(summary).length).toBeLessThanOrEqual(64);
+        expect(summary).toBe('深度思考 · 使用了 very-long-s… 等 4个工具');
     });
 
     test('reasoning and tool rows share the same left edge and kind column width', () => {
@@ -1004,7 +1198,7 @@ describe('task-view GUI output modes', () => {
         const tool = view.querySelector('.od-process-tool') as HTMLElement;
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('任务追问');
         expect(tool.querySelector('.od-process-tool-args')).toBeNull();
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 任务追问 等工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 任务追问 等 1个工具');
     });
 
     test('load skill summaries show only the skill name instead of raw arguments', async () => {
@@ -1024,7 +1218,7 @@ describe('task-view GUI output modes', () => {
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('加载技能');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('use-browser');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).not.toContain('bundleName');
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 加载技能 等工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 加载技能 等 1个工具');
 
         const toggle = tool.querySelector('[data-process-entry-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
@@ -1057,7 +1251,7 @@ describe('task-view GUI output modes', () => {
         const tool = view.querySelector('.od-process-tool') as HTMLElement;
         expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('调用技能');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('use-browser');
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 调用技能 等工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('使用了 调用技能 等 1个工具');
 
         const toggle = tool.querySelector('[data-process-entry-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
@@ -1246,10 +1440,10 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
-        expect(flow.lastElementChild?.textContent).toContain('正在调用 Tool1…');
+        expect(flow.lastElementChild?.textContent).toContain('正在执行 echo 1…');
     });
 
-    test('streaming text deltas render safe Markdown in one stable part without rebuilding the assistant output', () => {
+    test('streaming text snapshots render safe Markdown in one stable part without rebuilding the assistant output', () => {
         const view = createView();
         view.task_id = 'task-1';
         view.innerHTML = '<div id="taskview-chat-history"></div>';
@@ -1265,9 +1459,7 @@ describe('task-view GUI output modes', () => {
                 streaming: true,
                 last_part: {
                     type: 'text',
-                    text_delta: '**hello**',
-                    text_length: 9,
-                    stream_reset: true
+                    text: '**hello**'
                 }
             },
             history
@@ -1288,8 +1480,7 @@ describe('task-view GUI output modes', () => {
                 streaming: true,
                 last_part: {
                     type: 'text',
-                    text_delta: '\n\n- world',
-                    text_length: 18
+                    text: '**hello**\n\n- world'
                 }
             },
             history
@@ -1302,7 +1493,7 @@ describe('task-view GUI output modes', () => {
         expect(renderSpy).toHaveBeenCalledTimes(1);
     });
 
-    test('hidden history merges text deltas instead of replacing the complete part', () => {
+    test('hidden history replaces the current streaming part with the latest snapshot', () => {
         const view = createView();
         view._historyMessages = [
             {
@@ -1320,8 +1511,7 @@ describe('task-view GUI output modes', () => {
             streaming: true,
             last_part: {
                 type: 'text',
-                text_delta: ' world',
-                text_length: 11
+                text: 'hello world'
             }
         });
 
@@ -1355,11 +1545,7 @@ describe('task-view GUI output modes', () => {
                 message_id: 'message-terminal',
                 last_part_index: 1,
                 streaming: true,
-                last_part: {
-                    type: 'text',
-                    text_delta: ' stale',
-                    text_length: 14
-                }
+                last_part: { type: 'text', text: 'complete stale' }
             },
             view.querySelector('#taskview-chat-history')
         );
@@ -1382,9 +1568,7 @@ describe('task-view GUI output modes', () => {
                 last_part_index: 0,
                 last_part: {
                     type: 'text',
-                    text_delta: '## 最终',
-                    text_length: 5,
-                    stream_reset: true
+                    text: '## 最终'
                 },
                 streaming: true
             },
@@ -1472,7 +1656,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('collapsing a process also collapses open reasoning and tool details', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'detailed' } });
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-3',

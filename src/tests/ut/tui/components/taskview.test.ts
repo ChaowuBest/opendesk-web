@@ -32,7 +32,7 @@ function createToolPart(id: number, filePath: string, customOutput = `CUSTOM TOO
             key: 'renderer.taskview.output.purpose.readFile',
             params: { name: filePath.split('/').pop() || filePath }
         },
-        activity: { key: 'display.minimal.running.reading', params: { path: filePath } }
+        activity: { key: 'output.running.reading', params: { path: filePath } }
     };
     toolCall.status = 'success';
     toolCall.setTool({

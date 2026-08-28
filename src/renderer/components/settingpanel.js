@@ -2306,7 +2306,7 @@ class SettingPanel extends HTMLElement {
                     <label class="sp-form-label">${this._t('sp.general.outputMode')}</label>
                     <select id="gui-output-mode-select" class="sp-form-input">
                         <option value="minimal"${guiOutputMode === 'minimal' ? ' selected' : ''}>${this._t('sp.general.outputMode.minimal')}</option>
-                        <option value="detailed"${guiOutputMode === 'detailed' ? ' selected' : ''}>${this._t('sp.general.outputMode.detailed')}</option>
+                        <option value="verbose"${guiOutputMode === 'verbose' ? ' selected' : ''}>${this._t('sp.general.outputMode.verbose')}</option>
                     </select>
                 </div>
             </div>
