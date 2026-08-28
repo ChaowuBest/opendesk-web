@@ -227,9 +227,14 @@ export function showBlacklistPrompt(data: BlacklistPromptData): void {
         close();
     });
 
-    overlay.querySelector('[data-action="cancel"]')!.addEventListener('click', () => {
-        (window as any).skillBlacklistAPI?.dismissBlacklist(taskId);
-        close();
+    // 注意：弹窗内 data-action="cancel" 的元素有两个（顶部关闭按钮 + 底部"忽略"按钮），
+    // 必须用 querySelectorAll 全量绑定，否则监听器只会挂到第一个元素（顶部关闭按钮），
+    // 导致底部"忽略"按钮点击无响应。
+    overlay.querySelectorAll('[data-action="cancel"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            (window as any).skillBlacklistAPI?.dismissBlacklist(taskId);
+            close();
+        });
     });
 
     body.appendChild(overlay);
