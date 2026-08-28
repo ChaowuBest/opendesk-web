@@ -151,6 +151,10 @@ class PluginDefinedTool extends BaseTool<any> {
         return await this.source.renderToolCall(toolCall);
     }
 
+    getToolCallPresentation(toolCall: Parameters<BaseTool<any>['getToolCallPresentation']>[0]) {
+        return this.source.getToolCallPresentation(toolCall);
+    }
+
     renderToolCallCli(toolCall: Parameters<BaseTool<any>['renderToolCallCli']>[0], width: number) {
         return this.source.renderToolCallCli(toolCall, width);
     }

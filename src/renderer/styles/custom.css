@@ -3475,6 +3475,8 @@ agent-input[hide-disclaimer] .agent-input-footer {
 .od-completed-process-chevron {
     display: inline-block;
     color: var(--od-text-faint);
+    font-size: var(--fs-sm);
+    line-height: 1;
     transition: transform 140ms ease;
 }
 
@@ -3513,7 +3515,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-segment {
     min-width: 0;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
     overflow: visible;
     background: transparent;
     border: 0;
@@ -3534,9 +3536,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 32px;
+    min-height: 28px;
     margin: 0;
-    padding: 6px 0;
+    padding: 3px 0;
     border-bottom: 0;
     border-radius: 0;
 }
@@ -3566,10 +3568,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     color: var(--chat-green);
     font-size: 14px;
     line-height: 1;
-}
-
-.od-process-main-icon.is-incomplete {
-    color: #c44752;
 }
 
 .od-process-summary-text {
@@ -3605,7 +3603,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 .od-process-chevron {
     display: inline-block;
     color: var(--od-text-disabled);
-    font-size: var(--fs-lg);
+    font-size: var(--fs-sm);
     font-weight: 400;
     line-height: 1;
     transform: rotate(0deg);
@@ -3627,8 +3625,8 @@ agent-input[hide-disclaimer] .agent-input-footer {
     overflow-y: auto;
     overscroll-behavior: auto;
     scrollbar-gutter: stable;
-    margin: 2px 0 0;
-    padding: 6px 0 0;
+    margin: 0;
+    padding: 2px 0 0;
     border: 0;
     border-radius: 0;
     background: transparent;
@@ -3673,7 +3671,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-reason {
     margin-top: 0;
-    margin-bottom: 11px;
+    margin-bottom: 0;
     overflow: hidden;
     border-bottom: 1px solid var(--od-border);
     border-radius: 6px;
@@ -3691,9 +3689,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: grid;
     grid-template-columns: 58px minmax(0, 1fr) auto 12px;
     gap: 6px;
-    min-height: 30px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    min-height: 26px;
+    padding-top: 2px;
+    padding-bottom: 2px;
     color: #b45309;
     font-size: var(--fs-md);
     font-weight: 650;
@@ -3716,7 +3714,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-process-tool {
     margin-top: 0;
-    margin-bottom: 11px;
+    margin-bottom: 0;
     overflow: hidden;
     border-bottom: 1px solid var(--od-border);
     border-radius: 6px;
@@ -3736,9 +3734,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: grid;
     grid-template-columns: 58px auto minmax(0, 1fr) auto 12px;
     gap: 6px;
-    min-height: 30px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    min-height: 26px;
+    padding-top: 2px;
+    padding-bottom: 2px;
     color: var(--od-text-muted);
     font-family: var(--font-mono);
     font-size: var(--fs-md);
@@ -3766,7 +3764,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     min-width: 0;
     overflow: hidden;
     color: var(--od-text);
-    font-weight: 500;
+    font-weight: 400;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -3911,6 +3909,19 @@ task-view .od-process-markdown-result.markdown-body > :last-child {
     font-family: var(--font-sans);
     font-size: var(--fs-sm);
     font-weight: 650;
+}
+
+.od-process-tool-detail-status {
+    display: flex;
+    min-height: 42px;
+    align-items: center;
+    gap: 7px;
+    color: var(--od-text-muted);
+    font-family: var(--font-sans);
+}
+
+.od-process-tool-detail-status.is-error {
+    color: #c2413a;
 }
 
 .od-process-tool-execution-status {

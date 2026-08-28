@@ -3,6 +3,7 @@ import { ReasoningMessagePartView, TaskView, ToolCallMessagePartView } from '../
 import {
     AssistantMessage,
     ChatContext,
+    ErrorMessagePart,
     ReasoningMessagePart,
     TextMessagePart,
     ToolCall,
@@ -192,6 +193,55 @@ describe('TaskView chunk handling', () => {
         expect(taskView.messages).toHaveLength(2);
     });
 
+    test('rebuilds completed assistant elapsed time from the persisted duration', () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        const assistantMessage = new AssistantMessage([new TextMessagePart('Finished response')]);
+        assistantMessage.timestamp = 1_000;
+        assistantMessage.elapsedSeconds = 2.4;
+        chatContext.appendMessage(assistantMessage);
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Complete · Elapsed 2s');
+        expect(output).not.toContain('Complete · Elapsed 1m 39s');
+
+        now.mockReturnValue(200_000);
+        taskView.clearMessages();
+        taskView.rebuildFromHistory();
+
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Complete · Elapsed 2s');
+    });
+
+    test('rebuilds assistant errors with a failed terminal status', () => {
+        jest.spyOn(Date, 'now').mockReturnValue(100_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        const assistantMessage = new AssistantMessage([
+            new ErrorMessagePart('Stream Completion Failed', 'connection refused')
+        ]);
+        assistantMessage.elapsedSeconds = 2.4;
+        chatContext.appendMessage(assistantMessage);
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Failed · Elapsed 2s');
+        expect(output).not.toContain('Complete');
+    });
+
     test('renders tool call parts with missing toolcalls as empty output', () => {
         const view = new ToolCallMessagePartView();
 
@@ -281,6 +331,89 @@ describe('TaskView chunk handling', () => {
         expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✤ Reading `src/one.ts`');
     });
 
+    test('minimal mode renders a live assistant error with a red failed terminal status', async () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: new ErrorMessagePart('Stream Completion Failed', 'connection refused')
+        });
+        now.mockReturnValue(2_500);
+        taskView.clearStreamThrottle();
+
+        chalk.level = 3;
+        const rawOutput = taskView.render(100).join('\n');
+        const output = stripAnsi(rawOutput);
+        expect(output).toContain('Failed · Elapsed 2s');
+        expect(output).not.toContain('Complete');
+        expect(rawOutput).toContain(`${chalk.redBright('●')} ${chalk.redBright('Failed')}`);
+    });
+
+    test('minimal mode keeps a failed terminal status when an error follows partial text', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: new TextMessagePart('Partial response')
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: new ErrorMessagePart('Stream Completion Failed', 'connection reset')
+        });
+        taskView.clearStreamThrottle();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Partial response');
+        expect(output).toContain('Failed ·');
+        expect(output).not.toContain('Complete');
+    });
+
+    test('minimal mode keeps a successful terminal status after a recoverable tool error', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        const toolPart = createToolPart(1, 'missing-file.ts');
+        toolPart.toolcalls[0].status = 'error';
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: toolPart
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: new TextMessagePart('Recovered response')
+        });
+        taskView.clearStreamThrottle();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Recovered response');
+        expect(output).toContain('Complete ·');
+        expect(output).not.toContain('Failed');
+    });
+
     test('minimal final output stream does not report a completed tool as running', async () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
@@ -313,7 +446,7 @@ describe('TaskView chunk handling', () => {
 
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output.match(/[✣✤✥✦]/g)).toHaveLength(1);
-        expect(output).toContain('1.5s');
+        expect(output).toContain('Elapsed 2s');
         expect(output).toContain('Generating response…');
 
         now.mockRestore();
@@ -345,9 +478,9 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const output = renderedLines.join('\n');
-        const firstSummary = output.indexOf('Deep reasoning · Used Read File and other tools');
+        const firstSummary = output.indexOf('Deep reasoning · Used Read File in 2 tool calls');
         const firstBody = output.indexOf('First body');
-        const secondSummary = output.indexOf('Deep reasoning · Used Read File and other tools', firstBody);
+        const secondSummary = output.indexOf('Deep reasoning · Used Read File in 1 tool call', firstBody);
         const secondBody = output.indexOf('Second body');
         expect(firstSummary).toBeGreaterThanOrEqual(0);
         expect(firstSummary).toBeLessThan(firstBody);
@@ -356,11 +489,11 @@ describe('TaskView chunk handling', () => {
         expect(output).not.toMatch(/[✣✤✥✦]/);
 
         const firstSummaryLine = renderedLines.findIndex((line) =>
-            line.includes('Deep reasoning · Used Read File and other tools')
+            line.includes('Deep reasoning · Used Read File in 2 tool calls')
         );
         const firstBodyLine = renderedLines.findIndex((line) => line.includes('First body'));
         const secondSummaryLine = renderedLines.findIndex(
-            (line, index) => index > firstBodyLine && line.includes('Deep reasoning · Used Read File and other tools')
+            (line, index) => index > firstBodyLine && line.includes('Deep reasoning · Used Read File in 1 tool call')
         );
         const secondBodyLine = renderedLines.findIndex((line) => line.includes('Second body'));
         expect(renderedLines[0].trim()).toBe('');
@@ -424,12 +557,44 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('💡 深度思考 · 使用了 更新任务计划、网页搜索 等工具 · 2.0s');
-        expect(output).not.toContain('3个工具');
+        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具 · 耗时 2 秒');
+        expect(output).not.toContain('4个工具');
         expect(output).not.toContain('已执行工具');
         expect(rawOutput).toContain(
-            `${chalk.greenBright('💡')} ${chalk.dim('深度思考 · 使用了 更新任务计划、网页搜索 等工具 · 2.0s')}`
+            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具 · 耗时 2 秒')}`
         );
+    });
+
+    test('minimal tool summary uses tool-owned presentation metadata', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        const part = createNamedToolPart(1, 'plugin-opaqueOperation');
+        part.toolcalls[0].setTool({
+            renderToolCallCli: jest.fn(() => ['custom detail']),
+            getToolCallPresentation: jest.fn(() => ({ displayName: 'Inspector' }))
+        } as any);
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: part
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: new TextMessagePart('Done')
+        });
+        taskView.clearStreamThrottle();
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('Used Inspector in 1 tool call');
+        expect(output).not.toContain('plugin-opaqueOperation');
     });
 
     test('minimal tool summaries freeze each tool group duration independently', async () => {
@@ -493,14 +658,14 @@ describe('TaskView chunk handling', () => {
 
         now.mockReturnValue(20_000);
         let output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File and other tools · 6.0s');
-        expect(output).toContain('Deep reasoning · Used Read File and other tools · 4.0s');
+        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls · Elapsed 6s');
+        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call · Elapsed 4s');
 
         now.mockReturnValue(30_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File and other tools · 6.0s');
-        expect(output).toContain('Deep reasoning · Used Read File and other tools · 4.0s');
+        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls · Elapsed 6s');
+        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call · Elapsed 4s');
     });
 
     test('minimal completion suppresses a duplicate tool summary and dims its metadata', async () => {
@@ -530,12 +695,12 @@ describe('TaskView chunk handling', () => {
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
         expect(output).not.toContain('✓ 1 tool');
-        expect(output.indexOf('Complete · Deep reasoning · Used Read File and other tools · 1.5s')).toBeLessThan(
+        expect(output.indexOf('Complete · Deep reasoning · Used Read File in 1 tool call · Elapsed 2s')).toBeLessThan(
             output.indexOf('Final output')
         );
         expect(rawOutput).toContain(
             `${chalk.greenBright('●')} ${chalk.greenBright('Complete')} ${chalk.dim(
-                '· Deep reasoning · Used Read File and other tools · 1.5s'
+                '· Deep reasoning · Used Read File in 1 tool call · Elapsed 2s'
             )}`
         );
         expect(output).not.toContain('CUSTOM TOOL 1');
@@ -579,14 +744,14 @@ describe('TaskView chunk handling', () => {
 
         let output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File and other tools · 9.0s');
+        expect(output).toContain('Complete · Used Read File in 1 tool call · Elapsed 9s');
         expect(output).not.toContain('body segment');
 
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File and other tools · 9.0s');
+        expect(output).toContain('Complete · Used Read File in 1 tool call · Elapsed 9s');
         expect(output).not.toContain('body segment');
     });
 
@@ -615,8 +780,8 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output.match(/✓ Used Read File and other tools ·/g)).toHaveLength(3);
-        expect(output).toContain('Complete · Used Read File and other tools ·');
+        expect(output.match(/✓ Used Read File in 1 tool call ·/g)).toHaveLength(3);
+        expect(output).toContain('Complete · Used Read File in 3 tool calls ·');
         expect(output).not.toContain('body segment');
     });
 
@@ -715,23 +880,66 @@ describe('TaskView chunk handling', () => {
         expect(output).not.toContain('temporary-reason-12');
     });
 
-    test('retry progress is hidden in minimal mode and restored in verbose mode', async () => {
+    test('retry progress uses the same card in minimal and verbose modes', async () => {
+        const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const renderAtLevel = (level: 'minimal' | 'verbose', width = 100) => {
+            taskView.setOutputDisplayLevel(level);
+            return stripAnsi(taskView.render(width).join('\n'));
+        };
+        const scheduledRetry = {
+            type: 'retry',
+            task_id: 'task_1',
+            task_status: 'running',
+            attempt: 2,
+            delay_ms: 10_000,
+            next_retry_at: 11_000,
+            error_message: 'temporary failure',
+            status: 'scheduled'
+        } as const;
+        await taskView.handleChunkUpdate(scheduledRetry);
+
+        let minimalOutput = renderAtLevel('minimal');
+        let verboseOutput = renderAtLevel('verbose');
+        expect(minimalOutput).toBe(verboseOutput);
+        expect(minimalOutput).toContain('LLM Request Auto Retry');
+        expect(minimalOutput).toContain('Retried 2 time(s)');
+        expect(minimalOutput).toContain('(in 10s)');
+        expect(minimalOutput).toContain('/retry');
+        expect(minimalOutput).toContain('Last error: temporary failure');
+
+        now.mockReturnValue(4_000);
+        await taskView.handleChunkUpdate({
+            ...scheduledRetry,
+            error_message: 'temporary failure with a message that is too long for a narrow terminal'
+        });
+        minimalOutput = renderAtLevel('minimal', 24);
+        verboseOutput = renderAtLevel('verbose', 24);
+        expect(minimalOutput).toBe(verboseOutput);
+        expect(minimalOutput).toContain('/retry');
+        expect(minimalOutput.split('\n').every((line) => line.length <= 24)).toBe(true);
+
+        await taskView.handleChunkUpdate({
+            ...scheduledRetry,
+            status: 'retrying'
+        });
+        minimalOutput = renderAtLevel('minimal');
+        verboseOutput = renderAtLevel('verbose');
+        expect(minimalOutput).toBe(verboseOutput);
+        expect(minimalOutput).toContain('Starting retry attempt 2');
+        expect(minimalOutput).not.toContain('/retry');
+
         await taskView.handleChunkUpdate({
             type: 'retry',
             task_id: 'task_1',
             task_status: 'running',
             attempt: 2,
-            delay_ms: 1_000,
-            next_retry_at: Date.now() + 1_000,
+            delay_ms: 10_000,
+            next_retry_at: 11_000,
             error_message: 'temporary failure',
-            status: 'scheduled'
+            status: 'cleared'
         });
-
-        taskView.setOutputDisplayLevel('minimal');
-        expect(stripAnsi(taskView.render(100).join('\n'))).not.toContain('Retry');
-
-        taskView.setOutputDisplayLevel('verbose');
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('Retry');
+        expect(renderAtLevel('minimal')).not.toContain('LLM Request Auto Retry');
+        expect(renderAtLevel('verbose')).not.toContain('LLM Request Auto Retry');
     });
 });

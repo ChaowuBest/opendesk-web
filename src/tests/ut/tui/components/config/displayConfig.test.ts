@@ -47,13 +47,14 @@ describe('DisplayConfigPage', () => {
 
         expect(text).toContain('Display Settings');
         expect(text).toContain('Output Display');
-        expect(text).toContain('Minimal (minimal)');
+        expect(text).toContain('Minimal mode');
+        expect(text).not.toContain('(minimal)');
         expect(text).toContain('Reasoning Display');
         expect(text).toContain('Partial reasoning content (partial)');
         expect(text).toContain('Unavailable in minimal mode');
     });
 
-    test('saves verbose output and unlocks explicit full reasoning', () => {
+    test('saves detailed output and unlocks explicit full reasoning', () => {
         const onBack = jest.fn();
         const onConfigChange = jest.fn();
         const page = new DisplayConfigPage(createTuiMock(), onBack, onConfigChange);

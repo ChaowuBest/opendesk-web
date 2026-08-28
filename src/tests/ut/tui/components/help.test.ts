@@ -85,13 +85,20 @@ describe('HelpOverlay command selection', () => {
         expect(tui.inputArea.input.setText).not.toHaveBeenCalled();
     });
 
-    test('lists Ctrl+O as the output display shortcut', () => {
+    test('lists the configured output display shortcut', () => {
+        Setting.updateInstanceData({
+            cli_config: {
+                shortcuts: {
+                    output_display: 'ctrl+u'
+                }
+            }
+        });
         const registry = new SlashCommandRegistry();
         const { tui } = createHarness(registry);
         const overlay = new HelpOverlay(tui);
 
         const row = (overlay as any).shortcutTable.innerRows.find((item: any) => item.value === 'output_display');
 
-        expect(row.labels.map(stripAnsi)).toEqual(['Switch Output Display', 'Ctrl+O']);
+        expect(row.labels.map(stripAnsi)).toEqual(['Switch Output Display', 'Ctrl+U']);
     });
 });

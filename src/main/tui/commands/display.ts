@@ -14,11 +14,11 @@ import type { OpenDeskTUI } from '../entry.js';
 import type { OutputDisplayLevel } from '../display.js';
 import { t } from '../../../locale/index.js';
 
-const DISPLAY_COMMAND_LEVELS = ['minimal', 'verbose'] as const;
+const DISPLAY_COMMAND_LEVELS = ['minimal', 'detailed'] as const;
 
 function parseDisplayCommandLevel(value: string): OutputDisplayLevel | undefined {
     if (value === 'minimal') return 'minimal';
-    if (value === 'verbose') return 'verbose';
+    if (value === 'detailed' || value === 'verbose') return 'verbose';
     return undefined;
 }
 

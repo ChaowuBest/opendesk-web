@@ -81,6 +81,10 @@ describe('task-view GUI output modes', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
+        window.taskManagerAPI = {
+            getToolCallDetail: jest.fn(),
+            getFullTask: jest.fn()
+        } as any;
     });
 
     function toolPart(start: number, count: number) {
@@ -171,6 +175,39 @@ describe('task-view GUI output modes', () => {
         });
     });
 
+    test('output mode changes rerender mounted assistant output without full reload', () => {
+        const view = createView();
+        view.setAttribute('task_id', 'task-mode-switch');
+        view.task_id = 'task-mode-switch';
+        view.connectedCallback = () => {};
+        view.disconnectedCallback = () => {};
+        document.body.appendChild(view);
+        view.innerHTML = view.renderAssistantMessage({
+            message_id: 'message-mode-switch',
+            content: transcript(),
+            elapsedSeconds: 12,
+            timestamp: Date.now()
+        });
+
+        const messageContent = view.querySelector('#message-content-message-mode-switch');
+        const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
+
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'detailed' } });
+
+        expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
+        expect(view.querySelector('#message-content-message-mode-switch')).toBe(messageContent);
+        expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-output-mode')).toBe('detailed');
+        expect(view.querySelector('.od-process-summary[data-process-toggle]')?.getAttribute('aria-expanded')).toBe(
+            'false'
+        );
+
+        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
+
+        expect(view.querySelector('[data-completed-process-toggle]')?.getAttribute('aria-expanded')).toBe('true');
+        view.remove();
+    });
+
     test('minimal running output shows one clickable current-operation row', () => {
         const view = createView();
         const html = view._renderAssistantOutputHtml(transcript().slice(0, 2), {
@@ -253,7 +290,8 @@ describe('task-view GUI output modes', () => {
         fileTool.toolcalls[0] = {
             ...fileTool.toolcalls[0],
             tool_name: 'filemgr-readFile',
-            args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/package.json' })
+            args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/package.json' }),
+            presentation: { displayName: { key: 'filemgr.readFile.name' } }
         };
         view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
             isRunning: true,
@@ -264,6 +302,32 @@ describe('task-view GUI output modes', () => {
         expect(status).toContain('正在调用 读取文件…');
         expect(status).not.toContain('filemgr-readFile');
         expect(status).not.toContain('package.json');
+    });
+
+    test('tool rows consume structured presentation metadata without knowing the tool name', () => {
+        const view = createView();
+        const tools = toolPart(1, 1);
+        tools.toolcalls[0] = {
+            ...tools.toolcalls[0],
+            tool_name: 'plugin-opaqueOperation',
+            presentation: {
+                displayName: '制品检查',
+                summary: '检查 report.txt',
+                resource: { type: 'preview', value: '/workspace/report.txt' }
+            }
+        };
+        view.innerHTML = view._renderAssistantOutputHtml([tools], {
+            isRunning: false,
+            messageId: 'message-tool-presentation'
+        });
+
+        const tool = view.querySelector('.od-process-tool') as HTMLElement;
+        expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('制品检查');
+        expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('检查 report.txt');
+        expect((tool.querySelector('[data-open-preview]') as HTMLElement).dataset.openPreview).toBe(
+            '/workspace/report.txt'
+        );
+        expect(view.textContent).not.toContain('plugin-opaqueOperation');
     });
 
     test('expanded process entries use the same reasoning and tool rows as the design mockup', () => {
@@ -300,17 +364,20 @@ describe('task-view GUI output modes', () => {
             {
                 ...fileTools.toolcalls[0],
                 tool_name: 'filemgr-readFile',
-                args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/README.md' })
+                args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/README.md' }),
+                presentation: { displayName: '读取文件' }
             },
             {
                 ...fileTools.toolcalls[1],
                 tool_name: 'filemgr-readFile',
-                args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/package.json' })
+                args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/package.json' }),
+                presentation: { displayName: '读取文件' }
             },
             {
                 ...fileTools.toolcalls[2],
                 tool_name: 'filemgr-grepFiles',
-                args_string: JSON.stringify({ pattern: 'outputMode' })
+                args_string: JSON.stringify({ pattern: 'outputMode' }),
+                presentation: { displayName: '搜索文件内容' }
             }
         ];
         view.innerHTML = view._renderAssistantOutputHtml(
@@ -333,13 +400,28 @@ describe('task-view GUI output modes', () => {
         expect(summary).not.toContain('分析项目结构');
     });
 
+    test('a failed child tool does not replace the process summary icon', () => {
+        const view = createView();
+        const failedTool = toolPart(1, 1);
+        failedTool.toolcalls[0].status = 'error';
+        view.innerHTML = view._renderAssistantOutputHtml([failedTool], {
+            isRunning: false,
+            messageId: 'message-failed-child-tool'
+        });
+
+        expect(view.querySelector('.od-process-summary .lucide-lightbulb')).not.toBeNull();
+        expect(view.querySelector('.od-process-summary .fa-circle-exclamation')).toBeNull();
+        expect(view.querySelector('.od-process-tool-status.is-error')?.textContent).toBe('失败');
+    });
+
     test('process labels use the readable tool type instead of reasoning or tool parameters', () => {
         const view = createView();
         const browserTool = toolPart(1, 1);
         browserTool.toolcalls[0] = {
             ...browserTool.toolcalls[0],
             tool_name: 'webFetch',
-            args_string: JSON.stringify({ url: 'https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/' })
+            args_string: JSON.stringify({ url: 'https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/' }),
+            presentation: { displayName: '网页获取' }
         };
         view.innerHTML = view._renderAssistantOutputHtml(
             [
@@ -403,8 +485,10 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).toContain('.od-process-tool.od-process-chevron{grid-column:5;}');
     });
 
-    test('process typography stays compact and the main lightbulb stays visually compact', () => {
+    test('process typography and row spacing stay compact', () => {
         expect(taskViewStyles).toMatch(/\.od-process-main-icon\{[^}]*width:14px;[^}]*height:14px;/);
+        expect(taskViewStyles).toMatch(/\.od-process-chevron\{[^}]*font-size:var\(--fs-sm\);/);
+        expect(taskViewStyles).toMatch(/\.od-completed-process-chevron\{[^}]*font-size:var\(--fs-sm\);/);
         expect(taskViewStyles).toMatch(/\.od-process-reason\.od-process-entry-summary\{[^}]*font-size:var\(--fs-md\);/);
         expect(taskViewStyles).toMatch(/\.od-process-tool\.od-process-entry-summary\{[^}]*font-size:var\(--fs-md\);/);
         expect(taskViewStyles).toMatch(
@@ -412,10 +496,15 @@ describe('task-view GUI output modes', () => {
         );
         expect(taskViewStyles).toMatch(/\.od-process-entry-detail\{[^}]*font-size:var\(--fs-sm\);/);
         expect(taskViewStyles).toMatch(/\.od-process-detail-label\{[^}]*font-size:var\(--fs-sm\);/);
-        expect(taskViewStyles).toMatch(/\.od-process-entry-label\{[^}]*font-weight:500;/);
+        expect(taskViewStyles).toMatch(/\.od-process-entry-label\{[^}]*font-weight:400;/);
         expect(taskViewStyles).toMatch(
-            /\.od-process-reason\.od-process-entry-summary\{[^}]*min-height:30px;[^}]*padding-top:4px;[^}]*padding-bottom:4px;/
+            /\.od-process-reason\.od-process-entry-summary\{[^}]*min-height:26px;[^}]*padding-top:2px;[^}]*padding-bottom:2px;/
         );
+        expect(taskViewStyles).toMatch(
+            /\.od-process-tool\.od-process-entry-summary\{[^}]*min-height:26px;[^}]*padding-top:2px;[^}]*padding-bottom:2px;/
+        );
+        expect(taskViewStyles).toContain('.od-process-reason{margin-top:0;margin-bottom:0;');
+        expect(taskViewStyles).toContain('.od-process-tool{margin-top:0;margin-bottom:0;');
     });
 
     test('process summaries use an unframed Codex-style row while details keep their height limit', () => {
@@ -423,11 +512,11 @@ describe('task-view GUI output modes', () => {
             /\.od-process-segment\{[^}]*overflow:visible;[^}]*background:transparent;[^}]*border:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).toMatch(
-            /\.od-process-summary\{[^}]*padding:6px0;[^}]*border-bottom:0;[^}]*border-radius:0;/
+            /\.od-process-summary\{[^}]*min-height:28px;[^}]*padding:3px0;[^}]*border-bottom:0;[^}]*border-radius:0;/
         );
         expect(taskViewStyles).not.toContain(".od-process-summary[aria-expanded='true']{border-bottom-color:");
         expect(taskViewStyles).toMatch(
-            /\.od-process-detail\{[^}]*max-height:280px;[^}]*overflow-y:auto;[^}]*margin:2px00;/
+            /\.od-process-detail\{[^}]*max-height:280px;[^}]*overflow-y:auto;[^}]*margin:0;/
         );
     });
 
@@ -440,6 +529,58 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:auto;/);
         expect(taskViewStyles).toMatch(/\.od-process-entry-detail\{[^}]*overscroll-behavior:auto;/);
         expect(taskViewStyles).not.toMatch(/\.od-process-(?:detail|entry-detail)\{[^}]*overscroll-behavior:contain;/);
+    });
+
+    test('loads lightweight tool details only after the first expansion and then reuses the cache', async () => {
+        const getToolCallDetail = jest.fn(async () => ({
+            args_string: '{"command":"npm test"}',
+            result: '6 passed',
+            status: 'success',
+            elapsedSeconds: 1.4
+        }));
+        window.taskManagerAPI.getToolCallDetail = getToolCallDetail;
+        const view = createView();
+        view.task_id = 'task-1';
+        const part = {
+            type: 'tool_call',
+            rendered: '',
+            toolcalls: [
+                {
+                    id: 'call-lazy',
+                    index: 0,
+                    tool_name: 'terminal-executeZsh',
+                    status: 'success',
+                    args_preview: '{"command":"npm test"}',
+                    args_truncated: false,
+                    detail_available: true,
+                    elapsedSeconds: 1.4
+                }
+            ]
+        };
+        view._assistantPartsByMessage.set('message-lazy', [part]);
+        view.innerHTML = view._renderAssistantOutputHtml([part], {
+            isRunning: false,
+            messageId: 'message-lazy'
+        });
+
+        const tool = view.querySelector('.od-process-tool') as HTMLElement;
+        const toggle = tool.querySelector('[data-process-entry-toggle="tool"]') as HTMLElement;
+        const detail = tool.querySelector('.od-process-entry-detail') as HTMLElement;
+        expect(detail.innerHTML.trim()).toBe('');
+        expect(getToolCallDetail).not.toHaveBeenCalled();
+
+        view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(getToolCallDetail).toHaveBeenCalledWith('task-1', 'message-lazy', 0, 0, 'call-lazy');
+        expect(detail.textContent).toContain('npm test');
+        expect(detail.textContent).toContain('6 passed');
+
+        view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
+        view._handleProcessToggleClick({ target: toggle, preventDefault() {}, stopPropagation() {} });
+        await Promise.resolve();
+        expect(getToolCallDetail).toHaveBeenCalledTimes(1);
     });
 
     test('expanded tool details reuse a human-readable tool renderer when available', () => {
@@ -501,6 +642,14 @@ describe('task-view GUI output modes', () => {
             ...fileTool.toolcalls[0],
             tool_name: 'filemgr-readFile',
             args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/package.json' }),
+            presentation: {
+                displayName: { key: 'filemgr.readFile.name' },
+                summary: {
+                    key: 'renderer.taskview.output.purpose.readFile',
+                    params: { name: 'package.json' }
+                },
+                resource: { type: 'preview', value: '/workspace/OpenDesk/package.json' }
+            },
             result: JSON.stringify({
                 type: 'text',
                 file: {
@@ -543,12 +692,22 @@ describe('task-view GUI output modes', () => {
         fileTools.toolcalls[0] = {
             ...fileTools.toolcalls[0],
             tool_name: 'filemgr-readFile',
-            args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/appguide.md' })
+            args_string: JSON.stringify({ file_path: '/workspace/OpenDesk/appguide.md' }),
+            presentation: {
+                displayName: '读取文件',
+                summary: '读取 appguide.md',
+                resource: { type: 'preview', value: '/workspace/OpenDesk/appguide.md' }
+            }
         };
         fileTools.toolcalls[1] = {
             ...fileTools.toolcalls[1],
             tool_name: 'filemgr-writeFile',
-            args_string: JSON.stringify({ path: '/workspace/OpenDesk/setting.md', content: '# Settings' })
+            args_string: JSON.stringify({ path: '/workspace/OpenDesk/setting.md', content: '# Settings' }),
+            presentation: {
+                displayName: '写入文件',
+                summary: '写入 setting.md',
+                resource: { type: 'changes', value: '/workspace/OpenDesk/setting.md' }
+            }
         };
         view.innerHTML = view._renderAssistantOutputHtml([fileTools], {
             isRunning: false,
@@ -589,7 +748,12 @@ describe('task-view GUI output modes', () => {
         browserTools.toolcalls[0] = {
             ...browserTools.toolcalls[0],
             tool_name: 'browser-navigate',
-            args_string: JSON.stringify({ url: 'https://docs.example.com/guide?lang=zh-CN' })
+            args_string: JSON.stringify({ url: 'https://docs.example.com/guide?lang=zh-CN' }),
+            presentation: {
+                displayName: '打开网页',
+                summary: '打开 https://docs.example.com/guide?lang=zh-CN',
+                resource: { type: 'url', value: 'https://docs.example.com/guide?lang=zh-CN' }
+            }
         };
         browserTools.toolcalls[1] = {
             ...browserTools.toolcalls[1],
@@ -640,6 +804,10 @@ describe('task-view GUI output modes', () => {
                 command: 'rg -n "renderToolCall" src/main',
                 description: '定位工具渲染入口'
             }),
+            presentation: {
+                displayName: { key: 'renderer.taskview.output.toolName.executeCommand' },
+                summary: '定位工具渲染入口'
+            },
             rendered: '<details class="terminal-tool"><summary>Bash</summary><pre>result</pre></details>'
         };
         view.innerHTML = view._renderAssistantOutputHtml([terminalTool], {
@@ -648,7 +816,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const tool = view.querySelector('.od-process-tool') as HTMLElement;
-        expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('Bash');
+        expect(tool.querySelector('.od-process-entry-label')?.textContent).toBe('执行命令');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).toBe('定位工具渲染入口');
         expect(tool.querySelector('.od-process-tool-args')?.textContent).not.toContain('rg -n');
     });
@@ -662,7 +830,8 @@ describe('task-view GUI output modes', () => {
             args_string: JSON.stringify({
                 taskId: 'task_example',
                 question: '这个任务最终得出了什么结论？'
-            })
+            }),
+            presentation: { displayName: '任务追问' }
         };
         view.innerHTML = view._renderAssistantOutputHtml([taskFollowUpTool], {
             isRunning: false,
@@ -681,7 +850,8 @@ describe('task-view GUI output modes', () => {
         loadSkillTool.toolcalls[0] = {
             ...loadSkillTool.toolcalls[0],
             tool_name: 'LoadSkill',
-            args_string: JSON.stringify({ bundleName: 'browser', skillName: 'use-browser' })
+            args_string: JSON.stringify({ bundleName: 'browser', skillName: 'use-browser' }),
+            presentation: { displayName: '加载技能', summary: 'use-browser' }
         };
         view.innerHTML = view._renderAssistantOutputHtml([loadSkillTool], {
             isRunning: false,
@@ -714,6 +884,7 @@ describe('task-view GUI output modes', () => {
                 toolName: 'navigate',
                 toolArgs: { url: 'https://developer.huawei.com/docs', waitUntil: 'load' }
             }),
+            presentation: { displayName: '调用技能', summary: 'use-browser' },
             result: JSON.stringify({
                 content: [{ type: 'text', text: '页面已打开' }],
                 internalTrace: 'verbose protocol data'
@@ -761,7 +932,8 @@ describe('task-view GUI output modes', () => {
                 skillName: 'use-browser',
                 toolName: 'evaluate',
                 toolArgs: { expression: '() => document.title' }
-            })
+            }),
+            presentation: { displayName: '调用技能', summary: 'use-browser' }
         };
         view.innerHTML = view._renderAssistantOutputHtml([callSkillTool], {
             isRunning: false,
@@ -779,12 +951,14 @@ describe('task-view GUI output modes', () => {
         searchTools.toolcalls[0] = {
             ...searchTools.toolcalls[0],
             tool_name: 'filemgr-grepFiles',
-            args_string: JSON.stringify({ pattern: 'model' })
+            args_string: JSON.stringify({ pattern: 'model' }),
+            presentation: { displayName: '搜索文件内容', summary: '查找匹配“model”的内容' }
         };
         searchTools.toolcalls[1] = {
             ...searchTools.toolcalls[1],
             tool_name: 'filemgr-globFiles',
-            args_string: JSON.stringify({ pattern: 'src/cli/**/*.ts' })
+            args_string: JSON.stringify({ pattern: 'src/cli/**/*.ts' }),
+            presentation: { displayName: '查找文件', summary: '查找 src/cli 中的 TypeScript 文件' }
         };
         view.innerHTML = view._renderAssistantOutputHtml([searchTools], {
             isRunning: false,
@@ -799,6 +973,12 @@ describe('task-view GUI output modes', () => {
         expect(view.textContent).not.toContain('内容搜索');
         expect(view.textContent).not.toContain('模式匹配');
         expect(tools[1].querySelector('.od-process-entry-summary')?.textContent).not.toContain('src/cli/**/*.ts');
+        expect(tools[1].querySelector('.od-process-entry-detail')?.textContent?.trim()).toBe('');
+        view._handleProcessToggleClick({
+            target: tools[1].querySelector('[data-process-entry-toggle]'),
+            preventDefault() {},
+            stopPropagation() {}
+        });
         expect(tools[1].querySelector('.od-process-entry-detail')?.textContent).toContain('src/cli/**/*.ts');
     });
 
@@ -809,6 +989,7 @@ describe('task-view GUI output modes', () => {
             ...tools.toolcalls[0],
             tool_name: 'webSearch',
             args_string: JSON.stringify({ query: 'HarmonyOS ArkTS API Kit' }),
+            presentation: { displayName: '网页搜索', resultFormat: 'markdown' },
             result: [
                 '## Bing 搜索结果',
                 '',
@@ -828,6 +1009,13 @@ describe('task-view GUI output modes', () => {
         });
 
         const renderedTools = view.querySelectorAll('.od-process-tool');
+        renderedTools.forEach((tool) => {
+            view._handleProcessToggleClick({
+                target: tool.querySelector('[data-process-entry-toggle]'),
+                preventDefault() {},
+                stopPropagation() {}
+            });
+        });
         const markdown = renderedTools[0].querySelector('.od-process-markdown-result.markdown-body');
         expect(markdown).not.toBeNull();
         expect(markdown?.querySelector('h2')?.textContent).toBe('Bing 搜索结果');

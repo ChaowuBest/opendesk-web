@@ -649,9 +649,9 @@ export class DashboardBar implements Component {
         const fmtKey = (key: string) => SlashCommandRegistry.formatKeyLabel(key);
         return `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost(
             '•'
-        )} Ctrl+O ${t('input.statusbar.switchDisplay')} ${C.ghost('•')} ${fmtKey(shortcuts.show_help)} ${t(
-            'input.statusbar.help'
-        )}`;
+        )} ${fmtKey(shortcuts.output_display)} ${t('input.statusbar.switchDisplay')} ${C.ghost('•')} ${fmtKey(
+            shortcuts.show_help
+        )} ${t('input.statusbar.help')}`;
     }
 
     private async refresh(): Promise<void> {
@@ -672,7 +672,7 @@ export class DashboardBar implements Component {
         const weekdayName = t(weekdayKey);
         cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
-        // 快捷键提示（Ctrl+K 切换模式、Ctrl+O 切换显示、Ctrl+H 帮助）
+        // 快捷键提示（键位从 TUI 快捷键配置中读取）
         cells.push(this.buildShortcutCell());
 
         // 通知角标

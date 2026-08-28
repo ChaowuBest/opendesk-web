@@ -72,12 +72,19 @@ describe('DashboardBar status filters', () => {
         ).toBe(false);
     });
 
-    test('shows the Ctrl+O display shortcut beside Ctrl+K', async () => {
+    test('shows the configured output display shortcut beside Ctrl+K', async () => {
+        Setting.updateInstanceData({
+            cli_config: {
+                shortcuts: {
+                    output_display: 'ctrl+u'
+                }
+            }
+        });
         const dashboard = new DashboardBar(() => undefined);
         await (dashboard as any).refresh();
 
         const output = stripAnsi(dashboard.render(200).join('\n'));
-        expect(output).toContain('Ctrl+K switch mode • Ctrl+O switch display • Ctrl+H help');
+        expect(output).toContain('Ctrl+K switch mode • Ctrl+U switch display • Ctrl+H help');
         expect(output).not.toContain('Display: Minimal');
     });
 });

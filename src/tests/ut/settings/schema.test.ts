@@ -2,7 +2,10 @@
  * Settings schema unit tests.
  */
 
-import { Setting } from '../../../main/utils/setting';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 describe('设置 schema', () => {
     test('开发者模式默认关闭', () => {
@@ -168,6 +171,19 @@ describe('设置 schema', () => {
         expect(setting.cli_config.inherit_venv).toBe(true);
         expect(setting.cli_config.output_display).toBe('minimal');
         expect(setting.cli_config.show_all_reasoning).toBe(false);
+        expect(setting.cli_config.shortcuts.output_display).toBe('ctrl+o');
+    });
+
+    test('终端输出显示快捷键可以自定义', () => {
+        const setting = Setting.getSettingSchema().parse({
+            cli_config: {
+                shortcuts: {
+                    output_display: 'ctrl+u'
+                }
+            }
+        });
+
+        expect(setting.cli_config.shortcuts.output_display).toBe('ctrl+u');
     });
 
     test('终端输出显示统一使用 verbose 并迁移旧 full 配置', () => {
@@ -229,6 +245,14 @@ describe('设置 schema', () => {
         const setting = Setting.getSettingSchema().parse({});
 
         expect(setting.task_config.evidence_card).toBe(false);
+    });
+
+    test('TUI 详细输出接受 detailed 术语并兼容存量 verbose 值', () => {
+        const detailed = Setting.getSettingSchema().parse({ cli_config: { output_display: 'detailed' } });
+        const verbose = Setting.getSettingSchema().parse({ cli_config: { output_display: 'verbose' } });
+
+        expect(detailed.cli_config.output_display).toBe('verbose');
+        expect(verbose.cli_config.output_display).toBe('verbose');
     });
 
     test('旧模型缺省为对话模型', () => {
@@ -334,5 +358,60 @@ describe('设置 schema', () => {
         });
 
         expect(Setting.getInstance().getData().default_embedding_model).toBe('embed');
+    });
+});
+
+describe('TUI 输出配置迁移', () => {
+    let settingDirectory: string;
+
+    beforeEach(() => {
+        settingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-setting-migration-'));
+        setCustomOpendeskDirectory(settingDirectory);
+        Setting.clearCache();
+    });
+
+    afterEach(() => {
+        Setting.clearCache();
+        setCustomOpendeskDirectory(undefined);
+        fs.rmSync(settingDirectory, { recursive: true, force: true });
+    });
+
+    function writeSetting(cliConfig: Record<string, unknown>): void {
+        fs.writeFileSync(
+            path.join(settingDirectory, 'setting.json'),
+            JSON.stringify({ cli_config: cliConfig }),
+            'utf8'
+        );
+    }
+
+    test('旧 reason_display=full 在缺少 output_display 时迁移为 verbose 并写回配置', () => {
+        writeSetting({ reason_display: 'full' });
+
+        const setting = Setting.load();
+        const persisted = JSON.parse(fs.readFileSync(path.join(settingDirectory, 'setting.json'), 'utf8'));
+
+        expect(setting?.data.cli_config.output_display).toBe('verbose');
+        expect(persisted.cli_config.output_display).toBe('verbose');
+    });
+
+    test('显式配置 minimal 时不受旧 reason_display=full 影响', () => {
+        writeSetting({ reason_display: 'full', output_display: 'minimal' });
+
+        expect(Setting.load()?.data.cli_config.output_display).toBe('minimal');
+    });
+
+    test('旧 reason_display=partial 在缺少 output_display 时使用 minimal 默认值', () => {
+        writeSetting({ reason_display: 'partial' });
+
+        expect(Setting.load()?.data.cli_config.output_display).toBe('minimal');
+    });
+
+    test.each([
+        ['reason_display=on', { reason_display: 'on' }],
+        ['show_all_reasoning=true', { show_all_reasoning: true }]
+    ])('更早的完整 reasoning 配置 %s 也迁移为 verbose', (_label, cliConfig) => {
+        writeSetting(cliConfig);
+
+        expect(Setting.load()?.data.cli_config.output_display).toBe('verbose');
     });
 });

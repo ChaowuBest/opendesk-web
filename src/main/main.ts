@@ -84,6 +84,7 @@ import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './util
 import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
 import * as taskTransfer from './aikernel/task/transfer.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
+import { findToolCallDetail } from './aikernel/task/tool-call-detail.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -1518,6 +1519,26 @@ const registerTaskManagerAPIHandlers = () => {
         await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
+    });
+    ipcMain.handle('taskManager:getToolCallDetail', (_event, taskId, messageId, partIndex, toolIndex, toolCallId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        if (
+            typeof messageId !== 'string' ||
+            !Number.isInteger(partIndex) ||
+            partIndex < 0 ||
+            !Number.isInteger(toolIndex) ||
+            toolIndex < 0 ||
+            (toolCallId !== undefined && typeof toolCallId !== 'string')
+        ) {
+            return { status: 'error', message: 'invalid tool call locator' };
+        }
+        const detail = findToolCallDetail(task, messageId, partIndex, toolIndex, toolCallId);
+        return detail === undefined
+            ? { status: 'error', message: `tool call ${toolCallId || toolIndex} not found` }
+            : { status: 'ok', data: detail };
     });
     ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
         try {

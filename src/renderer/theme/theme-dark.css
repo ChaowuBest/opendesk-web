@@ -743,7 +743,6 @@ html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'] {
     background: transparent !important;
 }
 
-html[data-theme='dark'] #app-root task-view .reasoning-block-od,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details,
 html[data-theme='dark'] #app-root task-view .subtask-pool-card {
     background: var(--od-bg-elevated) !important;
@@ -751,62 +750,14 @@ html[data-theme='dark'] #app-root task-view .subtask-pool-card {
     color: var(--od-text);
 }
 
-html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-header,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary {
     color: var(--od-text-muted) !important;
 }
-/* Expanded/active header keeps amber tint even in dark mode */
-html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header span,
-html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-content-visible .reasoning-header span {
-    color: #fbbf24 !important;
-}
-html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header i.fa-lightbulb,
-html[data-theme='dark']
-    #app-root
-    task-view
-    .reasoning-block-od.reasoning-content-visible
-    .reasoning-header
-    i.fa-lightbulb {
-    color: #fcd34d !important;
-}
-
-html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary:hover,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover {
     background: var(--od-bg-muted) !important;
     color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] #app-root task-view .reasoning-content,
-html[data-theme='dark'] #app-root task-view .reasoning-preview-content {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-preview-area {
-    border-left-color: rgba(96, 165, 250, 0.3) !important;
-}
-
-html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-full-area {
-    border-left-color: var(--od-border) !important;
-}
-
-/* Reasoning bubble dark mode */
-html[data-theme='dark'] #app-root task-view .reasoning-bubble {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-    box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.5),
-        0 2px 8px rgba(0, 0, 0, 0.35) !important;
-}
-html[data-theme='dark'] #app-root task-view .reasoning-bubble-content {
-    color: var(--od-text-muted) !important;
-}
-html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.18) !important;
-}
-html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.28) !important;
 }
 
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'] {

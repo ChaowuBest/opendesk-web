@@ -112,6 +112,7 @@ export class HelpOverlay implements Component {
         const shortcuts = getShortcuts();
         const shortcutDefs: Array<{ key: string; descKey: string }> = [
             { key: 'switch_mode', descKey: 'shortcut.switch_mode' },
+            { key: 'output_display', descKey: 'shortcut.output_display' },
             { key: 'switch_model', descKey: 'shortcut.switch_model' },
             { key: 'endline', descKey: 'shortcut.endline' },
             { key: 'show_help', descKey: 'shortcut.show_help' },
@@ -126,11 +127,6 @@ export class HelpOverlay implements Component {
             ],
             value: def.key
         }));
-        rows.push({
-            labels: [chalk.bold(t('shortcut.output_display')), chalk.cyan('Ctrl+O')],
-            value: 'output_display'
-        });
-
         if (rows.length === 0) {
             rows.push({ labels: [chalk.dim(t('help.no.shortcuts')), ''], value: '_empty' });
         }

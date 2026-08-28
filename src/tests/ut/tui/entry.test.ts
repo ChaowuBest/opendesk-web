@@ -190,6 +190,48 @@ describe('OpenDeskTUI active task view state', () => {
         }
     });
 
+    test('uses the configured output display shortcut instead of fixed Ctrl+O', () => {
+        Setting.clearCache();
+        Setting.updateInstanceData({
+            cli_config: {
+                shortcuts: {
+                    output_display: 'ctrl+u'
+                }
+            }
+        });
+        let inputListener: ((data: string) => { consume?: boolean } | undefined) | undefined;
+        const cycleOutputDisplayLevel = jest.fn();
+        const input = {};
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            configComponent: undefined,
+            textPageActive: false,
+            cycleOutputDisplayLevel,
+            inputArea: {
+                input,
+                hasPromptWidget: jest.fn(() => false),
+                shellResultPanel: { isVisible: jest.fn(() => false) },
+                btwResultPanel: { isVisible: jest.fn(() => false) }
+            },
+            tui: {
+                start: jest.fn(),
+                addInputListener: jest.fn((listener) => {
+                    inputListener = listener;
+                    return jest.fn();
+                }),
+                setFocus: jest.fn()
+            },
+            shortcutManager: { attach: jest.fn() }
+        }) as any;
+        Object.defineProperty(tui, 'hasOpenOverlay', { value: false, writable: true });
+
+        tui.start();
+
+        expect(inputListener?.('\x0f')).toBeUndefined();
+        expect(cycleOutputDisplayLevel).not.toHaveBeenCalled();
+        expect(inputListener?.('\x15')).toEqual({ consume: true });
+        expect(cycleOutputDisplayLevel).toHaveBeenCalledTimes(1);
+    });
+
     test('cycles the current task output display without persisting configuration', () => {
         Setting.clearCache();
         Setting.updateInstanceData({

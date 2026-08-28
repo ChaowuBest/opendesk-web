@@ -229,6 +229,7 @@ const GUIConfigSchema = z.object({
 
 export const DEFAULT_SHORTCUTS = {
     switch_mode: 'ctrl+k',
+    output_display: 'ctrl+o',
     switch_model: 'f2',
     clear_input: 'ctrl+c',
     endline: 'ctrl+j',
@@ -238,6 +239,7 @@ export const DEFAULT_SHORTCUTS = {
 
 const ShortcutsSchema = z.object({
     switch_mode: z.string().default(DEFAULT_SHORTCUTS.switch_mode).describe('模式切换'),
+    output_display: z.string().default(DEFAULT_SHORTCUTS.output_display).describe('输出显示切换'),
     switch_model: z.string().default(DEFAULT_SHORTCUTS.switch_model).describe('模型切换'),
     endline: z.string().default(DEFAULT_SHORTCUTS.endline).describe('回车换行'),
     show_help: z.string().default(DEFAULT_SHORTCUTS.show_help).describe('打开帮助'),
@@ -255,13 +257,14 @@ const LegacyReasonDisplaySchema = z.preprocess(
 );
 
 const OutputDisplaySchema = z.preprocess(
-    (value: unknown) => (value === 'full' ? 'verbose' : value),
+    (value: unknown) => (value === 'full' || value === 'detailed' ? 'verbose' : value),
     z.enum(['minimal', 'verbose']).default('minimal')
 );
 
 const TerminalCliSchema = z.object({
     shortcuts: ShortcutsSchema.default({
         switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+        output_display: DEFAULT_SHORTCUTS.output_display,
         switch_model: DEFAULT_SHORTCUTS.switch_model,
         endline: DEFAULT_SHORTCUTS.endline,
         show_help: DEFAULT_SHORTCUTS.show_help,
@@ -469,6 +472,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {
                 switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+                output_display: DEFAULT_SHORTCUTS.output_display,
                 switch_model: DEFAULT_SHORTCUTS.switch_model,
                 endline: DEFAULT_SHORTCUTS.endline,
                 show_help: DEFAULT_SHORTCUTS.show_help,
@@ -517,6 +521,21 @@ export interface BuiltinModelProvider {
     readonly providerName: string;
     resolveInstance(model: Model, expectedType?: ModelType): ModelInstance | null;
     refreshModels(fetchImpl?: BuiltinModelFetch): Promise<Model[]>;
+function migrateLegacyTuiOutputDisplay(settingRawObject: unknown): boolean {
+    if (!settingRawObject || typeof settingRawObject !== 'object' || Array.isArray(settingRawObject)) return false;
+    const cliConfig = (settingRawObject as Record<string, unknown>).cli_config;
+    if (!cliConfig || typeof cliConfig !== 'object' || Array.isArray(cliConfig)) return false;
+
+    const rawCliConfig = cliConfig as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(rawCliConfig, 'output_display')) return false;
+    const usedFullReasoning =
+        rawCliConfig.reason_display === 'full' ||
+        rawCliConfig.reason_display === 'on' ||
+        rawCliConfig.show_all_reasoning === true;
+    if (!usedFullReasoning) return false;
+
+    rawCliConfig.output_display = 'verbose';
+    return true;
 }
 
 export class ModelInstance {
@@ -816,6 +835,8 @@ export class Setting {
         }
 
         removeLegacyExperimentalFeature(settingRawObject);
+        // Migration: preserve full TUI output for users whose legacy reasoning setting showed full content.
+        const migratedLegacyTuiOutputDisplay = migrateLegacyTuiOutputDisplay(settingRawObject);
 
         const setting = new Setting();
         try {
@@ -828,6 +849,9 @@ export class Setting {
 
         // 校验默认模型引用，清除已不存在的模型别名
         setting.validateDefaultModels();
+        if (migratedLegacyTuiOutputDisplay) {
+            setting.save();
+        }
         return setting;
     }
 

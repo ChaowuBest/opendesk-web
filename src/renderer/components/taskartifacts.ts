@@ -618,14 +618,20 @@ class TaskArtifacts extends HTMLElement {
         if (!panel) return;
         const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/$/, '');
         const requestedPath = normalizePath(filePath);
-        const header = Array.from(panel.querySelectorAll<HTMLElement>('.changes-file-header')).find((candidate) => {
+        if (!requestedPath) return;
+        const headers = Array.from(panel.querySelectorAll<HTMLElement>('.changes-file-header'));
+        const exactMatches = headers.filter((candidate) => {
             const candidatePath = normalizePath(candidate.dataset.filePath || '');
-            return (
-                candidatePath === requestedPath ||
-                candidatePath.endsWith(`/${requestedPath}`) ||
-                requestedPath.endsWith(`/${candidatePath}`)
-            );
+            return candidatePath === requestedPath;
         });
+        let header = exactMatches.length === 1 ? exactMatches[0] : undefined;
+        if (header === undefined && exactMatches.length === 0) {
+            const suffixMatches = headers.filter((candidate) => {
+                const candidatePath = normalizePath(candidate.dataset.filePath || '');
+                return candidatePath.endsWith(`/${requestedPath}`) || requestedPath.endsWith(`/${candidatePath}`);
+            });
+            header = suffixMatches.length === 1 ? suffixMatches[0] : undefined;
+        }
         if (!header) return;
         panel.querySelectorAll('.changes-file-item.is-focused').forEach((item) => item.classList.remove('is-focused'));
         const item = header.closest('.changes-file-item');

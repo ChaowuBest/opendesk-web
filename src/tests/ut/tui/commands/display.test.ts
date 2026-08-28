@@ -32,6 +32,7 @@ describe('/display command', () => {
 
     test.each([
         ['minimal', 'minimal'],
+        ['detailed', 'verbose'],
         ['verbose', 'verbose']
     ] as const)('persists and immediately applies %s', async (commandLevel, outputLevel) => {
         let handler: any;
@@ -52,7 +53,7 @@ describe('/display command', () => {
         expect(Setting.getInstance().getData().cli_config?.output_display).toBe(outputLevel);
     });
 
-    test('offers only minimal and verbose completions', () => {
+    test('offers minimal and detailed completions while keeping verbose as a compatibility alias', () => {
         let handler: any;
         const tui = {
             commandRegistry: {
@@ -67,10 +68,13 @@ describe('/display command', () => {
         expect(handler.getArgumentCompletions('')).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ value: 'minimal' }),
-                expect.objectContaining({ value: 'verbose' })
+                expect.objectContaining({ value: 'detailed' })
             ])
         );
         expect(handler.getArgumentCompletions('')).toHaveLength(2);
+        expect(handler.getArgumentCompletions('')).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'verbose' })])
+        );
     });
 
     test('rejects the legacy full command name', async () => {

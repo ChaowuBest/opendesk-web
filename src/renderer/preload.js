@@ -198,6 +198,20 @@ function exposeTaskManagerAPI() {
                 throw err;
             }
         },
+        getToolCallDetail: async (taskId, messageId, partIndex, toolIndex, toolCallId) => {
+            const result = await ipcRenderer.invoke(
+                'taskManager:getToolCallDetail',
+                taskId,
+                messageId,
+                partIndex,
+                toolIndex,
+                toolCallId
+            );
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            throw new Error(result.message);
+        },
         getTaskInfo: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getTaskInfo', taskId);
             if (result.status === 'ok') {

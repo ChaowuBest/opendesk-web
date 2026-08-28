@@ -11,8 +11,9 @@
 
 import type { OpenDeskTUI } from '../entry.js';
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
-import { Setting } from '../../utils/setting.js';
+import { Setting, getShortcuts } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
+import { SlashCommandRegistry } from './base.js';
 import chalk from 'chalk';
 import {
     REASONING_EFFORT_CLI_TO_STORAGE,
@@ -217,9 +218,10 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 }
 
                 if (subArg === 'full' && tui.activeTaskId && tui.taskView.getOutputDisplayLevel?.() === 'minimal') {
+                    const outputDisplayShortcut = SlashCommandRegistry.formatKeyLabel(getShortcuts().output_display);
                     const info = new InfoOverlay(tui, {
                         title: t('common.close'),
-                        message: chalk.red(t('reason.error.full.requires.output')),
+                        message: chalk.red(t('reason.error.full.requires.output', { shortcut: outputDisplayShortcut })),
                         closeLabel: t('common.close')
                     });
                     info.show();

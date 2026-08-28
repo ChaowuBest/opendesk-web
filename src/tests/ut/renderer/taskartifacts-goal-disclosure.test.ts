@@ -242,6 +242,50 @@ describe('task artifacts goal disclosure state', () => {
         ).toBe('');
     });
 
+    test('prefers the exact file path over an earlier suffix match', async () => {
+        (window as any).taskManagerAPI.getTaskChanges = jest.fn(async () => ({
+            totalFiles: 2,
+            totalAdded: 2,
+            totalRemoved: 0,
+            files: [
+                { filePath: 'project/src/setting.ts', totalAdded: 1, totalRemoved: 0, changes: [] },
+                { filePath: 'src/setting.ts', totalAdded: 1, totalRemoved: 0, changes: [] }
+            ]
+        }));
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            setTaskId: (taskId: string) => void;
+            openFileChanges: (filePath: string) => Promise<void>;
+        };
+        artifacts.setTaskId('task-1');
+
+        await artifacts.openFileChanges('src/setting.ts');
+
+        expect(
+            artifacts.shadowRoot?.querySelector('.changes-file-item.is-focused .changes-file-header')?.dataset.filePath
+        ).toBe('src/setting.ts');
+    });
+
+    test('does not focus a file when the suffix path matches multiple changes', async () => {
+        (window as any).taskManagerAPI.getTaskChanges = jest.fn(async () => ({
+            totalFiles: 2,
+            totalAdded: 2,
+            totalRemoved: 0,
+            files: [
+                { filePath: 'project-a/src/setting.ts', totalAdded: 1, totalRemoved: 0, changes: [] },
+                { filePath: 'project-b/src/setting.ts', totalAdded: 1, totalRemoved: 0, changes: [] }
+            ]
+        }));
+        const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
+            setTaskId: (taskId: string) => void;
+            openFileChanges: (filePath: string) => Promise<void>;
+        };
+        artifacts.setTaskId('task-1');
+
+        await artifacts.openFileChanges('src/setting.ts');
+
+        expect(artifacts.shadowRoot?.querySelector('.changes-file-item.is-focused')).toBeNull();
+    });
+
     test('activates focus layout when browser becomes active and restores on destroy', () => {
         const artifacts = createArtifacts() as ReturnType<typeof createArtifacts> & {
             forceBrowserActive: () => void;

@@ -119,7 +119,10 @@ describe('/reason display compatibility command', () => {
             cli_config: {
                 output_display: 'minimal',
                 show_all_reasoning: false,
-                reason_display: 'partial'
+                reason_display: 'partial',
+                shortcuts: {
+                    output_display: 'ctrl+u'
+                }
             }
         });
         const { command, tui } = createCommand({ activeTaskId: 'task_1', outputDisplayLevel: 'minimal' });
@@ -131,6 +134,8 @@ describe('/reason display compatibility command', () => {
         expect(tui.taskView.invalidate).not.toHaveBeenCalled();
         expect(tui.tui.requestRender).not.toHaveBeenCalled();
         expect(overlayShows.at(-1)?.message).toContain('minimal output');
+        expect(overlayShows.at(-1)?.message).toContain('Ctrl+U');
+        expect(overlayShows.at(-1)?.message).not.toContain('Ctrl+O');
     });
 
     test('allows full reasoning after the current task is temporarily switched to verbose output', async () => {

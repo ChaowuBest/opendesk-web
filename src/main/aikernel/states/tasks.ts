@@ -2612,10 +2612,8 @@ export class TaskState {
             return;
         }
 
-        const profilerToken = this.profiler?.beginTool(tool_call.tool_name, this._currentTurn);
-
         tool_call.setTool(tool);
-        tool_call.startTiming();
+        let profilerToken: number | undefined;
         // 进入执行阶段的标志：只要 beforeToolCall（执行阶段入口）被触发，
         // 无论 execute 成功/失败/抛错，afterToolCall 都必须成对触发
         let execEntered = false;
@@ -2680,6 +2678,10 @@ export class TaskState {
                     return;
                 }
             }
+
+            // 工具耗时只覆盖正式执行阶段，排除参数解析、校验和权限确认等待。
+            tool_call.startTiming();
+            profilerToken = this.profiler?.beginTool(tool_call.tool_name, this._currentTurn);
 
             // ===== 执行阶段开始：beforeToolCall / execute / afterToolCall 成对 =====
             const hookFeedback = await TelemetryOperationRegistry.aroundOperation(

@@ -733,24 +733,6 @@ export class InlineResultPanel implements Component {
 
 export type ShellResultPanel = InlineResultPanel;
 
-class VerticallyPaddedComponent implements Component {
-    constructor(
-        private readonly child: Component,
-        private readonly padding: number
-    ) {}
-
-    invalidate() {
-        this.child.invalidate?.();
-    }
-
-    render(width: number): string[] {
-        const lines = this.child.render(width);
-        if (lines.length === 0) return [];
-        const paddingLines = Array(this.padding).fill(' '.repeat(width));
-        return [...paddingLines, ...lines, ...paddingLines];
-    }
-}
-
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
  *
@@ -765,7 +747,6 @@ export class AgentInputArea implements Component {
 
     private openDeskTUI: OpenDeskTUI;
     private layout: Box;
-    private inputFrame: Component;
     private status: AgentInputStatus = 'idle';
     private hintText: Text = new Text('');
 
@@ -784,12 +765,11 @@ export class AgentInputArea implements Component {
         this.openDeskTUI = openDeskTUI;
         this.layout = new Box(0, 0);
         this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
-        this.inputFrame = new VerticallyPaddedComponent(this.input, 1);
         this.defaultBorderColor = this.input.borderColor;
         this.layout.addChild(this.hintText);
         this.layout.addChild(this.btwResultPanel);
         this.layout.addChild(this.shellResultPanel);
-        this.layout.addChild(this.inputFrame);
+        this.layout.addChild(this.input);
         this.layout.addChild(this.statusBar);
         this.statusBar.setTUI(this.openDeskTUI.tui);
 
@@ -1115,7 +1095,7 @@ export class AgentInputArea implements Component {
     private updateQueueHint() {
         const len = this.messageQueue.length;
         if (len === 0) {
-            this.hintText.setText('');
+            this.refreshHint();
         } else if (len === 1) {
             const preview =
                 this.messageQueue[0].length > 60 ? this.messageQueue[0].slice(0, 57) + '...' : this.messageQueue[0];
@@ -1184,7 +1164,7 @@ export class AgentInputArea implements Component {
         if (current) {
             this.layout.removeChild(current);
         } else {
-            this.layout.removeChild(this.inputFrame);
+            this.layout.removeChild(this.input);
         }
         this.promptWidgets.push(widget);
         this.layout.addChild(widget);
@@ -1228,7 +1208,7 @@ export class AgentInputArea implements Component {
         if (previous) {
             this.layout.addChild(previous);
         } else {
-            this.layout.addChild(this.inputFrame);
+            this.layout.addChild(this.input);
         }
         this.layout.addChild(this.statusBar);
         this.openDeskTUI.syncInputAreaPromptHost();

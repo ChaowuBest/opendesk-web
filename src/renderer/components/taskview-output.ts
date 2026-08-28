@@ -17,6 +17,9 @@ export interface GuiToolCall {
     tool_name?: string;
     status?: string;
     args_string?: string;
+    args_preview?: string;
+    args_truncated?: boolean;
+    detail_available?: boolean;
     result?: string;
     rendered?: string;
     elapsedSeconds?: number;

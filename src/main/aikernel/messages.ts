@@ -14,7 +14,11 @@ import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { levenshteinDistance } from '../../utils/string.js';
-
+import {
+    getDefaultToolCallPresentation,
+    sanitizeToolCallPresentation,
+    type ToolCallPresentation
+} from './tool-presentation.js';
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
@@ -338,6 +342,7 @@ const LARGE_ARGS_THRESHOLD = 500;
 
 export const TOOL_RESULT_STORAGE_VERSION = 1;
 export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
+export const TOOL_CALL_ARGS_PREVIEW_MAX_CHARS = 2048;
 
 export class ToolCall implements BaseChatToolCall {
     index: number;
@@ -440,18 +445,32 @@ export class ToolCall implements BaseChatToolCall {
         return rest;
     }
 
-    /** 前端过程详情需要完整参数、结果和耗时，长内容由 GUI 固定高度滚动区承载。 */
+    /** 仅返回渲染摘要；完整参数和结果由详情 IPC 按需读取。 */
     toRenderJSON(): object {
+        const argsString = typeof this.args_string === 'string' ? this.args_string : '';
+        const argsPreview = argsString.slice(0, TOOL_CALL_ARGS_PREVIEW_MAX_CHARS);
         return {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
             status: this.status,
-            args_string: this.args_string,
-            result: this.result,
-            elapsedSeconds: this.elapsedSeconds,
-            rendered: this.rendered
+            args_preview: argsPreview,
+            args_truncated: argsPreview.length < argsString.length,
+            detail_available: Boolean(argsString || this.result || this.rendered),
+            presentation: this.getPresentation(),
+            elapsedSeconds: this.elapsedSeconds
         };
+    }
+
+    getPresentation(): ToolCallPresentation {
+        try {
+            if (this.tool && typeof this.tool.getToolCallPresentation === 'function') {
+                return sanitizeToolCallPresentation(this.tool.getToolCallPresentation(this), this.tool_name);
+            }
+        } catch (error) {
+            logger.error(`Error creating tool presentation for ${this.tool_name}: ${error}`);
+        }
+        return getDefaultToolCallPresentation(this);
     }
 
     static normalizeResultStorage(
@@ -813,7 +832,7 @@ export class ToolCallMessagePart implements BaseToolCallMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
-            rendered: this.rendered,
+            ...(this.toolcalls.length === 0 ? { rendered: this.rendered } : {}),
             toolcalls: this.toolcalls.map((tc) => tc.toRenderJSON())
         };
     }

@@ -2300,7 +2300,7 @@ export class OpenDeskTUI {
             ) {
                 const shortcuts = getShortcuts();
 
-                if (matchesKey(data, Key.ctrl('o'))) {
+                if (matchesKey(data, shortcuts.output_display)) {
                     this.cycleOutputDisplayLevel();
                     return { consume: true };
                 }

@@ -21,6 +21,7 @@ import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAs
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import { switchTaskMode } from '../main/aikernel/task/mode.js';
+import { serializeTaskUpdateForRender } from '../main/aikernel/task/update-render.js';
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
@@ -123,7 +124,11 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
      * @param chunkUpdate the chunk update to send
      */
     send(chunkUpdate: TaskUpdateChunk) {
-        safeSendToWebFrame(this.senderFrame, `taskManager:taskUpdate:${this.subscription_id}`, chunkUpdate);
+        safeSendToWebFrame(
+            this.senderFrame,
+            `taskManager:taskUpdate:${this.subscription_id}`,
+            serializeTaskUpdateForRender(chunkUpdate)
+        );
     }
 }
 

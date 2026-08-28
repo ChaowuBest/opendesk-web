@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { defineConfig, loadEnv } from 'electron-vite';
+import { defineConfig, externalizeDepsPlugin, loadEnv } from 'electron-vite';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import {
@@ -33,11 +33,30 @@ export default defineConfig(({ mode }) => {
             },
             resolve: {
                 alias: {
+                    // marked-katex-extension@5.1.7+ 的 exports.import 直接指向 TS 源码 (src/index.ts)。
+                    // Electron 主进程的依赖会被 external，运行时由 Node ESM loader 加载，
+                    // 而 Node 拒绝为 node_modules 下的 .ts 做类型剥离，抛出
+                    // ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING。这里显式映射到随包发布的
+                    // CJS 产物，使其被打进 bundle，运行时不再走 exports 解析。
+                    'marked-katex-extension': path.join(
+                        __dirname,
+                        'node_modules',
+                        'marked-katex-extension',
+                        'lib',
+                        'index.cjs'
+                    ),
                     ...openDeskOfficeAliases
                 }
             },
             publicDir: path.join(__dirname, 'resources', 'main'),
-            plugins: [openDeskOfficeMainBuildPlugin, tailwindcss()],
+            plugins: [
+                // 显式 externalize 依赖列表，并把 marked-katex-extension 排除在外：
+                // electron-vite 默认会把所有 dependencies 设为 external（enforce: 'pre'，
+                // 早于 resolve 生效），导致 alias 无法覆盖；显式传入后检测到同名插件不再自动注入。
+                externalizeDepsPlugin({ exclude: ['marked-katex-extension'] }),
+                openDeskOfficeMainBuildPlugin,
+                tailwindcss()
+            ],
             build: {
                 outDir: 'dist/main',
                 // 生产环境关闭 sourcemap 以减小体积和内存占用
