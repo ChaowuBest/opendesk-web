@@ -1,5 +1,5 @@
 import { ToolCall, ToolCallMessagePart } from '../../../main/aikernel/messages.js';
-import { serializeTaskUpdateForRender } from '../../../platforms/electron-task-update-render.js';
+import { serializeTaskUpdateForRender } from '../../../main/aikernel/task/update-render.js';
 import { ReadFileTool } from '../../../main/applications/filemgr/tools.js';
 import { ExecuteBashTool, ExecuteZshTool } from '../../../main/applications/terminal/tools.js';
 import { WebFetchTool } from '../../../main/applications/search/tools/webfetch.js';

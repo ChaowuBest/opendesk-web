@@ -20,17 +20,20 @@ describe('renderer preload task toolset callback ownership', () => {
         expect(preloadSource.indexOf(toolCallListener)).toBeGreaterThan(preloadSource.indexOf(duplicateGuard));
     });
 
-    test('acknowledges a streamed task update after its callback returns', () => {
-        expect(preloadSource).toContain("ipcRenderer.send('taskManager:ackTaskUpdate'");
-        expect(preloadSource).toMatch(/try \{\s*callback\(\.\.\.args\);\s*\} finally \{/);
+    test('forwards task updates directly to the callback', () => {
+        expect(preloadSource).toMatch(
+            /ipcRenderer\.on\(channel, \(event, \.\.\.args\) => \{\s*callback\(\.\.\.args\);\s*\}\)/
+        );
+        expect(preloadSource).not.toContain('ackTaskUpdate');
     });
 
-    test('requests a current task snapshot only after installing the subscription listener', () => {
+    test('returns the subscription after installing the task update listener', () => {
         const listener = 'ipcRenderer.on(channel';
-        const synchronization = "ipcRenderer.invoke('taskManager:syncTaskUpdate'";
+        const returnSubscription = 'return subscriptionId;';
 
         expect(preloadSource.indexOf(listener)).toBeGreaterThan(-1);
-        expect(preloadSource.indexOf(synchronization)).toBeGreaterThan(preloadSource.indexOf(listener));
+        expect(preloadSource.indexOf(returnSubscription)).toBeGreaterThan(preloadSource.indexOf(listener));
+        expect(preloadSource).not.toContain("ipcRenderer.invoke('taskManager:syncTaskUpdate'");
     });
 });
 

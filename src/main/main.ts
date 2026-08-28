@@ -1683,23 +1683,6 @@ const registerTaskManagerAPIHandlers = () => {
         const subscriber = new ElectronTaskUpdateSubscriber(event.senderFrame);
         return { status: 'ok', data: task.addSubscriber(subscriber) };
     });
-    ipcMain.handle('taskManager:syncTaskUpdate', async (event, taskId, subscriptionId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-
-        const subscriber = task.subscribers.find((item) => item.subscription_id === subscriptionId);
-        if (!(subscriber instanceof ElectronTaskUpdateSubscriber) || subscriber.senderFrame !== event.senderFrame) {
-            return { status: 'error', message: 'task update subscriber not found' };
-        }
-
-        // The renderer loads history before subscribing. The task may have
-        // completed in that gap, so replay the current part after the listener
-        // has explicitly confirmed that it is ready.
-        await task.sendSubscriptionFeedback();
-        return { status: 'ok' };
-    });
     ipcMain.handle('taskManager:unsubscribeTaskUpdate', (event, taskId, subscriptionId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
@@ -1708,18 +1691,6 @@ const registerTaskManagerAPIHandlers = () => {
 
         return { status: 'ok', data: task.removeSubscriber(subscriptionId) };
     });
-    ipcMain.on('taskManager:ackTaskUpdate', (event, taskId, subscriptionId, sequence) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        const subscriber = task?.subscribers.find((item) => item.subscription_id === subscriptionId);
-        if (
-            subscriber instanceof ElectronTaskUpdateSubscriber &&
-            subscriber.senderFrame === event.senderFrame &&
-            Number.isSafeInteger(sequence)
-        ) {
-            subscriber.acknowledge(sequence);
-        }
-    });
-
     ipcMain.handle('taskManager:getTaskList', (_event) => {
         return { status: 'ok', data: globalState.taskManagerState.getTaskList() };
     });
