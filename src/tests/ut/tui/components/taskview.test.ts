@@ -527,6 +527,30 @@ describe('TaskView chunk handling', () => {
         expect(statusLine - bodyLine).toBe(2);
     });
 
+    test('minimal mode collapses duplicate spacing between consecutive assistant messages', () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const chatContext = new ChatContext();
+        const first = new AssistantMessage([createToolPart(1, 'src/one.ts'), new TextMessagePart('First final')]);
+        const second = new AssistantMessage([createToolPart(2, 'src/two.ts'), new TextMessagePart('Second final')]);
+        chatContext.appendMessage(first);
+        chatContext.appendMessage(second);
+        taskView.taskState = {
+            task_id: 'task_1',
+            task_status: 'stopped',
+            chat_context: chatContext
+        } as any;
+
+        taskView.rebuildFromHistory();
+
+        const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
+        const firstBodyLine = renderedLines.findIndex((line) => line.includes('First final'));
+        const secondSummaryLine = renderedLines.findIndex(
+            (line, index) => index > firstBodyLine && line.includes('Complete ·')
+        );
+        expect(firstBodyLine).toBeGreaterThanOrEqual(0);
+        expect(secondSummaryLine - firstBodyLine).toBe(2);
+    });
+
     test('minimal tool summary shows localized reasoning, readable tool names, and elapsed time', async () => {
         setRuntimeLocale('zh-CN');
         const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);

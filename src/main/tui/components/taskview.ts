@@ -1104,9 +1104,19 @@ class IncrementalBox implements Component {
 
         // 渲染所有 children（大部分返回缓存，开销极低）
         const childLines: string[] = [];
+        let previousChild: Component | undefined;
         for (const child of this.children) {
             const lines = child.render(width);
-            for (const line of lines) childLines.push(line);
+            let start = 0;
+            if (
+                previousChild instanceof AssistantMessageView &&
+                child instanceof AssistantMessageView &&
+                childLines.at(-1)?.trim() === ''
+            ) {
+                while (start < lines.length && lines[start].trim() === '') start += 1;
+            }
+            for (let index = start; index < lines.length; index += 1) childLines.push(lines[index]);
+            previousChild = child;
         }
 
         if (childLines.length === 0) return [];
