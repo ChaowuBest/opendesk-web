@@ -23,7 +23,8 @@ export const SUPPORTED_ATTACHMENT_FILE_EXTENSIONS = [
     'ods',
     'pdf',
     'ofd',
-    'rtf'
+    'rtf',
+    'txt'
 ] as const;
 
 export const KNOWN_UNSUPPORTED_ATTACHMENT_FILE_EXTENSIONS = ['ppt', 'md', 'html'] as const;

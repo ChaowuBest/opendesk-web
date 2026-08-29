@@ -55,7 +55,8 @@ test('agent attachment support covers officeparser plus legacy doc and xls adapt
         'ods',
         'pdf',
         'ofd',
-        'rtf'
+        'rtf',
+        'txt'
     ]);
     for (const extension of officeParserSupportedExtensions) {
         assert.ok(support.supportedExtensions.includes(extension), `.${extension} should remain supported`);
