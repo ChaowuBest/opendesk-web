@@ -338,6 +338,10 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        log: (level, message) => {
+            const safeLevel = ['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info';
+            ipcRenderer.send('renderer:log', safeLevel, String(message ?? ''));
+        },
         rewindToUserMessage: async (taskId, messageId, options = {}) => {
             const result = await ipcRenderer.invoke('taskManager:rewindToUserMessage', taskId, messageId, options);
             if (result.status !== 'ok') {
