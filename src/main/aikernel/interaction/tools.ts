@@ -25,7 +25,6 @@ import type { TaskState } from '../states/tasks.js';
 import { findMessageIdForToolCallForTask } from '../task/permission.js';
 import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
-import type { ToolCallPresentation } from '../tool-presentation.js';
 
 // ─── Provider 接口 ────────────────────────────────────────────────────────────
 
@@ -163,10 +162,6 @@ export class AskUserTool extends InteractiveTool<typeof AskUserArgsSchema> {
             AskUserArgsSchema
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
-    }
-
-    getToolCallPresentation(): ToolCallPresentation {
-        return { displayName: { key: 'tools.askUser.name' } };
     }
 
     /**

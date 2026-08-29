@@ -33,7 +33,6 @@ import dotenv from 'dotenv';
 import format from 'string-template';
 import { parseJsonWithRepair } from '../../utils/json.js';
 import { ToolCall } from './messages';
-import { getToolCallPresentationArgs, type ToolCallPresentation } from './tool-presentation.js';
 import chalk from 'chalk';
 import { statusDisplay } from '../tui/components/toolcall';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -205,7 +204,7 @@ export class Skill {
                 result += format(TOOL_XML, {
                     name: tool.name,
                     description: tool.description,
-                    parameters: JSON.stringify(tool.getJsonSchema())
+                    parameters: JSON.stringify(tool.params.toJSONSchema())
                 });
             }
         }
@@ -383,26 +382,10 @@ const LoadSkillSchema = z.object({
     skillName: z.string().describe('要读取的Skill的名称(name)')
 });
 
-function getSkillToolCallPresentation(toolcall: ToolCall, displayNameKey: string): ToolCallPresentation {
-    const args = getToolCallPresentationArgs(toolcall);
-    const explicitSummary = [args.description, args.purpose, args.task].find(
-        (value): value is string => typeof value === 'string' && Boolean(value.trim())
-    );
-    const skillName = typeof args.skillName === 'string' ? args.skillName.trim() : '';
-    return {
-        displayName: { key: displayNameKey },
-        summary: explicitSummary?.trim() || skillName || undefined
-    };
-}
-
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
         super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema);
         this.setExecutor(this.loadSkill.bind(this));
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getSkillToolCallPresentation(toolcall, 'renderer.taskview.output.toolName.loadSkill');
     }
 
     getDeclaredPermissions(args: z.output<typeof LoadSkillSchema>): PermissionRequest[] {
@@ -555,9 +538,6 @@ function parseCallSkillToolArgs(toolArgs: unknown): object {
 }
 
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
-    /** CallSkillTool 自身 schema 的外层字段（从 schema 派生，新增外层字段时自动同步），平铺参数修复时需从候选内层参数中剔除 */
-    private static readonly OUTER_ARG_KEYS: readonly string[] = Object.keys(CallSkillToolSchema.shape);
-
     constructor() {
         super(
             'CallSkillTool',
@@ -567,159 +547,19 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
     }
 
-    /**
-     * 部分模型在调用 CallSkillTool 时会把内部工具参数直接平铺到顶层，
-     * 丢失 toolName/toolArgs 包装，导致 schema 校验必然失败，且模型重试往往重复同样的错误。
-     * 此方法尝试把这类参数还原为规范的 { bundleName, skillName, toolName, toolArgs } 结构。
-     * 仅当已加载技能的内部工具 schema 能唯一解释全部平铺字段时才修复，避免误判。
-     */
-    private resolveSkillToolArgs(
-        raw: unknown
-    ): { bundleName: string; skillName: string; toolName: string; toolArgs: object } | undefined {
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-            return undefined;
-        }
-        const record = raw as Record<string, unknown>;
-        const bundleName = typeof record['bundleName'] === 'string' ? record['bundleName'] : undefined;
-        const skillName = typeof record['skillName'] === 'string' ? record['skillName'] : undefined;
-        if (!bundleName || !skillName) {
-            return undefined;
-        }
-
-        const toolName = typeof record['toolName'] === 'string' ? record['toolName'] : undefined;
-        if (toolName) {
-            let toolArgs: object;
-            try {
-                toolArgs = parseCallSkillToolArgs(record['toolArgs']);
-            } catch {
-                toolArgs = {};
-            }
-            return { bundleName, skillName, toolName, toolArgs };
-        }
-
-        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断
-        const flatArgs: Record<string, unknown> = {};
-        let hasFlatArgs = false;
-        for (const [key, value] of Object.entries(record)) {
-            if (CallSkillTool.OUTER_ARG_KEYS.includes(key)) {
-                continue;
-            }
-            flatArgs[key] = value;
-            hasFlatArgs = true;
-        }
-        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断。
-        // toolArgs 可能是 JSON 字符串（部分模型按字符串嵌套传递，见 task_mtvpprvf_91ts 故障），先解析成对象
-        let parsedExplicitToolArgs: unknown;
-        try {
-            parsedExplicitToolArgs = parseCallSkillToolArgs(record['toolArgs']);
-        } catch {
-            parsedExplicitToolArgs = undefined;
-        }
-        if (
-            parsedExplicitToolArgs &&
-            typeof parsedExplicitToolArgs === 'object' &&
-            !Array.isArray(parsedExplicitToolArgs)
-        ) {
-            Object.assign(flatArgs, parsedExplicitToolArgs);
-            hasFlatArgs = true;
-        }
-        if (!hasFlatArgs) {
-            return undefined;
-        }
-
-        const skill = SkillRegistry.getInstance().getCachedSkill(bundleName, skillName);
-        if (!skill) {
-            return undefined;
-        }
-        const inferredToolName = this.inferInnerToolName(skill, flatArgs);
-        if (!inferredToolName) {
-            return undefined;
-        }
-        return { bundleName, skillName, toolName: inferredToolName, toolArgs: flatArgs };
-    }
-
-    /**
-     * 根据平铺参数在各内部工具 schema 上的命中情况推断 toolName。
-     * 候选必须满足：所有平铺字段都能被该工具 schema 解释，且至少命中一个必填字段；
-     * 多个候选打分完全相同时视为歧义，返回 undefined（宁可不修复也不误判）。
-     */
-    private inferInnerToolName(skill: Skill, flatArgs: Record<string, unknown>): string | undefined {
-        if (!skill.toolsets) {
-            return undefined;
-        }
-        const flatKeys = Object.keys(flatArgs);
-        if (flatKeys.length === 0) {
-            return undefined;
-        }
-
-        interface Candidate {
-            name: string;
-            requiredRatio: number;
-            hitCount: number;
-        }
-        const candidates: Candidate[] = [];
-        for (const toolset of skill.toolsets) {
-            for (const [, tool] of toolset.tools) {
-                const jsonSchema = tool.getJsonSchema();
-                const properties = (jsonSchema?.properties ?? {}) as Record<string, unknown>;
-                const required = Array.isArray(jsonSchema?.required) ? (jsonSchema.required as string[]) : [];
-                let unknownKeys = 0;
-                let requiredHits = 0;
-                let hitCount = 0;
-                for (const key of flatKeys) {
-                    if (key in properties) {
-                        hitCount++;
-                        if (required.includes(key)) {
-                            requiredHits++;
-                        }
-                    } else {
-                        unknownKeys++;
-                    }
-                if (unknownKeys > 0 || requiredHits === 0) {
-                    continue;
-                }
-                const requiredRatio = required.length > 0 ? requiredHits / required.length : 0;
-                candidates.push({ name: tool.name, requiredRatio, hitCount });
-            }
-        }
-        if (candidates.length === 0) {
-            return undefined;
-        }
-        candidates.sort((a, b) => b.requiredRatio - a.requiredRatio || b.hitCount - a.hitCount);
-        const top = candidates[0];
-        const runnerUp = candidates[1];
-        if (runnerUp && runnerUp.requiredRatio === top.requiredRatio && runnerUp.hitCount === top.hitCount) {
-            return undefined;
-        }
-        return top.name;
-    }
-
-    validateArgs(args: unknown): ToolArgsValidationResult<T> {
-        const baseResult = super.validateArgs(args);
-        if (baseResult.success) {
-            return baseResult;
-        }
-        const repaired = this.resolveSkillToolArgs(args);
-        if (!repaired) {
-            return baseResult;
-        }
-        const repairedResult = super.validateArgs(repaired);
-        return repairedResult.success ? { ...repairedResult, repaired: true } : baseResult;
-    }
-
     getDeclaredPermissions(args: z.output<typeof CallSkillToolSchema>): PermissionRequest[] {
-        // 委托给内部工具的权限声明。
-        // args 可能未经 schema 校验（如缺失 toolName 的平铺参数），
-        // 先尝试解析/修复，保证修复后的调用不会绕过内部工具的权限审批
-        const resolved = this.resolveSkillToolArgs(args);
-        if (!resolved) {
-            return [];
-        }
-        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(resolved.bundleName, resolved.skillName);
+        // 委托给内部工具的权限声明
+        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(args.bundleName, args.skillName);
         if (cachedSkill) {
-            const innerTool = cachedSkill.getTool(resolved.toolName);
+            const innerTool = cachedSkill.getTool(args.toolName);
             if (innerTool) {
-                const innerPerms = innerTool.getDeclaredPermissions(resolved.toolArgs);
+                let parsedToolArgs: object;
+                try {
+                    parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
+                } catch {
+                    parsedToolArgs = {};
+                }
+                const innerPerms = innerTool.getDeclaredPermissions(parsedToolArgs);
                 if (innerPerms.length > 0) {
                     return innerPerms;
                 }

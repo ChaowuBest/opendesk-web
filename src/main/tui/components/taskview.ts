@@ -65,7 +65,6 @@ import {
     isReasoningDisplayFullConfigured,
     type OutputDisplayLevel
 } from '../display.js';
-import { resolveToolCallPresentation } from '../../aikernel/tool-presentation.js';
 
 const MAX_TUI_PART_INDEX = 10_000;
 const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
@@ -640,10 +639,8 @@ function getMinimalRunningIcon(): string {
 
 function getMinimalToolAction(toolCall?: ToolCall): string {
     if (!toolCall) return t('display.minimal.running.waiting');
-    const presentation = resolveToolCallPresentation(toolCall.getPresentation(), t);
-    if (presentation.activity) return presentation.activity;
     return t('display.minimal.running.tool', {
-        tool: presentation.summary || presentation.displayName
+        tool: toolCall.tool_name
     });
 }
 
@@ -657,15 +654,9 @@ function compactMinimalToolName(value: string, maxLength: number = 12): string {
         .trim()}…`;
 }
 
-function getMinimalToolDisplayName(toolCall: ToolCall): string {
-    return resolveToolCallPresentation(toolCall.getPresentation(), t).displayName;
-}
-
 function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean): string {
     const toolNames = Array.from(
-        new Set(
-            toolCalls.map((toolCall) => compactMinimalToolName(getMinimalToolDisplayName(toolCall))).filter(Boolean)
-        )
+        new Set(toolCalls.map((toolCall) => compactMinimalToolName(toolCall.tool_name)).filter(Boolean))
     );
     const listedNames = toolNames.slice(0, 2).join(t('display.minimal.tools.summary.listSeparator'));
     const tools = listedNames

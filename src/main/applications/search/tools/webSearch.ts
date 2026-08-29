@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -57,7 +57,7 @@ export interface WebSearchAppConfig {
     getBingLang(): 'zh' | 'en';
 }
 
-export class WebSearchTool extends SearchPresentationTool<typeof WebSearchArgsSchema> {
+export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
     private channel: WebSearchChannel;
     private appConfig: WebSearchAppConfig;
     private delegate: BaseTool<any>;

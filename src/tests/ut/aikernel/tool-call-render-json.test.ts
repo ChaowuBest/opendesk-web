@@ -1,197 +1,136 @@
 import { ToolCall, ToolCallMessagePart } from '../../../main/aikernel/messages.js';
 import { serializeTaskUpdateForRender } from '../../../main/aikernel/task/update-render.js';
-import { ReadFileTool } from '../../../main/applications/filemgr/tools.js';
-import { ExecuteBashTool, ExecuteZshTool } from '../../../main/applications/terminal/tools.js';
-import { WebFetchTool } from '../../../main/applications/search/tools/webfetch.js';
-import { BrowserNavigateTool } from '../../../main/applications/browser/tools.js';
+import { getToolDisplayNameKey, humanizeToolName } from '../../../common/tool-display-name.js';
+import { enUs } from '../../../locale/en-us.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
+import { zhCn } from '../../../locale/zh-cn.js';
 
 describe('ToolCall GUI render payload', () => {
-    test('keeps the task snapshot lightweight without exposing tool arguments', () => {
+    beforeEach(() => {
+        setRuntimeLocale('zh-CN');
+    });
+
+    afterEach(() => {
+        setRuntimeLocale(null);
+    });
+
+    test('humanizes generic tool names without changing the protocol identifier', () => {
+        expect(getToolDisplayNameKey('filemgr-readFile')).toBe('renderer.taskview.toolName.readFile');
+        expect(getToolDisplayNameKey('filemgr-grep')).toBe('renderer.taskview.toolName.grep');
+        expect(getToolDisplayNameKey('filemgr-grepFiles')).toBe('renderer.taskview.toolName.grep');
+        expect(getToolDisplayNameKey('skill-manager-LoadSkill')).toBe('renderer.taskview.toolName.loadSkill');
+        expect(getToolDisplayNameKey('search-WebSearch')).toBe('renderer.taskview.toolName.webSearch');
+        expect(humanizeToolName('plugin-demo-fetchRecords')).toBe('plugin / demo / fetch Records');
+        expect(humanizeToolName('')).toBe('');
+    });
+
+    test.each([
+        ['browser-navigate', 'renderer.taskview.toolName.browserNavigate'],
+        ['browser-snapshot', 'renderer.taskview.toolName.browserSnapshot'],
+        ['browser-click', 'renderer.taskview.toolName.browserClick'],
+        ['browser-type', 'renderer.taskview.toolName.browserType'],
+        ['filemgr-readImage', 'renderer.taskview.toolName.readImage'],
+        ['terminal-checkShellStatus', 'tools.checkShellStatus.name'],
+        ['search-bingSearch', 'search.bing.name'],
+        ['task-info-listRecentTasks', 'tools.listRecentTasks.name'],
+        ['mailbox-getEmailList', 'renderer.taskview.toolName.getEmailList'],
+        ['knowledgebase-operate-askKnowledgeBase', 'renderer.taskview.toolName.askKnowledgeBase'],
+        ['global-todos-listGlobalTodos', 'renderer.taskview.toolName.listGlobalTodos'],
+        ['mcp-manage-listMcpServers', 'renderer.taskview.toolName.listMcpServers'],
+        ['devicemgr-executeNodeShell', 'renderer.taskview.toolName.executeNodeShell'],
+        ['devicemgr-readNodeFile', 'renderer.taskview.toolName.readNodeFile'],
+        ['channel-outbound-SendFile', 'renderer.taskview.toolName.SendFile'],
+        ['workflow-agent-CompleteWorkflowAgent', 'renderer.taskview.toolName.CompleteWorkflowAgent'],
+        ['current-presentation-open_presentation', 'renderer.taskview.toolName.open_presentation']
+    ])('registers a display name for built-in tool %s', (toolName, expectedKey) => {
+        expect(getToolDisplayNameKey(toolName)).toBe(expectedKey);
+    });
+
+    test('distinguishes HarmonyOS operations from browser operations with the same short name', () => {
+        expect(getToolDisplayNameKey('browser-click')).toBe('renderer.taskview.toolName.browserClick');
+        expect(getToolDisplayNameKey('use-harmony-click')).toBe('renderer.taskview.toolName.harmonyClick');
+        expect(getToolDisplayNameKey('browser-snapshot')).toBe('renderer.taskview.toolName.browserSnapshot');
+        expect(getToolDisplayNameKey('use-harmony-snapshot')).toBe('renderer.taskview.toolName.harmonySnapshot');
+    });
+
+    test('keeps every task-view tool label localized in Chinese and English', () => {
+        const prefix = 'renderer.taskview.toolName.';
+        const zhKeys = Object.keys(zhCn)
+            .filter((key) => key.startsWith(prefix))
+            .sort();
+        const enKeys = Object.keys(enUs)
+            .filter((key) => key.startsWith(prefix))
+            .sort();
+
+        expect(enKeys).toEqual(zhKeys);
+        expect(zhKeys.length).toBeGreaterThan(190);
+        for (const key of zhKeys) {
+            expect(zhCn[key]).toBeTruthy();
+            expect(enUs[key]).toBeTruthy();
+        }
+    });
+
+    test('uses a localized human-readable label in the generic fallback card', async () => {
+        const call = new ToolCall(0, 'call-generic', 'filemgr-readFile', '{}');
+        const html = await call.render();
+        expect(html).toContain(zhCn['renderer.taskview.toolName.readFile']);
+        expect(html).not.toContain('filemgr-readFile');
+    });
+
+    test('uses the concise Chinese label for Bash commands', async () => {
+        const call = new ToolCall(0, 'call-bash', 'terminal-executeBash', '{}');
+        const html = await call.render();
+        expect(html).toContain(zhCn['renderer.taskview.toolName.executeBash']);
+        expect(html).not.toContain('执行 Bash 命令');
+    });
+
+    test('uses the same human-readable label for generic error cards', async () => {
+        const call = new ToolCall(0, 'call-error', 'filemgr-readFile', '{}');
+        call.status = 'error';
+        call.result = '读取失败';
+        const html = await call.render();
+        expect(html).toContain(zhCn['renderer.taskview.toolName.readFile']);
+        expect(html).not.toContain('filemgr-readFile');
+    });
+
+    test('uses the mainline rendered card and excludes raw arguments and results', () => {
         const call = new ToolCall(0, 'call-1', 'terminal-executeZsh', '{"command":"npm test"}');
         call.args_object = { command: 'npm test' };
         call.result = '6 passed';
         call.status = 'success';
-        call.rendered = '<div>terminal result</div>';
-        call.setTool(new ExecuteZshTool());
+        call.rendered = '<details class="terminal-tool">terminal result</details>';
 
         expect(call.toRenderJSON()).toEqual({
             index: 0,
             id: 'call-1',
             tool_name: 'terminal-executeZsh',
             status: 'success',
-            detail_available: true,
-            presentation: {
-                displayName: 'Zsh',
-                summary: { key: 'renderer.taskview.output.purpose.shell' }
-            }
+            rendered: '<details class="terminal-tool">terminal result</details>'
         });
+        expect(call.toRenderJSON()).not.toHaveProperty('args_string');
+        expect(call.toRenderJSON()).not.toHaveProperty('args_object');
+        expect(call.toRenderJSON()).not.toHaveProperty('result');
     });
 
-    test('never includes tool arguments or the raw tool result', () => {
-        const call = new ToolCall(0, 'call-large', 'terminal-executeZsh', `{"command":"${'x'.repeat(10_000)}"}`);
-        call.result = 'sensitive output';
-
-        const payload = call.toRenderJSON() as Record<string, unknown>;
-
-        expect(payload).not.toHaveProperty('args_string');
-        expect(payload).not.toHaveProperty('args_preview');
-        expect(payload).not.toHaveProperty('args_truncated');
-        expect(payload).not.toHaveProperty('result');
-        expect(payload).not.toHaveProperty('rendered');
-    });
-
-    test('only advertises rendered-only detail after an explicit custom-detail opt-in', () => {
-        const unsafe = new ToolCall(0, 'call-unsafe-render', 'terminal-executeZsh', '{"command":"secret"}');
-        unsafe.rendered = '<details class="terminal-tool">secret</details>';
-
-        const safe = new ToolCall(1, 'call-safe-render', 'plugin-safeDetail', '{}');
-        safe.rendered = '<div class="tool-card">safe detail</div>';
-        safe.presentation = { displayName: 'Safe detail', detailMode: 'custom' };
-
-        expect(unsafe.toRenderJSON()).toMatchObject({ detail_available: false });
-        expect(safe.toRenderJSON()).toMatchObject({ detail_available: true });
-    });
-
-    test('does not expose missing arguments from legacy task data', () => {
+    test('supports legacy task data with missing arguments', () => {
         const call = new ToolCall(0, 'call-legacy', 'Legacy', '{}');
         (call as any).args_string = undefined;
 
-        expect(call.toRenderJSON()).toMatchObject({ detail_available: false });
-    });
-
-    test('serializes bounded presentation metadata supplied by the tool', () => {
-        const call = new ToolCall(0, 'call-presentation', 'plugin-inspectArtifact', '{}');
-        call.setTool({
-            getToolCallPresentation: () => ({
-                displayName: 'Inspect artifact',
-                summary: 'Inspect report.txt',
-                resource: { type: 'preview', value: '/workspace/report.txt' },
-                resultFormat: 'markdown'
-            })
-        } as any);
-
-        expect(call.toRenderJSON()).toMatchObject({
-            presentation: {
-                displayName: 'Inspect artifact',
-                summary: 'Inspect report.txt',
-                resource: { type: 'preview', value: '/workspace/report.txt' },
-                resultFormat: 'markdown'
-            }
+        expect(call.toRenderJSON()).toEqual({
+            index: 0,
+            id: 'call-legacy',
+            tool_name: 'Legacy',
+            status: 'pending',
+            rendered: undefined
         });
     });
 
-    test('bounds untrusted presentation text and rejects unsupported resource actions', () => {
-        const call = new ToolCall(0, 'call-untrusted-presentation', 'plugin-untrusted', '{}');
-        call.setTool({
-            getToolCallPresentation: () => ({
-                displayName: 'n'.repeat(1_000),
-                summary: 's'.repeat(4_000),
-                activity: 'a'.repeat(4_000),
-                resource: { type: 'execute', value: '/workspace/report.txt' }
-            })
-        } as any);
-
-        const presentation = (call.toRenderJSON() as any).presentation;
-        expect(Array.from(presentation.displayName)).toHaveLength(160);
-        expect(Array.from(presentation.summary)).toHaveLength(512);
-        expect(Array.from(presentation.activity)).toHaveLength(512);
-        expect(presentation).not.toHaveProperty('resource');
-    });
-
-    test('keeps the core fallback independent from built-in tool names', () => {
-        const call = new ToolCall(
-            0,
-            'call-default-presentation',
-            'filemgr-readFile',
-            '{"file_path":"/workspace/package.json"}'
-        );
-
-        expect(call.getPresentation()).toEqual({ displayName: 'filemgr-readFile' });
-    });
-
-    test('gets file presentation semantics from the file tool owner', () => {
-        const call = new ToolCall(
-            0,
-            'call-file-presentation',
-            'filemgr-readFile',
-            '{"file_path":"/workspace/package.json"}'
-        );
-        call.args_object = { file_path: '/workspace/package.json' };
-        call.setTool(new ReadFileTool());
-
-        expect(call.getPresentation()).toMatchObject({
-            summary: {
-                key: 'renderer.taskview.output.purpose.readFile',
-                params: { name: 'package.json' }
-            },
-            resource: { type: 'preview', value: '/workspace/package.json' },
-            detailMode: 'resource'
-        });
-        expect(call.getPresentation().displayName).not.toBe('filemgr-readFile');
-    });
-
-    test('persists an owner-provided presentation for history when the tool is unavailable', () => {
-        const call = new ToolCall(
-            0,
-            'call-persisted-presentation',
-            'filemgr-readFile',
-            '{"file_path":"/workspace/package.json"}'
-        );
-        call.args_object = { file_path: '/workspace/package.json' };
-        call.setTool(new ReadFileTool());
-
-        const restored = ToolCall.assign(JSON.parse(JSON.stringify(call)));
-
-        expect(restored.tool).toBeUndefined();
-        expect(restored.getPresentation()).toMatchObject({
-            displayName: { key: 'filemgr.readFile.name' },
-            resource: { type: 'preview', value: '/workspace/package.json' },
-            detailMode: 'resource'
-        });
-    });
-
-    test('uses a localized action name for Bash execution', () => {
-        const call = new ToolCall(0, 'call-bash', 'terminal-executeBash', '{"command":"pwd"}');
-        call.args_object = { command: 'pwd' };
-        call.setTool(new ExecuteBashTool());
-
-        expect(call.getPresentation().displayName).toEqual({
-            key: 'renderer.taskview.output.toolName.executeCommand'
-        });
-    });
-
-    test('gets Markdown and URL semantics from the search tool owner', () => {
-        const call = new ToolCall(0, 'call-web-fetch', 'search-webFetch', '{"url":"https://example.com/docs"}');
-        call.args_object = { url: 'https://example.com/docs' };
-        call.setTool(new WebFetchTool());
-
-        expect(call.getPresentation()).toEqual({
-            displayName: { key: 'search.webfetch.name' },
-            summary: {
-                key: 'renderer.taskview.output.purpose.openUrl',
-                params: { url: 'https://example.com/docs' }
-            },
-            resource: { type: 'url', value: 'https://example.com/docs' },
-            resultFormat: 'markdown'
-        });
-    });
-
-    test('gets navigation semantics from the browser tool owner', () => {
-        const call = new ToolCall(0, 'call-navigate', 'browser-navigate', '{"url":"https://example.com"}');
-        call.args_object = { url: 'https://example.com' };
-        call.setTool(new BrowserNavigateTool({} as any));
-
-        expect(call.getPresentation()).toMatchObject({
-            displayName: { key: 'renderer.taskview.output.toolName.navigate' },
-            resource: { type: 'url', value: 'https://example.com/' }
-        });
-    });
-
-    test('serializes live Electron assistant updates through the lightweight render contract', () => {
+    test('serializes live Electron updates with the complete mainline tool-card snapshot', () => {
         const call = new ToolCall(0, 'call-live', 'terminal-executeZsh', '{"command":"npm test"}');
         call.result = 'live result';
         const part = new ToolCallMessagePart();
         part.toolcalls.push(call);
+        part.rendered = '<div class="terminal-tool">mainline terminal card</div>';
 
         const update = serializeTaskUpdateForRender({
             type: 'assistant',
@@ -203,11 +142,8 @@ describe('ToolCall GUI render payload', () => {
         });
         const tool = (update as any).last_part.toolcalls[0];
 
-        expect(tool).not.toHaveProperty('args_preview');
-        expect(tool).not.toHaveProperty('args_truncated');
-        expect(tool).not.toHaveProperty('args_string');
         expect(tool).not.toHaveProperty('args_string');
         expect(tool).not.toHaveProperty('result');
-        expect((update as any).last_part).not.toHaveProperty('rendered');
+        expect((update as any).last_part.rendered).toBe('<div class="terminal-tool">mainline terminal card</div>');
     });
 });

@@ -26,14 +26,6 @@ function createToolPart(id: number, filePath: string, customOutput = `CUSTOM TOO
     const part = new ToolCallMessagePart();
     const toolCall = new ToolCall(id, `tool-${id}`, 'filemgr-readFile', JSON.stringify({ file_path: filePath }));
     toolCall.args_object = { file_path: filePath };
-    toolCall.presentation = {
-        displayName: { key: 'filemgr.readFile.name' },
-        summary: {
-            key: 'renderer.taskview.output.purpose.readFile',
-            params: { name: filePath.split('/').pop() || filePath }
-        },
-        activity: { key: 'display.minimal.running.reading', params: { path: filePath } }
-    };
     toolCall.status = 'success';
     toolCall.setTool({
         renderToolCallCli: jest.fn(() => [customOutput])
@@ -51,14 +43,6 @@ function createRunningToolPart(id: number, filePath: string): ToolCallMessagePar
 function createNamedToolPart(id: number, toolName: string): ToolCallMessagePart {
     const part = createToolPart(id, `src/${id}.ts`);
     part.toolcalls[0].tool_name = toolName;
-    const displayNameKeys: Record<string, string> = {
-        'filemgr-readFile': 'filemgr.readFile.name',
-        'search-webSearch': 'renderer.taskview.output.toolName.webSearch',
-        'todomgr-TodoWrite': 'renderer.taskview.output.toolName.todoWrite'
-    };
-    part.toolcalls[0].presentation = {
-        displayName: displayNameKeys[toolName] ? { key: displayNameKeys[toolName] } : toolName
-    };
     return part;
 }
 
@@ -243,7 +227,7 @@ describe('TaskView chunk handling', () => {
         taskView.rebuildFromHistory();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call');
+        expect(output).toContain('Used filemgr-rea… in 1 tool call');
         expect(output).toContain('Final response');
         expect(output.match(/Complete ·/g)).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
@@ -351,7 +335,7 @@ describe('TaskView chunk handling', () => {
         });
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Reading `src/main/tui/components/taskview.ts`');
+        expect(output).toContain('Running filemgr-readFile…');
         expect(output.match(/[✣✤✥✦]/g)).toHaveLength(1);
         expect(output).toContain('1 tool');
         expect(output).not.toContain('private reasoning');
@@ -373,13 +357,13 @@ describe('TaskView chunk handling', () => {
             last_part: createRunningToolPart(1, 'src/one.ts')
         });
 
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✣ Reading `src/one.ts`');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✣ Running filemgr-readFile…');
 
         now.mockReturnValue(300);
         taskView.requestStreamRender();
 
         expect(tui.requestRender).toHaveBeenCalledTimes(1);
-        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✤ Reading `src/one.ts`');
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('✤ Running filemgr-readFile…');
     });
 
     test('minimal mode renders a live assistant error with a red failed terminal status', async () => {
@@ -517,7 +501,7 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         let output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call');
+        expect(output).toContain('Used filemgr-rea… in 1 tool call');
         expect(output).toContain('Final response');
         expect(output.match(/Complete ·/g)).toHaveLength(1);
         expect(output).not.toMatch(/[✣✤✥✦]/);
@@ -525,7 +509,7 @@ describe('TaskView chunk handling', () => {
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Read File in 1 tool call');
+        expect(output).toContain('Used filemgr-rea… in 1 tool call');
     });
 
     test('minimal mode updates elapsed time before the first assistant event', () => {
@@ -568,9 +552,9 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const output = renderedLines.join('\n');
-        const firstSummary = output.indexOf('Deep reasoning · Used Read File in 2 tool calls');
+        const firstSummary = output.indexOf('Deep reasoning · Used filemgr-rea… in 2 tool calls');
         const firstBody = output.indexOf('First body');
-        const secondSummary = output.indexOf('Deep reasoning · Used Read File in 1 tool call', firstBody);
+        const secondSummary = output.indexOf('Deep reasoning · Used filemgr-rea… in 1 tool call', firstBody);
         const secondBody = output.indexOf('Second body');
         expect(firstSummary).toBeGreaterThanOrEqual(0);
         expect(firstSummary).toBeLessThan(firstBody);
@@ -579,11 +563,11 @@ describe('TaskView chunk handling', () => {
         expect(output).not.toMatch(/[✣✤✥✦]/);
 
         const firstSummaryLine = renderedLines.findIndex((line) =>
-            line.includes('Deep reasoning · Used Read File in 2 tool calls')
+            line.includes('Deep reasoning · Used filemgr-rea… in 2 tool calls')
         );
         const firstBodyLine = renderedLines.findIndex((line) => line.includes('First body'));
         const secondSummaryLine = renderedLines.findIndex(
-            (line, index) => index > firstBodyLine && line.includes('Deep reasoning · Used Read File in 1 tool call')
+            (line, index) => index > firstBodyLine && line.includes('Deep reasoning · Used filemgr-rea… in 1 tool call')
         );
         const secondBodyLine = renderedLines.findIndex((line) => line.includes('Second body'));
         expect(renderedLines[0].trim()).toBe('');
@@ -714,21 +698,20 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具');
+        expect(output).toContain('✓ 深度思考 · 使用了 todomgr-Tod…、search-webS… 等 3个工具');
         expect(output).not.toContain('4个工具');
         expect(output).not.toContain('已执行工具');
         expect(rawOutput).toContain(
-            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、网页搜索 等 3个工具')}`
+            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 todomgr-Tod…、search-webS… 等 3个工具')}`
         );
     });
 
-    test('minimal tool summary uses tool-owned presentation metadata', async () => {
+    test('minimal tool summary uses the mainline tool name', async () => {
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
         taskView.setOutputDisplayLevel('minimal');
         const part = createNamedToolPart(1, 'plugin-opaqueOperation');
         part.toolcalls[0].setTool({
-            renderToolCallCli: jest.fn(() => ['custom detail']),
-            getToolCallPresentation: jest.fn(() => ({ displayName: 'Inspector' }))
+            renderToolCallCli: jest.fn(() => ['custom detail'])
         } as any);
 
         await taskView.handleChunkUpdate({
@@ -750,8 +733,7 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Used Inspector in 1 tool call');
-        expect(output).not.toContain('plugin-opaqueOperation');
+        expect(output).toContain('Used plugin-opaq… in 1 tool call');
     });
 
     test('minimal tool summaries freeze each tool group duration independently', async () => {
@@ -815,14 +797,14 @@ describe('TaskView chunk handling', () => {
 
         now.mockReturnValue(20_000);
         let output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls');
-        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call');
+        expect(output).toContain('Deep reasoning · Used filemgr-rea… in 2 tool calls');
+        expect(output).toContain('Deep reasoning · Used filemgr-rea… in 1 tool call');
 
         now.mockReturnValue(30_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output).toContain('Deep reasoning · Used Read File in 2 tool calls');
-        expect(output).toContain('Deep reasoning · Used Read File in 1 tool call');
+        expect(output).toContain('Deep reasoning · Used filemgr-rea… in 2 tool calls');
+        expect(output).toContain('Deep reasoning · Used filemgr-rea… in 1 tool call');
     });
 
     test('minimal completion suppresses a duplicate tool summary and dims its metadata', async () => {
@@ -852,12 +834,12 @@ describe('TaskView chunk handling', () => {
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
         expect(output).not.toContain('✓ 1 tool');
-        expect(output.indexOf('Complete · Deep reasoning · Used Read File in 1 tool call')).toBeLessThan(
+        expect(output.indexOf('Complete · Deep reasoning · Used filemgr-rea… in 1 tool call')).toBeLessThan(
             output.indexOf('Final output')
         );
         expect(rawOutput).toContain(
             `${chalk.greenBright('●')} ${chalk.greenBright('Complete')} ${chalk.dim(
-                '· Deep reasoning · Used Read File in 1 tool call'
+                '· Deep reasoning · Used filemgr-rea… in 1 tool call'
             )}`
         );
         expect(output).not.toContain('CUSTOM TOOL 1');
@@ -901,14 +883,14 @@ describe('TaskView chunk handling', () => {
 
         let output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File in 1 tool call');
+        expect(output).toContain('Complete · Used filemgr-rea… in 1 tool call');
         expect(output).not.toContain('body segment');
 
         now.mockReturnValue(20_000);
         taskView.invalidate();
         output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).not.toContain('✓ 1 tool');
-        expect(output).toContain('Complete · Used Read File in 1 tool call');
+        expect(output).toContain('Complete · Used filemgr-rea… in 1 tool call');
         expect(output).not.toContain('body segment');
     });
 
@@ -937,8 +919,8 @@ describe('TaskView chunk handling', () => {
         taskView.clearStreamThrottle();
 
         const output = stripAnsi(taskView.render(100).join('\n'));
-        expect(output.match(/✓ Used Read File in 1 tool call/g)).toHaveLength(3);
-        expect(output).toContain('Complete · Used Read File in 3 tool calls');
+        expect(output.match(/✓ Used filemgr-rea… in 1 tool call/g)).toHaveLength(3);
+        expect(output).toContain('Complete · Used filemgr-rea… in 3 tool calls');
         expect(output).not.toContain('body segment');
     });
 

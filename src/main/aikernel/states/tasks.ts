@@ -173,8 +173,6 @@ export class BaseTaskUpdateSubscriber {
     send(_chunkUpdate: TaskUpdateChunk) {
         throw new Error('send not implemented');
     }
-
-    dispose(): void {}
 }
 
 class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -722,13 +720,8 @@ export class TaskState {
     retainAvailableTaskUpdateSubscribers(context: string): void {
         this.subscribers = this.subscribers.filter((subscriber) => {
             try {
-                const available = subscriber.isAvailable();
-                if (!available) {
-                    subscriber.dispose();
-                }
-                return available;
+                return subscriber.isAvailable();
             } catch (err) {
-                subscriber.dispose();
                 logger.error(
                     `task update subscriber availability check failed for ${context} (${subscriber.subscription_id}): ${errorToMessage(err)}`
                 );
@@ -2474,8 +2467,7 @@ export class TaskState {
                     provisional: last_message.isImplicitThinkCandidatePart(updated_part_index)
                         ? 'implicit_think_close_candidate'
                         : undefined,
-                    usage: last_message.usage,
-                    timestamp: last_message.timestamp
+                    usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
                 return;
@@ -3186,7 +3178,6 @@ export class TaskState {
         }
 
         this.subscribers = this.subscribers.filter((s) => s.subscription_id !== subscription_id);
-        subscriber.dispose();
         logger.info('task update subscriber removed for task', this.task_id);
         return true;
     }

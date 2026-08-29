@@ -17,7 +17,6 @@ import { zhCn } from '../../locale/zh-cn.js';
 import { enUs } from '../../locale/en-us.js';
 import { resolvePreferredLocale } from '../../common/locale.js';
 import type { ToolResultWriter } from './types/index.js';
-import { getDefaultToolCallPresentation, type ToolCallPresentation } from './tool-presentation.js';
 
 const validationTranslations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
@@ -300,11 +299,6 @@ export class BaseTool<T extends z.ZodType> {
      */
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return undefined;
-    }
-
-    /** 返回 GUI/TUI 共用的轻量工具展示信息；子类可覆盖以声明自身的展示语义。 */
-    getToolCallPresentation(_toolcall: ToolCall): ToolCallPresentation {
-        return getDefaultToolCallPresentation(_toolcall);
     }
 
     /**

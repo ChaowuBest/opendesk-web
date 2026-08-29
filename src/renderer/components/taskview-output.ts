@@ -14,11 +14,7 @@ import type { OutputDisplayLevel } from '../../common/output-display.js';
 export type GuiReasonDisplayMode = 'inline' | 'bubble';
 
 export interface GuiToolCall {
-    id?: string;
-    index?: number;
     tool_name?: string;
-    status?: string;
-    detail_available?: boolean;
 }
 
 export interface GuiAssistantPart {
@@ -33,22 +29,15 @@ export interface GuiProcessEntry {
     type: 'reasoning' | 'tool';
     key: string;
     partIndex: number;
-    toolIndex?: number;
-    ordinal?: number;
-    part?: GuiAssistantPart;
-    tool?: GuiToolCall;
+    part: GuiAssistantPart;
+    tools?: GuiToolCall[];
 }
 
 export interface GuiProcessItem {
     type: 'process';
     key: string;
-    processIndex: number;
     entries: GuiProcessEntry[];
-    toolCount: number;
-    toolStart: number | null;
-    toolEnd: number | null;
     hasReasoning: boolean;
-    hasError: boolean;
 }
 
 export interface GuiBodyItem {
@@ -62,9 +51,7 @@ export interface GuiStatusItem {
     type: 'status';
     key: 'running-status';
     kind: 'reasoning' | 'tool' | 'working';
-    part?: GuiAssistantPart;
     tool?: GuiToolCall;
-    toolCount: number;
 }
 
 export type GuiAssistantOutputItem = GuiProcessItem | GuiBodyItem;
@@ -82,6 +69,10 @@ export function getDefaultProcessExpanded(mode: OutputDisplayLevel): boolean {
     return mode === 'verbose';
 }
 
+export function getDefaultReasoningExpanded(mode: OutputDisplayLevel): boolean {
+    return mode === 'verbose';
+}
+
 function hasVisibleContent(part: GuiAssistantPart): boolean {
     return Boolean(String(part.rendered ?? part.text ?? '').trim());
 }
@@ -92,12 +83,7 @@ export function buildAssistantOutputItems(
 ): GuiAssistantOutputItem[] {
     const items: GuiAssistantOutputItem[] = [];
     let entries: GuiProcessEntry[] = [];
-    let toolOrdinal = 0;
-    let reasoningOrdinal = 0;
     let processIndex = 0;
-    let processToolStart: number | null = null;
-    let processToolEnd: number | null = null;
-    let processHasError = false;
     let processHasReasoning = false;
 
     const flushProcess = () => {
@@ -105,19 +91,11 @@ export function buildAssistantOutputItems(
         items.push({
             type: 'process',
             key: `process-${processIndex}`,
-            processIndex,
             entries,
-            toolCount: processToolStart !== null && processToolEnd !== null ? processToolEnd - processToolStart + 1 : 0,
-            toolStart: processToolStart,
-            toolEnd: processToolEnd,
-            hasReasoning: processHasReasoning,
-            hasError: processHasError
+            hasReasoning: processHasReasoning
         });
         processIndex += 1;
         entries = [];
-        processToolStart = null;
-        processToolEnd = null;
-        processHasError = false;
         processHasReasoning = false;
     };
 
@@ -125,12 +103,10 @@ export function buildAssistantOutputItems(
         if (!part) return;
         if (part.type === 'reasoning') {
             processHasReasoning = true;
-            reasoningOrdinal += 1;
             entries.push({
                 type: 'reasoning',
                 key: `reasoning-${partIndex}`,
                 partIndex,
-                ordinal: reasoningOrdinal,
                 part
             });
             return;
@@ -138,31 +114,13 @@ export function buildAssistantOutputItems(
 
         if (part.type === 'tool_call') {
             const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
-            toolcalls.forEach((tool, toolIndex) => {
-                toolOrdinal += 1;
-                processToolStart ??= toolOrdinal;
-                processToolEnd = toolOrdinal;
-                processHasError ||= tool?.status === 'error';
+            if (toolcalls.length > 0 || hasVisibleContent(part)) {
                 entries.push({
                     type: 'tool',
-                    key: `tool-${partIndex}-${tool?.id || toolIndex}`,
+                    key: `tool-${partIndex}`,
                     partIndex,
-                    toolIndex,
-                    ordinal: toolOrdinal,
-                    tool
-                });
-            });
-            if (toolcalls.length === 0 && hasVisibleContent(part)) {
-                toolOrdinal += 1;
-                processToolStart ??= toolOrdinal;
-                processToolEnd = toolOrdinal;
-                entries.push({
-                    type: 'tool',
-                    key: `tool-${partIndex}-fallback`,
-                    partIndex,
-                    toolIndex: 0,
-                    ordinal: toolOrdinal,
-                    tool: { rendered: part.rendered }
+                    part,
+                    tools: toolcalls
                 });
             }
             return;
@@ -193,13 +151,6 @@ export function buildAssistantOutputItems(
 }
 
 function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem | undefined {
-    let toolCount = 0;
-    for (const part of parts) {
-        if (part?.type === 'tool_call') {
-            toolCount += Array.isArray(part.toolcalls) && part.toolcalls.length > 0 ? part.toolcalls.length : 1;
-        }
-    }
-
     for (let index = parts.length - 1; index >= 0; index -= 1) {
         const part = parts[index];
         if (!part) continue;
@@ -212,16 +163,14 @@ function buildRunningStatus(parts: GuiAssistantPart[]): GuiStatusItem | undefine
                 type: 'status',
                 key: 'running-status',
                 kind: 'tool',
-                part,
-                tool: toolcalls[toolcalls.length - 1],
-                toolCount
+                tool: toolcalls[toolcalls.length - 1]
             };
         }
         if (part.type === 'reasoning') {
-            return { type: 'status', key: 'running-status', kind: 'reasoning', part, toolCount };
+            return { type: 'status', key: 'running-status', kind: 'reasoning' };
         }
     }
-    return { type: 'status', key: 'running-status', kind: 'working', toolCount };
+    return { type: 'status', key: 'running-status', kind: 'working' };
 }
 
 export function getVisibleAssistantOutputItems(
@@ -239,21 +188,13 @@ export function getVisibleAssistantOutputItems(
         options.parts ??
         items.flatMap((item) => {
             if (item.type === 'process') {
-                return item.entries.flatMap((entry) => {
-                    if (entry.part) return [entry.part];
-                    if (entry.type === 'tool' && entry.tool) {
-                        return [{ type: 'tool_call', toolcalls: [entry.tool] }];
-                    }
-                    return [];
-                });
+                return item.entries.map((entry) => entry.part);
             }
             return [item.part];
         });
     const status = buildRunningStatus(parts);
     if (!status) return items;
-    if (!options.parts) {
-        status.toolCount = items.reduce((count, item) => count + (item.type === 'process' ? item.toolCount : 0), 0);
-    }
+    if (options.mode === 'verbose' && status.kind === 'reasoning') return items;
     if (options.mode === 'minimal' && !options.showRunningDetails) {
         const hasBody = items.some((item) => item.type === 'body' || item.type === 'error');
         if (!hasBody) return [status];

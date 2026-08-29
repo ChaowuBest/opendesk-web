@@ -1,6 +1,7 @@
 import {
     buildAssistantOutputItems,
     getDefaultProcessExpanded,
+    getDefaultReasoningExpanded,
     getVisibleAssistantOutputItems,
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
@@ -18,9 +19,7 @@ function tools(start: number, count: number) {
             id: `tool-${start + offset}`,
             index: start + offset - 1,
             tool_name: `Tool${start + offset}`,
-            status: 'success',
-            detail_available: true,
-            presentation: { displayName: `Tool${start + offset}` }
+            status: 'success'
         }))
     };
 }
@@ -61,11 +60,8 @@ describe('GUI assistant output model', () => {
         const items = buildAssistantOutputItems(parts, { isRunning: false });
 
         expect(items.map((item) => item.type)).toEqual(['process', 'body', 'process', 'body', 'process', 'final']);
-        expect(items.filter((item) => item.type === 'process').map((item: any) => item.toolCount)).toEqual([
-            10, 10, 10
-        ]);
-        expect((items[0] as any).toolStart).toBe(1);
-        expect((items[4] as any).toolEnd).toBe(30);
+        expect((items[0] as any).entries).toHaveLength(2);
+        expect((items[0] as any).entries[1].tools).toHaveLength(10);
         expect((items[5] as any).part.text).toBe('最终正文');
         expect(items.filter((item) => item.type === 'process').every((item) => !('elapsedSeconds' in item))).toBe(true);
     });
@@ -76,7 +72,7 @@ describe('GUI assistant output model', () => {
         });
 
         expect(items.map((item) => item.type)).toEqual(['process', 'final']);
-        expect((items[0] as any).toolCount).toBe(25);
+        expect((items[0] as any).entries[1].tools).toHaveLength(25);
     });
 
     test('minimal running output commits completed stages once body text is available', () => {
@@ -87,7 +83,6 @@ describe('GUI assistant output model', () => {
         const visible = getVisibleAssistantOutputItems(items, { mode: 'minimal', isRunning: true });
 
         expect(visible.map((item) => item.type)).toEqual(['process', 'body', 'status']);
-        expect((visible[2] as any).toolCount).toBe(3);
 
         const expanded = getVisibleAssistantOutputItems(items, {
             mode: 'minimal',
@@ -144,8 +139,23 @@ describe('GUI assistant output model', () => {
         expect(visible.map((item) => item.type)).toEqual(['process', 'body']);
     });
 
-    test('process defaults differ by mode while inner detail remains user controlled', () => {
+    test('verbose running reasoning does not append a duplicate thinking status', () => {
+        const parts = [reasoning('正在展开的完整思考')];
+        const items = buildAssistantOutputItems(parts, { isRunning: true });
+
+        const visible = getVisibleAssistantOutputItems(items, {
+            mode: 'verbose',
+            isRunning: true,
+            parts
+        });
+
+        expect(visible.map((item) => item.type)).toEqual(['process']);
+    });
+
+    test('process and completed reasoning defaults differ by output mode', () => {
         expect(getDefaultProcessExpanded('minimal')).toBe(false);
         expect(getDefaultProcessExpanded('verbose')).toBe(true);
+        expect(getDefaultReasoningExpanded('minimal')).toBe(false);
+        expect(getDefaultReasoningExpanded('verbose')).toBe(true);
     });
 });

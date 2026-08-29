@@ -45,14 +45,11 @@ export { REASONING_EFFORT_VALUES } from './reasoning.js';
 export type { ReasoningEffort } from './reasoning.js';
 export type { AgentDefinition } from './agent.js';
 export type {
-    LocalizedToolPresentationText,
-    ToolCallPresentation,
     ToolDefinition,
     ToolExecutionContext,
     ToolExecutionResult,
     ToolRenderContent,
     ToolRenderContext,
     ToolRenderers,
-    ToolResultWriter,
-    ToolPresentationText
+    ToolResultWriter
 } from './tools.js';

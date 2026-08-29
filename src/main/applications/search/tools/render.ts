@@ -10,6 +10,7 @@
  */
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { getSafeWebUrl } from '../../../../common/web-link.js';
 import type { ToolCall } from '../../../aikernel/messages';
 
 /**
@@ -29,12 +30,18 @@ export function renderSearchToolCall(opts: {
 
     const detailParts: string[] = [];
     if (opts.query) {
-        detailParts.push(`"${escapeHtml(opts.query)}"`);
+        const safeUrl = getSafeWebUrl(opts.query);
+        const escapedQuery = escapeHtml(opts.query.trim());
+        detailParts.push(
+            safeUrl
+                ? `<a class="od-search-tool-link text-blue-600 hover:text-blue-700 hover:underline" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(safeUrl)}">"${escapedQuery}"</a>`
+                : `"${escapedQuery}"`
+        );
     }
     if (opts.toolcall.status === 'success' && opts.toolcall.result && opts.resultCountExtractor) {
         const count = opts.resultCountExtractor(opts.toolcall.result);
         if (count) {
-            detailParts.push(count);
+            detailParts.push(escapeHtml(count));
         }
     }
     const detail = detailParts.join(' · ');

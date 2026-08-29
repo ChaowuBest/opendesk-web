@@ -112,7 +112,6 @@ export interface TaskUpdateAssistantChunk {
     streaming?: boolean;
     provisional?: 'implicit_think_close_candidate';
     usage?: Usage;
-    timestamp?: number;
 }
 
 export interface TaskUpdateAssistantReplaceChunk {

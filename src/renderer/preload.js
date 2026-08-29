@@ -198,20 +198,6 @@ function exposeTaskManagerAPI() {
                 throw err;
             }
         },
-        getToolCallDetail: async (taskId, messageId, partIndex, toolIndex, toolCallId) => {
-            const result = await ipcRenderer.invoke(
-                'taskManager:getToolCallDetail',
-                taskId,
-                messageId,
-                partIndex,
-                toolIndex,
-                toolCallId
-            );
-            if (result.status === 'ok') {
-                return result.data;
-            }
-            throw new Error(result.message);
-        },
         getTaskInfo: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getTaskInfo', taskId);
             if (result.status === 'ok') {
@@ -287,8 +273,7 @@ function exposeTaskManagerAPI() {
             }
             const subscriptionId = result.data;
             console.info('task update subscribed for task', taskId, subscriptionId);
-            const channel = `taskManager:taskUpdate:${subscriptionId}`;
-            ipcRenderer.on(channel, (event, ...args) => {
+            ipcRenderer.on(`taskManager:taskUpdate:${subscriptionId}`, (event, ...args) => {
                 callback(...args);
             });
             return subscriptionId;

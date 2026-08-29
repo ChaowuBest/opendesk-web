@@ -95,20 +95,6 @@ class PluginTool extends BaseTool<any> {
         return this.definition.getDeclaredPermissions?.(args, buildExecutionContext(taskState)) ?? [];
     }
 
-    override getToolCallPresentation(toolCall: ToolCall) {
-        if (!this.definition.presentation) return super.getToolCallPresentation(toolCall);
-        try {
-            const presentation =
-                typeof this.definition.presentation === 'function'
-                    ? this.definition.presentation(buildRenderContext(toolCall))
-                    : this.definition.presentation;
-            return presentation ?? super.getToolCallPresentation(toolCall);
-        } catch (error) {
-            logger.error(`Plugin tool presentation failed: ${this.name}`, error);
-            return super.getToolCallPresentation(toolCall);
-        }
-    }
-
     override async renderToolCall(toolCall: ToolCall): Promise<string | undefined> {
         if (!this.definition.render?.gui) return undefined;
         try {
@@ -163,10 +149,6 @@ class PluginDefinedTool extends BaseTool<any> {
 
     async renderToolCall(toolCall: Parameters<BaseTool<any>['renderToolCall']>[0]) {
         return await this.source.renderToolCall(toolCall);
-    }
-
-    getToolCallPresentation(toolCall: Parameters<BaseTool<any>['getToolCallPresentation']>[0]) {
-        return this.source.getToolCallPresentation(toolCall);
     }
 
     renderToolCallCli(toolCall: Parameters<BaseTool<any>['renderToolCallCli']>[0], width: number) {

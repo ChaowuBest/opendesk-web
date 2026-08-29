@@ -25,6 +25,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
+import { getToolDisplayNameKey, humanizeToolName } from '../../common/tool-display-name.js';
+import { t } from '../../locale/index.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -342,6 +344,7 @@ const LARGE_ARGS_THRESHOLD = 500;
 
 export const TOOL_RESULT_STORAGE_VERSION = 1;
 export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
+
 export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
@@ -365,7 +368,6 @@ export class ToolCall implements BaseChatToolCall {
     /** 本地 microcompact 后的持久化元数据 */
     microcompact?: ToolCallMicrocompactMetadata;
     metadata?: RuntimeMetadata;
-    presentation?: ToolCallPresentation;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -425,42 +427,19 @@ export class ToolCall implements BaseChatToolCall {
 
     /** 序列化时显式排除 tool，避免运行时引用被持久化后反序列化为纯对象导致渲染/执行异常 */
     toJSON(): object {
-        const { tool: _tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
-        return {
-            ...rest,
-            presentation: this.getPresentation()
-        };
+        const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
+        return rest;
     }
 
-    /** 仅返回渲染摘要；执行结果和经工具显式声明的自定义详情由 IPC 按需读取。 */
+    /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段 */
     toRenderJSON(): object {
-        const presentation = this.getPresentation();
         return {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
             status: this.status,
-            detail_available: Boolean(this.result || (this.rendered && presentation.detailMode === 'custom')),
-            presentation
+            rendered: this.rendered
         };
-    }
-
-    getPresentation(): ToolCallPresentation {
-        try {
-            if (this.tool && typeof this.tool.getToolCallPresentation === 'function') {
-                this.presentation = sanitizeToolCallPresentation(
-                    this.tool.getToolCallPresentation(this),
-                    this.tool_name
-                );
-                return this.presentation;
-            }
-        } catch (error) {
-            logger.error(`Error creating tool presentation for ${this.tool_name}: ${error}`);
-        }
-        this.presentation = this.presentation
-            ? sanitizeToolCallPresentation(this.presentation, this.tool_name)
-            : getDefaultToolCallPresentation(this);
-        return this.presentation;
     }
 
     static normalizeResultStorage(
@@ -663,7 +642,10 @@ export class ToolCall implements BaseChatToolCall {
                 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
                 : '';
 
-        const displayName = this.tool_name;
+        const displayNameKey = getToolDisplayNameKey(this.tool_name);
+        const displayName = displayNameKey
+            ? t(displayNameKey)
+            : humanizeToolName(this.tool_name) || t('renderer.taskview.output.tool');
 
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
@@ -678,12 +660,16 @@ export class ToolCall implements BaseChatToolCall {
     private renderError(): string {
         const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         const errText = (this.result || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const displayNameKey = getToolDisplayNameKey(this.tool_name);
+        const displayName = displayNameKey
+            ? t(displayNameKey)
+            : humanizeToolName(this.tool_name) || t('renderer.taskview.output.tool');
         return `<div class="od-inline-toolcall-container">
             <div class="flex flex-col min-w-0">
                 <input type="checkbox" id="${errId}" class="peer hidden">
                 <div class="flex items-center gap-1.5">
                     <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
-                    <span class="shrink-0 text-slate-500 text-xs">${this.tool_name}</span>
+                    <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(displayName)}</span>
                     <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
                     <label for="${errId}" class="text-xs text-rose-500 cursor-pointer select-none hover:text-rose-600 transition-colors">失败</label>
                 </div>
@@ -712,7 +698,6 @@ export class ToolCall implements BaseChatToolCall {
         });
         tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
         tc.microcompact = ToolCall.normalizeMicrocompact(tc.microcompact);
-        tc.presentation = tc.presentation ? sanitizeToolCallPresentation(tc.presentation, tc.tool_name) : undefined;
         return tc;
     }
 }
@@ -822,7 +807,7 @@ export class ToolCallMessagePart implements BaseToolCallMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
-            ...(this.toolcalls.length === 0 ? { rendered: this.rendered } : {}),
+            rendered: this.rendered,
             toolcalls: this.toolcalls.map((tc) => tc.toRenderJSON())
         };
     }

@@ -16,7 +16,7 @@ body {
     display: none !important;
 }
 
-/* Reasoning block (inline-tool style) */
+/* Reasoning block (mainline inline/bubble presentation). */
 .reasoning-block-od .reasoning-header {
     list-style: none;
 }
@@ -30,33 +30,23 @@ body {
     margin-left: 4px;
     margin-top: 2px;
 }
-/* 全文区用 display:none 折叠而非 max-height:0：折叠态的思考全文不参与布局，
-   历史中每个思考块都不会再让强制回流（scrollHeight 读取等）为全文做 pre-wrap
-   文本排版——这是长任务历史下 UI 卡顿随历史线性增长的主因之一。 */
 .reasoning-block-od .reasoning-full-area {
-    display: none;
     border-left: 2px solid rgb(226 232 240);
     margin-left: 4px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    margin-top: 0;
+    transition:
+        max-height 0.3s ease,
+        opacity 0.25s ease,
+        margin-top 0.3s ease;
 }
 .reasoning-block-od.reasoning-expanded .reasoning-full-area {
-    display: block;
     max-height: 200px;
     overflow-y: auto;
+    opacity: 1;
     margin-top: 2px;
-    animation: reasoning-full-fade-in 0.25s ease;
-}
-@keyframes reasoning-full-fade-in {
-    from {
-        opacity: 0;
-    }
-    to {
-        opacity: 1;
-    }
-}
-@media (prefers-reduced-motion: reduce) {
-    .reasoning-block-od.reasoning-expanded .reasoning-full-area {
-        animation: none;
-    }
 }
 /* 展开的思考块内容滚动条：不设置会导致 WebKit 使用系统默认宽度（明显变粗），
    与深色主题下其它细滚动条保持一致。 */
@@ -90,12 +80,10 @@ html[data-theme='dark'] .reasoning-block-od .reasoning-preview-area::-webkit-scr
 .reasoning-block-od.reasoning-content-visible .reasoning-header i.fa-lightbulb {
     color: #f59e0b !important;
 }
-
-/* Reasoning icon breathing gradient (active thinking).
-   只做 opacity 脉冲（合成器动画）：background-position 动画会让图标每帧重绘，
-   流式思考期间与文本重绘叠加放大 GPU/渲染进程占用。 */
+/* Reasoning icon breathing gradient (active thinking) */
 .reasoning-icon-breathing {
     background: linear-gradient(135deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24);
+    background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -104,14 +92,17 @@ html[data-theme='dark'] .reasoning-block-od .reasoning-preview-area::-webkit-scr
 @keyframes reasoning-icon-breathe {
     0%,
     100% {
+        background-position: 0% 50%;
         opacity: 0.65;
     }
     50% {
+        background-position: 100% 50%;
         opacity: 1;
     }
 }
 html[data-theme='dark'] .reasoning-icon-breathing {
     background: linear-gradient(135deg, #fcd34d, #fbbf24, #fef3c7, #fbbf24, #fcd34d);
+    background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -159,9 +150,6 @@ html[data-theme='dark'] .reasoning-icon-breathing {
     opacity: 0;
     transform: translateY(4px);
     pointer-events: none;
-    /* 隐藏态跳过内容的布局与绘制：气泡里保存着思考全文，长历史下不能让
-       不可见的气泡文本持续参与强制回流。重新悬停/钉住时自动恢复渲染。 */
-    content-visibility: hidden;
 }
 /* Bubble content color */
 .reasoning-bubble-content {
@@ -306,69 +294,6 @@ html[data-theme='dark'] .reasoning-icon-breathing {
     overflow: hidden !important;
     width: 100% !important;
 }
-/* Mermaid diagram */
-.markdown-body .mermaid-block {
-    margin: 0.6em 0 !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-    width: 100% !important;
-    box-sizing: border-box !important;
-    overflow: hidden !important;
-}
-/* 渲染前的空占位：居中 + 最小高度 */
-.markdown-body .mermaid-block:not([data-mermaid-rendered]) {
-    min-height: 60px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 12px !important;
-}
-.markdown-body .mermaid-block-header {
-    display: flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    padding: 0.35em 0.75em !important;
-    background: #f8fafc !important;
-    border-bottom: 1px solid #e2e8f0 !important;
-}
-.markdown-body .mermaid-block-lang {
-    font-size: var(--fs-sm) !important;
-    font-weight: 600 !important;
-    color: #64748b !important;
-    user-select: none !important;
-}
-.markdown-body .mermaid-block .mermaid-rendered {
-    width: 100% !important;
-    overflow-x: auto !important;
-    padding: 12px !important;
-    box-sizing: border-box !important;
-}
-.markdown-body .mermaid-block svg {
-    max-width: 100% !important;
-    height: auto !important;
-}
-.markdown-body .mermaid-block .mermaid-source,
-.markdown-body .mermaid-block .mermaid-fallback {
-    margin: 0 !important;
-    padding: 12px !important;
-    width: 100% !important;
-    white-space: pre-wrap !important;
-    word-break: break-word !important;
-    font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace) !important;
-    font-size: var(--fs-sm) !important;
-    overflow-x: auto !important;
-    box-sizing: border-box !important;
-}
-task-view .markdown-body .mermaid-block {
-    border-color: var(--chat-line-soft) !important;
-}
-task-view .markdown-body .mermaid-block-header {
-    background: var(--chat-sb-bg) !important;
-    border-bottom-color: var(--chat-line-soft) !important;
-}
-task-view .markdown-body .mermaid-block-lang {
-    color: var(--chat-ink3) !important;
-}
 .markdown-body .code-block-header {
     display: flex !important;
     align-items: center !important;
@@ -401,7 +326,7 @@ task-view .markdown-body .mermaid-block-lang {
         color 0.15s;
 }
 /* 无 preview toggle 时，copy button 自身靠右 */
-.markdown-body .code-block-header .code-copy-btn:last-child {
+.markdown-body .code-copy-btn:last-child {
     margin-left: auto;
 }
 .markdown-body .code-copy-btn:hover {
@@ -496,18 +421,6 @@ html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb
 }
 html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
-}
-/* Plugin tool code block (pluginmgr render.gui) */
-.plugin-code-block::-webkit-scrollbar {
-    width: 4px !important;
-    height: 4px !important;
-}
-.plugin-code-block::-webkit-scrollbar-thumb {
-    background: #d1d5db !important;
-    border-radius: 2px !important;
-}
-.plugin-code-block::-webkit-scrollbar-track {
-    background: transparent !important;
 }
 /* Fallback for bare pre (no wrapper) */
 .markdown-body pre {
@@ -693,6 +606,15 @@ task-view .markdown-body a:not(.od-file-pill) {
 }
 task-view .markdown-body a:not(.od-file-pill):hover {
     border-bottom-color: var(--chat-accent) !important;
+}
+
+task-view .od-web-output-link {
+    color: var(--chat-accent);
+    text-decoration: none;
+    border-bottom: 1px solid var(--chat-accent-soft);
+}
+task-view .od-web-output-link:hover {
+    border-bottom-color: var(--chat-accent);
 }
 
 /* 行内代码 */
@@ -914,24 +836,6 @@ details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
 }
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-track {
     background: transparent;
-}
-.terminal-shell-tag {
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid #d1d5db;
-    border-radius: 9999px;
-    padding: 1px 6px;
-    color: #64748b;
-    background: #f8fafc;
-    font-size: 10px;
-    line-height: 1.4;
-    font-weight: 600;
-    white-space: nowrap;
-}
-.terminal-shell-tag-sandbox {
-    color: #7c3aed;
-    border-color: #c4b5fd;
-    background: #f5f3ff;
 }
 /* Dark mode terminal scrollbar */
 html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
@@ -1186,20 +1090,8 @@ pre.terminal-tool-output {
     gap: 4px;
     flex: 1;
     min-width: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
     flex-wrap: nowrap;
-    scrollbar-width: thin;
-}
-.agent-input-toolbar-left::-webkit-scrollbar {
-    height: 1px;
-}
-.agent-input-toolbar-left::-webkit-scrollbar-track {
-    background: transparent;
-}
-.agent-input-toolbar-left::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 2px;
 }
 .agent-input-toolbar-right {
     display: flex;
@@ -1954,12 +1846,6 @@ html[data-theme='dark'] .sb-chat-badge {
     display: block;
     font-size: var(--fs-lg);
     line-height: 1.2;
-    /* 插件可通过 appearance capability 设置标题/描述，超长时单行省略，
-       避免文案溢出品牌区遮挡右侧的主题切换与折叠按钮 */
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 .sb-header-title {
     min-height: 37px;
@@ -1969,10 +1855,6 @@ html[data-theme='dark'] .sb-chat-badge {
     color: var(--od-text-muted);
     font-size: var(--fs-sm);
     line-height: 1.3;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 .sb-task-container {
     display: flex;
@@ -3374,11 +3256,9 @@ agent-input[hide-disclaimer] .agent-input-footer {
     gap: 20px;
 }
 /* 历史区域浅色主题滚动条：深色主题在 theme-dark.css 中定义了 6px 细滚动条，
-   浅色主题此前没有对应规则，一旦历史内容溢出就会回退到系统默认宽度的粗滚动条。
-   width 约束纵向、height 约束横向，缺一都会回退到系统默认粗细。 */
+   浅色主题此前没有对应规则，一旦历史内容溢出就会回退到系统默认宽度的粗滚动条。 */
 #taskview-chat-history::-webkit-scrollbar {
     width: 6px;
-    height: 6px;
 }
 #taskview-chat-history::-webkit-scrollbar-track {
     background: transparent;
@@ -3395,11 +3275,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     /* flex column 子项默认 min-width:auto，内容（宽图片/长文本/表格）超宽时
        会把历史容器撑出横向滚动条；限制为 0 让内容在容器内折行或由子元素自身滚动。 */
     min-width: 0;
-    /* 注意：不要在这里加 content-visibility:auto——实测（Chromium）它首次渲染
-       视口外历史项时，尺寸校正会让视口跳动 300px+；配合 overflow-anchor:auto
-       虽可零跳动，但顶部补载会与 _loadOlderHistoryBatch 的手动 scrollTop 恢复
-       双重补偿，且首次上翻时滚动量被渲染校正吃掉。需要精确高度的 JS 虚拟化
-       才能安全引入。 */
 }
 #taskview-chat-history::after {
     content: '';
@@ -3522,8 +3397,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     border-radius: 0;
 }
 
-.od-process-summary,
-.od-process-entry-summary {
+.od-process-summary {
     width: 100%;
     border: 0;
     color: var(--od-text);
@@ -3548,12 +3422,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     color: var(--chat-green);
 }
 
-.od-process-entry-summary:hover {
-    background: var(--od-bg-muted);
-}
-
-.od-process-summary:focus-visible,
-.od-process-entry-summary:focus-visible {
+.od-process-summary:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--od-accent) 65%, transparent);
     outline-offset: -2px;
 }
@@ -3628,50 +3497,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: block;
 }
 
-.od-process-entry {
-    min-width: 0;
-}
-
-.od-process-entry-summary {
-    align-items: center;
-    width: 100%;
-    margin: 0;
-    border: 0;
-    background: transparent;
-}
-
-.od-process-entry-kind {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    font-size: var(--fs-md);
-    font-weight: 650;
-}
-
-.od-process-reason,
-.od-process-tool {
-    margin-left: 0;
-    margin-right: 0;
-}
-
-.od-process-reason .od-process-entry-summary,
-.od-process-tool .od-process-entry-summary {
-    padding-left: 2px;
-    padding-right: 2px;
-}
-
-.od-process-reason {
-    margin-top: 0;
-    margin-bottom: 0;
-    overflow: hidden;
-    border-bottom: 1px solid var(--od-border);
-    border-radius: 6px;
-    color: var(--od-text-muted);
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-}
-
 .od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open,
 .od-assistant-output-flow[data-reason-display='bubble'] .od-completed-process-detail.is-open {
     max-height: none;
@@ -3679,367 +3504,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     scrollbar-gutter: auto;
 }
 
-.od-process-reason.is-bubble {
-    position: relative;
-    overflow: visible;
-    background: transparent;
-}
-
-.od-process-reason.is-bubble.is-expanded {
-    background: transparent;
-}
-
-.od-process-reason .od-reasoning-bubble {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    z-index: 30;
-    display: block;
-    width: min(600px, calc(100% - 10px));
-    max-height: 300px;
-    margin: 0;
-    padding: 14px 16px !important;
-    overflow-y: auto;
-    overscroll-behavior: auto;
-    border: 1px solid var(--od-border-strong) !important;
-    border-radius: 8px !important;
-    color: var(--od-text-muted) !important;
-    background: var(--od-bg-elevated) !important;
-    box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.14),
-        0 2px 8px rgba(0, 0, 0, 0.08);
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(4px);
-    pointer-events: none;
-    transition:
-        opacity 180ms ease,
-        visibility 180ms ease,
-        transform 180ms ease;
-}
-
-.od-process-reason.is-bubble:hover .od-reasoning-bubble,
-.od-process-reason.is-bubble:focus-within .od-reasoning-bubble,
-.od-process-reason.is-bubble .od-reasoning-bubble.is-open {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-    pointer-events: auto;
-}
-
-@media (max-width: 640px) {
-    .od-process-reason .od-reasoning-bubble {
-        position: fixed;
-        left: 16px;
-        right: 16px;
-        bottom: 16px;
-        width: auto;
-        max-height: min(300px, 45vh);
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .od-process-reason .od-reasoning-bubble {
-        transition: none;
-    }
-}
-
-.od-process-reason.is-expanded {
-    border-bottom-color: transparent;
-    background: var(--od-bg-subtle);
-}
-
-.od-process-reason .od-process-entry-summary {
-    display: grid;
-    grid-template-columns: 58px minmax(0, 1fr) 12px;
-    gap: 6px;
-    min-height: 26px;
-    padding-top: 2px;
-    padding-bottom: 2px;
-    color: #b45309;
-    font-size: var(--fs-md);
-    font-weight: 650;
-}
-
-.od-process-reason.is-expanded .od-process-entry-kind,
-.od-process-reason.is-expanded .od-process-entry-icon {
-    color: #d26300;
-}
-
-.od-process-reason:not(.is-expanded) .od-process-entry-kind,
-.od-process-reason:not(.is-expanded) .od-process-entry-icon {
-    color: #71839a;
-}
-
-.od-process-reason .od-process-entry-text {
-    color: var(--od-text-muted);
-    font-weight: 500;
-}
-
-.od-process-tool {
-    margin-top: 0;
-    margin-bottom: 0;
-    overflow: hidden;
-    border-bottom: 1px solid var(--od-border);
-    border-radius: 6px;
-}
-
-.od-process-tool:last-child {
-    margin-bottom: 3px;
-    border-bottom: 0;
-}
-
-.od-process-tool.is-expanded {
-    border-bottom-color: transparent;
-    background: var(--od-bg-subtle);
-}
-
-.od-process-tool .od-process-entry-summary {
-    display: grid;
-    grid-template-columns: 58px auto minmax(0, 1fr) 12px;
-    gap: 6px;
-    min-height: 26px;
-    padding-top: 2px;
-    padding-bottom: 2px;
-    color: var(--od-text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--fs-md);
-}
-
-.od-process-tool .od-process-entry-kind,
-.od-process-tool .od-process-entry-icon {
-    color: #71839a;
-}
-
-.od-process-reason .od-process-entry-kind,
-.od-process-tool .od-process-entry-kind {
-    font-family: var(--font-sans);
-}
-
-.od-process-entry-label {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--od-text);
-    font-weight: 400;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.od-process-tool .od-process-entry-label {
-    max-width: 240px;
-}
-
-.od-process-resource-link {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 3px;
-    background: transparent;
-    color: #16805d;
-    cursor: pointer;
-    font: inherit;
-    text-decoration: underline;
-    text-decoration-color: transparent;
-    text-underline-offset: 2px;
-    transition:
-        color 120ms ease,
-        text-decoration-color 120ms ease;
-}
-
-.od-process-resource-link:hover {
-    color: #0d6b4c;
-    text-decoration-color: currentColor;
-}
-
-.od-process-resource-link:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--chat-green) 55%, transparent);
-    outline-offset: 2px;
-}
-
-.od-process-entry-text {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--od-text-muted);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.od-process-tool-args,
-.od-process-tool-status {
-    font-family: var(--font-mono);
-    font-size: var(--fs-md);
-}
-
-.od-process-tool-status {
-    margin-left: 6px;
-    color: var(--od-text-disabled);
-    font-family: var(--font-sans);
-    font-weight: 650;
-    white-space: nowrap;
-}
-
-.od-process-tool-status.is-success {
-    color: #16805d;
-}
-
-.od-process-tool-status.is-error {
-    color: #c2413a;
-}
-
-.od-process-entry-detail {
-    display: none;
-    box-sizing: border-box;
-    max-height: 148px;
-    overflow-y: auto;
-    overscroll-behavior: auto;
-    scrollbar-gutter: stable;
-    margin: 0;
-    padding: 2px 4px 9px 30px;
-    color: var(--od-text-muted);
-    background: var(--od-bg-subtle) !important;
-    border: 0;
-    border-radius: 0;
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-    white-space: normal;
-}
-
-.od-process-reason .od-process-entry-detail {
-    padding: 0 10px 9px;
-}
-
-task-view .od-process-reason .od-process-entry-detail.markdown-body {
-    color: var(--od-text-muted) !important;
-    font-size: var(--fs-sm) !important;
-    line-height: 1.65 !important;
-}
-
-.od-process-entry-detail.is-open {
-    display: block;
-}
-
-.od-process-entry-detail pre {
-    max-width: 100%;
-    margin: 0;
-    padding: 3px 0 7px;
-    overflow-x: auto;
-    color: var(--od-text);
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-.od-process-entry-detail pre:last-child {
-    margin-bottom: 0;
-}
-
-task-view .od-process-markdown-result.markdown-body {
-    padding: 3px 0 7px;
-    color: var(--od-text);
-    font-size: var(--fs-sm);
-    line-height: 1.55;
-}
-
-task-view .od-process-markdown-result.markdown-body > :first-child {
-    margin-top: 0;
-}
-
-task-view .od-process-markdown-result.markdown-body > :last-child {
-    margin-bottom: 0;
-}
-
-.od-process-tool-execution-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin: 0 0 7px;
-    padding-bottom: 6px;
-    color: var(--od-text-muted);
-    border-bottom: 1px solid var(--od-border);
-    font-family: var(--font-sans);
-    font-size: var(--fs-sm);
-    font-weight: 650;
-}
-
-.od-process-tool-detail-status {
-    display: flex;
-    min-height: 42px;
-    align-items: center;
-    gap: 7px;
-    color: var(--od-text-muted);
-    font-family: var(--font-sans);
-}
-
-.od-process-tool-detail-status.is-error {
-    color: #c2413a;
-}
-
-.od-process-tool-execution-status {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    color: var(--od-text-disabled);
-    font-weight: 600;
-}
-
-.od-process-tool-execution-status.is-success {
-    color: #16805d;
-}
-
-.od-process-tool-execution-status.is-running {
-    color: #2563a8;
-}
-
-.od-process-tool-execution-status.is-error {
-    color: #c2413a;
-}
-
-.od-process-tool-execution-status.is-cancelled,
-.od-process-tool-execution-status.is-interrupted {
-    color: #a16207;
-}
-
-.od-process-tool-field,
-.od-process-tool-output {
-    margin-bottom: 7px;
-}
-
-.od-process-tool-field.is-command pre::before {
-    color: #3b82a5;
-    content: '$ ';
-    user-select: none;
-}
-
-.od-process-tool-rendered {
-    min-width: 0;
-}
-
-.od-process-tool-rendered > :first-child {
-    margin-top: 0 !important;
-}
-
-.od-process-tool-rendered > :last-child {
-    margin-bottom: 0 !important;
-}
-
-.od-process-detail-label {
-    color: var(--od-text-muted);
-    margin: 3px 0 2px;
-    font-size: var(--fs-sm);
-    font-weight: 650;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.od-process-detail,
-.od-process-entry-detail {
+.od-process-detail {
     scrollbar-color: #9aa3ad transparent;
     scrollbar-width: thin;
 }
@@ -4048,33 +3513,21 @@ task-view .od-process-markdown-result.markdown-body > :last-child {
     width: 8px;
 }
 
-.od-process-entry-detail::-webkit-scrollbar {
-    width: 7px;
-}
-
-.od-process-detail::-webkit-scrollbar-track,
-.od-process-entry-detail::-webkit-scrollbar-track {
+.od-process-detail::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.od-process-detail::-webkit-scrollbar-thumb,
-.od-process-entry-detail::-webkit-scrollbar-thumb {
+.od-process-detail::-webkit-scrollbar-thumb {
     border: 2px solid var(--od-bg-elevated);
     border-radius: 5px;
     background: #9aa3ad;
 }
 
-.od-process-entry-detail::-webkit-scrollbar-thumb {
-    border-color: var(--od-bg-subtle);
-}
-
-html[data-theme='dark'] .od-process-detail,
-html[data-theme='dark'] .od-process-entry-detail {
+html[data-theme='dark'] .od-process-detail {
     scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
-html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb,
-html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
+html[data-theme='dark'] .od-process-detail::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18);
 }
 
@@ -4180,16 +3633,6 @@ html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
     .od-process-action {
         width: auto;
         margin-left: auto;
-    }
-
-    .od-process-tool .od-process-entry-summary {
-        display: flex;
-        flex-wrap: wrap;
-        column-gap: 6px;
-    }
-
-    .od-process-tool .od-process-entry-text {
-        flex-basis: calc(100% - 128px);
     }
 }
 
@@ -4994,17 +4437,6 @@ html[data-theme='dark'] .od-process-entry-detail::-webkit-scrollbar-thumb {
 .diff-table tr:hover td {
     filter: brightness(0.97);
 }
-/* Diff body scrollbar (compact, per scrollbar_specification.md) */
-.diff-body::-webkit-scrollbar {
-    height: 4px !important;
-}
-.diff-body::-webkit-scrollbar-thumb {
-    background: #d1d5db !important;
-    border-radius: 2px !important;
-}
-.diff-body::-webkit-scrollbar-track {
-    background: transparent !important;
-}
 
 /* 保护 diff 编辑器的等宽字体 */
 html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body,
@@ -5076,14 +4508,6 @@ message-queue-panel {
     -webkit-backdrop-filter: blur(12px);
 }
 
-/* 流式输出期间聊天区每帧重绘，会让面板背后的模糊持续重新光栅化（GPU 占用大头），
-   任务运行中改用不透明背景（属性由 taskview 的 emitTaskStatusChanged 维护）。 */
-task-view[streaming] .message-queue-container {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: rgba(255, 255, 255, 0.92);
-}
-
 @keyframes message-queue-slide-down {
     from {
         opacity: 0;
@@ -5149,13 +4573,7 @@ html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.8);
     margin-bottom: 3px;
-    translate: 0 var(--queue-offset, 0px);
-    scale: 1 var(--queue-scale, 1);
-    transition:
-        translate 120ms ease-out,
-        scale 120ms ease-out,
-        transform 160ms ease,
-        background 0.12s ease;
+    transition: background 0.12s ease;
 }
 
 .message-queue-item:last-child {
@@ -5174,44 +4592,18 @@ html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
     min-width: 0;
 }
 
-.message-queue-drag-handle {
-    display: inline-flex;
+.message-queue-item-index {
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 24px;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: #6b7280;
-    cursor: grab;
-    touch-action: none;
-    flex-shrink: 0;
-}
-
-.message-queue-drag-handle:hover,
-.message-queue-drag-handle:focus-visible {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
     background: rgba(59, 130, 246, 0.12);
-    color: #2563eb;
-}
-
-.message-queue-drag-handle:active {
-    cursor: grabbing;
-}
-
-.message-queue-drag-handle svg {
-    width: 16px;
-    height: 16px;
-    pointer-events: none;
-}
-
-.message-queue-item-dragging {
-    opacity: 0.85;
-    position: relative;
-    z-index: 1;
-    transition: none;
-    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.16);
+    color: #3b82f6;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
 .message-queue-item-text {

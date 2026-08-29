@@ -19,22 +19,6 @@ describe('renderer preload task toolset callback ownership', () => {
         expect(preloadSource.indexOf(duplicateGuard)).toBeGreaterThan(preloadSource.indexOf(exposure));
         expect(preloadSource.indexOf(toolCallListener)).toBeGreaterThan(preloadSource.indexOf(duplicateGuard));
     });
-
-    test('forwards task updates directly to the callback', () => {
-        expect(preloadSource).toMatch(
-            /ipcRenderer\.on\(channel, \(event, \.\.\.args\) => \{\s*callback\(\.\.\.args\);\s*\}\)/
-        );
-        expect(preloadSource).not.toContain('ackTaskUpdate');
-    });
-
-    test('returns the subscription after installing the task update listener', () => {
-        const listener = 'ipcRenderer.on(channel';
-        const returnSubscription = 'return subscriptionId;';
-
-        expect(preloadSource.indexOf(listener)).toBeGreaterThan(-1);
-        expect(preloadSource.indexOf(returnSubscription)).toBeGreaterThan(preloadSource.indexOf(listener));
-        expect(preloadSource).not.toContain("ipcRenderer.invoke('taskManager:syncTaskUpdate'");
-    });
 });
 
 describe('renderer preload Harmony runtime sandbox compatibility', () => {

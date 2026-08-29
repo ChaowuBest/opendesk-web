@@ -9,8 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ToolResult } from '../../../aikernel/tool';
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool, ToolResult } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -63,7 +62,7 @@ const WebFetchArgsSchema = z.object({
     url: z.string().describe('要获取内容的网页URL地址')
 });
 
-export class WebFetchTool extends SearchPresentationTool<typeof WebFetchArgsSchema> {
+export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private turndownService: TurndownService;
     private lastHttpStatus: number | undefined;
     private readonly apiAdapters: ApiAdapter[] = [new GitCodeAdapter(), new GitHubAdapter()];

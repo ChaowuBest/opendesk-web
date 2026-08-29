@@ -17,34 +17,15 @@ import { z } from 'zod';
 import { type TaskTodo, getOrInitTaskTodos, setTaskTodos } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../../common/utils/escape.js';
-import { t } from './locale/index.js';
+import { t } from '../../../locale/index.js';
 import { type TodoMgrApplication } from './app';
-import { describeCron, type CronDescribeLabels } from '../../utils/cron';
+import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
 import type { TodoWorkspaceConfig } from './common.js';
-import type { ToolCallPresentation } from '../../aikernel/tool-presentation.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
-
-/** describeCron 的多语言文案，词条随当前 locale 动态解析 */
-function cronLabels(): CronDescribeLabels {
-    return {
-        dowNames: Array.from({ length: 7 }, (_, i) => t(`cron.desc.dowNames.${i}`)),
-        everyDowTemplate: t('cron.desc.everyDow'),
-        dowTemplate: t('cron.desc.dow'),
-        monthlyDomTemplate: t('cron.desc.monthlyDom'),
-        monthTemplate: t('cron.desc.month'),
-        hourTemplate: t('cron.desc.hourOnly'),
-        minuteTemplate: t('cron.desc.minuteOnly'),
-        everyMinute: t('cron.desc.everyMinute')
-    };
-}
-
-function todoToolPresentation(displayNameKey: string): ToolCallPresentation {
-    return { displayName: { key: displayNameKey } };
-}
 
 export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema> {
     constructor() {
@@ -56,12 +37,8 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    getToolCallPresentation() {
-        return todoToolPresentation('tools.getCurrentTime.name');
-    }
-
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        return [chalk.dim(`🕐 ${t('tool.getCurrentTime.name')}`)];
+        return [chalk.dim('🕐 获取当前时间')];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -77,7 +54,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="far fa-clock shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tool.getCurrentTime.name'))}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.getCurrentTime.name'))}</span>
                 ${statusIcon}
                 <span class="text-xs text-slate-600">${escapeHtml(timeStr)}</span>
             </div>
@@ -98,10 +75,10 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         const timezone = `UTC${offsetStr}`;
 
         return [
-            `- **${t('tool.getCurrentTime.labelUtc')}**: ${iso}`,
-            `- **${t('tool.getCurrentTime.labelLocal')}**: ${locale}`,
-            `- **${t('tool.getCurrentTime.labelTimezone')}**: ${timezone}`,
-            `- **${t('tool.getCurrentTime.labelTimestamp')}**: ${now.getTime()}`
+            `- **UTC 时间**: ${iso}`,
+            `- **当地时间**: ${locale}`,
+            `- **时区**: ${timezone}`,
+            `- **时间戳**: ${now.getTime()}`
         ].join('\n');
     }
 }
@@ -154,10 +131,10 @@ function normalizeWorkspaceField(workspace?: string): TodoWorkspaceConfig | unde
 
     const normalized = workspace.trim();
     if (!normalized) {
-        throw new Error(t('error.workspaceEmpty'));
+        throw new Error('workspace 不能为空；如不需要指定工作空间，请省略该字段');
     }
     if (!path.isAbsolute(normalized)) {
-        throw new Error(t('error.workspaceNotAbsolute', { workspace }));
+        throw new Error(`workspace 必须是绝对路径，当前值："${workspace}"`);
     }
     return { type: 'path', path: normalized };
 }
@@ -214,9 +191,8 @@ function validateAndNormalizeTrigger(trigger: unknown): z.output<typeof TriggerS
     const result = TriggerSchema.safeParse(parsedTrigger);
     if (!result.success) {
         throw new Error(
-            t('error.triggerInvalid', {
-                message: result.error.message
-            })
+            `无效的 trigger 格式: ${result.error.message}。` +
+                `trigger 应为对象格式，如: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z"}`
         );
     }
 
@@ -231,7 +207,7 @@ function formatTriggerDisplay(trigger: any): string {
         case 'scheduled':
             return `⏱ ${new Date(trigger.triggerAt).toLocaleString()}`;
         case 'cron':
-            return `🔁 ${describeCron(trigger.cronExpression, cronLabels())}`;
+            return `🔁 ${describeCron(trigger.cronExpression)}`;
         default:
             return '';
     }
@@ -242,18 +218,15 @@ function formatDeliverDisplay(deliver: any): string {
     return `${deliver.channel}:${deliver.accountId} → ${deliver.recipientId}`;
 }
 
-const TRIGGER_ICON_CONFIG: Record<string, { icon: string; bg: string; color: string }> = {
-    scheduled: { icon: 'fa-clock', bg: '#EFF6FF', color: '#2563EB' },
-    cron: { icon: 'fa-arrows-rotate', bg: '#F0FDF4', color: '#16A34A' },
-    event: { icon: 'fa-bolt', bg: '#FFF7ED', color: '#EA580C' }
+const TRIGGER_ICON_CONFIG: Record<string, { icon: string; bg: string; color: string; label: string }> = {
+    scheduled: { icon: 'fa-clock', bg: '#EFF6FF', color: '#2563EB', label: '定时任务' },
+    cron: { icon: 'fa-arrows-rotate', bg: '#F0FDF4', color: '#16A34A', label: '周期任务' },
+    event: { icon: 'fa-bolt', bg: '#FFF7ED', color: '#EA580C', label: '按需触发' }
 };
-
-function getStatusBadge(isEnabled: boolean): { color: string; bg: string; label: string; dot: string } {
-    const style = isEnabled
-        ? { color: '#2563EB', bg: '#EFF6FF', dot: '#007AFF' }
-        : { color: '#8E8E93', bg: '#F5F5F7', dot: '#C7C7CC' };
-    return { ...style, label: t(isEnabled ? 'status.enabled' : 'status.disabled') };
-}
+const STATUS_BADGE: Record<string, { color: string; bg: string; label: string; dot: string }> = {
+    enabled: { color: '#2563EB', bg: '#EFF6FF', label: '启用中', dot: '#007AFF' },
+    disabled: { color: '#8E8E93', bg: '#F5F5F7', label: '未启用', dot: '#C7C7CC' }
+};
 
 function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall): string {
     const title = args?.['title'] || '';
@@ -263,7 +236,7 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
 
     const triggerType = trigger?.type || 'scheduled';
     const tCfg = TRIGGER_ICON_CONFIG[triggerType] || TRIGGER_ICON_CONFIG.scheduled;
-    const sCfg = getStatusBadge(isEnabled);
+    const sCfg = STATUS_BADGE[isEnabled ? 'enabled' : 'disabled'];
     const triggerDesc = formatTriggerDisplay(trigger);
 
     const isRunning = toolcall.status === 'running';
@@ -275,14 +248,11 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
         try {
             const result = JSON.parse(toolcall.result);
             resultHtml = `<div style="display:flex;align-items:center;gap:5px;margin-top:10px;padding:8px 10px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#16A34A;">
-                <i class="fas fa-check-circle"></i> ${
-                    result.id
-                        ? escapeHtml(t('tool.card.successWithId', { id: String(result.id).slice(0, 16) }))
-                        : escapeHtml(t('tool.card.success'))
-                }
+                <i class="fas fa-check-circle"></i> 操作成功${result.id ? `（ID: ${escapeHtml(String(result.id).slice(0, 16))}…）` : ''}
             </div>`;
         } catch {
-            resultHtml = `<div style="margin-top:10px;padding:8px 10px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#16A34A;"><i class="fas fa-check-circle"></i> ${escapeHtml(t('tool.card.success'))}</div>`;
+            resultHtml =
+                '<div style="margin-top:10px;padding:8px 10px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#16A34A;"><i class="fas fa-check-circle"></i> 操作成功</div>';
         }
     } else if (isError && toolcall.result) {
         resultHtml = `<div style="margin-top:10px;padding:8px 10px;background:#FEF2F2;border-radius:8px;font-size:12px;color:#DC2626;"><i class="fas fa-circle-xmark"></i> ${escapeHtml(String(toolcall.result).slice(0, 120))}</div>`;
@@ -347,10 +317,6 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    getToolCallPresentation() {
-        return todoToolPresentation('renderer.taskview.output.toolName.todoWrite');
-    }
-
     private getTaskTodos(taskId: string): TaskTodo[] {
         return getOrInitTaskTodos(taskId);
     }
@@ -367,12 +333,12 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const total = todos.length;
         const enabled = todos.filter((t: any) => t.enabled !== false).length;
 
-        let title = t('tool.todoWrite.cardTitle');
+        let title = '更新任务计划';
         let detail = '';
         if (total > 0) {
             if (enabled === 0) {
-                title = t('tool.todoWrite.cardDisabled');
-                detail = t('tool.todoWrite.itemsCount', { count: total });
+                title = '任务计划未启用';
+                detail = `${total} 项`;
             } else {
                 detail = `${enabled}/${total}`;
             }
@@ -412,10 +378,10 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         }
 
         // 否则显示简洁摘要
-        let summary = t('tool.todoWrite.cliSummary', { total });
+        let summary = `共 ${total} 个任务`;
         if (total > 0) {
-            if (enabled > 0) summary += ` · ${t('tool.todoWrite.cliEnabled', { count: enabled })}`;
-            if (disabled > 0) summary += ` · ${t('tool.todoWrite.cliDisabled', { count: disabled })}`;
+            if (enabled > 0) summary += ` · 启用中 ${enabled}`;
+            if (disabled > 0) summary += ` · 未启用 ${disabled}`;
         }
 
         return [`📋 ${summary}`];
@@ -438,7 +404,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         // Use Card component with custom border
         const card = new Card({
             icon: '✅',
-            title: t('tool.todoWrite.cliAllCompleted'),
+            title: '所有待办已完成!',
             body: bodyLines,
             border: borderConfig
         });
@@ -535,13 +501,17 @@ function validateScheduledTrigger(trigger?: z.output<typeof TriggerSchema>): voi
 
     // 检查是否为有效的 ISO 8601 UTC 时间格式（应以 Z 结尾）
     if (!triggerAt.endsWith('Z')) {
-        throw new Error(t('error.triggerAtMustUtc', { triggerAt }));
+        throw new Error(
+            `scheduled trigger 的 triggerAt 必须使用 UTC 时间（以 Z 结尾），当前值："${triggerAt}"。` +
+                `请使用 getCurrentTime 工具获取当前 UTC 时间，并根据需要计算目标时间。` +
+                `例如：当地时间 2026-03-01 09:00 (UTC+8) 应转换为 "2026-03-01T01:00:00Z"`
+        );
     }
 
     // 验证是否为有效的日期
     const date = new Date(triggerAt);
     if (isNaN(date.getTime())) {
-        throw new Error(t('error.triggerAtInvalidDate', { triggerAt }));
+        throw new Error(`无效的日期格式："${triggerAt}"，请使用 ISO 8601 UTC 格式，如 "2026-03-01T01:00:00Z"`);
     }
 }
 
@@ -581,7 +551,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return Promise.resolve(renderTodoCardHtml(t('tool.card.add'), toolcall.args_object, toolcall));
+        return Promise.resolve(renderTodoCardHtml('添加自动化任务', toolcall.args_object, toolcall));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -593,28 +563,25 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
 
         if (title || content) {
             if (title) {
-                body.push(chalk.dim(t('tool.cli.label.title')) + truncText(String(title), width - 20));
+                body.push(chalk.dim('标题: ') + truncText(String(title), width - 20));
             }
             if (content) {
-                body.push(chalk.dim(t('tool.cli.label.content')) + truncText(String(content), width - 20));
+                body.push(chalk.dim('内容: ') + truncText(String(content), width - 20));
             }
             if (trigger) {
-                body.push(chalk.dim(t('tool.cli.label.trigger')) + chalk.cyan(formatTriggerDisplay(trigger)));
+                body.push(chalk.dim('触发器: ') + chalk.cyan(formatTriggerDisplay(trigger)));
             }
         }
 
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
-                body.push(chalk.dim('  ✓ ' + t('tool.cli.add.successWithId')) + chalk.green(String(result.id)));
+                body.push(chalk.dim('  ✓ 待办已添加，ID: ') + chalk.green(String(result.id)));
                 if (result.todo?.deliver) {
-                    body.push(
-                        chalk.dim('  📨 ' + t('tool.cli.add.deliveredTo')) +
-                            chalk.blueBright(formatDeliverDisplay(result.todo.deliver))
-                    );
+                    body.push(chalk.dim('  📨 投递到: ') + chalk.blueBright(formatDeliverDisplay(result.todo.deliver)));
                 }
             } catch {
-                body.push(chalk.dim('  ✓ ' + t('tool.cli.add.success')));
+                body.push(chalk.dim('  ✓ 待办已添加!'));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -622,7 +589,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
 
         return new Card({
             icon: '🌍',
-            title: t('tool.cli.add.cardTitle'),
+            title: '添加全局待办',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -689,7 +656,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return Promise.resolve(renderTodoCardHtml(t('tool.card.update'), toolcall.args_object, toolcall));
+        return Promise.resolve(renderTodoCardHtml('更新自动化任务', toolcall.args_object, toolcall));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -700,27 +667,27 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         if (id) {
             body.push(chalk.dim('ID: ') + chalk.cyan(String(id)));
             const updates: string[] = [];
-            if (args.title) updates.push(t('tool.cli.update.field.title'));
-            if (args.content) updates.push(t('tool.cli.update.field.content'));
-            if (args.enabled !== undefined) updates.push(t('tool.cli.update.field.enabled'));
-            if (args.priority) updates.push(t('tool.cli.update.field.priority'));
-            if (args.category) updates.push(t('tool.cli.update.field.category'));
-            if (args.trigger) updates.push(t('tool.cli.update.field.trigger'));
-            if (args.removeTrigger) updates.push(t('tool.cli.update.field.removeTrigger'));
+            if (args.title) updates.push('标题');
+            if (args.content) updates.push('内容');
+            if (args.enabled !== undefined) updates.push('启用状态');
+            if (args.priority) updates.push('优先级');
+            if (args.category) updates.push('分类');
+            if (args.trigger) updates.push('触发器');
+            if (args.removeTrigger) updates.push('移除触发器');
             if (updates.length > 0) {
-                body.push(chalk.dim(t('tool.cli.update.updated')) + chalk.yellow(updates.join(', ')));
+                body.push(chalk.dim('更新: ') + chalk.yellow(updates.join(', ')));
             }
         }
 
         if (toolcall.status === 'success' && toolcall.result) {
-            body.push(chalk.dim('  ✓ ' + t('tool.cli.update.success')));
+            body.push(chalk.dim('  ✓ 待办已更新!'));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
         return new Card({
             icon: '🔄',
-            title: t('tool.cli.update.cardTitle'),
+            title: '更新全局待办',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -781,20 +748,19 @@ export class ListGlobalTodoDeliverTargetsTool extends BaseTool<typeof ListGlobal
     private async handleExecute(): Promise<string> {
         const channels = await this.todoMgrApp.getConnectedChannelsForUI();
         if (channels.length === 0) {
-            return t('tool.deliverTargets.empty');
+            return '当前没有可用的消息渠道。请先连接渠道插件。';
         }
 
         const lines: string[] = [];
         for (const channel of channels) {
-            const status = channel.online ? t('tool.deliverTargets.online') : t('tool.deliverTargets.offline');
+            const status = channel.online ? '在线' : '离线';
             lines.push(`- ${channel.label} (${channel.channelId}:${channel.accountId}) ${status}`);
             if (channel.recipients.length === 0) {
-                lines.push(`  - ${t('tool.deliverTargets.noContacts')}`);
+                lines.push('  - 暂无联系人；请先通过该渠道收发一条消息。');
                 continue;
             }
             for (const recipient of channel.recipients) {
-                const chatType =
-                    recipient.chatType === 'group' ? t('tool.deliverTargets.group') : t('tool.deliverTargets.private');
+                const chatType = recipient.chatType === 'group' ? '群聊' : '私聊';
                 const deliver = {
                     type: 'channel',
                     channel: channel.channelId,
@@ -834,15 +800,15 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
         const body: string[] = [];
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim(`  ⏳ ${t('tool.cli.list.loading')}`));
+            body.push(chalk.dim('  ⏳ 加载中…'));
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
                 const todos = Array.isArray(result.todos) ? result.todos : [];
                 if (todos.length === 0) {
-                    body.push(chalk.dim(`  ${t('tool.cli.list.empty')}`));
+                    body.push(chalk.dim('  暂无全局待办'));
                 } else {
-                    body.push(chalk.dim(`  ${t('tool.cli.list.found', { count: chalk.white(String(todos.length)) })}`));
+                    body.push(chalk.dim(`  找到 ${chalk.white(String(todos.length))} 个全局待办:`));
                     for (const todo of todos.slice(0, 5)) {
                         const isEnabled = todo.enabled !== false;
                         const statusIcon = isEnabled ? '●' : '○';
@@ -857,11 +823,11 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
                         );
                     }
                     if (todos.length > 5) {
-                        body.push(chalk.dim(`    ${t('tool.cli.list.more', { count: todos.length - 5 })}`));
+                        body.push(chalk.dim(`    ... 还有 ${todos.length - 5} 个`));
                     }
                 }
             } catch {
-                body.push(chalk.dim(`  ✓ ${t('tool.cli.list.success')}`));
+                body.push(chalk.dim('  ✓ 已获取待办列表'));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -869,7 +835,7 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
 
         return new Card({
             icon: '📋',
-            title: t('tool.cli.list.cardTitle'),
+            title: '全局待办列表',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -907,14 +873,14 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
         }
 
         if (toolcall.status === 'success') {
-            body.push(chalk.dim(`  ✓ ${t('tool.cli.delete.success')}`));
+            body.push(chalk.dim('  ✓ 待办已删除!'));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
         return new Card({
             icon: '🗑',
-            title: t('tool.cli.delete.cardTitle'),
+            title: '删除全局待办',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -945,13 +911,13 @@ export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsAr
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        return [chalk.dim(`📡 ${t('tool.cli.events.cardTitle')}`)];
+        return [chalk.dim('📡 获取应用事件清单')];
     }
 
     private async handleExecute(): Promise<string> {
         const applicationRegistry = this.todoMgrApp.registry;
         if (!applicationRegistry) {
-            return t('tool.events.errorNoRegistry');
+            return '错误：未找到ApplicationRegistry，无法获取可用事件';
         }
         const eventsMap = await applicationRegistry.getAllSupportedEvents();
 

@@ -11,25 +11,21 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
-import { updateStreamingText } from '../utils/streaming-text.js';
-import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
-import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
-import { ChatNavigation, buildConversationStops, mergeRenderedConversationStops } from './chatNavigation.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
-import { enhanceCodeBlocks, enhanceToolPreviewCards, renderMermaidBlocks } from './previewer.ts';
+import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
-import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { formatOutputElapsed } from '../../common/output-duration.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
-import { buildTaskExportHtml } from '../utils/task-export.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
+import { getToolDisplayNameKey, humanizeToolName } from '../../common/tool-display-name.ts';
+import { enhanceWebLinks } from '../utils/web-linkify.ts';
 import {
     GoalController,
     canShowWaitingAssistantPlaceholder,
@@ -44,12 +40,6 @@ const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
 const EXPORT_DOWNLOAD_SVG =
     '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
-const EXPORT_WEBPAGE_SVG =
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
-const EXPORT_JSON_SVG =
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
-const TOOL_DETAIL_CACHE_MAX_ENTRIES = 20;
-
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const CHECK_ICON_SVG =
@@ -91,6 +81,7 @@ import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 import {
     buildAssistantOutputItems,
     getDefaultProcessExpanded,
+    getDefaultReasoningExpanded,
     getVisibleAssistantOutputItems,
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
@@ -103,9 +94,7 @@ export const TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT = 20;
 export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
-// 流式思考预览只保留尾部切片：全文每帧重写的布局/文本成本会随思考长度线性膨胀，
-// 是长任务下渲染进程 CPU 飙高的主因之一。
-const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
+const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 let taskViewT = createRendererTranslator();
 let guiOutputMode = 'minimal';
 let guiReasonDisplayMode = 'inline';
@@ -209,18 +198,6 @@ function formatReasoningElapsedTime(seconds, chars = null) {
     return timeStr;
 }
 
-/**
- * 流式思考预览的尾部切片：预览区始终滚动钉底展示最新内容，
- * 只写尾部可将每帧 DOM 写入与文本排版成本从 O(累计长度) 降到 O(切片长度)。
- * 切片按行边界对齐，避免首行显示半截内容。
- */
-function sliceReasoningPreviewTail(text) {
-    const value = text || '';
-    if (value.length <= TASKVIEW_REASONING_PREVIEW_TAIL_CHARS) return value;
-    const tail = value.slice(-TASKVIEW_REASONING_PREVIEW_TAIL_CHARS);
-    const newlineIndex = tail.indexOf('\n');
-    return newlineIndex >= 0 ? tail.slice(newlineIndex + 1) : tail;
-}
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -352,15 +329,12 @@ class TaskView extends HTMLElement {
         this._contextSizeModel = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
         this._messageContainerCache = new Map();
-        this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
-            if (this._shouldSuppressIncrementalRender()) return;
-            const historyContainer = this.getHistoryContainer();
-            if (!historyContainer) return;
-            this._renderAssistantProgress(progress, historyContainer);
-            this.tryScrollToEnd();
-        });
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
+        /** @type {number | null} 节流过程区内部滚动的 rAF id */
+        this._processScrollFollowRafId = null;
+        /** @type {Map<string, {root: HTMLElement, targetKey: string}>} */
+        this._pendingProcessScrollFollowTargets = new Map();
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
         this._browserPip = null;
         /** @type {number | null} 浏览器空闲销毁倒计时 */
@@ -379,12 +353,6 @@ class TaskView extends HTMLElement {
         this._assistantDisclosureStateByMessage = new Map();
         /** @type {Map<string, boolean>} 极简运行态是否展开了当前消息的执行过程。 */
         this._assistantRunningDetails = new Map();
-        /** @type {Map<string, {messageId: string, partIndex: number, toolIndex: number, tool: object}>} */
-        this._toolDetailSources = new Map();
-        /** @type {Map<string, object>} 已按需加载的工具详情。 */
-        this._toolDetailCache = new Map();
-        /** @type {Map<string, Promise<object>>} 合并同一工具详情的并发请求。 */
-        this._toolDetailRequests = new Map();
         /** @type {boolean} 是否正在执行 reload()，用于暂停订阅回调的 DOM 操作 */
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
@@ -481,8 +449,6 @@ class TaskView extends HTMLElement {
     /** @type {number} 最近一次用户主动滚动输入的时间戳，用于区分缩放等引起的被动 scroll。 */
     _lastUserScrollTs = 0;
 
-    _lastUserScrollDirection = 0;
-
     /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
     _historyScrollKeydownHandler = null;
 
@@ -500,10 +466,8 @@ class TaskView extends HTMLElement {
     }
 
     /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
-    _markUserScrollIntent(direction = 0) {
-        this._conversationJumpInProgress = false;
+    _markUserScrollIntent() {
         this._lastUserScrollTs = Date.now();
-        this._lastUserScrollDirection = direction;
     }
 
     /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
@@ -691,6 +655,8 @@ class TaskView extends HTMLElement {
         text: 'bg-transparent markdown-body'
     };
 
+    static REASONING_UPDATE_FALLBACK_MS = 250;
+
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
     /** 无持续 usage 时按字符数估算 token 的比例（chars / 4） */
@@ -833,79 +799,8 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * Create reasoning block HTML in inline-tool style.
-     * @param {string} rendered - Reasoning text content
-     * @param {boolean} isStreaming - Whether the reasoning is currently being streamed
-     */
-    static createReasoningPartHtml(rendered, isStreaming = false, elapsedSeconds = null) {
-        const escaped = escapeHtml(rendered || '');
-        const title = escapeHtml(taskViewT('reasoning.card.title'));
-        const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
-
-        // During streaming: icon breathes with gradient to indicate active thinking
-        const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
-
-        // Pre-fill elapsed time for completed (e.g. historical) reasoning blocks
-        const chars = (rendered || '').length;
-        const timeText =
-            !isStreaming && elapsedSeconds != null ? `（${formatReasoningElapsedTime(elapsedSeconds, chars)}）` : '';
-
-        const isBubble = guiReasonDisplayMode === 'bubble';
-
-        if (isBubble) {
-            // Bubble starts hidden for completed blocks; streaming blocks show it immediately
-            const bubbleHiddenClass = isStreaming ? '' : ' reasoning-bubble-hidden';
-            // 流式气泡只写尾部切片，全文在 finalize 时一次性回填
-            const bubbleText = escapeHtml(isStreaming ? sliceReasoningPreviewTail(rendered) : rendered || '');
-            const bubbleHtml = `<div class="reasoning-bubble compact-scroll${bubbleHiddenClass}"><div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap">${bubbleText}</div></div>`;
-            return `
-        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
-            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
-                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
-                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
-            </div>
-            ${bubbleHtml}
-        </div>`;
-        }
-
-        // Inline mode
-        const toggleHtml = isStreaming
-            ? ''
-            : `<span class="reasoning-toggle text-xs text-blue-500 hover:text-blue-600 cursor-pointer shrink-0"></span>`;
-
-        let previewHtml = '';
-        if (isStreaming) {
-            previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escapeHtml(
-                sliceReasoningPreviewTail(rendered)
-            )}</div></div>`;
-        }
-
-        // 流式块的全文区保持为空：折叠期间每帧写入全文会让文本布局成本随思考长度
-        // 线性膨胀（历史越长卡顿越明显）。全文由 finalizeReasoningBlock 一次性回填。
-        const fullText = isStreaming ? '' : escaped;
-        const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${fullText}</div></div>`;
-
-        return `
-        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
-            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
-                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
-                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
-                ${toggleHtml}
-            </div>
-            ${previewHtml}
-            ${fullHtml}
-        </div>`;
-    }
-
-    /**
      * Update the live preview and hidden full content of a streaming reasoning block.
      * Also updates the elapsed time display in real-time.
-     *
-     * 预览节点只写尾部切片；全文节点折叠期间跳写（仅记录最新全文，由
-     * finalizeReasoningBlock 一次性回填）。流式块在思考期间始终折叠（展开开关
-     * 只对 completed 块生效），因此跳写不影响任何可见内容。
      */
     static updateReasoningPreview(el, text) {
         if (!el) return;
@@ -914,8 +809,6 @@ class TaskView extends HTMLElement {
         // 思考块会继续计时，出现"两个思考块同时活跃同时计时"。
         if (el.classList.contains('reasoning-completed')) return;
         el._reasoningTextLength = (text || '').length;
-        el._reasoningFullText = text || '';
-        el._reasoningFullStale = true;
 
         // Time display refresh (created once per element)
         if (!el._refreshReasoningTime) {
@@ -946,12 +839,10 @@ class TaskView extends HTMLElement {
         // Refresh time display on every content update (real-time char count)
         el._refreshReasoningTime();
 
-        const tailText = sliceReasoningPreviewTail(text);
-
         // Bubble mode: update bubble content
         const bubbleContent = el.querySelector('.reasoning-bubble-content');
         if (bubbleContent) {
-            bubbleContent.textContent = tailText;
+            bubbleContent.textContent = text;
             const bubble = el.querySelector('.reasoning-bubble');
             if (bubble) {
                 bubble.scrollTop = bubble.scrollHeight;
@@ -964,13 +855,17 @@ class TaskView extends HTMLElement {
         // of staring at a frozen head of the preview (clipped by max-height).
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
-            previewContent.textContent = tailText;
+            previewContent.textContent = text;
             const previewArea = el.querySelector('.reasoning-preview-area');
             if (previewArea) {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
-        // 全文节点（.reasoning-content）不再逐帧写入，见 finalizeReasoningBlock 的回填。
+
+        const fullContent = el.querySelector('.reasoning-content');
+        if (fullContent) {
+            fullContent.textContent = text;
+        }
     }
 
     /**
@@ -1048,20 +943,6 @@ class TaskView extends HTMLElement {
         // Flush any deferred streaming text so the finalized block is complete.
         TaskView.flushReasoningPreview(el);
 
-        // 折叠期间全文区跳写，这里一次性回填，保证完成后展开可见完整内容
-        // （历史长时这是把全文逐帧写入布局树改为仅一次写入的关键）。
-        if (el._reasoningFullStale && el._reasoningFullText !== undefined) {
-            const fullContent = el.querySelector('.reasoning-content');
-            if (fullContent) {
-                fullContent.textContent = el._reasoningFullText;
-            }
-            const bubbleContent = el.querySelector('.reasoning-bubble-content');
-            if (bubbleContent) {
-                bubbleContent.textContent = el._reasoningFullText;
-            }
-            el._reasoningFullStale = false;
-        }
-
         // Clear the per-second time interval
         if (el._reasoningTimeInterval) {
             clearInterval(el._reasoningTimeInterval);
@@ -1073,7 +954,7 @@ class TaskView extends HTMLElement {
 
         // Bubble mode: auto-hide the bubble after a short delay
         const bubble = el.querySelector('.reasoning-bubble');
-        if (bubble) {
+        if (bubble && el.isConnected) {
             setTimeout(() => {
                 if (
                     el.classList.contains('reasoning-completed') &&
@@ -1128,92 +1009,65 @@ class TaskView extends HTMLElement {
         }
     }
 
+    static createReasoningPartHtml(rendered, isStreaming = false, partIndex = -1, elapsedSeconds = null) {
+        const escaped = escapeHtml(rendered || '');
+        const title = escapeHtml(taskViewT('reasoning.card.title'));
+        const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
+        const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
+        const streamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
+        const timingAttribute = isStreaming ? ` data-reasoning-start="${Date.now()}"` : '';
+        const timeText =
+            !isStreaming && elapsedSeconds != null
+                ? `（${formatReasoningElapsedTime(elapsedSeconds, (rendered || '').length)}）`
+                : '';
+        const expanded = getDefaultReasoningExpanded(guiOutputMode);
+
+        if (guiReasonDisplayMode === 'bubble') {
+            const bubbleOpen = isStreaming || expanded;
+            const wrapperExpandedClass =
+                expanded && !isStreaming ? ' reasoning-bubble-pinned reasoning-content-visible' : '';
+            const bubbleHiddenClass = bubbleOpen ? '' : ' reasoning-bubble-hidden';
+            return `
+                <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}>
+                    <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                        <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                        <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                        <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+                    </div>
+                    <div class="reasoning-bubble compact-scroll${bubbleHiddenClass}">
+                        <div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escaped}</div>
+                    </div>
+                </div>`;
+        }
+
+        const previewHtml =
+            isStreaming && !expanded
+                ? `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${streamingAttribute}>${escaped}</div></div>`
+                : '';
+        const fullStreamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
+        const wrapperExpandedClass = expanded ? ' reasoning-expanded reasoning-content-visible' : '';
+        return `
+            <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}>
+                <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                    <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                    <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+                </div>
+                ${previewHtml}
+                <div class="reasoning-full-area" data-reasoning-scroll-key="${partIndex}"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap"${fullStreamingAttribute}>${escaped}</div></div>
+            </div>`;
+    }
+
     static _plainTextFromHtml(value) {
         const container = document.createElement('div');
         container.innerHTML = String(value || '');
         return (container.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
-    static _toolBasename(value) {
-        const normalized = String(value || '').replace(/[\\/]+$/, '');
-        return normalized.split(/[\\/]/).pop() || normalized;
-    }
-
-    static _toolPresentationText(value) {
-        if (typeof value === 'string') return value.trim();
-        if (!value || typeof value !== 'object' || typeof value.key !== 'string') return '';
-        return taskViewT(value.key, value.params && typeof value.params === 'object' ? value.params : undefined);
-    }
-
     static _toolDisplayName(tool) {
-        const displayName = TaskView._toolPresentationText(tool?.presentation?.displayName);
-        if (displayName) return displayName;
-        return tool?.tool_name || taskViewT('renderer.taskview.output.tool');
-    }
-
-    static _toolPurpose(tool) {
-        return TaskView._toolPresentationText(tool?.presentation?.summary);
-    }
-
-    static _toolFileAction(tool) {
-        const resource = tool?.presentation?.resource;
-        if (!resource || (resource.type !== 'preview' && resource.type !== 'changes')) return undefined;
-        return typeof resource.value === 'string' && resource.value.trim()
-            ? { type: resource.type, filePath: resource.value.trim() }
-            : undefined;
-    }
-
-    static _browserUrl(value) {
-        if (typeof value !== 'string' || !value.trim()) return undefined;
-        try {
-            const url = new URL(value.trim());
-            return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : undefined;
-        } catch {
-            return undefined;
-        }
-    }
-
-    static _compactBrowserUrl(url) {
-        try {
-            const parsed = new URL(url);
-            const path = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '');
-            return `${parsed.host}${path}`;
-        } catch {
-            return url;
-        }
-    }
-
-    static _renderBrowserLink(url, text = url) {
-        const label = taskViewT('renderer.taskview.output.action.openUrl', { url });
-        return `<a class="od-process-resource-link od-process-browser-link" href="${escapeHtml(url)}"
-            data-open-browser-url="${escapeHtml(url)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${escapeHtml(text)}</a>`;
-    }
-
-    static _renderToolPurpose(tool) {
-        const purpose = TaskView._toolPurpose(tool);
-        const action = TaskView._toolFileAction(tool);
-        if (action) {
-            const name = TaskView._toolBasename(action.filePath);
-            const nameOffset = purpose.indexOf(name);
-            if (!name) return escapeHtml(purpose);
-            const dataAttribute = action.type === 'preview' ? 'data-open-preview' : 'data-open-changes';
-            const labelKey =
-                action.type === 'preview'
-                    ? 'renderer.taskview.output.action.previewFile'
-                    : 'renderer.taskview.output.action.viewChanges';
-            const label = taskViewT(labelKey, { name });
-            const link = `<button type="button" class="od-process-resource-link od-process-file-link"
-                ${dataAttribute}="${escapeHtml(action.filePath)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${escapeHtml(name)}</button>`;
-            return nameOffset < 0
-                ? `${escapeHtml(purpose)}${purpose ? ' · ' : ''}${link}`
-                : `${escapeHtml(purpose.slice(0, nameOffset))}${link}${escapeHtml(purpose.slice(nameOffset + name.length))}`;
-        }
-
-        const resource = tool?.presentation?.resource;
-        const browserUrl = TaskView._browserUrl(resource?.type === 'url' ? resource.value : undefined);
-        const urlOffset = browserUrl ? purpose.indexOf(browserUrl) : -1;
-        if (!browserUrl || urlOffset < 0) return escapeHtml(purpose);
-        return `${escapeHtml(purpose.slice(0, urlOffset))}${TaskView._renderBrowserLink(browserUrl, TaskView._compactBrowserUrl(browserUrl))}${escapeHtml(purpose.slice(urlOffset + browserUrl.length))}`;
+        const toolName = tool?.tool_name;
+        const key = getToolDisplayNameKey(toolName);
+        return key ? taskViewT(key) : humanizeToolName(toolName) || taskViewT('renderer.taskview.output.tool');
     }
 
     static _compactProcessPhrase(value, maxLength = 18) {
@@ -1238,7 +1092,7 @@ class TaskView extends HTMLElement {
 
     static _processSummary(item) {
         const entries = item.entries || [];
-        const tools = entries.filter((entry) => entry.type === 'tool' && entry.tool).map((entry) => entry.tool);
+        const tools = entries.filter((entry) => entry.type === 'tool').flatMap((entry) => entry.tools || []);
         const displayNames = Array.from(new Set(tools.map((tool) => TaskView._toolDisplayName(tool)).filter(Boolean)));
         const toolNames = Array.from(new Set(displayNames.map((name) => TaskView._compactProcessPhrase(name, 12))));
         let toolSummary = '';
@@ -1267,326 +1121,29 @@ class TaskView extends HTMLElement {
         return TaskView._truncateProcessSummary(summary);
     }
 
-    static _readableToolValue(value) {
-        if (typeof value === 'string') return value;
-        if (value === undefined) return '';
-        return JSON.stringify(value, null, 2);
-    }
-
-    static _formatToolResult(result) {
-        const raw = String(result || '');
-        if (!raw) return '';
-        try {
-            const parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object') return raw;
-            if (parsed.type === 'file_unchanged') {
-                return taskViewT('renderer.taskview.output.result.fileUnchanged');
-            }
-            if (parsed.type === 'error' && parsed.error != null) {
-                return TaskView._readableToolValue(parsed.error);
-            }
-            if (parsed.file && typeof parsed.file === 'object') {
-                for (const key of ['content', 'text', 'output']) {
-                    if (parsed.file[key] != null) return TaskView._readableToolValue(parsed.file[key]);
-                }
-            }
-            if (Array.isArray(parsed.content)) {
-                const content = parsed.content
-                    .map((item) => {
-                        if (typeof item === 'string') return item;
-                        if (!item || typeof item !== 'object') return '';
-                        for (const key of ['text', 'content', 'output', 'message']) {
-                            if (item[key] != null) return TaskView._readableToolValue(item[key]);
-                        }
-                        return '';
-                    })
-                    .filter(Boolean)
-                    .join('\n');
-                if (content) return content;
-            }
-            for (const key of ['output', 'content', 'text', 'message']) {
-                if (parsed[key] != null) return TaskView._readableToolValue(parsed[key]);
-            }
-            return JSON.stringify(parsed, null, 2);
-        } catch {
-            return raw;
-        }
-    }
-
-    static _renderToolResult(result) {
-        const readable = TaskView._formatToolResult(result);
-        if (!readable) return '';
-        const pattern = /https?:\/\/[^\s<>"'`]+/gi;
-        let rendered = '';
-        let cursor = 0;
-        for (const match of readable.matchAll(pattern)) {
-            const offset = match.index ?? 0;
-            let candidate = match[0];
-            let suffix = '';
-            while (/[.,;:!?，。；：！？]$/.test(candidate)) {
-                suffix = candidate.slice(-1) + suffix;
-                candidate = candidate.slice(0, -1);
-            }
-            const browserUrl = TaskView._browserUrl(candidate);
-            rendered += escapeHtml(readable.slice(cursor, offset));
-            rendered += browserUrl ? TaskView._renderBrowserLink(browserUrl) : escapeHtml(match[0]);
-            rendered += escapeHtml(suffix);
-            cursor = offset + match[0].length;
-        }
-        return rendered + escapeHtml(readable.slice(cursor));
-    }
-
-    static _toolResultUsesMarkdown(tool) {
-        return tool?.presentation?.resultFormat === 'markdown';
-    }
-
-    static _renderMarkdownToolResult(result) {
-        const readable = TaskView._formatToolResult(result);
-        if (!readable) return '';
-        const container = document.createElement('div');
-        container.innerHTML = renderSafeMarkdown(readable);
-        container.querySelectorAll('a[href]').forEach((anchor) => {
-            const url = TaskView._browserUrl(anchor.getAttribute('href'));
-            if (!url) return;
-            const label = taskViewT('renderer.taskview.output.action.openUrl', { url });
-            anchor.classList.add('od-process-resource-link', 'od-process-browser-link');
-            anchor.setAttribute('data-open-browser-url', url);
-            anchor.setAttribute('aria-label', label);
-            anchor.setAttribute('title', label);
-            anchor.removeAttribute('target');
-        });
-        return container.innerHTML;
-    }
-
-    static _structuredToolRender(tool) {
-        const rendered = String(tool?.rendered || '');
-        if (!rendered) return '';
-        const hasStructuredContent = /<details\b|<pre\b|class=["'][^"']*(?:tool-card|terminal-tool)[^"']*["']/i.test(
-            rendered
-        );
-        return hasStructuredContent ? rendered : '';
-    }
-
-    static _toolStatusIcon(status) {
-        if (status === 'success') return 'fa-circle-check';
-        if (status === 'running') return 'fa-circle-notch fa-spin';
-        if (status === 'error') return 'fa-circle-xmark';
-        if (status === 'cancelled' || status === 'interrupted') return 'fa-circle-stop';
-        return 'fa-clock';
-    }
-
-    static _renderToolExecutionDetail(tool) {
-        const result = tool.result || '';
-        const fallback = !result ? tool.rendered || '' : '';
-        const resultTruncated = Boolean(tool.truncation?.result);
-        const renderedTruncated = Boolean(tool.truncation?.rendered);
-        const structuredRender = renderedTruncated ? '' : TaskView._structuredToolRender(tool);
-        const markdownResult =
-            structuredRender || resultTruncated || !TaskView._toolResultUsesMarkdown(tool)
-                ? ''
-                : TaskView._renderMarkdownToolResult(result);
-        const readableResult =
-            structuredRender || markdownResult
-                ? ''
-                : resultTruncated
-                  ? escapeHtml(result)
-                  : TaskView._renderToolResult(result);
-        const status = tool.status || 'pending';
-        const statusText = taskViewT(`renderer.taskview.output.toolStatus.${status}`);
-        const executionTitle = taskViewT('renderer.taskview.output.executionDetails');
-        const truncationNotice =
-            resultTruncated || renderedTruncated
-                ? `<div class="od-process-tool-detail-status">${escapeHtml(taskViewT('renderer.taskview.output.detailTruncated'))}</div>`
-                : '';
-        return `
-            <div class="od-process-tool-execution-header">
-                <span>${escapeHtml(executionTitle)}</span>
-                <span class="od-process-tool-execution-status is-${escapeHtml(status)}">
-                    <i class="fa-solid ${TaskView._toolStatusIcon(status)}" aria-hidden="true"></i>
-                    ${escapeHtml(statusText)}
-                </span>
-            </div>
-            ${truncationNotice}
-            ${structuredRender ? `<div class="od-process-tool-rendered">${structuredRender}</div>` : ''}
-            ${
-                markdownResult
-                    ? `<div class="od-process-tool-output is-markdown"><div class="od-process-detail-label">${taskViewT('renderer.taskview.output.result')}</div><div class="od-process-markdown-result markdown-body">${markdownResult}</div></div>`
-                    : ''
-            }
-            ${
-                readableResult
-                    ? `<div class="od-process-tool-output"><div class="od-process-detail-label">${taskViewT('renderer.taskview.output.result')}</div><pre>${readableResult}</pre></div>`
-                    : ''
-            }
-            ${!structuredRender ? fallback : ''}`;
-    }
-
-    _toolDetailKey(messageId, entry) {
-        return `${messageId}:${entry.partIndex}:${entry.toolIndex ?? 0}:${entry.tool?.id || ''}`;
-    }
-
-    _setToolDetailContent(detail, tool) {
-        detail.innerHTML = TaskView._renderToolExecutionDetail(tool);
-        detail.dataset.detailState = 'loaded';
-        enhanceCodeBlocks(detail);
-        enhanceToolPreviewCards(detail);
-    }
-
-    _cacheToolDetail(detailKey, detail) {
-        this._toolDetailCache.delete(detailKey);
-        this._toolDetailCache.set(detailKey, detail);
-        while (this._toolDetailCache.size > TOOL_DETAIL_CACHE_MAX_ENTRIES) {
-            const oldestKey = this._toolDetailCache.keys().next().value;
-            if (oldestKey === undefined) break;
-            this._toolDetailCache.delete(oldestKey);
-        }
-    }
-
-    _findToolDetailElement(detailKey) {
-        return Array.from(this.querySelectorAll('[data-tool-detail-key]')).find(
-            (element) => element.dataset.toolDetailKey === detailKey
-        );
-    }
-
-    _loadToolDetail(detail) {
-        const detailKey = detail?.dataset?.toolDetailKey;
-        const source = detailKey ? this._toolDetailSources.get(detailKey) : undefined;
-        if (!detailKey || !source) return;
-
-        const cached = this._toolDetailCache.get(detailKey);
-        if (cached) {
-            this._setToolDetailContent(detail, { ...source.tool, ...cached });
-            return;
-        }
-
-        if (!window.taskManagerAPI?.getToolCallDetail) {
-            this._setToolDetailContent(detail, source.tool);
-            return;
-        }
-
-        detail.dataset.detailState = 'loading';
-        detail.innerHTML = `<div class="od-process-tool-detail-status" role="status"><i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>${escapeHtml(taskViewT('renderer.taskview.output.detailLoading'))}</span></div>`;
-        let request = this._toolDetailRequests.get(detailKey);
-        if (!request) {
-            request = window.taskManagerAPI.getToolCallDetail(
-                this.task_id,
-                source.messageId,
-                source.partIndex,
-                source.toolIndex,
-                source.tool.id
-            );
-            this._toolDetailRequests.set(detailKey, request);
-        }
-        void request
-            .then((loaded) => {
-                this._cacheToolDetail(detailKey, loaded);
-                const current = this._findToolDetailElement(detailKey);
-                if (current) this._setToolDetailContent(current, { ...source.tool, ...loaded });
-            })
-            .catch((error) => {
-                console.error('Failed to load tool call detail:', error);
-                const current = this._findToolDetailElement(detailKey);
-                if (!current) return;
-                current.dataset.detailState = 'error';
-                current.innerHTML = `<div class="od-process-tool-detail-status is-error" role="alert">${escapeHtml(taskViewT('renderer.taskview.output.detailLoadFailed'))}</div>`;
-            })
-            .finally(() => this._toolDetailRequests.delete(detailKey));
-    }
-
     _captureProcessDisclosureState(root) {
         const state = new Map();
         root?.querySelectorAll?.('[data-disclosure-key]').forEach((toggle) => {
-            if (toggle.dataset.reasoningAutoOpen === 'true') return;
             state.set(toggle.dataset.disclosureKey, toggle.getAttribute('aria-expanded') === 'true');
         });
         return state;
     }
 
-    _renderProcessEntry(entry, processKey, disclosureState, messageId) {
-        const entryKey = `${processKey}-${entry.key}`;
-        const expanded = disclosureState?.get(entryKey) === true;
-        const detailId = `od-${this.widget_id}-${entryKey}-detail`;
+    _syncReasoningTimers(root) {
+        if (!root?.isConnected) return;
+        root?.querySelectorAll?.('.reasoning-block-od.reasoning-active').forEach((block) => {
+            const content = block.querySelector('[data-streaming-part-index]');
+            TaskView.updateReasoningPreview(block, content?.textContent || '');
+        });
+    }
+
+    _renderProcessEntry(entry) {
         if (entry.type === 'reasoning') {
             const streaming = entry.part?.streaming === true;
-            const bubble = guiReasonDisplayMode === 'bubble';
-            const autoOpen = bubble && streaming && !expanded;
-            const detailOpen = expanded || autoOpen;
-            const streamingText = String(entry.part?.text || '');
-            const content = streaming
-                ? `<div class="od-streaming-text" data-streaming-part-index="${entry.partIndex}">${renderSafeMarkdown(streamingText)}</div>`
-                : entry.part?.rendered || '';
-            const summary = streaming
-                ? streamingText.replace(/\s+/g, ' ').trim().slice(0, 160) ||
-                  taskViewT('renderer.taskview.output.reasoningSummary')
-                : TaskView._plainTextFromHtml(content) || taskViewT('renderer.taskview.output.reasoningSummary');
-            return `
-                <div class="od-process-entry od-process-reason${bubble ? ' is-bubble' : ''}${streaming ? ' is-streaming' : ''}${expanded ? ' is-expanded is-pinned' : ''}">
-                    <button type="button" class="od-process-entry-summary" data-process-entry-toggle="reasoning"
-                        data-disclosure-key="${escapeHtml(entryKey)}"${autoOpen ? ' data-reasoning-auto-open="true"' : ''}
-                        aria-expanded="${detailOpen}" aria-controls="${escapeHtml(detailId)}">
-                        <span class="od-process-entry-kind">
-                            <i class="fa-regular fa-lightbulb od-process-entry-icon" aria-hidden="true"></i>
-                            <span>${taskViewT('renderer.taskview.output.reasoning')}</span>
-                        </span>
-                        <span class="od-process-entry-text"${streaming ? ` data-streaming-summary-part-index="${entry.partIndex}"` : ''}>${escapeHtml(summary)}</span>
-                        <span class="od-process-chevron" aria-hidden="true">&gt;</span>
-                    </button>
-                    <div id="${escapeHtml(detailId)}" class="od-process-entry-detail markdown-body${bubble ? ' od-reasoning-bubble' : ''}${detailOpen ? ' is-open' : ''}"${bubble ? ' data-reasoning-bubble' : ''}>
-                        ${content}
-                    </div>
-                </div>`;
+            const content = streaming ? entry.part?.text : entry.part?.rendered;
+            return TaskView.createReasoningPartHtml(content, streaming, entry.partIndex, entry.part?.elapsedSeconds);
         }
-
-        const tool = entry.tool || {};
-        const detailKey = this._toolDetailKey(messageId, entry);
-        const name = TaskView._toolDisplayName(tool);
-        const argumentSummary = TaskView._renderToolPurpose(tool);
-        const status = tool.status || 'pending';
-        const resourceOnly =
-            status === 'success' &&
-            tool.presentation?.detailMode === 'resource' &&
-            TaskView._toolFileAction(tool) !== undefined;
-        const detailAvailable = tool.detail_available === true;
-        const expandable = !resourceOnly && detailAvailable;
-        const statusText = taskViewT(`renderer.taskview.output.toolStatus.${status}`);
-        const statusHtml =
-            status && status !== 'success'
-                ? `<span class="od-process-tool-status is-${escapeHtml(status)}">${escapeHtml(statusText)}</span>`
-                : '';
-        const cachedDetail = this._toolDetailCache.get(detailKey);
-        const executionDetail =
-            expandable && expanded && cachedDetail
-                ? TaskView._renderToolExecutionDetail({ ...tool, ...cachedDetail })
-                : '';
-        if (!expandable) {
-            this._toolDetailSources.delete(detailKey);
-            this._toolDetailCache.delete(detailKey);
-        } else {
-            this._toolDetailSources.set(detailKey, {
-                messageId,
-                partIndex: entry.partIndex,
-                toolIndex: entry.toolIndex ?? 0,
-                tool
-            });
-        }
-        return `
-            <div class="od-process-entry od-process-tool${expandable && expanded ? ' is-expanded' : ''}${resourceOnly ? ' is-resource-only' : !expandable ? ' is-static' : ''}">
-                <div class="od-process-entry-summary"${expandable ? ` role="button" tabindex="0" data-process-entry-toggle="tool" data-disclosure-key="${escapeHtml(entryKey)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailId)}"` : ''}>
-                    <span class="od-process-entry-kind">
-                        <i class="fa-solid fa-wrench od-process-entry-icon" aria-hidden="true"></i>
-                        <span>${taskViewT('renderer.taskview.output.tool')}</span>
-                    </span>
-                    <span class="od-process-entry-label">${escapeHtml(name)}${statusHtml}</span>
-                    ${argumentSummary ? `<span class="od-process-entry-text od-process-tool-args">${argumentSummary}</span>` : ''}
-                        ${expandable ? '<span class="od-process-chevron" aria-hidden="true">&gt;</span>' : ''}
-                    </div>
-                ${
-                    expandable
-                        ? `<div id="${escapeHtml(detailId)}" class="od-process-entry-detail${expanded ? ' is-open' : ''}"
-                    data-tool-detail-key="${escapeHtml(detailKey)}" data-detail-state="${executionDetail ? 'loaded' : 'unloaded'}">${executionDetail}</div>`
-                        : ''
-                }
-            </div>`;
+        return String(entry.part?.rendered || '');
     }
 
     _renderProcessItem(item, messageId, disclosureState) {
@@ -1610,20 +1167,17 @@ class TaskView extends HTMLElement {
                     </span>
                 </button>
                 <div id="${escapeHtml(detailId)}" class="od-process-detail${expanded ? ' is-open' : ''}">
-                    ${item.entries
-                        .map((entry) => this._renderProcessEntry(entry, processKey, disclosureState, messageId))
-                        .join('')}
+                    ${item.entries.map((entry) => this._renderProcessEntry(entry)).join('')}
                 </div>
             </section>`;
     }
 
-    _renderRunningProcessDetails(item, messageId, disclosureState) {
-        const processKey = `${messageId}-${item.key}`;
+    _renderRunningProcessDetails(item, messageId) {
         const detailId = `od-${messageId}-running-details`;
         return `
             <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail is-open"
                 data-output-key="${escapeHtml(item.key)}">
-                ${item.entries.map((entry) => this._renderProcessEntry(entry, processKey, disclosureState, messageId)).join('')}
+                ${item.entries.map((entry) => this._renderProcessEntry(entry)).join('')}
             </div>`;
     }
 
@@ -1668,7 +1222,7 @@ class TaskView extends HTMLElement {
         const renderItem = (item, showFinalLabel = true, runningProcessDetails = false) => {
             if (item.type === 'process') {
                 if (runningProcessDetails) {
-                    return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
+                    return this._renderRunningProcessDetails(item, messageId);
                 }
                 return this._renderProcessItem(item, messageId, options.disclosureState);
             }
@@ -1838,7 +1392,6 @@ class TaskView extends HTMLElement {
     }
 
     _renderInitialHistoryWindow(messages, options = {}) {
-        this._navigationHistorySource = null;
         this._historyMessages = Array.isArray(messages) ? messages : [];
         this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
         this._historyRenderStartIndex = TaskView.findHistoryBatchStart(
@@ -1902,7 +1455,8 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
-        renderMermaidBlocks(historyContainer);
+        enhanceWebLinks(historyContainer);
+        this._syncReasoningTimers(historyContainer);
         this._syncPendingGoalEditToArtifacts();
     }
 
@@ -1914,9 +1468,8 @@ class TaskView extends HTMLElement {
         if (nextStartIndex >= previousStartIndex) return false;
 
         const historyContainer = this.getHistoryContainer();
-        const preserveScrollPosition = options.preserveScrollPosition !== false;
-        const previousScrollHeight = preserveScrollPosition ? historyContainer.scrollHeight : 0;
-        const previousScrollTop = preserveScrollPosition ? historyContainer.scrollTop : 0;
+        const previousScrollHeight = historyContainer.scrollHeight;
+        const previousScrollTop = historyContainer.scrollTop;
 
         this._loadingOlderHistory = true;
         try {
@@ -1934,11 +1487,11 @@ class TaskView extends HTMLElement {
                 for (const element of insertedElements) {
                     enhanceCodeBlocks(element);
                     enhanceToolPreviewCards(element);
-                    renderMermaidBlocks(element);
+                    enhanceWebLinks(element);
                 }
             }
 
-            if (preserveScrollPosition) {
+            if (options.preserveScrollPosition !== false) {
                 const scrollDelta = historyContainer.scrollHeight - previousScrollHeight;
                 historyContainer.scrollTop = previousScrollTop + scrollDelta;
             }
@@ -1981,8 +1534,6 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserProgressToHistory(progress) {
-        this._navigationHistorySource = null;
-        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -2004,8 +1555,6 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserReplaceToHistory(progress) {
-        this._navigationHistorySource = null;
-        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -2020,8 +1569,6 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantProgressToHistory(progress) {
-        this._navigationHistorySource = null;
-        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -2038,8 +1585,6 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantReplaceToHistory(progress) {
-        this._navigationHistorySource = null;
-        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -2186,6 +1731,7 @@ class TaskView extends HTMLElement {
 
         const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
         if (!message_content) return;
+        const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
         const isRunning = progress.task_status === 'running';
         const parts = progress.parts;
@@ -2193,6 +1739,9 @@ class TaskView extends HTMLElement {
             isRunning
         });
         const disclosureState = this._captureProcessDisclosureState(message_content);
+        message_content
+            .querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
         message_content.innerHTML = this._renderAssistantOutputHtml(parts, {
             isRunning,
             messageId: progress.message_id,
@@ -2200,7 +1749,9 @@ class TaskView extends HTMLElement {
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
-        renderMermaidBlocks(message_content, { defer: isRunning });
+        enhanceWebLinks(message_content);
+        this._syncReasoningTimers(message_content);
+        this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
@@ -2262,6 +1813,7 @@ class TaskView extends HTMLElement {
 
         const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
         if (!message_content) return false;
+        const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
         const partIndex = getProgressPartIndex(progress);
         const parts = [...(this._assistantPartsByMessage.get(progress.message_id) || [])];
@@ -2280,19 +1832,15 @@ class TaskView extends HTMLElement {
             const targets = message_content.querySelectorAll(`[data-streaming-part-index="${partIndex}"]`);
             if (targets.length > 0) {
                 targets.forEach((target) => {
-                    TaskView.morphDomChildren(target, renderSafeMarkdown(String(parts[partIndex].text || '')));
-                    const bubble = target.closest('[data-reasoning-bubble]');
-                    if (bubble) bubble.scrollTop = bubble.scrollHeight;
+                    const text = String(parts[partIndex].text || '');
+                    if (progress.last_part.type === 'reasoning') {
+                        target.textContent = text;
+                        const scrollingContainer = target.closest('.reasoning-bubble, .reasoning-preview-area');
+                        if (scrollingContainer) scrollingContainer.scrollTop = scrollingContainer.scrollHeight;
+                    } else {
+                        TaskView.morphDomChildren(target, renderSafeMarkdown(text));
+                    }
                 });
-                message_content
-                    .querySelectorAll(`[data-streaming-summary-part-index="${partIndex}"]`)
-                    .forEach((summary) => {
-                        summary.textContent =
-                            String(parts[partIndex].text || '')
-                                .replace(/\s+/g, ' ')
-                                .trim()
-                                .slice(0, 160) || taskViewT('renderer.taskview.output.reasoningSummary');
-                    });
                 patchedStreamingPart = true;
             } else if (progress.last_part.type === 'reasoning') {
                 // Collapsed minimal mode does not mount reasoning details while streaming.
@@ -2312,6 +1860,9 @@ class TaskView extends HTMLElement {
                 // collapsed process plus final result. Preview enhancers may also have
                 // inserted nodes that are absent from outputHtml, so index-based morphing
                 // cannot safely reconcile this structural transition.
+                message_content
+                    .querySelectorAll('.reasoning-block-od.reasoning-active')
+                    .forEach((el) => TaskView.finalizeReasoningBlock(el));
                 message_content.innerHTML = outputHtml;
             } else if (message_content.innerHTML !== outputHtml) {
                 TaskView.morphDomChildren(message_content, outputHtml);
@@ -2323,13 +1874,10 @@ class TaskView extends HTMLElement {
             });
             enhanceCodeBlocks(message_content);
             enhanceToolPreviewCards(message_content);
+            enhanceWebLinks(message_content);
         }
-        message_content.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
-            el.scrollTop = el.scrollHeight;
-        });
-        enhanceCodeBlocks(message_content);
-        enhanceToolPreviewCards(message_content);
-        renderMermaidBlocks(message_content, { defer: progress.task_status === 'running' });
+        this._syncReasoningTimers(message_content);
+        this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
         const isStreaming = progress.task_status === 'running';
         // 实时输出速度 + 消息级 token 估算（无 usage 时按 chars/4 临时估算「已输出/总计」）
@@ -2423,6 +1971,51 @@ class TaskView extends HTMLElement {
         return true;
     }
 
+    _getProcessScrollFollowTargets(root) {
+        const targets = new Map();
+        root.querySelectorAll('.od-process-detail.is-open[id]').forEach((element) => {
+            targets.set(`process:${element.id}`, element);
+        });
+        root.querySelectorAll('.reasoning-block-od.reasoning-expanded .reasoning-full-area').forEach((element) => {
+            const key = element.dataset.reasoningScrollKey;
+            if (key !== undefined) targets.set(`reasoning:${key}`, element);
+        });
+        return targets;
+    }
+
+    _captureProcessScrollFollowState(root) {
+        if (!this.auto_scrolling_to_bottom) return null;
+        const state = new Map();
+        for (const [key, element] of this._getProcessScrollFollowTargets(root)) {
+            const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+            state.set(key, distanceToBottom <= PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX);
+        }
+        return state;
+    }
+
+    _restoreProcessScrollFollowState(root, state) {
+        if (!state || !this.auto_scrolling_to_bottom) return;
+        const rootKey = root.id || this.widget_id;
+        for (const [targetKey] of this._getProcessScrollFollowTargets(root)) {
+            if (state.get(targetKey) === false) continue;
+            this._pendingProcessScrollFollowTargets.set(`${rootKey}:${targetKey}`, { root, targetKey });
+        }
+        if (this._pendingProcessScrollFollowTargets.size === 0 || this._processScrollFollowRafId !== null) return;
+
+        this._processScrollFollowRafId = -1;
+        const rafId = requestAnimationFrame(() => {
+            this._processScrollFollowRafId = null;
+            const pending = [...this._pendingProcessScrollFollowTargets.values()];
+            this._pendingProcessScrollFollowTargets.clear();
+            if (!this.auto_scrolling_to_bottom) return;
+            for (const { root: pendingRoot, targetKey } of pending) {
+                const element = this._getProcessScrollFollowTargets(pendingRoot).get(targetKey);
+                if (element) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+            }
+        });
+        if (this._processScrollFollowRafId !== null) this._processScrollFollowRafId = rafId;
+    }
+
     tryScrollToEnd() {
         if (!this.auto_scrolling_to_bottom) {
             return;
@@ -2485,44 +2078,6 @@ class TaskView extends HTMLElement {
             }
         }
         return null;
-    }
-
-    _getConversationStops() {
-        const attachmentLabel = taskViewT('renderer.taskview.navigation.attachment');
-        if (this._navigationHistorySource !== this._historyMessages) {
-            this._navigationHistorySource = this._historyMessages;
-            this._navigationHistoryStops = buildConversationStops(
-                this._historyMessages,
-                shouldRenderUserHistoryMessage,
-                attachmentLabel,
-                getGoalSupplementDisplayText
-            );
-        }
-        return mergeRenderedConversationStops(
-            this._navigationHistoryStops,
-            this.getHistoryContainer(),
-            attachmentLabel
-        );
-    }
-
-    _navigateConversation(messageId) {
-        const history = this.getHistoryContainer();
-        if (!history || typeof messageId !== 'string' || messageId.length === 0) return;
-        if (!this._findGoalMessageTarget(messageId) && this._getHistoryMessageIndexById(messageId) < 0) return;
-        this.setAutoScrollingToBottom(false);
-        this._ensureHistoryLoadedThroughMessage(messageId);
-        const target = this._findGoalMessageTarget(messageId);
-        if (!target) return;
-        const requestedTop =
-            history.scrollTop + target.getBoundingClientRect().top - history.getBoundingClientRect().top - 20;
-        const top = Math.max(0, Math.min(requestedTop, history.scrollHeight - history.clientHeight));
-        // Browsers do not emit scrollend when the clamped destination is already reached.
-        this._conversationJumpInProgress = Math.abs(history.scrollTop - top) > 0.5;
-        if (!this._conversationJumpInProgress) return;
-        history.scrollTo({
-            top,
-            behavior: 'instant'
-        });
     }
 
     _scrollToGoalMessage(messageId, options = {}) {
@@ -2657,7 +2212,6 @@ class TaskView extends HTMLElement {
     };
 
     async reload() {
-        this._assistantProgressBuffer.clear();
         this._reloading = true;
         const version = ++this._reloadVersion;
         let shouldAutoSendQueuedMessage = false;
@@ -2691,9 +2245,6 @@ class TaskView extends HTMLElement {
             this._assistantPartsByMessage.clear();
             this._assistantRenderStateByMessage.clear();
             this._assistantDisclosureStateByMessage.clear();
-            this._toolDetailSources.clear();
-            this._toolDetailCache.clear();
-            this._toolDetailRequests.clear();
 
             if (this._toolbar && task_state.task_name) {
                 this._taskName = task_state.task_name;
@@ -2717,7 +2268,6 @@ class TaskView extends HTMLElement {
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
             if (input_widget) {
                 input_widget.taskId = this.task_id;
-                this._syncInputTaskWorkspace();
                 if (task_state.model) {
                     input_widget.setModel(task_state.model);
                 }
@@ -2727,7 +2277,7 @@ class TaskView extends HTMLElement {
                     // 任务没有显式设置推理模式时，重置为模型默认值，防止跨任务泄漏
                     const modelAlias = task_state.model || input_widget.selectedModel;
                     const model = input_widget.availableModels.find((m) => m.alias === modelAlias);
-                    input_widget.setReasoningEffort(model?.reasoning_effort);
+                    input_widget.setReasoningEffort(model?.reasoning_effort || '');
                     input_widget._updateEffortIcon?.();
                 }
                 input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
@@ -2819,13 +2369,6 @@ class TaskView extends HTMLElement {
                 if (shouldAutoSendQueuedMessage) {
                     this._autoSendQueueMessages();
                 }
-            }
-            // 首屏内容就绪信号：供外层（openTask）的加载占位淡出使用。
-            // 放在 finally 以覆盖任务损坏、加载异常等提前返回路径；元素已
-            // 被移除时 disconnectedCallback 会递增版本号，同样要派发，否则
-            // 占位会一直挂到 openTask 侧的超时兜底才消失。
-            if (version === this._reloadVersion || !this.isConnected) {
-                this.dispatchEvent(new CustomEvent('task-view-content-ready'));
             }
         }
     }
@@ -3204,22 +2747,6 @@ class TaskView extends HTMLElement {
         this._updateMessageQueuePanel();
     }
 
-    /** 将队列消息移动到指定位置，后续自动发送沿用此顺序。 */
-    reorderMessageQueue(id, targetIndex) {
-        const index = this.messageQueue.findIndex((item) => item.id === id);
-        if (
-            index < 0 ||
-            !Number.isInteger(targetIndex) ||
-            targetIndex < 0 ||
-            targetIndex >= this.messageQueue.length ||
-            index === targetIndex
-        )
-            return;
-        const [item] = this.messageQueue.splice(index, 1);
-        this.messageQueue.splice(targetIndex, 0, item);
-        this._updateMessageQueuePanel();
-    }
-
     /**
      * 结束所有活跃 reasoning 块的计时并清理流式残留状态
      * （等待占位、usage spinner、流式光标、最后一条 assistant 消息的元信息行）。
@@ -3229,7 +2756,6 @@ class TaskView extends HTMLElement {
      * 结束分支被 _handleTaskStatusUpdate 短路跳过、活跃 reasoning 块永不 finalize。
      */
     _cleanupStreamingState(timestamp = Date.now()) {
-        this._assistantProgressBuffer.flush();
         const historyContainer = this.getHistoryContainer();
         if (!historyContainer) return;
         // 完成所有活跃 reasoning 块的计时（清除每秒计时器、定格耗时）
@@ -3434,9 +2960,6 @@ class TaskView extends HTMLElement {
     }
 
     emitTaskStatusChanged(status) {
-        // 流式期间禁用队列面板的 backdrop-filter：聊天区每帧重绘会让背景模糊持续
-        // 重新光栅化，是 GPU 占用的重要来源（对应 CSS 见 task-view[streaming] 规则）。
-        this.toggleAttribute('streaming', status === 'running');
         this.dispatchEvent(
             new CustomEvent('task-status-changed', {
                 detail: {
@@ -3652,13 +3175,6 @@ class TaskView extends HTMLElement {
                 const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
-            },
-            // 浮窗可见时固定 webview 视口为 16:9（避免窄高容器把截图拉长），隐藏时恢复自适应
-            onVisibilityChanged: (visible) => {
-                const sidebar = this._getRightSidebarEl();
-                if (sidebar && typeof sidebar.browserSetViewportFixed === 'function') {
-                    sidebar.browserSetViewportFixed(visible);
-                }
             }
         });
     }
@@ -3771,7 +3287,7 @@ class TaskView extends HTMLElement {
         if (!target) return;
         e.preventDefault();
         e.stopPropagation();
-        const filePath = normalizeDriveRootPath(target.dataset.openEditor || '');
+        const filePath = target.dataset.openEditor;
         if (!filePath) return;
         const lineAttr = target.dataset.editorLine;
         const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
@@ -3877,37 +3393,6 @@ class TaskView extends HTMLElement {
         this.openFileInSidebar(filePath, validLine);
     }
 
-    _handleChangesOpenClick(e) {
-        const target = e.target.closest('[data-open-changes]');
-        if (!target) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const filePath = target.dataset.openChanges;
-        if (!filePath) return;
-        this._forceExpandRightSidebar();
-        const sidebar = this._getRightSidebarEl();
-        if (sidebar && typeof sidebar.openFileChanges === 'function') {
-            sidebar.openFileChanges(filePath);
-        }
-    }
-
-    _handleBrowserUrlOpenClick(e) {
-        const target = e.target.closest('[data-open-browser-url]');
-        if (!target) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const url = TaskView._browserUrl(target.dataset.openBrowserUrl);
-        if (url) this.openUrlInSidebar(url);
-    }
-
-    _handleProcessEntryKeydown(e) {
-        const target = e.target.closest('.od-process-entry-summary[role="button"]');
-        if (!target || e.target.closest('.od-process-resource-link') || (e.key !== 'Enter' && e.key !== ' ')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        target.click();
-    }
-
     /**
      * 处理 file-pill 与 FileMessagePart 卡片的右键菜单事件。
      * 两者共用同一份菜单内容（预览 / 复制路径 / 默认打开 / 在文件夹显示），保证一致性。
@@ -3947,8 +3432,6 @@ class TaskView extends HTMLElement {
      */
     _openFileContextMenu(filePath, x, y) {
         this._dismissFilePillContextMenu();
-        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，菜单全部动作统一使用规范化路径
-        filePath = normalizeDriveRootPath(filePath);
 
         const dark =
             this.dataset.theme === 'dark' ||
@@ -4153,6 +3636,8 @@ class TaskView extends HTMLElement {
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
+            enhanceWebLinks(messageContent);
+            this._syncReasoningTimers(messageContent);
         }
 
         if (historyContainer) {
@@ -4166,7 +3651,7 @@ class TaskView extends HTMLElement {
     }
 
     _handleProcessToggleClick(e) {
-        if (e.target.closest('[data-open-preview], [data-open-changes], [data-open-browser-url]')) return;
+        if (e.target.closest('[data-open-preview]')) return;
         const completedToggle = e.target.closest('[data-completed-process-toggle]');
         if (completedToggle) {
             e.preventDefault();
@@ -4204,6 +3689,7 @@ class TaskView extends HTMLElement {
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
+            enhanceWebLinks(messageContent);
             return;
         }
         const processToggle = e.target.closest('[data-process-toggle]');
@@ -4217,49 +3703,52 @@ class TaskView extends HTMLElement {
             process.classList.toggle('is-expanded', expanded);
             const detail = Array.from(process.children).find((child) => child.classList.contains('od-process-detail'));
             detail?.classList.toggle('is-open', expanded);
-            if (!expanded) {
-                process.querySelectorAll('[data-process-entry-toggle]').forEach((toggle) => {
-                    toggle.setAttribute('aria-expanded', 'false');
-                    delete toggle.dataset.reasoningAutoOpen;
-                });
-                process
-                    .querySelectorAll('.od-process-entry')
-                    .forEach((entry) => entry.classList.remove('is-expanded', 'is-pinned'));
-                process
-                    .querySelectorAll('.od-process-entry-detail')
-                    .forEach((entryDetail) => entryDetail.classList.remove('is-open'));
-            }
+            return;
+        }
+    }
+
+    _handleReasoningToggleClick(e) {
+        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        if (!header) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = header.closest('.reasoning-block-od');
+        if (!wrapper) return;
+
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble) {
+            const isPinned = wrapper.classList.toggle('reasoning-bubble-pinned');
+            bubble.classList.toggle('reasoning-bubble-hidden', !isPinned);
+            wrapper.classList.toggle('reasoning-content-visible', isPinned);
             return;
         }
 
-        const entryToggle = e.target.closest('[data-process-entry-toggle]');
-        if (!entryToggle) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const entry = entryToggle.closest('.od-process-entry');
-        if (!entry) return;
-        if (entry.classList.contains('od-process-reason') && entry.classList.contains('is-bubble')) {
-            const pinned = !entry.classList.contains('is-pinned');
-            const autoOpen = !pinned && entry.classList.contains('is-streaming');
-            entry.classList.toggle('is-expanded', pinned);
-            entry.classList.toggle('is-pinned', pinned);
-            entryToggle.setAttribute('aria-expanded', String(pinned || autoOpen));
-            if (autoOpen) {
-                entryToggle.dataset.reasoningAutoOpen = 'true';
-            } else {
-                delete entryToggle.dataset.reasoningAutoOpen;
-            }
-            const bubble = Array.from(entry.children).find((child) => child.hasAttribute('data-reasoning-bubble'));
-            bubble?.classList.toggle('is-open', pinned || autoOpen);
-            return;
+        const isExpanded = wrapper.classList.toggle('reasoning-expanded');
+        wrapper.classList.toggle('reasoning-content-visible', isExpanded);
+    }
+
+    _handleReasoningHoverEnter(e) {
+        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        if (!header) return;
+        const wrapper = header.closest('.reasoning-block-od');
+        if (!wrapper || wrapper.classList.contains('reasoning-bubble-pinned')) return;
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble) {
+            bubble.classList.remove('reasoning-bubble-hidden');
+            wrapper.classList.add('reasoning-content-visible');
         }
-        const expanded = entryToggle.getAttribute('aria-expanded') !== 'true';
-        entryToggle.setAttribute('aria-expanded', String(expanded));
-        entry.classList.toggle('is-expanded', expanded);
-        const detail = Array.from(entry.children).find((child) => child.classList.contains('od-process-entry-detail'));
-        detail?.classList.toggle('is-open', expanded);
-        if (expanded && entry.classList.contains('od-process-tool') && detail) {
-            this._loadToolDetail(detail);
+    }
+
+    _handleReasoningHoverLeave(e) {
+        const isFromHeader = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        const isFromBubble = e.target.closest('.reasoning-bubble');
+        if (!isFromHeader && !isFromBubble) return;
+        const wrapper = e.target.closest('.reasoning-block-od.reasoning-completed');
+        if (!wrapper || wrapper.classList.contains('reasoning-bubble-pinned')) return;
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble && !wrapper.matches(':hover')) {
+            bubble.classList.add('reasoning-bubble-hidden');
+            wrapper.classList.remove('reasoning-content-visible');
         }
     }
 
@@ -4270,63 +3759,12 @@ class TaskView extends HTMLElement {
     /**
      * 公开方法：在当前任务的右侧工作空间中打开文件。
      */
-    async openFileInSidebar(filePath, line, onSwitchBlocked) {
-        // 渲染阶段不校验文件存在性（允许路径样式文本的误报 pill），
-        // 点击时在此处统一校验：不存在则弹模态提示，不再进入预览流程。
-        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，入口统一规范化。
-        filePath = normalizeDriveRootPath(filePath);
-        try {
-            const exists = await window.fsAPI?.fileExists?.(filePath);
-            if (exists === false) {
-                this._showFileMissingModal(filePath);
-                return;
-            }
-        } catch {
-            // 存在性校验失败时不阻塞打开，由后续打开流程自行处理
-        }
+    openFileInSidebar(filePath, line, onSwitchBlocked) {
         this._forceExpandRightSidebar();
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFilePreview === 'function') {
             sidebar.openFilePreview(filePath, line, onSwitchBlocked);
         }
-    }
-
-    /**
-     * 文件不存在时的模态提示弹窗（简单展示类：遮罩点击可关闭）。
-     */
-    _showFileMissingModal(filePath) {
-        document.getElementById('od-file-missing-modal')?.remove();
-        const dark =
-            this.dataset.theme === 'dark' ||
-            document.documentElement.dataset.theme === 'dark' ||
-            document.body.dataset.theme === 'dark';
-
-        const overlay = document.createElement('div');
-        overlay.id = 'od-file-missing-modal';
-        overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/40';
-        overlay.innerHTML = `
-            <div class="${dark ? 'bg-[#26262a] text-gray-100 ring-white/10' : 'bg-white text-gray-800 ring-black/10'} max-w-[460px] w-[88%] rounded-2xl p-5 shadow-2xl ring-1 flex flex-col gap-3">
-                <div class="flex items-center gap-2">
-                    <span class="text-red-500 flex-shrink-0">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
-                    </span>
-                    <span class="font-semibold text-sm">${escapeHtml(taskViewT('renderer.taskview.file.missing.title'))}</span>
-                </div>
-                <div class="text-xs leading-relaxed ${dark ? 'text-gray-400' : 'text-gray-500'}">${escapeHtml(taskViewT('renderer.taskview.file.missing.hint'))}</div>
-                <div class="text-xs font-mono break-all rounded-lg px-3 py-2 ${dark ? 'bg-white/5 text-gray-300' : 'bg-gray-50 text-gray-600'}">${escapeHtml(filePath)}</div>
-                <div class="flex justify-end">
-                    <button type="button" class="od-file-missing-close text-xs font-medium rounded-lg px-3.5 py-1.5 ${dark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} transition-colors">
-                        ${escapeHtml(taskViewT('renderer.taskview.file.missing.close'))}
-                    </button>
-                </div>
-            </div>`;
-
-        const close = () => overlay.remove();
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) close();
-        });
-        overlay.querySelector('.od-file-missing-close')?.addEventListener('click', close);
-        document.body.appendChild(overlay);
     }
 
     /**
@@ -4605,10 +4043,6 @@ class TaskView extends HTMLElement {
                 sidebar.ensureBrowserReady(true);
             }
         } else {
-            if (initialBrowserUse && typeof sidebar.markPendingBrowserAutoReveal === 'function') {
-                // 后台/隐藏期间的首次 Browser Use：记录大屏预览状态，待用户切回任务时生效
-                sidebar.markPendingBrowserAutoReveal();
-            }
             if (typeof sidebar.ensureBrowserReady === 'function') {
                 sidebar.ensureBrowserReady(false);
             }
@@ -4635,17 +4069,7 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        // 后台首次 Browser Use 记录的大屏预览状态：按任务维度延迟到切回任务时生效，
-        // 不受上次离开时的折叠状态影响（_expandRightSidebar 内部会隐藏画中画）。
-        const pendingBrowserReveal =
-            typeof rightSidebar.applyPendingBrowserAutoReveal === 'function' &&
-            rightSidebar.applyPendingBrowserAutoReveal();
-        if (pendingBrowserReveal) {
-            this._forceExpandRightSidebar();
-            if (typeof rightSidebar.forceBrowserActive === 'function') {
-                rightSidebar.forceBrowserActive();
-            }
-        } else if (this._rightSidebarExpanded) {
+        if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
             rightSidebar.style.width = this._workspaceFocusLayout.getTargetPanelWidth();
@@ -4688,7 +4112,6 @@ class TaskView extends HTMLElement {
                     await window.taskManagerAPI.updateTaskWorkspace(this.task_id, selected);
                     this._taskWorkspace = selected;
                     this._toolbar.setToolbarSubtitle(selected, wsClickHandler, taskViewT('workspace.taskLabel'));
-                    this._syncInputTaskWorkspace();
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
             };
@@ -4727,207 +4150,14 @@ class TaskView extends HTMLElement {
                 },
                 taskViewT('workspace.taskLabel')
             );
-            this._syncInputTaskWorkspace();
             document.dispatchEvent(new CustomEvent('workspace-changed'));
-        }
-    }
-
-    /** 将任务工作空间同步给任务内输入框，使 @ 文件补全跟随任务工作空间 */
-    _syncInputTaskWorkspace() {
-        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
-        if (input_widget && typeof input_widget.setTaskWorkspace === 'function') {
-            input_widget.setTaskWorkspace(this._taskWorkspace);
-        }
-    }
-
-    /**
-     * 用与 GUI 完全相同的渲染管线输出全量历史消息 HTML 分片，供导出使用。
-     * DOM 中只渲染尾部窗口（虚拟化），这里必须显式覆盖全量消息；
-     * 未锚定到具体消息的 goal evaluation 卡片与初始渲染保持一致地追加在末尾。
-     * 返回分片数组而非单个巨串，避免超大任务的一次性字符串拼接开销。
-     */
-    _renderFullHistoryForExport() {
-        const messages = this._historyMessages;
-        let lastAssistantIdx = -1;
-        for (let i = 0; i < messages.length; i++) {
-            if (messages[i]?.role === 'assistant') lastAssistantIdx = i;
-        }
-        const htmlParts = [this._renderHistoryRangeToHtml(0, messages.length, { usageAssistantIdx: lastAssistantIdx })];
-        const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
-            getUnanchoredGoalEvaluationRecords(this._historyGoalEvaluationRecords, messages),
-            this.task_id,
-            taskViewT
-        );
-        if (unanchoredGoalEvaluationHtml) {
-            htmlParts.push(unanchoredGoalEvaluationHtml);
-        }
-        return htmlParts;
-    }
-
-    /**
-     * 收集导出 header 所需的任务元数据（模型/起止时间/累计 token 消耗）。
-     * getTaskInfo 失败时返回 null，header 相应降级为仅标题 + 导出时间。
-     */
-    async _buildExportHeaderInfo() {
-        const formatDateTime = (value) => {
-            if (!value) return null;
-            const d = new Date(value);
-            if (Number.isNaN(d.getTime())) return null;
-            const pad = (n) => String(n).padStart(2, '0');
-            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        };
-        const exportedAt = taskViewT('renderer.taskview.export.meta.exportedAt', {
-            time: formatDateTime(Date.now())
-        });
-        const labels = {
-            model: taskViewT('renderer.taskview.export.meta.model'),
-            startedAt: '',
-            exportedAt,
-            totalTokens: taskViewT('renderer.taskStatusWidget.totalTokens'),
-            inputTokens: taskViewT('renderer.taskStatusWidget.inputTokens'),
-            outputTokens: taskViewT('renderer.taskStatusWidget.outputTokens'),
-            toggleToLight: taskViewT('renderer.sidebar.themeToggleToLight'),
-            toggleToDark: taskViewT('renderer.sidebar.themeToggleToDark')
-        };
-        const header = {
-            title: this._taskName || this.task_id || 'OpenDesk',
-            exportedAt,
-            labels
-        };
-        try {
-            const info = await window.taskManagerAPI.getTaskInfo(this.task_id);
-            if (info.model) header.model = info.model;
-            const startedAt = formatDateTime(info.started_at || info.created_at);
-            if (startedAt) {
-                header.startedAt = startedAt;
-                labels.startedAt = taskViewT('renderer.taskStatusWidget.startedAt', { time: startedAt });
-            }
-            const usage = info.usage_summary;
-            if (usage && typeof usage.total_tokens === 'number') {
-                header.usage = {
-                    total: usage.total_tokens,
-                    input: usage.input_tokens,
-                    output: usage.output_tokens
-                };
-            }
-        } catch (error) {
-            console.warn('Failed to load task info for export header:', error);
-        }
-        try {
-            const version = await window.settingAPI.getVersion();
-            if (version) {
-                header.generatedBy = taskViewT('renderer.taskview.export.meta.generatedBy', { version });
-            }
-        } catch (error) {
-            console.warn('Failed to load app version for export header:', error);
-        }
-        return header;
-    }
-
-    /**
-     * 弹出导出下拉菜单（锚定在工具栏导出按钮下方）。
-     * 再次点击导出按钮时关闭菜单（mousedown 处理器忽略按钮自身区域的点击）。
-     */
-    _openExportMenu(anchorEl) {
-        if (!anchorEl) return;
-        if (document.getElementById('od-taskview-export-menu') || this._exportMenuDismissHandler) {
-            this._dismissExportMenu();
-            return;
-        }
-
-        const dark =
-            this.dataset.theme === 'dark' ||
-            document.documentElement.dataset.theme === 'dark' ||
-            document.body.dataset.theme === 'dark';
-        const menu = document.createElement('div');
-        menu.id = 'od-taskview-export-menu';
-        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
-        menu.style.minWidth = '150px';
-
-        const items = [
-            { action: 'export-html', icon: EXPORT_WEBPAGE_SVG, label: taskViewT('renderer.taskview.export.menu.html') },
-            { action: 'export-json', icon: EXPORT_JSON_SVG, label: taskViewT('renderer.taskview.export.menu.json') }
-        ];
-        menu.innerHTML = items
-            .map(
-                (item) =>
-                    `<button class="ctx-item" data-action="${item.action}">` +
-                    `<span class="ctx-icon-sm">${item.icon}</span>` +
-                    `<span class="ctx-label">${item.label}</span></button>`
-            )
-            .join('');
-
-        const rect = anchorEl.getBoundingClientRect();
-        // 菜单与按钮右缘对齐，锚定在按钮下方；待真实尺寸渲染后在 rAF 中修正越界
-        menu.style.left = `${Math.max(8, rect.right - 150)}px`;
-        menu.style.top = `${rect.bottom + 6}px`;
-        document.body.appendChild(menu);
-
-        requestAnimationFrame(() => {
-            const margin = 8;
-            const menuRect = menu.getBoundingClientRect();
-            const left = Math.max(
-                margin,
-                Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin)
-            );
-            let top = rect.bottom + 6;
-            if (top + menuRect.height > window.innerHeight - margin) {
-                top = Math.max(margin, rect.top - menuRect.height - 6);
-            }
-            menu.style.left = `${left}px`;
-            menu.style.top = `${top}px`;
-        });
-
-        menu.querySelector('[data-action="export-html"]').addEventListener('click', () => {
-            this._dismissExportMenu();
-            void this.exportTask();
-        });
-        menu.querySelector('[data-action="export-json"]').addEventListener('click', () => {
-            this._dismissExportMenu();
-            void this.exportTaskJson();
-        });
-
-        this._exportMenuDismissHandler = (ev) => {
-            if (!menu.contains(ev.target) && !anchorEl.contains(ev.target)) {
-                this._dismissExportMenu();
-            }
-        };
-        document.addEventListener('mousedown', this._exportMenuDismissHandler);
-    }
-
-    _dismissExportMenu() {
-        document.getElementById('od-taskview-export-menu')?.remove();
-        if (this._exportMenuDismissHandler) {
-            document.removeEventListener('mousedown', this._exportMenuDismissHandler);
-            this._exportMenuDismissHandler = null;
-        }
-    }
-
-    async exportTaskJson() {
-        try {
-            // .task.json 的默认导出名与任务存储文件名一致，便于后续 /import task 导回
-            const saveResult = await window.fsAPI.saveFile({
-                title: taskViewT('renderer.taskview.export.jsonTitle'),
-                defaultPath: `${this.task_id}.json`,
-                filters: [
-                    { name: 'JSON Files', extensions: ['json'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ]
-            });
-            if (saveResult.canceled || !saveResult.filePath) {
-                return; // 用户取消了操作
-            }
-            await window.taskManagerAPI.exportTaskJson(this.task_id, saveResult.filePath);
-        } catch (error) {
-            console.error('Failed to export task json:', error);
-            alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
         }
     }
 
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
-            const defaultFileName = `task-${this.task_id}-${timestamp}.html`;
+            const defaultFileName = `conversation-${timestamp}.html`;
 
             // 1. 显示保存文件对话框（Electron 会自动处理文件覆盖确认）
             const saveResult = await window.fsAPI.saveFile({
@@ -4944,24 +4174,9 @@ class TaskView extends HTMLElement {
             }
 
             const filePath = saveResult.filePath;
-            const chatHistory = this.getHistoryContainer();
-            if (!chatHistory) {
-                return;
-            }
 
-            // 2. 复用 task view 的渲染管线与实时样式构建导出文档，保证显示效果与 GUI 对齐
-            const header = await this._buildExportHeaderInfo();
-            const { html, fontUrls } = buildTaskExportHtml({
-                taskName: header.title,
-                contentHtml: this._renderFullHistoryForExport(),
-                chatHistory,
-                doc: document,
-                reasoningCollapseLabel: taskViewT('reasoning.hide.content'),
-                header
-            });
-
-            // 3. 交由主进程内联字体并写盘
-            await window.taskManagerAPI.saveExportHtml(filePath, html, fontUrls);
+            // 2. 保存文件
+            await window.taskManagerAPI.exportTask(this.task_id, filePath);
         } catch (error) {
             console.error('Failed to export task:', error);
             alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
@@ -5217,8 +4432,8 @@ class TaskView extends HTMLElement {
                         iconSvg: EXPORT_DOWNLOAD_SVG,
                         label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
-                        action: (event) => {
-                            this._openExportMenu(event?.currentTarget);
+                        action: () => {
+                            this.exportTask();
                         }
                     },
                     {
@@ -5261,15 +4476,6 @@ class TaskView extends HTMLElement {
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
 
-        this._handleChangesOpenClick = this._handleChangesOpenClick.bind(this);
-        this.addEventListener('click', this._handleChangesOpenClick);
-
-        this._handleBrowserUrlOpenClick = this._handleBrowserUrlOpenClick.bind(this);
-        this.addEventListener('click', this._handleBrowserUrlOpenClick);
-
-        this._handleProcessEntryKeydown = this._handleProcessEntryKeydown.bind(this);
-        this.addEventListener('keydown', this._handleProcessEntryKeydown);
-
         // 添加 FileMessagePart 卡片三点菜单按钮的点击事件监听（事件代理）
         this._handleFileCardMenuClick = this._handleFileCardMenuClick.bind(this);
         this.addEventListener('click', this._handleFileCardMenuClick);
@@ -5284,6 +4490,13 @@ class TaskView extends HTMLElement {
 
         this._handleProcessToggleClick = this._handleProcessToggleClick.bind(this);
         this.addEventListener('click', this._handleProcessToggleClick);
+
+        this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
+        this.addEventListener('click', this._handleReasoningToggleClick);
+        this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
+        this.addEventListener('mouseover', this._handleReasoningHoverEnter);
+        this._handleReasoningHoverLeave = this._handleReasoningHoverLeave.bind(this);
+        this.addEventListener('mouseout', this._handleReasoningHoverLeave);
 
         // 消息 hover 菜单按钮事件代理
         this._handleMsgActionClick = this._handleMsgActionClick.bind(this);
@@ -5390,11 +4603,15 @@ class TaskView extends HTMLElement {
                     // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                     // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                     // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
-                    if (this._shouldSuppressIncrementalRender()) {
-                        if (this._reloading) {
-                            this._deferTaskUpdateDuringReload(progress);
+                    if (this._reloading) {
+                        this._deferTaskUpdateDuringReload(progress);
+                        this._handleTaskStatusUpdate(progress.task_status);
+                        if (progress.type === 'goal_eval') {
+                            this._handleGoalEvalProgress(progress, { renderToConversation: false });
                         }
-                        this._assistantProgressBuffer.clear();
+                        return;
+                    }
+                    if (this.style.display === 'none' || this.hasAttribute('data-background')) {
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
                             this._handleGoalEvalProgress(progress, { renderToConversation: false });
@@ -5402,8 +4619,6 @@ class TaskView extends HTMLElement {
                         return;
                     }
 
-                    // Control/replacement events must observe all preceding text.
-                    if (progress.type !== 'assistant') this._assistantProgressBuffer.flush();
                     const history_container = this.getHistoryContainer();
 
                     if (progress.type === 'user_replace') {
@@ -5444,7 +4659,7 @@ class TaskView extends HTMLElement {
                     } else if (progress.type === 'goal_eval') {
                         this._handleGoalEvalProgress(progress);
                     } else {
-                        this._assistantProgressBuffer.push(progress);
+                        this._renderAssistantProgress(progress, history_container);
                         // 有 assistant token 输出 → 移除过渡中的 goal supplement 卡片
                         this.resolvePendingGoalSupplements();
                         // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
@@ -5508,14 +4723,16 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
-        this._assistantProgressBuffer.clear();
-        this._chatNavigation?.destroy();
-        this._chatNavigation = null;
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
         this._deferredTaskUpdates = [];
         this._taskUpdateHandler = null;
+        if (this._processScrollFollowRafId !== null && this._processScrollFollowRafId >= 0) {
+            cancelAnimationFrame(this._processScrollFollowRafId);
+        }
+        this._processScrollFollowRafId = null;
+        this._pendingProcessScrollFollowTargets.clear();
         const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
         if (artifacts && typeof artifacts.setTaskTodos === 'function') {
             artifacts.setTaskTodos([]);
@@ -5524,17 +4741,16 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleOpenFileClick);
         this.removeEventListener('click', this._handleSkillPillClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
-        this.removeEventListener('click', this._handleChangesOpenClick);
-        this.removeEventListener('click', this._handleBrowserUrlOpenClick);
-        this.removeEventListener('keydown', this._handleProcessEntryKeydown);
         this.removeEventListener('click', this._handleFileCardMenuClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
-        this.removeEventListener('contextmenu', this._handleLinkContextMenu);
-        this._dismissLinkContextMenu();
-        this._dismissExportMenu();
-        this.removeEventListener('click', this._handleReasoningToggleClick);
         this.removeEventListener('click', this._handleProcessToggleClick);
+        this.removeEventListener('click', this._handleReasoningToggleClick);
+        this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
+        this.getHistoryContainer()
+            ?.querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
         this._disconnectAgentInputRequests?.();
         this._disconnectAgentInputRequests = null;
         this._goalController.disconnect();
@@ -5550,9 +4766,6 @@ class TaskView extends HTMLElement {
             );
         }
         this.subscription_id = null;
-        this._toolDetailSources.clear();
-        this._toolDetailCache.clear();
-        this._toolDetailRequests.clear();
         if (this._globalTodosUnsubscribe) {
             try {
                 this._globalTodosUnsubscribe();
@@ -5615,7 +4828,7 @@ class TaskView extends HTMLElement {
 
     _renderEmbedded() {
         this.innerHTML = `
-        <div class="bg-gray-30 h-full flex flex-col" data-agent-input-height-reference>
+        <div class="bg-gray-30 h-full flex flex-col">
             <div class="relative flex-1 overflow-hidden min-h-0">
                 <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-3"></div>
                 <!-- 滚动控制按钮组 -->
@@ -5668,9 +4881,6 @@ class TaskView extends HTMLElement {
     }
 
     render() {
-        this._conversationJumpInProgress = false;
-        this._chatNavigation?.destroy();
-        this._chatNavigation = null;
         if (this.isEmbedded) {
             this._renderEmbedded();
             return;
@@ -5680,7 +4890,7 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
-                <div class="flex-1 flex flex-col min-w-0" data-agent-input-height-reference>
+                <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
                         <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
@@ -5727,7 +4937,7 @@ class TaskView extends HTMLElement {
                     <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
-                    <div class="pb-3 pt-1" style="padding-left: 30px; padding-right: 30px;">
+                    <div class="px-3 pb-3 pt-1">
                         <!-- 消息队列面板 -->
                         <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" hide-search />
@@ -5822,12 +5032,11 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         input_widget.taskId = this.task_id;
-        this._syncInputTaskWorkspace();
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
                 try {
-                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias, event.detail.reasoningEffort);
+                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias);
                 } catch (err) {
                     console.error('setTaskModel failed:', err);
                 }
@@ -5906,26 +5115,13 @@ class TaskView extends HTMLElement {
             queuePanel.setCallbacks(
                 (id) => this.sendQueueMessageImmediately(id),
                 (item) => this.editQueueMessage(item),
-                (id) => this.removeFromMessageQueue(id),
-                (id, targetIndex) => this.reorderMessageQueue(id, targetIndex)
+                (id) => this.removeFromMessageQueue(id)
             );
         }
 
         const chatHistory = this.querySelector('#taskview-chat-history');
-        this._chatNavigation?.destroy();
-        this._chatNavigation = new ChatNavigation(chatHistory, {
-            navigate: (messageId) => this._navigateConversation(messageId),
-            translate: (key, params) => taskViewT(key, params),
-            refresh: () => this._getConversationStops()
-        });
-        this._chatNavigation.setStops(this._getConversationStops());
-        chatHistory.addEventListener('scrollend', () => {
-            this._conversationJumpInProgress = false;
-        });
         chatHistory.addEventListener('scroll', () => {
             if (this._programmaticScrolling) return;
-            // Keep streamed output detached until the navigation scroll has completed.
-            if (this._conversationJumpInProgress) return;
             if (chatHistory.scrollTop <= TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX) {
                 this._loadOlderHistoryFromScroll();
             }
@@ -5933,8 +5129,6 @@ class TaskView extends HTMLElement {
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             // 使用更宽松的阈值避免因内容增长导致的误 detach
             if (distanceToBottom < 80) {
-                // A small upward gesture must not immediately reattach at the bottom.
-                if (this._lastUserScrollDirection < 0 && this._hasRecentUserScrollIntent()) return;
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
                 }
@@ -5956,14 +5150,14 @@ class TaskView extends HTMLElement {
                 // 忽略浏览器缩放/捏合手势（Ctrl/⌘ + 滚轮、触控板捏合），
                 // 缩放不应改变“锁定底部自动更新”的状态
                 if (e.ctrlKey || e.metaKey) return;
-                if (e.deltaY !== 0 && nestedScrollerConsumesWheel(chatHistory, e)) return;
                 if (e.deltaY !== 0) {
-                    this._markUserScrollIntent(Math.sign(e.deltaY));
+                    this._markUserScrollIntent();
                 }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
-                    // Unlock before native scrolling; a queued render must not win the race.
-                    if (chatHistory.scrollTop > 0 && this.auto_scrolling_to_bottom) {
+                    const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
+                    const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
+                    if (distanceToBottom >= 80 && this.auto_scrolling_to_bottom) {
                         this.setAutoScrollingToBottom(false);
                     }
                 } else if (e.deltaY > 0) {
@@ -6016,7 +5210,6 @@ class TaskView extends HTMLElement {
         this._historyScrollKeydownHandler = (e) => {
             if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
             const target = e.target;
-            if (target?.closest?.('.od-chat-nav')) return;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
                 return;
             }
@@ -6044,10 +5237,7 @@ class TaskView extends HTMLElement {
             chatHistory.querySelectorAll('.pool-seg').forEach((seg) => {
                 const indicator = seg.querySelector('.pool-seg-indicator');
                 const active = seg.querySelector('.pool-seg-btn.active');
-                // 历史子项启用 content-visibility:auto 后，视口外卡片是"跳过"态，
-                // 读取 offset 会得到 0；此时不能把 0 写进指示器（否则滚回可见时
-                // 指示器丢失），等卡片真实渲染后由点击/下次变更重新定位。
-                if (indicator && active && active.offsetWidth > 0) {
+                if (indicator && active) {
                     indicator.style.left = active.offsetLeft + 'px';
                     indicator.style.width = active.offsetWidth + 'px';
                 }

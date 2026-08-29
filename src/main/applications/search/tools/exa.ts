@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -37,7 +37,7 @@ const ExaSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词')
 });
 
-export class ExaSearchTool extends SearchPresentationTool<typeof ExaSearchArgsSchema> {
+export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {

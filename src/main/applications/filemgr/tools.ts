@@ -30,7 +30,6 @@ import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
 import { getFileToolCallPresentation } from './tool-presentation.js';
 import fs from 'fs';
 import path from 'path';
-import readline from 'node:readline';
 import * as diff from 'diff';
 import fileType from 'file-type';
 import chalk from 'chalk';
@@ -346,7 +345,7 @@ function renderToolCard(opts: {
     body: string;
 }): string {
     return `
-    <div class="tool-card rounded-md border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-1">
+    <div class="rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-1">
         <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
             <span class="text-lg">${opts.icon}</span>
             <span class="font-medium text-slate-700">${escapeHtml(opts.title)}</span>
@@ -869,10 +868,6 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('readFile', toolcall);
-    }
-
     getDeclaredPermissions(args: z.output<typeof readFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const p = sanitizePath(args.file_path || '', basePath);
@@ -1241,10 +1236,6 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
         this.setUniversalExecutor(this.executeCommand);
     }
 
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('readImage', toolcall);
-    }
-
     async isAvailable(taskState?: TaskState): Promise<boolean> {
         const model = currentTaskModel(taskState);
         if (!model) return false;
@@ -1314,10 +1305,6 @@ export class AskImageTool extends BaseTool<typeof askImageSchema> {
             askImageSchema
         );
         this.setExecutor(this.executeCommand);
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('askImage', toolcall);
     }
 
     async isAvailable(taskState?: TaskState): Promise<boolean> {
@@ -1474,10 +1461,6 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
 
         this.extractDelegate = extractDelegate;
         this.setExecutor(this.executeCommand);
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('extractText', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof extractTextSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -1721,10 +1704,6 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         this.serialExecution = true;
     }
 
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('writeFile', toolcall);
-    }
-
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const p = sanitizePath(args.path, getWorkingDirectory(taskState));
         if (!p) return [];
@@ -1894,10 +1873,6 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
         this.setExecutor(this.executeCommand);
         this.serialExecution = true;
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('editFile', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2100,10 +2075,6 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
         this.setExecutor(this.executeCommand);
         this.serialExecution = true;
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('searchReplace', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -2414,10 +2385,6 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         this.serialExecution = true;
     }
 
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('applyPatch', toolcall);
-    }
-
     getDeclaredPermissions(args: z.output<typeof applyPatchSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const ops = parsePatch(args.patch);
@@ -2637,10 +2604,6 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('globFiles', toolcall);
-    }
-
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
         const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
@@ -2811,10 +2774,6 @@ const DEFAULT_GREP_IGNORE = [
     'coverage/**'
 ];
 
-const GREP_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-const GREP_FILE_SEARCH_CONCURRENCY = 4;
-const GREP_MAX_GITIGNORE_PATTERNS = 50_000;
-
 /**
  * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
  * 对齐 git 的语义：
@@ -2879,62 +2838,35 @@ function convertGitignoreRule(rule: string, prefix: string): string[] | null {
  * 收集 basePath 下所有 .gitignore 中的规则，转换为 fastGlob 兼容的 ignore 模式。
  * 行为对齐 ripgrep：递归收集各层级 .gitignore 并按所在目录正确作用域化。
  */
-async function readGitignorePatterns(filePath: string, prefix: string): Promise<string[]> {
-    const patterns: string[] = [];
-    try {
-        const stat = await fs.promises.stat(filePath);
-        if (!stat.isFile()) return patterns;
-
-        const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
-        const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
-        for await (const rawLine of lineReader) {
-            const converted = convertGitignoreRule(rawLine, prefix);
-            if (converted) {
-                const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
-                patterns.push(...converted.slice(0, remaining));
-                if (patterns.length >= GREP_MAX_GITIGNORE_PATTERNS) break;
-            }
-        }
-    } catch {
-        // 读取失败则跳过该 .gitignore
-    }
-    return patterns;
-}
-
 async function collectGitignorePatterns(basePath: string): Promise<string[]> {
     const patterns: string[] = [];
-    const appendPatterns = (newPatterns: string[]): boolean => {
-        const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;
-        if (remaining <= 0) return false;
-        patterns.push(...newPatterns.slice(0, remaining));
-        return patterns.length < GREP_MAX_GITIGNORE_PATTERNS;
-    };
-
     try {
-        // 先读取根规则。这样 fast-glob 在发现嵌套 .gitignore 时可以直接剪枝，
-        // 避免在大型工作区中先遍历 node_modules、构建产物和缓存目录。
-        const rootGitignore = path.join(basePath, '.gitignore');
-        const rootPatterns = (await readGitignorePatterns(rootGitignore, '')).slice(0, GREP_MAX_GITIGNORE_PATTERNS);
-        appendPatterns(rootPatterns);
-
-        const gitignoreStream = fastGlob.stream('**/.gitignore', {
+        const gitignoreFiles = await fastGlob('**/.gitignore', {
             cwd: basePath,
-            ignore: [...DEFAULT_GREP_IGNORE, ...rootPatterns],
+            ignore: DEFAULT_GREP_IGNORE,
             absolute: false,
             onlyFiles: true,
             suppressErrors: true,
             dot: true
         });
 
-        for await (const entry of gitignoreStream) {
-            const relPath = String(entry);
-            if (relPath === '.gitignore') continue;
+        for (const relPath of gitignoreFiles) {
             const dir = path.dirname(relPath);
             const prefix = dir === '.' ? '' : dir + '/';
-            if (!appendPatterns(await readGitignorePatterns(path.join(basePath, relPath), prefix))) break;
+            try {
+                const content = await fs.promises.readFile(path.join(basePath, relPath), 'utf-8');
+                for (const rawLine of content.split('\n')) {
+                    const converted = convertGitignoreRule(rawLine, prefix);
+                    if (converted) {
+                        patterns.push(...converted);
+                    }
+                }
+            } catch {
+                // 读取失败则跳过该 .gitignore
+            }
         }
     } catch {
-        // fastGlob 失败（如目录不存在）则返回已读取的根规则
+        // fastGlob 失败（如目录不存在）则返回空
     }
     return patterns;
 }
@@ -2966,10 +2898,6 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         );
 
         this.setExecutor(this.executeCommand);
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('grepFiles', toolcall);
     }
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
@@ -3048,49 +2976,23 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
-        const filePattern = toolcall.args_object?.['filePattern'];
-        const ignoreCase = toolcall.args_object?.['ignoreCase'];
-        const fields: string[] = [];
-        const appendField = (labelKey: string, value: unknown, maxWidth: number) => {
-            if (value === undefined || value === null || value === '') return;
-            fields.push(`<div class="grid grid-cols-[96px_minmax(0,1fr)] gap-3 py-1">
-                <dt class="text-xs text-slate-500">${escapeHtml(t(labelKey))}</dt>
-                <dd class="text-xs text-slate-700 break-all">${escapeHtml(truncText(String(value), maxWidth))}</dd>
-            </div>`);
-        };
-        appendField('renderer.taskview.output.field.pattern', pattern, 512);
-        appendField('renderer.taskview.output.field.path', searchPath, 1024);
-        appendField('renderer.taskview.output.field.filePattern', filePattern, 512);
-        if (ignoreCase === false) {
-            appendField(
-                'renderer.taskview.output.field.caseSensitive',
-                t('renderer.taskview.output.value.enabled'),
-                64
-            );
+
+        let detail = pattern ? escapeHtml(String(pattern)) : '';
+        if (searchPath) {
+            detail += ` · ${escapeHtml(String(searchPath))}`;
+        }
+        if (toolcall.status === 'success' && toolcall.result) {
+            const summaryMatch = toolcall.result.match(/在 (\d+) 个文件中找到 (\d+) 处匹配/);
+            if (summaryMatch) {
+                detail += ` · ${summaryMatch[1]} 文件 / ${summaryMatch[2]} 处匹配`;
+            }
         }
 
-        const resultLines = typeof toolcall.result === 'string' ? toolcall.result.split('\n') : [];
-        const summary = resultLines[0] ? truncText(resultLines[0], 512) : '';
-        const matches = resultLines.filter((line) => line.startsWith('> ')).slice(0, 5);
-        const resultHtml =
-            summary || matches.length > 0
-                ? `<div class="mt-2 border-t border-slate-100 pt-2">
-                    ${summary ? `<div class="text-xs text-slate-600">${escapeHtml(summary)}</div>` : ''}
-                    ${
-                        matches.length > 0
-                            ? `<pre class="mt-1 max-h-[220px] overflow-auto text-xs whitespace-pre-wrap break-words">${matches
-                                  .map((line) => escapeHtml(truncText(line, 500)))
-                                  .join('\n')}</pre>`
-                            : ''
-                    }
-                </div>`
-                : '';
-
-        return renderToolCard({
-            icon: '🔎',
+        return renderInlineTool({
+            icon: 'fas fa-code',
             title: t('filemgr.grep.name'),
             status: toolcall.status,
-            body: `<dl>${fields.join('')}</dl>${resultHtml}`
+            detail
         });
     }
 
@@ -3142,17 +3044,41 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             const basePath = searchPath ? sanitizePath(searchPath, workingDir) : workingDir;
             const globPattern = this.normalizeFilePattern(filePattern);
 
+            // 单文件搜索快速路径
+            let filesToSearch: string[];
+            try {
+                const stat = await fs.promises.stat(basePath);
+                if (stat.isFile()) {
+                    filesToSearch = [basePath];
+                } else {
+                    const gitignorePatterns = await collectGitignorePatterns(basePath);
+                    const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
+                    filesToSearch = await fastGlob(globPattern, {
+                        cwd: basePath,
+                        ignore: allIgnorePatterns,
+                        absolute: true,
+                        onlyFiles: true,
+                        suppressErrors: true
+                    });
+                }
+            } catch {
+                const gitignorePatterns = await collectGitignorePatterns(basePath);
+                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
+                filesToSearch = await fastGlob(globPattern, {
+                    cwd: basePath,
+                    ignore: allIgnorePatterns,
+                    absolute: true,
+                    onlyFiles: true,
+                    suppressErrors: true
+                });
+            }
+
             const matches: GrepMatch[] = [];
 
             const searchFile = async (filePath: string): Promise<GrepMatch[]> => {
                 const fileMatches: GrepMatch[] = [];
 
                 try {
-                    const stat = await fs.promises.stat(filePath);
-                    if (stat.size > GREP_MAX_FILE_SIZE_BYTES) {
-                        return fileMatches;
-                    }
-
                     // 预检测二进制文件：读取文件头判断
                     const fd = await fs.promises.open(filePath, 'r');
                     const headBuf = Buffer.alloc(512);
@@ -3167,46 +3093,25 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                         return fileMatches;
                     }
 
-                    const input = fs.createReadStream(filePath, { encoding: 'utf-8' });
-                    const lineReader = readline.createInterface({ input, crlfDelay: Infinity });
-                    const contextBefore: string[] = [];
-                    let pendingContextAfter: GrepMatch[] = [];
-                    let lineNumber = 0;
-                    let stopAfterLine: number | undefined;
+                    const content = await fs.promises.readFile(filePath, 'utf-8');
+                    const lines = content.split('\n');
 
-                    for await (const line of lineReader) {
-                        lineNumber++;
-
-                        for (const match of pendingContextAfter) {
-                            if (match.contextAfter.length < contextLines) {
-                                match.contextAfter.push(line);
-                            }
-                        }
-                        pendingContextAfter = pendingContextAfter.filter(
-                            (match) => match.contextAfter.length < contextLines
-                        );
-
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i];
                         regex.lastIndex = 0;
 
                         let match;
                         while ((match = regex.exec(line)) !== null) {
-                            const grepMatch: GrepMatch = {
+                            fileMatches.push({
                                 file: filePath,
-                                line: lineNumber,
+                                line: i + 1,
                                 column: match.index + 1,
                                 content: line,
-                                contextBefore: contextBefore.slice(),
-                                contextAfter: []
-                            };
-                            fileMatches.push(grepMatch);
-                            if (contextLines > 0) {
-                                pendingContextAfter.push(grepMatch);
-                            }
+                                contextBefore: lines.slice(Math.max(0, i - contextLines), i),
+                                contextAfter: lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines))
+                            });
 
-                            if (fileMatches.length >= maxResults) {
-                                stopAfterLine = lineNumber + contextLines;
-                                break;
-                            }
+                            if (fileMatches.length >= maxResults) break;
 
                             // 防止零宽匹配导致无限循环
                             if (match[0].length === 0) {
@@ -3215,16 +3120,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                         }
 
                         regex.lastIndex = 0;
-                        if (contextLines > 0) {
-                            contextBefore.push(line);
-                            if (contextBefore.length > contextLines) {
-                                contextBefore.shift();
-                            }
-                        }
-                        if (stopAfterLine !== undefined && lineNumber >= stopAfterLine) {
-                            input.destroy();
-                            break;
-                        }
+                        if (fileMatches.length >= maxResults) break;
                     }
                 } catch {
                     // 跳过无法读取的文件
@@ -3233,47 +3129,15 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 return fileMatches;
             };
 
-            const appendBatchMatches = async (batch: string[]): Promise<void> => {
+            const batchSize = 20;
+            for (let i = 0; i < filesToSearch.length && matches.length < maxResults; i += batchSize) {
+                const batch = filesToSearch.slice(i, i + batchSize);
                 const batchResults = await Promise.all(batch.map(searchFile));
-                for (const fileMatches of batchResults) {
-                    const remaining = maxResults - matches.length;
-                    if (remaining <= 0) break;
-                    matches.push(...fileMatches.slice(0, remaining));
-                }
-            };
+                matches.push(...batchResults.flat());
 
-            let isSingleFile = false;
-            try {
-                isSingleFile = (await fs.promises.stat(basePath)).isFile();
-            } catch {
-                // 将不存在或不可访问的路径交给 fast-glob 处理，保持原有的空结果行为
-            }
-
-            if (isSingleFile) {
-                await appendBatchMatches([basePath]);
-            } else {
-                const gitignorePatterns = await collectGitignorePatterns(basePath);
-                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
-                const fileStream = fastGlob.stream(globPattern, {
-                    cwd: basePath,
-                    ignore: allIgnorePatterns,
-                    absolute: true,
-                    onlyFiles: true,
-                    suppressErrors: true
-                });
-                let batch: string[] = [];
-
-                for await (const filePath of fileStream) {
-                    batch.push(String(filePath));
-                    if (batch.length < GREP_FILE_SEARCH_CONCURRENCY) continue;
-
-                    await appendBatchMatches(batch);
-                    if (matches.length >= maxResults) break;
-                    batch = [];
-                }
-
-                if (batch.length > 0 && matches.length < maxResults) {
-                    await appendBatchMatches(batch);
+                if (matches.length >= maxResults) {
+                    matches.length = maxResults;
+                    break;
                 }
             }
 
@@ -3505,15 +3369,6 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
         );
         this.searchIndexedFiles = searchIndexedFiles;
         this.setExecutor(this.executeCommand);
-    }
-
-    // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽
-    isAvailable(_taskState?: TaskState): boolean {
-        return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
-    }
-
-    getToolCallPresentation(toolcall: ToolCall) {
-        return getFileToolCallPresentation('semanticSearch', toolcall);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {

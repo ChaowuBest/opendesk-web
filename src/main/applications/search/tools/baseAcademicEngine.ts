@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -57,7 +57,7 @@ export interface AcademicPaper {
  * 学术搜索引擎基类。
  * 子类只需提供引擎元信息 + 实现 doSearch()，渲染和格式化由基类统一处理。
  */
-export abstract class BaseAcademicSearchEngine extends SearchPresentationTool<typeof ACADEMIC_ENGINE_ARGS_SCHEMA> {
+export abstract class BaseAcademicSearchEngine extends BaseTool<typeof ACADEMIC_ENGINE_ARGS_SCHEMA> {
     /** 引擎显示名称（如 "arXiv"、"DBLP"） */
     protected abstract engineName: string;
 

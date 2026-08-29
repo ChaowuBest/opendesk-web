@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -29,7 +29,7 @@ const ConfigureSearchToolArgsSchema = z.object({
     value: z.string().optional().describe('设置默认渠道时的渠道ID值，或设置开关时的 "true"/"false"')
 });
 
-export class ConfigureSearchTool extends SearchPresentationTool<typeof ConfigureSearchToolArgsSchema> {
+export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgsSchema> {
     private searchApp: SearchApplication;
 
     constructor(searchApp: SearchApplication) {
@@ -140,7 +140,7 @@ export class ConfigureSearchTool extends SearchPresentationTool<typeof Configure
 
 const ListSearchToolsArgsSchema = z.object({});
 
-export class ListSearchToolsTool extends SearchPresentationTool<typeof ListSearchToolsArgsSchema> {
+export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSchema> {
     private searchApp: SearchApplication;
 
     constructor(searchApp: SearchApplication) {
@@ -249,7 +249,7 @@ const ToggleSearchToolArgsSchema = z.object({
     enabled: z.boolean().describe('是否启用该工具，true为启用，false为禁用')
 });
 
-export class ToggleSearchToolTool extends SearchPresentationTool<typeof ToggleSearchToolArgsSchema> {
+export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSchema> {
     private searchApp: SearchApplication;
 
     constructor(searchApp: SearchApplication) {

@@ -12,26 +12,6 @@
 import type { z } from 'zod';
 import type { PermissionRequest } from './permissions.js';
 
-export interface LocalizedToolPresentationText {
-    key: string;
-    params?: Record<string, string | number>;
-}
-
-export type ToolPresentationText = string | LocalizedToolPresentationText;
-
-export interface ToolCallPresentation {
-    displayName: ToolPresentationText;
-    summary?: ToolPresentationText;
-    activity?: ToolPresentationText;
-    resource?: {
-        type: 'preview' | 'changes' | 'url';
-        value: string;
-    };
-    /** Select the complete GUI detail surface: a resource link or audited owner-rendered content. */
-    detailMode?: 'resource' | 'custom';
-    resultFormat?: 'plain' | 'markdown';
-}
-
 /** Stable task information exposed while a tool is evaluated or executed. */
 export interface ToolExecutionContext {
     taskId?: string;
@@ -99,6 +79,5 @@ export interface ToolDefinition<T extends z.ZodType = z.ZodType> {
     getDeclaredPermissions?(args: z.output<T>, context: ToolExecutionContext): PermissionRequest[];
     execute(args: z.output<T>, context: ToolExecutionContext, result: ToolResultWriter): Promise<ToolExecutionResult>;
     stop?(): void | Promise<void>;
-    presentation?: ToolCallPresentation | ((context: ToolRenderContext) => ToolCallPresentation | undefined);
     render?: ToolRenderers;
 }

@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { SearchPresentationTool } from './presentation.js';
+import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
@@ -52,7 +52,7 @@ const TavilySearchArgsSchema = z.object({
     include_answer: z.boolean().optional().describe('是否生成问题的简短答案，默认false')
 });
 
-export class TavilySearchTool extends SearchPresentationTool<typeof TavilySearchArgsSchema> {
+export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {

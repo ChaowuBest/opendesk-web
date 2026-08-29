@@ -14,8 +14,6 @@
  * Runtime classes and executable tool implementations intentionally do not belong here.
  */
 
-import type { ToolCallPresentation } from './tools.js';
-
 /** A JSON-safe snapshot of the metadata attached to an OpenDesk message or tool call. */
 export interface RuntimeMetadata {
     scope?: 'task' | 'goal' | 'global';
@@ -104,7 +102,6 @@ export interface BaseChatToolCall {
     result_storage?: ToolResultStorageMetadata;
     microcompact?: ToolCallMicrocompactMetadata;
     metadata?: RuntimeMetadata;
-    presentation?: ToolCallPresentation;
 }
 
 export interface BaseToolCallMessagePart {
