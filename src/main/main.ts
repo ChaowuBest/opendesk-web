@@ -24,8 +24,7 @@ import {
     screen,
     session,
     powerMonitor,
-    powerSaveBlocker,
-    clipboard
+    powerSaveBlocker
 } from 'electron';
 import type { WebContents } from 'electron';
 import {
@@ -49,7 +48,6 @@ import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs, getLogFilename } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
-import { createMainWindowContextMenuTemplate } from './window-context-menu.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
@@ -798,26 +796,17 @@ const createWindow = () => {
         return true;
     };
 
-    // 链接和可编辑区域使用 Electron 原生菜单；label 使用 t() 以跟随 OpenDesk 语言设置。
+    // 可编辑区域恢复 Electron 默认右键菜单（剪切/复制/粘贴/全选），非编辑区域保持禁用。
+    // label 使用 t() 以跟随 OpenDesk 语言设置；role 保留以维持系统原生快捷键和启用/禁用逻辑。
     mainWindow.webContents.on('context-menu', (_event, params) => {
-        const template = createMainWindowContextMenuTemplate(
-            params,
-            {
-                openLink: t('contextmenu.openLink'),
-                copyLink: t('contextmenu.copyLink'),
-                cut: t('contextmenu.cut'),
-                copy: t('contextmenu.copy'),
-                paste: t('contextmenu.paste'),
-                selectAll: t('contextmenu.selectAll')
-            },
-            {
-                openLink: (url) => {
-                    openLink(url);
-                },
-                copyText: (text) => clipboard.writeText(text)
-            }
-        );
-        if (template.length > 0) Menu.buildFromTemplate(template).popup();
+        if (!params.isEditable) return;
+        Menu.buildFromTemplate([
+            { role: 'cut', label: t('contextmenu.cut') },
+            { role: 'copy', label: t('contextmenu.copy') },
+            { role: 'paste', label: t('contextmenu.paste') },
+            { type: 'separator' },
+            { role: 'selectAll', label: t('contextmenu.selectAll') }
+        ]).popup();
     });
 
     // 全屏状态下按 ESC 退出全屏（主窗口直接获焦时）

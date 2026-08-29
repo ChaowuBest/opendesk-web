@@ -435,7 +435,7 @@ describe('task-view GUI output modes', () => {
         );
         expect(taskViewStyles).toMatch(/\.reasoning-bubble\.reasoning-bubble-hidden\{[^}]*opacity:0;/);
         expect(taskViewStyles).toMatch(
-            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail\.is-open,[^{]*\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-completed-process-detail\.is-open\{[^}]*overflow:visible;/
+            /\.od-assistant-output-flow\[data-reason-display='bubble'\]\.od-process-detail\.is-open\{[^}]*overflow:visible;/
         );
     });
 
@@ -711,7 +711,11 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).toMatch(/\.reasoning-block-od\.reasoning-header\{[^}]*list-style:none;/);
     });
 
-    test('process summaries use an unframed Codex-style row while details keep their height limit', () => {
+    test('expanded completed process grows naturally while nested process details keep their height limit', () => {
+        expect(taskViewStyles).toMatch(
+            /\.od-completed-process-detail\.is-open\{[^}]*display:block;[^}]*max-height:none;[^}]*overflow:visible;/
+        );
+        expect(taskViewStyles).not.toMatch(/\.od-completed-process-detail\{[^}]*max-height:/);
         expect(taskViewStyles).toMatch(
             /\.od-process-segment\{[^}]*overflow:visible;[^}]*background:transparent;[^}]*border:0;[^}]*border-radius:0;/
         );

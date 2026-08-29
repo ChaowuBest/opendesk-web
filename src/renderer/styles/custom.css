@@ -3361,31 +3361,13 @@ agent-input[hide-disclaimer] .agent-input-footer {
 
 .od-completed-process-detail {
     display: none;
-    max-height: min(420px, 56vh);
     padding: 2px 4px 8px 0;
-    overflow-y: auto;
-    overscroll-behavior-y: auto;
-    scrollbar-color: #9aa3ad transparent;
-    scrollbar-width: thin;
 }
 
 .od-completed-process-detail.is-open {
     display: block;
-}
-
-.od-completed-process-detail::-webkit-scrollbar {
-    width: 8px;
-}
-
-.od-completed-process-detail::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.od-completed-process-detail::-webkit-scrollbar-thumb {
-    border: 2px solid transparent;
-    border-radius: 5px;
-    background: #9aa3ad;
-    background-clip: padding-box;
+    max-height: none;
+    overflow: visible;
 }
 
 .od-process-segment {
@@ -3497,8 +3479,7 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: block;
 }
 
-.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open,
-.od-assistant-output-flow[data-reason-display='bubble'] .od-completed-process-detail.is-open {
+.od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open {
     max-height: none;
     overflow: visible;
     scrollbar-gutter: auto;

@@ -2209,8 +2209,6 @@ export const zhCn: Record<string, string> = {
     'renderer.memory.readFailedDetail': '暂时无法读取记忆，请刷新后重试。',
 
     // Main - Context Menu
-    'contextmenu.openLink': '用系统浏览器打开',
-    'contextmenu.copyLink': '复制链接',
     'contextmenu.cut': '剪切',
     'contextmenu.copy': '复制',
     'contextmenu.paste': '粘贴',

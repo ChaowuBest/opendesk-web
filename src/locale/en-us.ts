@@ -2272,8 +2272,6 @@ export const enUs: Record<string, string> = {
     'renderer.memory.readFailedDetail': 'Memories are temporarily unavailable. Refresh to try again.',
 
     // Main - Context Menu
-    'contextmenu.openLink': 'Open in System Browser',
-    'contextmenu.copyLink': 'Copy Link',
     'contextmenu.cut': 'Cut',
     'contextmenu.copy': 'Copy',
     'contextmenu.paste': 'Paste',
