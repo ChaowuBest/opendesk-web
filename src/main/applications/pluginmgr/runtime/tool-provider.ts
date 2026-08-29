@@ -16,7 +16,6 @@ import { escapeHtml } from '../../../../common/utils/escape.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, type PluginHost } from './host.js';
 import { getPluginMcpToolsets } from './mcp.js';
-import { sanitizeModelToolName } from './tool-names.js';
 
 const fallbackAbortSignal = new AbortController().signal;
 
@@ -169,14 +168,12 @@ export class PluginToolsetProvider implements ToolsetProvider {
     constructor(private readonly host: PluginHost = getPluginHost()) {}
 
     async listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
-        const grouped = new Map<string, BaseToolset>();
+        const pluginToolset = new BaseToolset('plugin');
         for (const record of this.host.listTools()) {
-            const toolset =
-                grouped.get(record.pluginId) ?? new BaseToolset(`plugin-${sanitizeModelToolName(record.pluginId)}`);
-            grouped.set(record.pluginId, toolset);
-            toolset.addTool(createPluginTool(record.definition));
+            pluginToolset.addTool(createPluginTool(record.definition));
         }
-        return [...grouped.values(), ...(await getPluginMcpToolsets(taskState?.getWorkspace() || undefined))];
+        const pluginToolsets = pluginToolset.tools.size > 0 ? [pluginToolset] : [];
+        return [...pluginToolsets, ...(await getPluginMcpToolsets(taskState?.getWorkspace() || undefined))];
     }
 }
 
