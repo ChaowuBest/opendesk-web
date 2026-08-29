@@ -19,8 +19,10 @@ import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
+import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
 import {
     GoalController,
     canShowWaitingAssistantPlaceholder,
@@ -3143,6 +3145,96 @@ class TaskView extends HTMLElement {
     }
 
     /**
+     * 处理消息中 HTTP(S) 链接的右键菜单事件。
+     */
+    _handleLinkContextMenu(e) {
+        const anchor = e.target.closest('a[href]');
+        if (!anchor) return;
+        const url = getSafeWebUrl(anchor.getAttribute('href'));
+        if (!url) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._openLinkContextMenu(url, e.clientX, e.clientY);
+    }
+
+    _openLinkContextMenu(url, x, y) {
+        this._dismissLinkContextMenu();
+
+        const items = createWebLinkContextMenuItems(
+            url,
+            {
+                copyLink: taskViewT('renderer.taskview.linkTag.copyLink'),
+                openExternal: taskViewT('renderer.taskview.linkTag.openExternal'),
+                openInBrowser: taskViewT('renderer.taskview.linkTag.openInBrowser')
+            },
+            {
+                copyLink: (linkUrl) => navigator.clipboard.writeText(linkUrl).catch(() => {}),
+                openExternal: (linkUrl) => window.open(linkUrl, '_blank'),
+                openInBrowser: (linkUrl) => this.openUrlInSidebar(linkUrl)
+            }
+        );
+        if (items.length === 0) return;
+
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const menu = document.createElement('div');
+        menu.id = 'od-link-ctx';
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '180px';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        const icons = {
+            'copy-link': COPY_ICON_SVG,
+            'open-external': FILE_TAG_OPEN_DEFAULT_SVG,
+            'open-browser': FILE_TAG_PREVIEW_SVG
+        };
+        menu.innerHTML = items
+            .map(
+                (item) =>
+                    `<button class="ctx-item" data-action="${item.action}">` +
+                    `<span class="ctx-icon-sm">${icons[item.action]}</span>` +
+                    `<span class="ctx-label">${escapeHtml(item.label)}</span></button>`
+            )
+            .join('');
+
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const margin = 8;
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth - margin) {
+                menu.style.left = `${window.innerWidth - rect.width - margin}px`;
+            }
+            if (rect.bottom > window.innerHeight - margin) {
+                menu.style.top = `${window.innerHeight - rect.height - margin}px`;
+            }
+        });
+
+        for (const item of items) {
+            menu.querySelector(`[data-action="${item.action}"]`)?.addEventListener('click', () => {
+                this._dismissLinkContextMenu();
+                item.run();
+            });
+        }
+
+        this._linkCtxDismissHandler = (event) => {
+            if (!menu.contains(event.target)) this._dismissLinkContextMenu();
+        };
+        document.addEventListener('mousedown', this._linkCtxDismissHandler);
+    }
+
+    _dismissLinkContextMenu() {
+        document.getElementById('od-link-ctx')?.remove();
+        if (this._linkCtxDismissHandler) {
+            document.removeEventListener('mousedown', this._linkCtxDismissHandler);
+            this._linkCtxDismissHandler = null;
+        }
+    }
+
+    /**
      * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
      */
     _handleReasoningToggleClick(e) {
@@ -3918,6 +4010,10 @@ class TaskView extends HTMLElement {
         this._handleFilePillContextMenu = this._handleFilePillContextMenu.bind(this);
         this.addEventListener('contextmenu', this._handleFilePillContextMenu);
 
+        // 添加消息中 Web 链接右键菜单的事件监听（事件代理）
+        this._handleLinkContextMenu = this._handleLinkContextMenu.bind(this);
+        this.addEventListener('contextmenu', this._handleLinkContextMenu);
+
         // 添加 reasoning 块展开/收起的事件代理
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
@@ -4152,6 +4248,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleFileCardMenuClick);
         this.removeEventListener('contextmenu', this._handleFilePillContextMenu);
         this._dismissFilePillContextMenu();
+        this.removeEventListener('contextmenu', this._handleLinkContextMenu);
+        this._dismissLinkContextMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
         this._disconnectAgentInputRequests?.();
         this._disconnectAgentInputRequests = null;
