@@ -11,13 +11,13 @@
 
 import * as acp from '@agentclientprotocol/sdk';
 import { Readable } from 'node:stream';
-import { OpenDeskAcpAgent } from './agent.js';
+import { OpenDeskAcpAgent, type AcpAgentOptions } from './agent.js';
 import { createAcpProtocolOutput } from './stdio.js';
 
-export async function startAcpServer(): Promise<void> {
+export async function startAcpServer(options?: AcpAgentOptions): Promise<void> {
     const output = createAcpProtocolOutput();
     const input = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
     const stream = acp.ndJsonStream(output, input);
-    const connection = new acp.AgentSideConnection((conn) => new OpenDeskAcpAgent(conn), stream);
+    const connection = new acp.AgentSideConnection((conn) => new OpenDeskAcpAgent(conn, options), stream);
     await connection.closed;
 }
