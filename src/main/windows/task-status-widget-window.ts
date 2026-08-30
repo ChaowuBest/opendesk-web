@@ -339,10 +339,31 @@ function getWidgetOrigin(): { x: number; y: number } {
     }
 }
 
+/**
+ * Windows 上透明无边框窗口的已知缺陷（electron/electron#40515）：窗口显示或尺寸
+ * 变化时，DirectComposition 合成层偶发丢失 alpha 通道，透明背景退化为不透明底色，
+ * 圆角浮窗变成直角矩形且时有时无。在显示与程序化 setBounds 之后重新声明完全透明
+ * 的背景色并强制重绘一帧，让合成层恢复 alpha 通道。该问题仅存在于 Windows，其余
+ * 平台直接跳过。
+ */
+function reassertTransparentBackground(win: BrowserWindow): void {
+    if (process.platform !== 'win32') {
+        return;
+    }
+    try {
+        win.setBackgroundColor('#00000000');
+        win.webContents.invalidate();
+    } catch (err) {
+        logger.warn(`failed to reassert transparent background: ${errorToMessage(err)}`);
+    }
+}
+
 /** 设置窗口 bounds，并把目标位置记为程序化移动（供 moved 事件区分用户拖拽）。 */
 function applyWidgetBounds(win: BrowserWindow, bounds: { x: number; y: number; width: number; height: number }): void {
     lastProgrammaticOrigin = { x: bounds.x, y: bounds.y };
     win.setBounds(bounds);
+    // 尺寸变化是透明背景丢失的触发点之一，变完立即修复。
+    reassertTransparentBackground(win);
 }
 
 function positionWidget(win: BrowserWindow): void {
@@ -410,6 +431,8 @@ function showWidget(): void {
         } else {
             // 被动状态窗不抢占焦点，避免打断用户当前操作。
             win.showInactive();
+            // 显示透明窗口是透明背景丢失的另一个触发点，显示后立即修复。
+            reassertTransparentBackground(win);
         }
     } else {
         pushSummary();
@@ -424,6 +447,8 @@ function showWidgetInactiveIfStillWanted(win: BrowserWindow): void {
     const mode = host?.getFloatingWindowMode();
     if (isWidgetTriggerEffective(mode, { hidden: isWindowHidden, focused: isWindowFocused }, suppression)) {
         win.showInactive();
+        // ready-to-show 异步显示路径与同步显示路径同样需要修复透明背景。
+        reassertTransparentBackground(win);
     }
 }
 
