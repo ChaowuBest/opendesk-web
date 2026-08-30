@@ -32,4 +32,12 @@ describe('serve telemetry initialization', () => {
         const serve = program.commands.find((command) => command.name() === 'serve');
         expect(serve?.options.some((option) => option.long === '--use-config-permissions')).toBe(true);
     });
+
+    test('registers the --model option for locking the model', () => {
+        const program = new Command();
+        registerServeCommand(program);
+
+        const serve = program.commands.find((command) => command.name() === 'serve');
+        expect(serve?.options.some((option) => option.long === '--model')).toBe(true);
+    });
 });

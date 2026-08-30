@@ -55,6 +55,14 @@ function modeToAcp(mode: ModeDecl): acp.SessionMode {
     };
 }
 
+export interface AcpAgentOptions {
+    /**
+     * 通过 serve --model 指定的固定模型别名。
+     * 设置后所有会话使用该模型，且客户端无法通过 setSessionModel 切换。
+     */
+    model?: string;
+}
+
 function getChatModels(data: SettingData): SettingData['models'] {
     return (data.models ?? []).filter((model) => model.model_type === 'chat');
 }
@@ -118,7 +126,14 @@ export class OpenDeskAcpAgent implements acp.Agent {
     private readonly agentDecl = AgentRegistry.getMainAgent();
     private readonly sessions = new Map<string, AcpSessionState>();
 
-    constructor(private readonly connection: AgentSideConnection) {}
+    private readonly fixedModel?: string;
+
+    constructor(
+        private readonly connection: AgentSideConnection,
+        options?: AcpAgentOptions
+    ) {
+        this.fixedModel = options?.model;
+    }
 
     async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
         return {
@@ -157,10 +172,11 @@ export class OpenDeskAcpAgent implements acp.Agent {
         const mode = this.agentDecl.getDefaultMode();
         const task = GlobalState.getInstance().taskManagerState.createTask();
 
-        // Initialize task model from ACP's persisted default (falls back to OpenDesk default)
+        // 指定固定模型时直接使用；否则从 ACP 持久化默认（回退到 OpenDesk 默认）解析
         const settingData = Setting.getInstance().getData();
         const chatModels = getChatModels(settingData).map((m) => m.alias);
-        const resolvedModel = AcpState.getInstance().resolveDefaultModel(settingData.default_model, chatModels);
+        const resolvedModel =
+            this.fixedModel ?? AcpState.getInstance().resolveDefaultModel(settingData.default_model, chatModels);
         if (resolvedModel) {
             task.model = resolvedModel;
         }
@@ -204,14 +220,12 @@ export class OpenDeskAcpAgent implements acp.Agent {
                 const bTime = b.task.updated_at?.getTime() ?? b.createdAt.getTime();
                 return bTime - aTime;
             })
-            .map(
-                (session): acp.SessionInfo => ({
-                    sessionId: session.sessionId,
-                    cwd: session.cwd,
-                    title: session.task.task_name || t('acp.session.default_title'),
-                    updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
-                })
-            );
+            .map((session): acp.SessionInfo => ({
+                sessionId: session.sessionId,
+                cwd: session.cwd,
+                title: session.task.task_name || t('acp.session.default_title'),
+                updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
+            }));
 
         return { sessions };
     }
@@ -275,6 +289,17 @@ export class OpenDeskAcpAgent implements acp.Agent {
         const session = this.sessions.get(params.sessionId);
         if (!session) {
             throw sessionNotFound(params.sessionId);
+        }
+
+        // 固定模型（serve --model）模式下拒绝切换，模型不可被客户端修改
+        if (this.fixedModel) {
+            if (params.modelId !== this.fixedModel) {
+                throw acp.RequestError.invalidParams(
+                    { modelId: params.modelId },
+                    `model is locked to: ${this.fixedModel}`
+                );
+            }
+            return {};
         }
 
         const setting = Setting.getInstance();

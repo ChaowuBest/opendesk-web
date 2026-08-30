@@ -23,6 +23,7 @@ interface ServeOptions {
     username?: string;
     configDirectory?: string;
     useConfigPermissions?: boolean;
+    model?: string;
 }
 
 export async function initializeServeTelemetry(initializer: () => Promise<void> = initTelemetry): Promise<void> {
@@ -40,12 +41,14 @@ export function registerServeCommand(prog: Command): void {
         .option('--username <username>', 'HTTP Basic Auth 用户名 (默认 opencode)')
         .option('--config-directory <path>', '指定 OpenDesk 应用数据目录')
         .option('--use-config-permissions', t('serve.useConfigPermissions'))
+        .option('--model <alias>', '锁定 ACP 会话使用的模型别名（指定后客户端无法通过 setSessionModel 切换）')
         .action(async (opts: ServeOptions, command: Command) => {
             await applyServeConfigDirectory(opts, command);
             const mode = getServeMode(opts);
+            const model = opts.model || command.parent?.opts?.()?.model;
 
             if (mode === 'acp') {
-                await startAcpServerMode(opts);
+                await startAcpServerMode({ ...opts, model });
                 return;
             }
 
@@ -128,7 +131,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     );
 }
 
-async function startAcpServerMode(_opts: ServeOptions) {
+async function startAcpServerMode(opts: ServeOptions) {
     let formatFailure = (message: string) => `ACP server failed: ${message}`;
 
     try {
@@ -141,8 +144,20 @@ async function startAcpServerMode(_opts: ServeOptions) {
 
         await initializeServeRuntime({ consoleTransport: false });
 
+        // 校验 --model 指定的模型别名是否为有效的 chat 模型
+        let fixedModel: string | undefined;
+        if (opts.model) {
+            const { Setting } = await import('../../utils/setting.js');
+            const setting = Setting.getInstance();
+            if (!setting.getModelInstance(opts.model, 'chat')) {
+                process.stderr.write(`[serve] ${t('error.model.chat_alias_not_found', { alias: opts.model })}\n`);
+                process.exit(1);
+            }
+            fixedModel = opts.model;
+        }
+
         const { startAcpServer: startAcpStdioServer } = await import('../../server/acp/server.js');
-        await startAcpStdioServer();
+        await startAcpStdioServer({ model: fixedModel });
         process.exit(0);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
