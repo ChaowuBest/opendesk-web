@@ -296,7 +296,9 @@ export class TaskState {
 
     set agentId(agentId: string | undefined) {
         if (this._agentId === agentId) return;
+        const previousAgentId = this._agentId;
         this._agentId = agentId;
+        this.extensions.notifyLifecycle({ type: 'agent_changed', previousAgentId, nextAgentId: agentId });
         this.agent_system_prompt = undefined;
         this.updateEffectiveSystemPrompt();
         if (this.task_manager_state.tasks.includes(this)) {
@@ -1824,6 +1826,7 @@ export class TaskState {
      */
     cleanup() {
         this.cancelPendingTaskReview();
+        this.extensions.notifyLifecycle({ type: 'dispose' });
         const taskDirectory = getTaskDirectory();
         const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
 
@@ -1875,6 +1878,7 @@ export class TaskState {
         const alreadyStopped = this.task_status === 'stopped';
 
         if (!alreadyStopped) {
+            this.extensions.notifyLifecycle({ type: 'stop', reason });
             this.task_status = 'stopped';
             this._pluginAbortController.abort();
             this.stop_requested_by_user = reason === 'user';
@@ -1937,6 +1941,7 @@ export class TaskState {
         const alreadyStopped = this.task_status === 'stopped';
 
         if (!alreadyStopped) {
+            this.extensions.notifyLifecycle({ type: 'stop', reason: 'user' });
             this.task_status = 'stopped';
             this.stop_requested_by_user = true;
             this.finished_at = new Date();
@@ -1976,6 +1981,7 @@ export class TaskState {
     async interruptRunningTurn(options: InterruptRunningTurnOptions): Promise<void> {
         // 与 stop() 同理：确保任务已完全加载，防止访问空的 chat_context
         this.ensureLoaded();
+        this.extensions.notifyLifecycle({ type: 'stop', reason: options.userInitiated === true ? 'user' : 'system' });
         this._pluginAbortController.abort();
         const requestedAt = new Date().toISOString();
         this.runtimeInterrupt = {

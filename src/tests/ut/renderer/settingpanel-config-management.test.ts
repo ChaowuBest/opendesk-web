@@ -195,6 +195,335 @@ describe('setting-panel config management', () => {
         expect(options).toEqual(['', 'vision-model']);
     });
 
+    test('tests ACP agents through the main-world application API', async () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'OpenDesk ACP',
+            transport: {
+                type: 'stdio',
+                command: 'node',
+                args: ['D:/OpenDesk/dist/cli/opendesk-debug', 'serve', '--mode', 'acp']
+            }
+        };
+        panel.innerHTML = '<div id="acp-agent-test-result" hidden></div>';
+        panel._readAcpAgentForm = jest.fn(() => profile);
+        const call = jest.fn(async () => {
+            throw new Error('worker acpmgr not found');
+        });
+        const callMainWorld = jest.fn(async () => ({ agentInfo: { name: 'OpenDesk' } }));
+        window.applicationRegistryAPI = { call, callMainWorld };
+
+        await panel._testAcpAgent(profile.id);
+
+        expect(callMainWorld).toHaveBeenCalledWith('acpmgr', 'testAgent', profile);
+        expect(call).not.toHaveBeenCalled();
+        expect(panel.querySelector('#acp-agent-test-result')?.classList.contains('od-sp-verify-success')).toBe(true);
+    });
+
+    test('constrains long ACP command summaries without hiding card actions', () => {
+        const panel = createPanel();
+        const endpoint =
+            'C:/Program Files/nodejs/node.exe --no-warnings D:/ai/oh-robot/tmp_patch/OpenDesk/dist/cli/opendesk serve --mode acp --config-directory C:/Users/85481/AppData/Roaming/opendesk';
+        panel.currentData.applications = {
+            acpmgr: {
+                agents: [
+                    {
+                        name: 'OpenDesk ACP Server',
+                        enabled: true,
+                        dispatchable: true,
+                        transport: {
+                            type: 'stdio',
+                            command: 'C:/Program Files/nodejs/node.exe',
+                            args: [
+                                '--no-warnings',
+                                'D:/ai/oh-robot/tmp_patch/OpenDesk/dist/cli/opendesk',
+                                'serve',
+                                '--mode',
+                                'acp',
+                                '--config-directory',
+                                'C:/Users/85481/AppData/Roaming/opendesk'
+                            ]
+                        }
+                    }
+                ]
+            }
+        };
+
+        panel.innerHTML = panel.renderAcpAgentsSection();
+
+        const summary = panel.querySelector('.sp-acp-agent-summary') as HTMLElement;
+        expect(summary).not.toBeNull();
+        expect(summary.title).toBe(endpoint);
+        expect(panel.querySelector('.edit-acp-agent-btn')).not.toBeNull();
+        expect(panel.querySelector('.delete-acp-agent-btn')).not.toBeNull();
+    });
+
+    test('shows and edits the execution host for a remote ACP agent', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Remote ACP',
+            enabled: true,
+            transport: {
+                type: 'streamableHttp',
+                url: 'https://agent.example.com/acp',
+                headers: {},
+                cookies: 'include'
+            },
+            execution: {
+                location: 'agent',
+                workspace: { strategy: 'fixed', path: '/workspace/project', platform: 'posix' }
+            },
+            session: { configOptions: {}, mcpBindings: [] },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = { acpmgr: { agents: [profile] } };
+        panel.innerHTML = panel.renderAcpAgentsSection();
+
+        expect(panel.querySelector('.sp-acp-agent-card')?.textContent).toContain('Agent 主机');
+
+        panel.showAcpAgentEditModal(0);
+        expect((panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement).value).toBe('agent');
+        expect((panel.querySelector('#acp-agent-remote-cwd') as HTMLInputElement).value).toBe('/workspace/project');
+        const next = panel._readAcpAgentForm(profile.id);
+        expect(next.execution).toEqual(profile.execution);
+    });
+
+    test('preserves stdio when selecting experimental ACP v2 in the Agent settings form', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Local ACP v2',
+            enabled: true,
+            protocolVersion: 2,
+            transport: {
+                type: 'stdio',
+                command: 'agent',
+                args: [],
+                cwd: 'workspace',
+                env: {},
+                inheritEnv: true
+            },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required'
+            },
+            session: { configOptions: {}, mcpBindings: [] },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = { acpmgr: { agents: [profile] } };
+
+        panel.showAcpAgentEditModal(0);
+
+        const protocol = panel.querySelector('#acp-agent-protocol-version') as HTMLSelectElement;
+        const transport = panel.querySelector('#acp-agent-transport') as HTMLSelectElement;
+        Array.from(protocol.options).forEach((option) => (option.selected = option.value === '1'));
+        protocol.dispatchEvent(new Event('change'));
+        Array.from(protocol.options).forEach((option) => (option.selected = option.value === '2'));
+        protocol.dispatchEvent(new Event('change'));
+
+        expect(transport.value).toBe('stdio');
+        expect(panel._readAcpAgentForm(profile.id).protocolVersion).toBe(2);
+        expect(panel._readAcpAgentForm(profile.id).transport.type).toBe('stdio');
+        expect(panel._readAcpAgentForm(profile.id).execution.agentSessionCwd).toBeUndefined();
+    });
+
+    test('distinguishes stdio launch cwd, session workspace, external MCP, and automatic MCP-over-ACP', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Local ACP v2',
+            enabled: true,
+            protocolVersion: 2,
+            transport: {
+                type: 'stdio',
+                command: 'agent',
+                args: [],
+                cwd: 'workspace',
+                env: {},
+                inheritEnv: true
+            },
+            execution: {
+                location: 'client',
+                workspace: { strategy: 'task' },
+                compatibility: 'required'
+            },
+            session: { configOptions: {}, mcpBindings: [] },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = { acpmgr: { agents: [profile] } };
+
+        panel.showAcpAgentEditModal(0);
+
+        expect(panel.querySelector('#acp-agent-cwd')?.closest('.od-sp-fg')?.textContent).toContain(
+            'Agent 进程启动目录'
+        );
+        expect(
+            panel.querySelector('#acp-agent-client-workspace-strategy')?.closest('.od-sp-fg')?.textContent
+        ).toContain('工作区');
+        expect(
+            panel.querySelector('#acp-agent-client-workspace-strategy')?.closest('.od-sp-fg')?.textContent
+        ).not.toContain('Client 工作区');
+        expect(panel.querySelector('#acp-agent-mcp-policy')?.closest('.od-sp-fg')?.textContent).toContain(
+            '外部 MCP 策略'
+        );
+        expect((panel.querySelector('#acp-agent-mcp-policy') as HTMLSelectElement).value).toBe('none');
+        expect((panel.querySelector('#acp-agent-custom-mcp-fields') as HTMLElement).hidden).toBe(true);
+        expect(panel.querySelector('#acp-agent-v2-client-mcp-status')?.textContent).toContain(
+            'MCP-over-ACP（自动提供）'
+        );
+    });
+
+    test('keeps transport and execution independent and exposes friendly ACP runtime controls', () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Configured ACP',
+            enabled: true,
+            protocolVersion: 1,
+            transport: {
+                type: 'stdio',
+                command: 'agent',
+                args: [],
+                cwd: 'workspace',
+                env: {},
+                inheritEnv: true
+            },
+            execution: { location: 'client', workspace: { strategy: 'task' }, compatibility: 'preferred' },
+            session: {
+                authMethodId: 'agent-login',
+                mcpPolicy: 'custom',
+                configOptions: {},
+                mcpBindings: [{ serverId: 'filesystem', location: 'agent' }]
+            },
+            timeouts: { connectMs: 15000, promptMs: 600000 },
+            reconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 5000 }
+        };
+        panel.currentData.applications = {
+            acpmgr: { agents: [profile] },
+            mcpmgr: {
+                servers: [
+                    { id: 'filesystem', name: 'Filesystem', enabled: true },
+                    { id: 'browser', name: 'Browser', enabled: true }
+                ]
+            }
+        };
+
+        panel.showAcpAgentEditModal(0);
+
+        expect(panel.querySelector('#acp-agent-client-runtime-warning')?.textContent).toContain(
+            'Client-hosted 运行模式依赖'
+        );
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(false);
+        expect((panel.querySelector('#acp-agent-auth-method') as HTMLSelectElement).value).toBe('agent-login');
+        expect((panel.querySelector('#acp-agent-connect-timeout') as HTMLInputElement).value).toBe('15000');
+        expect((panel.querySelector('#acp-agent-prompt-timeout') as HTMLInputElement).value).toBe('600000');
+        const selectedMcp = panel.querySelector('[data-acp-mcp-server-id="filesystem"]') as HTMLInputElement;
+        expect(selectedMcp.hasAttribute('checked')).toBe(true);
+        expect(panel.querySelector('[data-acp-mcp-server-id="browser"]')?.hasAttribute('checked')).toBe(false);
+
+        const transport = panel.querySelector('#acp-agent-transport') as HTMLSelectElement;
+        Array.from(transport.options).forEach((option) => (option.selected = option.value === 'streamableHttp'));
+        transport.dispatchEvent(new Event('change'));
+        expect((panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement).value).toBe('client');
+
+        const executionLocation = panel.querySelector('#acp-agent-execution-location') as HTMLSelectElement;
+        Object.defineProperty(executionLocation, 'value', { configurable: true, value: 'agent' });
+        executionLocation.dispatchEvent(new Event('change'));
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(true);
+
+        Object.defineProperty(executionLocation, 'value', { configurable: true, value: 'client' });
+        executionLocation.dispatchEvent(new Event('change'));
+        expect((panel.querySelector('#acp-agent-client-runtime-warning') as HTMLElement).hidden).toBe(false);
+
+        Array.from(transport.options).forEach((option) => (option.selected = option.value === 'stdio'));
+        const next = panel._readAcpAgentForm(profile.id);
+        expect(next.session.authMethodId).toBe('agent-login');
+        expect(next.session.mcpBindings).toEqual([{ serverId: 'filesystem', location: 'agent' }]);
+        expect(next.session.mcpPolicy).toBe('custom');
+        expect(next.timeouts).toEqual({ connectMs: 15000, promptMs: 600000 });
+    });
+
+    test('defaults external MCP forwarding to none and only shows server choices for custom policy', () => {
+        const panel = createPanel();
+        panel.currentData.applications = {
+            acpmgr: { agents: [] },
+            mcpmgr: { servers: [{ id: 'filesystem', name: 'Filesystem', enabled: true }] }
+        };
+
+        panel.showAcpAgentEditModal(-1);
+
+        const policy = panel.querySelector('#acp-agent-mcp-policy') as HTMLSelectElement;
+        const customFields = panel.querySelector('#acp-agent-custom-mcp-fields') as HTMLElement;
+        expect(policy.value).toBe('none');
+        expect(customFields.hidden).toBe(true);
+
+        Array.from(policy.options).forEach((option) => (option.selected = option.value === 'enabled'));
+        policy.dispatchEvent(new Event('change'));
+        expect(customFields.hidden).toBe(true);
+
+        Array.from(policy.options).forEach((option) => (option.selected = option.value === 'custom'));
+        policy.dispatchEvent(new Event('change'));
+        expect(customFields.hidden).toBe(false);
+    });
+
+    test('discovers ACP session options and writes a selected model to the profile JSON', async () => {
+        const panel = createPanel();
+        const profile = {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'OpenDesk ACP',
+            session: { configOptions: {} },
+            transport: { type: 'stdio', command: 'node', args: [] }
+        };
+        panel.innerHTML = `
+            <textarea id="acp-agent-config-options">{}</textarea>
+            <select id="acp-agent-auth-method"><option value="">None</option></select>
+            <div id="acp-agent-discovered-config" hidden><div id="acp-agent-discovered-config-controls"></div></div>
+            <div id="acp-agent-test-result" hidden></div>`;
+        panel._readAcpAgentForm = jest.fn(() => profile);
+        window.applicationRegistryAPI = {
+            callMainWorld: jest.fn(async () => ({
+                agentInfo: { name: 'OpenCode' },
+                configOptions: [
+                    {
+                        id: 'model',
+                        name: 'Model',
+                        type: 'select',
+                        category: 'model',
+                        currentValue: 'opencode/big-pickle',
+                        options: [
+                            { value: 'opencode/big-pickle', name: 'Big Pickle' },
+                            { value: 'opencode/deepseek-v4-flash-free', name: 'DeepSeek Free' }
+                        ]
+                    }
+                ],
+                authMethods: [
+                    { id: 'login', type: 'agent', name: 'Login', description: 'Agent login' },
+                    { id: 'terminal-login', type: 'terminal', name: 'Terminal login' }
+                ]
+            }))
+        };
+
+        await panel._testAcpAgent(profile.id);
+
+        const select = panel.querySelector('[data-acp-config-option-id="model"]') as HTMLSelectElement;
+        expect(select).not.toBeNull();
+        Object.defineProperty(select, 'value', {
+            configurable: true,
+            value: 'opencode/deepseek-v4-flash-free'
+        });
+        select.dispatchEvent(new Event('change'));
+        expect(JSON.parse((panel.querySelector('#acp-agent-config-options') as HTMLTextAreaElement).value)).toEqual({
+            model: 'opencode/deepseek-v4-flash-free'
+        });
+        expect(panel.querySelector('#acp-agent-test-result')?.textContent).toContain('OpenCode');
+        const authOptions = Array.from((panel.querySelector('#acp-agent-auth-method') as HTMLSelectElement).options);
+        expect(authOptions.find((option) => option.value === 'login')?.hasAttribute('disabled')).toBe(false);
+        expect(authOptions.find((option) => option.value === 'terminal-login')?.hasAttribute('disabled')).toBe(true);
+    });
+
     test.each(['1.5', '9007199254740992'])('rejects non-integer max output tokens %s', async (value) => {
         const panel = createPanel();
         panel.render();

@@ -39,6 +39,7 @@ import { NotesApplication } from '../main/applications/notes/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 import { AgentGateApplication } from '../main/applications/agentgate/app.js';
 import { AgentOfficeApplication } from '../main/applications/agentoffice/app.js';
+import { AcpMgrApplication } from '../main/applications/acpmgr/app.js';
 import { initAgentGateHook } from '../main/applications/agentgate/hook.js';
 import { WorkflowMgrApplication } from '../main/applications/workflowMgr/app.js';
 import { PluginMgrApplication } from '../main/applications/pluginmgr/app.js';
@@ -371,6 +372,7 @@ export class WorkerPlatform extends AbstractPlatform {
             PluginMgrApplication,
             AppMgrApplication,
             McpMgrApplication,
+            AcpMgrApplication,
             TodoMgrApplication,
             ChannelMgrApplication,
             KnowledgeBaseApplication,

@@ -139,7 +139,7 @@ export function extractAttemptCompletionResult(
             }
         }
     }
-    return null;
+    return task.extensions.getSubTaskCompletionResult() ?? null;
 }
 
 /**
