@@ -5,6 +5,7 @@
  * - 精确匹配（正常路径）
  * - 等号→横线纠错（如 filemgr=readFile → filemgr-readFile）
  * - 补全包名纠错（如 readFile → filemgr-readFile）
+ * - 近拼写容错（编辑距离 ≤ 1，如 filemtr-readFile → filemgr-ReadFile）
  * - 等号替换后无匹配
  * - 包名补全时多个候选（唯一性检查）
  * - 包名补全时无匹配
@@ -117,6 +118,73 @@ describe('ChatContext.getTool() 工具名称自动纠错', () => {
 
             // 精确匹配仍然能工作
             const tool = chatContext.getTool('filemgr-ReadFile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+    });
+
+    // ========== 近拼写容错（编辑距离 ≤ 1） ==========
+
+    describe('近拼写容错（编辑距离 ≤ 1）', () => {
+        test('toolset 名错 1 个字母时自动纠错（filemtr → filemgr）', () => {
+            const tool = chatContext.getTool('filemtr-ReadFile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('tool 名错 1 个字母时自动纠错（ReadFile → ReadFle）', () => {
+            const tool = chatContext.getTool('filemgr-ReadFle');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('tool 名多 1 个字母（插入）时自动纠错', () => {
+            const tool = chatContext.getTool('filemgr-ReadFfile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('tool 名少 1 个字母（删除）时自动纠错', () => {
+            const tool = chatContext.getTool('filemgr-eadFile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('仅大小写不同的输入也能容错', () => {
+            const tool = chatContext.getTool('filemgr-readfile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('等号 + 拼写错误组合也能容错（filemtr=ReadFile）', () => {
+            const tool = chatContext.getTool('filemtr=ReadFile');
+            expect(tool).toBeDefined();
+            expect(tool!.name).toBe('ReadFile');
+        });
+
+        test('误差超过 1 个字母时无法纠错', () => {
+            const tool = chatContext.getTool('filemxy-ReadFile');
+            expect(tool).toBeUndefined();
+        });
+
+        test('长度差超过 1 时无法纠错', () => {
+            const tool = chatContext.getTool('filemgrxx-ReadFile');
+            expect(tool).toBeUndefined();
+        });
+
+        test('多个候选误差都在 1 个字母以内时放弃纠错', () => {
+            chatContext.attachToolsets(makeToolset('filemts', ['ReadFile']));
+
+            // filemtr 与 filemgr、filemts 各差 1 个字母，不唯一
+            const tool = chatContext.getTool('filemtr-ReadFile');
+            expect(tool).toBeUndefined();
+        });
+
+        test('误差为 2 的候选不干扰距离为 1 的唯一候选', () => {
+            chatContext.attachToolsets(makeToolset('filemxy', ['ReadFile']));
+
+            // filemtr 与 filemxy 差 2 个字母，不构成候选；filemgr 距离 1，唯一匹配
+            const tool = chatContext.getTool('filemtr-ReadFile');
             expect(tool).toBeDefined();
             expect(tool!.name).toBe('ReadFile');
         });

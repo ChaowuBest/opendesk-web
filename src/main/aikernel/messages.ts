@@ -2541,6 +2541,38 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
 
 /**
+ * 计算两个字符串的编辑距离（Levenshtein distance）。
+ * 仅用于工具名近拼写容错，字符串很短，直接做完整 DP 即可。
+ */
+function levenshteinDistance(a: string, b: string): number {
+    if (a === b) return 0;
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+
+    // 保证 a 为较短字符串，减少内存占用
+    if (a.length > b.length) {
+        [a, b] = [b, a];
+    }
+
+    let prev: number[] = [];
+    for (let j = 0; j <= b.length; j++) {
+        prev[j] = j;
+    }
+    for (let i = 1; i <= a.length; i++) {
+        const cur: number[] = [i];
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(
+                prev[j] + 1, // 删除
+                cur[j - 1] + 1, // 插入
+                prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1) // 替换
+            );
+        }
+        prev = cur;
+    }
+    return prev[b.length];
+}
+
+/**
  * Chat context for a chat session
  */
 export class ChatContext {
@@ -2598,6 +2630,35 @@ export class ChatContext {
                 logger.warn(`工具名称自动纠错(补全包名): "${name}" -> "${candidateFullName}"`);
                 return candidate;
             }
+        }
+
+        // 4. 自动纠错：模型输出的完整名与某个工具仅相差 1 个字母（如 filemtr-readFile → filemgr-ReadFile）
+        //    先归一化等号，再按大小写不敏感比较编辑距离，避免把大小写差异也计入误差。
+        const normalizedName = name.replace(/=/g, '-');
+        const loweredName = normalizedName.toLowerCase();
+        let fuzzyCandidate: BaseTool<any> | undefined;
+        let fuzzyCandidateFullName = '';
+        for (const [key, tool] of tools) {
+            // 长度差超过 1，编辑距离必然大于 1，跳过以节省计算
+            if (Math.abs(key.length - loweredName.length) > 1) {
+                continue;
+            }
+            const dist = levenshteinDistance(loweredName, key.toLowerCase());
+            if (dist <= 1) {
+                if (fuzzyCandidate) {
+                    // 多个工具都满足误差，不唯一，放弃纠错
+                    logger.warn(
+                        `工具名称 "${name}" 与多个工具误差在 1 个字母以内 (${fuzzyCandidateFullName}, ${key})，无法自动纠错`
+                    );
+                    return undefined;
+                }
+                fuzzyCandidate = tool;
+                fuzzyCandidateFullName = key;
+            }
+        }
+        if (fuzzyCandidate) {
+            logger.warn(`工具名称自动纠错(近拼写容错): "${name}" -> "${fuzzyCandidateFullName}"`);
+            return fuzzyCandidate;
         }
 
         return undefined;
