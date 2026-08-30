@@ -201,4 +201,61 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         expect(task.getFileReadState().size).toBe(0);
     });
+
+    test('resubmit while active preserves old history without materializing current TailCard state', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const task = new TaskState(manager, null);
+        task.task_name = 'existing task';
+        const oldPrompt = new UserMessage('old internal prompt');
+        oldPrompt.internal = true;
+        const realUser = new UserMessage('edit me');
+        task.chat_context.appendMessage(oldPrompt);
+        task.chat_context.appendMessage(realUser);
+        task.chat_context.appendMessage(new AssistantMessage());
+        task.setFrontendTailCardSection('knowledge-mode', 'new request-only prompt');
+        task.markCompacted();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+
+        await task.rewindToUserMessage(realUser.message_id, { resubmit: true });
+
+        expect(
+            task.chat_context.messages
+                .filter((message): message is UserMessage => message instanceof UserMessage)
+                .map((message) => message.getPlainText())
+        ).toEqual(['old internal prompt', 'edit me']);
+        expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('new request-only prompt');
+    });
+
+    test('resubmit after removing a TailCard section preserves old history', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const task = new TaskState(manager, null);
+        task.task_name = 'existing task';
+        const oldPrompt = new UserMessage('old internal prompt');
+        oldPrompt.internal = true;
+        const realUser = new UserMessage('edit me');
+        task.chat_context.appendMessage(oldPrompt);
+        task.chat_context.appendMessage(realUser);
+        task.chat_context.appendMessage(new AssistantMessage());
+        task.setFrontendTailCardSection('knowledge-mode', 'current request-only prompt');
+        task.removeFrontendTailCardSection('knowledge-mode');
+        task.markCompacted();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+
+        await task.rewindToUserMessage(realUser.message_id, { resubmit: true });
+
+        expect(
+            task.chat_context.messages
+                .filter((message): message is UserMessage => message instanceof UserMessage)
+                .map((message) => message.getPlainText())
+        ).toEqual(['old internal prompt', 'edit me']);
+        expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('current request-only prompt');
+    });
 });

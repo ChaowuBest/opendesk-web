@@ -26,6 +26,7 @@ import { getTempDir, getHomeDir } from '../../utils/temp.js';
 import { cleanPathInput } from '../../../utils/path.js';
 import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
+import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';
@@ -3208,15 +3209,41 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
 // ==================== SemanticSearch 工具 ====================
 
+const semanticSearchScopeSchema = z.discriminatedUnion('type', [
+    z.object({
+        type: z.literal('path'),
+        path: z.string().min(1)
+    }),
+    z.object({
+        type: z.literal('paths'),
+        paths: z.array(z.string().min(1)).min(1).max(FILEMGR_SEARCH_MAX_PATHS)
+    })
+]);
+
 const semanticSearchSchema = z.object({
     query: z.string().describe('要进行语义模糊搜索的内容，一句话简单的自然语言描述即可'),
-    maxResults: z.number().int().min(1).max(30).default(30).describe('最大返回结果数，默认 30，最多 30')
+    maxResults: z.number().int().min(1).max(30).default(30).describe('最大返回结果数，默认 30，最多 30'),
+    scope: z
+        .preprocess((value) => {
+            if (typeof value !== 'string') {
+                return value;
+            }
+            try {
+                return JSON.parse(value);
+            } catch {
+                return value;
+            }
+        }, semanticSearchScopeSchema)
+        .optional()
 });
+
+export type FilemgrSearchScope = z.output<typeof semanticSearchScopeSchema>;
 
 interface SemanticSearchItem {
     path: string;
     filename?: string;
     snippet?: string | null;
+    snippets?: Array<{ chunkId?: string; text: string; score?: number }>;
     matchTypes?: string[];
     score?: number;
 }
@@ -3229,7 +3256,13 @@ interface SemanticSearchResult {
     code?: string;
 }
 
-type SemanticSearchExecutor = (query: string, maxResults: number) => Promise<SemanticSearchResult>;
+type SemanticSearchExecutor = (
+    query: string,
+    maxResults: number,
+    scope?: FilemgrSearchScope
+) => Promise<SemanticSearchResult>;
+
+export const SEMANTIC_SEARCH_SNIPPET_BUDGET_CHARS = 8000;
 
 function normalizeMarkdownText(value: unknown): string {
     return String(value ?? '')
@@ -3283,6 +3316,7 @@ export function formatSemanticSearchMarkdown(result: SemanticSearchResult, maxRe
             `- ${t('filemgr.semanticSearch.result.noResults', { query: normalizeMarkdownText(result?.query) })}`
         );
     } else {
+        let snippetBudget = SEMANTIC_SEARCH_SNIPPET_BUDGET_CHARS;
         for (const item of results) {
             const matchTypes = formatSemanticMatchTypes(item.matchTypes);
             const matchPart = matchTypes ? ` - ${t('filemgr.semanticSearch.result.match')}: ${matchTypes}` : '';
@@ -3290,8 +3324,18 @@ export function formatSemanticSearchMarkdown(result: SemanticSearchResult, maxRe
             lines.push(
                 `  - ${t('filemgr.semanticSearch.result.title')}: ${truncateMarkdownText(item.filename || path.basename(item.path))}`
             );
-            if (item.snippet) {
-                lines.push(`  - ${t('filemgr.semanticSearch.result.chunk')}: ${truncateMarkdownText(item.snippet)}`);
+            const snippets = item.snippets?.length
+                ? item.snippets.map((snippet) => snippet.text)
+                : item.snippet
+                  ? [item.snippet]
+                  : [];
+            if (snippets.length) {
+                for (const snippet of snippets) {
+                    const rendered = truncateMarkdownText(snippet);
+                    if (rendered.length > snippetBudget) break;
+                    lines.push(`  - ${t('filemgr.semanticSearch.result.chunk')}: ${rendered}`);
+                    snippetBudget -= rendered.length;
+                }
             } else {
                 lines.push(
                     `  - ${t('filemgr.semanticSearch.result.chunk')}: ${t('filemgr.semanticSearch.result.noChunk')}`
@@ -3310,8 +3354,6 @@ export function formatSemanticSearchMarkdown(result: SemanticSearchResult, maxRe
         );
     }
 
-    lines.push('');
-    lines.push(t('filemgr.semanticSearch.result.readHint'));
     return lines.join('\n');
 }
 
@@ -3390,10 +3432,10 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
     async executeCommand(args: z.output<typeof semanticSearchSchema>): Promise<string> {
         const query = typeof args.query === 'string' ? args.query.trim() : '';
         const maxResults = Math.max(1, Math.min(Number(args.maxResults) || 30, 30));
-        if (!query) {
+        if (!query && args.scope === undefined) {
             return formatSemanticSearchMarkdown({ query, results: [], totalHits: 0 }, maxResults);
         }
-        const result = await this.searchIndexedFiles(query, maxResults);
+        const result = await this.searchIndexedFiles(query, maxResults, args.scope);
         return formatSemanticSearchMarkdown(result, maxResults);
     }
 }

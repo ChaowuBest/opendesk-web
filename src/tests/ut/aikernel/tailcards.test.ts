@@ -84,6 +84,7 @@ describe('Hooks.onTailcardGenerate / buildTailcards', () => {
     test('isolates callback errors and applies per-module maxChars', async () => {
         const task = new TaskState(new TaskManagerState());
         const errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+        const failingCallbackOrder = task.hooks.tailcardHooks.length;
         task.hooks.onTailcardGenerate(() => {
             throw new Error('broken tail');
         });
@@ -94,7 +95,10 @@ describe('Hooks.onTailcardGenerate / buildTailcards', () => {
         expect(result).toContain('## Section: limited');
         expect(result).toContain('ab...');
         expect(result).not.toContain('abcdefghij');
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('callback 1 failed'), expect.any(Error));
+        expect(errorSpy).toHaveBeenCalledWith(
+            expect.stringContaining(`callback ${failingCallbackOrder} failed`),
+            expect.any(Error)
+        );
     });
 
     test('keeps registrations isolated between tasks', async () => {
@@ -136,6 +140,7 @@ describe('Hooks.onTailcardGenerate / buildTailcards', () => {
 
     test('installs EvidenceCard once per task and checks its feature switch on every request', async () => {
         const task = new TaskState(new TaskManagerState());
+        const initialTailcardHookCount = task.hooks.tailcardHooks.length;
 
         expect(await task.hooks.buildTailcards({ task, ...createContext() })).toBeUndefined();
 
@@ -160,6 +165,6 @@ describe('Hooks.onTailcardGenerate / buildTailcards', () => {
             }
         });
         expect(await task.hooks.buildTailcards({ task, ...createContext() })).toBeUndefined();
-        expect(task.hooks.tailcardHooks).toHaveLength(1);
+        expect(task.hooks.tailcardHooks).toHaveLength(initialTailcardHookCount);
     });
 });

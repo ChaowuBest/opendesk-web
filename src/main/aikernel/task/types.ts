@@ -37,6 +37,11 @@ export interface TaskUsageSnapshot {
     live?: TaskLiveUsageSnapshot;
 }
 
+export interface TailCardSectionEntry {
+    id: string;
+    content: string;
+}
+
 export interface TaskRuntimeInterrupt {
     requested: boolean;
     reason: string;

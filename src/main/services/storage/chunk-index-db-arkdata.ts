@@ -98,6 +98,7 @@ export async function dropChunkIndexStoreArkdata(dbPath: string): Promise<void> 
 }
 
 export class ChunkIndexDBArkdata implements IChunkIndexDB {
+    readonly backend = 'arkdata' as const;
     private readonly dbPath: string;
     private readonly dimension: number;
     private readonly tableName = 'chunk_index';

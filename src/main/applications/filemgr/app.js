@@ -20,8 +20,6 @@ import FileManagerWorker from './worker';
 import { extractText as extractFileTextDirect } from './parser/extract.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
-import { buildFileNavigationSkill } from './skills.js';
-import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 import './harness/index.js';
 
@@ -122,6 +120,14 @@ class FileMgrApplication extends BaseApplication {
         return FileManagerWorker;
     }
 
+    async searchIndexedFiles(query, options = {}) {
+        const resp = await this.callWorker('searchIndexedFiles', query, options);
+        if (resp?.status === 'error') {
+            throw new Error(resp.message ?? t('filemgr.search.failed'));
+        }
+        return resp?.data;
+    }
+
     static getConfigSchema() {
         return z.object({
             enabled: z.boolean().describe('启用AI文件系统').default(false),
@@ -160,21 +166,12 @@ class FileMgrApplication extends BaseApplication {
         });
 
         toolset.addTool(
-            new SemanticSearchTool(async (query, maxResults) => {
-                const resp = await this.callWorker('searchIndexedFiles', query, { topK: maxResults });
-                if (resp?.status === 'error') {
-                    throw new Error(resp.message ?? '搜索失败');
-                }
-                return resp?.data;
-            })
+            new SemanticSearchTool((query, maxResults, scope) =>
+                this.searchIndexedFiles(query, { topK: maxResults, scope })
+            )
         );
 
         return [toolset];
-    }
-
-    async getSkills() {
-        const semanticSearchAvailable = Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
-        return [Skill.parseMd(buildFileNavigationSkill({ semanticSearchAvailable }))];
     }
 
     openPath(filePath) {
@@ -240,6 +237,9 @@ class FileMgrApplication extends BaseApplication {
             const total = (source.total_files ?? 0).toLocaleString();
             const embedded = (source.embedded_count ?? 0).toLocaleString();
             const pending = (source.pending_count ?? 0).toLocaleString();
+            if (source.paused === true) {
+                return t('renderer.filemgr.source.pausedWithCount', { count: total });
+            }
             if (source.state === 'unavailable') return `路径不可访问 · 上次 ${total} 文件`;
             if (source.state === 'pending') return '等待扫描';
             if (source.state === 'scanning') return `扫描中 · ${embedded} / ${total} 文件（待处理 ${pending}）`;

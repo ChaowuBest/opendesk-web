@@ -19,6 +19,8 @@ import { withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { parseAndChunk } from './parser/index.js';
 import path from 'path';
 import fs from 'fs';
+import { t } from '../../../locale/index.js';
+import { normalizeFilemgrSearchScope } from './search/indexed.js';
 // ── Code constants (not in config schema) ──────────────────────────
 const CHUNK_LEVEL = 'structured';
 const NORMAL_SCAN_INTERVAL_MS = 5 * 60 * 1000;
@@ -42,6 +44,45 @@ const ACCEPTING_SEMANTIC_WRITE_STATE = Object.freeze({
     chunk: Object.freeze({ acceptingWrites: true })
 });
 
+function scopedSearchDiagnosticsEnabled() {
+    return process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS === '1';
+}
+
+function scopeOperatorValue(scope) {
+    if (!scope) return undefined;
+    return scope.type === 'path' ? scope.path : scope.paths;
+}
+
+function logScopedSearchDiagnostics(route, scope, result) {
+    if (!scope || !scopedSearchDiagnosticsEnabled()) return;
+    logger.info(
+        `[filemgr] scoped search diagnostics ${JSON.stringify({
+            route,
+            scopeType: scope.type,
+            ...(scope.type === 'path' ? { scopePath: scope.path } : { scopePaths: scope.paths }),
+            diagnostics: result?.diagnostics
+        })}`
+    );
+}
+
+export function buildIndexedFilePreconditions({ scope, requireEmbedded }) {
+    return [
+        { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+        ...(requireEmbedded ? [{ indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }] : []),
+        { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+        ...(scope
+            ? [
+                  {
+                      indexer: 'BaseIndexer',
+                      field: 'item_id',
+                      operator: 'path_descendant_or_self',
+                      value: scopeOperatorValue(scope)
+                  }
+              ]
+            : [])
+    ];
+}
+
 // ── User-facing warning strings ────────────────────────────────────
 const WARNINGS = {
     NO_EMBEDDING_MODEL: '未配置向量嵌入模型，语义搜索不可用。请运行 /config 配置"向量嵌入模型"。',
@@ -50,7 +91,16 @@ const WARNINGS = {
     EMBED_API_DOWN: 'embedding API 暂时不可用，请稍后重试。',
     DEFERRED: '文件索引尚未就绪，请稍后重试。',
     READONLY_MODE: 'READONLY_MODE',
-    SEMANTIC_PARTIAL: '部分智能内容搜索暂不可用，已显示可用结果'
+    SEMANTIC_PARTIAL: '部分智能内容搜索暂不可用，已显示可用结果',
+    get SEARCH_PARTIAL() {
+        return t('filemgr.search.partial');
+    },
+    get SEARCH_FAILED() {
+        return t('filemgr.search.failed');
+    },
+    get INVALID_SCOPE() {
+        return t('filemgr.search.invalid_scope');
+    }
 };
 
 const CODES = {
@@ -58,7 +108,9 @@ const CODES = {
     EMBED_API_DOWN: 'EMBED_API_DOWN',
     INDEX_NOT_READY: 'INDEX_NOT_READY',
     SEMANTIC_PARTIAL: 'SEMANTIC_PARTIAL',
-    SEARCH_FAILED: 'SEARCH_FAILED'
+    SEARCH_FAILED: 'SEARCH_FAILED',
+    SEARCH_PARTIAL: 'SEARCH_PARTIAL',
+    INVALID_SCOPE: 'INVALID_SCOPE'
 };
 
 function toStorageTimestamp(value) {
@@ -174,12 +226,11 @@ function limitChunksForEmbedding(chunks) {
 
 // ── Search result shape ────────────────────────────────────────────
 /**
- * 三个 search 方法（searchFileByName / searchFileByContent /
- * searchFilesByKeyword）都返回 SearchResultItem[] —— 业务字段，永远不
+ * 文件级 search 方法返回 SearchResultItem[] —— 业务字段，永远不
  * 暴露内部存储字段（item_id/item_type/ext/chunk_text/root_refs）。
  *
  * 注意：FSStorage 的 search 方法假设 this.storage 已 initialize。deferred
- * 状态检查由 worker 层负责（worker.js searchFileByName/Content），不要绕
+ * 状态检查由 worker 层负责，不要绕
  * 过 worker 直接调 FSStorage 的 search 方法。
  *
  * @typedef {object} SearchResultItem
@@ -187,7 +238,7 @@ function limitChunksForEmbedding(chunks) {
  * @property {string} filename    文件名
  * @property {number} modified    最近修改时间戳（毫秒）
  * @property {number} size        文件大小（字节）
- * @property {string | null} snippet  命中的内容片段；仅 searchFileByContent 有值，其他方法为 null
+ * @property {string | null} snippet  命中的内容片段
  */
 
 // ── Zod schema ─────────────────────────────────────────────────────
@@ -531,6 +582,10 @@ class FSStorage {
                     if (val.last_scan_at !== null && typeof val.last_scan_at !== 'number') {
                         throw new Error(`invalid root last_scan_at: ${key}`);
                     }
+                    val.paused ??= false;
+                    if (typeof val.paused !== 'boolean') {
+                        throw new Error(`invalid root paused: ${key}`);
+                    }
                 }
                 this.scannerState = state;
                 return;
@@ -555,6 +610,34 @@ class FSStorage {
         // to the caller (not swallowed).
         this._stateWriteChain = this._stateWriteChain.then(writeOp, writeOp);
         return this._stateWriteChain;
+    }
+
+    async _writeScannerStateSnapshot(state, commit) {
+        // Freeze pause state at call time, then commit memory before the write chain advances.
+        const serialized = JSON.stringify(state, null, 2);
+        const writeOp = async () => {
+            const tmp = this._scannerStatePath + '.tmp';
+            await fs.promises.writeFile(tmp, serialized, 'utf-8');
+            await fs.promises.rename(tmp, this._scannerStatePath);
+            commit();
+        };
+        this._stateWriteChain = this._stateWriteChain.then(writeOp, writeOp);
+        return this._stateWriteChain;
+    }
+
+    async setRootPaused(root, paused) {
+        const rootState = this.scannerState.roots[root];
+        if (!rootState) throw new Error(`unknown scanner root: ${root}`);
+        const nextState = {
+            ...this.scannerState,
+            roots: {
+                ...this.scannerState.roots,
+                [root]: { ...rootState, paused }
+            }
+        };
+        await this._writeScannerStateSnapshot(nextState, () => {
+            rootState.paused = paused;
+        });
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
@@ -1753,7 +1836,8 @@ class FSStorage {
      * @param {string} query
      * @param {{ topK?: number }} [opts]
      */
-    async searchFileByName(query, { topK = 20 } = {}) {
+    async searchFileByName(query, { topK = 20, scope } = {}) {
+        scope = normalizeFilemgrSearchScope(scope);
         if (!query?.trim()) {
             return this._wrapResult(query, [], 0, null);
         }
@@ -1775,7 +1859,7 @@ class FSStorage {
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
         }
 
-        const result = await this.storage.search([
+        const conditions = [
             {
                 indexer: 'VectorIndexer',
                 field: 'filename',
@@ -1783,9 +1867,18 @@ class FSStorage {
                 value: queryEmbedding,
                 vectorQuery: { topK, metric: 'cosine' }
             },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
-            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-        ]);
+            ...buildIndexedFilePreconditions({ scope, requireEmbedded: true })
+        ];
+        const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
+        const result = scope
+            ? await this.storage.searchScope(
+                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                  {
+                      collectDiagnostics
+                  }
+              )
+            : await this.storage.search(conditions);
+        logScopedSearchDiagnostics('name_semantic', scope, result);
 
         let items = result.items.map((it) => ({
             path: it.item.item_id,
@@ -1809,7 +1902,12 @@ class FSStorage {
      * @param {string} query
      * @param {{ topK?: number }} [opts]
      */
-    async searchFileByContent(query, { topK = 20 } = {}) {
+    async searchIndexedChunks(query, { topK, scope } = {}) {
+        const normalizedTopK = Number(topK);
+        if (!Number.isInteger(normalizedTopK) || normalizedTopK < 1 || normalizedTopK > 5000) {
+            throw new TypeError('searchIndexedChunks topK must be an integer in 1..5000');
+        }
+        scope = normalizeFilemgrSearchScope(scope);
         if (!query?.trim()) {
             return this._wrapResult(query, [], 0, null);
         }
@@ -1827,68 +1925,70 @@ class FSStorage {
             // Short retry for transient 429s; user-waiting path so cap small.
             queryEmbedding = await withRateLimitRetry(() => LLM.embed(query, this._dimParam()), { maxRetries: 2 });
         } catch (err) {
-            logger.warn(`[filemgr] searchFileByContent embed failed: ${err.message}`);
+            logger.warn(`[filemgr] searchIndexedChunks embed failed: ${err.message}`);
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
         }
 
-        const chunkTopK = topK * 3;
-        const result = await this.storage.search([
+        const conditions = [
             {
                 indexer: 'ChunkIndexer',
                 field: 'chunk_text',
                 operator: 'vector_near',
                 value: queryEmbedding,
-                vectorQuery: { topK: chunkTopK, metric: 'cosine' }
+                vectorQuery: { topK: normalizedTopK, metric: 'cosine' }
             },
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
-            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-        ]);
-
-        const fileMap = new Map();
-        for (const it of result.items) {
-            const filePath = it.item.item_id;
-            const score = it.ChunkScore ?? 0;
-            if (!fileMap.has(filePath) || fileMap.get(filePath)._score < score) {
-                fileMap.set(filePath, {
-                    path: filePath,
-                    filename: it.item.filename,
-                    modified: it.item.modified,
-                    size: it.item.size,
-                    snippet: it.chunk_text,
-                    semanticScore: score,
-                    _score: score
-                });
+            ...buildIndexedFilePreconditions({ scope, requireEmbedded: true })
+        ];
+        const collectDiagnostics = scope && scopedSearchDiagnosticsEnabled();
+        const result = scope
+            ? await this.storage.searchScope(
+                  { preconditions: conditions.slice(1), targetCondition: conditions[0] },
+                  {
+                      collectDiagnostics
+                  }
+              )
+            : await this.storage.search(conditions);
+        logScopedSearchDiagnostics('content_semantic', scope, result);
+        let items = result.items.slice(0, normalizedTopK).map((it) => ({
+            chunk: { id: it.chunk_id, text: it.chunk_text },
+            score: it.ChunkScore ?? 0,
+            source: {
+                path: it.item.item_id,
+                filename: it.item.filename,
+                modified: it.item.modified,
+                size: it.item.size,
+                refCount: it.item.ref_count,
+                rootRefs: it.item.root_refs
             }
-        }
-
-        let aggregated = Array.from(fileMap.values());
-        aggregated.sort((a, b) => b._score - a._score);
-        aggregated = aggregated.slice(0, topK);
-
-        let items = aggregated.map(({ _score, ...rest }) => rest);
+        }));
 
         try {
-            items = await LLM.rerank(query, items, (item) => item.snippet);
+            items = await LLM.rerank(query, items, (item) => item.chunk.text);
         } catch (err) {
-            logger.warn(`[filemgr] searchFileByContent rerank failed: ${err.message}`);
+            logger.warn(`[filemgr] searchIndexedChunks rerank failed: ${err.message}`);
         }
-
-        return this._wrapResult(query, items, result.totalCount);
+        return this._wrapResult(query, items, items.length);
     }
 
     /**
      * Internal keyword route for aggregated indexed search. Includes storage metadata
      * needed by worker-side final filtering; do not expose directly to renderer callers.
      */
-    async searchIndexedFilesByKeyword(keyword, { limit = 150 } = {}) {
-        const result = await this.storage.search(
-            [
-                { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
-                { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-            ],
-            { limit, orderBy: { field: 'modified', direction: 'DESC' } }
-        );
+    async searchIndexedFilesByKeyword(keyword, { limit = 150, scope } = {}) {
+        scope = normalizeFilemgrSearchScope(scope);
+        const conditions = scope
+            ? [
+                  { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
+                  ...buildIndexedFilePreconditions({ scope, requireEmbedded: false })
+              ]
+            : [
+                  { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
+                  { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
+              ];
+        const result = await this.storage.search(conditions, {
+            limit,
+            orderBy: { field: 'modified', direction: 'DESC' }
+        });
         const rows = result.items.map((it) => ({
             path: it.item.item_id,
             filename: it.item.filename,

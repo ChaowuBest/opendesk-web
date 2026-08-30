@@ -106,6 +106,36 @@ describe('application frame task manager proxy', () => {
             progress: { task_status: 'stopped' }
         });
         expect(taskUpdate).toHaveBeenCalledTimes(1);
+
+        const listPromise = (window as any).taskManagerAPI.listFrontendTailCardSections('task-1');
+        const listRequest = postMessage.mock.calls[4][0];
+        expect(listRequest).toMatchObject({
+            channel: CHANNEL,
+            api: 'taskManager',
+            method: 'listFrontendTailCardSections',
+            args: ['task-1']
+        });
+        dispatchMessage(window, {
+            channel: CHANNEL,
+            requestId: listRequest.requestId,
+            result: [{ id: 'renderer.context', content: 'opaque' }]
+        });
+        await expect(listPromise).resolves.toEqual([{ id: 'renderer.context', content: 'opaque' }]);
+
+        const setPromise = (window as any).taskManagerAPI.setFrontendTailCardSection('task-1', 'id', 'content');
+        const setRequest = postMessage.mock.calls[5][0];
+        expect(setRequest).toMatchObject({
+            channel: CHANNEL,
+            api: 'taskManager',
+            method: 'setFrontendTailCardSection',
+            args: ['task-1', 'id', 'content']
+        });
+        dispatchMessage(window, {
+            channel: CHANNEL,
+            requestId: setRequest.requestId,
+            error: 'write failed'
+        });
+        await expect(setPromise).rejects.toThrow('write failed');
     });
 
     test('host relays task events and application tool results', async () => {

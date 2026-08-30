@@ -19,6 +19,7 @@ import type {
     IBaseIndexDB
 } from './base-indexer.js';
 import type {
+    ArkDataBatchOptions,
     ArkDataExecOptions,
     ArkDataRow,
     ArkDataValueType,
@@ -33,8 +34,14 @@ import {
     arkDataNonNegativeIntegerLiteral,
     normalizeArkDataResultLimit
 } from './arkdata-result-limit.js';
+import {
+    normalizePathDescendantOrSelfValues,
+    pathDescendantOrSelfSqlValues
+} from './path-scope.js';
 
 const ARKDATA_SELECT_PAGE_ROWS = ARKDATA_MAX_RESULT_ROWS;
+
+type BaseWriteGroup = { columns: string[]; rows: any[][] };
 
 function describeArkDataError(error: unknown): Record<string, any> {
     const err = error as any;
@@ -154,6 +161,37 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
 
     private params(values: any[]): ArkDataValueType[] {
         return values.map((value) => this.scalar(value));
+    }
+
+    private hasDuplicateItemIds(records: Record<string, any>[]): boolean {
+        const seen = new Set<string>();
+        for (const record of records) {
+            const itemId = String(record.item_id);
+            if (seen.has(itemId)) return true;
+            seen.add(itemId);
+        }
+        return false;
+    }
+
+    private addWriteGroupRow(groups: Map<string, BaseWriteGroup>, columns: string[], values: any[]): void {
+        const key = columns.join('\0');
+        let group = groups.get(key);
+        if (!group) {
+            group = { columns, rows: [] };
+            groups.set(key, group);
+        }
+        group.rows.push(values);
+    }
+
+    private async executeMany(sql: string, rows: any[][]): Promise<void> {
+        if (rows.length === 0) return;
+        const opts: ArkDataBatchOptions = { ...(this.opts() ?? {}), maxRows: 1000 };
+        await this.kit().executePreparedManyBatched(
+            this.storeId,
+            sql,
+            rows.map((row) => this.params(row)),
+            opts
+        );
     }
 
     private sqlLimitLiteral(value: unknown): string {
@@ -415,6 +453,38 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         );
         if (normalizedRecords.length === 0) return 0;
         const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => String(record.item_id)));
+        if (this.hasDuplicateItemIds(normalizedRecords)) {
+            return await this.insertManySequentialForArkData(normalizedRecords, existingRows);
+        }
+        return await this.transaction(async () => {
+            let count = 0;
+            const seenItemIds = new Set(existingRows.keys());
+            const insertGroups = new Map<string, BaseWriteGroup>();
+            for (const record of normalizedRecords) {
+                const itemId = String(record.item_id);
+                if (seenItemIds.has(itemId)) continue;
+                seenItemIds.add(itemId);
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
+                const values = columns.map((col) => record[col]);
+                this.addWriteGroupRow(insertGroups, columns, values);
+                count++;
+            }
+            for (const group of insertGroups.values()) {
+                const placeholders = group.columns.map(() => '?').join(', ');
+                await this.executeMany(
+                    `INSERT INTO ${this.tableName} (${group.columns.join(', ')}) VALUES (${placeholders})`,
+                    group.rows
+                );
+            }
+            return count;
+        });
+    }
+
+    private async insertManySequentialForArkData(
+        normalizedRecords: Record<string, any>[],
+        existingRows: Map<string, Record<string, any>>
+    ): Promise<number> {
         return await this.transaction(async () => {
             let count = 0;
             const seenItemIds = new Set(existingRows.keys());
@@ -449,6 +519,54 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         );
         if (normalizedRecords.length === 0) return 0;
         const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => String(record.item_id)));
+        if (this.hasDuplicateItemIds(normalizedRecords)) {
+            return await this.upsertManySequentialForArkData(normalizedRecords, existingRows);
+        }
+        return await this.transaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            const insertGroups = new Map<string, BaseWriteGroup>();
+            const updateGroups = new Map<string, BaseWriteGroup>();
+            for (const record of normalizedRecords) {
+                const itemId = String(record.item_id);
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
+                const updateColumns = columns.filter((col) => col !== 'item_id');
+                const existing = currentRows.get(itemId);
+                if (!existing) {
+                    const values = columns.map((col) => record[col]);
+                    this.addWriteGroupRow(insertGroups, columns, values);
+                    count++;
+                    currentRows.set(itemId, { ...record });
+                    continue;
+                }
+                if (updateColumns.length === 0) continue;
+                const hasChanges = updateColumns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const values = [...updateColumns.map((col) => record[col]), itemId];
+                this.addWriteGroupRow(updateGroups, updateColumns, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            for (const group of insertGroups.values()) {
+                const placeholders = group.columns.map(() => '?').join(', ');
+                await this.executeMany(
+                    `INSERT INTO ${this.tableName} (${group.columns.join(', ')}) VALUES (${placeholders})`,
+                    group.rows
+                );
+            }
+            for (const group of updateGroups.values()) {
+                const setClause = group.columns.map((col) => `${col} = ?`).join(', ');
+                await this.executeMany(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, group.rows);
+            }
+            return count;
+        });
+    }
+
+    private async upsertManySequentialForArkData(
+        normalizedRecords: Record<string, any>[],
+        existingRows: Map<string, Record<string, any>>
+    ): Promise<number> {
         return await this.transaction(async () => {
             let count = 0;
             const currentRows = new Map(existingRows);
@@ -526,6 +644,38 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         );
         if (normalizedRecords.length === 0) return 0;
         const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => String(record.item_id)));
+        if (this.hasDuplicateItemIds(normalizedRecords)) {
+            return await this.updateManySequentialForArkData(normalizedRecords, existingRows);
+        }
+        return await this.transaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            const updateGroups = new Map<string, BaseWriteGroup>();
+            for (const record of normalizedRecords) {
+                const itemId = String(record.item_id);
+                const columns = this.getRecordColumns(record).filter((col) => col !== 'item_id');
+                if (columns.length === 0) continue;
+                const existing = currentRows.get(itemId);
+                if (!existing) continue;
+                const hasChanges = columns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const values = [...columns.map((field) => record[field]), itemId];
+                this.addWriteGroupRow(updateGroups, columns, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            for (const group of updateGroups.values()) {
+                const setClause = group.columns.map((field) => `${field} = ?`).join(', ');
+                await this.executeMany(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, group.rows);
+            }
+            return count;
+        });
+    }
+
+    private async updateManySequentialForArkData(
+        normalizedRecords: Record<string, any>[],
+        existingRows: Map<string, Record<string, any>>
+    ): Promise<number> {
         return await this.transaction(async () => {
             let count = 0;
             const currentRows = new Map(existingRows);
@@ -690,7 +840,14 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             const { field, operator, value } = condition;
             const op = operator.toLowerCase() as BaseQueryOperator;
             this.validateField(field);
-            if (op === 'in' || op === 'notin') {
+            if (op === 'path_descendant_or_self') {
+                const pathClauses = normalizePathDescendantOrSelfValues(value).map((pathValue) => {
+                    const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(pathValue);
+                    params.push(normalizedPath, descendantPattern);
+                    return `(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`;
+                });
+                clauses.push(pathClauses.length === 1 ? pathClauses[0] : `(${pathClauses.join(' OR ')})`);
+            } else if (op === 'in' || op === 'notin') {
                 if (!Array.isArray(value)) throw new Error(`${operator} requires array`);
                 if (value.length === 0) {
                     clauses.push(op === 'in' ? '1 = 0' : '1 = 1');

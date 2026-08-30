@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { FileMgrApplication, formatStorageStatusBlock } from '../../../../main/applications/filemgr/app.js';
 import { ApplicationRegistry } from '../../../../main/applications/registry.js';
 import { Setting } from '../../../../main/utils/setting.js';
-import { setRuntimeLocale } from '../../../../locale/index.js';
+import { setRuntimeLocale, t } from '../../../../locale/index.js';
 
 const originalCallWorker = ApplicationRegistry.callWorker;
 const now = Date.now();
@@ -343,6 +343,28 @@ async function testSlashShowsUnavailableRootsAndVisibleRebuildEvent() {
     assert.ok(page.text.includes('⚠️ 部分扫描路径暂时不可访问，索引已保留。'));
 }
 
+async function testSlashShowsLocalizedPausedSource() {
+    const page = await runSlashStatus(
+        makeStatusData({
+            sources: [
+                {
+                    root: '/tmp/filemgr-status-test',
+                    paused: true,
+                    state: 'paused',
+                    last_scan_at: now - 5 * 60 * 1000,
+                    total_files: 12,
+                    embedded_count: 12,
+                    pending_count: 0,
+                    is_workspace: false
+                }
+            ]
+        })
+    );
+
+    assert.ok(page.text.includes('已暂停 · 12 个文件'));
+    assert.doesNotMatch(page.text, /\bpaused\b/);
+}
+
 async function testSlashStatusLabels() {
     const cases = [
         ['idle', '● 未配置'],
@@ -391,6 +413,31 @@ async function testSlashAlertMessages() {
     }
 }
 
+async function testSearchIndexedFilesForwardsOptionsAndUnwraps() {
+    const app = new FileMgrApplication();
+    const calls = [];
+    app.registry = {
+        callWorker: async (...args) => {
+            calls.push(args);
+            return { data: { query: 'plan', results: [], totalHits: 0 } };
+        }
+    };
+    const options = {
+        topK: 5,
+        scope: { type: 'paths', paths: ['/workspace/a', '/workspace/b'] }
+    };
+    assert.deepEqual(await app.searchIndexedFiles('plan', options), { query: 'plan', results: [], totalHits: 0 });
+    assert.deepEqual(calls, [['filemgr', 'searchIndexedFiles', 'plan', options]]);
+
+    app.registry.callWorker = async () => ({ status: 'error', message: 'worker failed' });
+    await assert.rejects(() => app.searchIndexedFiles('plan', options), /worker failed/);
+    app.registry.callWorker = async () => ({ status: 'error' });
+    await assert.rejects(
+        () => app.searchIndexedFiles('plan', options),
+        (error) => error.message === t('filemgr.search.failed')
+    );
+}
+
 testBaseOnlyDoesNotReportUnloadedChunksAsZero();
 testFullModeReportsChunkCount();
 await testTUIReadonlyModesAreHiddenFromDashboard();
@@ -399,7 +446,9 @@ await testStatusChangedBridgePublishesAndNotifiesTUI();
 await testSlashReadonlyDeferredDoesNotShowNoScanDirs();
 await testSlashReadonlyFullModeCopyIsClear();
 await testSlashShowsUnavailableRootsAndVisibleRebuildEvent();
+await testSlashShowsLocalizedPausedSource();
 await testSlashStatusLabels();
 await testSlashAlertMessages();
+await testSearchIndexedFilesForwardsOptionsAndUnwraps();
 ApplicationRegistry.callWorker = originalCallWorker;
 console.log('✅ app-status-format tests passed');

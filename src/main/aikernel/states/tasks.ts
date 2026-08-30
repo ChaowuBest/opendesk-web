@@ -117,6 +117,7 @@ export type {
 export type {
     TaskStatus,
     TaskCompletionStatus,
+    TailCardSectionEntry,
     TaskRuntimeInterrupt,
     TaskModelRequestOptions,
     SubmitUserMessageOptions,
@@ -131,7 +132,7 @@ export type {
     TaskUpdateGoalEvalChunk,
     TaskUpdateChunk
 } from '../task/types.js';
-import type { SubmitUserMessageOptions, TaskUsageSnapshot } from '../task/types.js';
+import type { SubmitUserMessageOptions, TailCardSectionEntry, TaskUsageSnapshot } from '../task/types.js';
 import {
     ATTEMPT_COMPLETION_TOOL_NAME,
     getLLMRetryDelayMs,
@@ -500,6 +501,7 @@ export class TaskState {
     private _activeTurnMetadata?: RuntimeMetadata;
     private _activeModelRequestOptions?: TaskModelRequestOptions;
     private _subTaskCreatedListeners = new Set<(subTask: TaskState) => void>();
+    private readonly activeTailCardSections = new Map<string, string>();
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -641,6 +643,7 @@ export class TaskState {
         this._extensions = new TaskExtensionManager(this);
         syncEvidenceCardTaskState(this);
         registerEvidenceCardTailcard(this);
+        this.registerActiveTailCardSections();
         this.bindChatContextMessageAppend();
     }
 
@@ -1009,12 +1012,49 @@ export class TaskState {
      * 向 chat_context 追加一条内部用户消息（用户不可见），并通知前端。
      */
     async appendInternalUserMessage(content: string, metadata?: RuntimeMetadata, rawText?: string): Promise<void> {
-        const user_message = new UserMessage(content);
-        user_message.internal = true;
-        user_message.rawText = rawText;
-        user_message.metadata = metadata;
-        this.chat_context.appendMessage(user_message);
+        this.appendInternalUserMessageToContext(content, metadata, rawText);
         await this.sendSubscriptionFeedback();
+    }
+
+    listFrontendTailCardSections(): TailCardSectionEntry[] {
+        return Array.from(this.activeTailCardSections, ([id, content]) => ({ id, content }));
+    }
+
+    setFrontendTailCardSection(id: string, content: string): void {
+        if (id === '') {
+            throw new TypeError('id must not be empty');
+        }
+        if (content === '') {
+            throw new TypeError('content must not be empty');
+        }
+        this.activeTailCardSections.set(id, content);
+    }
+
+    removeFrontendTailCardSection(id: string): void {
+        this.activeTailCardSections.delete(id);
+    }
+
+    private registerActiveTailCardSections(): void {
+        this.hooks.onTailcardGenerate(() => {
+            const content = Array.from(this.activeTailCardSections.values())
+                .map((section) => section.trim())
+                .filter(Boolean)
+                .join('\n\n');
+            return content.length > 0 ? { id: 'task-tail-card-sections', content, priority: 100 } : undefined;
+        });
+    }
+
+    private appendInternalUserMessageToContext(
+        content: string,
+        metadata?: RuntimeMetadata,
+        rawText?: string
+    ): UserMessage {
+        const userMessage = new UserMessage(content);
+        userMessage.internal = true;
+        userMessage.rawText = rawText;
+        userMessage.metadata = metadata;
+        this.chat_context.appendMessage(userMessage);
+        return userMessage;
     }
 
     getNextTurnGeneration(): number {
@@ -1076,11 +1116,7 @@ export class TaskState {
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
-        const userMessage = new UserMessage(options.prompt);
-        userMessage.internal = true;
-        userMessage.rawText = options.rawText;
-        userMessage.metadata = metadata;
-        this.chat_context.appendMessage(userMessage);
+        const userMessage = this.appendInternalUserMessageToContext(options.prompt, metadata, options.rawText);
         for (let i = 0; i < userMessage.content.length; i++) {
             await this.sendSubscriptionFeedback(i);
         }

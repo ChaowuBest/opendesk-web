@@ -35,6 +35,8 @@ import { escapeSqlStr } from '../../../common/utils/escape.js';
 
 // ── VectorIndexDBHm ───────────────────────────────────────────────
 export class VectorIndexDBHm implements IVectorIndexDB {
+    static readonly backend = 'native' as const;
+    readonly backend = VectorIndexDBHm.backend;
     private readonly addon: HmSqliteAddon;
     private db: unknown;
     private readonly dbPath: string;

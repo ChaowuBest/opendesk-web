@@ -15,6 +15,37 @@ const SOURCES_STYLE_ID = 'filemgr-sources-styles';
 const MINI_RING_CIRCUMFERENCE = 37.7;
 const SKELETON_CARD_COUNT = 3;
 export const WORKSPACE_SOURCE_PROTECTED_MESSAGE = '当前工作空间不能在这里移除。请回到主页面切换工作空间。';
+const SOURCE_CONTROL_FALLBACKS = {
+    'renderer.filemgr.source.pause': 'Pause scanning',
+    'renderer.filemgr.source.resume': 'Continue scanning',
+    'renderer.filemgr.source.moreActions': 'More actions',
+    'renderer.filemgr.source.remove': 'Remove scan path',
+    'renderer.filemgr.source.pausing': 'Pausing…',
+    'renderer.filemgr.source.resuming': 'Resuming…',
+    'renderer.filemgr.source.paused': 'Paused',
+    'renderer.filemgr.source.pausedWithCount': 'Paused · ${count} files',
+    'renderer.filemgr.source.error.readonly': 'Pause state cannot be changed in query mode. Retry in the main window.',
+    'renderer.filemgr.source.error.unknownRoot': 'This source no longer exists. Refresh and retry.',
+    'renderer.filemgr.source.error.notReady': 'The file manager is not ready. Retry shortly.',
+    'renderer.filemgr.source.error.persistenceFailed': 'The pause state could not be saved. Retry.',
+    'renderer.filemgr.source.error.runtimeFailed': 'The pause or resume operation failed. Retry.',
+    'renderer.filemgr.source.error.generic': 'The operation failed. Retry.'
+};
+const SOURCE_CONTROL_ERROR_KEYS = {
+    readonly: 'renderer.filemgr.source.error.readonly',
+    unknown_root: 'renderer.filemgr.source.error.unknownRoot',
+    not_ready: 'renderer.filemgr.source.error.notReady',
+    persistence_failed: 'renderer.filemgr.source.error.persistenceFailed',
+    runtime_failed: 'renderer.filemgr.source.error.runtimeFailed',
+    invalid_request: 'renderer.filemgr.source.error.generic',
+    generic: 'renderer.filemgr.source.error.generic'
+};
+
+function sourceControlText(options, key, vars = {}) {
+    const translated = options.t?.(key, vars);
+    const template = translated && translated !== key ? translated : (SOURCE_CONTROL_FALLBACKS[key] ?? key);
+    return template.replace(/\$\{(\w+)\}/g, (_match, name) => String(vars[name] ?? ''));
+}
 
 function resolveDocument(documentOverride) {
     const doc = documentOverride || globalThis.document;
@@ -178,6 +209,7 @@ function normalizeSource(source, data, index) {
         lastScanAt,
         unavailableInfo,
         workspace: isWorkspaceSource(source, data),
+        paused: source?.paused === true,
         state: source?.state ?? source?.status ?? null,
         isRunning: source?.isRunning === true
     };
@@ -196,6 +228,9 @@ function getSortedSources(data) {
 }
 
 function getDisplayState(source, mode) {
+    if (source.paused) {
+        return 'paused';
+    }
     if (source.unavailableInfo) {
         return 'unavailable';
     }
@@ -235,7 +270,13 @@ function getProgress(source, displayState) {
     return Math.max(0, Math.min(100, Math.round((source.embeddedCount / source.totalFiles) * 100)));
 }
 
-function getStatusText(source, displayState, mode) {
+function getStatusText(source, displayState, mode, options) {
+    const pendingPaused = options.pendingByRoot?.get(source.path);
+    if (pendingPaused === true) return sourceControlText(options, 'renderer.filemgr.source.pausing');
+    if (pendingPaused === false) return sourceControlText(options, 'renderer.filemgr.source.resuming');
+    if (displayState === 'paused') {
+        return sourceControlText(options, 'renderer.filemgr.source.pausedWithCount', { count: source.totalFiles });
+    }
     if (displayState === 'unavailable') {
         return `路径不可访问 · 上次 ${source.unavailableInfo?.lastCount ?? source.totalFiles} 文件`;
     }
@@ -291,12 +332,39 @@ function injectStyles(doc) {
     gap: 10px;
     overflow-y: auto;
     max-height: 196px;
-    padding: 2px 2px 4px;
+    padding: 2px 7px 4px 2px;
     scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--od-text-muted) 42%, transparent) transparent;
+    scrollbar-gutter: stable;
     flex: 1;
     min-width: 0;
     min-height: 0;
     transition: opacity 180ms ease;
+}
+
+.fs-upper .fs-sources::-webkit-scrollbar {
+    width: 8px;
+}
+
+.fs-upper .fs-sources::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.fs-upper .fs-sources::-webkit-scrollbar-thumb {
+    min-height: 36px;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--od-text-muted) 42%, transparent);
+    background-clip: content-box;
+}
+
+.fs-upper .fs-sources::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--od-text-muted) 64%, transparent);
+    background-clip: content-box;
+}
+
+.fs-upper .fs-sources::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 .fs-upper .fs-sources.fs-error-layer {
@@ -452,22 +520,245 @@ function injectStyles(doc) {
     letter-spacing: 0;
 }
 
-.fs-upper .fs-source-card .close-btn {
+.fs-upper .source-actions {
     flex-shrink: 0;
-    width: 22px;
-    height: 22px;
+}
+
+.fs-upper .source-menu-trigger {
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--od-text-muted);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s, background 0.15s, color 0.15s;
-    font-size: 16px;
-    line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    opacity: 0.68;
+    transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
+}
+
+.fs-upper .source-menu-trigger:hover,
+.fs-upper .source-actions.open .source-menu-trigger {
+    color: var(--od-text);
+    background: var(--od-bg-muted);
+    opacity: 1;
+}
+
+.fs-upper .source-menu-trigger:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 72%, transparent);
+    outline-offset: 2px;
+}
+
+.fs-upper .source-menu-dots,
+.fs-upper .source-menu-dots::before,
+.fs-upper .source-menu-dots::after {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.fs-upper .source-menu-dots {
+    position: relative;
+}
+
+.fs-upper .source-menu-dots::before,
+.fs-upper .source-menu-dots::after {
+    content: '';
+    position: absolute;
+    top: 0;
+}
+
+.fs-upper .source-menu-dots::before {
+    left: -5px;
+}
+
+.fs-upper .source-menu-dots::after {
+    right: -5px;
+}
+
+.filemgr-source-menu-portal {
+    --filemgr-danger: #ef4444;
+    --filemgr-danger-bg: color-mix(in srgb, var(--filemgr-danger) 10%, var(--od-bg-elevated));
+    position: fixed;
+    z-index: 10000;
+    min-width: 132px;
+    padding: 5px;
+    border: 1px solid color-mix(in srgb, var(--od-border) 82%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--od-bg-elevated) 96%, transparent);
+    box-shadow:
+        0 12px 30px rgba(0, 0, 0, 0.18),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(16px);
+}
+
+.filemgr-source-menu-portal[hidden] {
+    display: none;
+}
+
+.filemgr-source-menu-portal .source-menu-item {
+    width: 100%;
+    height: 30px;
+    padding: 0 9px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--od-text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1;
+    text-align: left;
+    white-space: nowrap;
+    transition: color 140ms ease, background 140ms ease;
+}
+
+.filemgr-source-menu-portal .source-menu-item:hover {
+    background: var(--od-bg-muted);
+}
+
+.filemgr-source-menu-portal .source-menu-item[data-action='pause']:hover {
+    color: #d99035;
+    background: color-mix(in srgb, #d99035 10%, transparent);
+}
+
+.filemgr-source-menu-portal .source-menu-remove {
+    color: var(--filemgr-danger);
+}
+
+.filemgr-source-menu-portal .source-menu-remove:hover {
+    background: var(--filemgr-danger-bg);
+}
+
+.filemgr-source-menu-portal .source-menu-item:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 68%, transparent);
+    outline-offset: -2px;
+}
+
+.fs-upper .source-resume-btn {
+    flex-shrink: 0;
+    height: 24px;
+    padding: 0 9px 0 7px;
+    border: 1px solid color-mix(in srgb, var(--od-accent) 24%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--od-accent) 9%, transparent);
+    color: var(--od-accent);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+        color 150ms ease,
+        background 150ms ease,
+        border-color 150ms ease,
+        transform 150ms var(--filemgr-ease-out);
+}
+
+.fs-upper .source-resume-btn:hover {
+    background: color-mix(in srgb, var(--od-accent) 15%, transparent);
+    border-color: color-mix(in srgb, var(--od-accent) 42%, transparent);
+    transform: translateY(-1px);
+}
+
+.fs-upper .source-resume-btn:active {
+    transform: translateY(0) scale(0.97);
+}
+
+.fs-upper .source-resume-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--od-accent) 72%, transparent);
+    outline-offset: 2px;
+}
+
+.fs-upper .source-control-icon,
+.filemgr-source-menu-portal .source-control-icon {
+    position: relative;
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+    display: inline-block;
+}
+
+.filemgr-source-menu-portal [data-action='pause'] .source-control-icon::before,
+.filemgr-source-menu-portal [data-action='pause'] .source-control-icon::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    width: 3px;
+    height: 8px;
+    border-radius: 1.5px;
+    background: currentColor;
+}
+
+.filemgr-source-menu-portal [data-action='pause'] .source-control-icon::before {
+    left: 2px;
+}
+
+.filemgr-source-menu-portal [data-action='pause'] .source-control-icon::after {
+    right: 2px;
+}
+
+.fs-upper [data-action='resume'] .source-control-icon::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 1.5px;
+    width: 0;
+    height: 0;
+    border-top: 4.5px solid transparent;
+    border-bottom: 4.5px solid transparent;
+    border-left: 7px solid currentColor;
+}
+
+.fs-upper .source-control-label,
+.filemgr-source-menu-portal .source-control-label {
+    transform: translateY(-0.25px);
+}
+
+.fs-upper .source-control-btn:disabled,
+.filemgr-source-menu-portal .source-menu-item:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.fs-upper .source-resume-btn:disabled {
+    color: var(--od-text-muted);
+    background: var(--od-bg-muted);
+    border-color: var(--od-border);
+    transform: none;
+}
+
+.filemgr-source-menu-portal .source-menu-item:disabled {
+    background: transparent;
+}
+
+.fs-upper .fs-source-control-error {
+    color: var(--filemgr-danger);
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+@keyframes filemgr-source-control-spin {
+    to { transform: rotate(360deg); }
+}
+
+.fs-upper .source-control-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: filemgr-source-control-spin 800ms linear infinite;
 }
 
 .fs-upper .fs-source-card .fs-file-alert {
@@ -486,21 +777,6 @@ function injectStyles(doc) {
     font-weight: 600;
     line-height: 1;
     font-variant-numeric: tabular-nums;
-}
-
-.fs-upper .fs-source-card:hover .close-btn,
-.fs-upper .fs-source-card .close-btn:focus-visible {
-    opacity: 1;
-}
-
-.fs-upper .fs-source-card .close-btn:hover {
-    background: var(--filemgr-danger-bg);
-    color: var(--filemgr-danger);
-}
-
-.fs-upper .fs-source-card .close-btn:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--od-accent) 72%, transparent);
-    outline-offset: 2px;
 }
 
 .fs-upper .fs-source-card .row3 {
@@ -526,16 +802,11 @@ function injectStyles(doc) {
 }
 
 .fs-upper .fs-source-card .time-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
     margin-left: auto;
-    padding: 1.5px 7px;
-    background: var(--od-bg-muted);
     color: var(--od-text-muted);
-    border-radius: 999px;
     font-size: 10.5px;
     font-weight: 500;
+    opacity: 0.72;
     flex-shrink: 0;
 }
 
@@ -731,6 +1002,10 @@ function injectStyles(doc) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .fs-upper .source-control-spinner {
+        animation: none;
+    }
+
     .fs-upper .fs-anim,
     .fs-upper .fs-skeleton-line,
     .fs-upper .fs-source-card,
@@ -813,12 +1088,15 @@ function createIconBox(doc, source, displayState) {
 }
 
 function createDeleteButton(doc, source, options) {
+    const removeText = sourceControlText(options, 'renderer.filemgr.source.remove');
     const button = doc.createElement('button');
     button.type = 'button';
-    button.className = 'close-btn';
-    button.title = '删除数据源';
-    button.setAttribute('aria-label', `删除数据源 ${source.path}`);
-    button.textContent = '×';
+    button.className = 'source-menu-item source-menu-remove';
+    button.setAttribute('role', 'menuitem');
+    button.title = removeText;
+    button.setAttribute('aria-label', `${removeText}: ${source.path}`);
+    button.textContent = removeText;
+    button.disabled = options.pendingByRoot?.has(source.path) === true;
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         if (source.workspace) {
@@ -869,6 +1147,201 @@ function createDeleteButton(doc, source, options) {
     return button;
 }
 
+function createSourceControlButton(doc, source, options) {
+    const rootIsPending = options.pendingByRoot?.has(source.path) === true;
+    const action = source.paused ? 'resume' : 'pause';
+    const actionText = sourceControlText(
+        options,
+        source.paused ? 'renderer.filemgr.source.resume' : 'renderer.filemgr.source.pause'
+    );
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = source.paused
+        ? 'source-control-btn source-resume-btn'
+        : 'source-control-btn source-menu-item';
+    if (!source.paused) {
+        button.setAttribute('role', 'menuitem');
+    }
+    button.dataset.action = action;
+    button.disabled = rootIsPending || options.workerStatus !== 'running';
+    button.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
+    button.setAttribute('aria-label', actionText);
+    button.title = actionText;
+    if (rootIsPending) {
+        const spinner = doc.createElement('span');
+        spinner.className = 'source-control-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        button.appendChild(spinner);
+    } else {
+        const icon = doc.createElement('span');
+        icon.className = 'source-control-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        button.appendChild(icon);
+    }
+    const label = doc.createElement('span');
+    label.className = 'source-control-label';
+    label.textContent = actionText;
+    button.appendChild(label);
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        options.onRequestSourceControl?.(source, !source.paused);
+    });
+    return button;
+}
+
+function createSourceMenuPortal(doc) {
+    const view = doc.defaultView;
+    let activeMenu = null;
+
+    const positionMenu = () => {
+        if (!activeMenu) return;
+        const { menu, trigger } = activeMenu;
+        const triggerRect = trigger.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const viewportWidth = view?.innerWidth || doc.documentElement?.clientWidth || 1024;
+        const viewportHeight = view?.innerHeight || doc.documentElement?.clientHeight || 768;
+        const viewportInset = 8;
+        const gap = 6;
+        const fitsBelow = triggerRect.bottom + gap + menuRect.height <= viewportHeight - viewportInset;
+        const fitsAbove = triggerRect.top - gap - menuRect.height >= viewportInset;
+        const placement = !fitsBelow && fitsAbove ? 'top' : 'bottom';
+        const preferredTop =
+            placement === 'top' ? triggerRect.top - menuRect.height - gap : triggerRect.bottom + gap;
+        const maxTop = Math.max(viewportInset, viewportHeight - menuRect.height - viewportInset);
+        const top = Math.min(Math.max(viewportInset, preferredTop), maxTop);
+        const preferredLeft = triggerRect.right - menuRect.width;
+        const maxLeft = Math.max(viewportInset, viewportWidth - menuRect.width - viewportInset);
+        const left = Math.min(Math.max(viewportInset, preferredLeft), maxLeft);
+
+        menu.style.top = `${Math.round(top)}px`;
+        menu.style.left = `${Math.round(left)}px`;
+    };
+
+    const close = ({ restoreFocus = false } = {}) => {
+        if (!activeMenu) return;
+        const { actions, menu, trigger } = activeMenu;
+        activeMenu = null;
+        actions.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+        menu.hidden = true;
+        menu.style.removeProperty('top');
+        menu.style.removeProperty('left');
+        actions.appendChild(menu);
+        if (restoreFocus && trigger.isConnected) {
+            trigger.focus();
+        }
+    };
+
+    const open = ({ actions, menu, trigger, focusFirst = false }) => {
+        if (activeMenu?.trigger === trigger) {
+            close({ restoreFocus: true });
+            return;
+        }
+        close();
+        activeMenu = { actions, menu, trigger };
+        actions.classList.add('open');
+        trigger.setAttribute('aria-expanded', 'true');
+        menu.hidden = false;
+        doc.body.appendChild(menu);
+        positionMenu();
+        if (focusFirst) {
+            menu.querySelector('.source-menu-item:not([disabled])')?.focus();
+        }
+    };
+
+    const closeOnOutsidePointer = (event) => {
+        if (!activeMenu) return;
+        if (activeMenu.trigger.contains(event.target) || activeMenu.menu.contains(event.target)) return;
+        close();
+    };
+    const closeOnViewportChange = () => close();
+
+    doc.addEventListener('pointerdown', closeOnOutsidePointer);
+    view?.addEventListener('resize', closeOnViewportChange);
+    view?.addEventListener('scroll', closeOnViewportChange, true);
+
+    return {
+        open,
+        close,
+        destroy() {
+            close();
+            doc.removeEventListener('pointerdown', closeOnOutsidePointer);
+            view?.removeEventListener('resize', closeOnViewportChange);
+            view?.removeEventListener('scroll', closeOnViewportChange, true);
+        }
+    };
+}
+
+function createSourceActionsMenu(doc, source, options) {
+    const actions = doc.createElement('div');
+    actions.className = 'source-actions';
+
+    const moreActionsText = sourceControlText(options, 'renderer.filemgr.source.moreActions');
+    const trigger = doc.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'source-menu-trigger';
+    trigger.title = moreActionsText;
+    trigger.setAttribute('aria-label', `${moreActionsText}: ${source.path}`);
+    trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', 'false');
+
+    const dots = doc.createElement('span');
+    dots.className = 'source-menu-dots';
+    dots.setAttribute('aria-hidden', 'true');
+    trigger.appendChild(dots);
+
+    const menu = doc.createElement('div');
+    menu.className = 'filemgr-source-menu-portal';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+
+    if (!source.paused) {
+        menu.appendChild(createSourceControlButton(doc, source, options));
+    }
+    menu.appendChild(createDeleteButton(doc, source, options));
+
+    trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        options.sourceMenuPortal?.open({ actions, menu, trigger });
+    });
+    trigger.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            options.sourceMenuPortal?.open({ actions, menu, trigger, focusFirst: true });
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            options.sourceMenuPortal?.close({ restoreFocus: true });
+        }
+    });
+    menu.addEventListener(
+        'click',
+        (event) => {
+            if (event.target.closest?.('.source-menu-item')) {
+                options.sourceMenuPortal?.close();
+            }
+        },
+        true
+    );
+    menu.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        options.sourceMenuPortal?.close({ restoreFocus: true });
+    });
+    menu.addEventListener('focusout', (event) => {
+        const relatedTarget = event.relatedTarget;
+        if (relatedTarget && (menu.contains(relatedTarget) || trigger.contains(relatedTarget))) return;
+        const setTimeout = doc.defaultView?.setTimeout ?? globalThis.setTimeout;
+        setTimeout(() => {
+            if (!menu.contains(doc.activeElement) && doc.activeElement !== trigger) {
+                options.sourceMenuPortal?.close();
+            }
+        }, 0);
+    });
+
+    actions.append(trigger, menu);
+    return actions;
+}
+
 function createFileAlert(doc, source) {
     if (!source.failedCount || source.failedCount <= 0) return null;
     const alert = doc.createElement('span');
@@ -894,7 +1367,8 @@ function appendStatusIcon(doc, row, source, displayState) {
 
 function createSourceCard(doc, source, mode, options) {
     const displayState = getDisplayState(source, mode);
-    const statusText = getStatusText(source, displayState, mode);
+    const statusText = getStatusText(source, displayState, mode, options);
+    const rootIsPending = options.pendingByRoot?.has(source.path) === true;
     const card = doc.createElement('article');
     card.className = [
         'fs-source-card',
@@ -908,6 +1382,7 @@ function createSourceCard(doc, source, mode, options) {
     card.dataset.sourceId = String(source.id);
     card.dataset.state = displayState;
     card.dataset.progress = String(getProgress(source, displayState));
+    card.setAttribute('aria-busy', rootIsPending ? 'true' : 'false');
 
     const info = doc.createElement('div');
     info.className = 'info';
@@ -925,7 +1400,7 @@ function createSourceCard(doc, source, mode, options) {
     if (fileAlert) {
         row1.appendChild(fileAlert);
     }
-    row1.appendChild(createDeleteButton(doc, source, options));
+    row1.appendChild(createSourceActionsMenu(doc, source, options));
 
     const row3 = doc.createElement('div');
     row3.className = 'row3';
@@ -939,6 +1414,9 @@ function createSourceCard(doc, source, mode, options) {
     status.title = statusText;
 
     row3.appendChild(status);
+    if (source.paused) {
+        row3.appendChild(createSourceControlButton(doc, source, options));
+    }
     if (source.lastScanAt) {
         const timeTag = doc.createElement('span');
         timeTag.className = 'time-tag';
@@ -947,6 +1425,17 @@ function createSourceCard(doc, source, mode, options) {
         row3.appendChild(timeTag);
     }
     info.append(row1, row3);
+    const controlError = options.errorByRoot?.get(source.path);
+    if (controlError) {
+        const error = doc.createElement('div');
+        error.className = 'fs-source-control-error';
+        error.setAttribute('role', 'alert');
+        error.textContent = sourceControlText(
+            options,
+            SOURCE_CONTROL_ERROR_KEYS[controlError.code] ?? SOURCE_CONTROL_ERROR_KEYS.generic
+        );
+        info.appendChild(error);
+    }
     card.append(createIconBox(doc, source, displayState), info);
 
     return card;
@@ -1021,7 +1510,7 @@ function renderCards(refs, doc, options) {
         refs.grid.appendChild(createEmptyCard(doc));
     } else {
         for (const source of sources) {
-            refs.grid.appendChild(createSourceCard(doc, source, renderMode, options));
+            refs.grid.appendChild(createSourceCard(doc, source, renderMode, { ...options, workerStatus: status }));
         }
     }
 
@@ -1053,18 +1542,52 @@ export function createSources(options = {}) {
     injectStyles(doc);
 
     const refs = buildSourcesDom(doc);
-    const render = () => {
-        renderCards(refs, doc, options);
+    const sourceMenuPortal = createSourceMenuPortal(doc);
+    const pendingByRoot = new Map();
+    const errorByRoot = new Map();
+    const requestSourceControl = async (source, paused) => {
+        const root = source.path;
+        if (!root || pendingByRoot.has(root)) return;
+        pendingByRoot.set(root, paused);
+        errorByRoot.delete(root);
+        render();
+        try {
+            await options.onSetSourcePaused?.({ root, paused });
+        } catch (error) {
+            errorByRoot.set(root, { code: error?.code ?? 'generic' });
+        } finally {
+            pendingByRoot.delete(root);
+            render();
+        }
     };
+    const renderOptions = {
+        ...options,
+        pendingByRoot,
+        errorByRoot,
+        sourceMenuPortal,
+        onRequestSourceControl: requestSourceControl
+    };
+    function render() {
+        sourceMenuPortal.close();
+        renderCards(refs, doc, renderOptions);
+    }
 
     render();
 
-    const unsubscribe = subscribeSnapshot(render);
+    const unsubscribe = subscribeSnapshot(() => {
+        errorByRoot.clear();
+        render();
+    });
 
     return {
         element: refs.element,
+        setTranslator(translator) {
+            renderOptions.t = translator;
+            render();
+        },
         destroy() {
             unsubscribe();
+            sourceMenuPortal.destroy();
             refs.element.remove();
         }
     };

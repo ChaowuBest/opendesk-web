@@ -1150,6 +1150,59 @@ const registerUsageAPIHandlers = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
+    ipcMain.handle('taskManager:listFrontendTailCardSections', (_event, taskId: unknown) => {
+        if (typeof taskId !== 'string') {
+            return { status: 'error', message: 'taskId must be a string' };
+        }
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return { status: 'ok', data: task.listFrontendTailCardSections() };
+    });
+
+    ipcMain.handle(
+        'taskManager:setFrontendTailCardSection',
+        (_event, taskId: unknown, id: unknown, content: unknown) => {
+            if (typeof taskId !== 'string') {
+                return { status: 'error', message: 'taskId must be a string' };
+            }
+            if (typeof id !== 'string') {
+                return { status: 'error', message: 'id must be a string' };
+            }
+            if (typeof content !== 'string') {
+                return { status: 'error', message: 'content must be a string' };
+            }
+            if (id === '') {
+                return { status: 'error', message: 'id must not be empty' };
+            }
+            if (content === '') {
+                return { status: 'error', message: 'content must not be empty' };
+            }
+            const task = globalState.taskManagerState.getTask(taskId);
+            if (task === undefined) {
+                return { status: 'error', message: `task ${taskId} not found` };
+            }
+            task.setFrontendTailCardSection(id, content);
+            return { status: 'ok' };
+        }
+    );
+
+    ipcMain.handle('taskManager:removeFrontendTailCardSection', (_event, taskId: unknown, id: unknown) => {
+        if (typeof taskId !== 'string') {
+            return { status: 'error', message: 'taskId must be a string' };
+        }
+        if (typeof id !== 'string') {
+            return { status: 'error', message: 'id must be a string' };
+        }
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        task.removeFrontendTailCardSection(id);
+        return { status: 'ok' };
+    });
+
     type CreateTaskOptions = {
         modeId?: string;
         selectedExecutionNodeId?: string | null;
@@ -3488,8 +3541,7 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

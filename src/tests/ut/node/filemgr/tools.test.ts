@@ -22,7 +22,8 @@ import {
     ExtractTextTool,
     ReadImageTool,
     SemanticSearchTool,
-    createFileManagerToolset
+    createFileManagerToolset,
+    formatSemanticSearchMarkdown
 } from '../../../../main/applications/filemgr/tools.js';
 
 setRuntimeLocale('en-US');
@@ -118,7 +119,7 @@ test('extractText rejects unsupported file types before extraction', async () =>
     }
 });
 
-test('semanticSearch returns at most 30 markdown bullet results with path, title, chunk, and read hint', async () => {
+test('semanticSearch returns at most 30 markdown bullet results without suggesting full-file reads', async () => {
     const items = Array.from({ length: 35 }, (_, index) => ({
         path: `/workspace/report-${index + 1}.md`,
         filename: `report-${index + 1}.md`,
@@ -144,7 +145,201 @@ test('semanticSearch returns at most 30 markdown bullet results with path, title
     assert.match(output, /\/workspace\/report-1\.md/);
     assert.match(output, /Title: report-1\.md/);
     assert.match(output, /Chunk: matching chunk 1/);
-    assert.match(output, /extractText/);
+    assert.doesNotMatch(output, /extractText/);
+});
+
+test('semanticSearch forwards scope and renders snippets within the shared budget', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return {
+            query: 'plan',
+            results: [
+                {
+                    path: '/workspace/report.md',
+                    snippets: [
+                        { chunkId: 'a', text: 'A'.repeat(500), score: 0.9 },
+                        { chunkId: 'b', text: 'second chunk', score: 0.8 }
+                    ]
+                }
+            ],
+            totalHits: 1
+        };
+    });
+    const scope = { type: 'path' as const, path: '/workspace' };
+    const output = await tool.executeCommand({ query: 'plan', maxResults: 5, scope } as any);
+    assert.deepEqual(calls, [['plan', 5, scope]]);
+    assert.match(output, /second chunk/);
+});
+
+test('semanticSearch accepts one paths scope and invokes its executor once', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return { query: 'plan', results: [], totalHits: 0 };
+    });
+    const scope = {
+        type: 'paths' as const,
+        paths: ['/workspace/a', '/workspace/b']
+    };
+
+    const result = await tool.execute({ query: 'plan', maxResults: 5, scope } as any);
+    assert.equal(result.status, 'success');
+    assert.deepEqual(calls, [['plan', 5, scope]]);
+});
+
+test('semanticSearch normalizes one JSON-stringified scope before strict validation', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return { query: 'plan', results: [], totalHits: 0 };
+    });
+    const scopes = [
+        { type: 'path' as const, path: '/workspace/a' },
+        {
+            type: 'paths' as const,
+            paths: ['/workspace/a', '/workspace/b']
+        }
+    ];
+
+    for (const scope of scopes) {
+        const result = await tool.execute({
+            query: 'plan',
+            maxResults: 5,
+            scope: JSON.stringify(scope)
+        } as any);
+        assert.equal(result.status, 'success');
+    }
+
+    assert.deepEqual(calls, [
+        ['plan', 5, scopes[0]],
+        ['plan', 5, scopes[1]]
+    ]);
+
+    const jsonSchema = tool.params.toJSONSchema() as any;
+    assert.ok(Array.isArray(jsonSchema.properties.scope.oneOf));
+    assert.equal(jsonSchema.properties.scope.type, undefined);
+});
+
+test('semanticSearch rejects malformed or invalid stringified scopes without executing', async () => {
+    let calls = 0;
+    const tool = new SemanticSearchTool(async () => {
+        calls += 1;
+        return { query: 'plan', results: [], totalHits: 0 };
+    });
+    const invalidScopes = [
+        'not-json',
+        JSON.stringify({ type: 'paths', paths: [] }),
+        JSON.stringify({ type: 'unknown', paths: ['/workspace/a'] }),
+        JSON.stringify(JSON.stringify({ type: 'path', path: '/workspace/a' }))
+    ];
+
+    for (const scope of invalidScopes) {
+        const result = await tool.execute({
+            query: 'plan',
+            maxResults: 5,
+            scope
+        } as any);
+        assert.equal(result.status, 'error');
+        assert.match(String(result.result), /scope/);
+    }
+
+    assert.equal(calls, 0);
+});
+
+test('semanticSearch forwards blank queries with explicit scope for authoritative validation', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return {
+            query: '',
+            results: [],
+            totalHits: 0,
+            warning: 'Invalid search scope',
+            code: 'INVALID_SCOPE'
+        };
+    });
+    const scope = { type: 'paths' as const, paths: ['/unknown'] };
+
+    const result = await tool.execute({ query: '   ', maxResults: 5, scope } as any);
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(calls, [['', 5, scope]]);
+    assert.match(String(result.result), /INVALID_SCOPE/);
+});
+
+test('semanticSearch keeps the existing extra-key stripping behavior for valid scopes', async () => {
+    const calls: unknown[][] = [];
+    const tool = new SemanticSearchTool(async (...args) => {
+        calls.push(args);
+        return { query: 'plan', results: [], totalHits: 0 };
+    });
+
+    const result = await tool.execute({
+        query: 'plan',
+        maxResults: 5,
+        scope: {
+            type: 'path',
+            path: '/workspace/a',
+            extraFromOlderCaller: 'ignored'
+        }
+    } as any);
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(calls, [['plan', 5, { type: 'path', path: '/workspace/a' }]]);
+});
+
+test('semanticSearch schema rejects empty and over-limit path arrays before execution', async () => {
+    let calls = 0;
+    const tool = new SemanticSearchTool(async () => {
+        calls += 1;
+        return { results: [], totalHits: 0 };
+    });
+
+    const empty = await tool.execute({
+        query: 'plan',
+        maxResults: 5,
+        scope: { type: 'paths', paths: [] }
+    } as any);
+    assert.equal(empty.status, 'error');
+    assert.match(String(empty.result), /paths/);
+
+    const overLimit = await tool.execute({
+        query: 'plan',
+        maxResults: 5,
+        scope: {
+            type: 'paths',
+            paths: Array.from({ length: 65 }, (_, index) => `/workspace/${index}`)
+        }
+    } as any);
+    assert.equal(overLimit.status, 'error');
+    assert.match(String(overLimit.result), /paths/);
+    assert.equal(calls, 0);
+});
+
+test('semanticSearch enforces the real shared 8000 character budget but keeps every path and title', async () => {
+    const fullSnippet = (index: number) => `${String(index).padStart(2, '0')}${'x'.repeat(498)}`;
+    const output = formatSemanticSearchMarkdown({
+        query: 'budget',
+        results: [
+            {
+                path: '/workspace/first.md',
+                filename: 'first.md',
+                snippets: Array.from({ length: 17 }, (_, index) => ({
+                    text: fullSnippet(index),
+                    score: 1 - index / 100
+                }))
+            },
+            { path: '/workspace/second.md', filename: 'second.md', snippet: 'must not fit' }
+        ],
+        totalHits: 2
+    });
+    assert.match(output, /00x+/);
+    assert.match(output, /15x+/);
+    assert.doesNotMatch(output, /16x+/);
+    assert.doesNotMatch(output, /must not fit/);
+    assert.match(output, /\/workspace\/second\.md/);
+    assert.match(output, /Title: second\.md/);
 });
 
 test('extractText GUI render uses an inline summary without embedding extracted content', async () => {

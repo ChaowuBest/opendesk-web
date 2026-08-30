@@ -106,6 +106,7 @@ export async function dropVectorIndexStoreArkdata(dbPath: string): Promise<void>
 }
 
 export class VectorIndexDBArkdata implements IVectorIndexDB {
+    readonly backend = 'arkdata' as const;
     private readonly dbPath: string;
     private readonly dimension: number;
     private readonly tableName = 'vector_index';

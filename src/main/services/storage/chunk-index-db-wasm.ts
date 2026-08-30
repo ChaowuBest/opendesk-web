@@ -142,6 +142,7 @@ function computeMetric(
 }
 
 export class ChunkIndexDBWasm implements IChunkIndexDB {
+    readonly backend = 'wasm' as const;
     private readonly db: InstanceType<(typeof sqlite3Wasm)['Database']>;
     private readonly dbPath: string;
     private readonly dimension: number;

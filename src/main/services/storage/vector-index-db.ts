@@ -55,6 +55,7 @@ export function probeVectorIndexStoreNative(dbPath: string): BaseIndexStoreProbe
  * better-sqlite3 使用 SQLite 的 WAL 模式，支持多读单写
  */
 export class VectorIndexDB implements IVectorIndexDB {
+    readonly backend = 'native' as const;
     private db: Database.Database;
     private readonly metaTableName = 'vector_index_meta';
     private readonly vecTableName = 'vector_index_vec';

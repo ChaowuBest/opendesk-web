@@ -205,8 +205,28 @@ const results = await storage.search(conditions);
 // 范围查询
 { indexer: 'BaseIndexer', field: 'created_at', operator: '>=', value: 1700000000000 }
 
-// 支持的 operator：= != > < >= <= like notlike in notin between notbetween
+// 支持的 operator：= != > < >= <= like notlike in notin between notbetween path_descendant_or_self
 ```
+
+```ts
+const union = await storage.search([
+    { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' },
+    {
+        indexer: 'BaseIndexer',
+        field: 'item_id',
+        operator: 'path_descendant_or_self',
+        value: ['/docs', '/shared']
+    }
+]);
+```
+
+`path_descendant_or_self` accepts one non-empty path string or a non-empty path string array.
+Array members are OR-ed inside this one operator; separate FilterCondition entries remain AND-ed.
+An empty array or any non-string/empty member is invalid and never means “unscoped”.
+Pure-slash or malformed drive-root values such as `///` and `C:////` are rejected before any database call.
+Descendant matching continues to use the existing SQL `LIKE` behavior. FileMgr keeps case-sensitive
+scope identity and final filtering, but on a case-sensitive filesystem case-only sibling paths may
+compete for the candidate top-K before that final filter and can therefore cause fewer results.
 
 ### 4.2 TagIndexer — Tag 过滤
 

@@ -33,6 +33,8 @@ function float32ToHexLiteral(arr: Float32Array | number[]): string {
 import { escapeSqlStr } from '../../../common/utils/escape.js';
 
 export class ChunkIndexDBHm implements IChunkIndexDB {
+    static readonly backend = 'native' as const;
+    readonly backend = ChunkIndexDBHm.backend;
     private readonly addon: HmSqliteAddon;
     private db: unknown;
     private readonly dbPath: string;

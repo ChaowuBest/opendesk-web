@@ -51,12 +51,16 @@ import path from 'path';
 import fs from 'fs';
 import { getHomeDir } from '../../utils/temp.js';
 import {
+    createIndexedSearchContext,
     filterIndexedResults,
+    filterIndexedResultsByPolicy,
+    groupIndexedChunksByFile,
     mergeSearchRoutes,
-    normalizeSearchTopK,
+    InvalidFilemgrSearchScopeError,
     rankSearchResults,
+    resolveFilemgrSearchScopeForEntries,
     toIndexedFileSearchResult
-} from './search-indexed.js';
+} from './search/indexed.js';
 import { extractText as extractFileTextFromParser } from './parser/extract.js';
 import { FSEntrySchema } from './setting.js';
 
@@ -65,35 +69,16 @@ const MAX_RECENT_FAILURES = 20;
 const FILEMGR_SCANNING_ENABLED = true;
 const UNAVAILABLE_THRESHOLD = 50;
 
-const SEARCH_ROUTE_ALIASES = {
-    keyword: 'keyword',
-    name: 'name_semantic',
-    name_semantic: 'name_semantic',
-    content: 'content_semantic',
-    content_semantic: 'content_semantic'
-};
-
-function normalizeIndexedSearchRoutes(options = {}) {
-    const requested = Array.isArray(options?.routes)
-        ? options.routes.map((route) => SEARCH_ROUTE_ALIASES[String(route)]).filter(Boolean)
-        : null;
-    const routes = new Set(requested?.length ? requested : ['keyword', 'name_semantic', 'content_semantic']);
-    if (options?.includeContentSemantic === false) {
-        routes.delete('content_semantic');
-    }
-    return {
-        keyword: routes.has('keyword'),
-        nameSemantic: routes.has('name_semantic'),
-        contentSemantic: routes.has('content_semantic'),
-        needsSemantic: routes.has('name_semantic') || routes.has('content_semantic')
-    };
-}
-
 function normalizeSearchArgs(query, topK) {
     return {
         query: typeof query === 'string' ? query : '',
         topK: Math.max(1, Math.min(Number(topK) || 20, 100))
     };
+}
+
+function invalidIndexedSearchScopeResult(query) {
+    const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE);
 }
 
 class FSScanner {
@@ -134,8 +119,8 @@ class FSScanner {
         return !this._stopped;
     }
 
-    _queueScanTask(taskQueue) {
-        if (!taskQueue || !this._scanTask || this._shouldYield()) {
+    _queueScanTask(taskQueue, { allowPendingControl = false } = {}) {
+        if (!taskQueue || !this._scanTask || (!allowPendingControl && this._shouldYield())) {
             if (this._workerRef) this._workerRef._scanPending = false;
             return false;
         }
@@ -149,7 +134,7 @@ class FSScanner {
         return true;
     }
 
-    async start(taskQueue) {
+    async start(taskQueue, { allowPendingControl = false } = {}) {
         if (!this._stopped || this._scheduledTimeout !== null) {
             await this.stop();
         }
@@ -194,17 +179,19 @@ class FSScanner {
             }, this._getScanInterval(this.root));
         };
 
-        this._queueScanTask(taskQueue);
+        this._queueScanTask(taskQueue, { allowPendingControl });
     }
 
-    requestImmediateScan(taskQueue = this._taskQueue) {
+    requestImmediateScan(taskQueue = this._taskQueue, { allowPendingControl = false } = {}) {
         if (this._stopped) return;
         if (!taskQueue || !this._scanTask) return;
         if (this._scheduledTimeout) {
             clearTimeout(this._scheduledTimeout);
             this._scheduledTimeout = null;
         }
-        if (this._queueScanTask(taskQueue) && this._workerRef) this._workerRef._scanPending = true;
+        if (this._queueScanTask(taskQueue, { allowPendingControl }) && this._workerRef) {
+            this._workerRef._scanPending = true;
+        }
     }
 
     async stop() {
@@ -421,6 +408,8 @@ class FileManagerWorker extends BaseWorker {
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
         this._embeddingQueueActive = false;
         this._embeddingQueueScheduled = false;
+        this._pendingSourceControls = new Set();
+        this._sourceControlSequence = 0;
     }
 
     _nextInitSeq() {
@@ -447,11 +436,26 @@ class FileManagerWorker extends BaseWorker {
         return (this._lastConfig?.entries ?? this.config?.entries ?? []).map((entry) => entry.root);
     }
 
+    _registerSourceControlIntent() {
+        const token = ++this._sourceControlSequence;
+        this._pendingSourceControls.add(token);
+        return token;
+    }
+
+    _consumeSourceControlIntent(token) {
+        this._pendingSourceControls.delete(token);
+    }
+
+    _getRunnableRoots() {
+        return this._getActiveRoots().filter((root) => this.storage?.scannerState?.roots?.[root]?.paused !== true);
+    }
+
     _hasPendingControlChange() {
         return (
             this._pendingConfigChange !== null ||
             this._pendingWorkspaceChange !== null ||
-            this._pendingEmbeddingConfigChange
+            this._pendingEmbeddingConfigChange ||
+            this._pendingSourceControls.size > 0
         );
     }
 
@@ -473,10 +477,11 @@ class FileManagerWorker extends BaseWorker {
         return this._scanPending || this._hasPendingControlChange();
     }
 
-    _enqueueEmbeddingQueue() {
+    _enqueueEmbeddingQueue({ allowPendingControl = false } = {}) {
         const storage = this.storage;
         if (!storage || storage.mode !== 'full') return;
-        if (this._hasPendingControlChange()) return;
+        if (this._getRunnableRoots().length === 0) return;
+        if (!allowPendingControl && this._hasPendingControlChange()) return;
         if (this._embeddingQueueScheduled || this._embeddingQueueActive) return;
         this._embeddingQueueScheduled = true;
         this.taskQueue
@@ -488,10 +493,11 @@ class FileManagerWorker extends BaseWorker {
                 this._embeddingQueueScheduled = false;
                 this._embeddingQueueActive = true;
                 try {
-                    if (this.storage !== storage) return 0;
+                    const runnableRoots = this._getRunnableRoots();
+                    if (this.storage !== storage || runnableRoots.length === 0) return 0;
                     return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
-                        activeRoots: this._getActiveRoots(),
-                        currentWorkspace: this._currentWorkspace
+                        activeRoots: runnableRoots,
+                        currentWorkspace: runnableRoots.includes(this._currentWorkspace) ? this._currentWorkspace : null
                     });
                 } finally {
                     this._embeddingQueueActive = false;
@@ -696,7 +702,8 @@ class FileManagerWorker extends BaseWorker {
                         last_full_scan: 0,
                         last_scan_at: null,
                         total_files: 0,
-                        last_file_count: 0
+                        last_file_count: 0,
+                        paused: false
                     };
                 }
             }
@@ -799,28 +806,65 @@ class FileManagerWorker extends BaseWorker {
             return;
         }
         const seen = new Set();
-        const deduped = filesystems.filter((e) => {
-            if (seen.has(e.root)) {
-                logger.warn(`[filemgr] duplicate root ignored: ${e.root}`);
+        const deduped = filesystems.filter((entry) => {
+            if (seen.has(entry.root)) {
+                logger.warn(`[filemgr] duplicate root ignored: ${entry.root}`);
                 return false;
             }
-            seen.add(e.root);
+            seen.add(entry.root);
             return true;
         });
         for (const fsEntry of deduped) {
-            const root = fsEntry.root;
-            const state = this.storage.scannerState.roots[root];
-
-            const scanner = new FSScanner(fsEntry, this.storage, root, state, {
-                onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
-                workerRef: this,
-                getActiveRoots: () => (this._lastConfig?.entries ?? deduped).map((entry) => entry.root),
-                getScanInterval: (root) => this._getScanIntervalForRoot(root),
-                shouldYield: () => this._hasPendingControlChange()
-            });
-            this.scanners.set(root, scanner);
-            await scanner.start(this.taskQueue);
+            await this._startScanner(fsEntry, deduped);
         }
+    }
+
+    async _startScanner(fsEntry, filesystems, { allowPaused = false, allowPendingControl = false } = {}) {
+        const root = fsEntry.root;
+        const state = this.storage?.scannerState?.roots?.[root];
+        const existing = this.scanners.get(root);
+        if (!state || (state.paused && !allowPaused)) {
+            if (existing) {
+                await existing.stop().catch(() => {});
+                if (this.scanners.get(root) === existing) this.scanners.delete(root);
+            }
+            return null;
+        }
+        if (existing?.isRunning()) {
+            existing.requestImmediateScan(this.taskQueue, { allowPendingControl });
+            return existing;
+        }
+        if (existing) {
+            await existing.stop().catch(() => {});
+            if (this.scanners.get(root) === existing) this.scanners.delete(root);
+        }
+        const scanner = new FSScanner(fsEntry, this.storage, root, state, {
+            onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
+            workerRef: this,
+            getActiveRoots: () => (this._lastConfig?.entries ?? filesystems).map((entry) => entry.root),
+            getScanInterval: (scannerRoot) => this._getScanIntervalForRoot(scannerRoot),
+            shouldYield: () => this._hasPendingControlChange()
+        });
+        this.scanners.set(root, scanner);
+        try {
+            await scanner.start(this.taskQueue, { allowPendingControl });
+            if (!scanner.isRunning()) throw new Error(`scanner did not start for ${root}`);
+            return scanner;
+        } catch (error) {
+            await scanner.stop().catch(() => {});
+            if (this.scanners.get(root) === scanner) this.scanners.delete(root);
+            throw error;
+        }
+    }
+
+    _scheduleRunnableWork({ allowPendingControl = false } = {}) {
+        const runnableRoots = new Set(this._getRunnableRoots());
+        for (const [root, scanner] of this.scanners) {
+            if (runnableRoots.has(root)) {
+                scanner.requestImmediateScan(this.taskQueue, { allowPendingControl });
+            }
+        }
+        this._enqueueEmbeddingQueue({ allowPendingControl });
     }
 
     async _restartScanners() {
@@ -957,7 +1001,8 @@ class FileManagerWorker extends BaseWorker {
                             last_full_scan: 0,
                             last_scan_at: null,
                             total_files: 0,
-                            last_file_count: 0
+                            last_file_count: 0,
+                            paused: false
                         };
                     }
                 }
@@ -1118,6 +1163,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _deriveSourceState(root, counts, mode) {
+        if (this.storage?.scannerState?.roots?.[root]?.paused === true) return 'paused';
         if (this.storage?.scannerState.unavailable_roots?.[root]) return 'unavailable';
         if (counts.total_files === 0) return counts.last_scan_at === null ? 'pending' : 'completed';
         if (mode === 'full') return counts.pending_count > 0 ? 'scanning' : 'completed';
@@ -1136,17 +1182,26 @@ class FileManagerWorker extends BaseWorker {
     _buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath }) {
         const entries = this._getVisibleConfigEntries();
         const defaultWorkspace = this._getDefaultWorkspace();
-        const sources = entries.map((entry) => ({
-            root: entry.root,
-            entry,
-            state: this.storage?.scannerState?.unavailable_roots?.[entry.root] ? 'unavailable' : 'pending',
-            last_scan_at: null,
-            total_files: 0,
-            embedded_count: 0,
-            pending_count: 0,
-            failed_count: 0,
-            is_workspace: entry.root === defaultWorkspace
-        }));
+        const sources = entries.map((entry) => {
+            const rootState = this.storage?.scannerState?.roots?.[entry.root];
+            const paused = rootState?.paused === true;
+            return {
+                root: entry.root,
+                entry,
+                paused,
+                state: paused
+                    ? 'paused'
+                    : this.storage?.scannerState?.unavailable_roots?.[entry.root]
+                      ? 'unavailable'
+                      : 'pending',
+                last_scan_at: rootState?.last_scan_at ?? null,
+                total_files: rootState?.total_files ?? 0,
+                embedded_count: 0,
+                pending_count: 0,
+                failed_count: rootState?.last_failed_count ?? 0,
+                is_workspace: entry.root === defaultWorkspace
+            };
+        });
 
         return {
             status,
@@ -1189,21 +1244,7 @@ class FileManagerWorker extends BaseWorker {
         // inner store is null so getStatus() returns null. Without this guard, building
         // storage_stats below dereferences null ("Cannot read properties of null (db_size)").
         if (!this.storage || !storageStatus) {
-            return {
-                status,
-                mode: null,
-                alerts: this._buildAlerts(status, null),
-                sources: [],
-                totals: null,
-                storage_stats: null,
-                last_rebuild_event: null,
-                isDeferred: this.storage?.isDeferred?.() ?? false,
-                deferredReason: this.storage?.deferredReason ?? null,
-                readonly: this._readonlyMode ?? false,
-                platform,
-                is_openharmony: isOpenHarmony,
-                home_path: homePath
-            };
+            return this._buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath });
         }
         const entries = this._getVisibleConfigEntries();
         const roots = entries.map((entry) => entry.root);
@@ -1219,6 +1260,7 @@ class FileManagerWorker extends BaseWorker {
         }));
 
         const sources = entries.map((entry) => {
+            const rootState = this.storage?.scannerState?.roots?.[entry.root];
             const counts = perRootCounts.get(entry.root) ?? {
                 total_files: 0,
                 embedded_count: 0,
@@ -1229,6 +1271,7 @@ class FileManagerWorker extends BaseWorker {
             return {
                 root: entry.root,
                 entry,
+                paused: rootState?.paused === true,
                 state: this._deriveSourceState(entry.root, counts, mode),
                 last_scan_at: counts.last_scan_at,
                 total_files: counts.total_files,
@@ -1279,6 +1322,124 @@ class FileManagerWorker extends BaseWorker {
         };
     }
 
+    async _getSourceControlSnapshot() {
+        try {
+            return await this.getFileSystemStatus();
+        } catch (error) {
+            logger.warn(`[filemgr] source control snapshot degraded: ${error?.message ?? error}`);
+            const platform = process.platform;
+            let homePath = '';
+            try {
+                homePath = os.homedir?.() ?? '';
+            } catch {}
+            return this._buildLightweightStatusSnapshot({
+                status: this._getEffectiveStatus(),
+                platform,
+                isOpenHarmony: platform === 'openharmony',
+                homePath: homePath || process.env.HOME || process.env.USERPROFILE || ''
+            });
+        }
+    }
+
+    async _sourceControlError(code) {
+        return { status: 'error', code, data: await this._getSourceControlSnapshot() };
+    }
+
+    async setSourcePaused(request) {
+        const root = request?.root;
+        const paused = request?.paused;
+        if (typeof root !== 'string' || root.length === 0 || typeof paused !== 'boolean') {
+            return this._sourceControlError('invalid_request');
+        }
+        if (this._readonlyMode) return this._sourceControlError('readonly');
+        if (!this.storage || this.status === 'error' || this.status === 'initializing') {
+            return this._sourceControlError('not_ready');
+        }
+        if (!this._getVisibleConfigEntries().some((entry) => entry.root === root)) {
+            return this._sourceControlError('unknown_root');
+        }
+
+        const token = this._registerSourceControlIntent();
+        let result;
+        let started = false;
+        try {
+            await this.runSequentially(async () => {
+                started = true;
+                this._consumeSourceControlIntent(token);
+                const entries = this._getVisibleConfigEntries();
+                const entry = entries.find((candidate) => candidate.root === root);
+                const rootState = this.storage?.scannerState?.roots?.[root];
+                if (!entry) {
+                    result = await this._sourceControlError('unknown_root');
+                    return;
+                }
+                if (!rootState) {
+                    result = await this._sourceControlError('not_ready');
+                    return;
+                }
+
+                if (paused) {
+                    const scanner = this.scanners.get(root) ?? null;
+                    if (scanner) {
+                        await scanner.stop();
+                        this.scanners.delete(root);
+                    }
+                    try {
+                        if (rootState.paused !== true) await this.storage.setRootPaused(root, true);
+                    } catch (error) {
+                        logger.warn(`[filemgr] pause persistence failed for ${root}: ${error?.message ?? error}`);
+                        if (scanner) {
+                            await this._startScanner(entry, entries, {
+                                allowPaused: true,
+                                allowPendingControl: true
+                            });
+                        }
+                        result = await this._sourceControlError('persistence_failed');
+                        return;
+                    }
+                } else {
+                    if (!FILEMGR_SCANNING_ENABLED) {
+                        result = await this._sourceControlError('runtime_failed');
+                        return;
+                    }
+                    let scanner;
+                    try {
+                        scanner = await this._startScanner(entry, entries, {
+                            allowPaused: true,
+                            allowPendingControl: true
+                        });
+                        if (!scanner?.isRunning()) {
+                            result = await this._sourceControlError('runtime_failed');
+                            return;
+                        }
+                    } catch (error) {
+                        logger.warn(`[filemgr] resume runtime failed for ${root}: ${error?.message ?? error}`);
+                        result = await this._sourceControlError('runtime_failed');
+                        return;
+                    }
+                    try {
+                        if (rootState.paused !== false) await this.storage.setRootPaused(root, false);
+                    } catch (error) {
+                        logger.warn(`[filemgr] resume persistence failed for ${root}: ${error?.message ?? error}`);
+                        await scanner?.stop().catch(() => {});
+                        this.scanners.delete(root);
+                        result = await this._sourceControlError('persistence_failed');
+                        return;
+                    }
+                }
+
+                this._scheduleRunnableWork({ allowPendingControl: true });
+                result = { status: 'ok', data: await this._getSourceControlSnapshot() };
+            });
+        } catch (error) {
+            logger.warn(`[filemgr] source control failed for ${root}: ${error?.message ?? error}`);
+            result = await this._sourceControlError('runtime_failed');
+        } finally {
+            if (!started) this._consumeSourceControlIntent(token);
+        }
+        return result;
+    }
+
     async getStatus() {
         return { status: 'ok', data: await this.getFileSystemStatus() };
     }
@@ -1321,7 +1482,8 @@ class FileManagerWorker extends BaseWorker {
                                 last_full_scan: 0,
                                 last_scan_at: null,
                                 total_files: 0,
-                                last_file_count: 0
+                                last_file_count: 0,
+                                paused: false
                             };
                         } else {
                             this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
@@ -1353,86 +1515,171 @@ class FileManagerWorker extends BaseWorker {
         return stat?.isFile?.() ? stat : null;
     }
 
-    async searchIndexedFiles(query, options = {}) {
-        const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-        const topK = normalizeSearchTopK(options?.topK);
-        const routes = normalizeIndexedSearchRoutes(options);
-
+    _checkIndexedSearchPreconditions(context) {
         if (!this.storage || this.storage.isDeferred()) {
-            return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
         }
+        if (!context.query) return toIndexedFileSearchResult(context.query, [], 0);
+        return null;
+    }
 
-        if (!normalizedQuery) {
-            return toIndexedFileSearchResult(normalizedQuery, [], 0);
+    async _runKeywordRoute(context) {
+        try {
+            const search = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
+            const results = await search.call(this.storage, context.query, {
+                limit: context.topK * 3,
+                scope: context.scope
+            });
+            return { route: 'keyword', success: true, results };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
+            return { route: 'keyword', success: false, results: [], error };
         }
+    }
 
-        let keyword = [];
-        if (routes.keyword) {
-            try {
-                const keywordSearch = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
-                keyword = await keywordSearch.call(this.storage, normalizedQuery, { limit: topK * 3 });
-            } catch (error) {
-                logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
-                return toIndexedFileSearchResult(
-                    normalizedQuery,
-                    [],
-                    0,
-                    '文件搜索暂不可用，请稍后重试',
-                    CODES.SEARCH_FAILED
-                );
+    async _runNameSemanticRoute(context) {
+        try {
+            const result = await this.storage.searchFileByName(context.query, {
+                topK: Math.min(context.topK * 2, 200),
+                scope: context.scope
+            });
+            return { route: 'name_semantic', success: !result?.code, results: result?.results ?? [] };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles name semantic failed: ${error.message}`);
+            return { route: 'name_semantic', success: false, results: [], error };
+        }
+    }
+
+    async _runContentSemanticRoute(context) {
+        try {
+            const result = await this.storage.searchIndexedChunks(context.query, {
+                topK: Math.min(context.topK * 3, 5000),
+                scope: context.scope
+            });
+            return {
+                route: 'content_semantic',
+                success: !result?.code,
+                results: result?.code
+                    ? []
+                    : groupIndexedChunksByFile(result?.results ?? [], Math.min(context.topK * 2, 200))
+            };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles content semantic failed: ${error.message}`);
+            return { route: 'content_semantic', success: false, results: [], error };
+        }
+    }
+
+    async _finalizeIndexedSearch(context, outcomes, initialWarning, initialCode) {
+        const failed = outcomes.filter((outcome) => !outcome.success);
+        const succeeded = outcomes.filter((outcome) => outcome.success);
+        if (failed.length > 0 && succeeded.length === 0) {
+            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.SEARCH_FAILED, CODES.SEARCH_FAILED);
+        }
+        let warning = initialWarning;
+        let code = initialCode;
+        if (failed.length > 0) {
+            const keywordFailed = failed.some((outcome) => outcome.route === 'keyword');
+            warning = keywordFailed ? WARNINGS.SEARCH_PARTIAL : WARNINGS.SEMANTIC_PARTIAL;
+            code = keywordFailed ? CODES.SEARCH_PARTIAL : CODES.SEMANTIC_PARTIAL;
+        }
+        const byRoute = Object.fromEntries(outcomes.map((outcome) => [outcome.route, outcome.results]));
+        const merged = mergeSearchRoutes({
+            keyword: byRoute.keyword ?? [],
+            nameSemantic: byRoute.name_semantic ?? [],
+            contentSemantic: byRoute.content_semantic ?? []
+        });
+        const filtered = await filterIndexedResults(merged, {
+            entries: this._getVisibleConfigEntries(),
+            unavailableRoots: this.storage.scannerState?.unavailable_roots ?? {},
+            scope: context.requestedScope,
+            currentWorkspace: this._currentWorkspace,
+            statFile: (filePath) => this._statFileForSearch(filePath),
+            concurrency: 16
+        });
+        const latestEntries = this._getVisibleConfigEntries();
+        const latestUnavailableRoots = this.storage.scannerState?.unavailable_roots ?? {};
+        try {
+            resolveFilemgrSearchScopeForEntries(context.requestedScope, {
+                entries: latestEntries,
+                unavailableRoots: latestUnavailableRoots
+            });
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(context.query);
             }
+            throw error;
+        }
+        const finalFiltered = filterIndexedResultsByPolicy(filtered, {
+            entries: latestEntries,
+            unavailableRoots: latestUnavailableRoots,
+            scope: context.requestedScope
+        });
+        const ranked = rankSearchResults(finalFiltered, { currentWorkspace: this._currentWorkspace }).slice(
+            0,
+            context.topK
+        );
+        return toIndexedFileSearchResult(context.query, ranked, finalFiltered.length, warning, code);
+    }
+
+    async searchIndexedFiles(query, options = {}) {
+        let context;
+        try {
+            context = createIndexedSearchContext(query, options);
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(query);
+            }
+            throw error;
         }
 
-        let name = { results: [] };
-        let content = { results: [] };
+        try {
+            const resolution = resolveFilemgrSearchScopeForEntries(context.scope, {
+                entries: this._getVisibleConfigEntries(),
+                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+            });
+            context = {
+                ...context,
+                requestedScope: resolution.requestedScope,
+                scope: resolution.effectiveScope,
+                coversAllSources: resolution.coversAllSources
+            };
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(query);
+            }
+            throw error;
+        }
+
+        const earlyResult = this._checkIndexedSearchPreconditions(context);
+        if (earlyResult) return earlyResult;
+
+        const outcomes = [];
+        if (context.routes.keyword) outcomes.push(await this._runKeywordRoute(context));
         let warning;
         let code;
-
-        if (routes.needsSemantic) {
+        if (context.routes.needsSemantic) {
             if (this.storage.mode === 'full') {
-                if (routes.nameSemantic) {
-                    try {
-                        name = await this.storage.searchFileByName(normalizedQuery, { topK: topK * 2 });
-                        if (name?.code) code = CODES.SEMANTIC_PARTIAL;
-                    } catch (error) {
-                        logger.warn(`[filemgr] searchIndexedFiles name semantic failed: ${error.message}`);
-                        code = CODES.SEMANTIC_PARTIAL;
-                    }
-                }
-
-                if (routes.contentSemantic) {
-                    try {
-                        content = await this.storage.searchFileByContent(normalizedQuery, { topK: topK * 2 });
-                        if (content?.code) code = CODES.SEMANTIC_PARTIAL;
-                    } catch (error) {
-                        logger.warn(`[filemgr] searchIndexedFiles content semantic failed: ${error.message}`);
-                        code = CODES.SEMANTIC_PARTIAL;
-                    }
-                }
-
-                if (code === CODES.SEMANTIC_PARTIAL) {
-                    warning = WARNINGS.SEMANTIC_PARTIAL;
-                }
+                if (context.routes.nameSemantic) outcomes.push(await this._runNameSemanticRoute(context));
+                if (context.routes.contentSemantic) outcomes.push(await this._runContentSemanticRoute(context));
             } else {
                 warning = WARNINGS.NO_EMBEDDING_MODEL;
                 code = CODES.EMBED_UNAVAILABLE;
             }
         }
 
-        const merged = mergeSearchRoutes({
-            keyword,
-            nameSemantic: name?.results ?? [],
-            contentSemantic: content?.results ?? []
-        });
-        const filtered = await filterIndexedResults(merged, {
-            entries: this._lastConfig?.entries ?? this.config?.entries ?? [],
-            unavailableRoots: this.storage.scannerState?.unavailable_roots ?? {},
-            currentWorkspace: this._currentWorkspace,
-            statFile: (filePath) => this._statFileForSearch(filePath),
-            concurrency: 16
-        });
-        const ranked = rankSearchResults(filtered, { currentWorkspace: this._currentWorkspace }).slice(0, topK);
-        return toIndexedFileSearchResult(normalizedQuery, ranked, filtered.length, warning, code);
+        try {
+            resolveFilemgrSearchScopeForEntries(context.requestedScope, {
+                entries: this._getVisibleConfigEntries(),
+                unavailableRoots: this.storage?.scannerState?.unavailable_roots ?? {}
+            });
+        } catch (error) {
+            if (error instanceof InvalidFilemgrSearchScopeError) {
+                return invalidIndexedSearchScopeResult(query);
+            }
+            throw error;
+        }
+
+        return this._finalizeIndexedSearch(context, outcomes, warning, code);
     }
 
     /**

@@ -47,8 +47,10 @@ import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
 import { BaseIndexer, type BaseIndexStoreProbeResult } from './base-indexer.js';
 import { ChunkIndexer } from './chunk-indexer.js';
+import type { ChunkSearchResult } from './chunk-indexer.js';
 
 const DELETE_BATCH_SIZE = 500;
+export const ARKDATA_SCOPED_SEARCH_BATCH_SIZE = 5000;
 
 export type ItemType = 'file' | 'mail' | 'memory';
 
@@ -255,7 +257,8 @@ export type ScalarOperator =
     | 'in'
     | 'notin'
     | 'between'
-    | 'notbetween';
+    | 'notbetween'
+    | 'path_descendant_or_self';
 
 // 向量操作符
 export type VectorOperator = 'vector_similarity' | 'vector_near' | 'vector_not_similar' | 'vector_range';
@@ -278,6 +281,193 @@ export interface FilterCondition {
     operator: QueryOperator;
     value: any;
     vectorQuery?: VectorQuery;
+}
+
+export interface ScopedSearchRequest {
+    preconditions: FilterCondition[];
+    targetCondition: FilterCondition;
+}
+
+export interface ScopedSearchOptions {
+    collectDiagnostics?: boolean;
+}
+
+export interface ScopedSearchDiagnostics {
+    backend: 'native' | 'arkdata' | 'wasm';
+    target: 'vector' | 'chunk';
+    strategy: 'exact_temp' | 'exact_in' | 'ann_overfetch_filter';
+    requestedK: number;
+    topK: number;
+    totalTargetRows: number;
+    exactCandidateCount: number;
+    exactBatchSize: number;
+    exactBatchCount: number;
+    basePrefilterLatencyMs: number;
+    targetSearchLatencyMs: number;
+    mergeLatencyMs: number;
+    latencyMs: number;
+    memoryBeforeRssBytes: number;
+    memoryAfterRssBytes: number;
+    memoryDeltaRssBytes: number;
+}
+
+export type SemanticIndexBackend = ScopedSearchDiagnostics['backend'];
+
+export function validateSemanticIndexBackend(value: unknown, owner: string): SemanticIndexBackend {
+    if (value === undefined || value === null || value === '') {
+        throw new Error(`${owner} backend capability is missing`);
+    }
+    if (value !== 'native' && value !== 'arkdata' && value !== 'wasm') {
+        throw new Error(`${owner} backend capability is invalid: ${String(value)}`);
+    }
+    return value;
+}
+
+export interface ScopedSearchResult {
+    items: SearchItem[];
+    totalCount: number;
+    diagnostics?: ScopedSearchDiagnostics;
+}
+
+export class ScopedSearchValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ScopedSearchValidationError';
+    }
+}
+
+export function splitScopedCandidateItems(items: Item[], batchSize: number): Item[][] {
+    if (!Number.isInteger(batchSize) || batchSize <= 0) {
+        throw new RangeError('Scoped search batch size must be a positive integer');
+    }
+    const batches: Item[][] = [];
+    for (let offset = 0; offset < items.length; offset += batchSize) {
+        batches.push(items.slice(offset, offset + batchSize));
+    }
+    return batches;
+}
+
+export function mergeScopedVectorHits(
+    batches: SearchItem[][],
+    candidateMap: Map<string, Item>,
+    topK: number
+): SearchItem[] {
+    const seen = new Set<string>();
+    const hits: SearchItem[] = [];
+    for (const hit of batches.flat()) {
+        const id = hit.item.item_id;
+        const candidate = candidateMap.get(id);
+        if (!candidate) continue;
+        if (!Number.isFinite(hit.VecScore)) {
+            throw new Error(`Scoped search invariant violation: vector hit ${id} must have a finite VecScore`);
+        }
+        if (seen.has(id)) throw new Error(`Scoped search invariant violation: duplicate vector hit ${id}`);
+        seen.add(id);
+        hits.push({ ...hit, item: candidate, tags: candidate.tag });
+    }
+    return hits
+        .sort(
+            (left, right) =>
+                (right.VecScore ?? -Infinity) - (left.VecScore ?? -Infinity) ||
+                left.item.item_id.localeCompare(right.item.item_id)
+        )
+        .slice(0, topK);
+}
+
+export function mergeScopedChunkHits(
+    batches: ChunkSearchResult[][],
+    candidateMap: Map<string, Item>,
+    topK: number
+): SearchItem[] {
+    const seen = new Set<string>();
+    const hits: SearchItem[] = [];
+    for (const hit of batches.flat()) {
+        const candidate = candidateMap.get(hit.item_id);
+        if (!candidate) continue;
+        if (!Number.isFinite(hit.similarity)) {
+            throw new Error(
+                `Scoped search invariant violation: chunk hit ${hit.item_id}/${hit.chunk_id} must have a finite similarity`
+            );
+        }
+        const key = `${hit.item_id}\u0000${hit.chunk_id}`;
+        if (seen.has(key)) throw new Error(`Scoped search invariant violation: duplicate chunk hit ${key}`);
+        seen.add(key);
+        hits.push({
+            item: candidate,
+            tags: candidate.tag,
+            ChunkScore: hit.similarity,
+            chunk_id: hit.chunk_id,
+            chunk_text: hit.chunk_text
+        });
+    }
+    return hits
+        .sort(
+            (left, right) =>
+                (right.ChunkScore ?? -Infinity) - (left.ChunkScore ?? -Infinity) ||
+                left.item.item_id.localeCompare(right.item.item_id) ||
+                String(left.chunk_id).localeCompare(String(right.chunk_id))
+        )
+        .slice(0, topK);
+}
+
+function validateScopedSearchRequest(request: ScopedSearchRequest): void {
+    if (!request || !Array.isArray(request.preconditions) || request.preconditions.length === 0) {
+        throw new ScopedSearchValidationError('Scoped search requires non-empty preconditions');
+    }
+    if (
+        request.preconditions.some(
+            (condition) =>
+                condition === null ||
+                typeof condition !== 'object' ||
+                Array.isArray(condition) ||
+                condition.indexer !== 'BaseIndexer'
+        )
+    ) {
+        throw new ScopedSearchValidationError(
+            'Scoped search preconditions must contain BaseIndexer conditions only'
+        );
+    }
+    const target = request.targetCondition;
+    if (!target || typeof target !== 'object' || Array.isArray(target)) {
+        throw new ScopedSearchValidationError('Scoped search target must be an object');
+    }
+    if (!['VectorIndexer', 'ChunkIndexer'].includes(target.indexer)) {
+        throw new ScopedSearchValidationError('Scoped search target must be VectorIndexer or ChunkIndexer');
+    }
+    if (typeof target.field !== 'string' || target.field.trim().length === 0) {
+        throw new ScopedSearchValidationError('Scoped search target field must be a non-empty string');
+    }
+    if (target.operator !== 'vector_near') {
+        throw new ScopedSearchValidationError('Scoped search target operator must be vector_near');
+    }
+    const vector = target.value;
+    const isNumberArray = Array.isArray(vector) && vector.every((value) => typeof value === 'number');
+    const isFloat32Array = vector instanceof Float32Array;
+    if ((!isNumberArray && !isFloat32Array) || vector.length === 0 || !Array.from(vector).every(Number.isFinite)) {
+        throw new ScopedSearchValidationError('Scoped search target value must be a non-empty finite vector');
+    }
+    const vectorQuery = target.vectorQuery;
+    if (
+        vectorQuery !== undefined &&
+        (vectorQuery === null || typeof vectorQuery !== 'object' || Array.isArray(vectorQuery))
+    ) {
+        throw new ScopedSearchValidationError('Scoped search vectorQuery must be an object');
+    }
+    if (vectorQuery?.topK !== undefined && (!Number.isInteger(vectorQuery.topK) || vectorQuery.topK <= 0)) {
+        throw new ScopedSearchValidationError('Scoped search vectorQuery topK must be a positive integer');
+    }
+    if (
+        vectorQuery?.metric !== undefined &&
+        !(['cosine', 'euclidean', 'dot_product', 'manhattan'] as unknown[]).includes(vectorQuery.metric)
+    ) {
+        throw new ScopedSearchValidationError('Scoped search vectorQuery metric is invalid');
+    }
+    if (
+        vectorQuery?.threshold !== undefined &&
+        (!Number.isFinite(vectorQuery.threshold) || vectorQuery.threshold < 0 || vectorQuery.threshold > 1)
+    ) {
+        throw new ScopedSearchValidationError('Scoped search vectorQuery threshold must be finite and between 0 and 1');
+    }
 }
 
 export interface UpsertOptions {
@@ -471,6 +661,93 @@ export class BaseStorage {
             items: results,
             totalCount: results.length
         };
+    }
+
+    async searchScope(request: ScopedSearchRequest, options: ScopedSearchOptions = {}): Promise<ScopedSearchResult> {
+        this.ensureUsable();
+        validateScopedSearchRequest(request);
+
+        const startedAt = Date.now();
+        const memoryBefore = options.collectDiagnostics ? process.memoryUsage().rss : 0;
+        const baseStartedAt = Date.now();
+        const baseResult = await this.baseIndexer.search(request.preconditions);
+        const basePrefilterLatencyMs = Date.now() - baseStartedAt;
+        const candidateMap = new Map(baseResult.items.map((item) => [item.item_id, item]));
+        const candidateItems = [...candidateMap.values()];
+        const target = request.targetCondition.indexer === 'VectorIndexer' ? 'vector' : 'chunk';
+        const targetIndexer = target === 'vector' ? this.vectorIndexer : this.chunkIndexer;
+        if (!targetIndexer) throw new Error(`${request.targetCondition.indexer} not initialized for this schema`);
+        if (typeof targetIndexer.getBackend !== 'function') {
+            throw new Error(`${request.targetCondition.indexer} backend capability is missing`);
+        }
+        const backend = validateSemanticIndexBackend(
+            targetIndexer.getBackend(),
+            request.targetCondition.indexer
+        );
+        const requestedK = request.targetCondition.vectorQuery?.topK ?? 10;
+        const batchSize = backend === 'arkdata' ? ARKDATA_SCOPED_SEARCH_BATCH_SIZE : candidateItems.length;
+        const batches =
+            candidateItems.length === 0
+                ? []
+                : backend === 'arkdata'
+                  ? splitScopedCandidateItems(candidateItems, ARKDATA_SCOPED_SEARCH_BATCH_SIZE)
+                  : [candidateItems];
+        let totalTargetRows = 0;
+        if (options.collectDiagnostics) {
+            const info = await targetIndexer.getInfo();
+            totalTargetRows = typeof info.size === 'number' ? info.size : 0;
+        }
+
+        const targetStartedAt = Date.now();
+        const vectorBatches: SearchItem[][] = [];
+        const chunkBatches: ChunkSearchResult[][] = [];
+        for (const batch of batches) {
+            if (target === 'vector') {
+                if (!this.vectorIndexer) throw new Error('VectorIndexer not initialized for this schema');
+                const result = await this.vectorIndexer.search([request.targetCondition], { existingResults: batch });
+                vectorBatches.push(this.itemsToSearchItems(result.items, result.scores, 'VectorIndexer'));
+            } else {
+                if (!this.chunkIndexer) throw new Error('ChunkIndexer not initialized for this schema');
+                chunkBatches.push(
+                    await this.chunkIndexer.searchChunks(
+                        request.targetCondition.value,
+                        request.targetCondition.vectorQuery ?? { threshold: 0.5 },
+                        batch.map((item) => item.item_id)
+                    )
+                );
+            }
+        }
+        const targetSearchLatencyMs = batches.length === 0 ? 0 : Date.now() - targetStartedAt;
+        const mergeStartedAt = Date.now();
+        const items =
+            target === 'vector'
+                ? mergeScopedVectorHits(vectorBatches, candidateMap, requestedK)
+                : mergeScopedChunkHits(chunkBatches, candidateMap, requestedK);
+        const mergeLatencyMs = Date.now() - mergeStartedAt;
+        const result: ScopedSearchResult = { items, totalCount: items.length };
+        if (options.collectDiagnostics) {
+            const memoryAfter = process.memoryUsage().rss;
+            result.diagnostics = {
+                backend,
+                target,
+                strategy:
+                    backend === 'arkdata' ? 'exact_in' : backend === 'wasm' ? 'ann_overfetch_filter' : 'exact_temp',
+                requestedK,
+                topK: requestedK,
+                totalTargetRows,
+                exactCandidateCount: candidateItems.length,
+                exactBatchSize: candidateItems.length === 0 ? 0 : batchSize,
+                exactBatchCount: batches.length,
+                basePrefilterLatencyMs,
+                targetSearchLatencyMs,
+                mergeLatencyMs,
+                latencyMs: Date.now() - startedAt,
+                memoryBeforeRssBytes: memoryBefore,
+                memoryAfterRssBytes: memoryAfter,
+                memoryDeltaRssBytes: memoryAfter - memoryBefore
+            };
+        }
+        return result;
     }
 
     async searchVectorMeta(

@@ -8,6 +8,7 @@ import {
     formatLastScan
 } from '../../../../../main/applications/filemgr/renderer/sources.js';
 import { setSnapshot } from '../../../../../main/applications/filemgr/renderer/state.js';
+import { createRendererTranslator } from '../../../../../renderer/locale.ts';
 
 test('formatLastScan only shows just now for scans within one minute', (t) => {
     const now = 1_700_000_000_000;
@@ -29,6 +30,10 @@ test('filemgr foreground status surfaces avoid persistent paint animations', () 
     assert.doesNotMatch(bannerStyles, /filemgr-od-pulse[\s\S]*infinite/);
     assert.doesNotMatch(bannerStyles, /filemgr-od-alert-pulse[\s\S]*infinite/);
     assert.doesNotMatch(sourceStyles, /filemgr-source-shimmer[\s\S]*infinite/);
+    assert.match(
+        sourceStyles,
+        /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.fs-upper \.source-control-spinner\s*\{\s*animation: none;/
+    );
 
     banner.destroy();
     sources.destroy();
@@ -206,7 +211,9 @@ test('source card remains deletable while filemgr is in error state', () => {
     assert.equal(grid?.classList.contains('fs-error-layer'), true);
     assert.equal(/fs-error-layer[\s\S]*pointer-events\s*:\s*none/.test(sourceStyles), false);
 
-    document.querySelector('.close-btn')?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    document
+        .querySelector('.source-menu-remove')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
     assert.deepEqual(deleteRequests, [root]);
 
@@ -268,7 +275,9 @@ test('workspace source delete button shows protected message instead of requesti
     });
     document.body.appendChild(sources.element);
 
-    document.querySelector('.close-btn')?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    document
+        .querySelector('.source-menu-remove')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
     assert.deepEqual(deleteRequests, []);
     assert.deepEqual(protectedRequests, [
@@ -280,4 +289,393 @@ test('workspace source delete button shows protected message instead of requesti
 
     sources.destroy();
     globalThis.CustomEvent = originalCustomEvent;
+});
+
+test('source card keeps routine actions in a localized overflow menu and paused recovery in the status row', () => {
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [
+            {
+                root: '/Users/example/active',
+                paused: false,
+                state: 'completed',
+                total_files: 4,
+                last_scan_at: Date.now()
+            },
+            {
+                root: '/Users/example/paused',
+                paused: true,
+                state: 'paused',
+                total_files: 2,
+                last_scan_at: Date.now()
+            }
+        ]
+    });
+    const sources = createSources({ document, t: createRendererTranslator('en-US') });
+    document.body.appendChild(sources.element);
+
+    const cards = document.querySelectorAll('.fs-source-card');
+    const activeMenu = cards[0].querySelector('.filemgr-source-menu-portal');
+    const activeTrigger = cards[0].querySelector('.source-menu-trigger');
+    assert.equal(activeTrigger?.getAttribute('aria-label'), 'More actions: /Users/example/active');
+    assert.equal(activeTrigger?.getAttribute('aria-expanded'), 'false');
+    assert.equal(activeMenu?.hidden, true);
+    assert.equal(activeMenu?.querySelector('.source-control-btn')?.textContent, 'Pause scanning');
+    assert.equal(activeMenu?.querySelector('.source-menu-remove')?.textContent, 'Remove scan path');
+    assert.equal(cards[0].querySelector('.row3 .source-control-btn'), null);
+
+    activeTrigger?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    assert.equal(activeTrigger?.getAttribute('aria-expanded'), 'true');
+    assert.equal(activeMenu?.hidden, false);
+    assert.equal(activeMenu?.parentElement, document.body);
+    assert.equal(activeMenu?.style.top, '8px');
+    assert.equal(activeMenu?.style.left, '8px');
+
+    assert.equal(cards[1].querySelector('.filemgr-source-menu-portal .source-control-btn'), null);
+    assert.equal(cards[1].querySelector('.row3 .source-control-btn')?.textContent, 'Continue scanning');
+    assert.equal(cards[1].querySelector('.source-menu-remove')?.textContent, 'Remove scan path');
+
+    document.body.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+    assert.equal(activeTrigger?.getAttribute('aria-expanded'), 'false');
+    assert.equal(activeMenu?.hidden, true);
+    assert.equal(activeMenu?.parentElement, cards[0].querySelector('.source-actions'));
+
+    sources.destroy();
+});
+
+test('source pause control stays card-local and waits for backend snapshot', async (t) => {
+    const root = '/Users/example/docs';
+    const otherRoot = '/Users/example/other';
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [
+            { root, paused: false, state: 'completed', total_files: 4, last_scan_at: Date.now() },
+            { root: otherRoot, paused: false, state: 'completed', total_files: 2, last_scan_at: Date.now() }
+        ]
+    });
+    let resolveRequest;
+    const calls = [];
+    const sources = createSources({
+        document,
+        t: (key) =>
+            ({
+                'renderer.filemgr.source.pause': 'Pause',
+                'renderer.filemgr.source.pausing': 'Pausing…'
+            })[key] ?? key,
+        onSetSourcePaused: async (request) => {
+            calls.push(request);
+            await new Promise((resolve) => {
+                resolveRequest = resolve;
+            });
+            setSnapshot({
+                status: 'running',
+                mode: 'full',
+                sources: [
+                    { root, paused: true, state: 'paused', total_files: 4, last_scan_at: Date.now() },
+                    { root: otherRoot, paused: false, state: 'completed', total_files: 2, last_scan_at: Date.now() }
+                ]
+            });
+        }
+    });
+    t.after(async () => {
+        resolveRequest?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        sources.destroy();
+    });
+    document.body.appendChild(sources.element);
+    const cards = document.querySelectorAll('.fs-source-card');
+    const firstControl = cards[0].querySelector('.source-control-btn');
+
+    assert.equal(firstControl?.textContent, 'Pause');
+    firstControl?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    assert.deepEqual(calls, [{ root, paused: true }]);
+    const pendingCards = document.querySelectorAll('.fs-source-card');
+    assert.equal(pendingCards[0].getAttribute('aria-busy'), 'true');
+    assert.equal(pendingCards[1].getAttribute('aria-busy'), 'false');
+    assert.equal(pendingCards[0].querySelector('.source-control-btn')?.disabled, true);
+    assert.equal(pendingCards[0].querySelector('.source-control-btn')?.getAttribute('aria-busy'), 'true');
+    assert.equal(pendingCards[0].querySelector('.source-menu-remove')?.disabled, true);
+    assert.equal(document.querySelectorAll('.fs-source-card')[1].querySelector('.source-control-btn')?.disabled, false);
+    assert.equal(document.querySelectorAll('.fs-source-card')[1].querySelector('.source-menu-remove')?.disabled, false);
+    assert.equal(document.querySelector('.fs-source-card')?.dataset.state, 'completed');
+    assert.match(document.querySelector('.fs-source-card')?.textContent ?? '', /Pausing/);
+    pendingCards[0]
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    assert.deepEqual(calls, [{ root, paused: true }]);
+
+    resolveRequest();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(document.querySelector('.fs-source-card')?.dataset.state, 'paused');
+    assert.equal(document.querySelector('.source-control-spinner'), null);
+});
+
+test('source resume pending stays confirmed and card-local', async (t) => {
+    const root = '/Users/example/paused';
+    const otherRoot = '/Users/example/runnable';
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [
+            { root, paused: true, state: 'paused', total_files: 4, last_scan_at: Date.now() },
+            { root: otherRoot, paused: false, state: 'completed', total_files: 2, last_scan_at: Date.now() }
+        ]
+    });
+    let resolveRequest;
+    const calls = [];
+    const sources = createSources({
+        document,
+        t: createRendererTranslator('en-US'),
+        onSetSourcePaused: (request) => {
+            calls.push(request);
+            return new Promise((resolve) => {
+                resolveRequest = resolve;
+            });
+        }
+    });
+    t.after(async () => {
+        resolveRequest?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        sources.destroy();
+    });
+    document.body.appendChild(sources.element);
+
+    document
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    assert.deepEqual(calls, [{ root, paused: false }]);
+    assert.equal(document.querySelector('.fs-source-card')?.dataset.state, 'paused');
+    assert.equal(document.querySelector('.fs-source-card')?.getAttribute('aria-busy'), 'true');
+    assert.match(document.querySelector('.fs-source-card')?.textContent ?? '', /Resuming/);
+    assert.equal(document.querySelector('.source-control-btn')?.getAttribute('aria-busy'), 'true');
+    assert.equal(document.querySelector('.source-menu-remove')?.disabled, true);
+    assert.equal(document.querySelectorAll('.fs-source-card')[1].querySelector('.source-control-btn')?.disabled, false);
+    assert.equal(document.querySelectorAll('.fs-source-card')[1].querySelector('.source-menu-remove')?.disabled, false);
+
+    resolveRequest();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(document.querySelector('.source-control-spinner'), null);
+});
+
+test('source pause failure settles spinner and keeps confirmed state retryable', async (t) => {
+    const root = '/Users/example/failing';
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [{ root, paused: false, state: 'completed', total_files: 4, last_scan_at: Date.now() }]
+    });
+    let attempts = 0;
+    let resolveRetry;
+    const sources = createSources({
+        document,
+        onSetSourcePaused: async () => {
+            attempts++;
+            if (attempts === 2) {
+                await new Promise((resolve) => {
+                    resolveRetry = resolve;
+                });
+                return;
+            }
+            const error = new Error('failed');
+            error.code = 'persistence_failed';
+            throw error;
+        }
+    });
+    t.after(async () => {
+        resolveRetry?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        sources.destroy();
+    });
+    document.body.appendChild(sources.element);
+
+    document
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(attempts, 1);
+    assert.equal(document.querySelector('.fs-source-card')?.dataset.state, 'completed');
+    assert.equal(document.querySelector('.source-control-spinner'), null);
+    assert.equal(document.querySelector('.source-control-btn')?.disabled, false);
+    assert.match(document.querySelector('.fs-source-control-error')?.textContent ?? '', /saved|保存/);
+
+    document
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    assert.equal(attempts, 2);
+    assert.equal(document.querySelector('.fs-source-control-error'), null);
+    assert.ok(document.querySelector('.source-control-spinner'));
+    resolveRetry();
+    await Promise.resolve();
+    await Promise.resolve();
+});
+
+test('source pause controls use real Chinese and English translations', (t) => {
+    for (const [locale, expected] of [
+        ['zh-CN', ['继续扫描', '已暂停 · 4 个文件']],
+        ['en-US', ['Continue scanning', 'Paused · 4 files']]
+    ]) {
+        const { document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+        setSnapshot({
+            status: 'running',
+            mode: 'full',
+            sources: [
+                {
+                    root: `/Users/example/${locale}`,
+                    paused: true,
+                    state: 'paused',
+                    total_files: 4,
+                    last_scan_at: Date.now()
+                }
+            ]
+        });
+        const sources = createSources({ document, t: createRendererTranslator(locale) });
+        t.after(() => sources.destroy());
+        document.body.appendChild(sources.element);
+        const control = document.querySelector('.source-control-btn');
+        assert.equal(control?.textContent, expected[0]);
+        assert.equal(control?.dataset.action, 'resume');
+        assert.equal(control?.getAttribute('aria-label'), expected[0]);
+        assert.equal(control?.getAttribute('title'), expected[0]);
+        assert.ok(control?.querySelector('.source-control-icon'));
+        assert.equal(document.querySelector('.status-text')?.textContent, expected[1]);
+    }
+});
+
+test('real translator covers pause resume pending paused and retryable error text', async (t) => {
+    const root = '/Users/example/localized-control';
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [{ root, paused: false, state: 'completed', total_files: 4, last_scan_at: Date.now() }]
+    });
+    let attempt = 0;
+    let releasePause;
+    let releaseResume;
+    const sources = createSources({
+        document,
+        t: createRendererTranslator('en-US'),
+        onSetSourcePaused: async ({ paused }) => {
+            attempt++;
+            if (paused) {
+                await new Promise((resolve) => {
+                    releasePause = resolve;
+                });
+                setSnapshot({
+                    status: 'running',
+                    mode: 'full',
+                    sources: [{ root, paused: true, state: 'paused', total_files: 4, last_scan_at: Date.now() }]
+                });
+                return;
+            }
+            await new Promise((resolve) => {
+                releaseResume = resolve;
+            });
+            const error = new Error('runtime');
+            error.code = 'runtime_failed';
+            throw error;
+        }
+    });
+    t.after(async () => {
+        releasePause?.();
+        releaseResume?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        sources.destroy();
+    });
+    document.body.appendChild(sources.element);
+    assert.equal(document.querySelector('.source-control-btn')?.textContent, 'Pause scanning');
+
+    document
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    assert.match(document.querySelector('.status-text')?.textContent ?? '', /Pausing/);
+    releasePause();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(document.querySelector('.source-control-btn')?.textContent, 'Continue scanning');
+    assert.equal(document.querySelector('.status-text')?.textContent, 'Paused · 4 files');
+
+    document
+        .querySelector('.source-control-btn')
+        ?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    assert.match(document.querySelector('.status-text')?.textContent ?? '', /Resuming/);
+    releaseResume();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(attempt, 2);
+    assert.equal(
+        document.querySelector('.fs-source-control-error')?.textContent,
+        'The pause or resume operation failed. Retry.'
+    );
+});
+
+test('different source cards can remain pending concurrently', async (t) => {
+    const roots = ['/Users/example/one', '/Users/example/two'];
+    const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: roots.map((root) => ({
+            root,
+            paused: false,
+            state: 'completed',
+            total_files: 1,
+            last_scan_at: Date.now()
+        }))
+    });
+    const resolvers = new Map();
+    const calls = [];
+    const sources = createSources({
+        document,
+        onSetSourcePaused: (request) => {
+            calls.push(request);
+            return new Promise((resolve) => resolvers.set(request.root, resolve));
+        }
+    });
+    t.after(async () => {
+        for (const resolve of resolvers.values()) resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        sources.destroy();
+    });
+    document.body.appendChild(sources.element);
+    const controls = document.querySelectorAll('.source-control-btn');
+    controls[0].dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    document
+        .querySelectorAll('.source-control-btn')[1]
+        .dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    assert.deepEqual(
+        calls,
+        roots.map((root) => ({ root, paused: true }))
+    );
+    assert.equal(document.querySelectorAll('.source-control-spinner').length, 2);
+    resolvers.get(roots[0])();
+    resolvers.get(roots[1])();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(document.querySelectorAll('.source-control-spinner').length, 0);
 });

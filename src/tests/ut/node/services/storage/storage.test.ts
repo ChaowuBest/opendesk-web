@@ -9,13 +9,17 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { performance } from 'node:perf_hooks';
 import {
     BaseStorage,
     ColumnSchema,
     Item,
     SearchItem,
     BM25Query,
-    DimMismatchError
+    DimMismatchError,
+    ScopedSearchValidationError,
+    mergeScopedVectorHits,
+    splitScopedCandidateItems
 } from '../../../../../main/services/storage/abstract-storage.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -1055,6 +1059,866 @@ async function testSearchVectorMetaEmptyDb(): Promise<void> {
 
 // ── Main ─────────────────────────────────────────────────────────────
 
+async function testScopedSearchValidationAndVectorBatching(): Promise<void> {
+    const items = Array.from({ length: 10001 }, (_, index) => ({
+        item_id: `item-${index}`,
+        item_type: 'file' as const,
+        marker: index
+    }));
+    assert.deepEqual(
+        splitScopedCandidateItems(items, 5000).map((batch) => batch.length),
+        [5000, 5000, 1]
+    );
+
+    const dir = tmpDir('scoped-contract');
+    const storage = new BaseStorage('scoped-contract', fullSchema, dir);
+    await assert.rejects(
+        () =>
+            storage.searchScope({
+                preconditions: [],
+                targetCondition: {
+                    indexer: 'VectorIndexer',
+                    field: 'text',
+                    operator: 'vector_near',
+                    value: makeOneHotVector(0),
+                    vectorQuery: { topK: 2 }
+                }
+            }),
+        ScopedSearchValidationError
+    );
+
+    const calls: string[] = [];
+    (storage as any).baseIndexer = {
+        search: async () => {
+            calls.push('base');
+            return { items: items.slice(0, 3), totalCount: 3 };
+        }
+    };
+    (storage as any).vectorIndexer = {
+        getBackend: () => 'wasm',
+        search: async (_conditions: unknown, options: any) => {
+            calls.push(`vector:${options.existingResults.length}`);
+            return {
+                items: [
+                    { item_id: 'item-2', item_type: 'file' },
+                    { item_id: 'outside', item_type: 'file' },
+                    { item_id: 'item-1', item_type: 'file' }
+                ],
+                scores: new Map([
+                    ['item-2', 0.8],
+                    ['outside', 1],
+                    ['item-1', 0.8]
+                ]),
+                totalCount: 3
+            };
+        }
+    };
+    const result = await storage.searchScope({
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
+        targetCondition: {
+            indexer: 'VectorIndexer',
+            field: 'text',
+            operator: 'vector_near',
+            value: makeOneHotVector(0),
+            vectorQuery: { topK: 2 }
+        }
+    });
+    assert.deepEqual(calls, ['base', 'vector:3']);
+    assert.deepEqual(
+        result.items.map((hit) => hit.item.item_id),
+        ['item-1', 'item-2']
+    );
+    assert.equal(result.items[0].item.marker, 1);
+    assert.equal(result.totalCount, 2);
+    cleanup(dir);
+}
+
+async function testScopedVectorTargetValidationPrecedesBasePrefilter(): Promise<void> {
+    const invalidTargets: Array<[string, any]> = [
+        ['non-object target', null],
+        ['empty field', { indexer: 'VectorIndexer', field: ' ', operator: 'vector_near', value: [1] }],
+        ['unsupported operator', { indexer: 'VectorIndexer', field: 'text', operator: '=', value: [1] }],
+        ['empty array vector', { indexer: 'VectorIndexer', field: 'text', operator: 'vector_near', value: [] }],
+        [
+            'non-finite array vector',
+            { indexer: 'VectorIndexer', field: 'text', operator: 'vector_near', value: [Number.NaN] }
+        ],
+        [
+            'empty typed vector',
+            { indexer: 'VectorIndexer', field: 'text', operator: 'vector_near', value: new Float32Array() }
+        ],
+        [
+            'invalid vectorQuery',
+            { indexer: 'VectorIndexer', field: 'text', operator: 'vector_near', value: [1], vectorQuery: [] }
+        ],
+        [
+            'invalid topK',
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { topK: 0 }
+            }
+        ],
+        [
+            'invalid metric',
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { metric: 'chebyshev' }
+            }
+        ],
+        [
+            'invalid threshold',
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { threshold: 1.1 }
+            }
+        ]
+    ];
+
+    for (const candidateItems of [[], [{ item_id: 'candidate', item_type: 'file' as const }]]) {
+        const storage = new BaseStorage('scoped-vector-validation', fullSchema, tmpDir('scoped-vector-validation'));
+        let baseCalls = 0;
+        let backendCalls = 0;
+        let targetCalls = 0;
+        (storage as any).baseIndexer = {
+            search: async () => {
+                baseCalls++;
+                return { items: candidateItems, totalCount: candidateItems.length };
+            }
+        };
+        (storage as any).vectorIndexer = {
+            getBackend: () => {
+                backendCalls++;
+                return 'native';
+            },
+            search: async (_conditions: unknown, options: any) => {
+                targetCalls++;
+                assert.deepEqual(options.existingResults, candidateItems);
+                return {
+                    items: candidateItems,
+                    scores: new Map(candidateItems.map((item) => [item.item_id, 0.75])),
+                    totalCount: candidateItems.length
+                };
+            }
+        };
+        const control = await storage.searchScope({
+            preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
+            targetCondition: {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: [1],
+                vectorQuery: { topK: 1 }
+            }
+        });
+        assert.equal(baseCalls, 1);
+        assert.equal(backendCalls, 1);
+        assert.equal(targetCalls, candidateItems.length === 0 ? 0 : 1);
+        assert.deepEqual(
+            control.items.map((hit) => hit.item.item_id),
+            candidateItems.map((item) => item.item_id)
+        );
+        baseCalls = 0;
+        backendCalls = 0;
+        targetCalls = 0;
+        for (const [name, targetCondition] of invalidTargets) {
+            await assert.rejects(
+                () =>
+                    storage.searchScope({
+                        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }],
+                        targetCondition
+                    }),
+                ScopedSearchValidationError,
+                `${name} must fail before a ${candidateItems.length === 0 ? 'potentially empty' : 'non-empty'} prefilter`
+            );
+        }
+        assert.equal(baseCalls, 0);
+        assert.equal(backendCalls, 0);
+        assert.equal(targetCalls, 0);
+    }
+}
+
+async function testScopedSearchRejectsMalformedPreconditionsBeforeAnyStorageCall(): Promise<void> {
+    const malformedPreconditions: Array<[string, unknown]> = [
+        ['null', null],
+        ['undefined', undefined],
+        ['array', []],
+        ['string', 'BaseIndexer'],
+        ['number', 1]
+    ];
+    const storage = new BaseStorage(
+        'scoped-precondition-validation',
+        fullSchema,
+        tmpDir('scoped-precondition-validation')
+    );
+    let baseCalls = 0;
+    let backendCalls = 0;
+    let vectorCalls = 0;
+    let chunkCalls = 0;
+    (storage as any).baseIndexer = {
+        search: async () => {
+            baseCalls++;
+            return { items: [{ item_id: 'candidate', item_type: 'file' }], totalCount: 1 };
+        }
+    };
+    (storage as any).vectorIndexer = {
+        getBackend: () => {
+            backendCalls++;
+            return 'native';
+        },
+        search: async () => {
+            vectorCalls++;
+            return { items: [], scores: new Map(), totalCount: 0 };
+        }
+    };
+    (storage as any).chunkIndexer = {
+        getBackend: () => {
+            backendCalls++;
+            return 'native';
+        },
+        searchChunks: async () => {
+            chunkCalls++;
+            return [];
+        }
+    };
+
+    for (const [name, malformedPrecondition] of malformedPreconditions) {
+        await assert.rejects(
+            () =>
+                storage.searchScope({
+                    preconditions: [malformedPrecondition] as any,
+                    targetCondition: {
+                        indexer: 'VectorIndexer',
+                        field: 'text',
+                        operator: 'vector_near',
+                        value: [1],
+                        vectorQuery: { topK: 1 }
+                    }
+                }),
+            ScopedSearchValidationError,
+            `${name} precondition must fail with the scoped search validation error`
+        );
+        assert.equal(baseCalls, 0, `${name} precondition must not run the Base prefilter`);
+        assert.equal(backendCalls, 0, `${name} precondition must not inspect a backend`);
+        assert.equal(vectorCalls, 0, `${name} precondition must not run the Vector target`);
+        assert.equal(chunkCalls, 0, `${name} precondition must not run the Chunk target`);
+    }
+}
+
+async function testScopedVectorMergeRejectsInvariantViolations(): Promise<void> {
+    const candidateMap = new Map<string, Item>([['a', { item_id: 'a', item_type: 'file' }]]);
+    assert.throws(
+        () =>
+            mergeScopedVectorHits(
+                [
+                    [{ item: { item_id: 'a', item_type: 'file' }, VecScore: 0.8 }],
+                    [{ item: { item_id: 'a', item_type: 'file' }, VecScore: 0.7 }]
+                ],
+                candidateMap,
+                2
+            ),
+        /duplicate vector hit/
+    );
+    for (const score of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assert.throws(
+            () =>
+                mergeScopedVectorHits(
+                    [[{ item: { item_id: 'a', item_type: 'file' }, VecScore: score }]],
+                    candidateMap,
+                    1
+                ),
+            /finite VecScore/
+        );
+    }
+}
+
+async function testScopedSearchEmptyAndDiagnostics(): Promise<void> {
+    const storage = new BaseStorage('scoped-diagnostics', fullSchema, tmpDir('scoped-diagnostics'));
+    let targetCalls = 0;
+    let getInfoCalls = 0;
+    (storage as any).baseIndexer = { search: async () => ({ items: [], totalCount: 0 }) };
+    (storage as any).vectorIndexer = {
+        getBackend: () => 'wasm',
+        search: async () => {
+            targetCalls++;
+            return { items: [], totalCount: 0 };
+        },
+        getInfo: async () => {
+            getInfoCalls++;
+            return { size: 42 };
+        }
+    };
+    const request = {
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=' as const, value: 'file' }],
+        targetCondition: {
+            indexer: 'VectorIndexer',
+            field: 'text',
+            operator: 'vector_near' as const,
+            value: makeOneHotVector(0),
+            vectorQuery: { topK: 7 }
+        }
+    };
+    const withoutDiagnostics = await storage.searchScope(request);
+    assert.equal(withoutDiagnostics.diagnostics, undefined);
+    assert.equal(getInfoCalls, 0);
+    const withDiagnostics = await storage.searchScope(request, { collectDiagnostics: true });
+    assert.equal(getInfoCalls, 1);
+    assert.equal(targetCalls, 0, 'empty candidates must not execute an unfiltered target search');
+    assert.equal(withDiagnostics.diagnostics?.totalTargetRows, 42);
+    assert.equal(withDiagnostics.diagnostics?.backend, 'wasm');
+    assert.equal(withDiagnostics.diagnostics?.strategy, 'ann_overfetch_filter');
+    assert.equal(withDiagnostics.diagnostics?.exactBatchCount, 0);
+    assert.equal(withDiagnostics.diagnostics?.exactBatchSize, 0);
+    assert.equal(withDiagnostics.diagnostics?.targetSearchLatencyMs, 0);
+    assert.equal(withDiagnostics.diagnostics?.topK, 7);
+}
+
+async function testSemanticBackendCapabilityIsSynchronousAndDoesNotReinitialize(): Promise<void> {
+    const vectorDir = tmpDir('vector-backend-capability');
+    const chunkDir = tmpDir('chunk-backend-capability');
+    const chunkSchema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            chunk_text: { type: 'TEXT', nullable: true }
+        },
+        needIndexers: { chunk_text: [{ indexer: 'ChunkIndexer', options: { dim: 4 } }] }
+    };
+    const vectorStorage = new BaseStorage('vector-backend-capability', fullSchema, vectorDir);
+    const chunkStorage = new BaseStorage('chunk-backend-capability', chunkSchema, chunkDir);
+    try {
+        await vectorStorage.initialize();
+        await chunkStorage.initialize();
+        const vectorIndexer = (vectorStorage as any).vectorIndexer;
+        const chunkIndexer = (chunkStorage as any).chunkIndexer;
+        let vectorStoredDimCalls = 0;
+        let chunkStoredDimCalls = 0;
+        vectorIndexer.db.getStoredDim = async () => {
+            vectorStoredDimCalls++;
+            return 1024;
+        };
+        chunkIndexer.db.getStoredDim = async () => {
+            chunkStoredDimCalls++;
+            return 4;
+        };
+
+        assert.equal(vectorIndexer.getBackend(), 'native');
+        assert.equal(chunkIndexer.getBackend(), 'native');
+        assert.equal(vectorStoredDimCalls, 0);
+        assert.equal(chunkStoredDimCalls, 0);
+    } finally {
+        vectorStorage.close();
+        chunkStorage.close();
+        cleanup(vectorDir);
+        cleanup(chunkDir);
+    }
+}
+
+async function testScopedSearchRejectsMissingOrInvalidBackendCapability(): Promise<void> {
+    const storage = new BaseStorage('scoped-backend-contract', fullSchema, tmpDir('scoped-backend-contract'));
+    (storage as any).baseIndexer = {
+        search: async () => ({ items: [{ item_id: 'inside', item_type: 'file' }], totalCount: 1 })
+    };
+    const request = {
+        preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=' as const, value: 'file' }],
+        targetCondition: {
+            indexer: 'VectorIndexer' as const,
+            field: 'text',
+            operator: 'vector_near' as const,
+            value: makeOneHotVector(0),
+            vectorQuery: { topK: 1 }
+        }
+    };
+    (storage as any).vectorIndexer = { search: async () => ({ items: [], scores: new Map(), totalCount: 0 }) };
+    await assert.rejects(() => storage.searchScope(request), /VectorIndexer backend capability is missing/);
+    (storage as any).vectorIndexer.getBackend = () => 'cuda';
+    await assert.rejects(() => storage.searchScope(request), /VectorIndexer backend capability is invalid: cuda/);
+}
+
+async function testNativeScopedVectorUsesExactCandidateTopK(): Promise<void> {
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true }
+        },
+        needIndexers: { filename: [{ indexer: 'VectorIndexer', options: { dim: 4 } }] }
+    };
+    const dir = tmpDir('native-scoped-vector');
+    const storage = new BaseStorage('native-scoped-vector', schema, dir);
+    try {
+        await storage.initialize();
+        await storage.insert([
+            {
+                item_id: 'outside',
+                item_type: 'file',
+                filename: 'outside',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [1, 0, 0, 0] }] }
+            },
+            {
+                item_id: 'inside-best',
+                item_type: 'file',
+                filename: 'inside-best',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.9, 0.1, 0, 0] }] }
+            },
+            {
+                item_id: 'inside-worse',
+                item_type: 'file',
+                filename: 'inside-worse',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0, 1, 0, 0] }] }
+            }
+        ]);
+        const result = await storage.searchScope({
+            preconditions: [{ indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: 'inside%' }],
+            targetCondition: {
+                indexer: 'VectorIndexer',
+                field: 'filename',
+                operator: 'vector_near',
+                value: [1, 0, 0, 0],
+                vectorQuery: { topK: 1, metric: 'cosine' }
+            }
+        });
+        assert.deepEqual(
+            result.items.map((hit) => hit.item.item_id),
+            ['inside-best']
+        );
+        assert.equal(result.items[0].item.filename, 'inside-best');
+    } finally {
+        storage.close();
+        cleanup(dir);
+    }
+}
+
+async function testNativeScopedVectorRanksAcrossPathUnion(): Promise<void> {
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true }
+        },
+        needIndexers: {
+            filename: [{ indexer: 'VectorIndexer', options: { dim: 4 } }]
+        }
+    };
+    const dir = tmpDir('native-path-union-vector');
+    const storage = new BaseStorage('native-path-union-vector', schema, dir);
+    try {
+        await storage.initialize();
+        await storage.insert([
+            {
+                item_id: '/outside/global-best.md',
+                item_type: 'file',
+                filename: 'outside',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [1, 0, 0, 0] }] }
+            },
+            {
+                item_id: '/source/a/best.md',
+                item_type: 'file',
+                filename: 'a-best',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.99, 0.01, 0, 0] }] }
+            },
+            {
+                item_id: '/source/b/best.md',
+                item_type: 'file',
+                filename: 'b-best',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.95, 0.05, 0, 0] }] }
+            },
+            {
+                item_id: '/source/a/lower.md',
+                item_type: 'file',
+                filename: 'a-lower',
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0, 1, 0, 0] }] }
+            }
+        ]);
+
+        const result = await storage.searchScope({
+            preconditions: [
+                { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' },
+                {
+                    indexer: 'BaseIndexer',
+                    field: 'item_id',
+                    operator: 'path_descendant_or_self',
+                    value: ['/source/a', '/source/b']
+                }
+            ],
+            targetCondition: {
+                indexer: 'VectorIndexer',
+                field: 'filename',
+                operator: 'vector_near',
+                value: [1, 0, 0, 0],
+                vectorQuery: { topK: 2, metric: 'cosine' }
+            }
+        });
+
+        assert.deepEqual(
+            result.items.map((item) => item.item.item_id),
+            ['/source/a/best.md', '/source/b/best.md']
+        );
+        assert.equal(
+            result.items.some((item) => item.item.item_id.startsWith('/outside/')),
+            false
+        );
+    } finally {
+        storage.close();
+        cleanup(dir);
+    }
+}
+
+async function testForcedWasmScopedVectorUsesOneCompleteCandidateCall(): Promise<void> {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const previousArkData = process.env.ARKDATA_AVAILABLE;
+    Object.defineProperty(process, 'platform', { value: 'openharmony', configurable: true });
+    delete process.env.ARKDATA_AVAILABLE;
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true },
+            scoped: { type: 'INTEGER', nullable: true }
+        },
+        needIndexers: { filename: [{ indexer: 'VectorIndexer', options: { dim: 4 } }] }
+    };
+    const dir = tmpDir('wasm-scoped-vector');
+    const storage = new BaseStorage('wasm-scoped-vector', schema, dir);
+    try {
+        await storage.initialize();
+        const candidates = Array.from({ length: 65 }, (_, index) => ({
+            item_id: `inside-${index}`,
+            item_type: 'file' as const,
+            filename: `inside-${index}`,
+            scoped: 1,
+            indexer_columns: { VectorIndexer: [{ column: 'filename', content: [1, index / 1000, 0, 0] }] }
+        }));
+        await storage.insert([
+            ...candidates,
+            {
+                item_id: 'outside',
+                item_type: 'file',
+                filename: 'outside',
+                scoped: 0,
+                indexer_columns: { VectorIndexer: [{ column: 'filename', content: [1, 0, 0, 0] }] }
+            }
+        ]);
+        const realIndexer = (storage as any).vectorIndexer;
+        const realSearch = realIndexer.search.bind(realIndexer);
+        const delivered: number[] = [];
+        realIndexer.search = async (conditions: unknown, options: any) => {
+            delivered.push(options.existingResults.length);
+            return realSearch(conditions, options);
+        };
+        const result = await storage.searchScope(
+            {
+                preconditions: [{ indexer: 'BaseIndexer', field: 'scoped', operator: '=', value: 1 }],
+                targetCondition: {
+                    indexer: 'VectorIndexer',
+                    field: 'filename',
+                    operator: 'vector_near',
+                    value: [1, 0, 0, 0],
+                    vectorQuery: { topK: 5, metric: 'cosine' }
+                }
+            },
+            { collectDiagnostics: true }
+        );
+        assert.deepEqual(delivered, [65]);
+        assert.equal(result.diagnostics?.strategy, 'ann_overfetch_filter');
+        assert(!result.items.some((hit) => hit.item.item_id === 'outside'));
+    } finally {
+        storage.close();
+        cleanup(dir);
+        if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+        if (previousArkData === undefined) delete process.env.ARKDATA_AVAILABLE;
+        else process.env.ARKDATA_AVAILABLE = previousArkData;
+    }
+}
+
+async function testArkDataScopedSearchRunsExactBatchesAndFailsWholeTarget(): Promise<void> {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const previousArkData = process.env.ARKDATA_AVAILABLE;
+    Object.defineProperty(process, 'platform', { value: 'openharmony', configurable: true });
+    process.env.ARKDATA_AVAILABLE = '1';
+    try {
+        const candidates = Array.from({ length: 10001 }, (_, index) => ({
+            item_id: `item-${String(index).padStart(5, '0')}`,
+            item_type: 'file' as const,
+            marker: index
+        }));
+        const storage = new BaseStorage('arkdata-scoped', fullSchema, tmpDir('arkdata-scoped'));
+        (storage as any).baseIndexer = { search: async () => ({ items: candidates, totalCount: candidates.length }) };
+        const batchSizes: number[] = [];
+        (storage as any).vectorIndexer = {
+            getBackend: () => 'arkdata',
+            search: async (_conditions: unknown, options: any) => {
+                batchSizes.push(options.existingResults.length);
+                const item = options.existingResults.at(-1);
+                return {
+                    items: [item],
+                    scores: new Map([[item.item_id, item.marker / 10000]]),
+                    totalCount: 1
+                };
+            },
+            getInfo: async () => ({ size: 10001 })
+        };
+        const request = {
+            preconditions: [{ indexer: 'BaseIndexer', field: 'item_type', operator: '=' as const, value: 'file' }],
+            targetCondition: {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near' as const,
+                value: makeOneHotVector(0),
+                vectorQuery: { topK: 2 }
+            }
+        };
+        const result = await storage.searchScope(request, { collectDiagnostics: true });
+        assert.deepEqual(batchSizes, [5000, 5000, 1]);
+        assert.deepEqual(
+            result.items.map((hit) => hit.item.marker),
+            [10000, 9999]
+        );
+        assert.equal(result.diagnostics?.backend, 'arkdata');
+        assert.equal(result.diagnostics?.strategy, 'exact_in');
+        assert.equal(result.diagnostics?.exactBatchSize, 5000);
+        assert.equal(result.diagnostics?.exactBatchCount, 3);
+
+        let calls = 0;
+        (storage as any).vectorIndexer.search = async () => {
+            calls++;
+            if (calls === 2) throw new Error('batch failed');
+            return { items: [], scores: new Map(), totalCount: 0 };
+        };
+        await assert.rejects(() => storage.searchScope(request), /batch failed/);
+        assert.equal(calls, 2, 'target batches must be sequential and fail fast without partial results');
+    } finally {
+        if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+        if (previousArkData === undefined) delete process.env.ARKDATA_AVAILABLE;
+        else process.env.ARKDATA_AVAILABLE = previousArkData;
+    }
+}
+
+const SCOPED_SEARCH_PERF_ENABLED = process.env.FILEMGR_SCOPED_SEARCH_PERF === '1';
+const SCOPED_SEARCH_PERF_DIM = 32;
+const SCOPED_SEARCH_PERF_REQUESTED_K = 10;
+const SCOPED_SEARCH_PERF_MEASURED_RUNS = 5;
+
+interface ScopedSearchPerfIteration {
+    iteration: number;
+    latencyMs: number;
+    basePrefilterLatencyMs: number;
+    targetSearchLatencyMs: number;
+    memoryBeforeRssBytes: number;
+    memoryAfterRssBytes: number;
+    memoryDeltaRssBytes: number;
+    returnedIds: string[];
+}
+
+function scopedSearchPerfPercentile(values: number[], percentile: number): number {
+    const sorted = [...values].sort((left, right) => left - right);
+    return sorted[Math.max(0, Math.ceil(sorted.length * percentile) - 1)];
+}
+
+function scopedSearchPerfVector(rank: number, totalRows: number): number[] {
+    const vector = Array(SCOPED_SEARCH_PERF_DIM).fill(0);
+    vector[0] = (rank + 1) / totalRows;
+    vector[1] = 1;
+    return vector;
+}
+
+function scopedSearchPerfExpectedIds(totalRows: number, scopeRows: number): string[] {
+    return Array.from({ length: SCOPED_SEARCH_PERF_REQUESTED_K }, (_, offset) => {
+        const rank = scopeRows - offset - 1;
+        return `perf-${totalRows}-${String(rank).padStart(5, '0')}`;
+    });
+}
+
+function scopedSearchPerfInsertionRanks(totalRows: number): number[] {
+    return Array.from({ length: totalRows }, (_, position) => (position * 7919 + 104729) % totalRows);
+}
+
+function assertScopedSearchPerfInsertionOrderIsIndependent(
+    insertionRanks: number[],
+    totalRows: number,
+    scopeRows: number
+): void {
+    const insertionOrderTopK = insertionRanks
+        .filter((rank) => rank < scopeRows)
+        .slice(-SCOPED_SEARCH_PERF_REQUESTED_K)
+        .reverse();
+    const semanticTopK = Array.from({ length: SCOPED_SEARCH_PERF_REQUESTED_K }, (_, offset) => scopeRows - offset - 1);
+    assert.notDeepEqual(
+        insertionOrderTopK,
+        semanticTopK,
+        `fixture must reject reverse rowid/insertion order: total=${totalRows} scope=${scopeRows}`
+    );
+}
+
+async function runScopedSearchPerfCase(
+    storage: BaseStorage,
+    totalRows: number,
+    scopeRows: number,
+    target: 'vector' | 'chunk'
+): Promise<void> {
+    const queryVector = Array(SCOPED_SEARCH_PERF_DIM).fill(0);
+    queryVector[0] = 1;
+    const request = {
+        preconditions: [
+            { indexer: 'BaseIndexer' as const, field: 'scope_rank', operator: '<=' as const, value: scopeRows - 1 }
+        ],
+        targetCondition: {
+            indexer: target === 'vector' ? ('VectorIndexer' as const) : ('ChunkIndexer' as const),
+            field: target === 'vector' ? 'filename' : 'text',
+            operator: 'vector_near' as const,
+            value: queryVector,
+            vectorQuery: { topK: SCOPED_SEARCH_PERF_REQUESTED_K, metric: 'cosine' as const }
+        }
+    };
+    const expectedIds = scopedSearchPerfExpectedIds(totalRows, scopeRows);
+
+    const warmup = await storage.searchScope(request, { collectDiagnostics: true });
+    assert.equal(warmup.diagnostics?.backend, 'native', 'benchmark must measure the native backend');
+    assert.equal(warmup.diagnostics?.strategy, 'exact_temp', 'native benchmark must use exact candidate filtering');
+    assert.deepEqual(
+        warmup.items.map((hit) => hit.item.item_id),
+        expectedIds,
+        `${target} warmup must return the in-scope topK`
+    );
+
+    const iterations: ScopedSearchPerfIteration[] = [];
+    for (let iteration = 1; iteration <= SCOPED_SEARCH_PERF_MEASURED_RUNS; iteration++) {
+        const startedAt = performance.now();
+        const result = await storage.searchScope(request, { collectDiagnostics: true });
+        const latencyMs = performance.now() - startedAt;
+        const returnedIds = result.items.map((hit) => hit.item.item_id);
+        assert.deepEqual(returnedIds, expectedIds, `${target} measured run ${iteration} must return the in-scope topK`);
+        assert.equal(result.items.length, SCOPED_SEARCH_PERF_REQUESTED_K, `${target} must apply topK inside scope`);
+        assert(
+            result.items.every((hit) => hit.item.scope_rank < scopeRows),
+            `${target} must not return out-of-scope rows`
+        );
+        const diagnostics = result.diagnostics;
+        assert(diagnostics, 'benchmark diagnostics must be collected');
+        assert.equal(diagnostics.backend, 'native');
+        assert.equal(diagnostics.strategy, 'exact_temp');
+        assert.equal(diagnostics.totalTargetRows, totalRows);
+        assert.equal(diagnostics.exactCandidateCount, scopeRows);
+        iterations.push({
+            iteration,
+            latencyMs,
+            basePrefilterLatencyMs: diagnostics.basePrefilterLatencyMs,
+            targetSearchLatencyMs: diagnostics.targetSearchLatencyMs,
+            memoryBeforeRssBytes: diagnostics.memoryBeforeRssBytes,
+            memoryAfterRssBytes: diagnostics.memoryAfterRssBytes,
+            memoryDeltaRssBytes: diagnostics.memoryDeltaRssBytes,
+            returnedIds
+        });
+    }
+
+    const latencies = iterations.map((iteration) => iteration.latencyMs);
+    const prefilterLatencies = iterations.map((iteration) => iteration.basePrefilterLatencyMs);
+    const targetLatencies = iterations.map((iteration) => iteration.targetSearchLatencyMs);
+    console.log(
+        `[filemgr-scoped-search-perf] ${JSON.stringify({
+            totalRows,
+            scopeRows,
+            requestedK: SCOPED_SEARCH_PERF_REQUESTED_K,
+            target,
+            backend: 'native',
+            strategy: 'exact_temp',
+            warmupRuns: 1,
+            measuredRuns: SCOPED_SEARCH_PERF_MEASURED_RUNS,
+            p50LatencyMs: scopedSearchPerfPercentile(latencies, 0.5),
+            p90LatencyMs: scopedSearchPerfPercentile(latencies, 0.9),
+            prefilterP50LatencyMs: scopedSearchPerfPercentile(prefilterLatencies, 0.5),
+            prefilterP90LatencyMs: scopedSearchPerfPercentile(prefilterLatencies, 0.9),
+            targetP50LatencyMs: scopedSearchPerfPercentile(targetLatencies, 0.5),
+            targetP90LatencyMs: scopedSearchPerfPercentile(targetLatencies, 0.9),
+            peakMemoryAfterRssBytes: Math.max(...iterations.map((iteration) => iteration.memoryAfterRssBytes)),
+            peakMemoryDeltaRssBytes: Math.max(...iterations.map((iteration) => iteration.memoryDeltaRssBytes)),
+            returnedIds: expectedIds,
+            iterations
+        })}`
+    );
+}
+
+async function runScopedSearchNativeBenchmark(): Promise<void> {
+    if (!SCOPED_SEARCH_PERF_ENABLED) return;
+
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true },
+            text: { type: 'TEXT', nullable: true },
+            scope_rank: { type: 'INTEGER', nullable: false }
+        },
+        needIndexers: {
+            filename: [{ indexer: 'VectorIndexer', options: { dim: SCOPED_SEARCH_PERF_DIM } }],
+            text: [{ indexer: 'ChunkIndexer', options: { dim: SCOPED_SEARCH_PERF_DIM } }]
+        }
+    };
+    const matrix = [
+        { totalRows: 10000, scopeRows: [100, 1000, 5000, 10000] },
+        { totalRows: 20000, scopeRows: [1000, 10000] }
+    ];
+
+    for (const fixture of matrix) {
+        const dir = tmpDir(`scoped-perf-${fixture.totalRows}`);
+        let storage: BaseStorage | undefined;
+        try {
+            storage = new BaseStorage(`scoped-perf-${fixture.totalRows}`, schema, dir);
+            await storage.initialize();
+            const insertionRanks = scopedSearchPerfInsertionRanks(fixture.totalRows);
+            assert.equal(
+                new Set(insertionRanks).size,
+                fixture.totalRows,
+                'fixture insertion ranks must be a permutation'
+            );
+            for (const scopeRows of fixture.scopeRows) {
+                assertScopedSearchPerfInsertionOrderIsIndependent(insertionRanks, fixture.totalRows, scopeRows);
+            }
+            for (let start = 0; start < fixture.totalRows; start += 500) {
+                const items = Array.from({ length: Math.min(500, fixture.totalRows - start) }, (_, offset) => {
+                    const rank = insertionRanks[start + offset];
+                    const itemId = `perf-${fixture.totalRows}-${String(rank).padStart(5, '0')}`;
+                    const vector = scopedSearchPerfVector(rank, fixture.totalRows);
+                    return {
+                        item_id: itemId,
+                        item_type: 'file' as const,
+                        filename: `${itemId}.txt`,
+                        text: `benchmark chunk ${rank}`,
+                        scope_rank: rank,
+                        indexer_columns: {
+                            VectorIndexer: [{ column: 'filename', content: vector }],
+                            ChunkIndexer: [
+                                {
+                                    column: 'text',
+                                    id: `chunk-${rank}`,
+                                    text: `benchmark chunk ${rank}`,
+                                    content: vector
+                                }
+                            ]
+                        }
+                    };
+                });
+                await storage.insert(items);
+            }
+            for (const scopeRows of fixture.scopeRows) {
+                await runScopedSearchPerfCase(storage, fixture.totalRows, scopeRows, 'vector');
+                await runScopedSearchPerfCase(storage, fixture.totalRows, scopeRows, 'chunk');
+            }
+        } finally {
+            storage?.close();
+            cleanup(dir);
+        }
+    }
+}
+
 async function main(): Promise<void> {
     console.log('=== BaseStorage Integration Tests ===\n');
 
@@ -1088,6 +1952,17 @@ async function main(): Promise<void> {
     cleanup(sharedDir);
 
     const standaloneTests = [
+        testScopedSearchValidationAndVectorBatching,
+        testScopedVectorTargetValidationPrecedesBasePrefilter,
+        testScopedSearchRejectsMalformedPreconditionsBeforeAnyStorageCall,
+        testScopedVectorMergeRejectsInvariantViolations,
+        testScopedSearchEmptyAndDiagnostics,
+        testSemanticBackendCapabilityIsSynchronousAndDoesNotReinitialize,
+        testScopedSearchRejectsMissingOrInvalidBackendCapability,
+        testNativeScopedVectorUsesExactCandidateTopK,
+        testNativeScopedVectorRanksAcrossPathUnion,
+        testForcedWasmScopedVectorUsesOneCompleteCandidateCall,
+        testArkDataScopedSearchRunsExactBatchesAndFailsWholeTarget,
         testVectorBaseCombo,
         testBM25MultiColumn,
         testBM25VectorCombo,
@@ -1119,6 +1994,13 @@ async function main(): Promise<void> {
             console.error(`  FAIL ${test.name}: ${e.message}`);
             failed++;
         }
+    }
+
+    try {
+        await runScopedSearchNativeBenchmark();
+    } catch (e: any) {
+        console.error(`  FAIL runScopedSearchNativeBenchmark: ${e.message}`);
+        failed++;
     }
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);

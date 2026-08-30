@@ -12,7 +12,7 @@ setCustomOpendeskDirectory(isolatedOpendeskDir);
 let createWithNativeSqliteFallback: typeof StoragePlatform.createWithNativeSqliteFallback;
 let isNativeSqliteUnavailable: typeof StoragePlatform.isNativeSqliteUnavailable;
 let logger: typeof Logger;
-let getLogFilename: () => string;
+let getLogFilename: typeof import('../../../../../main/utils/logger.js').getLogFilename;
 
 async function loadModules(): Promise<void> {
     const platform = await import('../../../../../main/services/storage/platform.js');
@@ -21,6 +21,15 @@ async function loadModules(): Promise<void> {
     isNativeSqliteUnavailable = platform.isNativeSqliteUnavailable;
     logger = loggerModule.logger;
     getLogFilename = loggerModule.getLogFilename;
+}
+
+async function waitForFile(filePath: string, timeoutMs = 1000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (!fs.existsSync(filePath)) {
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return true;
 }
 
 function captureLogs(): { infos: string[]; warns: string[]; restore: () => void } {
@@ -154,8 +163,9 @@ async function testIsNativeSqliteUnavailableUnchanged(): Promise<void> {
 
 async function main(): Promise<void> {
     await loadModules();
+    const logFilePath = path.join(isolatedOpendeskDir, 'logs', getLogFilename());
     assert.ok(
-        fs.existsSync(path.join(isolatedOpendeskDir, 'logs', getLogFilename())),
+        await waitForFile(logFilePath),
         'logger should initialize its file transport under the isolated OpenDesk directory'
     );
     console.log('=== platform.ts backend logging tests ===\n');
