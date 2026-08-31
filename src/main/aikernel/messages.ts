@@ -345,6 +345,59 @@ const LARGE_ARGS_THRESHOLD = 500;
 export const TOOL_RESULT_STORAGE_VERSION = 1;
 export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
 
+const QR_ATTENTION_PHASES = new Set(['generating_qr', 'qr_code', 'waiting_for_scan']);
+const AUTH_ATTENTION_PHASES = new Set(['awaiting_authorization', 'device_authorization']);
+
+function hasNonEmptyString(record: Record<string, unknown>, keys: readonly string[]): boolean {
+    return keys.some((key) => typeof record[key] === 'string' && record[key].trim().length > 0);
+}
+
+/** Compatibility inference for legacy or temporarily unresolved interactive tools. */
+function inferRequiresUserAttention(toolCall: ToolCall): boolean {
+    if (toolCall.status !== 'running' || !toolCall.result_object || typeof toolCall.result_object !== 'object') {
+        return false;
+    }
+
+    const state = toolCall.result_object as Record<string, unknown>;
+    const ui = state.ui;
+    if (ui && typeof ui === 'object') {
+        const marker = (ui as Record<string, unknown>).requiresUserAttention;
+        if (typeof marker === 'boolean') return marker;
+    }
+
+    const rawPhase = typeof state.phase === 'string' ? state.phase : '';
+    const phase = rawPhase
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_');
+    const hasVerificationTarget = hasNonEmptyString(state, [
+        'verification_url',
+        'verification_uri',
+        'verification_uri_complete',
+        'authorization_url'
+    ]);
+    const hasQrArtifact = hasNonEmptyString(state, [
+        'qr_ascii',
+        'qr_code',
+        'qr_data_url',
+        'qr_url',
+        'qrDataUrl',
+        'qrcodeUrl'
+    ]);
+    const hasUserCode = hasNonEmptyString(state, ['user_code', 'userCode']);
+
+    if (QR_ATTENTION_PHASES.has(phase)) {
+        return hasVerificationTarget || hasQrArtifact;
+    }
+    if (AUTH_ATTENTION_PHASES.has(phase)) {
+        return hasVerificationTarget && (hasUserCode || hasQrArtifact);
+    }
+    if (phase === 'polling') {
+        return hasVerificationTarget && (hasUserCode || hasQrArtifact);
+    }
+    return false;
+}
+
 export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
@@ -433,12 +486,14 @@ export class ToolCall implements BaseChatToolCall {
 
     /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段 */
     toRenderJSON(): object {
+        const requiresUserAttention = this.requiresUserAttention();
         return {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
             status: this.status,
-            rendered: this.rendered
+            rendered: this.rendered,
+            ...(requiresUserAttention ? { requires_user_attention: true } : {})
         };
     }
 
@@ -605,6 +660,18 @@ export class ToolCall implements BaseChatToolCall {
 
     setTool(tool: BaseTool<any>) {
         this.tool = tool;
+    }
+
+    requiresUserAttention(): boolean {
+        if (this.tool !== undefined && typeof (this.tool as any).requiresUserAttention === 'function') {
+            try {
+                const explicit = this.tool.requiresUserAttention(this);
+                if (explicit !== undefined) return explicit === true;
+            } catch {
+                // A broken optional attention check must not disable compatibility inference.
+            }
+        }
+        return inferRequiresUserAttention(this);
     }
 
     async freezeRenderResult() {

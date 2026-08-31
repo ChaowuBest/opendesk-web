@@ -440,6 +440,82 @@ describe('PluginToolsetProvider', () => {
         expect(cliWidth).toBe(72);
     });
 
+    test('插件工具可以按运行状态声明需要用户即时关注', async () => {
+        const host = new PluginHost();
+        let attentionContext: unknown;
+        await host.activate(
+            definePlugin({
+                id: 'attention-demo',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'authorize',
+                        description: 'authorize an external service',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'waiting';
+                        },
+                        render: {
+                            requiresUserAttention(context) {
+                                attentionContext = context;
+                                return context.status === 'running' && context.resultObject?.phase === 'qr_code';
+                            }
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:attention-demo' }
+        );
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('attention-demo-authorize');
+        const call = new ToolCall(0, 'call-1', 'attention-demo-authorize', '{}');
+        call.args_object = {};
+        call.status = 'running';
+        call.result = 'scan the code';
+        call.result_object = { phase: 'qr_code' };
+
+        expect(tool?.requiresUserAttention(call)).toBe(true);
+        expect(attentionContext).toEqual({
+            tool: 'attention-demo-authorize',
+            callId: 'call-1',
+            status: 'running',
+            args: {},
+            result: 'scan the code',
+            resultObject: { phase: 'qr_code' }
+        });
+
+        call.status = 'success';
+        expect(tool?.requiresUserAttention(call)).toBe(false);
+    });
+
+    test('未声明关注回调的插件工具会保留 fallback 推断', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'legacy-attention',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'authorize',
+                        description: 'legacy authorization tool',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'waiting';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:legacy-attention' }
+        );
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const tool = toolset.getTool('legacy-attention-authorize');
+        const call = new ToolCall(0, 'call-legacy', 'legacy-attention-authorize', '{}');
+        call.status = 'running';
+        call.result_object = { ui: { requiresUserAttention: true } };
+        if (tool) call.setTool(tool);
+
+        expect(tool?.requiresUserAttention(call)).toBeUndefined();
+        expect(call.requiresUserAttention()).toBe(true);
+    });
+
     test('tool.definition 包装后保留插件 renderer', async () => {
         const host = new PluginHost();
         await host.activate(
@@ -476,6 +552,33 @@ describe('PluginToolsetProvider', () => {
 
         await expect(tool?.renderToolCall(call)).resolves.toContain('custom GUI');
         expect(tool?.renderToolCallCli(call, 80)).toEqual(['custom CLI']);
+    });
+
+    test('tool.definition 包装后保留用户关注判断', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'attention-transformer',
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', (input, output) => {
+                        if (input.tool === 'builtin') output.description = 'changed';
+                    });
+                }
+            }),
+            { origin: 'test:attention-transformer' }
+        );
+        const builtin = new BaseTool('builtin', 'original', z.object({}));
+        builtin.requiresUserAttention = (toolCall) => toolCall.status === 'running';
+        const toolset = new BaseToolset('builtin');
+        toolset.addTool(builtin);
+
+        await applyPluginToolDefinitions([toolset], undefined, host);
+        const wrapped = toolset.getTool('builtin');
+        const call = new ToolCall(0, 'call-1', 'builtin', '{}');
+        call.status = 'running';
+
+        expect(wrapped).not.toBe(builtin);
+        expect(wrapped?.requiresUserAttention(call)).toBe(true);
     });
 
     test('插件 renderer 异常时回退到默认渲染', async () => {

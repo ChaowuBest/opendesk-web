@@ -639,6 +639,11 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         return this.renderDefaultCard(toolcall, width, bundleName, skillName, toolName);
     }
 
+    requiresUserAttention(toolcall: ToolCall): boolean | undefined {
+        const inner = this.resolveInnerTool(toolcall);
+        return inner?.tool.requiresUserAttention(inner.toolCall);
+    }
+
     /**
      * 从父级 ToolCall 中解析并构建内部工具的 ToolCall，供渲染使用
      */

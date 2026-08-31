@@ -1174,8 +1174,9 @@ class TaskView extends HTMLElement {
 
     _renderRunningProcessDetails(item, messageId) {
         const detailId = `od-${messageId}-running-details`;
+        const attentionClass = item.requiresUserAttention ? ' od-user-attention-process-detail' : '';
         return `
-            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail is-open"
+            <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
                 data-output-key="${escapeHtml(item.key)}">
                 ${item.entries.map((entry) => this._renderProcessEntry(entry)).join('')}
             </div>`;
@@ -1273,9 +1274,9 @@ class TaskView extends HTMLElement {
                     const runningProcessDetails =
                         guiOutputMode === 'minimal' &&
                         options.isRunning &&
-                        showRunningDetails &&
                         item.type === 'process' &&
-                        visibleItems[index - 1]?.type === 'status';
+                        (item.requiresUserAttention === true ||
+                            (showRunningDetails && visibleItems[index - 1]?.type === 'status'));
                     return renderItem(item, true, runningProcessDetails);
                 })
                 .join('');

@@ -364,6 +364,16 @@ export class ToolCallMessagePartView implements Component {
         return [...this.viewMap.keys()];
     }
 
+    getAttentionToolCalls(): ToolCall[] {
+        return this.getToolCalls().filter((toolCall) => toolCall.requiresUserAttention());
+    }
+
+    renderAttentionToolCalls(width: number): string[] {
+        return [...this.viewMap.entries()]
+            .filter(([toolCall]) => toolCall.requiresUserAttention())
+            .flatMap(([, view]) => view.render(width));
+    }
+
     needsFreshRender(): boolean {
         for (const tc of this.viewMap.keys()) {
             if (tc.status === 'running') return true;
@@ -939,6 +949,7 @@ export class AssistantMessageView implements Component {
         const hasActiveToolCall = allToolCalls.some(
             (toolCall) => toolCall.status === 'pending' || toolCall.status === 'running'
         );
+        const hasAttentionToolCall = allToolCalls.some((toolCall) => toolCall.requiresUserAttention());
         const isStreamingText = this.parts[this.parts.length - 1] instanceof TextMessagePartView;
         let pendingToolCalls: ToolCall[] = [];
         let completionRendered = false;
@@ -967,7 +978,12 @@ export class AssistantMessageView implements Component {
             const part = this.parts[index];
             if (part instanceof ReasoningMessagePartView) continue;
             if (part instanceof ToolCallMessagePartView) {
-                pendingToolCalls.push(...part.getToolCalls());
+                const attentionToolCalls = new Set(part.getAttentionToolCalls());
+                pendingToolCalls.push(...part.getToolCalls().filter((toolCall) => !attentionToolCalls.has(toolCall)));
+                if (attentionToolCalls.size > 0) {
+                    flushPendingTools();
+                    appendBlock(part.renderAttentionToolCalls(width));
+                }
                 continue;
             }
 
@@ -992,7 +1008,7 @@ export class AssistantMessageView implements Component {
             }
         } else if (this.lifecycle === 'sealed') {
             flushPendingTools();
-        } else if (hasActiveToolCall || !isStreamingText) {
+        } else if (!hasAttentionToolCall && (hasActiveToolCall || !isStreamingText)) {
             appendBlock([this.renderMinimalRunning(allToolCalls, width)]);
         }
         return lines.length === 0 ? [] : ['', ...lines, ''];

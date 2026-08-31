@@ -286,6 +286,12 @@ function validatePluginToolDefinition(definition: unknown): asserts definition i
         if (definition.render.cli !== undefined && typeof definition.render.cli !== 'function') {
             throw new Error(`plugin.tool_render_cli_invalid:${name}`);
         }
+        if (
+            definition.render.requiresUserAttention !== undefined &&
+            typeof definition.render.requiresUserAttention !== 'function'
+        ) {
+            throw new Error(`plugin.tool_render_requires_user_attention_invalid:${name}`);
+        }
     }
 }
 

@@ -483,6 +483,28 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.od-stage-body')).toHaveLength(0);
     });
 
+    test('minimal running attention tool grows naturally so its QR code is not clipped', () => {
+        const view = createView();
+        const tools = toolPart(1, 1);
+        tools.rendered = '<div class="qr-code">SCAN QR CODE</div>';
+        tools.toolcalls[0] = {
+            ...tools.toolcalls[0],
+            status: 'running',
+            requires_user_attention: true
+        };
+
+        view.innerHTML = view._renderAssistantOutputHtml([tools], {
+            isRunning: true,
+            messageId: 'message-attention'
+        });
+
+        expect(view.querySelector('.od-running-process-detail')).not.toBeNull();
+        expect(view.querySelector('.od-user-attention-process-detail .qr-code')?.textContent).toBe('SCAN QR CODE');
+        expect(taskViewStyles).toMatch(
+            /\.od-user-attention-process-detail\{[^}]*max-height:none;[^}]*overflow:visible;[^}]*scrollbar-gutter:auto;/
+        );
+    });
+
     test('minimal running output shows completed stages before the current-operation row without expansion', () => {
         const view = createView();
         view.innerHTML = view._renderAssistantOutputHtml(transcript().slice(0, 5), {

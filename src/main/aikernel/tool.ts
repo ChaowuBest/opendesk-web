@@ -310,6 +310,15 @@ export class BaseTool<T extends z.ZodType> {
     }
 
     /**
+     * 当前工具调用是否正在等待用户关注。
+     * 返回 true 时，极简模式会在运行期间保留工具的自定义渲染。
+     * 返回 false 表示明确不需要关注；返回 undefined 则交由 ToolCall 的兼容推断处理。
+     */
+    requiresUserAttention(_toolcall: ToolCall): boolean | undefined {
+        return undefined;
+    }
+
+    /**
      * 设置工具的执行函数
      */
     setExecutor(executor: (args: z.output<T>, taskState?: TaskState) => Promise<string>): ThisType<T> {

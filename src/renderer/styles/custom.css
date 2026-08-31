@@ -3479,6 +3479,12 @@ agent-input[hide-disclaimer] .agent-input-footer {
     display: block;
 }
 
+.od-user-attention-process-detail {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+}
+
 .od-assistant-output-flow[data-reason-display='bubble'] .od-process-detail.is-open {
     max-height: none;
     overflow: visible;

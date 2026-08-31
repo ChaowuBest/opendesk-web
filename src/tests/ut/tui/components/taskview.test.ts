@@ -40,6 +40,15 @@ function createRunningToolPart(id: number, filePath: string): ToolCallMessagePar
     return part;
 }
 
+function createAttentionToolPart(id: number, customOutput = 'SCAN QR CODE'): ToolCallMessagePart {
+    const part = createRunningToolPart(id, `src/${id}.ts`);
+    part.toolcalls[0].setTool({
+        requiresUserAttention: jest.fn(() => true),
+        renderToolCallCli: jest.fn(() => [customOutput])
+    } as any);
+    return part;
+}
+
 function createNamedToolPart(id: number, toolName: string): ToolCallMessagePart {
     const part = createToolPart(id, `src/${id}.ts`);
     part.toolcalls[0].tool_name = toolName;
@@ -340,6 +349,33 @@ describe('TaskView chunk handling', () => {
         expect(output).toContain('1 tool');
         expect(output).not.toContain('private reasoning');
         expect(output).not.toContain('CUSTOM TOOL 1');
+    });
+
+    test('minimal mode keeps a running tool visible when it requires user attention', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: new ReasoningMessagePart('private reasoning', 'reasoning_content')
+        });
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 1,
+            last_part: createAttentionToolPart(1)
+        });
+
+        const output = stripAnsi(taskView.render(100).join('\n'));
+        expect(output).toContain('SCAN QR CODE');
+        expect(output).not.toContain('private reasoning');
     });
 
     test('minimal running status rotates its flower icon on stream refresh', async () => {

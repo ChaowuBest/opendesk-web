@@ -24,6 +24,22 @@ function tools(start: number, count: number) {
     };
 }
 
+function attentionTool(rendered = '<div>SCAN QR CODE</div>') {
+    return {
+        type: 'tool_call',
+        rendered,
+        toolcalls: [
+            {
+                id: 'attention-tool',
+                index: 0,
+                tool_name: 'loginChannel',
+                status: 'running',
+                requires_user_attention: true
+            }
+        ]
+    };
+}
+
 function text(label: string) {
     return { type: 'text', rendered: `<p>${label}</p>`, text: label };
 }
@@ -98,6 +114,17 @@ describe('GUI assistant output model', () => {
         expect(
             getVisibleAssistantOutputItems(items, { mode: 'minimal', isRunning: true }).map((item) => item.type)
         ).toEqual(['status']);
+    });
+
+    test('minimal running output keeps a tool that requires user attention visible', () => {
+        const items = buildAssistantOutputItems([reasoning('分析'), attentionTool()], { isRunning: true });
+
+        const visible = getVisibleAssistantOutputItems(items, { mode: 'minimal', isRunning: true });
+
+        expect(visible.map((item) => item.type)).toEqual(['process']);
+        expect((visible[0] as any).entries).toHaveLength(1);
+        expect((visible[0] as any).entries[0].part.rendered).toContain('SCAN QR CODE');
+        expect((visible[0] as any).requiresUserAttention).toBe(true);
     });
 
     test('running output does not append a finalizing status after visible text starts', () => {

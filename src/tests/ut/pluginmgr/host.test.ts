@@ -453,6 +453,21 @@ describe('PluginHost', () => {
                 parameters: z.object({ text: z.string() })
             },
             'plugin.tool_execute_invalid:echo'
+        ],
+        [
+            'requiresUserAttention 不是函数',
+            {
+                name: 'echo',
+                description: 'Echo text',
+                parameters: z.object({ text: z.string() }),
+                async execute() {
+                    return 'echo';
+                },
+                render: {
+                    requiresUserAttention: true
+                }
+            },
+            'plugin.tool_render_requires_user_attention_invalid:echo'
         ]
     ])('启用阶段拒绝无效 Tool：%s', async (_caseName, definition, expectedError) => {
         const host = new PluginHost();

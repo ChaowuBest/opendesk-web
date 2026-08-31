@@ -15,6 +15,7 @@ export type GuiReasonDisplayMode = 'inline' | 'bubble';
 
 export interface GuiToolCall {
     tool_name?: string;
+    requires_user_attention?: boolean;
 }
 
 export interface GuiAssistantPart {
@@ -38,6 +39,7 @@ export interface GuiProcessItem {
     key: string;
     entries: GuiProcessEntry[];
     hasReasoning: boolean;
+    requiresUserAttention: boolean;
 }
 
 export interface GuiBodyItem {
@@ -92,7 +94,10 @@ export function buildAssistantOutputItems(
             type: 'process',
             key: `process-${processIndex}`,
             entries,
-            hasReasoning: processHasReasoning
+            hasReasoning: processHasReasoning,
+            requiresUserAttention: entries.some(
+                (entry) => entry.type === 'tool' && entry.tools?.some((tool) => tool.requires_user_attention === true)
+            )
         });
         processIndex += 1;
         entries = [];
@@ -196,6 +201,20 @@ export function getVisibleAssistantOutputItems(
     if (!status) return items;
     if (options.mode === 'verbose' && status.kind === 'reasoning') return items;
     if (options.mode === 'minimal' && !options.showRunningDetails) {
+        const activeProcess = items.at(-1);
+        if (activeProcess?.type === 'process' && activeProcess.requiresUserAttention) {
+            const attentionEntries = activeProcess.entries.filter(
+                (entry) => entry.type === 'tool' && entry.tools?.some((tool) => tool.requires_user_attention === true)
+            );
+            return [
+                ...items.slice(0, -1),
+                {
+                    ...activeProcess,
+                    entries: attentionEntries,
+                    hasReasoning: false
+                }
+            ];
+        }
         const hasBody = items.some((item) => item.type === 'body' || item.type === 'error');
         if (!hasBody) return [status];
 
