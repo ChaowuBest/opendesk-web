@@ -74,7 +74,8 @@ describe('agent-input attachment support', () => {
                     'ods',
                     'pdf',
                     'ofd',
-                    'rtf'
+                    'rtf',
+                    'txt'
                 ],
                 knownUnsupportedExtensions: ['ppt']
             }))
@@ -98,7 +99,8 @@ describe('agent-input attachment support', () => {
             '/tmp/text.odt',
             '/tmp/deck.odp',
             '/tmp/calc.ods',
-            '/tmp/paper.pdf'
+            '/tmp/paper.pdf',
+            '/tmp/notes.txt'
         ];
 
         await expect(input.attachFilePaths(files)).resolves.toBe(true);
