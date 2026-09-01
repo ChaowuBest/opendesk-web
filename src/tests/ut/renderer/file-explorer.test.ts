@@ -119,6 +119,7 @@ describe('file explorer', () => {
         expect(editorUrl.searchParams.get('selectionActionLabel')).toBeTruthy();
         expect(editorUrl.searchParams.get('selectionActionTitle')).toBeTruthy();
         expect(editor?.getAttribute('title')).toBeTruthy();
+        expect(editor?.getAttribute('partition')).toBe('persist:opendesk-office');
         expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
         expect(container.querySelector('[data-preview-root]')?.classList.contains('ws-preview--fullscreen')).toBe(true);
         expect(container.querySelector('.ws-browser')?.classList.contains('ws-browser--hidden')).toBe(true);

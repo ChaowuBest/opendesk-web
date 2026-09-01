@@ -38,6 +38,7 @@ import {
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 import type { AgentInputRequest } from '../input/agentInputRequest.js';
 import { createSlidesSelectionInputRequest } from '../applications/office/slidesSelectionInput.js';
+import { OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 const t = createRendererTranslator();
 
@@ -1359,12 +1360,7 @@ export class FileExplorer {
      */
     selectFile(filePath: string, line?: number, onSwitchBlocked?: () => void): void {
         if (this._selectedFile === filePath && isOfficeDocument(filePath)) return;
-        if (
-            this._deferUntilOfficeCanClose(
-                () => this.selectFile(filePath, line, onSwitchBlocked),
-                onSwitchBlocked
-            )
-        ) {
+        if (this._deferUntilOfficeCanClose(() => this.selectFile(filePath, line, onSwitchBlocked), onSwitchBlocked)) {
             return;
         }
 
@@ -1450,8 +1446,7 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            | (HTMLElement & { getWebContentsId?: () => number })
-            | null;
+            (HTMLElement & { getWebContentsId?: () => number }) | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -2655,6 +2650,7 @@ export class FileExplorer {
         const editorUrl = `./${editorConfig.rendererPage}?${editorParams.toString()}`;
         const webview = document.createElement('webview');
         webview.className = 'ws-office-editor-frame ws-office-editor-frame--loading';
+        webview.setAttribute('partition', OPENDESK_OFFICE_PARTITION);
         webview.setAttribute('src', editorUrl);
         webview.setAttribute('title', t(editorConfig.titleKey));
         let editorReadyHandled = false;
@@ -2683,12 +2679,7 @@ export class FileExplorer {
                     webview as HTMLElement & { getWebContentsId?: () => number }
                 ).getWebContentsId?.();
                 if (webContentsId) {
-                    void window.officeHostAPI.bindOfficeTask(
-                        editorConfig.kind,
-                        this._taskId,
-                        filePath,
-                        webContentsId
-                    );
+                    void window.officeHostAPI.bindOfficeTask(editorConfig.kind, this._taskId, filePath, webContentsId);
                 }
             }
         };
@@ -3092,8 +3083,7 @@ export class FileExplorer {
             const d = this._previewState.data;
             const editorConfig = getOfficeEditorConfig(this._selectedFile);
             if (editorConfig) {
-                const editorUrl = `./${editorConfig.rendererPage}?mode=tab&file=${encodeURIComponent(this._selectedFile)}`;
-                bodyHtml = `<div class="ws-office-editor-host"><webview class="ws-office-editor-frame" src="${escapeHtml(editorUrl)}" title="${escapeHtml(t(editorConfig.titleKey))}"></webview></div>`;
+                bodyHtml = '<div class="ws-office-editor-host"></div>';
             } else if (d.tooLarge) {
                 bodyHtml = `
                 <div class="ws-preview-body ws-preview-info">
