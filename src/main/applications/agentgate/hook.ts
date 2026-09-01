@@ -561,7 +561,7 @@ async function checkWithAgentGate(
     cwd: string,
     userPrompt: string,
     task?: TaskState
-): Promise<{ allowed: boolean; reason: string; riskLevel: string; riskType: string }> {
+): Promise<{ allowed: boolean; reason: string; riskLevel: string; riskType: string; violatedLayers: string[] }> {
     // 获取当前会话的模型配置，传递给 agent-moss 做 per-request LLM 分析
     let llmConfig: Record<string, string> | undefined;
     if (task) {
@@ -618,7 +618,13 @@ async function checkWithAgentGate(
             console.error(`[AgentGate] HTTP ${response.status}: ${response.statusText}`);
             // 失效探测缓存，使下次 resolveGateUrl 重新探测正确端口
             invalidateGateUrlCache();
-            return { allowed: true, reason: 'Gate unreachable (fail-open)', riskLevel: '' };
+            return {
+                allowed: true,
+                reason: 'Gate unreachable (fail-open)',
+                riskLevel: '',
+                riskType: '',
+                violatedLayers: []
+            };
         }
 
         const result = (await response.json()) as Record<string, unknown>;
@@ -626,19 +632,30 @@ async function checkWithAgentGate(
         const reason = String(result.reason || '');
         const riskLevel = String(result.risk_level || '');
         const riskType = String(result.risk_type || '');
+        // violated_layers：AgentMoss 按真实执行顺序命中的层（L1.1/L1.2/L2.1/L2.2/L2.3/L3.1 + brain_L1/brain_L2）
+        const violatedLayers = Array.isArray(result.violated_layers)
+            ? (result.violated_layers as unknown[]).map(String)
+            : [];
 
         return {
             allowed: decision === 'Allow',
             reason,
             riskLevel,
-            riskType
+            riskType,
+            violatedLayers
         };
     } catch (err) {
         // Fail-Open: AgentGate 不可用时放行，避免阻断正常工作
         console.error(`[AgentGate] 请求失败: ${String(err)}`);
         // 失效探测缓存，使下次 resolveGateUrl 重新探测正确端口
         invalidateGateUrlCache();
-        return { allowed: true, reason: 'Gate unreachable (fail-open)', riskLevel: '', riskType: '' };
+        return {
+            allowed: true,
+            reason: 'Gate unreachable (fail-open)',
+            riskLevel: '',
+            riskType: '',
+            violatedLayers: []
+        };
     }
 }
 
@@ -681,7 +698,7 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
         const cwd: string = toolCall.args_object?.['workingDirectory'] || task.getWorkspace?.() || '';
         const userPrompt: string = task.chat_context?.lastUserMessage?.()?.getPlainText?.() || task.task_name || '';
 
-        const { allowed, reason, riskLevel, riskType } = await checkWithAgentGate(
+        const { allowed, reason, riskLevel, riskType, violatedLayers } = await checkWithAgentGate(
             command,
             sessionId,
             normalizeGateToolName(toolCall.tool_name),
@@ -693,6 +710,7 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
         if (!allowed) {
             const securityLevel = getSecurityLevel();
             const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
+            const layersText = violatedLayers.length > 0 ? violatedLayers.join(', ') : 'unknown';
 
             // 低级别：仅警告，不拦截
             if (securityLevel === 'low') {
@@ -709,6 +727,7 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                         `🚫 **AgentGate 安全拦截（高安全模式）**`,
                         ``,
                         `- **风险等级**: ${riskLevel || 'unknown'}`,
+                        `- **触发层**: ${layersText}`,
                         `- **原因**: ${reason || '未提供原因'}`,
                         `- **命令**: \`${command.slice(0, 200)}\``,
                         ``,
@@ -716,7 +735,16 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                     ].join('\n')
                 };
                 // Fire-and-forget 拦截记录 + 归因
-                void recordInterception(task, toolCall, command, reason, riskLevel, riskType, securityLevel);
+                void recordInterception(
+                    task,
+                    toolCall,
+                    command,
+                    reason,
+                    riskLevel,
+                    riskType,
+                    violatedLayers,
+                    securityLevel
+                );
                 return feedback;
             }
 
@@ -729,6 +757,7 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                         `🚫 **AgentGate 安全拦截（高风险操作）**`,
                         ``,
                         `- **风险等级**: ${riskLevel || 'unknown'}`,
+                        `- **触发层**: ${layersText}`,
                         `- **原因**: ${reason || '未提供原因'}`,
                         `- **命令**: \`${command.slice(0, 200)}\``,
                         ``,
@@ -736,7 +765,16 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                     ].join('\n')
                 };
                 // Fire-and-forget 拦截记录 + 归因
-                void recordInterception(task, toolCall, command, reason, riskLevel, riskType, securityLevel);
+                void recordInterception(
+                    task,
+                    toolCall,
+                    command,
+                    reason,
+                    riskLevel,
+                    riskType,
+                    violatedLayers,
+                    securityLevel
+                );
                 return feedback;
             }
 
@@ -748,6 +786,7 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                     `🚫 **AgentGate 安全拦截**`,
                     ``,
                     `- **风险等级**: ${riskLevel || 'unknown'}`,
+                    `- **触发层**: ${layersText}`,
                     `- **原因**: ${reason || '未提供原因'}`,
                     `- **命令**: \`${command.slice(0, 200)}\``,
                     ``,
@@ -758,8 +797,17 @@ async function onBeforeToolCall({ task, toolCall }: BeforeToolCallExecContext): 
                     `请根据拦截原因采取适当行动，不要暂停，不要询问用户。`
                 ].join('\n')
             };
-            // Fire-and-forget 拦截记录 + 归因
-            void recordInterception(task, toolCall, command, reason, riskLevel, securityLevel);
+            // Fire-and-forget 拦截记录 + 归因（补传 riskType：此前 medium/low 分支漏传，导致该级拦截记录 riskType 恒为空）
+            void recordInterception(
+                task,
+                toolCall,
+                command,
+                reason,
+                riskLevel,
+                riskType,
+                violatedLayers,
+                securityLevel
+            );
             return feedback;
         }
     } catch (err) {
@@ -778,6 +826,7 @@ async function recordInterception(
     reason: string,
     riskLevel: string,
     riskType: string,
+    violatedLayers: string[],
     securityLevel: string
 ): Promise<void> {
     try {
@@ -805,6 +854,7 @@ async function recordInterception(
                     reason,
                     riskLevel,
                     riskType,
+                    violatedLayers,
                     securityLevel,
                     turn,
                     certain: [{ bundleName: args.bundleName, skillName: args.skillName }],
@@ -824,6 +874,7 @@ async function recordInterception(
             reason,
             riskLevel,
             riskType,
+            violatedLayers,
             securityLevel,
             turn,
             certain: [],

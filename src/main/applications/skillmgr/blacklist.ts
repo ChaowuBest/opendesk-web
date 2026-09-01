@@ -175,6 +175,8 @@ export interface InterceptionRecord {
     riskLevel: string;
     /** 风险类型（analysis_timeout / service_unavailable / 真实恶意类型等） */
     riskType: string;
+    /** AgentMoss 命中的违规层（L1.1/L1.2/L2.1/L2.2/L2.3/L3.1 + brain_L1/brain_L2），按真实执行顺序 */
+    violatedLayers?: string[];
     /** 安全级别 */
     securityLevel: string;
     /** 拦截发生时的 turn 号 */
