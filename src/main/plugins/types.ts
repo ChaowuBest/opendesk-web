@@ -94,6 +94,8 @@ export interface ChannelCapabilities {
     reactions?: boolean;
     editing?: boolean;
     mentionGating?: boolean;
+    /** 是否支持结构化用户交互（权限审批 / askUser 卡片）。true 时需实现 sendInteraction */
+    interactive?: boolean;
 }
 
 export interface ChannelConfigAdapter<ResolvedAccount = any> {
@@ -230,6 +232,8 @@ export interface ChannelPlugin<ResolvedAccount = any, Probe = unknown, Audit = u
     onboarding?: any;
     reload?: { configPrefixes: string[]; noopPrefixes?: string[] };
     gatewayMethods?: string[];
+    /** 原生 channel 的结构化交互（权限审批 / askUser 卡片）发送入口 */
+    sendInteraction?: (request: any) => Promise<any>;
 }
 
 // ── Pairing Provider (decouples aikernel from applications layer) ─────────────

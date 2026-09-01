@@ -32,7 +32,9 @@ import type {
     PluginRegistration,
     PluginSkillDefinition,
     PluginMcpServerDefinition,
-    PluginStaticResources
+    PluginStaticResources,
+    Channel,
+    ChannelAccount
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import {
     OPENDESK_PLUGIN_API_VERSION,
@@ -118,6 +120,12 @@ interface BrowserHintRecord {
     /** 归一化后的地址前缀（不含协议） */
     urlPrefix: string;
     generator: BrowserHintGenerator;
+}
+
+interface ChannelRecord {
+    pluginKey: string;
+    pluginId: string;
+    channel: Channel;
 }
 
 export interface VisiblePluginContribution<T> {
@@ -370,6 +378,7 @@ export class PluginHost {
     private readonly commands = new Map<string, ContributionRecord<PluginCommandDefinition>>();
     private readonly agents = new Map<string, ContributionRecord<AgentDefinition>>();
     private readonly browserHints: BrowserHintRecord[] = [];
+    private readonly channels = new Map<string, ChannelRecord>();
     private readonly applicationEvents: ApplicationEventRecord[] = [];
     private readonly mcpRemovalListeners = new Set<(id: string) => void | Promise<void>>();
 
@@ -417,6 +426,25 @@ export class PluginHost {
 
     listBrowserHintPrefixes(): Array<{ pluginId: string; urlPrefix: string }> {
         return this.browserHints.map((record) => ({ pluginId: record.pluginId, urlPrefix: record.urlPrefix }));
+    }
+
+    /**
+     * 列出所有通过 ctx.channels.define 注册的 channel 实例。
+     * channelmgr 据此接入启动/登录/收发流程。
+     */
+    listChannels(): Array<{ pluginId: string; channel: Channel }> {
+        return Array.from(this.channels.values()).map((record) => ({
+            pluginId: record.pluginId,
+            channel: record.channel
+        }));
+    }
+
+    /** 按 channelId（ChannelMeta.id）查找已注册的 channel。 */
+    findChannel(channelId: string): Channel | undefined {
+        for (const record of this.channels.values()) {
+            if (record.channel.meta.id === channelId) return record.channel;
+        }
+        return undefined;
     }
 
     /**
@@ -931,6 +959,43 @@ export class PluginHost {
                             })
                         );
                     }
+                }
+            },
+            channels: {
+                define: <TAccount extends ChannelAccount>(channel: Channel<TAccount>) => {
+                    addCapability('channel');
+                    if (!channel || typeof channel !== 'object') {
+                        throw new Error('plugin.channel_invalid');
+                    }
+                    if (!channel.meta?.id || !channel.meta.id.trim()) {
+                        throw new Error('plugin.channel_id_invalid');
+                    }
+                    if (typeof channel.setChannelRuntimeContext !== 'function') {
+                        throw new Error('plugin.channel_runtime_invalid');
+                    }
+                    if (typeof channel.listAccounts !== 'function') {
+                        throw new Error('plugin.channel_list_accounts_invalid');
+                    }
+                    if (typeof channel.sendOutboundMessage !== 'function') {
+                        throw new Error('plugin.channel_send_outbound_invalid');
+                    }
+                    const channelId = channel.meta.id.trim();
+                    const collides = Array.from(this.channels.values()).some(
+                        (record) => record.channel.meta.id === channelId
+                    );
+                    if (collides) throw new Error(`Plugin channel already registered: ${channelId}`);
+                    const key = `${entry.key}:channel:${channelId}`;
+                    const record: ChannelRecord = {
+                        pluginKey: entry.key,
+                        pluginId: entry.id,
+                        channel: channel as Channel
+                    };
+                    this.channels.set(key, record);
+                    return track(
+                        new HostRegistration(() => {
+                            if (this.channels.get(key) === record) this.channels.delete(key);
+                        })
+                    );
                 }
             }
         };

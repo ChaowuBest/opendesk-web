@@ -13,17 +13,24 @@ import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js
 import { HarnessContext } from '../../aikernel/security/harness.js';
 import { UserMessage, AssistantMessage, ImageMessagePart, imageToDataUri } from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
-import { SkillRegistry } from '../../aikernel/skill.js';
-import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
+import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import type { InboundChannelMessage, Participant } from '../../plugins/types.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
 
 export interface ChannelReply {
     text: string;
     mediaUrls: string[];
+}
+
+/** 渠道账号的运行时设定：从该账号进入的消息自动使用这些配置 */
+export interface AccountRuntime {
+    workspace?: string;
+    agentId?: string;
+    modeId?: string;
+    model?: string;
 }
 
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -45,19 +52,36 @@ export class ChannelMessageRouter {
     private extraToolsets: BaseToolset[] = [];
 
     /**
+     * 解析指定渠道账号的运行时设定（workspace / agentId / model）。
+     * 从该 account 进入的消息自动使用这些设定；未配置时回退到全局值。
+     */
+    private getAccountRuntime?: (channelId: string, accountId: string) => AccountRuntime | undefined;
+
+    /**
      * 当消息被路由到任务时的回调。
      * 在 AI 处理之前触发，以便前端可以切换到对应的任务并显示实时处理过程。
      */
     onTaskResolved?: (task: TaskState, message: InboundChannelMessage) => void;
 
-    constructor(taskManagerState: TaskManagerState, workspace: string, model?: string) {
+    constructor(
+        taskManagerState: TaskManagerState,
+        workspace: string,
+        model?: string,
+        getAccountRuntime?: (channelId: string, accountId: string) => AccountRuntime | undefined
+    ) {
         this.taskManagerState = taskManagerState;
         this.workspace = workspace;
         this.model = model;
+        this.getAccountRuntime = getAccountRuntime;
     }
 
     addExtraToolset(toolset: BaseToolset): void {
         this.extraToolsets.push(toolset);
+    }
+
+    /** 由 channelmgr 注入账号级运行时设定解析器（workspace/agentId/model）。 */
+    setAccountRuntimeResolver(resolver: (channelId: string, accountId: string) => AccountRuntime | undefined): void {
+        this.getAccountRuntime = resolver;
     }
 
     /**
@@ -277,9 +301,38 @@ export class ChannelMessageRouter {
     }
 
     private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
-        const task = this.taskManagerState.createTask(this.model);
-        task.harnessContext = HarnessContext.createEmpty();
-        task.harnessContext.workspace = this.workspace;
+        // 账号级运行时设定：workspace / agentId / model 优先于全局值
+        const runtime = this.getAccountRuntime?.(message.channelId, message.accountId);
+        const model = runtime?.model || this.model;
+        const workspace = runtime?.workspace || this.workspace;
+
+        const task = this.taskManagerState.createTask(model);
+
+        // 指定 agent 时设置 agentId；'main'（主 agent）等价于未指定，避免保存过
+        // 账号设置后与默认路径的 prompt 行为不一致；无效 agentId 由 TaskState 回退主 agent
+        const effectiveAgentId = runtime?.agentId && runtime.agentId !== 'main' ? runtime.agentId : undefined;
+        if (effectiveAgentId) {
+            task.agentId = effectiveAgentId;
+        }
+        // 指定 agent 的运行模式（只读/标准/效率），无效时 TaskState 回退该 agent 默认模式
+        if (runtime?.modeId) {
+            task.activeModeId = runtime.modeId;
+        }
+
+        // 渠道任务不走 GUI 的 initHarness 路径，必须自行初始化带权限执行器的 harness。
+        // 若沿用 createEmpty()（permission 为 null），handleToolPermissionsForTask 会
+        // 在 `if (!enforcer) return false` 处直接跳过权限检查，导致工作空间外的
+        // 敏感操作被直接放行。这里按任务的 agent/mode 构建 enforcer 并授予 artifacts 权限。
+        try {
+            task.harnessContext = await HarnessContext.createForMode(workspace, task.getAgentMode());
+            task.harnessContext.workspace = workspace;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+        } catch (err: any) {
+            logger.warn(`[router] 初始化渠道任务权限 harness 失败: ${err?.message || err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+            task.harnessContext.workspace = workspace;
+        }
+
         const systemPrompt = await task.buildSystemPrompt();
 
         // Determine reply target: group ID for group chats, sender ID for direct messages
@@ -297,7 +350,9 @@ export class ChannelMessageRouter {
             .filter(Boolean)
             .join('\n');
 
-        task.agentId = undefined;
+        if (!effectiveAgentId) {
+            task.agentId = undefined;
+        }
         task.setSystemPrompt(channelContext);
 
         task.origin = {
@@ -306,6 +361,14 @@ export class ChannelMessageRouter {
             accountId: message.accountId,
             recipientId: replyTarget
         };
+        // 按渠道交互能力注入权限/askUser provider：支持交互则透传到用户侧，
+        // 不支持交互则不挂载交互工具、权限请求自动拒绝。
+        try {
+            const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
+            channelMgr?.applyChannelTaskProviders?.(task);
+        } catch (err: any) {
+            logger.warn(`[router] applyChannelTaskProviders failed: ${err?.message || err}`);
+        }
         taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
 
         return task;
@@ -345,7 +408,11 @@ export class ChannelMessageRouter {
                     }
                     try {
                         const dataUri = imageToDataUri(item.path);
-                        userMessage.content.push(new ImageMessagePart(dataUri));
+                        // 入站图片已下载到本地文件：携带 file_path 以文本引用形式交给模型
+                        // （与 GUI 粘贴图片、rewind 重新生成路径一致，模型可通过 readImage/askImage 工具读取）。
+                        // 若不带 file_path，supportsVision=false 时该图片 part 会被 toOpenAIMessage 过滤，
+                        // 导致模型只收到空文本而误报"用户消息内容为空"。
+                        userMessage.content.push(new ImageMessagePart(dataUri, item.path));
                         logger.info(`[router] attached inbound image: ${item.path} (${ct})`);
                     } catch (err: any) {
                         logger.warn(`[router] failed to read inbound image ${item.path}: ${err?.message || err}`);
@@ -369,12 +436,13 @@ export class ChannelMessageRouter {
                 });
             }
 
-            const toolsets = await ApplicationRegistry.listAvailableToolsets();
-            const skillToolset = SkillRegistry.getInstance().getToolset();
-            const memoryToolset = createMemoryToolset();
+            // 渠道支持交互时（interactionToolset 已由 applyChannelTaskProviders 注入），
+            // 标记当前 turn 为交互发起，使 buildToolsets 挂载 askUser 等交互工具。
+            if ((task as any).interactionToolset) {
+                (task as any).setTurnInteractive?.(true);
+            }
+            const toolsets = await task.buildToolsets();
             task.chat_context.attachToolsets(...toolsets);
-            task.chat_context.attachToolsets(skillToolset);
-            task.chat_context.attachToolsets(memoryToolset);
             for (const ts of this.extraToolsets) {
                 task.chat_context.attachToolsets(ts);
             }

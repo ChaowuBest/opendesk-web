@@ -21,6 +21,7 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
+import './channelSettings.js';
 import {
     parseTokenCount,
     isInvalidTokenCount,
@@ -206,6 +207,11 @@ class SettingPanel extends HTMLElement {
                 iconSvg: svg(
                     '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'
                 )
+            },
+            {
+                id: 'channels',
+                label: this._t('sp.tab.channels'),
+                iconSvg: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>')
             },
             {
                 id: 'agents',
@@ -909,6 +915,9 @@ class SettingPanel extends HTMLElement {
                         <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-5">
                             ${this.renderTaskSection()}
                         </div>
+                        <div id="tab-channels" class="${this._activeTab === 'channels' ? '' : 'hidden'} space-y-5">
+                            <channel-settings-panel></channel-settings-panel>
+                        </div>
                         <div id="tab-agents" class="${this._activeTab === 'agents' ? '' : 'hidden'} space-y-5">
                             ${this.renderAcpAgentsSection()}
                         </div>
@@ -949,7 +958,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'agents', 'search', 'general', 'wizard'];
+        const tabIds = ['models', 'tasks', 'channels', 'agents', 'search', 'general', 'wizard'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);

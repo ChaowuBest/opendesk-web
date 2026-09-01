@@ -44,8 +44,7 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    | { ok: true }
-    | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -1238,7 +1237,7 @@ export class ReadImageTool extends BaseTool<typeof readImageSchema> {
 
     async isAvailable(taskState?: TaskState): Promise<boolean> {
         const model = currentTaskModel(taskState);
-        if (!model) return true;
+        if (!model) return false;
         return LLM.supportsVision(model);
     }
 

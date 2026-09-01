@@ -449,8 +449,10 @@ test('readImage returns local image content as a multimodal tool result', async 
         assert.equal(result.status, 'success');
         assert.doesNotMatch(result.result, /base64/);
         const summary = JSON.parse(result.result);
+        // sanitizePath 统一输出正斜杠路径，Windows 上 path.join 为反斜杠，需归一化后比较
+        const forwardSlashPath = imagePath.replace(/\\/g, '/');
         assert.equal(summary.type, 'image');
-        assert.equal(summary.source, imagePath);
+        assert.equal(summary.source, forwardSlashPath);
         assert.equal(summary.mediaType, 'image/png');
         assert.equal(summary.width, 32);
         assert.equal(summary.height, 24);
@@ -461,7 +463,7 @@ test('readImage returns local image content as a multimodal tool result', async 
         assert.equal(resultObject.type, 'image');
         assert.equal(resultObject.images.length, 1);
         assert.match(resultObject.images[0].image_url, /^data:image\/png;base64,/);
-        assert.equal(resultObject.images[0].source, imagePath);
+        assert.equal(resultObject.images[0].source, forwardSlashPath);
     } finally {
         LLM.supportsVision = originalSupportsVision;
         setting.data = originalData;

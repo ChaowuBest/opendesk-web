@@ -19,7 +19,7 @@ import { logger } from '../../../utils/logger.js';
  * 这里注册一个 ESM loader hook：对上述包名先尝试常规解析（尊重插件自带
  * 依赖），解析失败时回退到宿主内置的同一模块文件。
  */
-const HOST_PACKAGE_SPECIFIERS = [
+export const HOST_PACKAGE_SPECIFIERS = [
     '@bitclub.ai/opendesk-plugin-sdk',
     '@bitclub.ai/opendesk-plugin-sdk/package',
     'zod'

@@ -2526,6 +2526,15 @@ export class TaskState {
         this.interactionToolset?.cancelAll();
     }
 
+    /**
+     * 标记当前 turn 是否由用户交互发起（决定 buildToolsets 是否挂载交互工具集）。
+     * 供渠道入站（router）、定时触发等外部入口在构建工具集前显式声明；
+     * submitUserMessage / startInternalTurn 仍按各自语义设置该标记。
+     */
+    setTurnInteractive(interactive: boolean): void {
+        this._currentTurnInteractive = interactive;
+    }
+
     async ensureToolsResolved() {
         return ensureToolsResolvedForTask(this);
     }

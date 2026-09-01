@@ -100,7 +100,8 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'command',
     'event',
     'agent',
-    'browser'
+    'browser',
+    'channel'
 ] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
@@ -562,6 +563,11 @@ export interface PluginContext {
             callback: PluginApplicationEventCallback
         ): PluginRegistration;
     };
+    /**
+     * 消息渠道能力：插件通过 `ctx.channels.define(channel)` 注册一个 Channel 实例。
+     * 注册的 channel 由 host 收集，供 channelmgr 启动/登录/收发消息。
+     */
+    readonly channels: ChannelsCapability;
 }
 
 export interface OpenDeskPlugin {
@@ -632,3 +638,280 @@ export function tool<Shape extends z.ZodRawShape>(
 }
 
 tool.schema = z;
+
+// ── Channel Capability（消息渠道）────────────────────────────────────────────
+// 插件实现 class XxxChannel implements Channel，通过 ctx.channels.define 注册。
+// 职责边界：channel 只负责「收原始消息 → ctx.dispatch」与「接收出站 → 发送」；
+// 配对/allowlist/群组策略等消息处理管线由 OpenDesk（channelmgr）统一处理。
+
+export type ChannelChatType = 'direct' | 'group';
+
+/** Channel 元数据：id 全局唯一，label 支持本地化映射 { en, zh } */
+export interface ChannelMeta {
+    id: string;
+    label: string | PluginDisplayNameMap;
+    description?: string;
+    aliases?: string[];
+    icon?: string;
+}
+
+export interface ChannelCapabilities {
+    chatTypes: ChannelChatType[];
+    /** 是否支持媒体收发；缺省 false */
+    media?: boolean;
+    /** 是否支持主题回复（thread） */
+    threading?: boolean;
+    /**
+     * 是否支持结构化用户交互（交互卡片、按钮回调等）。
+     * 为 true 时 OpenDesk 会把权限审批与 askUser 提问透传到用户侧（如飞书确认卡片）；
+     * 为 false/缺省时 OpenDesk 不向模型挂载相关交互工具，权限请求自动拒绝。
+     */
+    interactive?: boolean;
+}
+
+/**
+ * 媒体附件。
+ * 入站：channel 负责将远端媒体下载到本地后填 path，OpenDesk 读取该文件交给 agent。
+ * 出站：OpenDesk 提供 path（本地文件）或 url（远程地址），channel 负责上传/转换。
+ */
+export interface ChannelMediaAttachment {
+    path?: string;
+    url?: string;
+    contentType?: string;
+    fileName?: string;
+}
+
+export interface ChannelMessage {
+    text: string;
+    media?: ChannelMediaAttachment[];
+}
+
+/** 入站消息：channel 收到原始消息后原样 dispatch，不做任何策略过滤 */
+export interface ChannelInboundMessage {
+    /** 平台消息 id，OpenDesk 侧用于去重；无唯一 id 的平台可不填 */
+    messageId?: string;
+    /** 消息所属账号（channel 自己管理账号，dispatch 时须显式声明） */
+    accountId?: string;
+    chatType: ChannelChatType;
+    /** 发送者；group 场景下为群内发消息的用户 */
+    sender: { id: string; name?: string };
+    /** chatType === 'group' 时必填 */
+    group?: { id: string; name?: string };
+    text: string;
+    media?: ChannelMediaAttachment[];
+    /** 引用回复的源消息 id */
+    replyToMessageId?: string;
+    threadId?: string;
+    timestamp?: number;
+    /** 平台原始事件对象，透传调试用 */
+    raw?: unknown;
+}
+
+/** 出站目标：direct 时 recipientId 为用户 id，group 时 recipientId 为群 id */
+export interface ChannelOutboundTarget {
+    chatType: ChannelChatType;
+    recipientId: string;
+    groupId?: string;
+}
+
+export interface ChannelOutboundMessage {
+    to: ChannelOutboundTarget;
+    /** 使用哪个账号发送（对应 listAccounts 返回的 accountId） */
+    accountId: string;
+    message: ChannelMessage;
+}
+
+export interface ChannelSendResult {
+    /** 平台侧发送成功后的消息 id */
+    messageId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// 用户交互（权限审批 / askUser）能力
+// ---------------------------------------------------------------------------
+// Channel 若声明 capabilities.interactive === true，则必须实现 sendInteraction：
+// OpenDesk 把「权限审批」与「向用户提问」的结构化请求发到渠道侧渲染成交互 UI
+// （如飞书确认卡片），用户在渠道侧点击后经 ctx.dispatchInteraction 回传结果。
+// 渠道不支持交互时，OpenDesk 不挂载 askUser 等交互工具，权限请求自动拒绝。
+
+/** 交互类型：approval=权限审批，askUser=向用户提问 */
+export type ChannelInteractionKind = 'approval' | 'askUser';
+
+export interface ChannelInteractionOption {
+    label: string;
+    description: string;
+}
+
+export interface ChannelAskUserQuestion {
+    question: string;
+    /** 简短标签（最多 30 字符），展示为标题 */
+    header: string;
+    options: ChannelInteractionOption[];
+    /** 是否允许多选；缺省 false。飞书等按钮渠道对多选按逐个选择处理 */
+    multiple?: boolean;
+}
+
+export interface ChannelAskUserRequestPayload {
+    questions: ChannelAskUserQuestion[];
+}
+
+export interface ChannelApprovalRequest {
+    /** 展示给用户的审批说明（markdown 文本） */
+    prompt: string;
+    /** 触发审批的工具名（可选，用于展示上下文） */
+    tool?: string;
+    /** 被请求授权的权限请求列表 */
+    requests: PermissionRequest[];
+    confirmLabel?: string;
+    cancelLabel?: string;
+}
+
+/** 出站交互请求：OpenDesk 构造，channel 渲染为用户可见的交互 UI */
+export interface ChannelInteractionRequest {
+    /** 唯一交互 ID，回调通过它关联回 pending 的请求 */
+    interactionId: string;
+    kind: ChannelInteractionKind;
+    to: ChannelOutboundTarget;
+    accountId: string;
+    /** 过期时间（epoch ms）。到期未响应的交互应视为取消 */
+    expiresAt?: number;
+    payload: ChannelApprovalRequest | ChannelAskUserRequestPayload;
+}
+
+/** 入站交互事件：用户在渠道侧点击了交互 UI 的按钮/选项 */
+export interface ChannelInteractionEvent {
+    kind: ChannelInteractionKind;
+    interactionId: string;
+    /** 事件所属账号（channel 自己管理账号，dispatch 时须显式声明） */
+    accountId?: string;
+    /** 操作用户 */
+    operator: { id: string; name?: string };
+    /** approval 事件：用户选择 allow / deny */
+    decision?: 'allow' | 'deny';
+    /** askUser 事件：question index → 选中的 option label 数组 */
+    answers?: Record<number, string[]>;
+    /** 用户取消（如点击取消按钮、卡片超时） */
+    cancelled?: boolean;
+    /** 平台原始事件对象，透传调试用 */
+    raw?: unknown;
+}
+
+/** 账号句柄。敏感凭证由 channel 内部持久化，此对象只携带标识信息 */
+export interface ChannelAccount {
+    accountId: string;
+    accountName?: string;
+}
+
+export interface ChannelAccountStatus {
+    ok: boolean;
+    message?: string;
+}
+
+export interface ChannelQrLoginSession {
+    /** base64 编码的图像或指向二维码图片的网页地址 */
+    qrUrl: string;
+    sessionKey: string;
+    expiresAt?: number;
+}
+
+/** 参数登录的表单字段描述，OpenDesk 据此渲染登录 UI */
+export interface ChannelAccountLoginParam {
+    name: string;
+    displayName: string;
+    required: boolean;
+    /** password 时 UI 用掩码输入框 */
+    type?: 'text' | 'password';
+}
+
+export interface ChannelLogger {
+    info: (...args: any[]) => void;
+    warn: (...args: any[]) => void;
+    error: (...args: any[]) => void;
+    debug: (...args: any[]) => void;
+}
+
+/** 运行时上下文：OpenDesk 创建并通过 setChannelRuntimeContext 注入 Channel */
+export interface ChannelRuntimeContext {
+    readonly channelId: string;
+    /** 注入该上下文时对应的账号（channel 可据此区分多账号） */
+    readonly accountId?: string;
+    /** OpenDesk 侧维护的非敏感配置（对应 Channel.configSchema，存于 settings.json） */
+    readonly config: Readonly<Record<string, unknown>>;
+    /** channel 专属数据目录（<opendesk>/channels/<channelId>/），凭证持久化用 */
+    readonly dataDir: string;
+    /** 将相对路径解析到 dataDir 内 */
+    resolvePath(input: string): string;
+    /** 入站消息投递：OpenDesk 内部执行配对/allowlist/群组策略后决定是否路由到 agent */
+    dispatch(message: ChannelInboundMessage): Promise<void>;
+    /** 入站交互事件投递：用户点击了权限审批/askUser 交互 UI，OpenDesk 据此结算 pending 请求 */
+    dispatchInteraction(event: ChannelInteractionEvent): Promise<void>;
+    /**
+     * 连接状态上报（连接/断开/错误）。
+     * 多账号场景下 channel 持有的是最后一次注入的 ctx，上报时应显式传入
+     * 所属 accountId，避免状态串线到其他账号；不传则使用注入该 ctx 时的账号。
+     */
+    setStatus(status: { online: boolean; statusText?: string; error?: string }, accountId?: string): void;
+    /**
+     * 向 OpenDesk 发送扩展事件（如扫码过期、需要重新授权）。
+     * 多账号场景下建议显式传入 accountId（理由同 setStatus）。
+     */
+    emit(event: string, payload?: unknown, accountId?: string): void;
+    /** 系统级 fetch，继承 OpenDesk 代理配置 */
+    fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+    logger: ChannelLogger;
+}
+
+/**
+ * 消息渠道接口。插件实现子类（如 `class WechatChannel implements Channel`）。
+ * 生命周期：define → setChannelRuntimeContext → listAccounts → 逐个 start(account)；
+ * 登录新账号 → start(newAccount)；登出 → stop(accountId)。
+ */
+export interface Channel<TAccount extends ChannelAccount = ChannelAccount> {
+    readonly meta: ChannelMeta;
+    readonly capabilities: ChannelCapabilities;
+    /** 非敏感配置的 JSON Schema，OpenDesk 据此渲染配置 UI */
+    readonly configSchema?: unknown;
+
+    /** OpenDesk 调用，注入运行时上下文；实现者自行保留该 ctx，后续操作不再传入 */
+    setChannelRuntimeContext(ctx: ChannelRuntimeContext): void;
+
+    /** 列出当前已登录/已配置的账号（channel 从自己的持久化存储读取） */
+    listAccounts(): Promise<TAccount[]> | TAccount[];
+    /** 是否支持扫码登录；为 true 时必须实现 getAccountLoginQr / loginAccountWithQrWait */
+    supportLoginWithQr: boolean;
+    getAccountLoginQr?(): Promise<ChannelQrLoginSession>;
+    /** 轮询等待扫码结果；成功返回账号（channel 内部持久化凭证），失败抛错 */
+    loginAccountWithQrWait?(session: ChannelQrLoginSession, onProgress?: (message: string) => void): Promise<TAccount>;
+
+    /** 参数登录的表单描述（如飞书 appId/appSecret），OpenDesk 据此渲染表单 */
+    getAccountLoginParams(): ChannelAccountLoginParam[];
+    /** 用表单值登录，成功返回账号并持久化，失败抛错 */
+    loginAccountWithParams(values: Record<string, string>): Promise<TAccount>;
+
+    /** 主动检查某账号连接是否正常（如 token 是否过期） */
+    checkAccountStatus(accountId: string): Promise<ChannelAccountStatus>;
+    /** 登出并清理该账号的持久化凭证 */
+    logoutAccount(accountId: string): Promise<void> | void;
+
+    /** 启动某账号的长连接（WebSocket/轮询/Webhook 订阅）；连接异常退出时 reject */
+    start(account: TAccount): Promise<void>;
+    /** 停止某账号的连接并清理资源 */
+    stop(accountId: string): Promise<void>;
+    /** 可选：OpenDesk 配置变更时的热更新入口；未实现则 OpenDesk 执行 stop + start */
+    reload?(config: Record<string, unknown>): Promise<void> | void;
+
+    /** 发送消息到目标；返回平台消息 id 作为回执 */
+    sendOutboundMessage(message: ChannelOutboundMessage): Promise<ChannelSendResult>;
+
+    /**
+     * 发送结构化交互请求（权限审批卡片 / askUser 提问卡片）到目标用户。
+     * 仅当 capabilities.interactive === true 时必须实现；否则 OpenDesk 不会调用。
+     * 用户在渠道侧的选择通过 ChannelRuntimeContext.dispatchInteraction 回传。
+     */
+    sendInteraction?(request: ChannelInteractionRequest): Promise<ChannelSendResult>;
+}
+
+/** ctx.channels 能力：define 注册一个 channel，返回可 dispose 的 PluginRegistration */
+export interface ChannelsCapability {
+    define<TAccount extends ChannelAccount>(channel: Channel<TAccount>): PluginRegistration;
+}

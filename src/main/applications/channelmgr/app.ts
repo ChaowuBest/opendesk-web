@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import { BaseApplication, EventDecl } from '../base.js';
-import { t } from './locale/index.js';
+import { t as tLocal } from './locale/index.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
@@ -83,6 +83,20 @@ import { t } from '../../../locale/index.js';
 import qrcodeTerminal from 'qrcode-terminal';
 import chalk from 'chalk';
 import { getAdaptiveGreen } from '../../tui/theme.js';
+import { getPluginHost } from '../pluginmgr/index.js';
+import { AgentRegistry } from '../../aikernel/agents/registry.js';
+import { getModeDisplayName } from '../../aikernel/agents/common.js';
+import { Setting } from '../../utils/setting.js';
+import { createNativeChannelPluginEntry, isNativeChannelEntry } from './native-channel.js';
+import type { NativeChannelAdapter } from './native-channel.js';
+import type { ChannelAccountLoginParam } from '../../../../packages/plugin-sdk/src/index.js';
+import { ChannelInteractionService } from './interactions.js';
+import {
+    ChannelAskUserProvider,
+    ChannelPermissionPromptProvider,
+    createChannelDenyPermissionProvider
+} from './channel-task-interactions.js';
+import { createInteractionToolset } from '../../aikernel/interaction/tools.js';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -107,6 +121,14 @@ export function resolveChannelDisplayName(channelId: string, fallbackLabel?: str
     return CHANNEL_DISPLAY_NAMES[channelId] ?? fallbackLabel ?? channelId;
 }
 
+/** 解析账号显示名：优先 accountName，缺失时回退 accountId。 */
+export function resolveAccountDisplayName(
+    account: { accountName?: string } | null | undefined,
+    accountId: string
+): string {
+    return account?.accountName || accountId;
+}
+
 export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void;
 
 export interface LoginResult {
@@ -129,6 +151,9 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 标记本轮 turn 由渠道入站消息触发，afterFinishTurn 钩子无需回显用户消息到渠道 */
     private skipUserEchoTasks = new WeakSet<object>();
 
+    /** 渠道结构化用户交互服务（权限审批 / askUser 透传与结算） */
+    private readonly interactionService: ChannelInteractionService;
+
     /** 供外部（router / todomgr）标记当前 turn 的用户消息已在渠道侧可见 */
     markSkipUserEcho(task: object): void {
         this.skipUserEchoTasks.add(task);
@@ -136,10 +161,11 @@ export class ChannelMgrApplication extends BaseApplication {
 
     constructor() {
         super('channelmgr', false);
+        this.interactionService = new ChannelInteractionService((channelId) => this.findChannelPlugin(channelId));
     }
 
     getName(): string {
-        return t('app.name');
+        return tLocal('app.name');
     }
 
     onChannelStateChange(callback: ChannelStateChangeCallback): void {
@@ -169,11 +195,19 @@ export class ChannelMgrApplication extends BaseApplication {
 
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
-            { eventName: 'channel:connected', eventDescription: t('channel.event.connected') },
-            { eventName: 'channel:disconnected', eventDescription: t('channel.event.disconnected') },
-            { eventName: 'channel:message', eventDescription: t('channel.event.message') },
-            { eventName: 'channel:contactsUpdated', eventDescription: t('channel.event.contacts.updated') },
-            { eventName: 'channel:error', eventDescription: t('channel.event.error') }
+            { eventName: 'channel:connected', eventDescription: tLocal('channel.event.connected') },
+            { eventName: 'channel:disconnected', eventDescription: tLocal('channel.event.disconnected') },
+            { eventName: 'channel:message', eventDescription: tLocal('channel.event.message') },
+            { eventName: 'channel:contactsUpdated', eventDescription: tLocal('channel.event.contacts.updated') },
+            { eventName: 'channel:error', eventDescription: tLocal('channel.event.error') },
+            {
+                eventName: 'channel:loginStatus',
+                eventDescription: tLocal('channel.event.loginStatus')
+            },
+            {
+                eventName: 'channel:interaction',
+                eventDescription: tLocal('channel.event.interaction')
+            }
         ];
     }
 
@@ -268,6 +302,8 @@ export class ChannelMgrApplication extends BaseApplication {
     configureRouter(router: ChannelMessageRouter, workspace?: string): void {
         this.workspace = workspace;
         this.router = router;
+        // 从该 account 进入的消息按 account 绑定的 workspace/agentId/model 路由
+        router.setAccountRuntimeResolver((channelId, accountId) => this.getAccountRuntimeConfig(channelId, accountId));
 
         const outboundToolset = new BaseToolset('channel-outbound');
         outboundToolset.addTool(new SendFileTool());
@@ -405,6 +441,8 @@ export class ChannelMgrApplication extends BaseApplication {
             const loadResult = await loadPlugins();
             this.plugins = loadResult.entries;
             this.pluginLoadErrors = loadResult.errors;
+            // 加载原生插件系统（ctx.channels.define）注册的 channel
+            this.loadNativeChannels();
             const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
             logger.info(`已加载 ${this.plugins.length} 个插件，其中 ${channelPlugins.length} 个消息插件`);
             if (this.pluginLoadErrors.length > 0) {
@@ -422,10 +460,63 @@ export class ChannelMgrApplication extends BaseApplication {
         }
     }
 
+    /**
+     * 从原生插件系统（pluginmgr ctx.channels.define）加载 channel 实例，
+     * 生成伪 PluginEntry 并入 plugins 数组，复用现有 channelmgr 启动/收发流程。
+     */
+    private loadNativeChannels(): void {
+        const nativeChannels = getPluginHost().listChannels();
+        for (const { channel } of nativeChannels) {
+            const channelId = channel.meta.id;
+            // 原生 channel 优先：同 id 的 OpenClaw 兼容插件会被原生实现替换。
+            // 原生实现是 OpenDesk 内置（能力声明完整，如 interactive 交互卡片），
+            // OpenClaw 兼容插件仅是过渡方案；startChannelPlugin 在 loadNativeChannels
+            // 之后才执行，此时移除同名 OpenClaw entry 是安全的。
+            const existing = this.plugins.find((p) => p.channelPlugin?.id === channelId);
+            if (existing) {
+                if (isNativeChannelEntry(existing)) continue;
+                logger.info(`[channelmgr] native channel ${channelId} 替换 OpenClaw 兼容插件 ${existing.id}`);
+                this.plugins = this.plugins.filter((p) => p.channelPlugin?.id !== channelId);
+            }
+            let entry: PluginEntry | undefined;
+            const { entry: created } = createNativeChannelPluginEntry(channel, {
+                getConfig: (cid) => this.getChannelConfig(cid),
+                dispatch: async (cid, accountId, message) => {
+                    if (!entry?.channelPlugin) return;
+                    await this.handleInboundMessage(entry.channelPlugin, accountId, message);
+                },
+                dispatchInteraction: async (cid, accountId, event) => {
+                    await this.handleChannelInteractionEvent(cid, accountId, event);
+                },
+                setStatus: (cid, accountId, status) => {
+                    const stateKey = `${cid}:${accountId}`;
+                    const state = this.channelStates.get(stateKey);
+                    if (state) {
+                        state.status = { ...state.status, ...status };
+                        this.notifyStateChange();
+                    }
+                },
+                emit: (cid, event, payload) => {
+                    this.emitEvent(event, { channelId: cid, ...payload });
+                }
+            });
+            entry = created;
+            // 立即注入运行时上下文，确保登录/启动时 channel 的 ctx 已就绪
+            (entry.channelPlugin as unknown as NativeChannelAdapter).ensureRuntimeInjected();
+            logger.info(`[channelmgr] 已加载原生 channel: ${channelId} (plugin: ${entry.id})`);
+            this.plugins.push(entry);
+        }
+    }
+
     private async startChannelPlugin(entry: PluginEntry): Promise<void> {
         const cp = entry.channelPlugin!;
         const channelId = cp.id;
         const config = this.getChannelConfig(channelId);
+
+        // 原生 channel：先同步账号缓存，再读取账号列表
+        if (isNativeChannelEntry(entry)) {
+            await (entry.channelPlugin as unknown as NativeChannelAdapter).syncAccounts();
+        }
 
         logger.info(`[channelmgr] 正在启动消息插件: ${channelId} (${cp.meta.label}) ${JSON.stringify(config)}`);
 
@@ -484,7 +575,10 @@ export class ChannelMgrApplication extends BaseApplication {
                     NotificationManager.getInstance().info(
                         t('plugin.system'),
                         t('message.channel'),
-                        `${resolveChannelDisplayName(channelId, cp.meta.label)} ${t('channel.ready')}`
+                        `${resolveChannelDisplayName(channelId, cp.meta.label)} ${resolveAccountDisplayName(
+                            account,
+                            accountId
+                        )} ${t('channel.ready')}`
                     );
                 } catch (err: any) {
                     state.status = { online: false, statusText: t('channel.status.error'), error: err?.message };
@@ -855,9 +949,322 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     /**
+     * 为渠道来源的任务注入交互 provider（在 task.origin 设置后调用）。
+     * - 渠道支持结构化交互：权限审批与 askUser 透传到渠道用户侧；
+     * - 渠道不支持交互：权限请求自动拒绝，且不挂载交互工具集（askUser / exitPlanMode）。
+     */
+    applyChannelTaskProviders(task: TaskState): void {
+        const origin = task.origin;
+        if (!origin || origin.type !== 'channel') return;
+        const entry = this.findChannelPlugin(origin.channel);
+        const cp = entry?.channelPlugin;
+        const interactive = Boolean(cp?.capabilities?.interactive === true && cp.sendInteraction);
+        logger.info(
+            `[channelmgr] applyChannelTaskProviders ${origin.channel}: found=${Boolean(cp)} native=${entry ? isNativeChannelEntry(entry) : false} interactive=${cp?.capabilities?.interactive} hasSendInteraction=${typeof cp?.sendInteraction} => ${interactive}`
+        );
+        if (interactive) {
+            task.harnessContext.permissionPrompt = new ChannelPermissionPromptProvider(this.interactionService, origin);
+            task.interactionToolset = createInteractionToolset(
+                new ChannelAskUserProvider(this.interactionService, origin)
+            );
+            logger.info(
+                '[channelmgr] channel task ' + task.task_id + ' uses channel interactions (' + origin.channel + ')'
+            );
+        } else {
+            task.harnessContext.permissionPrompt = createChannelDenyPermissionProvider('no_prompt_provider');
+            task.interactionToolset = null;
+            logger.info(
+                '[channelmgr] channel task ' +
+                    task.task_id +
+                    ' has no interaction capability (' +
+                    origin.channel +
+                    '), interaction tools not mounted'
+            );
+        }
+    }
+
+    /** 结算渠道入站交互事件（用户在渠道侧点击了权限审批/askUser 卡片）。 */
+    async handleChannelInteractionEvent(channelId: string, accountId: string, event: unknown): Promise<void> {
+        const e = event as {
+            kind?: string;
+            interactionId?: string;
+            operator?: { id?: string; name?: string };
+            decision?: string;
+            answers?: Record<number, string[]>;
+            cancelled?: boolean;
+        };
+        if (!e || (e.kind !== 'approval' && e.kind !== 'askUser') || !e.interactionId) {
+            logger.warn('[channelmgr] invalid channel interaction event from ' + channelId + ':' + accountId);
+            return;
+        }
+        const matched = this.interactionService.handleInteractionEvent(channelId, accountId, {
+            kind: e.kind,
+            interactionId: e.interactionId,
+            accountId,
+            operator: { id: e.operator?.id ?? '', name: e.operator?.name },
+            decision: e.decision === 'deny' ? 'deny' : e.decision === 'allow' ? 'allow' : undefined,
+            answers: e.answers,
+            cancelled: e.cancelled,
+            raw: event
+        });
+        this.emitEvent('channel:interaction', { channelId, accountId, matched, kind: e.kind });
+    }
+
+    /**
      * 获取某个消息插件的完整配置。
      * 用户在 OpenDesk 配置中写 applications.channelmgr.{channelId} 来设置参数。
      */
+    // ── 账号运行时配置（workspace / agentId / model） ───────────────────────────
+
+    /**
+     * 读取指定渠道账号的运行时设定。存储于 applications.channelmgr.<channelId>.accountRuntime.<accountId>。
+     * 从该账号进入的消息自动使用这些设定（workspace 工作目录 / agentId 模式 / model）。
+     */
+    getAccountRuntimeConfig(
+        channelId: string,
+        accountId: string
+    ): { workspace?: string; agentId?: string; modeId?: string; model?: string } {
+        const config = (this.getConfig() || {}) as Record<string, any>;
+        const channelCfg = config[channelId] || {};
+        const runtime = (channelCfg.accountRuntime || {})[accountId] || {};
+        let model = typeof runtime.model === 'string' ? runtime.model : undefined;
+        // 模型已不存在时回退为 undefined（路由时使用默认对话模型）
+        if (model && !this.isValidChatModel(model)) {
+            logger.info('[channelmgr] account runtime 模型不存在，回退默认: ' + model);
+            model = undefined;
+        }
+        return {
+            workspace: typeof runtime.workspace === 'string' ? runtime.workspace : undefined,
+            agentId: typeof runtime.agentId === 'string' ? runtime.agentId : undefined,
+            modeId: typeof runtime.modeId === 'string' ? runtime.modeId : undefined,
+            model
+        };
+    }
+
+    /** 校验模型是否为当前已配置的 chat 模型。 */
+    private isValidChatModel(model: string): boolean {
+        try {
+            const data = Setting.getInstance().getData() || {};
+            const models = data.models;
+            if (!Array.isArray(models)) return false;
+            return models.some((m: any) => m?.model_type === 'chat' && m?.alias === model);
+        } catch {
+            return false;
+        }
+    }
+
+    /** 设置指定渠道账号的运行时设定（workspace / agentId / model），空值字段保持原样。 */
+    setAccountRuntimeConfig(
+        channelId: string,
+        accountId: string,
+        runtime: { workspace?: string; agentId?: string; modeId?: string; model?: string }
+    ): void {
+        const currentConfig = (this.getConfig() || {}) as Record<string, any>;
+        const channelCfg = { ...(currentConfig[channelId] || {}) };
+        const accountRuntime = { ...((channelCfg.accountRuntime as Record<string, unknown>) || {}) };
+        accountRuntime[accountId] = { ...((accountRuntime[accountId] as object) || {}), ...runtime };
+        channelCfg.accountRuntime = accountRuntime;
+        this.setConfig({ ...currentConfig, [channelId]: channelCfg });
+    }
+
+    // ── 原生 channel 查询与登录（供 GUI 使用） ───────────────────────────────────
+
+    /** 获取某渠道的账号列表（含账号级运行时配置）。 */
+    getChannelAccounts(
+        channelId: string
+    ): {
+        accountId: string;
+        accountName?: string;
+        runtime: { workspace?: string; agentId?: string; model?: string };
+    }[] {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin) return [];
+        const cp = entry.channelPlugin;
+        const native = isNativeChannelEntry(entry)
+            ? (entry.channelPlugin as unknown as NativeChannelAdapter)
+            : undefined;
+        let accountIds: string[];
+        try {
+            accountIds = cp.config.listAccountIds(this.getChannelConfig(channelId));
+        } catch {
+            accountIds = [];
+        }
+        return accountIds.map((accountId) => ({
+            accountId,
+            // 原生 channel 从账号缓存透出可读名称（微信/飞书登录时设置）
+            accountName: native?.getAccountName(accountId),
+            runtime: this.getAccountRuntimeConfig(channelId, accountId)
+        }));
+    }
+
+    /** 获取当前已配置的 chat 模型列表与默认模型（供 GUI 模型下拉选择）。 */
+    getAvailableModels(): { models: string[]; defaultModel: string } {
+        try {
+            const data = Setting.getInstance().getData() || {};
+            const rawModels = data.models as unknown as any[] | undefined;
+            const models = (rawModels || [])
+                .filter((m: any) => m?.model_type === 'chat')
+                .map((m: any) => m?.alias)
+                .filter((alias: unknown): alias is string => typeof alias === 'string' && alias.length > 0);
+            return {
+                models,
+                defaultModel: typeof data.default_model === 'string' ? data.default_model : ''
+            };
+        } catch {
+            return { models: [], defaultModel: '' };
+        }
+    }
+
+    /** 获取指定 Agent 支持的模式列表（主 agent 仅暴露 只读/标准/效率）。 */
+    getAgentModes(agentId: string): { id: string; name: string }[] {
+        try {
+            const agent = agentId === 'main' ? AgentRegistry.getMainAgent() : AgentRegistry.getAgent(agentId);
+            if (!agent) return [];
+            const modes = agent.supportedModes();
+            // 主 agent 只展示只读/标准/效率三个模式
+            const allowed = agentId === 'main' ? new Set(['readonly', 'standard', 'solo']) : null;
+            return modes
+                .filter((mode) => !allowed || allowed.has(mode.id))
+                .map((mode) => ({ id: mode.id, name: getModeDisplayName(mode) }));
+        } catch {
+            return [];
+        }
+    }
+
+    /** 获取某渠道支持的登录方式。 */
+    getChannelLoginModes(channelId: string): { qr: boolean; params: boolean } {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin) return { qr: false, params: false };
+        const cp = entry.channelPlugin;
+        const native = isNativeChannelEntry(entry)
+            ? (entry.channelPlugin as unknown as NativeChannelAdapter)
+            : undefined;
+        return {
+            // 原生 channel 的 gateway 方法恒存在，qr 支持必须看 channel 真实能力
+            qr: native ? native.supportQrLogin() : Boolean(cp.gateway?.loginWithQrStart && cp.gateway?.loginWithQrWait),
+            params: Boolean(native?.supportParamsLogin())
+        };
+    }
+
+    /** 获取参数登录的表单字段描述（原生 channel）。 */
+    getChannelLoginParams(channelId: string): ChannelAccountLoginParam[] {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin || !isNativeChannelEntry(entry)) return [];
+        return (entry.channelPlugin as unknown as NativeChannelAdapter).getLoginParams();
+    }
+
+    /** 登出指定渠道账号：停止连接、清理凭证并移除状态。 */
+    async logoutChannelAccount(channelId: string, accountId: string): Promise<{ ok: boolean; message?: string }> {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin) {
+            return { ok: false, message: '未找到渠道: ' + channelId };
+        }
+        const cp = entry.channelPlugin;
+        try {
+            // 1. 停止该账号的长连接并清理状态
+            await this.stopChannelPluginAccounts(cp, [accountId]);
+            // 2. 调用 channel 的登出（删除持久化凭证）
+            const account = cp.config.resolveAccount(this.getChannelConfig(channelId), accountId);
+            await cp.gateway?.logoutAccount?.({ accountId, account, cfg: this.getChannelConfig(channelId) });
+            logger.info('[channelmgr] 账号已登出: ' + channelId + ':' + accountId);
+            this.notifyStateChange();
+            return { ok: true };
+        } catch (err: any) {
+            logger.error('[channelmgr] 登出账号失败 ' + channelId + ':' + accountId + ': ' + (err?.message || err));
+            return { ok: false, message: err?.message || String(err) };
+        }
+    }
+
+    /** 通过参数登录（原生 channel 的表单登录，如飞书 appId/appSecret）。登录成功后自动重启连接。 */
+    async loginChannelWithParams(
+        channelId: string,
+        accountId: string,
+        values: Record<string, string>
+    ): Promise<LoginResult> {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin || !isNativeChannelEntry(entry)) {
+            return { phase: 'error', error: '渠道 ' + channelId + ' 不支持参数登录' };
+        }
+        const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
+        try {
+            const account = await adapter.loginWithParams(values);
+            logger.info('[loginChannel:' + channelId + '] 参数登录成功: ' + account.accountId);
+        } catch (err: any) {
+            logger.error('[loginChannel:' + channelId + '] 参数登录失败: ' + (err?.message || err));
+            return { phase: 'error', error: err?.message || String(err) };
+        }
+        try {
+            await this.restartChannelPlugin(channelId);
+        } catch (err: any) {
+            logger.error('[loginChannel] 登录成功但重启渠道失败: ' + (err?.message || err));
+        }
+        return { phase: 'success', message: resolveChannelDisplayName(channelId) + ' 登录成功' };
+    }
+
+    /**
+     * GUI 专用的扫码登录：QR 进度通过 channel:loginStatus 事件推送，
+     * 返回 Promise 在登录完成/失败时 resolve。
+     */
+    async startQrLogin(channelId: string, accountId = 'default'): Promise<LoginResult> {
+        const entry = this.findChannelPlugin(channelId);
+        if (!entry?.channelPlugin) {
+            return { phase: 'error', error: '未找到渠道: ' + channelId };
+        }
+        const cp = entry.channelPlugin;
+        if (!cp.gateway?.loginWithQrStart || !cp.gateway?.loginWithQrWait) {
+            return { phase: 'error', error: '渠道 ' + channelId + ' 不支持扫码登录' };
+        }
+        const push = (state: Partial<LoginChannelState>) => {
+            this.emitEvent('channel:loginStatus', { channelId, accountId, ...state } as any);
+        };
+        try {
+            push({ phase: 'init' });
+            const startResult = await cp.gateway.loginWithQrStart({
+                accountId,
+                force: false,
+                timeoutMs: 60_000,
+                verbose: false
+            });
+            const qrUrl = startResult?.qrDataUrl || startResult?.qrcodeUrl;
+            if (!qrUrl) {
+                return { phase: 'error', error: '渠道 ' + channelId + ' 未能生成二维码' };
+            }
+            push({ phase: 'polling', verification_url: qrUrl });
+            const waitResult = await cp.gateway.loginWithQrWait({
+                accountId,
+                sessionKey: startResult?.sessionKey,
+                timeoutMs: 480_000
+            });
+            if (waitResult?.connected) {
+                push({ phase: 'success', message: resolveChannelDisplayName(channelId) + ' 登录成功' });
+                // 立即重启连接，使消息收发与状态无需手动刷新即生效
+                try {
+                    await this.restartChannelPlugin(channelId);
+                } catch (err: any) {
+                    logger.error('[startQrLogin] 登录成功但重启渠道失败: ' + (err?.message || err));
+                }
+                return { phase: 'success', message: '登录成功' };
+            }
+            const message = waitResult?.message || '登录失败';
+            push({ phase: 'error', error: message });
+            return { phase: 'error', error: message };
+        } catch (err: any) {
+            const message = err?.message || String(err);
+            push({ phase: 'error', error: message });
+            return { phase: 'error', error: message };
+        }
+    }
+
+    /** 获取账号可绑定的 agent 列表。当前仅主 agent（OpenDesk），未来可扩展数字员工。 */
+    getAvailableAgents(): string[] {
+        try {
+            AgentRegistry.getMainAgent(); // 确保内置 agent 已初始化
+            return ['main'];
+        } catch {
+            return [];
+        }
+    }
+
     private getChannelConfig(channelId: string): any {
         const config = this.getConfig() || {};
         return {
@@ -1521,6 +1928,8 @@ export class ChannelMgrApplication extends BaseApplication {
         const loadResult = await loadPlugins();
         this.plugins = loadResult.entries;
         this.pluginLoadErrors = loadResult.errors;
+        // 原生插件系统的 channel 也随热重载重新收集
+        this.loadNativeChannels();
 
         const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
         logger.info(`[channelmgr] 重新加载完成: ${this.plugins.length} 个插件, ${channelPlugins.length} 个消息插件`);
