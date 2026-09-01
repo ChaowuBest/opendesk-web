@@ -124,12 +124,13 @@ const editorRuntimes: readonly OfficeEditorRuntime[] = editorDefinitions.map((de
     const preloadPath = path.join(__dirname, '..', 'preload', definition.preloadName);
     const rendererFilePath = path.join(__dirname, '..', 'renderer', definition.rendererPageName);
     const rendererDevUrl = getRendererDevUrl(definition.rendererPageName);
+    const matchesTrustedUrl = createTrustedRendererUrlMatcher({ rendererFilePath, rendererDevUrl });
     return {
         ...definition,
         preloadPath,
         rendererFilePath,
         rendererDevUrl,
-        isTrustedUrl: createTrustedRendererUrlMatcher({ rendererFilePath, rendererDevUrl })
+        isTrustedUrl: (url: string) => url.trim().length > 0 && matchesTrustedUrl(url)
     };
 });
 
