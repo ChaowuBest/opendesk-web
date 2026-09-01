@@ -14,7 +14,6 @@ import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
 import {
     useCliTransport,
-    useConsoleTransport,
     useDumpLogTransport,
     interceptConsole,
     dropDeprecatedLogs,
@@ -35,7 +34,6 @@ import {
     initializePluginHost,
     setRuntimePluginDirectories
 } from './applications/pluginmgr/index.js';
-import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
@@ -223,58 +221,6 @@ function parseCommandLineArgs() {
         lines.push('');
         return lines.join('\n');
     });
-
-    // channels subcommand
-    const channelsCmd = prog.command('channels').description('消息插件管理');
-
-    channelsCmd
-        .command('list')
-        .description('列出已安装的消息插件')
-        .action(() => {
-            const records = listInstalledPlugins();
-            if (records.length === 0) {
-                console.log('暂无已安装的消息插件');
-            } else {
-                console.log('已安装的消息插件 (启动时自动加载):');
-                for (const r of records) {
-                    const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
-                    console.log(`  ${r.id} [${status}]`);
-                }
-            }
-            process.exit(0);
-        });
-
-    channelsCmd
-        .command('info')
-        .description('加载并检查所有已启用的消息插件')
-        .action(async () => {
-            useCliTransport();
-            useConsoleTransport();
-            const records = listInstalledPlugins();
-            const enabledRecords = records.filter((r) => r.enabled);
-            if (enabledRecords.length === 0) {
-                console.log('暂无已启用的消息插件');
-                process.exit(0);
-            }
-            console.log(`正在加载 ${enabledRecords.length} 个已启用的插件...\n`);
-            const result = await loadPlugins();
-            if (result.entries.length > 0) {
-                console.log('已成功加载的插件:');
-                for (const entry of result.entries) {
-                    const cp = entry.channelPlugin;
-                    const channelInfo = cp ? ` (渠道: ${cp.meta.label})` : '';
-                    console.log(`  ✓ ${entry.id}${channelInfo}`);
-                }
-            }
-            if (result.errors.length > 0) {
-                console.log('\n加载失败的插件:');
-                for (const err of result.errors) {
-                    console.error(`  ✗ ${err.id}: ${err.error}`);
-                }
-            }
-            console.log(`\n总计: ${result.entries.length} 成功, ${result.errors.length} 失败`);
-            process.exit(result.errors.length > 0 ? 1 : 0);
-        });
 
     prog.action(async (kwargs: Record<string, string | undefined>) => {
         if (kwargs.version) {
@@ -521,7 +467,7 @@ async function main(args: CommandLineArgs) {
 
                 const CHANNEL_NAMES: Record<string, string> = {
                     feishu: '飞书',
-                    'openclaw-weixin': '微信',
+                    weixin: '微信',
                     whatsapp: 'WhatsApp',
                     zalouser: 'Zalo',
                     telegram: 'Telegram',

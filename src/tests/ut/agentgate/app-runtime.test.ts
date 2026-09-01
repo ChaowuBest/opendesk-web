@@ -168,10 +168,6 @@ jest.unstable_mockModule('../../../main/applications/agentgate/skillAttribution.
     sortByConfidenceDesc: jest.fn()
 }));
 
-jest.unstable_mockModule('../../../main/plugins/manager.js', () => ({
-    getExtensionsDir: jest.fn(() => '/tmp/opendesk-test/extensions')
-}));
-
 jest.unstable_mockModule('../../../main/aikernel/hooks.js', () => ({
     GlobalHooks: { beforeToolCall: jest.fn(), afterFinishTurn: jest.fn() }
 }));

@@ -58,7 +58,7 @@ export class WechatChannel {
         id: 'weixin',
         label: { en: 'WeChat', zh: '微信' },
         description: 'WeChat channel (getUpdates long-poll + sendMessage)',
-        aliases: ['openclaw-weixin', 'wechat']
+        aliases: ['wechat']
     };
     capabilities = { chatTypes: ['direct', 'group'], media: false };
     supportLoginWithQr = true;
@@ -354,7 +354,7 @@ export class WechatChannel {
         const outboundMsg = {
             from_user_id: '',
             to_user_id: message.to.recipientId,
-            client_id: 'openclaw-weixin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+            client_id: 'weixin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
             message_type: 2,
             message_state: 2,
             item_list: text ? [{ type: 1, text_item: { text } }] : undefined,

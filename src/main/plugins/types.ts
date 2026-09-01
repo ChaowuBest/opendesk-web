@@ -47,22 +47,6 @@ export interface PluginEntry {
     rootDir?: string;
 }
 
-export interface PluginLoadError {
-    id: string;
-    npmSpec: string;
-    error: string;
-}
-
-export interface PluginLoadResult {
-    entries: PluginEntry[];
-    errors: PluginLoadError[];
-}
-
-export interface PluginsConfig {
-    enabled: boolean;
-    installs: PluginInstallRecord[];
-}
-
 // ── Participant (for task origin/deliver) ─────────────────────────────────────
 
 export interface Participant {
@@ -129,23 +113,6 @@ export interface ChannelGatewayContext<ResolvedAccount = any> {
     account: ResolvedAccount;
     cfg: any;
     logger: PluginLogger;
-    /** OpenClaw compat: some plugins use ctx.log instead of ctx.logger */
-    log?: PluginLogger;
-    /** OpenClaw compat: runtime environment */
-    runtime?: {
-        log?: (...args: any[]) => void;
-        error?: (...args: any[]) => void;
-        warn?: (...args: any[]) => void;
-        [key: string]: any;
-    };
-    /** OpenClaw compat: abort signal for long-running connections */
-    abortSignal?: AbortSignal;
-    /**
-     * OpenClaw compat: channel runtime surface injected per gateway call.
-     * Newer plugins (e.g. weixin >= 2.4, feishu >= 2026.5) require this
-     * for media, routing, session, reply, and command helpers.
-     */
-    channelRuntime?: any;
     dispatch: ChannelDispatchFn;
     setStatus: (status: any) => void;
 }
@@ -193,10 +160,6 @@ export interface ChannelStatusIssue {
     message: string;
 }
 
-export interface ChannelHeartbeatAdapter {
-    resolveRecipients: (params: { cfg: any; accountId?: string | null }) => Promise<string[]>;
-}
-
 export interface ChannelMessagingAdapter {
     normalizeTarget: (raw: string) => string;
     parseReplyToMessageId?: (raw: string) => string | undefined;
@@ -206,82 +169,20 @@ export interface ChannelPlugin<ResolvedAccount = any, Probe = unknown, Audit = u
     id: ChannelId;
     meta: ChannelMeta;
     capabilities: ChannelCapabilities;
-    defaults?: { queue?: { debounceMs?: number } };
     config: ChannelConfigAdapter<ResolvedAccount>;
-    configSchema?: any;
-    setup?: any;
-    pairing?: any;
-    security?: any;
-    groups?: any;
-    mentions?: any;
     outbound?: ChannelOutboundAdapter;
     status?: ChannelStatusAdapter<ResolvedAccount, Probe, Audit>;
     gateway?: ChannelGatewayAdapter<ResolvedAccount>;
-    auth?: any;
-    elevated?: any;
-    commands?: any;
-    streaming?: any;
-    threading?: any;
     messaging?: ChannelMessagingAdapter;
-    agentPrompt?: any;
-    directory?: any;
-    resolver?: any;
-    actions?: any;
-    heartbeat?: ChannelHeartbeatAdapter;
-    agentTools?: any;
-    onboarding?: any;
-    reload?: { configPrefixes: string[]; noopPrefixes?: string[] };
-    gatewayMethods?: string[];
     /** 原生 channel 的结构化交互（权限审批 / askUser 卡片）发送入口 */
     sendInteraction?: (request: any) => Promise<any>;
 }
 
-// ── Pairing Provider (decouples aikernel from applications layer) ─────────────
-
-export interface PairingProvider {
-    getApprovedUserIds(channel: string, accountId: string): string[];
-    isUserApproved(channel: string, accountId: string, userId: string): boolean;
-    upsertPairingRequest(
-        channel: string,
-        accountId: string,
-        userId: string,
-        meta?: any
-    ): { code: string; created: boolean };
-    removePairingRequest(channel: string, accountId: string, userId: string): boolean;
-    getPendingRequests(channel?: string, accountId?: string): any[];
-    approveUser(channel: string, accountId: string, userId: string, meta?: any): void;
-    revokeUser(channel: string, accountId: string, userId: string): boolean;
-}
-
-// ── Plugin Logger & API ───────────────────────────────────────────────────────
+// ── Plugin Logger ─────────────────────────────────────────────────────────────
 
 export interface PluginLogger {
     info: (...args: any[]) => void;
     warn: (...args: any[]) => void;
     error: (...args: any[]) => void;
     debug: (...args: any[]) => void;
-}
-
-export interface OpenClawPluginApi {
-    id: string;
-    name: string;
-    version?: string;
-    description?: string;
-    source: string;
-    config: any;
-    pluginConfig?: Record<string, unknown>;
-    runtime: any;
-    logger: PluginLogger;
-    registerTool: (tool: any, opts?: any) => void;
-    registerHook: (events: string | string[], handler: any, opts?: any) => void;
-    registerHttpHandler: (handler: any) => void;
-    registerHttpRoute: (params: { path: string; handler: any }) => void;
-    registerChannel: (registration: any) => void;
-    registerGatewayMethod: (method: string, handler: any) => void;
-    registerCli: (registrar: any, opts?: any) => void;
-    registerService: (service: any) => void;
-    registerProvider: (provider: any) => void;
-    registerCommand: (command: any) => void;
-    resolvePath: (input: string) => string;
-    on: (hookName: string, handler: any, opts?: any) => void;
 }

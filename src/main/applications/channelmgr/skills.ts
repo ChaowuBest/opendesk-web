@@ -34,11 +34,9 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 | 微信 | \`weixin\` | 扫码登录（getAccountLoginQr） |
 | 飞书 | \`feishu\` | 参数登录（appId/appSecret） |
 
-> 历史兼容：\`openclaw-weixin\` 是旧版 openclaw 兼容插件的渠道 id，新原生插件的 id 为 \`weixin\`。
-
 ### 消息渠道1：微信
 
-- 渠道 id：\`weixin\`（别名：\`openclaw-weixin\`）
+- 渠道 id：\`weixin\`
 - 登录：调用 loginChannel（channelId=weixin），系统生成二维码，用户使用微信扫码后完成登录
 - 登录成功后凭证由渠道插件自行持久化，无需手动配置
 - 支持单聊与群聊文本消息
@@ -62,7 +60,7 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 - 使用 loginChannel 登录消息渠道（微信扫码 / 飞书等），传入对应 channelId
 - 使用 createFeishuBot 通过手机扫码一键创建飞书机器人（推荐，最快捷的方式）
 - 使用 listChannelPlugins 查看已安装的插件
-- 使用 installChannelPlugin 安装第三方消息渠道插件
+- 使用 installChannelPlugin 安装消息渠道插件（OpenDesk 插件）
 - 使用 uninstallChannelPlugin 卸载插件
 - 使用 toggleChannelPlugin 启用或禁用插件
 - 使用 setChannelConfig 设置渠道配置

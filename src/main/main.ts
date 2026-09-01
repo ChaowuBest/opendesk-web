@@ -3630,7 +3630,7 @@ async function startApplication(): Promise<void> {
 
                 const CHANNEL_NAMES: Record<string, string> = {
                     feishu: '飞书',
-                    'openclaw-weixin': '微信',
+                    weixin: '微信',
                     whatsapp: 'WhatsApp',
                     zalouser: 'Zalo',
                     telegram: 'Telegram',

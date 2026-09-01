@@ -11,7 +11,7 @@
 
 /**
  * 原生 Channel（plugin-sdk 的 ctx.channels.define 注册的类实例）到
- * 现有 OpenClaw 兼容 ChannelPlugin 描述符的桥接适配器。
+ * 内部 ChannelPlugin 描述符的桥接适配器。
  *
  * 设计目标：把原生 Channel 实例适配成 ChannelPlugin，从而复用 channelmgr
  * 现有的启动 / 状态 / 热重载 / 收发消息全套流程，无需重写 channelmgr 主干。

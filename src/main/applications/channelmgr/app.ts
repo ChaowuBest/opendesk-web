@@ -10,8 +10,8 @@
  */
 
 /**
- * 消息插件管理应用。
- * 加载、管理 OpenClaw 兼容的消息插件，并在插件与任务系统之间路由消息。
+ * 消息渠道管理应用。
+ * 加载原生插件系统（pluginmgr）注册的消息渠道，并在渠道与任务系统之间路由消息。
  */
 
 import { z } from 'zod';
@@ -22,29 +22,20 @@ import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';
 import {
-    loadPlugins,
+    getPluginHost,
     installPlugin,
     uninstallPlugin,
     setPluginEnabled,
-    invalidatePluginRequireCache
-} from '../../plugins/index.js';
+    reloadPluginHost
+} from '../pluginmgr/index.js';
 import type {
     PluginEntry,
-    PluginLoadError,
     ChannelPlugin,
     ChannelAccountStatus,
     ChannelGatewayContext,
     InboundChannelMessage,
-    ChannelAccountSnapshot,
     Participant
 } from '../../plugins/types.js';
-import {
-    registerChannelDispatch,
-    unregisterChannelDispatch,
-    getChannelDispatcher,
-    setPairingProvider
-} from '../../plugins/openclaw/api.js';
-import * as pairing from './pairing.js';
 import { recordContact, getContacts } from './contacts.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
@@ -56,9 +47,6 @@ import { AssistantMessage } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
 import path from 'path';
-import fs from 'fs';
-import { getTempDir } from '../../utils/temp.js';
-import { getPlatform } from '../../../platforms/base.js';
 import {
     ListPairingRequestsTool,
     ApprovePairingTool,
@@ -83,7 +71,7 @@ import { t } from '../../../locale/index.js';
 import qrcodeTerminal from 'qrcode-terminal';
 import chalk from 'chalk';
 import { getAdaptiveGreen } from '../../tui/theme.js';
-import { getPluginHost } from '../pluginmgr/index.js';
+
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { getModeDisplayName } from '../../aikernel/agents/common.js';
 import { Setting } from '../../utils/setting.js';
@@ -107,8 +95,8 @@ export interface ChannelRuntimeState {
 }
 
 const CHANNEL_DISPLAY_NAMES: Record<string, string> = {
+    weixin: '微信',
     feishu: '飞书',
-    'openclaw-weixin': '微信',
     whatsapp: 'WhatsApp',
     zalouser: 'Zalo',
     telegram: 'Telegram',
@@ -142,7 +130,6 @@ export interface LoginResult {
 export class ChannelMgrApplication extends BaseApplication {
     private workspace?: string;
     private plugins: PluginEntry[] = [];
-    private pluginLoadErrors: PluginLoadError[] = [];
     private channelStates: Map<string, ChannelRuntimeState> = new Map();
     private router?: ChannelMessageRouter;
     private initPromise?: Promise<void>;
@@ -233,55 +220,7 @@ export class ChannelMgrApplication extends BaseApplication {
 
         manageSkill.toolsets = [pairingToolset, pluginToolset];
 
-        const skills: Skill[] = [manageSkill];
-
-        // Load skills from installed channel plugins
-        const pluginSkills = this.loadPluginSkills();
-        skills.push(...pluginSkills);
-
-        return skills;
-    }
-
-    /**
-     * Scan all loaded plugins for SKILL.md files declared in their manifests.
-     */
-    private loadPluginSkills(): Skill[] {
-        const skills: Skill[] = [];
-        for (const plugin of this.plugins) {
-            const manifest = plugin.manifest;
-            const rootDir = plugin.rootDir;
-            if (!manifest.skills?.length || !rootDir) continue;
-
-            for (const skillPath of manifest.skills) {
-                const resolvedDir = path.resolve(rootDir, skillPath);
-                if (!fs.existsSync(resolvedDir) || !fs.statSync(resolvedDir).isDirectory()) {
-                    logger.warn(`插件 ${plugin.id} 的 skills 路径不存在: ${resolvedDir}`);
-                    continue;
-                }
-
-                try {
-                    const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
-                    for (const entry of entries) {
-                        if (!entry.isDirectory()) continue;
-                        const skillMdPath = path.join(resolvedDir, entry.name, 'SKILL.md');
-                        if (!fs.existsSync(skillMdPath)) continue;
-
-                        try {
-                            const raw = fs.readFileSync(skillMdPath, 'utf-8');
-                            const skill = Skill.parseMd(raw);
-                            skill.directory = path.join(resolvedDir, entry.name);
-                            logger.info(`已加载插件 ${plugin.id} 的 skill: ${skill.frontmatter.name}`);
-                            skills.push(skill);
-                        } catch (err: any) {
-                            logger.warn(`解析插件 ${plugin.id} 的 skill ${entry.name} 失败: ${err?.message || err}`);
-                        }
-                    }
-                } catch (err: any) {
-                    logger.warn(`读取插件 ${plugin.id} 的 skills 目录失败: ${err?.message || err}`);
-                }
-            }
-        }
-        return skills;
+        return [manageSkill];
     }
 
     /**
@@ -437,19 +376,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 return { text, mediaUrls };
             }
 
-            setPairingProvider(pairing);
-            const loadResult = await loadPlugins();
-            this.plugins = loadResult.entries;
-            this.pluginLoadErrors = loadResult.errors;
             // 加载原生插件系统（ctx.channels.define）注册的 channel
             this.loadNativeChannels();
             const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
-            logger.info(`已加载 ${this.plugins.length} 个插件，其中 ${channelPlugins.length} 个消息插件`);
-            if (this.pluginLoadErrors.length > 0) {
-                for (const e of this.pluginLoadErrors) {
-                    logger.error(`插件 ${e.id} 加载失败: ${e.error}`);
-                }
-            }
+            logger.info(`已加载 ${this.plugins.length} 个消息渠道`);
 
             for (const plugin of channelPlugins) {
                 await this.startChannelPlugin(plugin);
@@ -468,22 +398,11 @@ export class ChannelMgrApplication extends BaseApplication {
         const nativeChannels = getPluginHost().listChannels();
         for (const { channel } of nativeChannels) {
             const channelId = channel.meta.id;
-            // 原生 channel 优先：同 id 的 OpenClaw 兼容插件会被原生实现替换。
-            // 原生实现是 OpenDesk 内置（能力声明完整，如 interactive 交互卡片），
-            // OpenClaw 兼容插件仅是过渡方案；startChannelPlugin 在 loadNativeChannels
-            // 之后才执行，此时移除同名 OpenClaw entry 是安全的。
-            const existing = this.plugins.find((p) => p.channelPlugin?.id === channelId);
-            if (existing) {
-                if (isNativeChannelEntry(existing)) continue;
-                logger.info(`[channelmgr] native channel ${channelId} 替换 OpenClaw 兼容插件 ${existing.id}`);
-                this.plugins = this.plugins.filter((p) => p.channelPlugin?.id !== channelId);
-            }
-            let entry: PluginEntry | undefined;
             const { entry: created } = createNativeChannelPluginEntry(channel, {
                 getConfig: (cid) => this.getChannelConfig(cid),
                 dispatch: async (cid, accountId, message) => {
-                    if (!entry?.channelPlugin) return;
-                    await this.handleInboundMessage(entry.channelPlugin, accountId, message);
+                    if (!created?.channelPlugin) return;
+                    await this.handleInboundMessage(created.channelPlugin, accountId, message);
                 },
                 dispatchInteraction: async (cid, accountId, event) => {
                     await this.handleChannelInteractionEvent(cid, accountId, event);
@@ -500,11 +419,10 @@ export class ChannelMgrApplication extends BaseApplication {
                     this.emitEvent(event, { channelId: cid, ...payload });
                 }
             });
-            entry = created;
             // 立即注入运行时上下文，确保登录/启动时 channel 的 ctx 已就绪
-            (entry.channelPlugin as unknown as NativeChannelAdapter).ensureRuntimeInjected();
-            logger.info(`[channelmgr] 已加载原生 channel: ${channelId} (plugin: ${entry.id})`);
-            this.plugins.push(entry);
+            (created.channelPlugin as unknown as NativeChannelAdapter).ensureRuntimeInjected();
+            logger.info(`[channelmgr] 已加载原生 channel: ${channelId} (plugin: ${created.id})`);
+            this.plugins.push(created);
         }
     }
 
@@ -542,10 +460,6 @@ export class ChannelMgrApplication extends BaseApplication {
                 try {
                     const account = cp.config.resolveAccount(config, accountId);
                     const ctx = this.createGatewayContext(cp, accountId, account, config);
-
-                    registerChannelDispatch(channelId, accountId, async (message) => {
-                        await this.handleInboundMessage(cp, accountId, message);
-                    });
 
                     const startPromise = cp.gateway.startAccount(ctx);
 
@@ -593,8 +507,6 @@ export class ChannelMgrApplication extends BaseApplication {
         }
     }
 
-    private abortControllers: Map<string, AbortController> = new Map();
-
     private createGatewayContext(
         cp: ChannelPlugin,
         accountId: string,
@@ -622,274 +534,11 @@ export class ChannelMgrApplication extends BaseApplication {
             debug: (...args: any[]) => logger.info(`${tag}[debug] ${fmt(...args)}`)
         };
 
-        // Create an AbortController for this channel account
-        const abortController = new AbortController();
-        this.abortControllers.set(stateKey, abortController);
-
         return {
             accountId,
             account,
             cfg: config,
             logger: pluginLogger,
-            log: pluginLogger,
-            runtime: {
-                log: (...args: any[]) => logger.info(`${tag} ${fmt(...args)}`),
-                error: (...args: any[]) => logger.error(`${tag} ${fmt(...args)}`),
-                warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
-                platform: 'opendesk'
-            },
-            // ── OpenClaw session / store ─────────────────────────────────────
-            session: {
-                resolveStorePath: (sessionCfg: any, opts: any) => {
-                    const sessionKey = `${cp.id}:${accountId}:${opts?.to || ''}`;
-                    return sessionKey;
-                },
-                recordInboundSession: async (params: any) => {
-                    logger.debug(
-                        `recordInboundSession: storePath=${params?.storePath}, sessionKey=${params?.sessionKey}`
-                    );
-                }
-            },
-            // ── OpenClaw reply / inbound ─────────────────────────────────────
-            reply: {
-                finalizeInboundContext: (ctx: any) => ctx || {},
-                resolveHumanDelayConfig: (cfg: any, agentId: any) => ({ delayMs: 0 })
-            },
-            // ── OpenClaw routing ───────────────────────────────────────────────
-            routing: {
-                resolveAgentRoute: (params: any) => {
-                    const sessionKey = `${cp.id}:${accountId}:${params?.peer?.id || ''}`;
-                    return {
-                        agentId: params?.agentId || null,
-                        sessionKey,
-                        mainSessionKey: sessionKey
-                    };
-                }
-            },
-            // ── OpenClaw commands runtime ──────────────────────────────────────
-            commands: {
-                resolveSenderCommandAuthorizationWithRuntime: async (params: any) => {
-                    return { senderAllowedForCommands: true, commandAuthorized: true };
-                }
-            },
-            abortSignal: abortController.signal,
-
-            // OpenClaw compat: channelRuntime surface for newer plugins
-            // (weixin >= 2.4, feishu >= 2026.5) that access helpers via
-            // ctx.channelRuntime.media / .routing / .session / .reply / .commands etc.
-            channelRuntime: {
-                media: {
-                    saveMediaBuffer: async (
-                        buffer: Buffer,
-                        contentType: string,
-                        _dir?: string,
-                        _maxBytes?: number,
-                        fileName?: string
-                    ) => {
-                        const ext = contentType?.split('/')[1]?.split(';')[0] || 'bin';
-                        const name = fileName || `media-${Date.now()}.${ext}`;
-                        const mediaDir = path.join(getTempDir(), 'opendesk-media');
-                        if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
-                        const filePath = path.join(mediaDir, name);
-                        fs.writeFileSync(filePath, buffer);
-                        return { path: filePath, contentType: contentType || 'application/octet-stream' };
-                    },
-                    fetchRemoteMedia: async (url: string) => {
-                        const resp = await getPlatform().fetch(url);
-                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                        const buffer = Buffer.from(await resp.arrayBuffer());
-                        const ct =
-                            resp.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
-                        return { buffer, contentType: ct };
-                    }
-                },
-                routing: {
-                    buildAgentSessionKey: (params: any) => `${cp.id}:${accountId}:${params?.peer?.id || ''}`,
-                    resolveAgentRoute: (params: any) => {
-                        const sessionKey = `${cp.id}:${accountId}:${params?.peer?.id || ''}`;
-                        return {
-                            agentId: params?.agentId || null,
-                            sessionKey,
-                            mainSessionKey: sessionKey
-                        };
-                    }
-                },
-                session: {
-                    resolveStorePath: (_sessionCfg: any, opts: any) => `${opts?.agentId || 'default'}`,
-                    recordInboundSession: async (_params: any) => {},
-                    readSessionUpdatedAt: async () => null,
-                    recordSessionMetaFromInbound: async () => {},
-                    updateLastRoute: async () => {}
-                },
-                reply: {
-                    finalizeInboundContext: (ctx: any) => ctx || {},
-                    resolveHumanDelayConfig: (_cfg?: any, _agentId?: string) => ({
-                        enabled: false,
-                        minMs: 0,
-                        maxMs: 0,
-                        delayMs: 0
-                    }),
-                    resolveEffectiveMessagesConfig: (_cfg?: any) => ({}),
-                    createReplyDispatcherWithTyping: (params: any) => {
-                        const deliver = params.deliver || (async () => {});
-                        return {
-                            dispatcher: { deliver, onIdle: params.onIdle, onCleanup: params.onCleanup },
-                            replyOptions: {},
-                            markDispatchIdle: () => {
-                                params.onIdle?.();
-                                params.onCleanup?.();
-                            }
-                        };
-                    },
-                    withReplyDispatcher: async (params: any) => {
-                        try {
-                            await params.run();
-                        } finally {
-                            params.onSettled?.();
-                        }
-                        return { queuedFinal: true, counts: { final: 1 } };
-                    },
-                    settleReplyDispatcher: async () => {},
-                    dispatchReplyFromConfig: async (params: any) => {
-                        const ctx = params.ctx;
-                        if (!ctx) return;
-                        const channelId = ctx.Provider || ctx.OriginatingChannel || cp.id;
-                        const acctId = ctx.AccountId || accountId;
-                        const dispatch = getChannelDispatcher(channelId, acctId);
-                        if (!dispatch) {
-                            logger.warn(`[channelRuntime] no dispatch registered for ${channelId}:${acctId}`);
-                            return;
-                        }
-                        const body: string = ctx.Body || ctx.RawBody || '';
-                        const isGroup = ctx.ChatType === 'group';
-                        const mediaPaths: string[] = ctx.MediaPaths || ctx.MediaUrls || [];
-                        if (mediaPaths.length === 0 && (ctx.MediaPath || ctx.MediaUrl)) {
-                            mediaPaths.push(ctx.MediaPath || ctx.MediaUrl);
-                        }
-                        const mediaTypes: string[] = ctx.MediaTypes || [];
-                        if (mediaTypes.length === 0 && ctx.MediaType) mediaTypes.push(ctx.MediaType);
-                        const media = mediaPaths.map((p: string, i: number) => ({
-                            path: p,
-                            contentType: mediaTypes[i] || undefined
-                        }));
-                        const message: InboundChannelMessage = {
-                            channelId,
-                            accountId: acctId,
-                            senderId: ctx.SenderId || ctx.From || '',
-                            senderName: ctx.SenderName,
-                            text: body,
-                            chatType: isGroup ? 'group' : 'direct',
-                            groupId: isGroup ? ctx.GroupSubject : undefined,
-                            threadId: ctx.RootMessageId,
-                            messageId: ctx.MessageSid,
-                            replyToMessageId: ctx.ReplyToId,
-                            media: media.length > 0 ? media : undefined,
-                            raw: ctx
-                        };
-                        await dispatch(message);
-                    },
-                    formatAgentEnvelope: (params: any) => params.body || '',
-                    resolveEnvelopeFormatOptions: () => ({ includeTimestamp: false, includeChannel: false }),
-                    formatInboundEnvelope: (params: any) => params.body || ''
-                },
-                commands: {
-                    resolveCommandAuthorizedFromAuthorizers: (_params?: any) => true,
-                    isControlCommandMessage: (text: string) => {
-                        if (!text) return false;
-                        const t = text.trim();
-                        return t.startsWith('/') || t === '!stop' || t === '!reset';
-                    },
-                    shouldComputeCommandAuthorized: (text: string) => {
-                        if (!text) return false;
-                        const t = text.trim();
-                        return t.startsWith('/') || t.startsWith('!');
-                    },
-                    shouldHandleTextCommands: () => true
-                },
-                pairing: {
-                    buildPairingReply: (params: any) => {
-                        return `配对码: ${params.code || ''}`;
-                    },
-                    readAllowFromStore: () => [],
-                    upsertPairingRequest: () => ({ code: '', created: false })
-                },
-                text: {
-                    chunkByNewline: (text: string) => (text ? text.split('\n') : []),
-                    chunkMarkdownText: (text: string, limit?: number) => {
-                        if (!text || text.length <= (limit || 4000)) return [text];
-                        return [text.slice(0, limit || 4000)];
-                    },
-                    chunkMarkdownTextWithMode: (text: string, limit?: number) => {
-                        if (!text || text.length <= (limit || 4000)) return [text];
-                        return [text.slice(0, limit || 4000)];
-                    },
-                    chunkText: (text: string, limit?: number) => {
-                        if (!text || text.length <= (limit || 4000)) return [text];
-                        return [text.slice(0, limit || 4000)];
-                    },
-                    chunkTextWithMode: (text: string, limit?: number) => {
-                        if (!text || text.length <= (limit || 4000)) return [text];
-                        return [text.slice(0, limit || 4000)];
-                    },
-                    resolveChunkMode: () => 'text' as const,
-                    resolveTextChunkLimit: () => 4000,
-                    hasControlCommand: (text: string) => {
-                        if (!text) return false;
-                        const t = text.trim();
-                        return t.startsWith('/') || t === '!stop' || t === '!reset';
-                    },
-                    resolveMarkdownTableMode: () => 'native' as const,
-                    convertMarkdownTables: (text: string) => text
-                },
-                debounce: {
-                    resolveInboundDebounceMs: () => 1500,
-                    createInboundDebouncer: (opts: any) => ({
-                        enqueue: (event: any) => opts.onFlush?.([event])
-                    })
-                },
-                activity: {
-                    record: () => {},
-                    get: () => null
-                },
-                groups: {
-                    resolveGroupPolicy: () => 'open',
-                    resolveRequireMention: () => false
-                },
-                mentions: {
-                    buildMentionRegexes: () => [],
-                    matchesMentionPatterns: () => false,
-                    matchesMentionWithExplicit: () => false,
-                    implicitMentionKindWhen: () => undefined,
-                    resolveInboundMentionDecision: () => ({ allowed: true })
-                },
-                reactions: {
-                    createAckReactionHandle: () => null,
-                    shouldAckReaction: () => false,
-                    removeAckReactionAfterReply: async () => {},
-                    removeAckReactionHandleAfterReply: async () => {}
-                },
-                outbound: {
-                    loadAdapter: () => null
-                },
-                turn: {
-                    run: async () => {},
-                    runAssembled: async () => {},
-                    runResolved: async () => {},
-                    buildContext: () => ({}),
-                    runPrepared: async () => {},
-                    dispatchAssembled: async () => {}
-                },
-                threadBindings: {
-                    setIdleTimeoutBySessionKey: () => [],
-                    setMaxAgeBySessionKey: () => []
-                },
-                runtimeContexts: {
-                    register: () => ({ dispose: () => {} }),
-                    get: () => undefined,
-                    watch: () => () => {}
-                }
-            },
-
             dispatch: async (message: InboundChannelMessage) => {
                 logger.info(`[${cp.id}:${accountId}] 收到消息: ${message.senderName || message.senderId}`);
                 this.emitEvent('channel:message', {
@@ -1070,9 +719,7 @@ export class ChannelMgrApplication extends BaseApplication {
     // ── 原生 channel 查询与登录（供 GUI 使用） ───────────────────────────────────
 
     /** 获取某渠道的账号列表（含账号级运行时配置）。 */
-    getChannelAccounts(
-        channelId: string
-    ): {
+    getChannelAccounts(channelId: string): {
         accountId: string;
         accountName?: string;
         runtime: { workspace?: string; agentId?: string; model?: string };
@@ -1320,10 +967,6 @@ export class ChannelMgrApplication extends BaseApplication {
         }));
     }
 
-    getPluginLoadErrors(): PluginLoadError[] {
-        return this.pluginLoadErrors;
-    }
-
     /**
      * 向指定的 Participant 发送文本消息。
      * 用于定时任务等场景下根据 task.origin 发送回复。
@@ -1501,20 +1144,8 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     async loginChannel(channelId: string, accountId = 'default', result?: ToolResult): Promise<LoginResult> {
-        // 先在已加载的插件中查找
-        let entry = this.findChannelPlugin(channelId);
-
-        // 如果未找到，尝试（重新）加载插件——可能是安装后未重启，或首次调用
-        if (!entry?.channelPlugin) {
-            logger.info(
-                `[loginChannel] channel ${channelId} not found in ${this.plugins.length} loaded plugins, reloading...`
-            );
-            const loadResult = await loadPlugins();
-            this.plugins = loadResult.entries;
-            this.pluginLoadErrors = loadResult.errors;
-            logger.info(`[loginChannel] reloaded ${this.plugins.length} plugins`);
-            entry = this.findChannelPlugin(channelId);
-        }
+        // 先在已加载的原生渠道中查找
+        const entry = this.findChannelPlugin(channelId);
 
         if (!entry?.channelPlugin) {
             const loadedIds = this.plugins
@@ -1525,7 +1156,6 @@ export class ChannelMgrApplication extends BaseApplication {
         }
 
         const cp = entry.channelPlugin;
-        const config = this.getChannelConfig(channelId);
 
         let loginResult: LoginResult;
 
@@ -1537,19 +1167,6 @@ export class ChannelMgrApplication extends BaseApplication {
         // 路径 2：Feishu 特殊路径
         else if (channelId === 'feishu') {
             loginResult = await this.loginFeishuDeviceAuth(accountId, result);
-        }
-        // 路径 3：plugin 有自己的 auth.login（Zalo/WhatsApp 等，QR 输出到控制台）
-        else if (cp.auth?.login) {
-            logger.info(`[loginChannel] using plugin auth.login for ${channelId}`);
-            const runtime = this.buildRuntimeEnv(channelId);
-            await cp.auth.login({
-                cfg: config,
-                accountId,
-                runtime,
-                verbose: false,
-                channelInput: channelId
-            });
-            loginResult = { phase: 'success', message: `${channelId} 登录完成` };
         } else {
             return { phase: 'error', error: `渠道 ${channelId} 不支持 login` };
         }
@@ -1639,27 +1256,6 @@ export class ChannelMgrApplication extends BaseApplication {
         }
 
         return { phase: 'error', error: waitResult.message || `${resolveChannelDisplayName(channelId)} 登录失败` };
-    }
-
-    /**
-     * 为指定渠道构建 runtime 环境。
-     */
-    private buildRuntimeEnv(channelId: string) {
-        return {
-            log: (...args: any[]) =>
-                logger.info(
-                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
-                ),
-            error: (...args: any[]) =>
-                logger.error(
-                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
-                ),
-            warn: (...args: any[]) =>
-                logger.warn(
-                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
-                ),
-            platform: 'opendesk'
-        };
     }
 
     /**
@@ -1793,19 +1389,13 @@ export class ChannelMgrApplication extends BaseApplication {
 
     /**
      * 停止单个插件的指定 account（或全部 account）的 gateway 连接。
-     * 会清理 abortController、dispatch 注册、channelStates。
+     * 会清理 channelStates 并发出断连事件。
      */
     private async stopChannelPluginAccounts(cp: ChannelPlugin, accountIds: string[]): Promise<void> {
         const config = this.getChannelConfig(cp.id);
         for (const accountId of accountIds) {
             const stateKey = `${cp.id}:${accountId}`;
             try {
-                const ac = this.abortControllers.get(stateKey);
-                if (ac) {
-                    ac.abort();
-                    this.abortControllers.delete(stateKey);
-                }
-
                 if (cp.gateway?.stopAccount) {
                     const account = cp.config.resolveAccount(config, accountId);
                     await cp.gateway.stopAccount({
@@ -1823,13 +1413,10 @@ export class ChannelMgrApplication extends BaseApplication {
                     });
                 }
 
-                unregisterChannelDispatch(cp.id, accountId);
                 this.channelStates.delete(stateKey);
                 this.emitEvent('channel:disconnected', { channelId: cp.id, accountId });
             } catch (err: any) {
                 logger.error(`停止消息插件 ${cp.id}:${accountId} 失败: ${err?.message || err}`);
-                this.abortControllers.delete(stateKey);
-                unregisterChannelDispatch(cp.id, accountId);
                 this.channelStates.delete(stateKey);
             }
         }
@@ -1921,26 +1508,14 @@ export class ChannelMgrApplication extends BaseApplication {
         // 1. Stop all running channel plugins
         await this.stopAllChannels();
 
-        // 2. Invalidate CJS module cache so plugins are re-evaluated
-        invalidatePluginRequireCache();
-
-        // 3. Reload plugin list from disk
-        const loadResult = await loadPlugins();
-        this.plugins = loadResult.entries;
-        this.pluginLoadErrors = loadResult.errors;
-        // 原生插件系统的 channel 也随热重载重新收集
+        // 2. Re-collect native channels from the plugin host and start them
+        this.plugins = [];
         this.loadNativeChannels();
 
         const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
-        logger.info(`[channelmgr] 重新加载完成: ${this.plugins.length} 个插件, ${channelPlugins.length} 个消息插件`);
+        logger.info(`[channelmgr] 重新加载完成: ${this.plugins.length} 个消息渠道`);
 
-        if (this.pluginLoadErrors.length > 0) {
-            for (const e of this.pluginLoadErrors) {
-                logger.error(`插件 ${e.id} 加载失败: ${e.error}`);
-            }
-        }
-
-        // 4. Start all channel plugins
+        // 3. Start all channel plugins
         for (const plugin of channelPlugins) {
             await this.startChannelPlugin(plugin);
         }
@@ -2026,6 +1601,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 try {
                     const result = await installPlugin(rest);
                     if (result.success) {
+                        await reloadPluginHost();
                         await this.reloadChannels();
                         progress.hide();
                         showInfo(t('plugin.install.success'), t('channel.install.success', { id: result.id }));
@@ -2052,6 +1628,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 try {
                     const result = await uninstallPlugin(rest);
                     if (result.success) {
+                        await reloadPluginHost();
                         await this.reloadChannels();
                         progress.hide();
                         showInfo(t('plugin.uninstall.success'), t('channel.uninstall.success', { id: rest }));
@@ -2075,6 +1652,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     return;
                 }
                 if (setPluginEnabled(rest, true)) {
+                    await reloadPluginHost();
                     await this.reloadChannels();
                     showInfo(t('plugin.enable.success'), t('channel.enable.success', { id: rest }));
                 } else {
@@ -2088,6 +1666,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     return;
                 }
                 if (setPluginEnabled(rest, false)) {
+                    await reloadPluginHost();
                     await this.reloadChannels();
                     showInfo(t('plugin.disable.success'), t('channel.disable.success', { id: rest }));
                 } else {
@@ -2107,26 +1686,22 @@ export class ChannelMgrApplication extends BaseApplication {
             new InfoOverlay(tui, { title, message }).show();
         };
 
-        const errorLines = this.pluginLoadErrors.map((e) => `  ✗ ${e.id}: 加载失败 - ${e.error}`);
-        const errorSection = errorLines.length > 0 ? `\n\n加载失败的插件:\n${errorLines.join('\n')}` : '';
-
         switch (subCmd) {
             case 'list': {
                 const channels = this.getChannelPlugins();
-                if (channels.length === 0 && errorLines.length === 0) {
+                if (channels.length === 0) {
                     showInfo('消息插件', '暂无已注册的消息插件');
                 } else {
                     const lines = channels.map(
                         (ch) => `  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`
                     );
-                    const body = channels.length > 0 ? lines.join('\n') : '暂无已成功加载的消息插件';
-                    showInfo('消息插件列表', body + errorSection);
+                    showInfo('消息插件列表', lines.join('\n'));
                 }
                 break;
             }
             case 'status': {
                 const states = this.getChannelStates();
-                if (states.length === 0 && errorLines.length === 0) {
+                if (states.length === 0) {
                     showInfo('消息插件状态', '暂无运行中的消息插件');
                 } else {
                     const lines = states.map((s) => {
@@ -2135,8 +1710,7 @@ export class ChannelMgrApplication extends BaseApplication {
                         const errText = s.status.error ? ` (${s.status.error})` : '';
                         return `  ${icon} ${s.channelId}:${s.accountId} - ${s.label} [${statusText}]${errText}`;
                     });
-                    const body = states.length > 0 ? lines.join('\n') : '暂无运行中的消息插件';
-                    showInfo('消息插件状态', body + errorSection);
+                    showInfo('消息插件状态', lines.join('\n'));
                 }
                 break;
             }
