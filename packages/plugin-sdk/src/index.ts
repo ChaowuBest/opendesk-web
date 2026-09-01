@@ -564,7 +564,7 @@ export interface PluginContext {
         ): PluginRegistration;
     };
     /**
-     * 消息渠道能力：插件通过 `ctx.channels.define(channel)` 注册一个 Channel 实例。
+     * 消息渠道能力：插件通过 `ctx.channels.register(channel)` 注册一个 Channel 实例。
      * 注册的 channel 由 host 收集，供 channelmgr 启动/登录/收发消息。
      */
     readonly channels: ChannelsCapability;
@@ -573,6 +573,7 @@ export interface PluginContext {
 export interface OpenDeskPlugin {
     id: string;
     displayName?: PluginDisplayName;
+    description?: PluginLocalizedText;
     version?: string;
     apiVersion?: number;
     capabilities?: PluginCapability[];
@@ -584,18 +585,50 @@ export interface OpenDeskPlugin {
     setup(context: PluginContext): Promise<PluginSetupResult> | PluginSetupResult;
 }
 
+/** 本地化文本映射：语言主标签到文本的映射，如 { "en": "...", "zh": "..." } */
+export type PluginLocalizedTextMap = Record<string, string>;
+
+/**
+ * 插件本地化文本（displayName / description 通用）：
+ * 支持简单字符串或按语言声明的对象。
+ * 对象键使用 BCP 47 语言标签（如 en、zh、zh-CN），解析时取主语言标签匹配。
+ */
+export type PluginLocalizedText = string | PluginLocalizedTextMap;
+
 /** 本地化显示名称：语言主标签到名称的映射，如 { "en": "...", "zh": "..." } */
-export type PluginDisplayNameMap = Record<string, string>;
+export type PluginDisplayNameMap = PluginLocalizedTextMap;
 
 /**
  * 插件显示名称：支持简单字符串或按语言声明的对象。
  * 对象键使用 BCP 47 语言标签（如 en、zh、zh-CN），解析时取主语言标签匹配。
  */
-export type PluginDisplayName = string | PluginDisplayNameMap;
+export type PluginDisplayName = PluginLocalizedText;
 
-/** 取语言标签的主子标签（如 zh-CN -> zh），用于本地化名称匹配 */
+/** 取语言标签的主子标签（如 zh-CN -> zh），用于本地化文本匹配 */
 export function localePrimaryTag(value: string): string {
     return value.trim().toLowerCase().replace(/_/g, '-').split('-')[0] ?? '';
+}
+
+/**
+ * 按目标语言解析插件本地化文本（displayName / description 通用）。
+ * 字符串形式原样返回；对象形式优先匹配与目标语言同主语言的条目，
+ * 无匹配时回退到第一个可用翻译。
+ */
+export function resolvePluginLocalizedText(value: PluginLocalizedText | undefined, locale: string): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'object') {
+        const trimmed = value.trim();
+        return trimmed || undefined;
+    }
+    const entries = Object.entries(value)
+        .map(([key, entry]): readonly [string, string] => [
+            localePrimaryTag(key),
+            typeof entry === 'string' ? entry.trim() : ''
+        ])
+        .filter(([tag, text]) => tag.length > 0 && text.length > 0);
+    if (entries.length === 0) return undefined;
+    const preferred = localePrimaryTag(locale ?? '');
+    return entries.find(([tag]) => tag === preferred)?.[1] ?? entries[0][1];
 }
 
 /**
@@ -607,20 +640,7 @@ export function resolvePluginDisplayName(
     displayName: PluginDisplayName | undefined,
     locale: string
 ): string | undefined {
-    if (displayName === undefined) return undefined;
-    if (typeof displayName !== 'object') {
-        const trimmed = displayName.trim();
-        return trimmed || undefined;
-    }
-    const entries = Object.entries(displayName)
-        .map(([key, value]): readonly [string, string] => [
-            localePrimaryTag(key),
-            typeof value === 'string' ? value.trim() : ''
-        ])
-        .filter(([tag, value]) => tag.length > 0 && value.length > 0);
-    if (entries.length === 0) return undefined;
-    const preferred = localePrimaryTag(locale ?? '');
-    return entries.find(([tag]) => tag === preferred)?.[1] ?? entries[0][1];
+    return resolvePluginLocalizedText(displayName, locale);
 }
 
 export function definePlugin(plugin: OpenDeskPlugin): OpenDeskPlugin {
@@ -640,7 +660,7 @@ export function tool<Shape extends z.ZodRawShape>(
 tool.schema = z;
 
 // ── Channel Capability（消息渠道）────────────────────────────────────────────
-// 插件实现 class XxxChannel implements Channel，通过 ctx.channels.define 注册。
+// 插件实现 class XxxChannel implements Channel，通过 ctx.channels.register 注册。
 // 职责边界：channel 只负责「收原始消息 → ctx.dispatch」与「接收出站 → 发送」；
 // 配对/allowlist/群组策略等消息处理管线由 OpenDesk（channelmgr）统一处理。
 
@@ -911,7 +931,7 @@ export interface Channel<TAccount extends ChannelAccount = ChannelAccount> {
     sendInteraction?(request: ChannelInteractionRequest): Promise<ChannelSendResult>;
 }
 
-/** ctx.channels 能力：define 注册一个 channel，返回可 dispose 的 PluginRegistration */
+/** ctx.channels 能力：register 注册一个 channel，返回可 dispose 的 PluginRegistration */
 export interface ChannelsCapability {
-    define<TAccount extends ChannelAccount>(channel: Channel<TAccount>): PluginRegistration;
+    register<TAccount extends ChannelAccount>(channel: Channel<TAccount>): PluginRegistration;
 }

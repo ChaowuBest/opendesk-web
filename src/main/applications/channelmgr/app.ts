@@ -376,7 +376,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 return { text, mediaUrls };
             }
 
-            // 加载原生插件系统（ctx.channels.define）注册的 channel
+            // 加载原生插件系统（ctx.channels.register）注册的 channel
             this.loadNativeChannels();
             const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
             logger.info(`已加载 ${this.plugins.length} 个消息渠道`);
@@ -391,7 +391,7 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     /**
-     * 从原生插件系统（pluginmgr ctx.channels.define）加载 channel 实例，
+     * 从原生插件系统（pluginmgr ctx.channels.register）加载 channel 实例，
      * 生成伪 PluginEntry 并入 plugins 数组，复用现有 channelmgr 启动/收发流程。
      */
     private loadNativeChannels(): void {

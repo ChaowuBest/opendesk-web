@@ -101,6 +101,7 @@ describe('OpenDesk plugin loader', () => {
             entry: './index.js',
             id: 'secure',
             displayName: undefined,
+            description: undefined,
             version: '1.2.3',
             apiVersion: 1,
             capabilities: ['tool', 'hook'],

@@ -93,6 +93,47 @@ describe('pluginmgr agents', () => {
             );
             expect(merged.displayName).toEqual({ en: 'Hello Plugin', zh: '你好插件' });
         });
+
+        test('description 字符串形式保持不变并去除首尾空白', () => {
+            const manifest = parsePluginManifest({ schemaVersion: 1, description: ' A review helper plugin ' });
+            expect(manifest.description).toBe('A review helper plugin');
+        });
+
+        test('description 支持对象形式并将语言键归一化为主语言标签', () => {
+            const manifest = parsePluginManifest({
+                schemaVersion: 1,
+                description: { en: 'Review code changes', 'zh-CN': '审查代码变更' }
+            });
+            expect(manifest.description).toEqual({ en: 'Review code changes', zh: '审查代码变更' });
+        });
+
+        test('description 对象中的值必须是非空字符串', () => {
+            expect(() => parsePluginManifest({ schemaVersion: 1, description: {} })).toThrow(
+                'plugin.manifest_invalid_description'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, description: { en: '' } })).toThrow(
+                'plugin.manifest_invalid_description'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, description: { en: 'ok', zh: 42 } })).toThrow(
+                'plugin.manifest_invalid_description'
+            );
+            expect(() => parsePluginManifest({ schemaVersion: 1, description: 42 })).toThrow(
+                'plugin.manifest_invalid_description'
+            );
+        });
+
+        test('applyPluginManifest 将 manifest 中的本地化 description 合并进入口对象', () => {
+            const plugin = definePlugin({ id: 'localized-plugin', setup: () => undefined });
+            const merged = applyPluginManifest(
+                plugin,
+                parsePluginManifest({
+                    schemaVersion: 1,
+                    capabilities: [],
+                    description: { en: 'Review code changes', zh: '审查代码变更' }
+                })
+            );
+            expect(merged.description).toEqual({ en: 'Review code changes', zh: '审查代码变更' });
+        });
     });
 
     describe('目录加载', () => {

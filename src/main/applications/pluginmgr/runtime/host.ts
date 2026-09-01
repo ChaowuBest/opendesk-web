@@ -22,6 +22,7 @@ import type {
     PluginContext,
     PluginDisplayName,
     PluginFailureMode,
+    PluginLocalizedText,
     PluginApplicationEvent,
     PluginApplicationEventCallback,
     PluginApplicationEventFilter,
@@ -63,6 +64,7 @@ export interface PluginDiagnostic {
 export interface PluginHostEntry {
     id: string;
     displayName?: PluginDisplayName;
+    description?: PluginLocalizedText;
     version?: string;
     apiVersion: number;
     origin: string;
@@ -429,7 +431,7 @@ export class PluginHost {
     }
 
     /**
-     * 列出所有通过 ctx.channels.define 注册的 channel 实例。
+     * 列出所有通过 ctx.channels.register 注册的 channel 实例。
      * channelmgr 据此接入启动/登录/收发流程。
      */
     listChannels(): Array<{ pluginId: string; channel: Channel }> {
@@ -572,6 +574,7 @@ export class PluginHost {
             key: plugin.id,
             id: plugin.id,
             displayName: plugin.displayName,
+            description: plugin.description,
             version: plugin.version,
             apiVersion: plugin.apiVersion ?? OPENDESK_PLUGIN_API_VERSION,
             origin: options.origin,
@@ -962,7 +965,7 @@ export class PluginHost {
                 }
             },
             channels: {
-                define: <TAccount extends ChannelAccount>(channel: Channel<TAccount>) => {
+                register: <TAccount extends ChannelAccount>(channel: Channel<TAccount>) => {
                     addCapability('channel');
                     if (!channel || typeof channel !== 'object') {
                         throw new Error('plugin.channel_invalid');

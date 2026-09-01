@@ -302,6 +302,7 @@ export const enUs: Record<string, string> = {
     'plugin.center.browserHintCount': '${count} Browser Hints',
     'plugin.center.detail.close': 'Close plugin details',
     'plugin.center.detail.basicInfo': 'Plugin information',
+    'plugin.center.detail.description': 'Description',
     'plugin.center.detail.status': 'Status',
     'plugin.center.detail.version': 'Version',
     'plugin.center.detail.apiVersion': 'API version',

@@ -206,6 +206,7 @@ export class PluginMgrApplication extends BaseApplication {
                     manifest: manifest
                         ? {
                               displayName: manifest.displayName,
+                              description: manifest.description,
                               version: manifest.version,
                               apiVersion: manifest.apiVersion,
                               capabilities: manifest.capabilities

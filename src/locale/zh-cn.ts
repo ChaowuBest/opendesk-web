@@ -295,6 +295,7 @@ export const zhCn: Record<string, string> = {
     'plugin.center.browserHintCount': '${count} 个页面提示',
     'plugin.center.detail.close': '关闭插件详情',
     'plugin.center.detail.basicInfo': '插件信息',
+    'plugin.center.detail.description': '插件描述',
     'plugin.center.detail.status': '状态',
     'plugin.center.detail.version': '版本',
     'plugin.center.detail.apiVersion': 'API 版本',
