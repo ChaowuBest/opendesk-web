@@ -44,7 +44,6 @@ const shared: Config = {
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@earendil-works/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
     },
-    transformIgnorePatterns: ['/node_modules/(?!marked-katex-extension/)'],
     transform: {
         '^.+\\.ts$': [
             'ts-jest',

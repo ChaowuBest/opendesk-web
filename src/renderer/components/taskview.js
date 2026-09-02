@@ -20,7 +20,6 @@ import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
-import { formatOutputElapsed } from '../../common/output-duration.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
@@ -1009,18 +1008,29 @@ class TaskView extends HTMLElement {
         }
     }
 
-    static createReasoningPartHtml(rendered, isStreaming = false, partIndex = -1, elapsedSeconds = null) {
+    static createReasoningPartHtml(
+        rendered,
+        isStreaming = false,
+        partIndex = -1,
+        elapsedSeconds = null,
+        expandedOverride,
+        disclosureKey = ''
+    ) {
         const escaped = escapeHtml(rendered || '');
         const title = escapeHtml(taskViewT('reasoning.card.title'));
         const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
         const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
         const streamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
         const timingAttribute = isStreaming ? ` data-reasoning-start="${Date.now()}"` : '';
+        const disclosureAttribute = disclosureKey
+            ? ` data-reasoning-disclosure-key="${escapeHtml(disclosureKey)}"`
+            : '';
         const timeText =
             !isStreaming && elapsedSeconds != null
                 ? `（${formatReasoningElapsedTime(elapsedSeconds, (rendered || '').length)}）`
                 : '';
-        const expanded = getDefaultReasoningExpanded(guiOutputMode);
+        const expanded =
+            typeof expandedOverride === 'boolean' ? expandedOverride : getDefaultReasoningExpanded(guiOutputMode);
 
         if (guiReasonDisplayMode === 'bubble') {
             const bubbleOpen = isStreaming || expanded;
@@ -1028,7 +1038,7 @@ class TaskView extends HTMLElement {
                 expanded && !isStreaming ? ' reasoning-bubble-pinned reasoning-content-visible' : '';
             const bubbleHiddenClass = bubbleOpen ? '' : ' reasoning-bubble-hidden';
             return `
-                <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}>
+                <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
                     <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
                         <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
                         <span class="shrink-0 text-slate-500 text-xs">${title}</span>
@@ -1047,7 +1057,7 @@ class TaskView extends HTMLElement {
         const fullStreamingAttribute = isStreaming ? ` data-streaming-part-index="${partIndex}"` : '';
         const wrapperExpandedClass = expanded ? ' reasoning-expanded reasoning-content-visible' : '';
         return `
-            <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}>
+            <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}${wrapperExpandedClass}"${timingAttribute}${disclosureAttribute}>
                 <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
                     <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
                     <span class="shrink-0 text-slate-500 text-xs">${title}</span>
@@ -1126,6 +1136,12 @@ class TaskView extends HTMLElement {
         root?.querySelectorAll?.('[data-disclosure-key]').forEach((toggle) => {
             state.set(toggle.dataset.disclosureKey, toggle.getAttribute('aria-expanded') === 'true');
         });
+        root?.querySelectorAll?.('[data-reasoning-disclosure-key]').forEach((block) => {
+            state.set(
+                block.dataset.reasoningDisclosureKey,
+                block.classList.contains('reasoning-expanded') || block.classList.contains('reasoning-bubble-pinned')
+            );
+        });
         return state;
     }
 
@@ -1137,11 +1153,19 @@ class TaskView extends HTMLElement {
         });
     }
 
-    _renderProcessEntry(entry) {
+    _renderProcessEntry(entry, messageId, disclosureState) {
         if (entry.type === 'reasoning') {
             const streaming = entry.part?.streaming === true;
             const content = streaming ? entry.part?.text : entry.part?.rendered;
-            return TaskView.createReasoningPartHtml(content, streaming, entry.partIndex, entry.part?.elapsedSeconds);
+            const disclosureKey = `${messageId}-reasoning-${entry.partIndex}`;
+            return TaskView.createReasoningPartHtml(
+                content,
+                streaming,
+                entry.partIndex,
+                entry.part?.elapsedSeconds,
+                disclosureState?.get(disclosureKey),
+                disclosureKey
+            );
         }
         return String(entry.part?.rendered || '');
     }
@@ -1167,18 +1191,18 @@ class TaskView extends HTMLElement {
                     </span>
                 </button>
                 <div id="${escapeHtml(detailId)}" class="od-process-detail${expanded ? ' is-open' : ''}">
-                    ${item.entries.map((entry) => this._renderProcessEntry(entry)).join('')}
+                    ${item.entries.map((entry) => this._renderProcessEntry(entry, messageId, disclosureState)).join('')}
                 </div>
             </section>`;
     }
 
-    _renderRunningProcessDetails(item, messageId) {
+    _renderRunningProcessDetails(item, messageId, disclosureState) {
         const detailId = `od-${messageId}-running-details`;
         const attentionClass = item.requiresUserAttention ? ' od-user-attention-process-detail' : '';
         return `
             <div id="${escapeHtml(detailId)}" class="od-process-detail od-running-process-detail${attentionClass} is-open"
                 data-output-key="${escapeHtml(item.key)}">
-                ${item.entries.map((entry) => this._renderProcessEntry(entry)).join('')}
+                ${item.entries.map((entry) => this._renderProcessEntry(entry, messageId, disclosureState)).join('')}
             </div>`;
     }
 
@@ -1223,7 +1247,7 @@ class TaskView extends HTMLElement {
         const renderItem = (item, showFinalLabel = true, runningProcessDetails = false) => {
             if (item.type === 'process') {
                 if (runningProcessDetails) {
-                    return this._renderRunningProcessDetails(item, messageId);
+                    return this._renderRunningProcessDetails(item, messageId, options.disclosureState);
                 }
                 return this._renderProcessItem(item, messageId, options.disclosureState);
             }

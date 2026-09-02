@@ -1224,7 +1224,7 @@ export const enUs: Record<string, string> = {
     'reasoning.partial.hint': '…… (use /reason display full to show all thinking)',
     'display.level.minimal': 'Minimal display',
     'display.level.verbose': 'Detailed',
-    'display.command.description': 'Set TUI output display for this and future tasks',
+    'display.command.description': 'Set TUI output display for the current task',
     'display.command.title': 'Output Display',
     'display.command.usage': 'Usage: /display minimal|verbose',
     'display.minimal.running.reading': 'Reading `${path}`…',

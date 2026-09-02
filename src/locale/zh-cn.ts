@@ -1194,7 +1194,7 @@ export const zhCn: Record<string, string> = {
     'reasoning.partial.hint': '……（使用 /reason display full 可显示完整思考）',
     'display.level.minimal': '极简显示',
     'display.level.verbose': '详细显示',
-    'display.command.description': '设置当前及后续任务的 TUI 输出显示',
+    'display.command.description': '设置当前任务的 TUI 输出显示',
     'display.command.title': '输出显示',
     'display.command.usage': '用法: /display minimal|verbose',
     'display.minimal.running.reading': '正在读取 `${path}`…',

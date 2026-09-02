@@ -75,7 +75,7 @@ import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
 import { resolveTaskMode } from '../aikernel/task/mode.js';
 import { syncPluginTuiCommands } from '../applications/pluginmgr/index.js';
-import { getConfiguredOutputDisplayLevel, persistOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
+import { getConfiguredOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -122,6 +122,8 @@ export class OpenDeskTUI {
 
     public activeTaskId?: string;
     private taskOutputDisplayLevels = new Map<string, OutputDisplayLevel>();
+    /** 首条消息提交前，为随后创建的任务暂存显示层级。 */
+    private pendingOutputDisplayLevel?: OutputDisplayLevel;
     private lastConfiguredOutputDisplayLevel: OutputDisplayLevel = getConfiguredOutputDisplayLevel();
 
     /** 在尚未创建任务时通过 /rename 预设的任务名称 */
@@ -507,14 +509,12 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
-    public setOutputDisplayLevel(level: OutputDisplayLevel, options: { persist?: boolean } = {}): OutputDisplayLevel {
-        if (options.persist) {
-            persistOutputDisplayLevel(level);
-            this.lastConfiguredOutputDisplayLevel = level;
-        }
+    public setOutputDisplayLevel(level: OutputDisplayLevel): OutputDisplayLevel {
         if (this.activeTaskId) {
             this.taskOutputDisplayLevels ??= new Map<string, OutputDisplayLevel>();
             this.taskOutputDisplayLevels.set(this.activeTaskId, level);
+        } else {
+            this.pendingOutputDisplayLevel = level;
         }
         this.taskView.setOutputDisplayLevel?.(level);
         this.inputArea.statusBar.update({ outputDisplayLevel: level });
@@ -522,15 +522,16 @@ export class OpenDeskTUI {
         return level;
     }
 
-    public cycleOutputDisplayLevel(): OutputDisplayLevel | undefined {
-        if (!this.activeTaskId) return undefined;
+    public cycleOutputDisplayLevel(): OutputDisplayLevel {
         const next = this.taskView.getOutputDisplayLevel() === 'minimal' ? 'verbose' : 'minimal';
         return this.setOutputDisplayLevel(next);
     }
 
-    private bindOutputDisplayLevelToTask(taskId: string): void {
+    private bindOutputDisplayLevelToTask(taskId: string, options: { consumePending?: boolean } = {}): void {
         this.taskOutputDisplayLevels ??= new Map<string, OutputDisplayLevel>();
-        const level = this.taskOutputDisplayLevels.get(taskId) ?? getConfiguredOutputDisplayLevel();
+        const pendingLevel = options.consumePending ? this.pendingOutputDisplayLevel : undefined;
+        const level = this.taskOutputDisplayLevels.get(taskId) ?? pendingLevel ?? getConfiguredOutputDisplayLevel();
+        this.pendingOutputDisplayLevel = undefined;
         this.taskOutputDisplayLevels.set(taskId, level);
         this.taskView.setOutputDisplayLevel?.(level);
         this.inputArea.statusBar.update({ outputDisplayLevel: level });
@@ -1094,7 +1095,7 @@ export class OpenDeskTUI {
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
-        this.bindOutputDisplayLevelToTask(task.task_id);
+        this.bindOutputDisplayLevelToTask(task.task_id, { consumePending: true });
         this.taskView.clearMessages();
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
@@ -1128,6 +1129,10 @@ export class OpenDeskTUI {
             this.taskOutputDisplayLevels?.delete(this.activeTaskId);
         }
         this.activeTaskId = undefined;
+        this.pendingOutputDisplayLevel = undefined;
+        const configuredOutputDisplayLevel = getConfiguredOutputDisplayLevel();
+        this.taskView.setOutputDisplayLevel(configuredOutputDisplayLevel);
+        this.inputArea.statusBar.update({ outputDisplayLevel: configuredOutputDisplayLevel });
         this.inputArea.clearGoalSupplementQueuedHint();
         this.syncRetryCommandAvailability();
         this.syncTaskName();
@@ -1417,6 +1422,7 @@ export class OpenDeskTUI {
     }
 
     async onRequestSubmit(request: string) {
+        const createsTask = this.taskView.taskState === undefined;
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model, {
                 taskName: this.singleShot ? this.cliTaskName : (this.pendingTaskName ?? undefined)
@@ -1435,7 +1441,7 @@ export class OpenDeskTUI {
 
         const taskId = this.taskView.taskState.task_id;
         this.activeTaskId = taskId;
-        this.bindOutputDisplayLevelToTask(taskId);
+        this.bindOutputDisplayLevelToTask(taskId, { consumePending: createsTask });
         this.syncTaskName();
         this.undoStacks?.delete(taskId);
 

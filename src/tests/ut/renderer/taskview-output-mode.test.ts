@@ -813,6 +813,72 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-stage-body')?.textContent).toContain('阶段正文');
     });
 
+    test('minimal running output preserves a manually expanded reasoning block while streaming', () => {
+        const view = createView();
+        view.task_id = 'task-1';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        view.handleAssistantReplace({
+            task_status: 'running',
+            message_id: 'message-reasoning-expanded',
+            parts: [{ type: 'reasoning', rendered: '第一段思考' }]
+        });
+
+        const runningStatus = view.querySelector('[data-running-output-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: runningStatus, preventDefault() {}, stopPropagation() {} });
+        const reasoningHeader = view.querySelector('.reasoning-block-od .reasoning-header') as HTMLElement;
+        view._handleReasoningToggleClick({ target: reasoningHeader, preventDefault() {}, stopPropagation() {} });
+        expect(view.querySelector('.reasoning-block-od')?.classList).toContain('reasoning-expanded');
+
+        view._renderAssistantProgress(
+            {
+                type: 'assistant',
+                task_status: 'running',
+                message_id: 'message-reasoning-expanded',
+                last_part_index: 1,
+                streaming: true,
+                last_part: { type: 'text', text: '阶段正文', rendered: '<p>阶段正文</p>' }
+            },
+            view.querySelector('#taskview-chat-history')
+        );
+
+        expect(view.querySelector('.reasoning-block-od')?.classList).toContain('reasoning-expanded');
+        expect(view.querySelector('.reasoning-full-area')?.textContent).toContain('第一段思考');
+    });
+
+    test('minimal running output preserves a pinned reasoning bubble while streaming', () => {
+        onSettingChanged?.({
+            locale: 'zh-CN',
+            gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
+        });
+        const view = createView();
+        view.task_id = 'task-1';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        view.handleAssistantReplace({
+            task_status: 'running',
+            message_id: 'message-reasoning-pinned',
+            parts: [{ type: 'reasoning', rendered: '第一段思考' }]
+        });
+
+        const runningStatus = view.querySelector('[data-running-output-toggle]') as HTMLElement;
+        view._handleProcessToggleClick({ target: runningStatus, preventDefault() {}, stopPropagation() {} });
+        const reasoningHeader = view.querySelector('.reasoning-block-od .reasoning-header') as HTMLElement;
+        view._handleReasoningToggleClick({ target: reasoningHeader, preventDefault() {}, stopPropagation() {} });
+        expect(view.querySelector('.reasoning-block-od')?.classList).toContain('reasoning-bubble-pinned');
+
+        view.handleAssistantReplace({
+            task_status: 'running',
+            message_id: 'message-reasoning-pinned',
+            parts: [
+                { type: 'reasoning', rendered: '第一段思考' },
+                { type: 'text', rendered: '<p>阶段正文</p>' },
+                toolPart(1, 1)
+            ]
+        });
+
+        expect(view.querySelector('.reasoning-block-od')?.classList).toContain('reasoning-bubble-pinned');
+        expect(view.querySelector('.reasoning-bubble')?.classList).not.toContain('reasoning-bubble-hidden');
+    });
+
     test('minimal running output commits body text during streaming without expanding the current process', () => {
         const view = createView();
         view.task_id = 'task-1';
