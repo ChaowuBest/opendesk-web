@@ -11,8 +11,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { jsonrepair } from 'jsonrepair';
 import { randomUUID } from 'crypto';
+import { parseJsonWithRepair } from '../../../../../utils/json.js';
 import { logger } from '../../../../utils/logger.js';
 import { FileLock } from '../../../../utils/file-lock.js';
 import { GlobalHooks } from '../../../hooks.js';
@@ -53,7 +53,7 @@ export async function mutateMeta(
                     fs.promises.stat(resolvedMetaPath)
                 ]);
                 mode = stat.mode;
-                const parsed: unknown = JSON.parse(jsonrepair(raw));
+                const parsed: unknown = parseJsonWithRepair(raw);
                 if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
                     throw new Error(`${OPENDESK_META_FILENAME} 顶层必须是一个 JSON 对象`);
                 }

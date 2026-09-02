@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
+import { jest } from '@jest/globals';
 import { buildBuiltinPlugins } from '../../../../scripts/build-builtin-plugins.js';
 
 function makePluginFixture(

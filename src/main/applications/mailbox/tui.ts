@@ -39,7 +39,7 @@ import { ToolCallView, ToolCallMessagePartView } from '../../tui/components/task
 import { getAdaptiveGreen } from '../../tui/theme.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
-import { jsonrepair } from 'jsonrepair';
+import { parseJsonWithRepair } from '../../../utils/json.js';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -109,14 +109,7 @@ interface EmailContent {
 }
 
 type MailViewState =
-    | 'loading'
-    | 'list'
-    | 'detail'
-    | 'compose'
-    | 'assistant'
-    | 'assistant-result'
-    | 'search'
-    | 'search-list';
+    'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
@@ -1993,7 +1986,7 @@ export class MailOverlay implements Component {
                         tc.setTool(tool);
                         let args: any;
                         try {
-                            args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
+                            args = tc.args_string ? parseJsonWithRepair(tc.args_string) : {};
                         } catch (e) {
                             tc.status = 'error';
                             tc.result = (e as Error).message;

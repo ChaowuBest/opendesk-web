@@ -138,6 +138,21 @@ export interface SetPluginEnabledOptions {
     builtinDirectory?: string;
 }
 
+function readJson(file: string): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
+}
+
+function installedPackageName(stagingDirectory: string): string {
+    const packageJson = readJson(path.join(stagingDirectory, 'package.json'));
+    const dependencies = packageJson.dependencies;
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+        throw new Error('plugin.install_package_not_found');
+    }
+    const names = Object.keys(dependencies);
+    if (names.length !== 1) throw new Error('plugin.install_package_ambiguous');
+    return names[0];
+}
+
 function packageDirectory(prefix: string, packageName: string): string {
     return path.join(prefix, 'node_modules', ...packageName.split('/'));
 }

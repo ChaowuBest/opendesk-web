@@ -11,7 +11,7 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { jsonrepair } from 'jsonrepair';
+import { parseJsonWithRepair } from '../../utils/json.js';
 import {
     AssistantMessage,
     CompactSeparatorMessage,
@@ -100,7 +100,7 @@ function parseEvidenceObject(value: unknown): Record<string, unknown> {
     if (typeof value === 'string') {
         const trimmed = value.trim();
         if (!trimmed) return {};
-        const parsed = JSON.parse(jsonrepair(trimmed)) as unknown;
+        const parsed = parseJsonWithRepair(trimmed);
         if (parsed === null) return {};
         if (isRecord(parsed)) return parsed;
     }

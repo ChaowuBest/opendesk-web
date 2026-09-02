@@ -55,7 +55,7 @@ import {
 } from '../../utils/evidencecard.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { jsonrepair } from 'jsonrepair';
+import { parseJsonWithRepair, repairJsonString } from '../../../utils/json.js';
 import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
@@ -956,7 +956,7 @@ export class TaskState {
                     let args: any = tc.args_object;
                     if (!args && tc.args_string) {
                         try {
-                            args = JSON.parse(jsonrepair(tc.args_string));
+                            args = parseJsonWithRepair(tc.args_string);
                         } catch {
                             continue;
                         }
@@ -2596,7 +2596,7 @@ export class TaskState {
         try {
             let args: Record<string, unknown> = {};
             if (tool_call.args_string) {
-                const repaired = jsonrepair(tool_call.args_string);
+                const repaired = repairJsonString(tool_call.args_string);
                 args = JSON.parse(repaired);
                 // 同步更新为修复后的合法 JSON，避免下游 sanitizeOutboundMessage
                 // 因 JSON.parse 失败而清空参数
@@ -2774,7 +2774,7 @@ export class TaskState {
                 let args: Record<string, unknown> = {};
                 try {
                     if (tool_call.args_string) {
-                        const repaired = jsonrepair(tool_call.args_string);
+                        const repaired = repairJsonString(tool_call.args_string);
                         args = JSON.parse(repaired);
                     }
                 } catch {

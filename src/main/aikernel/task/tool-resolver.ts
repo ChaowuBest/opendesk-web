@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { jsonrepair } from 'jsonrepair';
+import { parseJsonWithRepair, repairJsonString } from '../../../utils/json.js';
 import { logger } from '../../utils/logger.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { AssistantMessage, ToolCall, tryExtractFirstJson } from '../messages.js';
@@ -157,7 +157,7 @@ export function resolveAllToolCallsForTask(task: TaskState) {
                 }
                 if (tc.args_string && !tc.args_object) {
                     try {
-                        tc.args_object = JSON.parse(jsonrepair(tc.args_string));
+                        tc.args_object = parseJsonWithRepair(tc.args_string);
                     } catch {
                         /* 解析失败不影响后续逻辑 */
                     }
@@ -191,7 +191,7 @@ export function resolveStreamingToolCallsForTask(task: TaskState, message: Assis
             }
             if (tc.args_string) {
                 try {
-                    tc.args_object = JSON.parse(jsonrepair(tc.args_string));
+                    tc.args_object = parseJsonWithRepair(tc.args_string);
                 } catch {
                     /* streaming 阶段 JSON 不完整属正常现象 */
                 }
@@ -270,7 +270,7 @@ export function finalizeToolCallArgs(tc: ToolCall): boolean {
         }
         // fallback: jsonrepair
         try {
-            const repaired = jsonrepair(raw);
+            const repaired = repairJsonString(raw);
             tc.args_object = JSON.parse(repaired);
             // 同步更新为修复后的合法 JSON，与 processToolCall 保持一致
             tc.args_string = repaired;

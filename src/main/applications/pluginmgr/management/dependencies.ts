@@ -43,7 +43,10 @@ type PluginManagerPlatform = NodeJS.Platform | 'openharmony';
 
 function environmentPathDirectories(platform: PluginManagerPlatform, environment: NodeJS.ProcessEnv): string[] {
     const pathValue = environmentValue(environment, ['Path', 'PATH']) ?? '';
-    const separator = platform === 'win32' ? ';' : ':';
+    // PATH 的格式由运行主机决定：Windows 主机上的路径带盘符（如 C:\foo），
+    // 其冒号不能作为分隔符。因此只要实际运行在 Windows 上就按 ';' 分隔，
+    // 否则模拟 darwin/openharmony 平台时盘符会被误切导致可执行文件路径丢失盘符。
+    const separator = platform === 'win32' || process.platform === 'win32' ? ';' : ':';
     const directories = pathValue
         .split(separator)
         .map((entry) => entry.trim().replace(/^"(.*)"$/, '$1'))
