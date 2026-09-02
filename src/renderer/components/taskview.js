@@ -1921,6 +1921,10 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
+                // 任务工作空间加载完成后同步刷新右边栏，避免首次打开时显示全局工作空间
+                if (artifacts && typeof artifacts.refreshWorkspace === 'function') {
+                    artifacts.refreshWorkspace(this._taskWorkspace);
+                }
             }
 
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
@@ -4093,6 +4097,11 @@ class TaskView extends HTMLElement {
                     },
                     taskViewT('workspace.taskLabel')
                 );
+                // task-list 事件携带最新工作空间时，同步刷新右边栏
+                const taskSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
+                if (taskSidebar && typeof taskSidebar.refreshWorkspace === 'function') {
+                    taskSidebar.refreshWorkspace(this._taskWorkspace);
+                }
             }
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);
