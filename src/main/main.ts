@@ -3755,7 +3755,27 @@ async function startApplication(): Promise<void> {
                         });
                     }
                 });
+
+                // 存储超限低频监控：跨阈值边沿推送 agentgate:storageOversize → 主窗口弹确认框。
+                // 独立于浮窗 eventsUpdate 链，浮窗关闭时仍能提醒。
+                agApp.startStorageMonitor((payload) => {
+                    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+                        safeSendToWebContents(globalMainWindow.webContents, 'agentgate:storageOversize', payload);
+                    }
+                });
             }
+
+            // IPC handler：主窗口确认存储清理 → app.cleanupStorage（删除 tool_calls + 清空拦截记录）
+            ipcMain.handle('agentgate:cleanupStorage', async () => {
+                const agApp2 = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+                if (!agApp2) return { status: 'error', message: 'agentgate application not found' };
+                try {
+                    const data = await (agApp2 as any).cleanupStorage();
+                    return { status: 'ok', data };
+                } catch (error) {
+                    return { status: 'error', message: String(error) };
+                }
+            });
         } catch (err) {
             logger.warn(`AgentGate bridge start failed: ${err}`);
         }

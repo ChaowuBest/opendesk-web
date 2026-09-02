@@ -276,3 +276,27 @@ export function clearInterceptionRecords(taskId: string): void {
         // 忽略删除失败
     }
 }
+
+/**
+ * 清除全部拦截记录（存储超限后一键清理，与 AgentGate tool_calls 清空联动）。
+ * 返回删除的文件数。
+ */
+export function clearAllInterceptionRecords(): number {
+    const dir = getInterceptionsDirectory();
+    if (!fs.existsSync(dir)) return 0;
+    let removed = 0;
+    try {
+        for (const file of fs.readdirSync(dir)) {
+            if (!file.endsWith('.json')) continue;
+            try {
+                fs.unlinkSync(path.join(dir, file));
+                removed++;
+            } catch {
+                // 单个文件删除失败跳过，不影响其余
+            }
+        }
+    } catch {
+        // 目录不可读，返回已删除数
+    }
+    return removed;
+}

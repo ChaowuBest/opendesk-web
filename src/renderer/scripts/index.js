@@ -293,6 +293,37 @@ if (window.skillBlacklistAPI) {
     });
 }
 
+// 监听 AgentGate 存储超限提醒：主进程低频轮询检测到本地记录超阈值时，弹确认框提示清理。
+// 确认后删除全部 tool_calls + 清空拦截记录（实际删除走 worker 进程）。
+if (window.agentgateStorageAPI) {
+    window.agentgateStorageAPI.onStorageOversize(async (data) => {
+        if (!data) return;
+        const t = window.__odT || ((k) => k);
+        const thresholdMB = Number(data.thresholdMB ?? 100);
+        const totalMB = Number(data.totalMB ?? 0);
+        const toolCalls = Number(data.toolCalls ?? 0);
+        const confirmed = await showConfirmModal({
+            icon: 'fa-database',
+            iconBg: '#FFF7ED',
+            iconColor: '#EA580C',
+            title: t('agentgate.storageOversize.title'),
+            message: t('agentgate.storageOversize.message')
+                .replace('{threshold}', String(thresholdMB))
+                .replace('{total}', String(totalMB))
+                .replace('{count}', String(toolCalls)),
+            confirmText: t('agentgate.storageOversize.cleanup'),
+            cancelText: t('agentgate.storageOversize.later'),
+            danger: true
+        });
+        if (!confirmed) return;
+        try {
+            await window.agentgateStorageAPI.cleanupAll();
+        } catch (err) {
+            console.error('[StorageOversize] cleanup failed:', err);
+        }
+    });
+}
+
 // 转发「等待用户输入」状态到主进程，供任务状态悬浮窗显示「需要操作」提示。
 document.addEventListener('task-waiting-state', (event) => {
     const { taskId, waiting } = event.detail || {};
