@@ -17,7 +17,13 @@ import pathLib from 'path';
 import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
 import { resolveChannelDisplayName } from './app.js';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../pluginmgr/index.js';
+import {
+    installPlugin,
+    uninstallPlugin,
+    listInstalledPlugins,
+    setPluginEnabled,
+    reloadPluginHost
+} from '../pluginmgr/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
@@ -196,6 +202,9 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
     private async run(args: z.infer<typeof InstallChannelPluginSchema>): Promise<string> {
         const result = await installPlugin(args.spec);
         if (result.success) {
+            // 先让插件宿主重新加载（新插件通过 ctx.channels.register 注册 channel），
+            // 再收集渠道并启动，否则 GUI 系统设置页 / reloadChannels 看不到新渠道。
+            await reloadPluginHost();
             await this.app.reloadChannels();
             return `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`;
         }
@@ -223,6 +232,8 @@ export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannel
     private async run(args: z.infer<typeof UninstallChannelPluginSchema>): Promise<string> {
         const result = await uninstallPlugin(args.id);
         if (result.success) {
+            // 宿主重载使被卸载插件的 channel 从运行时注销，随后收集渠道
+            await reloadPluginHost();
             await this.app.reloadChannels();
             return `插件已卸载: ${args.id}\n\n消息渠道已自动重新加载。`;
         }
@@ -277,6 +288,8 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
         const ok = setPluginEnabled(args.id, args.enabled);
         if (ok) {
             const action = args.enabled ? '启用' : '禁用';
+            // 宿主重载以应用启停状态（启用的插件才会执行 ctx.channels.register），随后收集渠道
+            await reloadPluginHost();
             await this.app.reloadChannels();
             return `插件已${action}: ${args.id}\n\n消息渠道已自动重新加载。`;
         }

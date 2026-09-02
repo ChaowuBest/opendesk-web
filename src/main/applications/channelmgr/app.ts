@@ -73,6 +73,7 @@ import chalk from 'chalk';
 import { getAdaptiveGreen } from '../../tui/theme.js';
 
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
+import { ApplicationRegistry } from '../registry.js';
 import { getModeDisplayName } from '../../aikernel/agents/common.js';
 import { Setting } from '../../utils/setting.js';
 import { createNativeChannelPluginEntry, isNativeChannelEntry } from './native-channel.js';
@@ -135,6 +136,8 @@ export class ChannelMgrApplication extends BaseApplication {
     private initPromise?: Promise<void>;
     private started = false;
     private stateChangeCallbacks: ChannelStateChangeCallback[] = [];
+    /** 监听 pluginmgr 插件变更事件（宿主重载后同步渠道运行时的退订句柄） */
+    private disposePluginChangedBridge?: () => void;
     /** 标记本轮 turn 由渠道入站消息触发，afterFinishTurn 钩子无需回显用户消息到渠道 */
     private skipUserEchoTasks = new WeakSet<object>();
 
@@ -385,9 +388,26 @@ export class ChannelMgrApplication extends BaseApplication {
                 await this.startChannelPlugin(plugin);
             }
             this.started = true;
+            this.subscribePluginChangedBridge();
         } catch (err: any) {
             logger.error(`消息插件初始化失败: ${err?.message || err}`);
         }
+    }
+
+    /**
+     * 监听 pluginmgr 的 pluginsChanged 事件，在插件宿主重载完成后同步渠道运行时。
+     * 覆盖经 pluginmgr 应用 API（GUI 插件管理页 / installPlugin 等工具）安装、卸载、
+     * 启停渠道类插件的入口：宿主侧注册的 channel 已更新，但本应用内存中的渠道列表
+     * 与连接不会自动跟随，需在此重新加载，避免消息设置页/运行时显示过期状态。
+     */
+    private subscribePluginChangedBridge(): void {
+        if (this.disposePluginChangedBridge) return;
+        this.disposePluginChangedBridge = ApplicationRegistry.onApplicationEvent((bundleName, eventName) => {
+            if (bundleName !== 'pluginmgr' || eventName !== 'pluginsChanged') return;
+            this.reloadChannels().catch((err: any) => {
+                logger.error(`[channelmgr] 插件变更后同步消息渠道失败: ${err?.message || err}`);
+            });
+        });
     }
 
     /**
@@ -1643,7 +1663,12 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'list': {
-                new PluginsListOverlay(tui, () => this.reloadChannels()).show();
+                // PluginsListOverlay 的启停/卸载同样先重载宿主（使启停与卸载立即生效、
+                // channel 注册随之更新），再重新收集渠道
+                new PluginsListOverlay(tui, async () => {
+                    await reloadPluginHost();
+                    await this.reloadChannels();
+                }).show();
                 break;
             }
             case 'enable': {
