@@ -18,6 +18,8 @@ import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import type { InboundChannelMessage, Participant } from '../../plugins/types.js';
+import { switchTaskMode } from '../../aikernel/task/mode.js';
+import { createChannelDenyPermissionProvider } from './channel-task-interactions.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
 
 export interface ChannelReply {
@@ -225,6 +227,7 @@ export class ChannelMessageRouter {
             // LLM check passed - update lastMessageAt before returning so that
             // if submitAndWaitForReply fails later, the timestamp is still correct.
             entry.lastMessageAt = Date.now();
+            await this.syncTaskMode(task, message);
             return task;
         } catch (err: any) {
             logger.warn(`[router] LLM 关联性检查失败，回退到超时判断: ${err?.message || err}`);
@@ -238,7 +241,42 @@ export class ChannelMessageRouter {
 
         // Fallback path also reuses the task - update lastMessageAt
         entry.lastMessageAt = Date.now();
+        await this.syncTaskMode(task, message);
         return task;
+    }
+
+    /**
+     * 将任务运行模式同步为账号当前运行时设定（modeId）。
+     *
+     * 同一 channel 会话（taskKey 相同、时间接近）会复用同一个任务；若用户在两轮消息之间
+     * 修改了账号的运行模式（如 标准模式→效率模式），复用时不更新会导致用户设置的模式失效。
+     * 仅当账号显式配置了 modeId 且与任务当前模式不一致时才切换；未配置时不干预任务模式。
+     */
+    private async syncTaskMode(task: TaskState, message: InboundChannelMessage): Promise<void> {
+        const runtime = this.getAccountRuntime?.(message.channelId, message.accountId);
+        const modeId = runtime?.modeId;
+        if (!modeId) return;
+
+        const currentModeId = task.activeModeId || task.getAgentMode().id;
+        if (currentModeId === modeId) return;
+
+        // channel 任务的 permissionPrompt 由 applyChannelTaskProviders 注入；
+        // 此处兜底返回 deny provider，避免意外缺失 provider 时权限请求悬挂等待。
+        const permissionPrompt = task.harnessContext.permissionPrompt;
+        try {
+            const switched = await switchTaskMode(
+                task,
+                modeId,
+                () => permissionPrompt ?? createChannelDenyPermissionProvider()
+            );
+            if (switched) {
+                logger.info(`[router] 任务 ${task.task_id} 模式已随账号设定同步: ${currentModeId} -> ${modeId}`);
+            } else {
+                logger.warn(`[router] 任务 ${task.task_id} 模式同步失败（无效模式或 agent 不支持）: ${modeId}`);
+            }
+        } catch (err: any) {
+            logger.warn(`[router] 任务 ${task.task_id} 模式同步异常: ${err?.message || err}`);
+        }
     }
 
     /**
