@@ -507,9 +507,18 @@ export class BrowserController {
      * Focus the host window and active guest webContents before keyboard input.
      * CDP can dispatch events without OS-level typing, but Chromium's focus
      * controller still needs the guest page to be the active focused target for
-     * keys like Tab that trigger browser-managed default focus navigation.
+     * keys like Tab that trigger browser-managed default focus navigation. The
+     * renderer may refuse focus when its browser belongs to a background host
+     * view; in that case CDP input continues without changing user focus.
      */
     private async _focusActiveWebviewForKeyboard(session: CDPSession): Promise<void> {
+        try {
+            const rendererFocused = await this.callRendererBrowser('browserFocusActiveWebview');
+            if (rendererFocused === false) return;
+        } catch {
+            /* older adapters may not implement this bridge method */
+        }
+
         try {
             const { BrowserWindow } = await import('electron');
             const guestWebContents = session.webContents as Electron.WebContents & {
@@ -528,12 +537,6 @@ export class BrowserController {
             } catch {
                 /* best-effort */
             }
-        }
-
-        try {
-            await this.callRendererBrowser('browserFocusActiveWebview');
-        } catch {
-            /* older adapters may not implement this bridge method */
         }
 
         try {

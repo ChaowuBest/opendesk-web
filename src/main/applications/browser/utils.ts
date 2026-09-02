@@ -68,13 +68,16 @@ export function makeEnsureSidebarScript(taskId: string): string {
                     webview.style.minHeight = '800px';
                 });
             }
-            function forceBrowserActive(autoSwitch) {
-                el._suppressBrowserAutoSwitch = false;
+            function prepareBrowser(autoSwitch) {
+                el._suppressBrowserAutoSwitch = !autoSwitch;
+                if (!autoSwitch && typeof el.ensureBrowserReady === 'function') {
+                    el.ensureBrowserReady(false);
+                    return;
+                }
                 if (typeof el.forceBrowserActive === 'function') {
                     el.forceBrowserActive();
                 } else if (typeof el.ensureBrowserReady === 'function') {
-                    if (typeof autoSwitch === 'undefined') el.ensureBrowserReady();
-                    else el.ensureBrowserReady(autoSwitch);
+                    el.ensureBrowserReady(true);
                 }
             }
             if (tv && taskViewIsHidden) {
@@ -107,14 +110,14 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 恢复为侧边栏正常宽度。
                 resetOversizedArtifact();
             }
-            // 无论前台还是后台任务：确保侧边栏已展开（尊重画中画状态，不强制展开），
-            // 确保 webview 以正确尺寸渲染，避免页面插件检测到 height=0 弹窗报错。
-            if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
+            // 前台任务可以进入浏览器聚焦布局；后台任务只挂载可渲染的 webview，
+            // 不得通过文档级布局事件收起当前任务的左侧导航或改变其输入焦点。
+            if (tv && !taskViewIsHidden && typeof tv._ensureRightSidebarOpen === 'function') {
                 tv._ensureRightSidebarOpen();
             }
-            forceBrowserActive(true);
+            prepareBrowser(!taskViewIsHidden);
             if (tv && taskViewIsHidden) {
-                // forceBrowserActive 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
+                // prepareBrowser 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
                 // 再应用一次尺寸，并保持 browser panel 可渲染。
                 if (typeof el.keepBrowserPanelRenderable === 'function') el.keepBrowserPanelRenderable();
                 setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));

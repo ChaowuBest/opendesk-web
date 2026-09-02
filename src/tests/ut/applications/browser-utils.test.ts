@@ -24,7 +24,7 @@ describe('browser utils', () => {
         delete (globalThis as any).document;
     });
 
-    test('hidden task view gets offscreen rendering and forced sidebar+browser tab', () => {
+    test('hidden task view gets offscreen rendering without activating foreground layout', () => {
         const window = installDom(`
             <div id="nonAppSlot" style="display:none">
                 <task-view id="task-view" style="display:none">
@@ -40,6 +40,7 @@ describe('browser utils', () => {
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
             ensureBrowserReady?: jest.Mock;
+            forceBrowserActive?: jest.Mock;
             keepBrowserPanelRenderable?: jest.Mock;
         };
         const shadow = artifacts.attachShadow({ mode: 'open' });
@@ -58,6 +59,7 @@ describe('browser utils', () => {
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
+        artifacts.forceBrowserActive = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
 
         runScript(makeEnsureSidebarScript('task-1'));
@@ -79,14 +81,15 @@ describe('browser utils', () => {
         expect(panel.style.display).toBe('');
         expect(panel.style.minHeight).toBe('800px');
         expect(webview.style.minHeight).toBe('800px');
-        // 后台任务也调用 _ensureRightSidebarOpen，保持与前台一致的侧边栏交互逻辑
+        // 后台任务只准备可渲染的 webview，不得激活会改变当前任务布局的侧边栏路径。
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
-        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
-        expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
-        expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
+        expect(artifacts._suppressBrowserAutoSwitch).toBe(true);
+        expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
-    test('data-background task view gets offscreen rendering and forced sidebar+browser tab', () => {
+    test('data-background task view stays offscreen without activating foreground layout', () => {
         const window = installDom(`
             <div id="nonAppSlot" style="display:none">
                 <task-view id="task-view" data-background="1">
@@ -102,6 +105,7 @@ describe('browser utils', () => {
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
             ensureBrowserReady?: jest.Mock;
+            forceBrowserActive?: jest.Mock;
         };
 
         const ensureTaskViewExists = jest.fn();
@@ -109,16 +113,18 @@ describe('browser utils', () => {
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
+        artifacts.forceBrowserActive = jest.fn();
 
         runScript(makeEnsureSidebarScript('task-1'));
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
         expect(taskView.getAttribute('data-background')).toBe('1');
-        // 后台任务也调用 _ensureRightSidebarOpen，保持与前台一致的侧边栏交互逻辑
+        // 已缓存的后台任务遵循相同的非激活准备路径。
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
-        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
-        expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
-        expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
+        expect(artifacts._suppressBrowserAutoSwitch).toBe(true);
+        expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
     test('clears oversized artifact styles left by previous background preparation', () => {
@@ -250,7 +256,7 @@ describe('browser utils', () => {
         runScript(makeEnsureSidebarScript('task-2'));
 
         expect(hiddenArtifacts.destroyBrowser).not.toHaveBeenCalled();
-        expect(currentArtifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
+        expect(currentArtifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
     test('switches to browser tab even when the visible sidebar is already expanded', () => {

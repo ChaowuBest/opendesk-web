@@ -851,8 +851,9 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _syncWorkspaceFocusLayout(): void {
-        const wsFocusActive = this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
-        const browserFocusActive = this._activeTab === 'browser' && this._browserVisible;
+        const hostVisible = this._isHostTaskVisible();
+        const wsFocusActive = hostVisible && this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
+        const browserFocusActive = hostVisible && this._activeTab === 'browser' && this._browserVisible;
         const active = wsFocusActive || browserFocusActive;
         const fullscreen = active && (browserFocusActive || this._workspaceFocusLayoutState.fullscreen);
         this.toggleAttribute('data-workspace-focus-fullscreen', fullscreen);
@@ -925,6 +926,11 @@ class TaskArtifacts extends HTMLElement {
     /** 外部可设置的标志：为 true 时 ensureBrowserReady 不自动切换 tab */
     public _suppressBrowserAutoSwitch = false;
 
+    private _isHostTaskVisible(): boolean {
+        const taskView = this.closest('task-view') as HTMLElement | null;
+        return !taskView || (!taskView.hasAttribute('data-background') && taskView.style.display !== 'none');
+    }
+
     /**
      * Ensure the browser tab is active and the EmbeddedBrowser is mounted.
      * Called before any browser operation from tools.
@@ -937,7 +943,7 @@ class TaskArtifacts extends HTMLElement {
             this._rebuildTabBar();
             this._dispatchBrowserVisibilityChanged();
         }
-        const shouldSwitch = autoSwitch && !this._suppressBrowserAutoSwitch;
+        const shouldSwitch = autoSwitch && !this._suppressBrowserAutoSwitch && this._isHostTaskVisible();
         if (shouldSwitch && this._activeTab !== 'browser') {
             this._switchTab('browser');
         }
@@ -1097,6 +1103,9 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：聚焦当前活动 webview，用于 pressKey 等键盘输入工具。
      */
     browserFocusActiveWebview(): boolean {
+        if (!this._isHostTaskVisible()) {
+            return false;
+        }
         this.ensureBrowserReady();
         return this._browser?.focusActiveWebview() ?? false;
     }
