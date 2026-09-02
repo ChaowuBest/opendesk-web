@@ -13,6 +13,7 @@ import { Marked } from 'marked';
 import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { levenshteinDistance } from '../../utils/string.js';
 
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
@@ -2539,38 +2540,6 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
-
-/**
- * 计算两个字符串的编辑距离（Levenshtein distance）。
- * 仅用于工具名近拼写容错，字符串很短，直接做完整 DP 即可。
- */
-function levenshteinDistance(a: string, b: string): number {
-    if (a === b) return 0;
-    if (a.length === 0) return b.length;
-    if (b.length === 0) return a.length;
-
-    // 保证 a 为较短字符串，减少内存占用
-    if (a.length > b.length) {
-        [a, b] = [b, a];
-    }
-
-    let prev: number[] = [];
-    for (let j = 0; j <= b.length; j++) {
-        prev[j] = j;
-    }
-    for (let i = 1; i <= a.length; i++) {
-        const cur: number[] = [i];
-        for (let j = 1; j <= b.length; j++) {
-            cur[j] = Math.min(
-                prev[j] + 1, // 删除
-                cur[j - 1] + 1, // 插入
-                prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1) // 替换
-            );
-        }
-        prev = cur;
-    }
-    return prev[b.length];
-}
 
 /**
  * Chat context for a chat session
