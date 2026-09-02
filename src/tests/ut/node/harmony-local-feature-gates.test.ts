@@ -24,6 +24,7 @@ const INCOMPLETE_PC_STATE: HarmonyLocalRuntimeState = {
 };
 
 test('Terminal registers only the verified HNP bash on Harmony PC', () => {
+    assert.equal(getOpenHarmonyTerminalBashPath(null), null);
     assert.equal(getOpenHarmonyTerminalBashPath(TABLET_STATE), null);
     assert.equal(getOpenHarmonyTerminalBashPath(INCOMPLETE_PC_STATE), '/data/service/hnp/bin/bash');
 });

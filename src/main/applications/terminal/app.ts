@@ -12,8 +12,8 @@
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
-import { ExecutePowerShellTool, ExecuteBashTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath } from '../../utils/shellExec.js';
+import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
+import { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
@@ -50,9 +50,13 @@ export class TerminalApplication extends BaseApplication {
                 break;
             }
             case 'openharmony': {
-                const ohBash = getOpenHarmonyTerminalBashPath();
+                const state = getHarmonyLocalRuntimeState();
+                const ohBash = getOpenHarmonyTerminalBashPath(state);
                 if (ohBash) {
                     toolset.addTool(new ExecuteBashTool(ohBash));
+                    toolset.addTool(new CheckShellStatusTool());
+                } else if (state === null && hasZsh()) {
+                    toolset.addTool(new ExecuteZshTool());
                     toolset.addTool(new CheckShellStatusTool());
                 }
                 break;
