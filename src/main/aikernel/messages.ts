@@ -13,6 +13,7 @@ import { Marked } from 'marked';
 import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { levenshteinDistance } from '../../utils/string.js';
 
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
@@ -2598,6 +2599,35 @@ export class ChatContext {
                 logger.warn(`工具名称自动纠错(补全包名): "${name}" -> "${candidateFullName}"`);
                 return candidate;
             }
+        }
+
+        // 4. 自动纠错：模型输出的完整名与某个工具仅相差 1 个字母（如 filemtr-readFile → filemgr-ReadFile）
+        //    先归一化等号，再按大小写不敏感比较编辑距离，避免把大小写差异也计入误差。
+        const normalizedName = name.replace(/=/g, '-');
+        const loweredName = normalizedName.toLowerCase();
+        let fuzzyCandidate: BaseTool<any> | undefined;
+        let fuzzyCandidateFullName = '';
+        for (const [key, tool] of tools) {
+            // 长度差超过 1，编辑距离必然大于 1，跳过以节省计算
+            if (Math.abs(key.length - loweredName.length) > 1) {
+                continue;
+            }
+            const dist = levenshteinDistance(loweredName, key.toLowerCase());
+            if (dist <= 1) {
+                if (fuzzyCandidate) {
+                    // 多个工具都满足误差，不唯一，放弃纠错
+                    logger.warn(
+                        `工具名称 "${name}" 与多个工具误差在 1 个字母以内 (${fuzzyCandidateFullName}, ${key})，无法自动纠错`
+                    );
+                    return undefined;
+                }
+                fuzzyCandidate = tool;
+                fuzzyCandidateFullName = key;
+            }
+        }
+        if (fuzzyCandidate) {
+            logger.warn(`工具名称自动纠错(近拼写容错): "${name}" -> "${fuzzyCandidateFullName}"`);
+            return fuzzyCandidate;
         }
 
         return undefined;

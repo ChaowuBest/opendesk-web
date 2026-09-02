@@ -10,16 +10,27 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 import { pathToFileURL } from 'url';
+import * as esbuild from 'esbuild';
 import { parsePluginManifest } from '../src/main/applications/pluginmgr/discovery/manifest.js';
+import {
+    installPluginDependencies,
+    resolveNpmInvocation
+} from '../src/main/applications/pluginmgr/management/dependencies.js';
+import { HOST_PACKAGE_SPECIFIERS } from '../src/main/applications/pluginmgr/runtime/package-mapping.js';
 
 const MANIFEST_FILENAME = 'opendesk.plugin.json';
+
+const execFileAsync = promisify(execFile);
 
 export interface BuildBuiltinPluginsOptions {
     sourceDirectory?: string;
     outputDirectory?: string;
+    runNpm?: (args: string[], cwd: string) => Promise<void>;
 }
 
 export interface BuiltinPluginBuildResult {
@@ -43,19 +54,36 @@ function assertSafeOutputDirectory(sourceDirectory: string, outputDirectory: str
     }
 }
 
-function copyPluginSources(sourceDirectory: string, outputDirectory: string): void {
+/**
+ * 复制插件源目录到输出目录。
+ * - copy 模式（includeNodeModules=true）：整体复制（含 node_modules），产物自包含；
+ * - bundle 模式（includeNodeModules=false）：依赖已内联进入口 bundle，跳过 node_modules，
+ *   仅携带 manifest、静态资源等非模块文件。
+ * node_modules 与 dist 均被 gitignore，不会污染版本库。
+ */
+function copyPluginSources(
+    sourceDirectory: string,
+    outputDirectory: string,
+    includeNodeModules: boolean,
+    excludeRootModuleFiles = false
+): void {
     fs.cpSync(sourceDirectory, outputDirectory, {
         recursive: true,
         filter(source) {
             const relative = path.relative(sourceDirectory, source);
             if (!relative) return true;
             const first = relative.split(path.sep)[0];
-            return first !== 'node_modules' && first !== '.git' && first !== 'dist';
+            if (first === '.git' || first === 'dist') return false;
+            if (first === 'node_modules' && !includeNodeModules) return false;
+            if (excludeRootModuleFiles && !relative.includes(path.sep) && /\.(?:js|mjs|cjs)$/.test(relative)) {
+                return false;
+            }
+            return true;
         }
     });
 }
 
-function buildBuiltinPlugin(
+function validateBuiltinPlugin(
     sourceDirectory: string,
     outputRoot: string,
     knownIds: Set<string>
@@ -84,14 +112,81 @@ function buildBuiltinPlugin(
     }
 
     const pluginOutputDirectory = path.join(outputRoot, manifest.id);
-    copyPluginSources(sourceDirectory, pluginOutputDirectory);
-    const outputEntry = path.resolve(pluginOutputDirectory, manifest.entry);
     return {
         id: manifest.id,
         sourceDirectory,
         outputDirectory: pluginOutputDirectory,
-        entry: outputEntry
+        entry: path.resolve(pluginOutputDirectory, manifest.entry)
     };
+}
+
+async function defaultRunNpm(args: string[], cwd: string): Promise<void> {
+    const invocation = resolveNpmInvocation(args);
+    await execFileAsync(invocation.executable, invocation.args, {
+        cwd,
+        timeout: 180_000,
+        maxBuffer: 10 * 1024 * 1024
+    });
+}
+
+/**
+ * 确保源插件目录具备运行时依赖：缺 node_modules 时按 package.json 的
+ * dependencies/peerDependencies 执行 npm install。依赖变更时删除源目录的
+ * node_modules（或手动重新 npm install）即可让下一次构建重新安装。
+ */
+async function ensurePluginDependencies(
+    pluginDirectory: string,
+    runNpm: (args: string[], cwd: string) => Promise<void>
+): Promise<void> {
+    if (fs.existsSync(path.join(pluginDirectory, 'node_modules'))) return;
+    await installPluginDependencies(pluginDirectory, runNpm);
+}
+
+/**
+ * manifest 声明 "bundle": true 的插件会把入口及其依赖内联为单个最小发布文件，
+ * 产物不携带 node_modules，运行时也无需解析裸包名。
+ */
+function shouldBundlePlugin(pluginDirectory: string): boolean {
+    const manifestPath = path.join(pluginDirectory, MANIFEST_FILENAME);
+    if (!fs.existsSync(manifestPath)) return false;
+    const rawManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { bundle?: unknown };
+    return rawManifest.bundle === true;
+}
+
+function readPluginEntry(pluginDirectory: string): string {
+    const manifestPath = path.join(pluginDirectory, MANIFEST_FILENAME);
+    const rawManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { entry?: string };
+    const entry = rawManifest.entry;
+    if (!entry) throw new Error(`plugin.builtin_manifest_entry_required:${path.basename(pluginDirectory)}`);
+    return entry;
+}
+
+/** 宿主映射包由运行时 package-mapping 兜底解析，bundle 时必须保留为外部引用。 */
+function hostExternalPackages(): string[] {
+    const packages = new Set<string>();
+    for (const specifier of HOST_PACKAGE_SPECIFIERS) {
+        const segments = specifier.split('/');
+        const name = specifier.startsWith('@') && segments.length >= 2 ? `${segments[0]}/${segments[1]}` : segments[0];
+        packages.add(name);
+    }
+    const external = [...packages];
+    for (const name of packages) external.push(`${name}/*`);
+    return external;
+}
+
+async function bundlePluginEntry(sourceEntry: string, outputEntry: string): Promise<void> {
+    await esbuild.build({
+        entryPoints: [sourceEntry],
+        bundle: true,
+        platform: 'node',
+        target: 'node20',
+        format: 'esm',
+        outfile: outputEntry,
+        minify: true,
+        treeShaking: true,
+        sourcemap: false,
+        external: hostExternalPackages()
+    });
 }
 
 export async function buildBuiltinPlugins(
@@ -99,6 +194,7 @@ export async function buildBuiltinPlugins(
 ): Promise<BuiltinPluginBuildResult[]> {
     const sourceDirectory = path.resolve(options.sourceDirectory ?? 'resources/plugins');
     const outputDirectory = path.resolve(options.outputDirectory ?? 'dist/plugins');
+    const runNpm = options.runNpm ?? defaultRunNpm;
     assertSafeOutputDirectory(sourceDirectory, outputDirectory);
     fs.rmSync(outputDirectory, { recursive: true, force: true });
     fs.mkdirSync(outputDirectory, { recursive: true });
@@ -112,7 +208,15 @@ export async function buildBuiltinPlugins(
     const knownIds = new Set<string>();
     const results: BuiltinPluginBuildResult[] = [];
     for (const pluginDirectory of pluginDirectories) {
-        results.push(await buildBuiltinPlugin(pluginDirectory, outputDirectory, knownIds));
+        const validated = validateBuiltinPlugin(pluginDirectory, outputDirectory, knownIds);
+        await ensurePluginDependencies(pluginDirectory, runNpm);
+        if (shouldBundlePlugin(pluginDirectory)) {
+            copyPluginSources(pluginDirectory, validated.outputDirectory, false, true);
+            await bundlePluginEntry(path.resolve(pluginDirectory, readPluginEntry(pluginDirectory)), validated.entry);
+        } else {
+            copyPluginSources(pluginDirectory, validated.outputDirectory, true);
+        }
+        results.push(validated);
     }
     return results;
 }

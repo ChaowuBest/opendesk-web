@@ -24,7 +24,7 @@ export interface ChannelContact {
     recipientId: string;
     /** 显示名称 */
     displayName: string;
-    /** 渠道 ID（如 openclaw-weixin, feishu） */
+    /** 渠道 ID（如 weixin, feishu） */
     channelId: string;
     /** 账号 ID */
     accountId: string;

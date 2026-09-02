@@ -57,7 +57,13 @@ describe('OpenDesk plugin distribution security', () => {
         const outside = path.join(os.tmpdir(), `opendesk-plugin-outside-${crypto.randomUUID()}.js`);
         fs.writeFileSync(outside, 'export default {};', 'utf-8');
         try {
-            fs.symlinkSync(outside, path.join(root, 'dist', 'linked.js'));
+            try {
+                fs.symlinkSync(outside, path.join(root, 'dist', 'linked.js'));
+            } catch (error) {
+                // Windows 上创建符号链接需要管理员/开发者模式权限，权限不足时跳过该用例
+                if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+                throw error;
+            }
             expect(() => computePluginIntegrity(root)).toThrow('plugin.integrity_symlink_unsupported');
         } finally {
             fs.rmSync(outside, { force: true });

@@ -787,6 +787,7 @@ export class OpenDeskTUI {
             () => {
                 task.model = prompt.newDefault;
                 task.persistLater();
+                this.refreshTaskToolsetsAfterModelSwitch(task);
                 this.resolveModelInfo();
             },
             () => {
@@ -1971,6 +1972,7 @@ export class OpenDeskTUI {
             if (taskStarted && activeTask) {
                 activeTask.model = onlyAlias;
                 activeTask.persistLater();
+                this.refreshTaskToolsetsAfterModelSwitch(activeTask);
             } else {
                 this.setGlobalDefaultModel(onlyAlias);
             }
@@ -1986,11 +1988,25 @@ export class OpenDeskTUI {
         if (taskStarted && activeTask) {
             activeTask.model = nextAlias;
             activeTask.persistLater();
+            this.refreshTaskToolsetsAfterModelSwitch(activeTask);
         } else {
             this.setGlobalDefaultModel(nextAlias);
         }
         this.resolveModelInfo();
         logger.info(`Model switched to: ${nextAlias}`);
+    }
+
+    /**
+     * 模型切换后重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，
+     * 否则运行中的 turn 会在后续请求中继续调用已不匹配的工具并报"模型不支持视觉"错误。
+     * 异步刷新不阻塞 UI，失败仅告警。
+     */
+    private refreshTaskToolsetsAfterModelSwitch(task: TaskState): void {
+        task.refreshToolsets().catch((err) => {
+            logger.warn(
+                `failed to refresh toolsets after model switch: ${err instanceof Error ? err.message : String(err)}`
+            );
+        });
     }
 
     /**

@@ -1213,7 +1213,7 @@ class SideBar extends HTMLElement {
 
     static CHANNEL_META = {
         feishu: { label: '飞书', color: '#3370FF' },
-        'openclaw-weixin': { label: '微信', color: '#09B83E' },
+        weixin: { label: '微信', color: '#09B83E' },
         whatsapp: { label: 'WhatsApp', color: '#25D366' },
         zalouser: { label: 'Zalo', color: null },
         telegram: { label: 'Telegram', color: '#26A5E4' },

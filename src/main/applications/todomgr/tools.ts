@@ -111,7 +111,7 @@ const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, Schedule
 
 const ChannelDeliverSchema = z.object({
     type: z.literal('channel').optional().describe('投递目标类型，当前仅支持 channel，可省略'),
-    channel: z.string().min(1).describe('渠道 ID，如 feishu、openclaw-weixin'),
+    channel: z.string().min(1).describe('渠道 ID，如 feishu、weixin'),
     accountId: z.string().min(1).describe('渠道账号 ID'),
     recipientId: z.string().min(1).describe('接收方 ID，私聊为 senderId，群聊为 groupId')
 });

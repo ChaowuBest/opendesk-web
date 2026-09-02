@@ -14,8 +14,8 @@ import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';
 import { InfoOverlay } from '../../tui/components/notice';
-import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../plugins/index.js';
-import type { PluginInstallRecord } from '../../plugins/types.js';
+import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../pluginmgr/index.js';
+import type { PluginRegistryRecord } from '../pluginmgr/index.js';
 
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
 
@@ -26,8 +26,8 @@ export class PluginsListOverlay implements Component {
     private list?: SelectList;
     private loader?: Loader;
     private state: ViewState = 'list';
-    private plugins: PluginInstallRecord[] = [];
-    private pendingPlugin?: PluginInstallRecord;
+    private plugins: PluginRegistryRecord[] = [];
+    private pendingPlugin?: PluginRegistryRecord;
     private onReload?: () => Promise<void>;
 
     constructor(openDeskTUI: OpenDeskTUI, onReload?: () => Promise<void>) {
@@ -62,9 +62,10 @@ export class PluginsListOverlay implements Component {
         } else {
             const items = this.plugins.map((r) => {
                 const status = r.enabled ? chalk.green('✓ 已启用') : chalk.red('✗ 已禁用');
+                const spec = r.spec ?? r.path;
                 return {
                     value: r.id,
-                    label: `${chalk.bold(r.id)} ${chalk.dim(`(${r.npmSpec})`)} [${status}]`
+                    label: `${chalk.bold(r.id)} ${chalk.dim(`(${spec})`)} [${status}]`
                 };
             });
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
@@ -81,7 +82,7 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this);
     }
 
-    private getSelectedPlugin(): PluginInstallRecord | undefined {
+    private getSelectedPlugin(): PluginRegistryRecord | undefined {
         if (!this.list || this.plugins.length === 0) return undefined;
         const item = this.list.getSelectedItem();
         if (!item || item.value === '__empty__') return undefined;

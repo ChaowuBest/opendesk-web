@@ -1770,7 +1770,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: err?.message || String(err) };
         }
     });
-    ipcMain.handle('taskManager:setTaskModel', (_event, taskId, modelAlias) => {
+    ipcMain.handle('taskManager:setTaskModel', async (_event, taskId, modelAlias) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
@@ -1778,8 +1778,20 @@ const registerTaskManagerAPIHandlers = () => {
         if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias, 'chat')) {
             return { status: 'error', message: t('error.model.chat_alias_not_found', { alias: modelAlias }) };
         }
+        const previous = task.model;
         task.model = modelAlias || undefined;
         task.persistLater();
+        // 模型切换后立即重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，
+        // 否则运行中的 turn 会在后续请求中继续调用已不匹配的工具并报"模型不支持视觉"错误。
+        if (previous !== task.model) {
+            try {
+                await task.refreshToolsets();
+            } catch (err) {
+                logger.warn(
+                    `failed to refresh toolsets after model switch: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:stopTask', async (event, taskId) => {
@@ -3618,7 +3630,7 @@ async function startApplication(): Promise<void> {
 
                 const CHANNEL_NAMES: Record<string, string> = {
                     feishu: '飞书',
-                    'openclaw-weixin': '微信',
+                    weixin: '微信',
                     whatsapp: 'WhatsApp',
                     zalouser: 'Zalo',
                     telegram: 'Telegram',

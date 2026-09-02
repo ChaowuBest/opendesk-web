@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "id": "weixin",
+    "displayName": "WeChat (微信)",
+    "description": {
+        "en": "WeChat channel (getUpdates long-poll + sendMessage)",
+        "zh": "微信消息渠道（getUpdates 长轮询 + sendMessage）"
+    },
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["channel"],
+    "platforms": ["win32", "darwin", "linux"],
+    "bundle": true
+}

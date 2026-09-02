@@ -10,30 +10,16 @@
  */
 
 /**
- * Plugin system entry point.
- * Re-exports all public APIs from the plugin system.
+ * Channel plugin type definitions (shared with the native channel adapter).
+ * The OpenClaw-compatible plugin runtime has been removed; channel plugins are
+ * now loaded exclusively through the pluginmgr native plugin system.
  */
-
-// Manager functions
-export {
-    installPlugin,
-    uninstallPlugin,
-    listInstalledPlugins,
-    setPluginEnabled,
-    loadPlugins,
-    resetOpenClawShim,
-    getExtensionsDir,
-    invalidatePluginRequireCache
-} from './manager.js';
 
 // Types
 export type {
     PluginManifest,
     PluginInstallRecord,
     PluginEntry,
-    PluginLoadError,
-    PluginLoadResult,
-    PluginsConfig,
     ChannelId,
     ChannelMeta,
     ChannelCapabilities,
@@ -47,12 +33,8 @@ export type {
     ChannelStatusAdapter,
     ChannelAccountSnapshot,
     ChannelStatusIssue,
-    ChannelHeartbeatAdapter,
     ChannelMessagingAdapter,
     ChannelPlugin,
     PluginLogger,
-    OpenClawPluginApi
+    Participant
 } from './types.js';
-
-// OpenClaw compatibility layer
-export { ensureOpenClawShim, createPluginApi } from './openclaw/index.js';

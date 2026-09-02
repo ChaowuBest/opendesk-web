@@ -99,9 +99,8 @@ let __platform: AbstractPlatform | null = null;
 
 export function setPlatform(platform: AbstractPlatform) {
     __platform = platform;
-    // Expose getPlatform globally so the generated openclaw plugin-sdk shim
-    // (which lives outside the app bundle) can access the platform instance
-    // without needing a file:// import back into the bundle.
+    // Expose getPlatform globally so external modules (e.g. plugins outside the
+    // app bundle) can access the platform instance without a file:// import.
     (globalThis as any).__opendesk_getPlatform = getPlatform;
 }
 

@@ -11,7 +11,12 @@
 
 import { z } from 'zod';
 import { getLocale, t } from '../../../locale/index.js';
-import { resolvePluginDisplayName, type PluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
+import {
+    resolvePluginDisplayName,
+    resolvePluginLocalizedText,
+    type PluginDisplayName,
+    type PluginLocalizedText
+} from '../../../../packages/plugin-sdk/src/index.js';
 
 import { BaseTool } from '../../aikernel/tool.js';
 import type { PermissionRequest } from '../../aikernel/types/index.js';
@@ -31,12 +36,14 @@ interface PluginView {
     enabled?: boolean;
     manifest?: {
         displayName?: PluginDisplayName;
+        description?: PluginLocalizedText;
         version?: string;
         apiVersion?: number;
         capabilities?: string[];
     };
     runtime?: {
         displayName?: PluginDisplayName;
+        description?: PluginLocalizedText;
         version?: string;
         apiVersion?: number;
         status?: string;
@@ -63,24 +70,38 @@ function resolvedDisplayName(plugin: PluginView): string {
     );
 }
 
-/** 将 view 中 manifest/runtime 声明的本地化 displayName 就地解析为当前语言的字符串 */
-function withResolvedDisplayNames(plugin: PluginView): PluginView {
+/** 将 view 中 manifest/runtime 声明的本地化字段（displayName / description）就地解析为当前语言的字符串 */
+function withResolvedLocalizedFields(plugin: PluginView): PluginView {
     const locale = getLocale();
-    const asString = (value?: PluginDisplayName) =>
-        value === undefined ? undefined : resolvePluginDisplayName(value, locale);
+    const asString = (value?: PluginDisplayName | PluginLocalizedText) =>
+        value === undefined ? undefined : resolvePluginLocalizedText(value, locale);
     return {
         ...plugin,
         manifest: plugin.manifest
-            ? { ...plugin.manifest, displayName: asString(plugin.manifest.displayName) }
+            ? {
+                  ...plugin.manifest,
+                  displayName: asString(plugin.manifest.displayName),
+                  description: asString(plugin.manifest.description)
+              }
             : undefined,
-        runtime: plugin.runtime ? { ...plugin.runtime, displayName: asString(plugin.runtime.displayName) } : undefined
+        runtime: plugin.runtime
+            ? {
+                  ...plugin.runtime,
+                  displayName: asString(plugin.runtime.displayName),
+                  description: asString(plugin.runtime.description)
+              }
+            : undefined
     };
 }
 
 function summarizePlugin(plugin: PluginView): Record<string, unknown> {
+    const locale = getLocale();
     return {
         id: plugin.id,
         displayName: resolvedDisplayName(plugin),
+        description:
+            resolvePluginLocalizedText(plugin.runtime?.description, locale) ??
+            resolvePluginLocalizedText(plugin.manifest?.description, locale),
         source: plugin.source,
         removable: plugin.removable ?? false,
         enabled: plugin.enabled ?? true,
@@ -145,7 +166,7 @@ export class GetPluginDetailsTool extends BaseTool<typeof GetPluginDetailsArgsSc
     private async get(args: z.output<typeof GetPluginDetailsArgsSchema>): Promise<string> {
         const plugin = asPluginViews(await this.pluginApp.list()).find((entry) => entry.id === args.id);
         if (!plugin) throw new Error(t('plugin.notFound', { id: args.id }));
-        return serialize({ plugin: withResolvedDisplayNames(plugin) });
+        return serialize({ plugin: withResolvedLocalizedFields(plugin) });
     }
 }
 

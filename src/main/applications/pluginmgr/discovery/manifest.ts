@@ -14,6 +14,7 @@ import {
     type OpenDeskPlugin,
     type PluginCapability,
     type PluginDisplayName,
+    type PluginLocalizedText,
     type PluginMcpServerDefinition,
     type PluginPlatform,
     type PluginStaticResources
@@ -31,6 +32,7 @@ export interface PluginManifest {
     entry?: string;
     id?: string;
     displayName?: PluginDisplayName;
+    description?: PluginLocalizedText;
     version?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
@@ -55,10 +57,11 @@ function optionalString(value: unknown, code: string): string | undefined {
 }
 
 /**
- * 解析 displayName：支持简单字符串或 { "en": "...", "zh": "..." } 形式的本地化对象。
+ * 解析本地化文本（displayName / description 通用）：
+ * 支持简单字符串或 { "en": "...", "zh": "..." } 形式的本地化对象。
  * 对象键归一化为主语言标签（如 zh-CN -> zh），值必须为非空字符串。
  */
-function optionalDisplayName(value: unknown, code: string): PluginDisplayName | undefined {
+function optionalLocalizedText(value: unknown, code: string): PluginLocalizedText | undefined {
     if (value === undefined) return undefined;
     if (typeof value === 'string') {
         const trimmed = value.trim();
@@ -197,7 +200,8 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         schemaVersion: 1,
         entry: optionalString(value.entry, 'plugin.manifest_invalid_entry'),
         id,
-        displayName: optionalDisplayName(value.displayName, 'plugin.manifest_invalid_display_name'),
+        displayName: optionalLocalizedText(value.displayName, 'plugin.manifest_invalid_display_name'),
+        description: optionalLocalizedText(value.description, 'plugin.manifest_invalid_description'),
         version: optionalString(value.version, 'plugin.manifest_invalid_version'),
         apiVersion: apiVersion as number,
         capabilities,
@@ -223,6 +227,7 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
         entry: declaration.plugin,
         id: declaration.id,
         displayName: declaration.displayName,
+        description: declaration.description,
         version: declaration.version ?? packageJson.version,
         apiVersion: declaration.apiVersion,
         capabilities: declaration.capabilities,
@@ -255,6 +260,7 @@ export function applyPluginManifest(plugin: OpenDeskPlugin, manifest?: PluginMan
     return {
         ...plugin,
         displayName: plugin.displayName ?? manifest.displayName,
+        description: plugin.description ?? manifest.description,
         version: plugin.version ?? manifest.version,
         apiVersion: plugin.apiVersion ?? manifest.apiVersion,
         capabilities: plugin.capabilities ?? manifest.capabilities,

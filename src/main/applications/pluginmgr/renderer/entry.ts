@@ -12,7 +12,12 @@
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { isSupportedLocale } from '../../../../common/locale.js';
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
-import { resolvePluginDisplayName, type PluginDisplayName } from '../../../../../packages/plugin-sdk/src/index.js';
+import {
+    resolvePluginDisplayName,
+    resolvePluginLocalizedText,
+    type PluginDisplayName,
+    type PluginLocalizedText
+} from '../../../../../packages/plugin-sdk/src/index.js';
 import {
     getSkillInitial,
     getSkillPastel,
@@ -27,6 +32,7 @@ import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-ove
 interface PluginRuntimeEntry {
     id: string;
     displayName?: PluginDisplayName;
+    description?: PluginLocalizedText;
     version?: string;
     status: 'active' | 'error' | 'disabled';
     origin: string;
@@ -57,6 +63,7 @@ interface PluginListEntry {
     runtime?: PluginRuntimeEntry;
     manifest?: {
         displayName?: PluginDisplayName;
+        description?: PluginLocalizedText;
         version?: string;
         apiVersion?: number;
         capabilities?: string[];
@@ -603,6 +610,14 @@ export class PluginMgrEntryWidget extends HTMLElement {
         );
     }
 
+    /** 按当前界面语言解析插件描述：运行时值优先，未声明时回退 manifest，均无则返回 undefined */
+    private pluginDescription(entry: PluginListEntry): string | undefined {
+        return (
+            resolvePluginLocalizedText(entry.runtime?.description, this.locale) ??
+            resolvePluginLocalizedText(entry.manifest?.description, this.locale)
+        );
+    }
+
     private async initialize(): Promise<void> {
         try {
             const settings = await window.top?.settingAPI?.loadSettingObject?.();
@@ -927,6 +942,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const model: SkillDetailCardModel = {
             id: entry.id,
             name,
+            description: this.pluginDescription(entry),
+            descriptionLabel: this.t('plugin.center.detail.description'),
             closeLabel: this.t('plugin.center.detail.close'),
             transition: this.returningFromAgent ? 'back' : undefined,
             metadataLabel: this.t('plugin.center.detail.basicInfo'),

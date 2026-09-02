@@ -30,8 +30,8 @@ import { BaseToolset, BaseTool, ToolResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
 import dotenv from 'dotenv';
-import { jsonrepair } from 'jsonrepair';
 import format from 'string-template';
+import { parseJsonWithRepair } from '../../utils/json.js';
 import { ToolCall } from './messages';
 import chalk from 'chalk';
 import { statusDisplay } from '../tui/components/toolcall';
@@ -526,7 +526,7 @@ function parseCallSkillToolArgs(toolArgs: unknown): object {
         if (trimmed.length === 0) {
             return {};
         }
-        const parsed = JSON.parse(jsonrepair(trimmed));
+        const parsed = parseJsonWithRepair(trimmed);
         if (parsed === null) {
             return {};
         }

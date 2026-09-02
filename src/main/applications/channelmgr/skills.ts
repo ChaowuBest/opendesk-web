@@ -21,70 +21,46 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 本技能提供对消息渠道插件的完整管理功能，包括插件安装配置、设备配对和连接状态监控。
 当前已经支持的消息渠道包括微信和飞书，其他消息渠道正在适配中。
 
-## 插件安装与配置
+## 消息渠道与登录
 
-### 登录消息渠道
+微信与飞书是 OpenDesk **内置原生消息渠道插件**（位于 resources/plugins，随 OpenDesk 自动加载），
+不需要手动安装。
 
 当用户说"登录微信"、"登录飞书"、"连接 WhatsApp"、"登录 Zalo"等时，**必须使用 loginChannel 工具**，
 传入对应的 channelId。
 
-| 渠道 | channelId |
-|------|--------------------|
-| 微信 | \`openclaw-weixin\` |
-| 飞书 | \`feishu\` |
+| 渠道 | channelId | 登录方式 |
+|------|-----------|----------|
+| 微信 | \`weixin\` | 扫码登录（getAccountLoginQr） |
+| 飞书 | \`feishu\` | 参数登录（appId/appSecret） |
 
-### 消息渠道1：飞书
+### 消息渠道1：微信
 
-#### 飞书 (Feishu / Lark)
+- 渠道 id：\`weixin\`
+- 登录：调用 loginChannel（channelId=weixin），系统生成二维码，用户使用微信扫码后完成登录
+- 登录成功后凭证由渠道插件自行持久化，无需手动配置
+- 支持单聊与群聊文本消息
 
-插件包名: \`@openclaw/feishu\`
-当前测试通过版本: \`@openclaw/feishu@2026.5.12\`
+### 消息渠道2：飞书
 
-##### 配置步骤
+- 渠道 id：\`feishu\`
+- 登录：调用 loginChannelWithParams 工具或引导用户在「消息渠道」界面通过参数登录表单输入
+  **App ID** 与 **App Secret**（来自飞书开放平台创建的企业自建应用）
+- 也可使用 createFeishuBot 工具通过手机扫码一键创建机器人，获取 App ID/App Secret
+- 应用需启用「长连接」事件订阅（应用能力 > 事件与回调 > 长连接模式），插件通过 WebSocket 接收消息
+- 支持单聊/群聊文本与图片消息
 
-1. 使用内置工具 installChannelPlugin 工具安装 \`@openclaw/feishu@2026.5.12\` 插件（请注意必须指定版本号）
-2. 使用 getChannelConfig 工具检查 feishu 渠道是否已有 appId 配置
-3. **如果 appId 为空或不存在**：调用 createFeishuBot 工具，让用户通过手机飞书扫码一键创建机器人（工具会在界面上显示二维码，用户扫码后自动返回 App ID 和 App Secret）
-4. **如果 appId 已存在**：直接使用现有凭证，或询问用户是否需要重新创建
-5. 使用 setChannelConfig 工具将获得的凭证（appId, appSecret）写入配置
+### 账号级设置
 
-**重要**：优先使用 createFeishuBot 扫码创建方式，这比手动在飞书开放平台创建应用要快得多。只有在扫码不可用时才引导用户手动创建。
-
-##### 飞书配置项
-
-飞书渠道的配置 JSON 结构如下：
-
-\`\`\`json
-{
-    "enabled": true,
-    "connectionMode": "websocket",
-    "dmPolicy": "pairing",
-    "groupPolicy": "allowlist",
-    "requireMention": true,
-    "accounts": {
-        "default": {
-            "appId": "<在飞书开放平台获得的App ID>",
-            "appSecret": "<在飞书开放平台获得的App Secret>"
-        }
-    }
-}
-\`\`\`
-
-使用 setChannelConfig 工具时，channelId 填 "feishu"，config 填上述 JSON 对象。
-
-### 消息渠道2：微信
-
-插件包名: \`@tencent-weixin/openclaw-weixin\`
-当前测试通过版本: \`@tencent-weixin/openclaw-weixin@2.4.3\`
-
-**重要**：安装微信插件时请指定版本号：\`@tencent-weixin/openclaw-weixin@2.4.3\`
+在「消息渠道」界面可为每个账号设置 **工作目录（workspace）** 与 **模式（agent）**，
+从该账号进入的消息会自动使用这些设定创建任务。
 
 ### 内置消息渠道插件管理工具清单
 
-- 使用 loginChannel 登录消息渠道（微信/飞书/Zalo/WhatsApp），传入对应 channelId
+- 使用 loginChannel 登录消息渠道（微信扫码 / 飞书等），传入对应 channelId
 - 使用 createFeishuBot 通过手机扫码一键创建飞书机器人（推荐，最快捷的方式）
 - 使用 listChannelPlugins 查看已安装的插件
-- 使用 installChannelPlugin 安装新插件
+- 使用 installChannelPlugin 安装消息渠道插件（OpenDesk 插件）
 - 使用 uninstallChannelPlugin 卸载插件
 - 使用 toggleChannelPlugin 启用或禁用插件
 - 使用 setChannelConfig 设置渠道配置
@@ -92,8 +68,8 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 
 ### 注意事项
 
-- 安装、卸载、启停或配置插件后会自动重新加载消息渠道，无需重启 OpenDesk
-- 配置信息会保存在 settings.json 的 applications.channelmgr 下
+- 微信/飞书为内置插件，随 OpenDesk 启动自动加载；第三方插件安装、卸载、启停或配置后会自动重新加载消息渠道
+- 账号级运行时配置（workspace/agent）保存在 settings.json 的 applications.channelmgr.<channelId>.accountRuntime 下
 
 ## 设备配对
 

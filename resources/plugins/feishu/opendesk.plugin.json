@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "id": "feishu",
+    "displayName": "Feishu (飞书)",
+    "description": {
+        "en": "Feishu/Lark channel (WebSocket long connection + open-apis)",
+        "zh": "飞书/Lark 消息渠道（WebSocket 长连接 + open-apis）"
+    },
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["channel"],
+    "platforms": ["win32", "darwin", "linux"],
+    "bundle": true
+}

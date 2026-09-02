@@ -10,5 +10,17 @@
  */
 
 export const enUs: Record<string, string> = {
-    'app.name': 'Messages'
+    'app.name': 'Channels',
+    'channel.event.connected': 'Channel connected',
+    'channel.event.disconnected': 'Channel disconnected',
+    'channel.event.message': 'Channel message received',
+    'channel.event.contactsUpdated': 'Channel contacts updated',
+    'channel.event.error': 'Channel error',
+    'channel.event.loginStatus': 'Channel QR login progress',
+    'channel.event.interaction': 'Channel user interaction (permission/ask)',
+    'channel.permission.approvalTitle': 'Permission confirmation',
+    'channel.permission.confirm': 'Allow',
+    'channel.permission.deny': 'Deny',
+    'channel.permission.askTitle': 'Question',
+    'channel.permission.cancelAsk': 'Cancel'
 };

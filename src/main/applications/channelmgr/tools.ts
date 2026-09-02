@@ -17,7 +17,7 @@ import pathLib from 'path';
 import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
 import { resolveChannelDisplayName } from './app.js';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../pluginmgr/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
@@ -177,7 +177,7 @@ export class ListChannelStatusTool extends BaseTool<typeof ListChannelStatusSche
 // ── Plugin Management Tools (for configure-channels skill) ──────────────────
 
 const InstallChannelPluginSchema = z.object({
-    spec: z.string().describe('要安装的插件包名或 URL，例如 "@openclaw/feishu" 或 .tgz 文件的下载链接')
+    spec: z.string().describe('要安装的 OpenDesk 插件：本地目录、.tgz 文件、URL 或 npm 包名')
 });
 
 export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPluginSchema> {
@@ -186,7 +186,7 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
     constructor(app: ChannelMgrApplication) {
         super(
             'installChannelPlugin',
-            'Install a channel plugin by npm package name or .tgz URL. Example: "@openclaw/feishu"',
+            'Install an OpenDesk channel plugin by local directory, .tgz file, URL or npm package name.',
             InstallChannelPluginSchema
         );
         this.app = app;
@@ -249,7 +249,7 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
         }
         const lines = records.map((r, i) => {
             const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
-            return `${i + 1}. ${r.id} (${r.npmSpec}) [${status}]\n   安装时间: ${r.installedAt}`;
+            return `${i + 1}. ${r.id} (${r.spec ?? r.path}) [${status}]\n   安装时间: ${r.installedAt ?? '-'}`;
         });
         return `共 ${records.length} 个已安装的插件：\n\n${lines.join('\n\n')}`;
     }
@@ -369,7 +369,7 @@ const LoginChannelSchema = z.object({
     channelId: z
         .string()
         .describe(
-            '消息渠道的 ID。有效值：\n  - "openclaw-weixin"（微信）\n  - "feishu"（飞书）\n  - "zalouser"（Zalo）\n  - "whatsapp"（WhatsApp）\n注意：微信的 ID 是 "openclaw-weixin"，不是 "weixin" 或 "tencent-weixin"'
+            '消息渠道的 ID。有效值：\n  - "weixin"（微信）\n  - "feishu"（飞书）\n  - "whatsapp"（WhatsApp）\n  - "zalouser"（Zalo）'
         ),
     accountId: z.string().default('default').describe('账户 ID，默认为 "default"')
 });
@@ -380,7 +380,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
     constructor(app: ChannelMgrApplication) {
         super(
             'loginChannel',
-            '触发消息渠道的登录流程。支持的 channelId：\n  - "openclaw-weixin"：微信登录（扫码）\n  - "feishu"：飞书登录（扫码创建机器人）\n  - "zalouser"：Zalo 登录（扫码）\n  - "whatsapp"：WhatsApp 登录（扫码）\n登录成功后会返回结果。注意：微信 channelId 必须使用 "openclaw-weixin"。',
+            '触发消息渠道的登录流程。支持的 channelId：\n  - "weixin"：微信登录（扫码）\n  - "feishu"：飞书登录（扫码创建机器人）\n  - "whatsapp"：WhatsApp 登录（扫码）\n  - "zalouser"：Zalo 登录（扫码）\n登录成功后会返回结果。',
             LoginChannelSchema
         );
         this.app = app;

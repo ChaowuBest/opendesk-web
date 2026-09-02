@@ -38,7 +38,7 @@ import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpServerState, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
-import { jsonrepair } from 'jsonrepair';
+import { parseJsonWithRepair } from '../../../utils/json.js';
 import { t as globalT } from '../../../locale/index.js';
 import {
     getRegistriesInfo,
@@ -359,11 +359,7 @@ export class McpMgrApplication extends BaseApplication {
         const jsonEnd = trimmed.lastIndexOf('}');
         const jsonText = jsonStart >= 0 && jsonEnd > jsonStart ? trimmed.slice(jsonStart, jsonEnd + 1) : trimmed;
 
-        try {
-            return JSON.parse(jsonText);
-        } catch {
-            return JSON.parse(jsonrepair(jsonText));
-        }
+        return parseJsonWithRepair<Record<string, any>>(jsonText);
     }
 
     private buildServerConfigFromMcpEntry(

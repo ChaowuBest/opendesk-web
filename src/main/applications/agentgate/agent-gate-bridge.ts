@@ -41,7 +41,7 @@ const PORT_GATE_START = 9100;
 const MAX_RESTART = 3;
 const EXTENSIONS_DIR_NAME = 'extensions';
 
-/** 获取 extensions 目录路径（与 plugins/manager.ts 的 getExtensionsDir 一致） */
+/** 获取 extensions 目录路径（AgentGate 服务加载插件 CLI bundle 用） */
 function getExtensionsDir(): string {
     const dir = path.join(getOpendeskDirectory(), EXTENSIONS_DIR_NAME);
     if (!fs.existsSync(dir)) {

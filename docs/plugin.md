@@ -443,13 +443,14 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`。声明静态 Skill、MCP
 或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
-### displayName 本地化
+### displayName 与 description 本地化
 
-`displayName` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk` 和插件入口对象均适用：
+`displayName` 与 `description` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk`
+和插件入口对象均适用：
 
-- 简单字符串：所有语言下显示同一名称；
-- 本地化对象：按语言声明名称，键为 BCP 47 语言标签（如 `en`、`zh`、`zh-CN`），
-  值为该语言下的显示名称。
+- 简单字符串：所有语言下显示同一文本；
+- 本地化对象：按语言声明文本，键为 BCP 47 语言标签（如 `en`、`zh`、`zh-CN`），
+  值为该语言下的文本。
 
 ```json
 {
@@ -459,6 +460,10 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
         "en": "Locale Demo",
         "zh": "本地化示例插件"
     },
+    "description": {
+        "en": "A demo plugin showing localized metadata.",
+        "zh": "一个演示本地化元数据的示例插件。"
+    },
     "entry": "./index.js",
     "apiVersion": 1,
     "capabilities": []
@@ -467,8 +472,8 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 
 解析时只比较语言主标签（请求 `zh-CN` 时 `zh-CN` 与 `zh-TW` 等键都视为中文条目）；
 没有匹配语言的条目时回退到对象中声明的第一个翻译；对象中的每个值都必须是非空字符串。
-插件中心按当前界面语言显示插件名称，并在应用切换语言后实时更新；
-未声明 `displayName` 时回退到插件 ID。
+插件中心按当前界面语言显示插件名称与描述，并在应用切换语言后实时更新；
+未声明 `displayName` 时回退到插件 ID，未声明 `description` 时不展示描述。
 
 ### Skill 路径
 

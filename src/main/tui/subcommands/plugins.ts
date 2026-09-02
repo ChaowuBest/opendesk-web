@@ -29,7 +29,7 @@ import {
     formatPluginInstallError
 } from '../../applications/pluginmgr/index.js';
 import type { PluginCapability, PluginHostEntry } from '../../applications/pluginmgr/index.js';
-import { resolvePluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
+import { resolvePluginDisplayName, resolvePluginLocalizedText } from '../../../../packages/plugin-sdk/src/index.js';
 import { getLocale, t } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import process from 'process';
@@ -67,12 +67,17 @@ function parseCapabilities(values: string[]): PluginCapability[] {
 
 function printRuntimeStatus(entries: PluginHostEntry[], json: boolean): void {
     if (json) {
-        // JSON 输出面向脚本消费，displayName 统一解析为当前语言的字符串
+        // JSON 输出面向脚本消费，displayName / description 统一解析为当前语言的字符串
         const locale = getLocale();
         const payload = entries.map((entry) => {
-            const { displayName, ...rest } = entry;
+            const { displayName, description, ...rest } = entry;
             const resolvedName = resolvePluginDisplayName(displayName, locale);
-            return resolvedName ? { ...rest, displayName: resolvedName } : rest;
+            const resolvedDescription = resolvePluginLocalizedText(description, locale);
+            return {
+                ...(resolvedName ? { displayName: resolvedName } : {}),
+                ...(resolvedDescription ? { description: resolvedDescription } : {}),
+                ...rest
+            };
         });
         console.log(JSON.stringify(payload, null, 2));
         return;

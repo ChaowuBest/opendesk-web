@@ -3,10 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { promisify } from 'util';
 import AdmZip from 'adm-zip';
 import { extract as extractTar } from 'tar';
 import {
@@ -16,10 +14,9 @@ import {
 } from '../../../../../packages/plugin-sdk/src/package.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
-import { buildChildProcessEnv } from '../../../utils/shellExec.js';
 import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
-import { isHostMappedPackageName } from '../runtime/package-mapping.js';
+import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
 import {
     ensurePluginDirectories,
     getBuiltinPluginsDirectory,
@@ -37,7 +34,7 @@ import {
 } from './registry.js';
 import { classifyPluginInstallError, type PluginInstallResult, type PluginInstallStage } from './errors.js';
 
-const execFileAsync = promisify(execFile);
+export { resolveNpmInvocation, type NpmInvocation } from './dependencies.js';
 
 export interface PluginInstallOptions {
     configDirectory?: string;
@@ -141,102 +138,6 @@ export interface SetPluginEnabledOptions {
     builtinDirectory?: string;
 }
 
-export interface NpmInvocation {
-    executable: string;
-    args: string[];
-}
-
-function environmentValue(environment: NodeJS.ProcessEnv, names: string[]): string | undefined {
-    for (const name of names) {
-        const value = environment[name];
-        if (value) return value;
-    }
-    return undefined;
-}
-
-function executableOnPath(name: string, directories: string[], requireExecutable: boolean): string | undefined {
-    for (const directory of directories) {
-        const candidate = path.join(directory, name);
-        try {
-            if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) continue;
-            if (requireExecutable) fs.accessSync(candidate, fs.constants.X_OK);
-            return candidate;
-        } catch {
-            continue;
-        }
-    }
-    return undefined;
-}
-
-type PluginManagerPlatform = NodeJS.Platform | 'openharmony';
-
-function environmentPathDirectories(platform: PluginManagerPlatform, environment: NodeJS.ProcessEnv): string[] {
-    const pathValue = environmentValue(environment, ['Path', 'PATH']) ?? '';
-    const separator = platform === 'win32' ? ';' : ':';
-    const directories = pathValue
-        .split(separator)
-        .map((entry) => entry.trim().replace(/^"(.*)"$/, '$1'))
-        .filter(Boolean);
-    if (platform !== 'win32') directories.push('/bin', '/usr/bin', '/usr/local/bin');
-    if (platform === 'darwin') directories.push('/opt/homebrew/bin');
-    if (platform === 'openharmony') directories.push('/data/service/hnp/bin');
-    return [...new Set(directories)];
-}
-
-export function resolveNpmInvocation(
-    args: string[],
-    platform: PluginManagerPlatform = process.platform,
-    environment: NodeJS.ProcessEnv = process.env
-): NpmInvocation {
-    const pathDirectories = environmentPathDirectories(platform, environment);
-    if (platform !== 'win32') {
-        const executable = executableOnPath('npm', pathDirectories, true);
-        if (!executable) throw new Error('plugin.install_npm_cli_not_found');
-        return { executable, args };
-    }
-
-    const configuredNpmCli = environment.npm_execpath;
-    const npmCliCandidates = [
-        configuredNpmCli,
-        ...pathDirectories.map((directory) => path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js'))
-    ].filter((candidate): candidate is string => Boolean(candidate));
-    const npmCli = npmCliCandidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
-    const configuredNode = environment.npm_node_execpath;
-    const nodeExecutable =
-        (configuredNode && fs.existsSync(configuredNode) && fs.statSync(configuredNode).isFile()
-            ? configuredNode
-            : undefined) ?? executableOnPath('node.exe', pathDirectories, false);
-    if (!npmCli || !nodeExecutable) throw new Error('plugin.install_npm_cli_not_found');
-    return {
-        executable: nodeExecutable,
-        args: [npmCli, ...args]
-    };
-}
-
-async function defaultNpmRunner(args: string[], cwd: string, cacheDirectory: string): Promise<void> {
-    const invocation = resolveNpmInvocation(args);
-    const npmrcPath = path.join(cwd, '.npmrc');
-    fs.mkdirSync(path.join(cwd, 'node_modules'), { recursive: true });
-    fs.mkdirSync(cacheDirectory, { recursive: true });
-    fs.writeFileSync(npmrcPath, '', 'utf-8');
-    try {
-        await execFileAsync(invocation.executable, invocation.args, {
-            cwd,
-            timeout: 180_000,
-            maxBuffer: 10 * 1024 * 1024,
-            env: buildChildProcessEnv({
-                ...process.env,
-                npm_config_userconfig: npmrcPath,
-                npm_config_cache: cacheDirectory,
-                npm_config_fund: 'false',
-                npm_config_audit: 'false'
-            })
-        });
-    } finally {
-        fs.rmSync(npmrcPath, { force: true });
-    }
-}
-
 function readJson(file: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
 }
@@ -250,50 +151,6 @@ function installedPackageName(stagingDirectory: string): string {
     const names = Object.keys(dependencies);
     if (names.length !== 1) throw new Error('plugin.install_package_ambiguous');
     return names[0];
-}
-
-const RUNTIME_DEPENDENCY_INSTALL_ARGS = [
-    'install',
-    '--no-save',
-    '--install-links=true',
-    '--no-bin-links',
-    '--omit=dev',
-    '--no-optional',
-    '--audit=false',
-    '--ignore-scripts',
-    '--package-lock=false'
-];
-
-/**
- * 收集插件声明且需要从 registry 安装的运行时依赖（name@range）。
- * 被宿主映射的包（@bitclub.ai/opendesk-plugin-sdk、zod）由 package-mapping
- * 在运行时兜底解析，无需（也不应）安装——否则会因声明的版本与 npm 已发布
- * 版本不匹配（如官网示例的 ^0.1.0）导致 npm ETARGET，整个插件安装失败。
- */
-function collectRuntimeDependencySpecs(packageJson: Record<string, unknown>): string[] {
-    const specs: string[] = [];
-    for (const field of ['dependencies', 'peerDependencies']) {
-        const value = packageJson[field];
-        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-        for (const [name, range] of Object.entries(value as Record<string, unknown>)) {
-            if (isHostMappedPackageName(name)) continue;
-            if (typeof range !== 'string' || !range) continue;
-            specs.push(`${name}@${range}`);
-        }
-    }
-    return specs;
-}
-
-async function installPluginDependencies(
-    pluginDirectory: string,
-    runNpm: (args: string[], cwd: string) => Promise<void>
-): Promise<void> {
-    const packageJsonPath = path.join(pluginDirectory, 'package.json');
-    if (!fs.existsSync(packageJsonPath)) return;
-    const packageJson = readJson(packageJsonPath);
-    const dependencySpecs = collectRuntimeDependencySpecs(packageJson);
-    if (dependencySpecs.length === 0) return;
-    await runNpm([...RUNTIME_DEPENDENCY_INSTALL_ARGS, ...dependencySpecs], pluginDirectory);
 }
 
 function packageDirectory(prefix: string, packageName: string): string {

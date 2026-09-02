@@ -122,6 +122,7 @@ describe('plugin manager application renderer', () => {
                         runtime: {
                             id: 'localized-plugin',
                             displayName: { en: 'Localized En Name', zh: '本地化中文名' },
+                            description: { en: 'Localized En Description', zh: '本地化插件描述' },
                             version: '1.0.0',
                             status: 'active',
                             origin: '/plugins/localized',
@@ -446,6 +447,16 @@ describe('plugin manager application renderer', () => {
         card.dispatchEvent(new Event('click'));
         const detail = widget.shadowRoot.querySelector('skill-detail-card');
         expect(detail.shadowRoot.innerHTML).toContain('本地化中文名');
+    });
+
+    test('displays the localized plugin description on the detail panel', async () => {
+        const widget = await createWidget();
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="localized-plugin"]');
+        card.dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('skill-detail-card');
+        // 测试环境 navigator 固定为 zh-CN，应显示中文描述
+        expect(detail.shadowRoot.innerHTML).toContain('本地化插件描述');
+        expect(detail.shadowRoot.innerHTML).not.toContain('Localized En Description');
     });
 
     test('switches localized display names when the main window notifies a locale change', async () => {
