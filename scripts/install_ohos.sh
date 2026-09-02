@@ -26,7 +26,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # ---- 常量 ----
-DOCS_URL="https://opendesk.bitclub.ai/docs/quickstart/cli"
+DOCS_URL="https://opendesk.matrix.openharmony.cn/docs/quickstart/cli"
 NPM_PACKAGE="@bitclub.ai/opendesk-cli"
 MIRROR_REGISTRY="https://registry.npmmirror.com"
 RC_FILE="$HOME/.zshrc"
