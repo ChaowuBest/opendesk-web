@@ -544,7 +544,9 @@ export async function executeSlashCommand(
                 if (navigated) return;
                 const browserWidget = document.querySelector('#nonAppSlot > browser-entry-widget');
                 if (browserWidget && typeof (browserWidget as any).navigateTo === 'function') {
-                    (browserWidget as any).navigateTo('https://opendesk.bitclub.ai/docs/quickstart/desktop/');
+                    (browserWidget as any).navigateTo(
+                        'https://opendesk.matrix.openharmony.cn/docs/quickstart/desktop/'
+                    );
                     navigated = true;
                 }
             };

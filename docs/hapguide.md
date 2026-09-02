@@ -265,7 +265,7 @@ npm run start
 下载 Opendesk-ohos 仓库:
 
 ```cmd
-git clone https://gitcode.com/IntelliOS/OpenDesk-ohos
+git clone https://gitcode.com/openharmony-robot/OpenDesk-ohos
 cd OpenDesk-ohos
 ```
 
