@@ -201,4 +201,29 @@ export default { id: 'bundled-external', setup() { return typeof z; } };`
         expect(text).toMatch(/from\s*"zod"/);
         expect(text).not.toContain('zod/v4');
     });
+
+    // 被内联的 CJS 依赖（如 ws）内部用 require('events') 访问 Node 内置模块，esbuild 会留下
+    // __require(...)。ESM 产物中 require 未定义时会抛 Dynamic require of "..." is not supported，
+    // 因此 bundle 必须注入模块作用域的 require。
+    test('bundle 产物可加载内联 CJS 依赖中对 Node 内置模块的 require', async () => {
+        makePluginFixture(sourceDirectory, 'bundled-cjs-dep', {
+            bundle: true,
+            packageJson: { dependencies: { 'cjs-dep': '1.0.0' } },
+            indexContent: `import { emitterName } from 'cjs-dep';
+export default { id: 'bundled-cjs-dep', setup() { return emitterName; } };`,
+            nodeModules: {
+                'cjs-dep/package.json': JSON.stringify({ name: 'cjs-dep', version: '1.0.0', main: 'index.js' }),
+                'cjs-dep/index.js': `const EventEmitter = require('events');
+module.exports.emitterName = EventEmitter.name;`
+            }
+        });
+
+        await buildBuiltinPlugins({ sourceDirectory, outputDirectory, runNpm: async () => {} });
+
+        const outputEntry = path.join(outputDirectory, 'bundled-cjs-dep', 'index.mjs');
+        const loaded = (await import(`${pathToFileURL(outputEntry).href}?test=${Date.now()}`)) as {
+            default: { setup(): string };
+        };
+        expect(loaded.default.setup()).toBe('EventEmitter');
+    });
 });

@@ -14,6 +14,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+// 不使用 Node 全局 WebSocket：它由 undici 提供，而 OpenHarmony 版 Electron 主进程无法加载
+// undici（见 src/platforms/electron.ts 的说明）。ws 是纯 JS 握手 + node:http，与 devicemgr
+// 网关保持同一套跨平台实现；bundle 时会被内联进插件产物，运行时无需 node_modules。
+import WebSocket from 'ws';
 // protobufjs 无 exports 字段，ESM 下需显式 .js 扩展名；UMD 产物用 default import 解构
 import protobuf from 'protobufjs/minimal.js';
 const { Reader, Writer } = protobuf;
@@ -415,18 +419,14 @@ export class FeishuChannel {
         let pingInterval = (endpointJson.data.ClientConfig?.PingInterval || 30) * 1000;
 
         // 2. 建立 WebSocket
-        const ws = new WebSocket(connectUrl);
-        ws.binaryType = 'arraybuffer';
-        // stop 与重连竞态防护：endpoint 请求期间账号已被 stop，放弃本次连接
+        // stop 与重连竞态防护：endpoint 请求期间账号已被 stop，此时不再建连。
+        // 必须在 new WebSocket 之前判断：ws 在握手阶段被 close 会异步 emit 'error'，
+        // 而此刻还没挂上 onerror，EventEmitter 会把它抛成未捕获异常。
         if (!this._runningAccounts.has(accountId)) {
-            try {
-                ws.close();
-            } catch {
-                /* ignore */
-            }
-            this._ws.delete(accountId);
             throw new Error('feishu: connection cancelled (account stopped)');
         }
+        const ws = new WebSocket(connectUrl);
+        ws.binaryType = 'arraybuffer';
         this._ws.set(accountId, ws);
 
         const sendFrame = (frame) => {

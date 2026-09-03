@@ -5,6 +5,7 @@
     "private": true,
     "description": "Feishu (飞书) message channel plugin",
     "dependencies": {
-        "protobufjs": "7.4.0"
+        "protobufjs": "7.4.0",
+        "ws": "8.21.3"
     }
 }

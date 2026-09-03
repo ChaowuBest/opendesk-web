@@ -25,26 +25,31 @@ function electronResourcesPluginsDirectory(): string | undefined {
 }
 
 /**
- * 从给定目录向上回溯，定位应用根目录下的内置插件目录。
+ * 从给定目录向上回溯，逐层产出可能的应用根目录。
  * 仅把含 package.json 的层级视为应用根，避免上溯过程中误命中
  * 无关目录（全局安装的 CLI、monorepo 中的兄弟项目等）。
  * 覆盖三种布局，无需写死任何绝对路径：
- *   - electron-vite dev：dist/main/chunks/ → 上溯到仓库根 → dist/plugins
- *   - CLI bundle：dist/cli/ → 上溯到仓库/包根 → dist/plugins
- *   - 鸿蒙 HAP：resources/app/dist/main/chunks/ → 上溯到 resources/app → dist|resources/plugins
+ *   - electron-vite dev：dist/main/chunks/ → 上溯到仓库根
+ *   - CLI bundle：dist/cli/ → 上溯到仓库/包根
+ *   - 鸿蒙 HAP：resources/app/dist/main/chunks/ → 上溯到 resources/app
  */
-export function findBuiltinPluginsDirectoryFrom(startDirectory: string): string | undefined {
+export function* appRootCandidatesFrom(startDirectory: string): Generator<string> {
     let directory = path.resolve(startDirectory);
     for (let depth = 0; depth < 8; depth++) {
-        if (fs.existsSync(path.join(directory, 'package.json'))) {
-            for (const relative of BUILTIN_PLUGINS_APP_RELATIVE_PATHS) {
-                const candidate = path.join(directory, relative);
-                if (isDirectory(candidate)) return candidate;
-            }
-        }
+        if (fs.existsSync(path.join(directory, 'package.json'))) yield directory;
         const parent = path.dirname(directory);
         if (parent === directory) break;
         directory = parent;
+    }
+}
+
+/** 从给定目录向上回溯，定位应用根目录下的内置插件目录（构建产物优先）。 */
+export function findBuiltinPluginsDirectoryFrom(startDirectory: string): string | undefined {
+    for (const appRoot of appRootCandidatesFrom(startDirectory)) {
+        for (const relative of BUILTIN_PLUGINS_APP_RELATIVE_PATHS) {
+            const candidate = path.join(appRoot, relative);
+            if (isDirectory(candidate)) return candidate;
+        }
     }
     return undefined;
 }
