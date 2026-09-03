@@ -1758,6 +1758,64 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    safeExposeInMainWorld('accountAPI', {
+        getConfig: async () => {
+            const result = await ipcRenderer.invoke('account:getConfig');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        configure: async (patch) => {
+            const result = await ipcRenderer.invoke('account:configure', patch);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        isSetupComplete: async () => {
+            const result = await ipcRenderer.invoke('account:isSetupComplete');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        isAvailable: async (kind) => {
+            const result = await ipcRenderer.invoke('account:isAvailable', kind);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        getSession: async () => {
+            const result = await ipcRenderer.invoke('account:getSession');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        getUserInfo: async () => {
+            const result = await ipcRenderer.invoke('account:getUserInfo');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        login: async (kind, username, password) => {
+            const result = await ipcRenderer.invoke('account:login', kind, username, password);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        updateDisplayName: async (displayName) => {
+            const result = await ipcRenderer.invoke('account:updateDisplayName', displayName);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        refreshToken: async () => {
+            const result = await ipcRenderer.invoke('account:refreshToken');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        logout: async () => {
+            const result = await ipcRenderer.invoke('account:logout');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        onSessionChanged: (callback) => {
+            const listener = (_event, session) => callback(session);
+            ipcRenderer.on('account:sessionChanged', listener);
+            return () => ipcRenderer.removeListener('account:sessionChanged', listener);
+        }
+    });
+
     // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，
     // 使得快捷键管理器和 magic pointer 在 webview 获焦时仍能工作。
     ipcRenderer.on('webview:keyboard-event', (_event, input) => {

@@ -368,6 +368,25 @@ type TelemetryConfig = z.infer<typeof TelemetrySchema>;
 type OpenTelemetryConfig = z.infer<typeof OpenTelemetryConfigSchema>;
 type LangfuseConfig = z.infer<typeof LangfuseConfigSchema>;
 
+const DEFAULT_PERSONAL_BASE_URL = 'http://127.0.0.1:8000/api/v1';
+
+const AccountConfigSchema = z
+    .object({
+        mode: z
+            .enum(['personal', 'enterprise', 'nologin'])
+            .default('nologin')
+            .describe('账号登录方式: personal=个人账号, enterprise=企业账号, nologin=无账号登录'),
+        default_base_url: z.string().default(DEFAULT_PERSONAL_BASE_URL).describe('个人账号默认后端地址(来自配置文件)'),
+        enterprise_base_url: z.string().default('').describe('企业账号私有化部署后端地址(用户输入, 可留空)')
+    })
+    .default({
+        mode: 'nologin',
+        default_base_url: DEFAULT_PERSONAL_BASE_URL,
+        enterprise_base_url: ''
+    });
+
+export type AccountConfig = z.infer<typeof AccountConfigSchema>;
+
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
@@ -437,6 +456,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             .default({}),
         // 权限配置独立校验，避免局部配置错误导致整个 setting.json 无法加载。
         permission: z.unknown().optional(),
+        account_config: AccountConfigSchema.describe('账号接入配置'),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }

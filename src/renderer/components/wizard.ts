@@ -10,6 +10,9 @@
  */
 
 import './wizard.css';
+import { createRendererTranslator } from '../locale.ts';
+import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
+import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
 
 type LoginChoice = 'opendesk' | 'enterprise' | 'nologin';
 
@@ -43,6 +46,9 @@ interface SettingData {
     providers: SettingProvider[];
     models: SettingModel[];
     default_model: string;
+    debug?: {
+        experimental_feature?: boolean;
+    };
     [key: string]: unknown;
 }
 
@@ -77,6 +83,25 @@ declare global {
             removeTaskViewCache(taskId: string): void;
             clearAllTaskViewCache(): void;
         };
+        accountAPI: {
+            getConfig(): Promise<{
+                mode: 'personal' | 'enterprise' | 'nologin';
+                default_base_url: string;
+                enterprise_base_url: string;
+            }>;
+            configure(patch: {
+                mode?: 'personal' | 'enterprise' | 'nologin';
+                enterprise_base_url?: string;
+            }): Promise<unknown>;
+            isSetupComplete(): Promise<boolean>;
+            login(kind: 'personal' | 'enterprise', username: string, password: string): Promise<unknown>;
+            getSession(): Promise<unknown>;
+            getUserInfo(): Promise<unknown>;
+            updateDisplayName(displayName: string): Promise<unknown>;
+            refreshToken(): Promise<unknown>;
+            logout(): Promise<unknown>;
+            onSessionChanged(callback: (session: unknown) => void): () => void;
+        };
     }
 }
 
@@ -87,10 +112,29 @@ class SetupWizard extends HTMLElement {
     private providerTemplates: ProviderTemplate[] = [];
     private currentData: SettingData | null = null;
     private _verifying = false;
+    private t = createRendererTranslator();
+    // 企业账号：先输入服务器地址，再进入登录表单
+    private enterpriseBaseUrlStep = true;
+    private accountLoginComplete = false;
+    // 账号登录表单状态
+    private loginUsername = '';
+    private loginPassword = '';
+    private loginBusy = false;
+    private loginError: string | null = null;
+    private enterpriseBaseUrlDraft = '';
 
     async connectedCallback(): Promise<void> {
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
         this.currentData = await window.settingAPI.loadSettingObject();
+        try {
+            const settingAPI = (window as any).settingAPI;
+            if (settingAPI?.loadSettingObject) {
+                const setting = await settingAPI.loadSettingObject();
+                this.t = createRendererTranslator(setting);
+            }
+        } catch {
+            // 使用默认语言
+        }
         this._render();
         this._bindEvents();
     }
@@ -152,14 +196,15 @@ class SetupWizard extends HTMLElement {
 
     // =================== Step 1 ===================
     private _renderStep1(): string {
+        const accountFeatureDisabled = !isAccountFeatureEnabled(this.currentData);
         return `
         <span class="step-tag">Step 1 · 账号选择</span>
         <h2>您希望如何登录 OpenDesk？</h2>
         <p class="ob-desc">我们支持使用个人账号或企业账号接入，也支持您配置自己的模型服务。无论使用何种登录方式，我们提供的功能都一视同仁。</p>
         <div class="opt-grid">
-            ${this._renderChoiceCard('opendesk', 'fa-user', 'OpenDesk 账号', '个人账号，同步任务、技能与偏好设置', true)}
-            ${this._renderChoiceCard('enterprise', 'fa-building', '企业账号', '企业统一身份认证（SSO）接入', true)}
-            ${this._renderChoiceCard('nologin', 'fa-plug', '不登录账号', '使用自定义的大模型服务，无需登录任何账号', false)}
+            ${this._renderChoiceCard('opendesk', 'fa-user', this.t('renderer.wizard.accountPersonal'), this.t('renderer.wizard.accountPersonalDesc'), accountFeatureDisabled)}
+            ${this._renderChoiceCard('enterprise', 'fa-building', this.t('renderer.wizard.accountEnterprise'), this.t('renderer.wizard.accountEnterpriseDesc'), accountFeatureDisabled)}
+            ${this._renderChoiceCard('nologin', 'fa-plug', this.t('renderer.wizard.accountNoLogin'), this.t('renderer.wizard.accountNoLoginDesc'), false)}
         </div>
         `;
     }
@@ -191,16 +236,81 @@ class SetupWizard extends HTMLElement {
 
     // =================== Step 2 ===================
     private _renderStep2(): string {
-        switch (this.loginChoice) {
-            case 'opendesk':
-                return this._renderPlaceholder('OpenDesk 账号', '个人账号系统正在建设中，敬请期待');
-            case 'enterprise':
-                return this._renderPlaceholder('企业账号', '企业账号接入系统正在建设中，敬请期待');
-            case 'nologin':
+        const view = resolveWizardStep2View(
+            this.loginChoice ?? 'nologin',
+            this.accountLoginComplete,
+            isAccountFeatureEnabled(this.currentData)
+        );
+        switch (view) {
+            case 'personal-login':
+                return this._renderAccountLogin('personal');
+            case 'enterprise-login':
+                return this._renderAccountLogin('enterprise');
+            case 'model-config':
                 return this._renderModelConfig();
-            default:
-                return this._renderPlaceholder('请先选择登录方式', '请返回上一步选择您的登录方式');
         }
+    }
+
+    private _renderAccountLogin(kind: 'personal' | 'enterprise'): string {
+        const isEnterprise = kind === 'enterprise';
+
+        // 企业账号先配置服务器地址，再进入登录表单
+        if (isEnterprise && this.enterpriseBaseUrlStep) {
+            return `
+            <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.enterpriseStep'))}</span>
+            <h2>${this._escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlTitle'))}</h2>
+            <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlDesc'))}</p>
+            <div class="form-card">
+                <div class="f-row">
+                    <label class="f-label">${this._escapeHtml(this.t('renderer.account.enterpriseBaseUrl'))}</label>
+                    <input id="wizard-enterprise-base-url" type="text" class="f-ctl" placeholder="https://your-server.example.com/api/v1" value="${this._escapeHtml(this.enterpriseBaseUrlDraft)}">
+                </div>
+                <div id="wizard-account-result" class="verify-result hidden"></div>
+                <div class="f-actions">
+                    <button id="wizard-enterprise-next" class="wiz-btn wiz-btn-primary" type="button">
+                        <i class="fas fa-arrow-right"></i>${this._escapeHtml(this.t('renderer.wizard.next'))}
+                    </button>
+                </div>
+            </div>
+            <div class="ob-back">
+                <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
+                    <i class="fas fa-arrow-left"></i>${this._escapeHtml(this.t('renderer.wizard.useNoLogin'))}
+                </button>
+            </div>
+            `;
+        }
+
+        return `
+        <span class="step-tag">Step 2 · ${this._escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
+        <h2>${this._escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
+        <p class="ob-desc">${this._escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
+        <div class="form-card">
+            <div class="f-row">
+                <label class="f-label">${this._escapeHtml(this.t('renderer.account.username'))}</label>
+                <input id="wizard-login-username" type="text" class="f-ctl" autocomplete="username" value="${this._escapeHtml(this.loginUsername)}">
+            </div>
+            <div class="f-row">
+                <label class="f-label">${this._escapeHtml(this.t('renderer.account.password'))}</label>
+                <div class="f-ctl f-ctl-with-btn">
+                    <input id="wizard-login-password" type="password" class="f-ctl-input" autocomplete="current-password">
+                    <button id="wizard-toggle-login-key" class="f-ctl-btn" type="button">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                </div>
+            </div>
+            ${this.loginError ? `<div id="wizard-account-result" class="verify-result verify-error">${this._escapeHtml(this.loginError)}</div>` : `<div id="wizard-account-result" class="verify-result hidden"></div>`}
+            <div class="f-actions">
+                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy ? 'disabled' : ''}>
+                    ${this.loginBusy ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${this._escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
+                </button>
+            </div>
+        </div>
+        <div class="ob-back">
+            <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
+                <i class="fas fa-arrow-left"></i>${this._escapeHtml(this.t('renderer.wizard.useNoLogin'))}
+            </button>
+        </div>
+        `;
     }
 
     private _renderPlaceholder(title: string, description: string): string {
@@ -338,6 +448,8 @@ class SetupWizard extends HTMLElement {
             card.addEventListener('click', () => {
                 if (card.dataset.disabled === 'true') return;
                 this.loginChoice = card.dataset.choice as LoginChoice;
+                this.accountLoginComplete = false;
+                this.enterpriseBaseUrlStep = true;
                 this._render();
                 this._bindEvents();
             });
@@ -364,10 +476,115 @@ class SetupWizard extends HTMLElement {
         });
 
         this._bindModelConfigEvents();
+        this._bindAccountEvents();
 
         this.querySelector('#wizard-create-task-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openHomePage();
         });
+    }
+
+    private _bindAccountEvents(): void {
+        const toggleBtn = this.querySelector<HTMLButtonElement>('#wizard-toggle-login-key');
+        toggleBtn?.addEventListener('click', () => {
+            const input = this.querySelector<HTMLInputElement>('#wizard-login-password');
+            const icon = toggleBtn.querySelector('i');
+            if (!input || !icon) return;
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.replace('fa-eye', 'fa-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.replace('fa-eye-slash', 'fa-eye');
+            }
+        });
+
+        this.querySelector<HTMLInputElement>('#wizard-login-username')?.addEventListener('input', (event) => {
+            this.loginUsername = (event.target as HTMLInputElement).value;
+        });
+        this.querySelector<HTMLInputElement>('#wizard-login-password')?.addEventListener('input', (event) => {
+            this.loginPassword = (event.target as HTMLInputElement).value;
+        });
+        this.querySelector<HTMLInputElement>('#wizard-enterprise-base-url')?.addEventListener('input', (event) => {
+            this.enterpriseBaseUrlDraft = (event.target as HTMLInputElement).value;
+        });
+
+        this.querySelector<HTMLButtonElement>('#wizard-enterprise-next')?.addEventListener('click', () => {
+            void this._handleEnterpriseBaseUrlNext();
+        });
+        this.querySelector<HTMLButtonElement>('#wizard-account-finish')?.addEventListener('click', () => {
+            void this._handleAccountLogin();
+        });
+        this.querySelector<HTMLButtonElement>('#wizard-account-back')?.addEventListener('click', () => {
+            this._handleBackToNoLogin();
+        });
+    }
+
+    private async _handleEnterpriseBaseUrlNext(): Promise<void> {
+        const baseUrl = this.enterpriseBaseUrlDraft.trim();
+        const resultDiv = this.querySelector<HTMLElement>('#wizard-account-result');
+        if (!baseUrl) {
+            this._showResult(resultDiv, 'error', this.t('renderer.wizard.enterpriseBaseUrlRequired'));
+            return;
+        }
+        try {
+            await window.accountAPI.configure({ enterprise_base_url: baseUrl });
+            this.enterpriseBaseUrlStep = false;
+            this._render();
+            this._bindEvents();
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this._showResult(resultDiv, 'error', msg);
+        }
+    }
+
+    private async _handleAccountLogin(): Promise<void> {
+        if (this.loginBusy) return;
+        const username = this.loginUsername.trim();
+        const password = this.loginPassword;
+        const resultDiv = this.querySelector<HTMLElement>('#wizard-account-result');
+        if (!username || !password) {
+            this._showResult(resultDiv, 'error', this.t('renderer.wizard.loginRequired'));
+            return;
+        }
+        this.loginBusy = true;
+        this.loginError = null;
+        this._render();
+        this._bindEvents();
+        try {
+            const api = (window as any).accountAPI;
+            if (!api?.login) {
+                throw new Error(this.t('renderer.wizard.accountServiceUnavailable'));
+            }
+            const kind = this.loginChoice === 'enterprise' ? 'enterprise' : 'personal';
+            await api.login(kind, username, password);
+            await this._saveAccountMode();
+            this.loginBusy = false;
+            this.accountLoginComplete = true;
+            this._render();
+            this._bindEvents();
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this.loginError = `${this.t('renderer.wizard.loginFailed')}：${msg}`;
+            this.loginBusy = false;
+            this._render();
+            this._bindEvents();
+        }
+    }
+
+    private _handleBackToNoLogin(): void {
+        this.loginChoice = 'nologin';
+        this.loginError = null;
+        this.loginBusy = false;
+        this.accountLoginComplete = false;
+        this.currentStep = 1;
+        this._render();
+        this._bindEvents();
+    }
+
+    private async _saveAccountMode(): Promise<void> {
+        const mode =
+            this.loginChoice === 'opendesk' ? 'personal' : this.loginChoice === 'enterprise' ? 'enterprise' : 'nologin';
+        await window.accountAPI.configure({ mode });
     }
 
     private _bindModelConfigEvents(): void {
@@ -490,6 +707,9 @@ class SetupWizard extends HTMLElement {
         data.default_model = modelName;
 
         await window.settingAPI.saveSettingObject(data);
+        if (this.loginChoice === 'nologin') {
+            await window.accountAPI.configure({ mode: 'nologin' });
+        }
         this.currentData = data;
     }
 
