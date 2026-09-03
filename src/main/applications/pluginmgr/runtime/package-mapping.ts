@@ -3,9 +3,12 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire, register } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { logger } from '../../../utils/logger.js';
+import { appRootCandidatesFrom } from '../management/paths.js';
 
 /**
  * 会被映射到宿主内置模块的包名。
@@ -24,6 +27,19 @@ export const HOST_PACKAGE_SPECIFIERS = [
     '@bitclub.ai/opendesk-plugin-sdk/package',
     'zod'
 ] as const;
+
+/**
+ * 宿主自带包在应用目录中的 workspace 位置（相对应用根）。
+ *
+ * Plugin SDK 以 `file:packages/plugin-sdk` 的形式被宿主依赖，运行时靠
+ * `node_modules/@bitclub.ai/opendesk-plugin-sdk` 这个指向 workspace 目录的
+ * 符号链接解析。打包、复制或裁剪应用目录时该链接可能不被保留（鸿蒙 HAP 等
+ * 非 Electron 产物尤其容易命中），宿主侧解析随之失败。workspace 目录本身仍随
+ * 应用分发，因此这里保留一条不依赖 node_modules 的兜底路径。
+ */
+const WORKSPACE_PACKAGE_DIRECTORIES = new Map<string, string>([
+    ['@bitclub.ai/opendesk-plugin-sdk', path.join('packages', 'plugin-sdk')]
+]);
 
 /**
  * 从模块 specifier 提取 npm 包名（scoped 包取 `@scope/name`，其余取第一段）。
@@ -48,14 +64,38 @@ function hostRequire(): ReturnType<typeof createRequire> {
 }
 
 /**
+ * 绕过 node_modules，直接从应用根目录下的 workspace 包解析 specifier。
+ *
+ * 以 workspace 包自身的 package.json 作为解析基准，借 Node 的包自引用
+ * （self-reference）解析：specifier 会按该包声明的 `exports` 映射到具体
+ * 产物文件，子路径（如 `./package`）无需在此硬编码。
+ * 定位不到时返回 undefined，由调用方保持原有行为。
+ */
+export function resolveWorkspacePackageUrl(specifier: string, startDirectory: string): string | undefined {
+    const workspaceDirectory = WORKSPACE_PACKAGE_DIRECTORIES.get(packageNameOf(specifier));
+    if (!workspaceDirectory) return undefined;
+    for (const appRoot of appRootCandidatesFrom(startDirectory)) {
+        const manifest = path.join(appRoot, workspaceDirectory, 'package.json');
+        if (!fs.existsSync(manifest)) continue;
+        try {
+            return pathToFileURL(createRequire(manifest).resolve(specifier)).href;
+        } catch {
+            continue;
+        }
+    }
+    return undefined;
+}
+
+/**
  * 从宿主模块解析链定位指定的包入口文件 URL。
- * 解析不到时返回 undefined（保持插件原有加载行为，不阻断）。
+ * 常规解析失败时退回应用根目录下的 workspace 包。
+ * 两者都解析不到时返回 undefined（保持插件原有加载行为，不阻断）。
  */
 function resolveHostPackageUrl(specifier: string): string | undefined {
     try {
         return pathToFileURL(hostRequire().resolve(specifier)).href;
     } catch {
-        return undefined;
+        return resolveWorkspacePackageUrl(specifier, path.dirname(fileURLToPath(import.meta.url)));
     }
 }
 

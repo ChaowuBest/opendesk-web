@@ -5,7 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { registerSdkPackageMapping } from '../../../../main/applications/pluginmgr/runtime/package-mapping.js';
+import {
+    registerSdkPackageMapping,
+    resolveWorkspacePackageUrl
+} from '../../../../main/applications/pluginmgr/runtime/package-mapping.js';
 
 async function createSdkImportingPlugin(pluginId: string): Promise<{ directory: string; url: string }> {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'opendesk-sdk-map-'));
@@ -116,5 +119,82 @@ test('插件自带 SDK 时优先使用插件自身的包', async () => {
         assert.equal(module.default.marker, 'plugin-owned-sdk');
     } finally {
         await rm(directory, { recursive: true, force: true });
+    }
+});
+
+/**
+ * Plugin SDK 以 `file:packages/plugin-sdk` 被宿主依赖，`node_modules` 下只是一个指向
+ * workspace 目录的符号链接。打包、复制或裁剪应用目录时该链接可能不被保留，宿主侧
+ * require.resolve 随之失败，兜底映射失效。workspace 目录（packages/plugin-sdk）仍随
+ * 应用分发，故必须能从应用根直接解析到它。
+ */
+async function createAppRootWithWorkspaceSdk(): Promise<string> {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'opendesk-workspace-sdk-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'opendesk-fixture' }));
+    const sdkRoot = path.join(root, 'packages', 'plugin-sdk');
+    await mkdir(path.join(sdkRoot, 'dist'), { recursive: true });
+    await writeFile(
+        path.join(sdkRoot, 'package.json'),
+        JSON.stringify({
+            name: '@bitclub.ai/opendesk-plugin-sdk',
+            version: '0.0.0-workspace',
+            type: 'module',
+            exports: {
+                '.': { default: './dist/index.js' },
+                './package': { default: './dist/package.js' }
+            }
+        })
+    );
+    await writeFile(path.join(sdkRoot, 'dist', 'index.js'), 'export const definePlugin = (plugin) => plugin;\n');
+    await writeFile(path.join(sdkRoot, 'dist', 'package.js'), 'export const validate = () => true;\n');
+    await mkdir(path.join(root, 'dist', 'main', 'chunks'), { recursive: true });
+    return root;
+}
+
+test('node_modules 链接缺失时，从应用根的 workspace 目录解析宿主 SDK', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        const resolved = resolveWorkspacePackageUrl('@bitclub.ai/opendesk-plugin-sdk', start);
+
+        assert.equal(resolved, pathToFileURL(path.join(root, 'packages/plugin-sdk/dist/index.js')).href);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('workspace 兜底按包声明的 exports 解析子路径', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        const resolved = resolveWorkspacePackageUrl('@bitclub.ai/opendesk-plugin-sdk/package', start);
+
+        assert.equal(resolved, pathToFileURL(path.join(root, 'packages/plugin-sdk/dist/package.js')).href);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('应用根缺少 workspace 目录时不返回兜底路径', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'opendesk-workspace-missing-'));
+    try {
+        await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'opendesk-fixture' }));
+        const start = path.join(root, 'dist', 'main', 'chunks');
+        await mkdir(start, { recursive: true });
+
+        assert.equal(resolveWorkspacePackageUrl('@bitclub.ai/opendesk-plugin-sdk', start), undefined);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('未声明 workspace 位置的宿主包不参与兜底解析', async () => {
+    const root = await createAppRootWithWorkspaceSdk();
+    try {
+        const start = path.join(root, 'dist', 'main', 'chunks');
+
+        assert.equal(resolveWorkspacePackageUrl('zod', start), undefined);
+    } finally {
+        await rm(root, { recursive: true, force: true });
     }
 });

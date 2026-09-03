@@ -9,6 +9,5 @@
     "entry": "./index.mjs",
     "apiVersion": 1,
     "capabilities": ["channel"],
-    "platforms": ["win32", "darwin", "linux"],
     "bundle": true
 }

@@ -174,6 +174,17 @@ function hostExternalPackages(): string[] {
     return external;
 }
 
+/**
+ * bundle 产物是 ESM，但被内联的 CJS 依赖（如 ws）内部仍用 `require('events')`
+ * 之类的同步调用访问 Node 内置模块。esbuild 不会把它们改写成静态 import（会改变
+ * 求值时机），而是留下 `__require(...)`，在 ESM 下 `require` 未定义就抛
+ * `Dynamic require of "..." is not supported`。这里补上模块作用域的 `require`，
+ * `__require` 会自动改用它。与 CLI 产物的 banner（见 esbuild.config.ts）同理。
+ */
+const BUNDLE_BANNER = `import { createRequire as __opendeskCreateRequire } from 'node:module';
+const require = __opendeskCreateRequire(import.meta.url);
+`;
+
 async function bundlePluginEntry(sourceEntry: string, outputEntry: string): Promise<void> {
     await esbuild.build({
         entryPoints: [sourceEntry],
@@ -185,6 +196,7 @@ async function bundlePluginEntry(sourceEntry: string, outputEntry: string): Prom
         minify: true,
         treeShaking: true,
         sourcemap: false,
+        banner: { js: BUNDLE_BANNER },
         external: hostExternalPackages()
     });
 }

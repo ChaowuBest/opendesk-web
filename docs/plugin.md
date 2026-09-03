@@ -39,7 +39,10 @@ plugins/
 > 例外：`@bitclub.ai/opendesk-plugin-sdk`（含 `./package` 子路径）和其运行时
 > 依赖 `zod` 由宿主进程内置。pluginmgr 启动时注册 ESM 解析映射：插件入口
 > `import` 这些包时，先按插件自己的 `node_modules` 解析（尊重插件声明的版本）；
-> 解析失败时回退到宿主内置的同名包。因此插件即使省略 SDK 的
+> 解析失败时回退到宿主内置的同名包。宿主内置包优先从主进程模块链的
+> `node_modules` 解析；SDK 在 `node_modules` 下只是一个指向 workspace 目录的符号
+> 链接，打包、复制或裁剪应用目录时可能不被保留，此时回退到应用根目录下的
+> workspace 包（`packages/plugin-sdk`）。因此插件即使省略 SDK 的
 > `node_modules`（例如鸿蒙端安装的目录插件无法执行 npm install）也能正常
 > 加载。其他第三方依赖仍必须由插件自带。
 
@@ -98,6 +101,10 @@ dist/plugins/
 `packages/plugin-sdk/dist`。该产物由独立的 rollup 构建生成，不在 electron-vite / esbuild
 的编译图中，因此改动 SDK 源码后必须重新执行上述任一构建命令；否则新增的导出在运行时不存在，
 插件会以 `does not provide an export named ...` 加载失败。
+
+`packages/plugin-sdk/dist` 在 Electron 打包布局下位于应用根；插件加载阶段通过
+`package-mapping.ts` 的 workspace 兜底（见上文「内置模块」例外）直接从应用根定位该产物，
+不依赖 `node_modules` 中 SDK 链接是否存在。
 
 Electron 打包时，`dist/plugins` 会作为只读资源复制到 `process.resourcesPath/plugins`；独立
 CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发环境也加载 `dist/plugins`，
