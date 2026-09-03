@@ -9,7 +9,7 @@ import { setRuntimePluginDirectories } from '../../../main/applications/pluginmg
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
-describe('conversation.review plugin hook', () => {
+describe('task.review plugin hook', () => {
     let configDirectory: string;
 
     beforeEach(async () => {
@@ -35,7 +35,7 @@ describe('conversation.review plugin hook', () => {
                 id: 'conversation-review-observer',
                 capabilities: ['hook'],
                 setup(ctx) {
-                    ctx.hooks.on('conversation.review', (input) => {
+                    ctx.hooks.on('task.review', (input) => {
                         received = input;
                     });
                 }
@@ -72,7 +72,7 @@ describe('conversation.review plugin hook', () => {
                 id: 'internal-review-observer',
                 capabilities: ['hook'],
                 setup(ctx) {
-                    ctx.hooks.on('conversation.review', () => {
+                    ctx.hooks.on('task.review', () => {
                         calls++;
                     });
                 }

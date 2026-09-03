@@ -16,6 +16,7 @@ import { disposePluginHost, initializePluginHost, reloadPluginHost } from './run
 import { discoverPlugins } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
 import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
+import { getPluginToolLocalName } from './runtime/tool-names.js';
 import { resolvePluginEntry } from './discovery/loader.js';
 import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
 import {
@@ -226,8 +227,8 @@ export class PluginMgrApplication extends BaseApplication {
                         cwd: definition.transport === 'stdio' ? definition.cwd : undefined,
                         url: definition.transport === 'stdio' ? undefined : definition.url
                     })),
-                    tools: (toolsByPlugin.get(id) ?? []).map(({ definition }) => ({
-                        name: definition.name,
+                    tools: (toolsByPlugin.get(id) ?? []).map(({ pluginId, definition }) => ({
+                        name: getPluginToolLocalName(pluginId, definition.name),
                         description: definition.description
                     })),
                     hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name })),

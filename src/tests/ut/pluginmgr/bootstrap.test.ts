@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
+import { z } from 'zod';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { ChatContext } from '../../../main/aikernel/messages.js';
 import { SkillRegistry } from '../../../main/aikernel/skill.js';
@@ -81,6 +82,37 @@ describe('OpenDesk plugin bootstrap', () => {
             removable: false,
             active: true
         });
+    });
+
+    test('插件管理列表展示 Tool 本地名，同时保留 Host 限定名', async () => {
+        await initializePluginHost();
+        await getPluginHost().activate(
+            {
+                id: 'tool-display',
+                capabilities: ['tool'],
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'inspect',
+                        description: 'Inspect a value',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'inspected';
+                        }
+                    });
+                }
+            },
+            { origin: 'test:tool-display' }
+        );
+
+        const application = new PluginMgrApplication();
+        const entry = (await application.list()).find((candidate) => candidate.id === 'tool-display');
+
+        expect(
+            getPluginHost()
+                .listTools()
+                .find(({ pluginId }) => pluginId === 'tool-display')?.definition.name
+        ).toBe('tool-display-inspect');
+        expect(entry?.tools).toEqual([{ name: 'inspect', description: 'Inspect a value' }]);
     });
 
     test('分别桥接 chat.headers 与 chat.params 到同一模型请求', async () => {

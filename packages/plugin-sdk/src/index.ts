@@ -129,14 +129,14 @@ export interface PluginChatParams {
     maxCompletionTokens?: number;
 }
 
-export interface PluginConversationReviewMessage {
+export interface PluginTaskReviewMessage {
     readonly role: 'user' | 'assistant';
     readonly content: string;
 }
 
-export interface PluginConversationReviewInput {
+export interface PluginTaskReviewInput {
     readonly taskId: string;
-    readonly messages: readonly PluginConversationReviewMessage[];
+    readonly messages: readonly PluginTaskReviewMessage[];
 }
 
 export interface PluginSkillLoadContext {
@@ -378,8 +378,8 @@ export interface PluginHookMap {
         input: PluginChatRequestInput;
         output: PluginChatParams;
     };
-    'conversation.review': {
-        input: PluginConversationReviewInput;
+    'task.review': {
+        input: PluginTaskReviewInput;
         output: Record<string, never>;
     };
     'skill.load.before': {
@@ -517,7 +517,7 @@ export interface PluginHookMap {
 export const OPENDESK_PLUGIN_HOOK_NAMES = [
     'chat.headers',
     'chat.params',
-    'conversation.review',
+    'task.review',
     'skill.load.before',
     'skill.load.after',
     'skill.list.after',
