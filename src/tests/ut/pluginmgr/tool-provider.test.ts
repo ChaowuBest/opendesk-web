@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
-import { ToolCall } from '../../../main/aikernel/messages.js';
+import { ChatContext, ToolCall } from '../../../main/aikernel/messages.js';
 import { PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import type { TaskState } from '../../../main/aikernel/states/tasks.js';
@@ -115,7 +115,7 @@ describe('PluginToolsetProvider', () => {
             getAbortSignal: () => abortController.signal
         } as TaskState);
 
-        expect(toolsets[0]?.name).toBe('plugin-demo');
+        expect(toolsets[0]?.name).toBe('plugin');
         expect(`${toolsets[0]?.name}-${tool?.name}`).toMatch(/^[a-zA-Z0-9_-]+$/);
         expect(result?.result).toBe('hello OpenDesk');
         expect(result?.result_object).toEqual({ greeted: 'OpenDesk' });
@@ -235,10 +235,70 @@ describe('PluginToolsetProvider', () => {
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
         const [toolName] = toolset.getTools().keys();
 
-        expect(toolset.name).toBe('plugin-demo-plugin');
+        expect(toolset.name).toBe('plugin');
         expect(toolName).toBe('demo-plugin-hello-world');
         expect(`${toolset.name}-${toolName}`).toMatch(/^[a-zA-Z0-9_-]+$/);
         await expect(toolset.getTool(toolName)?.execute({})).resolves.toMatchObject({ result: 'safe' });
+    });
+
+    test('模型工具名只包含一次插件 ID', async () => {
+        const host = new PluginHost();
+        await host.activate(
+            definePlugin({
+                id: 'demo-plugin',
+                setup(ctx) {
+                    ctx.tools.register({
+                        name: 'hello-world',
+                        description: 'hello tool',
+                        parameters: z.object({}),
+                        async execute() {
+                            return 'hello';
+                        }
+                    });
+                }
+            }),
+            { origin: 'test:model-tool-name' }
+        );
+
+        const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const chatContext = new ChatContext();
+        chatContext.attachToolsets(toolset);
+
+        expect(toolset.name).toBe('plugin');
+        expect([...chatContext.getTools().keys()]).toEqual(['plugin-demo-plugin-hello-world']);
+        expect(chatContext.getTool('plugin-demo-plugin-hello-world')).toBe(toolset.getTool('demo-plugin-hello-world'));
+    });
+
+    test('多个插件共享 plugin 工具集时仍按 canonical 名称隔离', async () => {
+        const host = new PluginHost();
+        for (const pluginId of ['alpha-plugin', 'beta-plugin']) {
+            await host.activate(
+                definePlugin({
+                    id: pluginId,
+                    setup(ctx) {
+                        ctx.tools.register({
+                            name: 'inspect',
+                            description: `inspect from ${pluginId}`,
+                            parameters: z.object({}),
+                            async execute() {
+                                return pluginId;
+                            }
+                        });
+                    }
+                }),
+                { origin: `test:${pluginId}` }
+            );
+        }
+
+        const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
+        const chatContext = new ChatContext();
+        chatContext.attachToolsets(...toolsets);
+
+        expect(toolsets).toHaveLength(1);
+        expect([...chatContext.getTools().keys()]).toEqual([
+            'plugin-alpha-plugin-inspect',
+            'plugin-beta-plugin-inspect'
+        ]);
     });
 
     test('tool.definition 也能改写 OpenDesk 内置工具定义', async () => {

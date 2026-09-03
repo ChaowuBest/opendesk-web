@@ -30,9 +30,20 @@ describe('renderer fully-loaded guards', () => {
         ).toBeLessThan(startupSource.indexOf('createWindow();'));
     });
 
+    test('registers renderer startup IPC before loading the main window', () => {
+        const startupSource = mainSource.slice(mainSource.indexOf('async function startApplication'));
+        const createWindowIndex = startupSource.indexOf('createWindow();');
+
+        expect(startupSource.indexOf('AgentRegistry.initBuiltinAgents();')).toBeLessThan(createWindowIndex);
+        expect(startupSource.indexOf('registerModeAPIHandlers();')).toBeLessThan(createWindowIndex);
+        expect(startupSource.indexOf('registerNativeBridge();')).toBeLessThan(createWindowIndex);
+    });
+
     test('defers browser session initialization until the main window is shown', () => {
         const startupSource = mainSource.slice(mainSource.indexOf('async function startApplication'));
-        expect(startupSource).toContain("globalMainWindow.once('ready-to-show', triggerBrowserInitialization)");
+        expect(startupSource).toContain('void mainWindowShown.then(() => void ensureBrowserReady())');
+        expect(startupSource).toContain('void mainWindowShown.then(() => void ensureTelemetryReady())');
+        expect(startupSource).not.toContain("globalMainWindow.once('ready-to-show', triggerBrowserInitialization)");
         const fullLoadingBarrier = sourceBetween(
             startupSource,
             'const ensureElectronFullyLoaded',
@@ -42,6 +53,17 @@ describe('renderer fully-loaded guards', () => {
         expect(fullLoadingBarrier).toContain('ensureBrowserReady()');
         expect(fullLoadingBarrier).toContain('registryWorkerReady');
         expect(startupSource).not.toContain('await Promise.all([agentsReady, browserReady])');
+    });
+
+    test('uses the shared main-window shown signal for delayed startup work', () => {
+        const startupSource = mainSource.slice(mainSource.indexOf('async function startApplication'));
+
+        expect(startupSource).toContain(
+            'void mainWindowShown.then(() => void ApplicationRegistry.ensureFullyLoaded())'
+        );
+        expect(startupSource).not.toContain("globalMainWindow.once('ready-to-show', triggerTelemetryInitialization)");
+        expect(startupSource).not.toContain("globalMainWindow.once('ready-to-show', triggerBrowserInitialization)");
+        expect(startupSource).not.toContain("globalMainWindow.once('ready-to-show', triggerLazyLoading)");
     });
 
     test('starts loading the main window before restoring global task state', () => {
@@ -65,6 +87,7 @@ describe('renderer fully-loaded guards', () => {
         expect(finishLoadIndex).toBeGreaterThan(readyToShowIndex);
         expect(createWindowSource).toContain('MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS');
         expect(createWindowSource).toContain('ready-to-show 未触发，使用 did-finish-load 兜底显示主窗口');
+        expect(createWindowSource).toContain('signalMainWindowShown();');
         expect(showIndex).toBeGreaterThanOrEqual(0);
     });
 

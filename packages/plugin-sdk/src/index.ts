@@ -129,12 +129,35 @@ export interface PluginChatParams {
     maxCompletionTokens?: number;
 }
 
+export interface PluginConversationReviewMessage {
+    readonly role: 'user' | 'assistant';
+    readonly content: string;
+}
+
+export interface PluginConversationReviewInput {
+    readonly taskId: string;
+    readonly messages: readonly PluginConversationReviewMessage[];
+}
+
 export interface PluginSkillLoadContext {
     bundleName: string;
     skillName: string;
     skillDirectory?: string;
     source?: 'installed' | 'config' | 'mounted' | 'builtin' | 'plugin';
     frontmatter: Record<string, unknown>;
+}
+
+export type PluginSkillListSource = 'installed' | 'config' | 'mounted';
+
+export interface PluginSkillListItem {
+    readonly name: string;
+    readonly directory: string;
+    readonly source: PluginSkillListSource;
+    readonly enabled: boolean;
+}
+
+export interface PluginSkillListAfterInput {
+    readonly skills: readonly PluginSkillListItem[];
 }
 
 export type PluginSkillLoadBeforeOutput = {
@@ -355,12 +378,20 @@ export interface PluginHookMap {
         input: PluginChatRequestInput;
         output: PluginChatParams;
     };
+    'conversation.review': {
+        input: PluginConversationReviewInput;
+        output: Record<string, never>;
+    };
     'skill.load.before': {
         input: PluginSkillLoadContext;
         output: PluginSkillLoadBeforeOutput;
     };
     'skill.load.after': {
         input: PluginSkillLoadContext;
+        output: Record<string, never>;
+    };
+    'skill.list.after': {
+        input: PluginSkillListAfterInput;
         output: Record<string, never>;
     };
     'skill.install.before': {
@@ -486,8 +517,10 @@ export interface PluginHookMap {
 export const OPENDESK_PLUGIN_HOOK_NAMES = [
     'chat.headers',
     'chat.params',
+    'conversation.review',
     'skill.load.before',
     'skill.load.after',
+    'skill.list.after',
     'skill.install.before',
     'skill.install.after',
     'permission.ask',

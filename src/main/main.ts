@@ -273,6 +273,17 @@ let officeQuitCheckPending = false;
 let officeQuitApproved = false;
 let isHuaweiStartupAuthPending = false;
 let isHuaweiLoginRestorePending = false;
+let resolveMainWindowShown: (() => void) | undefined;
+const mainWindowShown = new Promise<void>((resolve) => {
+    resolveMainWindowShown = resolve;
+});
+
+function signalMainWindowShown(): void {
+    const resolve = resolveMainWindowShown;
+    if (!resolve) return;
+    resolveMainWindowShown = undefined;
+    resolve();
+}
 
 function restoreHuaweiLoginForWorkbenchWindow(reason: string): void {
     if (process.platform !== 'openharmony' || !isHuaweiStartupAuthPending || isHuaweiLoginRestorePending) {
@@ -638,7 +649,7 @@ const createWindow = () => {
         }
     });
 
-    let mainWindowShown = false;
+    let hasShownMainWindow = false;
     let mainWindowShowFallbackTimer: NodeJS.Timeout | undefined;
     const clearMainWindowShowFallback = () => {
         if (!mainWindowShowFallbackTimer) return;
@@ -646,7 +657,7 @@ const createWindow = () => {
         mainWindowShowFallbackTimer = undefined;
     };
     const showMainWindow = (reason: 'ready-to-show' | 'did-finish-load fallback') => {
-        if (mainWindow.isDestroyed() || mainWindowShown || mainWindow.isVisible()) return;
+        if (mainWindow.isDestroyed() || hasShownMainWindow || mainWindow.isVisible()) return;
         // per-monitor DPI 下 BrowserWindow 构造时的 bounds 可能被错误缩放，
         // 在窗口已确定最终显示器（DPI 已就绪）后用 setBounds 精确修正
         if (savedBounds) {
@@ -656,8 +667,9 @@ const createWindow = () => {
             restoreHuaweiLoginForWorkbenchWindow(`workbench ${reason}`);
             return;
         }
-        mainWindowShown = true;
+        hasShownMainWindow = true;
         mainWindow.show();
+        signalMainWindowShown();
         logger.info(`[startup] 主窗口已显示 (${reason})`);
     };
 
@@ -671,7 +683,7 @@ const createWindow = () => {
     mainWindow.webContents.once('did-finish-load', () => {
         mainWindowShowFallbackTimer = setTimeout(() => {
             mainWindowShowFallbackTimer = undefined;
-            if (mainWindowShown || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+            if (hasShownMainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
             logger.warn('[startup] ready-to-show 未触发，使用 did-finish-load 兜底显示主窗口');
             showMainWindow('did-finish-load fallback');
         }, MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS);
@@ -908,6 +920,7 @@ const createWindow = () => {
             restoreHuaweiLoginForWorkbenchWindow('workbench show');
             return;
         }
+        signalMainWindowShown();
         setMainWindowHidden(false);
         safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
@@ -3296,24 +3309,17 @@ async function startApplication(): Promise<void> {
         registerNotificationAPIHandlers();
         registerThemeHandlers();
         registerEmbeddedOpenDeskOffice();
+        AgentRegistry.initBuiltinAgents();
+        registerModeAPIHandlers();
+        registerNativeBridge();
 
         createWindow();
 
         // 启动阶段不采集遥测；主窗口显示后再初始化运行期遥测。
-        const triggerTelemetryInitialization = () => void ensureTelemetryReady();
-        if (globalMainWindow && !globalMainWindow.isVisible()) {
-            globalMainWindow.once('ready-to-show', triggerTelemetryInitialization);
-        } else {
-            triggerTelemetryInitialization();
-        }
+        void mainWindowShown.then(() => void ensureTelemetryReady());
 
         // 浏览器持久化 session 不参与主窗口首屏，窗口显示后再在后台初始化。
-        const triggerBrowserInitialization = () => void ensureBrowserReady();
-        if (globalMainWindow && !globalMainWindow.isVisible()) {
-            globalMainWindow.once('ready-to-show', triggerBrowserInitialization);
-        } else {
-            triggerBrowserInitialization();
-        }
+        void mainWindowShown.then(() => void ensureBrowserReady());
 
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
@@ -3347,7 +3353,6 @@ async function startApplication(): Promise<void> {
                 return () => task.removeSubscriber(subscriber.subscription_id);
             }
         });
-        AgentRegistry.initBuiltinAgents();
         startMemoryCleanupScheduler(() =>
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
@@ -3374,8 +3379,7 @@ async function startApplication(): Promise<void> {
         initAgentGateHook();
 
         // Worker 会继承 ARKDATA_AVAILABLE，因此原生桥探测必须先于 Worker 和应用 Agent 初始化。
-        // 在本回调首次让出事件循环前注册，确保 renderer 的 native bridge IPC 被派发时 handler 已就绪。
-        registerNativeBridge();
+        // Native Bridge IPC 已在 createWindow 前注册，此处只执行需要 ArkTS active context 的能力探测。
         await probeArkdataAvailability();
 
         // 启动 global worker（同步 spawn，不阻塞）。
@@ -3438,12 +3442,7 @@ async function startApplication(): Promise<void> {
         await agentsReady;
 
         // 延迟加载在主窗口显示后触发，避免与 renderer 首次加载竞争资源
-        const triggerLazyLoading = () => ApplicationRegistry.ensureFullyLoaded();
-        if (globalMainWindow && !globalMainWindow.isVisible()) {
-            globalMainWindow.once('ready-to-show', triggerLazyLoading);
-        } else {
-            triggerLazyLoading();
-        }
+        void mainWindowShown.then(() => void ApplicationRegistry.ensureFullyLoaded());
 
         // 注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
         new ElectronExitPlanModeProvider();
@@ -3515,7 +3514,6 @@ async function startApplication(): Promise<void> {
         registerUsageAPIHandlers();
         // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
         // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
-        registerModeAPIHandlers();
         registerFSAPIHandlers();
         // registerSettingAPIHandlers() 已在 createWindow 之前提前注册，
         // 鸿蒙登录校验期间 renderer 需要调用 setting:loadSettingObject 判断是否显示引导页

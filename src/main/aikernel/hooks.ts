@@ -581,8 +581,8 @@ export class Hooks {
      *
      * 典型用途：为任务提供自动审查 / 代码审查能力（如将任务排入审查队列）。
      */
-    onTaskReview(callback: OnTaskReviewCallback, options?: HookOptions): void {
-        this.onTaskReviewHooks.push({ callback, options: resolveHookOptions(options) });
+    onTaskReview(callback: OnTaskReviewCallback, options?: HookOptions): () => void {
+        return this.registerHook(this.onTaskReviewHooks, callback, options);
     }
 
     async noticeOnTaskReview(ctx: OnTaskReviewContext): Promise<void> {

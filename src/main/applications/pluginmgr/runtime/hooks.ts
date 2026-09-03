@@ -4,13 +4,15 @@
  */
 
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import { type ToolCall } from '../../../aikernel/messages.js';
+import { AssistantMessage, UserMessage, type ToolCall } from '../../../aikernel/messages.js';
 import { t } from '../../../../locale/index.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, PluginHookError } from './host.js';
 import type {
     PluginChatRequestInput,
     PluginChatParams,
+    PluginConversationReviewMessage,
+    PluginSkillListItem,
     PluginShellType,
     PluginSkillInstallAfterContext,
     PluginSkillInstallBeforeOutput,
@@ -58,6 +60,46 @@ export async function runPluginChatHeaders(
     return output.headers;
 }
 
+function getConversationReviewMessages(task: TaskState, startMessageIndex: number): PluginConversationReviewMessage[] {
+    const start = Math.max(0, Math.min(startMessageIndex, task.chat_context.messages.length));
+    const messages: PluginConversationReviewMessage[] = [];
+
+    for (const message of task.chat_context.messages.slice(start)) {
+        let role: PluginConversationReviewMessage['role'];
+        let content: string;
+        if (message instanceof UserMessage) {
+            if (message.internal) continue;
+            role = 'user';
+            content = message.getPlainText().trim();
+        } else if (message instanceof AssistantMessage) {
+            role = 'assistant';
+            content = message.content
+                .map((part) => (part.type === 'text' ? part.text : ''))
+                .filter((text) => text.trim().length > 0)
+                .join('\n')
+                .trim();
+        } else {
+            continue;
+        }
+        if (content) messages.push({ role, content });
+    }
+
+    return messages;
+}
+
+export async function runPluginConversationReview(task: TaskState, startMessageIndex: number): Promise<void> {
+    const messages = Object.freeze(
+        getConversationReviewMessages(task, startMessageIndex).map((message) => Object.freeze({ ...message }))
+    );
+    try {
+        await getPluginHost().trigger('conversation.review', Object.freeze({ taskId: task.task_id, messages }), {});
+    } catch (error) {
+        if (!(error instanceof PluginHookError)) {
+            logger.error(`Plugin conversation-review hook failed: ${task.task_id}`, error);
+        }
+    }
+}
+
 export async function runPluginBeforeSkillLoad(input: PluginSkillLoadContext): Promise<PluginSkillLoadBeforeOutput> {
     const output: PluginSkillLoadBeforeOutput = { operation: 'allow' };
     await getPluginHost().trigger('skill.load.before', input, output);
@@ -70,6 +112,17 @@ export async function runPluginAfterSkillLoad(input: PluginSkillLoadContext): Pr
     } catch (error) {
         if (!(error instanceof PluginHookError)) {
             logger.error(`Plugin after-skill-load hook failed: ${input.bundleName}/${input.skillName}`, error);
+        }
+    }
+}
+
+export async function runPluginAfterSkillList(skills: readonly PluginSkillListItem[]): Promise<void> {
+    try {
+        const snapshot = Object.freeze(skills.map((skill) => Object.freeze({ ...skill })));
+        await getPluginHost().trigger('skill.list.after', Object.freeze({ skills: snapshot }), {});
+    } catch (error) {
+        if (!(error instanceof PluginHookError)) {
+            logger.error('Plugin after-skill-list hook failed', error);
         }
     }
 }
