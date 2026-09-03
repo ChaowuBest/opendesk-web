@@ -701,8 +701,20 @@ class AgentInput extends HTMLElement {
         const textarea = this.querySelector('#agent-input-textarea');
         if (textarea) {
             textarea.value = text || '';
+            this.autoResizeTextarea(textarea);
             this.updateSendButtonState();
         }
+    }
+
+    /**
+     * 根据内容自动调整输入框高度（最小高度由 min-h-14 保证，上限 240px 与 max-h-60 对应）。
+     * @param {HTMLTextAreaElement} textarea
+     */
+    autoResizeTextarea(textarea) {
+        if (!textarea) return;
+        // 先归零再按内容高度赋值，避免删除内容时高度残留
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 240) + 'px';
     }
 
     /**
@@ -1264,7 +1276,7 @@ class AgentInput extends HTMLElement {
                             id="agent-input-textarea"
                             placeholder="${inputPlaceholder}"
                             aria-label="${inputPlaceholder}"
-                            class="w-full h-14 resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
+                            class="w-full min-h-14 max-h-60 overflow-y-auto resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
                         ></textarea>
                         <div id="agent-input-placeholder" class="agent-input-placeholder" aria-hidden="true">${inputPlaceholderHTML}</div>
                     </div>
@@ -2897,6 +2909,8 @@ class AgentInput extends HTMLElement {
             );
             // 检测 / 和 @ 触发补全
             this.handleAutocompleteInput(textarea);
+            // 根据内容自动调整高度
+            this.autoResizeTextarea(textarea);
             // 更新发送按钮状态
             this.updateSendButtonState();
         });
@@ -3359,6 +3373,7 @@ class ApplicationAgentInput extends HTMLElement {
                 });
                 this.dispatchEvent(submitEvent);
                 textarea.value = '';
+                this.autoResizeTextarea(textarea);
             }
         });
 
