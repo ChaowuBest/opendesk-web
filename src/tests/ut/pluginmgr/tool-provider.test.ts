@@ -56,7 +56,7 @@ describe('PluginToolsetProvider', () => {
         const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets(taskState);
         await applyPluginToolDefinitions(toolsets, taskState, host);
         const [toolset] = toolsets;
-        const tool = toolset.getTool('capability-demo-write-report');
+        const tool = toolset.getTool('write-report');
         const permissions = tool?.getDeclaredPermissions({ path: '/workspace/report.md' }, taskState);
         const execution = await tool?.execute(
             { path: '/workspace/report.md' },
@@ -108,19 +108,19 @@ describe('PluginToolsetProvider', () => {
         );
 
         const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolsets[0]?.getTool('demo-hello');
+        const tool = toolsets[0]?.getTool('hello');
         const result = await tool?.execute({ name: 'OpenDesk' }, undefined, {
             task_id: 'task-1',
             getWorkspace: () => '/workspace',
             getAbortSignal: () => abortController.signal
         } as TaskState);
 
-        expect(toolsets[0]?.name).toBe('plugin');
+        expect(toolsets[0]?.name).toBe('plugin-demo');
         expect(`${toolsets[0]?.name}-${tool?.name}`).toMatch(/^[a-zA-Z0-9_-]+$/);
         expect(result?.result).toBe('hello OpenDesk');
         expect(result?.result_object).toEqual({ greeted: 'OpenDesk' });
         expect(receivedAbort).toBe(abortController.signal);
-        const call = new ToolCall(0, 'call-1', 'demo-hello', '{"name":"OpenDesk"}');
+        const call = new ToolCall(0, 'call-1', 'plugin-demo-hello', '{"name":"OpenDesk"}');
         await expect(tool?.renderToolCall(call)).resolves.toBeUndefined();
         expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
         abortController.abort();
@@ -164,7 +164,7 @@ describe('PluginToolsetProvider', () => {
             host
         );
 
-        expect(toolsets[0]?.getTool('demo-hello')?.description).toBe('transformed: hello tool');
+        expect(toolsets[0]?.getTool('hello')?.description).toBe('transformed: hello tool');
     });
 
     test.each([
@@ -235,8 +235,8 @@ describe('PluginToolsetProvider', () => {
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
         const [toolName] = toolset.getTools().keys();
 
-        expect(toolset.name).toBe('plugin');
-        expect(toolName).toBe('demo-plugin-hello-world');
+        expect(toolset.name).toBe('plugin-demo-plugin');
+        expect(toolName).toBe('hello-world');
         expect(`${toolset.name}-${toolName}`).toMatch(/^[a-zA-Z0-9_-]+$/);
         await expect(toolset.getTool(toolName)?.execute({})).resolves.toMatchObject({ result: 'safe' });
     });
@@ -264,13 +264,26 @@ describe('PluginToolsetProvider', () => {
         const chatContext = new ChatContext();
         chatContext.attachToolsets(toolset);
 
-        expect(toolset.name).toBe('plugin');
+        expect(toolset.name).toBe('plugin-demo-plugin');
         expect([...chatContext.getTools().keys()]).toEqual(['plugin-demo-plugin-hello-world']);
-        expect(chatContext.getTool('plugin-demo-plugin-hello-world')).toBe(toolset.getTool('demo-plugin-hello-world'));
+        expect(chatContext.getTool('plugin-demo-plugin-hello-world')).toBe(toolset.getTool('hello-world'));
     });
 
-    test('多个插件共享 plugin 工具集时仍按 canonical 名称隔离', async () => {
+    test('每个插件使用独立工具集并允许不同插件注册同名工具', async () => {
         const host = new PluginHost();
+        const definitionInputs: Array<{ tool: string; pluginId?: string }> = [];
+        await host.activate(
+            definePlugin({
+                id: 'definition-observer',
+                capabilities: ['hook'],
+                setup(ctx) {
+                    ctx.hooks.on('tool.definition', (input) => {
+                        if (input.pluginId) definitionInputs.push({ tool: input.tool, pluginId: input.pluginId });
+                    });
+                }
+            }),
+            { origin: 'test:definition-observer' }
+        );
         for (const pluginId of ['alpha-plugin', 'beta-plugin']) {
             await host.activate(
                 definePlugin({
@@ -291,13 +304,19 @@ describe('PluginToolsetProvider', () => {
         }
 
         const toolsets = await new PluginToolsetProvider(host).listAvailableToolsets();
+        await applyPluginToolDefinitions(toolsets, undefined, host);
         const chatContext = new ChatContext();
         chatContext.attachToolsets(...toolsets);
 
-        expect(toolsets).toHaveLength(1);
+        expect(toolsets.map(({ name }) => name)).toEqual(['plugin-alpha-plugin', 'plugin-beta-plugin']);
+        expect(toolsets.every((toolset) => toolset.getTool('inspect'))).toBe(true);
         expect([...chatContext.getTools().keys()]).toEqual([
             'plugin-alpha-plugin-inspect',
             'plugin-beta-plugin-inspect'
+        ]);
+        expect(definitionInputs).toEqual([
+            { tool: 'alpha-plugin-inspect', pluginId: 'alpha-plugin' },
+            { tool: 'beta-plugin-inspect', pluginId: 'beta-plugin' }
         ]);
     });
 
@@ -355,8 +374,9 @@ describe('PluginToolsetProvider', () => {
             getWorkspace: () => '/workspace/two'
         } as TaskState);
 
-        expect(matching[0]?.getTool('workspace-demo-hello')).toBeDefined();
-        expect(other[0]?.getTool('workspace-demo-hello')).toBeDefined();
+        expect(matching[0]?.name).toBe('plugin-workspace-demo');
+        expect(matching[0]?.getTool('hello')).toBeDefined();
+        expect(other[0]?.getTool('hello')).toBeDefined();
     });
 
     test('使用结构化 DTO 安全渲染插件工具', async () => {
@@ -394,8 +414,8 @@ describe('PluginToolsetProvider', () => {
         );
 
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolset.getTool('render-demo-inspect');
-        const call = new ToolCall(0, 'call-1', 'render-demo-inspect', '{"value":"demo"}');
+        const tool = toolset.getTool('inspect');
+        const call = new ToolCall(0, 'call-1', 'plugin-render-demo-inspect', '{"value":"demo"}');
         call.args_object = { value: 'demo' };
         call.status = 'success';
         call.result = 'done';
@@ -405,7 +425,7 @@ describe('PluginToolsetProvider', () => {
         const lines = tool?.renderToolCallCli(call, 72);
 
         expect(guiContext).toEqual({
-            tool: 'render-demo-inspect',
+            tool: 'plugin-render-demo-inspect',
             callId: 'call-1',
             status: 'success',
             args: { value: 'demo' },
@@ -451,8 +471,8 @@ describe('PluginToolsetProvider', () => {
             { task_id: 'task-1', getWorkspace: () => '/workspace' } as TaskState,
             host
         );
-        const tool = toolsets[0]?.getTool('renderer-hello');
-        const call = new ToolCall(0, 'call-1', 'renderer-hello', '{}');
+        const tool = toolsets[0]?.getTool('hello');
+        const call = new ToolCall(0, 'call-1', 'plugin-renderer-hello', '{}');
 
         await expect(tool?.renderToolCall(call)).resolves.toContain('custom GUI');
         expect(tool?.renderToolCallCli(call, 80)).toEqual(['custom CLI']);
@@ -485,8 +505,8 @@ describe('PluginToolsetProvider', () => {
             { origin: 'test:broken-renderer' }
         );
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolset.getTool('broken-renderer-hello');
-        const call = new ToolCall(0, 'call-1', 'broken-renderer-hello', '{}');
+        const tool = toolset.getTool('hello');
+        const call = new ToolCall(0, 'call-1', 'plugin-broken-renderer-hello', '{}');
 
         await expect(tool?.renderToolCall(call)).resolves.toBeUndefined();
         expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
@@ -514,8 +534,8 @@ describe('PluginToolsetProvider', () => {
             { origin: 'test:invalid-renderer' }
         );
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolset.getTool('invalid-renderer-hello');
-        const call = new ToolCall(0, 'call-1', 'invalid-renderer-hello', '{}');
+        const tool = toolset.getTool('hello');
+        const call = new ToolCall(0, 'call-1', 'plugin-invalid-renderer-hello', '{}');
 
         expect(tool?.renderToolCallCli(call, 80)).toBeUndefined();
     });

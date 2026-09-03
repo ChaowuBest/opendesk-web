@@ -147,8 +147,9 @@ export default definePlugin({
 });
 ```
 
-工具会以 `hello-greet` 的名字进入 OpenDesk 工具注册表。`setup` 可以返回清理函数或
-`PluginRegistration`；插件停用、重载或宿主退出时会释放注册项。
+工具会以 `hello-greet` 的名字进入 OpenDesk 工具注册表，并放入名为 `plugin-hello` 的独立 Toolset；
+Toolset 内部和插件中心都显示本地名 `greet`，模型侧最终名称为 `plugin-hello-greet`。`setup` 可以返回
+清理函数或 `PluginRegistration`；插件停用、重载或宿主退出时会释放注册项。
 
 ## 其他能力的最小入口
 

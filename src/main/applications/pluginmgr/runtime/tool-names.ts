@@ -15,3 +15,12 @@ export function qualifyPluginToolName(pluginId: string, name: string): string {
     const localName = trimmed.startsWith(`${pluginId}.`) ? trimmed.slice(pluginId.length + 1) : trimmed;
     return `${sanitizeModelToolName(pluginId)}-${sanitizeModelToolName(localName)}`;
 }
+
+export function qualifyPluginToolsetName(pluginId: string): string {
+    return `plugin-${sanitizeModelToolName(pluginId)}`;
+}
+
+export function getPluginToolLocalName(pluginId: string, qualifiedName: string): string {
+    const prefix = `${sanitizeModelToolName(pluginId)}-`;
+    return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : sanitizeModelToolName(qualifiedName);
+}

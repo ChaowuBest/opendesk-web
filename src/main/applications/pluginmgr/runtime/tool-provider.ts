@@ -16,6 +16,7 @@ import { escapeHtml } from '../../../../common/utils/escape.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, type PluginHost } from './host.js';
 import { getPluginMcpToolsets } from './mcp.js';
+import { getPluginToolLocalName, qualifyPluginToolsetName } from './tool-names.js';
 
 const fallbackAbortSignal = new AbortController().signal;
 
@@ -64,8 +65,14 @@ function buildExecutionContext(taskState?: TaskState): ToolExecutionContext {
 }
 
 class PluginTool extends BaseTool<any> {
-    constructor(private readonly definition: ToolDefinition) {
-        super(definition.name, definition.description, definition.parameters);
+    readonly qualifiedName: string;
+
+    constructor(
+        readonly pluginId: string,
+        private readonly definition: ToolDefinition
+    ) {
+        super(getPluginToolLocalName(pluginId, definition.name), definition.description, definition.parameters);
+        this.qualifiedName = definition.name;
         this.agentIds = definition.agentIds;
         this.serialExecution = definition.serialExecution ?? false;
         this.setUniversalExecutor(async (args, result, taskState?: TaskState) => {
@@ -117,8 +124,8 @@ class PluginTool extends BaseTool<any> {
     }
 }
 
-function createPluginTool(definition: ToolDefinition): BaseTool<any> {
-    return new PluginTool(definition);
+function createPluginTool(pluginId: string, definition: ToolDefinition): BaseTool<any> {
+    return new PluginTool(pluginId, definition);
 }
 
 class PluginDefinedTool extends BaseTool<any> {
@@ -168,12 +175,14 @@ export class PluginToolsetProvider implements ToolsetProvider {
     constructor(private readonly host: PluginHost = getPluginHost()) {}
 
     async listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
-        const pluginToolset = new BaseToolset('plugin');
+        const pluginToolsets = new Map<string, BaseToolset>();
         for (const record of this.host.listTools()) {
-            pluginToolset.addTool(createPluginTool(record.definition));
+            const toolsetName = qualifyPluginToolsetName(record.pluginId);
+            const toolset = pluginToolsets.get(toolsetName) ?? new BaseToolset(toolsetName);
+            pluginToolsets.set(toolsetName, toolset);
+            toolset.addTool(createPluginTool(record.pluginId, record.definition));
         }
-        const pluginToolsets = pluginToolset.tools.size > 0 ? [pluginToolset] : [];
-        return [...pluginToolsets, ...(await getPluginMcpToolsets(taskState?.getWorkspace() || undefined))];
+        return [...pluginToolsets.values(), ...(await getPluginMcpToolsets(taskState?.getWorkspace() || undefined))];
     }
 }
 
@@ -182,9 +191,10 @@ export async function applyPluginToolDefinitions(
     taskState?: TaskState,
     host: PluginHost = getPluginHost()
 ): Promise<void> {
-    const owners = new Map(host.listTools().map((record) => [record.definition.name, record.pluginId]));
     for (const toolset of toolsets) {
         for (const [name, source] of toolset.tools) {
+            const pluginTool = source instanceof PluginTool ? source : undefined;
+            const hookToolName = pluginTool?.qualifiedName ?? name;
             const output = {
                 description: source.description,
                 parameters: source.params
@@ -193,15 +203,15 @@ export async function applyPluginToolDefinitions(
                 await host.trigger(
                     'tool.definition',
                     {
-                        tool: name,
-                        pluginId: owners.get(name),
+                        tool: hookToolName,
+                        pluginId: pluginTool?.pluginId,
                         taskId: taskState?.task_id,
                         workspace: taskState?.getWorkspace() || undefined
                     },
                     output
                 );
             } catch (error) {
-                logger.error(`Plugin tool definition hook failed: ${name}`, error);
+                logger.error(`Plugin tool definition hook failed: ${hookToolName}`, error);
                 continue;
             }
             if (output.description !== source.description || output.parameters !== source.params) {
