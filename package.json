@@ -173,7 +173,7 @@
         "mailparser": "^3.9.1",
         "marked": "^17.0.1",
         "marked-highlight": "^2.2.3",
-        "marked-katex-extension": "^5.1.6",
+        "marked-katex-extension": "^5.1.12",
         "nedb": "^1.8.0",
         "nedb-promises": "^6.2.3",
         "node-imap": "^0.9.6",
