@@ -11,7 +11,7 @@ import { getPluginHost, PluginHookError } from './host.js';
 import type {
     PluginChatRequestInput,
     PluginChatParams,
-    PluginConversationReviewMessage,
+    PluginTaskReviewMessage,
     PluginSkillListItem,
     PluginShellType,
     PluginSkillInstallAfterContext,
@@ -60,12 +60,12 @@ export async function runPluginChatHeaders(
     return output.headers;
 }
 
-function getConversationReviewMessages(task: TaskState, startMessageIndex: number): PluginConversationReviewMessage[] {
+function getTaskReviewMessages(task: TaskState, startMessageIndex: number): PluginTaskReviewMessage[] {
     const start = Math.max(0, Math.min(startMessageIndex, task.chat_context.messages.length));
-    const messages: PluginConversationReviewMessage[] = [];
+    const messages: PluginTaskReviewMessage[] = [];
 
     for (const message of task.chat_context.messages.slice(start)) {
-        let role: PluginConversationReviewMessage['role'];
+        let role: PluginTaskReviewMessage['role'];
         let content: string;
         if (message instanceof UserMessage) {
             if (message.internal) continue;
@@ -87,15 +87,15 @@ function getConversationReviewMessages(task: TaskState, startMessageIndex: numbe
     return messages;
 }
 
-export async function runPluginConversationReview(task: TaskState, startMessageIndex: number): Promise<void> {
+export async function runPluginTaskReview(task: TaskState, startMessageIndex: number): Promise<void> {
     const messages = Object.freeze(
-        getConversationReviewMessages(task, startMessageIndex).map((message) => Object.freeze({ ...message }))
+        getTaskReviewMessages(task, startMessageIndex).map((message) => Object.freeze({ ...message }))
     );
     try {
-        await getPluginHost().trigger('conversation.review', Object.freeze({ taskId: task.task_id, messages }), {});
+        await getPluginHost().trigger('task.review', Object.freeze({ taskId: task.task_id, messages }), {});
     } catch (error) {
         if (!(error instanceof PluginHookError)) {
-            logger.error(`Plugin conversation-review hook failed: ${task.task_id}`, error);
+            logger.error(`Plugin task-review hook failed: ${task.task_id}`, error);
         }
     }
 }

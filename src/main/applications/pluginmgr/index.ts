@@ -26,8 +26,8 @@ export type {
     PluginChatRequestInput,
     PluginChatHeadersOutput,
     PluginChatParams,
-    PluginConversationReviewMessage,
-    PluginConversationReviewInput,
+    PluginTaskReviewMessage,
+    PluginTaskReviewInput,
     PluginSkillLoadContext,
     PluginSkillLoadBeforeOutput,
     PluginSkillListSource,
@@ -98,7 +98,7 @@ export type { PluginRegistryData, PluginRegistryRecord, PluginSourceKind } from 
 export {
     runPluginChatHeaders,
     runPluginChatParams,
-    runPluginConversationReview,
+    runPluginTaskReview,
     runPluginAfterSkillList,
     runPluginBeforeSkillInstall,
     runPluginAfterSkillInstall

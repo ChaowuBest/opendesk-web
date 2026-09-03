@@ -26,7 +26,7 @@ import {
     runPluginAfterSkillLoad,
     runPluginBeforeSkillLoad,
     runPluginBeforePermissionAsk,
-    runPluginConversationReview,
+    runPluginTaskReview,
     runPluginShellEnv
 } from './hooks.js';
 import { applyPluginToolDefinitions } from './tool-provider.js';
@@ -46,8 +46,7 @@ let disposeAikernelHooks: (() => void)[] = [];
 
 function notifyPluginSkillsChanged(): void {
     const application = ApplicationRegistry.getApplication('skillmgr') as
-        | { notifyExternalSkillsChanged?: (bundleName: string) => void }
-        | undefined;
+        { notifyExternalSkillsChanged?: (bundleName: string) => void } | undefined;
     if (application?.notifyExternalSkillsChanged) {
         application.notifyExternalSkillsChanged(PLUGIN_SKILL_BUNDLE);
     } else {
@@ -199,7 +198,7 @@ async function initialize(): Promise<void> {
     disposeAikernelHooks.push(
         GlobalHooks.onTaskReview(async ({ task, startMessageIndex }) => {
             if (task.parent_id !== null || task.internal === true) return;
-            await runPluginConversationReview(task, startMessageIndex);
+            await runPluginTaskReview(task, startMessageIndex);
         })
     );
     disposeAikernelHooks.push(

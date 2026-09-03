@@ -726,9 +726,9 @@ GUI callMainWorld
   -> skill.install.after
 ```
 
-### Conversation Hooks
+### Task Hooks
 
-`conversation.review` 复用 AIKernel 的 `onTaskReview` 生命周期，在主任务达到空闲审查阈值或用户手动触发
+`task.review` 复用 AIKernel 的 `onTaskReview` 生命周期，在主任务达到空闲审查阈值或用户手动触发
 任务审查时执行。输入包含 `taskId` 和本次审查范围内的 `messages`；消息只保留非内部的用户文本和
 Assistant 可见文本，不包含 reasoning、工具调用、工具结果、子任务或内部任务内容。该 Hook 是只读通知。
 
@@ -738,7 +738,7 @@ Assistant 可见文本，不包含 reasoning、工具调用、工具结果、子
 
 - `chat.headers`：在当前模型请求前追加或改写 HTTP Header。
 - `chat.params`：在当前模型请求前调整推理强度和最大输出 token。
-- `conversation.review`：主任务进入会话审查阶段时提供本次审查范围内的可见对话。
+- `task.review`：主任务进入会话审查阶段时提供本次审查范围内的可见对话。
 - `skill.load.before`：在 Agent 明确加载某个 Skill 时触发，可通过 `output.operation = 'deny'` 拒绝本次加载。
 - `skill.load.after`：某个 Skill 成功加载并生成完整正文后触发，仅用于观测和审计。
 - `skill.list.after`：SkillMgr 本地技能列表首次加载或发生变化后触发，仅用于观测。
