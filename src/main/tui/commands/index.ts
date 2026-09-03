@@ -43,6 +43,7 @@ import { registerModelCommand } from './model.js';
 import { registerGoalCommand } from './goal.js';
 import { registerUsageCommand } from './usage.js';
 import { registerFeedbackCommand } from './feedback.js';
+import { registerAccountCommands, registerLoginCommand, registerLogoutCommand } from './account.js';
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -80,4 +81,7 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerGoalCommand(tui);
     registerUsageCommand(tui);
     registerFeedbackCommand(tui);
+    registerAccountCommands(tui);
+    registerLoginCommand(tui);
+    registerLogoutCommand(tui);
 }

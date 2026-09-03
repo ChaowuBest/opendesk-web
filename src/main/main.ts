@@ -130,6 +130,7 @@ import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/
 import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
+import { registerElectronAccountIntegration } from './applications/account/electron.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
@@ -3280,6 +3281,7 @@ async function startApplication(): Promise<void> {
         // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
         // taskManager handler 会在本回调首次让出事件循环前完成注册。
         registerSettingAPIHandlers();
+        registerElectronAccountIntegration();
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
         registerThemeHandlers();

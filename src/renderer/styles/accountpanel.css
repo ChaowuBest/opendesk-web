@@ -1,0 +1,327 @@
+:host {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.account-panel {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--pc-text, #4a4642);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.trigger:hover {
+    background: var(--pc-hover, rgba(0, 0, 0, 0.06));
+}
+
+.trigger-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--pc-accent, #df4436);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+
+.trigger-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.trigger-name {
+    font-size: 13px;
+    color: var(--pc-heading, #1c1917);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.trigger-login {
+    font-size: 13px;
+    color: var(--pc-heading, #1c1917);
+}
+
+.popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 300px;
+    background: var(--pc-card-bg, #fff);
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.1));
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    padding: 16px;
+    z-index: 100;
+    box-sizing: border-box;
+}
+
+.popover::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: 20px;
+    width: 12px;
+    height: 12px;
+    background: var(--pc-card-bg, #fff);
+    border-left: 1px solid var(--pc-border, rgba(0, 0, 0, 0.1));
+    border-top: 1px solid var(--pc-border, rgba(0, 0, 0, 0.1));
+    transform: rotate(45deg);
+}
+
+.form-title {
+    margin: 0 0 12px;
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--pc-heading, #1c1917);
+}
+
+.field {
+    margin-bottom: 10px;
+}
+
+.field label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--pc-muted, #8a8580);
+}
+
+.field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--pc-text, #4a4642);
+    background: var(--pc-input-bg, #fff);
+    outline: none;
+}
+
+.field input:focus {
+    border-color: var(--pc-accent, #df4436);
+}
+
+.password-wrap {
+    position: relative;
+}
+
+.password-wrap input {
+    padding-right: 32px;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    color: var(--pc-muted, #8a8580);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+}
+
+.error-text {
+    margin: 0 0 10px;
+    color: var(--pc-error, #d33);
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.btn {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--pc-accent, #df4436);
+    color: #fff;
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--pc-muted, #8a8580);
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
+}
+
+.profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--pc-border, rgba(0, 0, 0, 0.08));
+}
+
+.profile-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--pc-accent, #df4436);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 650;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.profile-main {
+    min-width: 0;
+    flex: 1;
+}
+
+.profile-name {
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--pc-heading, #1c1917);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.profile-email {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--pc-muted, #8a8580);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.profile-section {
+    margin-top: 12px;
+}
+
+.profile-section-title {
+    font-size: 12px;
+    color: var(--pc-muted, #8a8580);
+    margin-bottom: 6px;
+}
+
+.edit-row {
+    display: flex;
+    gap: 8px;
+}
+
+.edit-row input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--pc-text, #4a4642);
+    background: var(--pc-input-bg, #fff);
+    outline: none;
+}
+
+.edit-row input:focus {
+    border-color: var(--pc-accent, #df4436);
+}
+
+.edit-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--pc-muted, #8a8580);
+}
+
+.success-text {
+    margin: 6px 0 0;
+    color: var(--pc-success, #2e7d32);
+    font-size: 12px;
+}
+
+.logout-row {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--pc-border, rgba(0, 0, 0, 0.08));
+}
+
+.btn-danger {
+    width: 100%;
+    background: transparent;
+    color: var(--pc-error, #d33);
+    border: 1px solid var(--pc-error, #d33);
+}
+
+.btn-danger:hover {
+    background: rgba(211, 51, 51, 0.08);
+}
+
+.confirm-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.confirm-row .btn-confirm {
+    background: var(--pc-error, #d33);
+    color: #fff;
+}
+
+.confirm-row .btn-cancel {
+    background: transparent;
+    color: var(--pc-muted, #8a8580);
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
+}
+
+.url-info {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--pc-hover, rgba(0, 0, 0, 0.04));
+    font-size: 12px;
+    color: var(--pc-muted, #8a8580);
+    word-break: break-all;
+}

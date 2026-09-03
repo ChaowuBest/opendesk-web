@@ -463,6 +463,15 @@ setup-wizard .f-actions .wiz-btn-secondary {
     flex: 1;
 }
 
+setup-wizard .ob-back {
+    margin-top: 16px;
+}
+
+setup-wizard .ob-back .wiz-btn-ghost {
+    font-size: 13px;
+    color: var(--accent, var(--wizard-accent, #df4436));
+}
+
 setup-wizard .wiz-btn {
     display: inline-flex;
     align-items: center;

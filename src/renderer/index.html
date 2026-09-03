@@ -682,7 +682,13 @@
             async function needsWizard() {
                 try {
                     var data = await window.settingAPI.loadSettingObject();
-                    return !data.providers || data.providers.length === 0;
+                    if (data.providers && data.providers.length > 0) {
+                        return false;
+                    }
+                    if (window.accountAPI && (await window.accountAPI.isSetupComplete())) {
+                        return false;
+                    }
+                    return true;
                 } catch (e) {
                     return false;
                 }
