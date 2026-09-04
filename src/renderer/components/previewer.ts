@@ -310,3 +310,124 @@ export function enhanceToolPreviewCards(container: HTMLElement): void {
         card.appendChild(shadowHost);
     }
 }
+
+interface MermaidPipeline {
+    render(id: string, code: string): Promise<{ svg: string }>;
+    sanitize(svg: string): string;
+}
+
+let mermaidPipelinePromise: Promise<MermaidPipeline> | null = null;
+let mermaidSeq = 0;
+
+/**
+ * Lazily load and initialize mermaid + DOMPurify.
+ * Mermaid is large, so it is only fetched via dynamic import when the first
+ * mermaid block needs rendering, keeping the initial bundle size unaffected.
+ */
+function loadMermaidPipeline(): Promise<MermaidPipeline> {
+    if (!mermaidPipelinePromise) {
+        mermaidPipelinePromise = (async () => {
+            const [mermaidMod, dompurifyMod] = await Promise.all([import('mermaid'), import('dompurify')]);
+            const mermaid = mermaidMod.default;
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: 'strict',
+                htmlLabels: false,
+                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default'
+            });
+            return {
+                render: (id: string, code: string) => mermaid.render(id, code),
+                sanitize: (svg: string) =>
+                    dompurifyMod.default.sanitize(svg, {
+                        USE_PROFILES: { svg: true, svgFilters: true }
+                    })
+            };
+        })();
+    }
+    return mermaidPipelinePromise;
+}
+
+/**
+ * Scan `container` for mermaid placeholders (`.mermaid-block`) produced by the
+ * main-process markdown renderer and render them as SVG. Placeholders already
+ * rendered are marked with `data-mermaid-rendered` and skipped, making this
+ * function safe to call repeatedly (e.g. during streaming).
+ */
+export function renderMermaidBlocks(container: HTMLElement): void {
+    const blocks = container.querySelectorAll<HTMLElement>('.mermaid-block:not([data-mermaid-rendered])');
+    for (const block of blocks) {
+        void renderMermaidBlock(block);
+    }
+}
+
+async function renderMermaidBlock(block: HTMLElement): Promise<void> {
+    const encoded = block.dataset.mermaidCode;
+    if (!encoded) {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    let source: string;
+    try {
+        source = decodeBase64Utf8(encoded);
+    } catch {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    if (!source.trim()) {
+        block.dataset.mermaidRendered = 'error';
+        return;
+    }
+    try {
+        const pipeline = await loadMermaidPipeline();
+        mermaidSeq += 1;
+        const id = `od-mermaid-${mermaidSeq}`;
+        const { svg } = await pipeline.render(id, source);
+        const sanitized = pipeline.sanitize(svg);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mermaid-rendered';
+        wrapper.innerHTML = sanitized;
+        const svgEl = wrapper.querySelector('svg');
+        if (svgEl) {
+            svgEl.style.maxWidth = '100%';
+            svgEl.style.height = 'auto';
+        }
+
+        // 源码视图（默认隐藏，切换开关后显示）
+        const sourcePre = document.createElement('pre');
+        sourcePre.className = 'mermaid-source';
+        sourcePre.textContent = source;
+        sourcePre.style.display = 'none';
+
+        // header + 预览开关（默认显示渲染结果，可切到源码）
+        const header = document.createElement('div');
+        header.className = 'mermaid-block-header';
+        const langLabel = document.createElement('span');
+        langLabel.className = 'mermaid-block-lang';
+        langLabel.textContent = 'Mermaid';
+        header.appendChild(langLabel);
+        const toggle = createToggleButton(true);
+        header.appendChild(toggle);
+        const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+        checkbox.addEventListener('change', () => {
+            const showPreview = checkbox.checked;
+            sourcePre.style.display = showPreview ? 'none' : '';
+            wrapper.style.display = showPreview ? '' : 'none';
+            toggle.title = showPreview ? '切换到源码' : '切换到预览';
+        });
+
+        block.replaceChildren(header, sourcePre, wrapper);
+        block.dataset.mermaidRendered = 'true';
+    } catch (err) {
+        // 渲染失败：暴露真实错误便于诊断；回退显示源码避免出现空白占位。
+        // 不标记 data-mermaid-rendered，流式阶段下一帧会重新尝试渲染。
+        console.error('[mermaid] render failed:', err);
+        showMermaidSourceFallback(block, source);
+    }
+}
+
+function showMermaidSourceFallback(block: HTMLElement, source: string): void {
+    const pre = document.createElement('pre');
+    pre.className = 'mermaid-fallback';
+    pre.textContent = source;
+    block.replaceChildren(pre);
+}

@@ -17,7 +17,7 @@ import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
-import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
+import { enhanceCodeBlocks, enhanceToolPreviewCards, renderMermaidBlocks } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
@@ -1206,6 +1206,7 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
+        renderMermaidBlocks(historyContainer);
         this._syncPendingGoalEditToArtifacts();
     }
 
@@ -1236,6 +1237,7 @@ class TaskView extends HTMLElement {
                 for (const element of insertedElements) {
                     enhanceCodeBlocks(element);
                     enhanceToolPreviewCards(element);
+                    renderMermaidBlocks(element);
                 }
             }
 
@@ -1496,6 +1498,7 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
+        renderMermaidBlocks(message_content);
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
@@ -1589,6 +1592,7 @@ class TaskView extends HTMLElement {
 
         if (progress.last_part.type === 'text') {
             enhanceCodeBlocks(last_part_element);
+            renderMermaidBlocks(last_part_element);
         }
 
         // 流式光标：任务运行中且当前 part 为文本时，在末尾追加闪烁光标

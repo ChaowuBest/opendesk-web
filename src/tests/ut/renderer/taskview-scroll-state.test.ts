@@ -79,7 +79,8 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         }));
         await jest.unstable_mockModule('../../../renderer/components/previewer.ts', () => ({
             enhanceCodeBlocks: jest.fn(),
-            enhanceToolPreviewCards: jest.fn()
+            enhanceToolPreviewCards: jest.fn(),
+            renderMermaidBlocks: jest.fn()
         }));
 
         window.settingAPI = {

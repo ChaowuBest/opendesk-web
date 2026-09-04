@@ -295,6 +295,69 @@ html[data-theme='dark'] .reasoning-icon-breathing {
     overflow: hidden !important;
     width: 100% !important;
 }
+/* Mermaid diagram */
+.markdown-body .mermaid-block {
+    margin: 0.6em 0 !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+}
+/* 渲染前的空占位：居中 + 最小高度 */
+.markdown-body .mermaid-block:not([data-mermaid-rendered]) {
+    min-height: 60px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 12px !important;
+}
+.markdown-body .mermaid-block-header {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 0.35em 0.75em !important;
+    background: #f8fafc !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+}
+.markdown-body .mermaid-block-lang {
+    font-size: var(--fs-sm) !important;
+    font-weight: 600 !important;
+    color: #64748b !important;
+    user-select: none !important;
+}
+.markdown-body .mermaid-block .mermaid-rendered {
+    width: 100% !important;
+    overflow-x: auto !important;
+    padding: 12px !important;
+    box-sizing: border-box !important;
+}
+.markdown-body .mermaid-block svg {
+    max-width: 100% !important;
+    height: auto !important;
+}
+.markdown-body .mermaid-block .mermaid-source,
+.markdown-body .mermaid-block .mermaid-fallback {
+    margin: 0 !important;
+    padding: 12px !important;
+    width: 100% !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace) !important;
+    font-size: var(--fs-sm) !important;
+    overflow-x: auto !important;
+    box-sizing: border-box !important;
+}
+task-view .markdown-body .mermaid-block {
+    border-color: var(--chat-line-soft) !important;
+}
+task-view .markdown-body .mermaid-block-header {
+    background: var(--chat-sb-bg) !important;
+    border-bottom-color: var(--chat-line-soft) !important;
+}
+task-view .markdown-body .mermaid-block-lang {
+    color: var(--chat-ink3) !important;
+}
 .markdown-body .code-block-header {
     display: flex !important;
     align-items: center !important;

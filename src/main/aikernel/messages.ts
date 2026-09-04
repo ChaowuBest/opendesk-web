@@ -204,6 +204,12 @@ const PREVIEWABLE_LANGS = new Set(['html', 'htm', 'svg']);
 marked.use({
     renderer: {
         code({ text, lang }: { text: string; lang?: string; escaped?: boolean }): string {
+            // mermaid 代码块不在此处做语法高亮，而是输出占位容器，
+            // 交由 renderer 进程（previewer.ts 的 renderMermaidBlocks）异步渲染为 SVG。
+            if (lang !== undefined && lang.toLowerCase() === 'mermaid') {
+                const encoded = Buffer.from(text).toString('base64');
+                return `<div class="mermaid-block" data-mermaid-code="${encoded}"></div>`;
+            }
             // 围栏代码块（lang 为 '' 或语言名）中仅包含单个文件地址时渲染为文件 pill；
             // indented 代码块（lang 为 undefined）保持原有代码块渲染。
             if (lang !== undefined) {
