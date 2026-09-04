@@ -57,6 +57,7 @@ beforeEach(() => {
     jest.resetModules();
     getCachedProxyEnvVarsMock.mockReset();
     getCachedProxyEnvVarsMock.mockReturnValue(null);
+    settingData.network_config.no_ssl = false;
     settingData.network_config.use_proxy = 'none';
     settingData.network_config.custom_proxy_addr = '';
     settingData.network_config.no_proxy = '';
@@ -167,5 +168,21 @@ describe('buildChildProcessEnv proxy injection', () => {
         const buildChildProcessEnv = await loadModule();
         const env = buildChildProcessEnv({ HTTP_PROXY: 'http://environ-proxy:1234' });
         expect(env.HTTP_PROXY).toBe('http://config-proxy:9090');
+    });
+
+    test('global no_ssl disables npm strict SSL verification', async () => {
+        settingData.network_config.no_ssl = true;
+
+        const buildChildProcessEnv = await loadModule();
+        const env = buildChildProcessEnv({ npm_config_strict_ssl: 'true' });
+        expect(env.npm_config_strict_ssl).toBe('false');
+    });
+
+    test('global SSL verification enabled preserves explicit npm strict SSL configuration', async () => {
+        settingData.network_config.no_ssl = false;
+
+        const buildChildProcessEnv = await loadModule();
+        const env = buildChildProcessEnv({ npm_config_strict_ssl: 'false' });
+        expect(env.npm_config_strict_ssl).toBe('false');
     });
 });

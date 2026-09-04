@@ -556,6 +556,11 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
     if (!env.PYTHONUTF8) env.PYTHONUTF8 = '1';
     injectNonInteractiveEnv(env);
 
+    // npm 不会继承平台 fetch 的 TLS 策略，需要显式映射全局证书校验设置。
+    if (settingData.network_config?.no_ssl === true) {
+        env.npm_config_strict_ssl = 'false';
+    }
+
     // 代理变量注入：network_config 优先（方案 B），无条件覆盖 env。
     //   - none   → 清空所有代理变量，确保命令行不走代理
     //   - system → 覆盖为系统代理（鸿蒙走 ArkTS 桥接，其他平台透传 env）
