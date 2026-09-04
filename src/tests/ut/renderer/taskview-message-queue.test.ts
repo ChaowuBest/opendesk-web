@@ -218,6 +218,100 @@ describe('task-view message queue', () => {
         expect(taskView.task_status).toBe('running');
     });
 
+    test('cancels an idle browser recycle timer when reload observes a running task', async () => {
+        const cancelBrowserIdleTimer = jest.fn();
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: { messages: [] }
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => [])
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            reload: () => Promise<void>;
+            _cancelBrowserIdleTimer: jest.Mock;
+        };
+        taskView.task_id = 'task-running-after-reload';
+        taskView.task_status = 'stopped';
+        taskView._cancelBrowserIdleTimer = cancelBrowserIdleTimer;
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        expect(taskView.task_status).toBe('running');
+        expect(cancelBrowserIdleTimer).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stale idle timer rechecks task status before recycling the browser', () => {
+        jest.useFakeTimers();
+        try {
+            const recycleBrowser = jest.fn();
+            const destroyBrowser = jest.fn();
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                task_status: string;
+                _getRightSidebarEl: () => {
+                    isBrowserVisible: () => boolean;
+                    recycleBrowser: jest.Mock;
+                    destroyBrowser: jest.Mock;
+                };
+                _startBrowserIdleTimer: () => void;
+            };
+            taskView.task_id = 'task-stale-idle-timer';
+            taskView.task_status = 'stopped';
+            taskView._getRightSidebarEl = () => ({
+                isBrowserVisible: () => true,
+                recycleBrowser,
+                destroyBrowser
+            });
+
+            taskView._startBrowserIdleTimer();
+            taskView.task_status = 'running';
+            jest.advanceTimersByTime(5 * 60 * 1000);
+
+            expect(recycleBrowser).not.toHaveBeenCalled();
+            expect(destroyBrowser).not.toHaveBeenCalled();
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('idle recycling waits while the user is currently viewing the Browser tab', () => {
+        jest.useFakeTimers();
+        try {
+            const recycleBrowser = jest.fn();
+            const taskView = document.createElement('task-view') as HTMLElement & {
+                task_id: string;
+                task_status: string;
+                _getRightSidebarEl: () => {
+                    isBrowserVisible: () => boolean;
+                    isBrowserPresentedToUser: () => boolean;
+                    recycleBrowser: jest.Mock;
+                };
+                _startBrowserIdleTimer: () => void;
+            };
+            taskView.task_id = 'task-visible-browser';
+            taskView.task_status = 'stopped';
+            taskView._getRightSidebarEl = () => ({
+                isBrowserVisible: () => true,
+                isBrowserPresentedToUser: () => true,
+                recycleBrowser
+            });
+
+            taskView._startBrowserIdleTimer();
+            jest.advanceTimersByTime(5 * 60 * 1000);
+
+            expect(recycleBrowser).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(1);
+        } finally {
+            restoreRealTimerGlobals();
+        }
+    });
+
     test('uses the shared task view with an input in embedded mode', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
@@ -267,7 +361,7 @@ describe('task-view message queue', () => {
         document.removeEventListener('sidebar-collapse-request', onCollapseRequest);
     });
 
-    test('exits preview but keeps focus width when the right sidebar is collapsed and reopened', () => {
+    test('suspends preview layout without changing the selected tab when the right sidebar is collapsed', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _rightSidebarExpanded: boolean;
@@ -280,17 +374,17 @@ describe('task-view message queue', () => {
         taskView._rightSidebarExpanded = true;
         taskView.render();
         const artifacts = taskView.querySelector<HTMLElement>('#task-task-1-artifacts')! as HTMLElement & {
-            exitPreview: jest.Mock;
+            suspendPreviewLayout: jest.Mock;
         };
         const resizer = taskView.querySelector<HTMLElement>('#task-task-1-resizer');
-        artifacts.exitPreview = jest.fn();
+        artifacts.suspendPreviewLayout = jest.fn();
 
         taskView.dispatchEvent(
             new CustomEvent('workspace-focus-layout-change', { detail: { active: true, fullscreen: true } })
         );
         taskView._collapseRightSidebar(artifacts, resizer);
 
-        expect(artifacts.exitPreview).toHaveBeenCalled();
+        expect(artifacts.suspendPreviewLayout).toHaveBeenCalled();
         expect(taskView._rightSidebarWidth).toBe(380);
 
         taskView._expandRightSidebar(artifacts, resizer);
@@ -2676,12 +2770,13 @@ describe('task-view message queue', () => {
         }
     });
 
-    test('browser app events force the right sidebar to the browser tab', () => {
+    test('the first visible browser app event may activate the browser layout', () => {
         const TaskViewClass = customElements.get('task-view') as any;
         TaskViewClass.rightSidebarExpanded = true;
 
         const sidebar = {
             _suppressBrowserAutoSwitch: true,
+            consumeInitialBrowserAutoReveal: jest.fn(() => true),
             forceBrowserActive: jest.fn(),
             browserNavigate: jest.fn()
         };
@@ -2702,12 +2797,47 @@ describe('task-view message queue', () => {
 
         taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
 
+        expect(sidebar.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(sidebar._suppressBrowserAutoSwitch).toBe(false);
         expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
         expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
 
         TaskViewClass.rightSidebarExpanded = false;
+    });
+
+    test('repeated browser app events preserve the current task layout', () => {
+        const sidebar = {
+            _suppressBrowserAutoSwitch: false,
+            consumeInitialBrowserAutoReveal: jest.fn(() => false),
+            ensureBrowserReady: jest.fn(),
+            forceBrowserActive: jest.fn(),
+            keepBrowserPanelRenderable: jest.fn(),
+            browserNavigate: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _browserPip: null;
+            _ensureRightSidebarOpen: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            _showBrowserPipIfNeeded: jest.Mock;
+            _handleBrowserEvent: (method: string, taskId: string, ...args: unknown[]) => void;
+        };
+
+        taskView.task_id = 'task-1';
+        taskView._browserPip = null;
+        taskView._ensureRightSidebarOpen = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+        taskView._showBrowserPipIfNeeded = jest.fn();
+
+        taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
+
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(sidebar.forceBrowserActive).not.toHaveBeenCalled();
+        expect(sidebar.ensureBrowserReady).toHaveBeenCalledWith(false);
+        expect(sidebar.keepBrowserPanelRenderable).toHaveBeenCalledTimes(1);
+        expect(sidebar._suppressBrowserAutoSwitch).toBe(true);
+        expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
     });
 
     test('opens a workspace file through the existing right sidebar', () => {
@@ -2726,5 +2856,25 @@ describe('task-view message queue', () => {
         taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
         expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
         expect(sidebar.openFilePreview).toHaveBeenCalledWith('/workspace/deck.pptx', undefined, onSwitchBlocked);
+    });
+
+    test('opens a user-selected link through an explicit browser activation', () => {
+        const sidebar = {
+            forceBrowserActive: jest.fn(),
+            browserAddTab: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _forceExpandRightSidebar: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            openUrlInSidebar: (url: string) => void;
+        };
+        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+
+        taskView.openUrlInSidebar('https://example.com');
+
+        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
+        expect(sidebar.browserAddTab).toHaveBeenCalledWith('https://example.com');
     });
 });

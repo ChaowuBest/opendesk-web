@@ -14,7 +14,8 @@ import {
     diffTrees,
     shouldFallbackToFullDiff,
     buildRefMissNote,
-    countDescendants
+    countDescendants,
+    mergeFrameTrees
 } from '../cdp/aria.js';
 
 function n(
@@ -97,6 +98,57 @@ describe('collapseNoisySubtrees', () => {
     test('countDescendants counts element nodes only', () => {
         const tree = n('generic', '', [n('link', 'a', [], {}, 'e1'), 'text', n('link', 'b', [], {}, 'e2')]);
         expect(countDescendants(tree)).toBe(2);
+    });
+});
+
+describe('mergeFrameTrees', () => {
+    test('merges srcdoc and about:blank iframe content even when frameSrc is empty', () => {
+        const frame = n('iframe', '', [], {}, 'e1');
+        frame.frameSrc = '';
+        frame.frameIndex = 0;
+        const root: AriaNode = { role: 'fragment', name: '', children: [frame], props: {} };
+
+        mergeFrameTrees(root, {
+            child: {
+                mainResult: {
+                    url: 'about:srcdoc',
+                    title: '',
+                    viewport: { width: 300, height: 200 },
+                    scroll: { x: 0, y: 0 },
+                    root: n('fragment', '', [n('button', 'Inside', [], {}, 'e2')]),
+                    iframeUrls: []
+                },
+                frameResults: {}
+            }
+        });
+
+        expect((frame.children[0] as AriaNode).ref).toBe('e1-e2');
+        expect((frame.children[0] as AriaNode).name).toBe('Inside');
+    });
+
+    test('matches a child frame by its unique URL when frame result order differs from DOM order', () => {
+        const frame = n('iframe', '', [], {}, 'e1');
+        frame.frameSrc = 'https://target.example/';
+        frame.frameIndex = 0;
+        const root: AriaNode = { role: 'fragment', name: '', children: [frame], props: {} };
+        const frameResult = (url: string, button: string) => ({
+            mainResult: {
+                url,
+                title: '',
+                viewport: { width: 300, height: 200 },
+                scroll: { x: 0, y: 0 },
+                root: n('fragment', '', [n('button', button, [], {}, 'e2')]),
+                iframeUrls: []
+            },
+            frameResults: {}
+        });
+
+        mergeFrameTrees(root, {
+            wrong: frameResult('https://wrong.example/', 'Wrong'),
+            target: frameResult('https://target.example/', 'Target')
+        });
+
+        expect((frame.children[0] as AriaNode).name).toBe('Target');
     });
 });
 

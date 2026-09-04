@@ -662,7 +662,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * JS snippet injected into the renderer to expand the sidebar and activate the browser tab.
+     * JS snippet injected into the renderer to prepare the embedded browser.
+     * The host presentation policy may reveal the browser on the task's first use only.
      * Finds the parent task-view by walking up from the task-artifacts element.
      * 如果 task-view 尚不存在（后台定时任务等场景），先创建一个隐藏的 task-view，
      * 并直接初始化浏览器（跳过侧边栏动画和全局状态修改）。
@@ -672,8 +673,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Ensure browser sidebar is open and browser tab is active for the given task,
-     * then execute a script in the active webview and return the result.
+     * Prepare the browser for the given task, then execute a script in the active
+     * webview and return the result.
      *
      * @param timeoutMs 超时时间（毫秒），默认 12 秒。防止 webview.executeJavaScript 在页面加载期间无限挂起。
      */
@@ -688,8 +689,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Call a synchronous method on the task's <task-artifacts> element.
-     * Also ensures browser sidebar is open.
+     * Call a synchronous method on the task's <task-artifacts> element after the
+     * embedded browser runtime is prepared.
      */
     async callRendererBrowser(taskId: string, method: string, ...args: any[]): Promise<any> {
         const ctrl = BrowserManager.getOrCreateController(taskId);
@@ -697,8 +698,8 @@ class BrowserApplication extends BaseApplication {
     }
 
     /**
-     * Ensure sidebar is expanded and browser tab is active, then emit an event.
-     * Used for fire-and-forget operations (navigate, goBack, etc.)
+     * Prepare the embedded browser, then emit an event.
+     * Used for fire-and-forget operations (navigate, goBack, etc.).
      */
     async emitBrowserEvent(eventName: string, taskId: string, ...args: any[]): Promise<void> {
         const mainWin = await this._getMainWindow();
