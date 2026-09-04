@@ -26,6 +26,40 @@ test('excludes top-level build output directories from packaged application file
     assert.ok(ignorePatterns.some((pattern) => pattern.test('/out/opendesk-win32-x64/opendesk.exe')));
     assert.ok(ignorePatterns.some((pattern) => pattern.test('/out-wix-preview/opendesk-win32-x64/opendesk.exe')));
     assert.ok(ignorePatterns.every((pattern) => !pattern.test('/resources/package/installer/ui.xml')));
+
+    // 开发期垃圾不应进 asar，否则会膨胀体积并拖慢 WiX light 的压缩耗时
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/temp/x.log')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/docs/appguide.md')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/benchmarks/run.py')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/scripts/setup-native-modules.cjs')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/.opendesk/memory/memory.json')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/.husky/pre-commit')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/node_modules/.vite/deps/x.js')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/AGENTS.md')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/package-lock.json')));
+});
+
+test('afterPrune workspace-link hook always invokes its callback so packaging does not hang', () => {
+    const hook = forgeConfig.materializeWorkspacePackageLinks;
+    assert.equal(typeof hook, 'function');
+
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(new Error('materializeWorkspacePackageLinks never called its callback (packager would hang)')),
+            5000
+        );
+        // electron-packager invokes afterPrune hooks through util.promisify with
+        // (buildPath, electronVersion, platform, arch, callback). The path does not
+        // exist here, but the hook must still signal completion.
+        hook(path.join(projectRoot, 'temp', '__nonexistent_packaging_dir__'), '39.8.10', 'win32', 'x64', (err) => {
+            clearTimeout(timer);
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve();
+        });
+    });
 });
 
 test('keeps the MSI upgrade identity while enabling the branded Chinese x64 installer', async () => {
@@ -113,6 +147,18 @@ test('keeps versioned application directories without recursively purging the se
     assert.doesNotMatch(creator.wixTemplate, /RemoveFolderEx/);
     assert.doesNotMatch(creator.wixTemplate, /<Component Id="PurgeOnUninstall"/);
     assert.doesNotMatch(creator.wixTemplate, /<ComponentRef Id="PurgeOnUninstall"/);
+    assert.match(creator.wixTemplate, /<MajorUpgrade AllowDowngrades="yes"\s*\/>/);
+    assert.doesNotMatch(creator.wixTemplate, /DowngradeErrorMessage|AllowDowngrades="no"|AllowSameVersionUpgrades/);
+    assert.doesNotMatch(creator.wixTemplate, /<Property Id="ALLUSERS"[^>]*\/>/); // InstallScope=perMachine 会隐式声明 ALLUSERS，显式声明会 LGHT0091 重复
+    assert.match(
+        creator.wixTemplate,
+        /<Condition Message="!\(loc\.AdminRequiredMessage\)">Installed OR Privileged<\/Condition>/
+    );
+    assert.match(creator.wixTemplate, /<Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0"\s*\/>/);
+    assert.match(
+        creator.wixTemplate,
+        /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes" CompressionLevel="low"\s*\/>/
+    );
     assert.deepEqual(await creator.getSpecialFiles(), [
         { name: 'opendesk.exe', path: 'temporary-launcher.exe' },
         { name: '.installInfo.json', path: 'temporary-install-info.json' }
@@ -269,6 +315,10 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(
         bootstrapper,
         /OnDetectRelatedMsiPackage[\s\S]*?e\.PackageId == PackageId[\s\S]*?RelatedOperation\.MajorUpgrade[\s\S]*?RelatedOperation\.MinorUpdate[\s\S]*?relatedMsiUpgradeDetected = true/
+    );
+    assert.match(
+        bootstrapper,
+        /OnDetectRelatedMsiPackage[\s\S]*?RelatedOperation\.MajorUpgrade[\s\S]*?RelatedOperation\.MinorUpdate[\s\S]*?RelatedOperation\.Downgrade[\s\S]*?relatedMsiUpgradeDetected = true/
     );
     assert.match(bootstrapper, /OnDetectRelatedMsiPackage[\s\S]*?RestoreRelatedMsiInstallFolder\(e\.ProductCode\)/);
     assert.match(bootstrapper, /FindRelatedMsiInstallFolder\(string productCode\)[\s\S]*?productCode \+ "\.msq"/);

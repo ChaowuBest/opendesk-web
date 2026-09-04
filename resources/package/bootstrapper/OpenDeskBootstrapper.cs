@@ -266,7 +266,9 @@ namespace OpenDesk.Installer
         {
             if (
                 e.PackageId == PackageId &&
-                (e.Operation == RelatedOperation.MajorUpgrade || e.Operation == RelatedOperation.MinorUpdate)
+                (e.Operation == RelatedOperation.MajorUpgrade ||
+                    e.Operation == RelatedOperation.MinorUpdate ||
+                    e.Operation == RelatedOperation.Downgrade)
             )
             {
                 relatedMsiUpgradeDetected = true;
