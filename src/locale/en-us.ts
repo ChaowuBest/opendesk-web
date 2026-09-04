@@ -1736,6 +1736,8 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.skill.install': 'Install skill',
     'renderer.agentInput.skill.empty.search': 'No matching skills found',
     'renderer.agentInput.skill.empty.none': 'No installed skills',
+    'renderer.agentInput.autocomplete.preview.command': 'Command',
+    'renderer.agentInput.autocomplete.preview.skill': 'Skill',
     'renderer.agentInput.recording.hint': 'Recording, click the microphone to stop',
     'renderer.agentInput.recording.stopTitle': 'Recording, click to stop',
     'renderer.agentInput.recording.endTitle': 'Recording, click to finish',

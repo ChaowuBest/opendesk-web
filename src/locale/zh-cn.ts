@@ -1685,6 +1685,8 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.skill.install': '安装技能',
     'renderer.agentInput.skill.empty.search': '未找到匹配的技能',
     'renderer.agentInput.skill.empty.none': '暂无已安装的技能',
+    'renderer.agentInput.autocomplete.preview.command': '命令',
+    'renderer.agentInput.autocomplete.preview.skill': '技能',
     'renderer.agentInput.recording.hint': '正在录音，点击麦克风按钮可停止录制',
     'renderer.agentInput.recording.stopTitle': '正在录音，点击停止',
     'renderer.agentInput.recording.endTitle': '正在录音，点击结束',

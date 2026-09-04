@@ -1912,6 +1912,7 @@ class AgentInput extends HTMLElement {
             panel.classList.remove('ctx-menu-visible');
             panel.classList.add('ctx-menu-hidden');
             this.skillPanelOpen = false;
+            this._hideSkillPreviewCard();
         } else {
             this.closeModelPanel(true);
             this.closeModePanel(true);
@@ -1989,7 +1990,162 @@ class AgentInput extends HTMLElement {
                 textarea.dispatchEvent(new Event('input', { bubbles: true }));
                 this.toggleSkillPanel(true);
             });
+
+            // 悬停预览：显示技能完整描述
+            const skillName = item.dataset.skillName;
+            const skillData = this.availableSkills.find((s) => s.name === skillName);
+            if (skillData) {
+                item.addEventListener('mouseenter', () => this._showSkillPreviewCard(item, skillData));
+                item.addEventListener('mouseleave', () => this._hideSkillPreviewCard());
+            }
         });
+    }
+
+    _showSkillPreviewCard(item, skillData) {
+        this._hideSkillPreviewCard();
+        const card = document.createElement('div');
+        card.id = 'agent-input-skill-preview';
+        card.setAttribute('role', 'tooltip');
+        const color = getSkillPastel(skillData.name);
+        const initial = getSkillInitial(skillData.name);
+        card.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span style="width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;background:${color.bg};color:${color.text};flex-shrink:0;">${initial}</span>
+                <div>
+                    <div style="font-weight:600;font-size:14px;color:#1d1d1f;">${escapeHtml(skillData.name)}</div>
+                    ${skillData.bundleName ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml(skillData.bundleName)}</div>` : ''}
+                </div>
+            </div>
+            <div style="font-size:13px;color:#555;line-height:1.55;white-space:pre-wrap;">${escapeHtml(skillData.description)}</div>
+        `;
+        Object.assign(card.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            background: '#fff',
+            border: '1px solid #e5e5e5',
+            borderRadius: '12px',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+            padding: '14px 16px',
+            maxWidth: '360px',
+            minWidth: '220px',
+            maxHeight: '260px',
+            overflowY: 'auto',
+            pointerEvents: 'none',
+            transition: 'opacity 0.12s ease'
+        });
+        document.body.appendChild(card);
+
+        const rect = item.getBoundingClientRect();
+        const spaceRight = window.innerWidth - rect.right;
+        if (spaceRight > 380) {
+            card.style.left = rect.right + 8 + 'px';
+            card.style.top = Math.max(4, rect.top - 20) + 'px';
+        } else {
+            card.style.left = Math.max(4, rect.left - 380) + 'px';
+            card.style.top = Math.max(4, rect.top - 20) + 'px';
+        }
+
+        // 保持卡片在视口内
+        requestAnimationFrame(() => {
+            const cardRect = card.getBoundingClientRect();
+            if (cardRect.bottom > window.innerHeight - 8) {
+                card.style.top = Math.max(4, window.innerHeight - cardRect.height - 8) + 'px';
+            }
+        });
+
+        this._skillPreviewCard = card;
+    }
+
+    _hideSkillPreviewCard() {
+        if (this._skillPreviewCard) {
+            this._skillPreviewCard.remove();
+            this._skillPreviewCard = null;
+        }
+    }
+
+    /**
+     * 显示补全项（命令/技能）的完整介绍卡片。
+     * 从列表项 DOM 的 data-* 属性读取元数据，支持悬停与键盘上下键选择。
+     */
+    _showAutocompletePreviewCard(item) {
+        if (!item) return;
+        const fullDesc = item.dataset.fullDesc;
+        if (fullDesc == null) return;
+        this._hideAutocompletePreviewCard();
+
+        const label = item.dataset.label || item.textContent?.trim() || '';
+        const bundleName = item.dataset.bundle || '';
+        const isCommand = item.dataset.isCommand === '1';
+        const iconClass = item.dataset.icon || '';
+        const iconBg = item.dataset.iconBg || '#F0F0F5';
+        const iconText = item.dataset.iconText || '#636366';
+
+        const card = document.createElement('div');
+        card.id = 'agent-input-autocomplete-preview';
+        card.setAttribute('role', 'tooltip');
+
+        let iconHtml;
+        if (isCommand && iconClass) {
+            iconHtml = `<i class="fas ${escapeHtml(iconClass)}" style="font-size:14px;"></i>`;
+        } else {
+            iconHtml = escapeHtml((label[0] || '/').toUpperCase());
+        }
+        const typeLabel = isCommand
+            ? this.t('renderer.agentInput.autocomplete.preview.command')
+            : this.t('renderer.agentInput.autocomplete.preview.skill');
+
+        card.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span style="width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;background:${iconBg};color:${iconText};flex-shrink:0;">${iconHtml}</span>
+                <div>
+                    <div style="font-weight:600;font-size:14px;color:#1d1d1f;">${escapeHtml(label)}</div>
+                    <div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml(typeLabel)}${bundleName ? ` · ${escapeHtml(bundleName)}` : ''}</div>
+                </div>
+            </div>
+            <div style="font-size:13px;color:#555;line-height:1.55;white-space:pre-wrap;">${escapeHtml(fullDesc)}</div>
+        `;
+        Object.assign(card.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            background: '#fff',
+            border: '1px solid #e5e5e5',
+            borderRadius: '12px',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+            padding: '14px 16px',
+            maxWidth: '360px',
+            minWidth: '220px',
+            maxHeight: '260px',
+            overflowY: 'auto',
+            pointerEvents: 'none',
+            transition: 'opacity 0.12s ease'
+        });
+        document.body.appendChild(card);
+
+        const rect = item.getBoundingClientRect();
+        const spaceRight = window.innerWidth - rect.right;
+        if (spaceRight > 380) {
+            card.style.left = rect.right + 8 + 'px';
+            card.style.top = Math.max(4, rect.top - 20) + 'px';
+        } else {
+            card.style.left = Math.max(4, rect.left - 380) + 'px';
+            card.style.top = Math.max(4, rect.top - 20) + 'px';
+        }
+
+        requestAnimationFrame(() => {
+            const cardRect = card.getBoundingClientRect();
+            if (cardRect.bottom > window.innerHeight - 8) {
+                card.style.top = Math.max(4, window.innerHeight - cardRect.height - 8) + 'px';
+            }
+        });
+
+        this._autocompletePreviewCard = card;
+    }
+
+    _hideAutocompletePreviewCard() {
+        if (this._autocompletePreviewCard) {
+            this._autocompletePreviewCard.remove();
+            this._autocompletePreviewCard = null;
+        }
     }
 
     handleInstallSkill() {
@@ -2095,6 +2251,8 @@ class AgentInput extends HTMLElement {
                     value: s.name,
                     label: s.name,
                     description: s.description.slice(0, 80),
+                    fullDescription: s.description,
+                    bundleName: s.bundleName,
                     icon: null,
                     iconClass: 'skill-icon',
                     pastelBg: color.bg,
@@ -2110,6 +2268,7 @@ class AgentInput extends HTMLElement {
                     value: cmd.name,
                     label: cmd.name,
                     description: cmd.description,
+                    fullDescription: cmd.description,
                     icon: cmd.icon,
                     iconClass: 'command-icon',
                     pastelBg: cmd.iconBg,
@@ -2306,8 +2465,18 @@ class AgentInput extends HTMLElement {
                 } else {
                     iconContent = `<span class="ctx-icon-lg ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></span>`;
                 }
+                const metaAttrs =
+                    item.fullDescription != null
+                        ? ` data-full-desc="${escapeHtml(item.fullDescription)}"` +
+                          ` data-label="${escapeHtml(item.label)}"` +
+                          ` data-icon="${escapeHtml(item.icon || '')}"` +
+                          ` data-icon-bg="${escapeHtml(item.pastelBg || '')}"` +
+                          ` data-icon-text="${escapeHtml(item.pastelText || '')}"` +
+                          (item.bundleName ? ` data-bundle="${escapeHtml(item.bundleName)}"` : '') +
+                          (item.isCommand ? ' data-is-command="1"' : '')
+                        : '';
                 return `
-            <button class="ctx-item-rich${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
+            <button class="ctx-item-rich${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}"${metaAttrs}>
                 ${iconContent}
                 <span class="ctx-rich-body">
                     <span class="ctx-rich-label">${this.autocompleteMode === 'file' ? '' : '/'}${item.label}</span>
@@ -2366,6 +2535,7 @@ class AgentInput extends HTMLElement {
         this.autocompleteOpen = false;
         this.autocompleteMode = null;
         this._autocompleteTriggerPosition = null;
+        this._hideAutocompletePreviewCard();
     }
 
     bindAutocompleteItemEvents() {
@@ -2382,19 +2552,30 @@ class AgentInput extends HTMLElement {
                 this.autocompleteSelectedIndex = idx;
                 this.updateAutocompleteSelection();
             });
+            item.addEventListener('mouseleave', () => {
+                this._hideAutocompletePreviewCard();
+            });
         });
     }
 
     updateAutocompleteSelection() {
         const items = this.querySelectorAll('#agent-input-autocomplete-list .ctx-item-rich');
+        let selectedEl = null;
         items.forEach((el, i) => {
             if (i === this.autocompleteSelectedIndex) {
                 el.classList.add('selected');
                 el.scrollIntoView({ block: 'nearest' });
+                selectedEl = el;
             } else {
                 el.classList.remove('selected');
             }
         });
+        // 键盘上下键切换时同步预览卡片
+        if (selectedEl && selectedEl.dataset.fullDesc != null) {
+            this._showAutocompletePreviewCard(selectedEl);
+        } else {
+            this._hideAutocompletePreviewCard();
+        }
     }
 
     /**
