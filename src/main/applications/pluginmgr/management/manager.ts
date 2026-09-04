@@ -14,6 +14,7 @@ import {
 } from '../../../../../packages/plugin-sdk/src/package.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
+import { getPlatform } from '../../../../platforms/base.js';
 import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
@@ -122,7 +123,7 @@ async function downloadPluginArchive(
     spec: string,
     destination: string,
     format: PluginArchiveFormat,
-    fetchArchive: typeof globalThis.fetch
+    fetchArchive: (input: string) => Promise<Response>
 ): Promise<string> {
     const response = await fetchArchive(spec);
     if (!response.ok) throw new Error(`plugin.install_archive_download_failed:${response.status}`);
@@ -230,7 +231,7 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                           spec,
                           temporarySourceDirectory,
                           archiveFormat,
-                          options.fetch ?? globalThis.fetch
+                          options.fetch ?? ((input) => getPlatform().fetch(input))
                       );
                 extractedDirectory = await extractPluginArchive(archivePath, extractionDirectory, archiveFormat);
                 stage = 'validate';

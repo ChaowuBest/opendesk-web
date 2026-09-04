@@ -19,6 +19,7 @@ import {
     getPluginTrashDirectory
 } from '../../../main/applications/pluginmgr/management/paths.js';
 import { getPluginRecord, upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
+import { setPlatform, type AbstractPlatform } from '../../../platforms/base.js';
 
 async function writePluginTgz(archivePath: string, pluginDirectory: string): Promise<void> {
     await createTar(
@@ -399,6 +400,48 @@ describe('pluginmgr managed installation', () => {
 
         expect(result).toEqual({ success: true, id: 'url-zip-review-helper' });
         expect(npmCalled).toBe(true);
+    });
+
+    test('从 URL ZIP 安装插件时默认使用平台网络层', async () => {
+        const archive = new AdmZip();
+        archive.addFile(
+            'package.json',
+            Buffer.from(JSON.stringify({ name: 'platform-fetch-plugin', version: '1.0.0' }))
+        );
+        archive.addFile(
+            'opendesk.plugin.json',
+            Buffer.from(
+                JSON.stringify({
+                    schemaVersion: 1,
+                    id: 'platform-fetch-plugin',
+                    entry: './index.mjs',
+                    apiVersion: 1,
+                    capabilities: []
+                })
+            )
+        );
+        archive.addFile('index.mjs', Buffer.from('export default {};'));
+        const platformFetch = jest.fn(async () => new Response(archive.toBuffer(), { status: 200 }));
+        setPlatform({
+            fetch: platformFetch,
+            getInjectedEnviron: () => new Map()
+        } as unknown as AbstractPlatform);
+        const globalFetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('global fetch should not run'));
+
+        try {
+            const result = await installPlugin('https://example.com/platform-fetch-plugin.zip', {
+                configDirectory,
+                runNpm: async () => {
+                    throw new Error('npm should not run for a ZIP without runtime dependencies');
+                }
+            });
+
+            expect(result).toEqual({ success: true, id: 'platform-fetch-plugin' });
+            expect(platformFetch).toHaveBeenCalledWith('https://example.com/platform-fetch-plugin.zip');
+            expect(globalFetch).not.toHaveBeenCalled();
+        } finally {
+            globalFetch.mockRestore();
+        }
     });
 
     test('无运行时依赖的 ZIP 不要求 npm', async () => {
