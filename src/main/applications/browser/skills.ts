@@ -61,7 +61,7 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 本技能提供内置的网页浏览器功能，可以通过 OpenDesk 的任务级浏览器标签直接访问网页，并支持通过工具进行自动化操作。
 每个任务拥有自己独立的浏览器实例。浏览器支持多标签页，所有标签页共享同一个会话（cookies / localStorage），跨任务也保持登录状态。
 
-底层使用 Chrome DevTools Protocol (CDP) 进行真实用户输入模拟（鼠标点击、键盘输入等），兼容所有前端框架（React / Vue / Angular 等）。
+底层通过 Chrome DevTools Protocol (CDP) 定位和控制目标页面。键鼠操作遵循焦点隔离：后台任务或用户正在操作 OpenDesk 时，在目标 frame 内定向执行，不主动切换窗口、任务或输入焦点；仅当目标 webview 本来就拥有焦点时，才使用原生 CDP 输入事件。
 
 ## 核心工作流
 
@@ -70,6 +70,15 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 1. \`snapshot\` → 得到可交互元素列表，每个元素有 ref（如 e0、e3、e12）
 2. 使用 ref 调用 \`click\` / \`type\` / \`hover\` 等操作工具
 3. 操作后页面变化 → 再次调用 \`snapshot\` 刷新 ref
+
+### iframe 页面
+
+快照中的 iframe 默认折叠。发现带有 \`[collapsed]\` 的 iframe ref 时，不得直接判断为“没有可操作元素”：
+
+1. 调用 \`explore(iframeRef)\` 展开 iframe 子树
+2. 使用返回的嵌套 ref（如 \`e5-e3\`）调用 \`click\` / \`type\` / \`scrollTo\`
+3. 对 iframe 内当前焦点发送按键或执行脚本时，将外层 iframe ref 传给 \`pressKey.iframeRef\` / \`evaluate.iframeRef\`
+4. 页面或 iframe 导航后重新调用 \`snapshot\`，不要复用旧的嵌套 ref
 
 ## 操作后自动快照
 
@@ -167,7 +176,7 @@ YAML 中每个节点的格式为：
 使用 **click** 点击元素：
 - \`target\`：使用 ref（如 \`e3\`）或 CSS 选择器
 - 支持 \`button\`（left/right/middle）、\`doubleClick\`、\`modifiers\`（Alt/Control/Meta/Shift）
-- 通过 CDP 发送真实鼠标事件（mouseMoved → mousePressed → mouseReleased），兼容所有框架
+- 不改变用户当前焦点；未聚焦或 iframe 页面会在目标 frame 内定向点击，目标 webview 本来已聚焦时使用原生 CDP 鼠标事件
 
 ### 输入文本
 

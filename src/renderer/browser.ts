@@ -23,6 +23,11 @@ import { createRendererTranslator } from './locale.js';
 
 export type { BrowserState, TabInfo };
 
+export interface BrowserRestoreState {
+    tabs: Array<{ url: string; title: string }>;
+    activeIndex: number;
+}
+
 const HOME_PAGE = 'about:blank';
 const fallbackT = createRendererTranslator();
 
@@ -66,6 +71,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
     private _resizeObserver: ResizeObserver | null = null;
+    private readonly _restoreState?: BrowserRestoreState;
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
 
@@ -78,9 +84,10 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
-    constructor(container: HTMLElement, id: string = '') {
+    constructor(container: HTMLElement, id: string = '', restoreState?: BrowserRestoreState) {
         super(id);
         this.container = container;
+        this._restoreState = restoreState;
         this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
         this._initVisibilityHandler();
@@ -599,7 +606,21 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.bindTabBarEvents();
         this._initViewportScaling();
 
-        this.addTab(HOME_PAGE);
+        const restorableTabs = this._restoreState?.tabs.filter((tab) => typeof tab.url === 'string' && tab.url) ?? [];
+        if (restorableTabs.length === 0) {
+            this.addTab(HOME_PAGE);
+            return;
+        }
+
+        const restoredIds = restorableTabs.map((restoredTab) => {
+            const tabId = this.addTab(restoredTab.url);
+            const tab = this.tabs.find((candidate) => candidate.id === tabId);
+            if (tab && restoredTab.title) tab.title = restoredTab.title;
+            return tabId;
+        });
+        const activeIndex = Math.min(Math.max(this._restoreState?.activeIndex ?? 0, 0), restoredIds.length - 1);
+        this.switchToTab(restoredIds[activeIndex]);
+        this.renderTabBar();
     }
 
     /**
@@ -1561,6 +1582,17 @@ export class EmbeddedBrowser extends BrowserInstance {
         }
     }
 
+    /** Return focus ownership without changing it. */
+    public hasActiveWebviewFocus(): boolean {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return false;
+        let active: Element | null = document.activeElement;
+        while (active?.shadowRoot?.activeElement) {
+            active = active.shadowRoot.activeElement;
+        }
+        return active === tab.webview || (tab.webview as unknown as HTMLElement).matches(':focus');
+    }
+
     /**
      * Capture a screenshot of the active tab as a data URL (PNG).
      * Uses main-process IPC to capture via webContents.capturePage(),
@@ -1596,6 +1628,15 @@ export class EmbeddedBrowser extends BrowserInstance {
     public getActiveTabUrl(): string {
         const tab = this.getActiveTab();
         return tab?.url || '';
+    }
+
+    /** Serializable tab state retained while an idle physical WebView is recycled. */
+    public getSessionState(): BrowserRestoreState {
+        const activeIndex = this.tabs.findIndex((tab) => tab.id === this.activeTabId);
+        return {
+            tabs: this.tabs.map((tab) => ({ url: tab.url, title: tab.title })),
+            activeIndex: activeIndex >= 0 ? activeIndex : 0
+        };
     }
 
     public destroy(): void {

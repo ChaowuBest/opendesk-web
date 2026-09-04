@@ -42,19 +42,19 @@ describe('task artifacts browser focus ownership', () => {
     });
 
     function createArtifacts(background: boolean): HTMLElement & {
-        browserFocusActiveWebview: () => boolean;
+        browserHasActiveWebviewFocus: () => boolean;
         ensureBrowserReady: jest.Mock;
-        _browser: { focusActiveWebview: jest.Mock; setPreviewMode: jest.Mock };
+        _browser: { hasActiveWebviewFocus: jest.Mock; setPreviewMode: jest.Mock };
     } {
         const taskView = document.createElement('task-view');
         if (background) taskView.setAttribute('data-background', '1');
         const artifacts = document.createElement('task-artifacts') as HTMLElement & {
-            browserFocusActiveWebview: () => boolean;
+            browserHasActiveWebviewFocus: () => boolean;
             ensureBrowserReady: jest.Mock;
-            _browser: { focusActiveWebview: jest.Mock; setPreviewMode: jest.Mock };
+            _browser: { hasActiveWebviewFocus: jest.Mock; setPreviewMode: jest.Mock };
         };
         artifacts.ensureBrowserReady = jest.fn();
-        artifacts._browser = { focusActiveWebview: jest.fn(() => true), setPreviewMode: jest.fn() };
+        artifacts._browser = { hasActiveWebviewFocus: jest.fn(() => true), setPreviewMode: jest.fn() };
         taskView.appendChild(artifacts);
         return artifacts;
     }
@@ -78,12 +78,12 @@ describe('task artifacts browser focus ownership', () => {
         expect(focusStates).toEqual([]);
     });
 
-    test('background task refuses browser focus without preparing the browser', () => {
+    test('background task reports that its browser does not own focus without preparing it', () => {
         const artifacts = createArtifacts(true);
 
-        expect(artifacts.browserFocusActiveWebview()).toBe(false);
+        expect(artifacts.browserHasActiveWebviewFocus()).toBe(false);
         expect(artifacts.ensureBrowserReady).not.toHaveBeenCalled();
-        expect(artifacts._browser.focusActiveWebview).not.toHaveBeenCalled();
+        expect(artifacts._browser.hasActiveWebviewFocus).not.toHaveBeenCalled();
     });
 
     test('hidden cached task refuses browser focus', () => {
@@ -91,16 +91,48 @@ describe('task artifacts browser focus ownership', () => {
         const taskView = artifacts.closest('task-view') as HTMLElement;
         taskView.style.display = 'none';
 
-        expect(artifacts.browserFocusActiveWebview()).toBe(false);
+        expect(artifacts.browserHasActiveWebviewFocus()).toBe(false);
         expect(artifacts.ensureBrowserReady).not.toHaveBeenCalled();
-        expect(artifacts._browser.focusActiveWebview).not.toHaveBeenCalled();
+        expect(artifacts._browser.hasActiveWebviewFocus).not.toHaveBeenCalled();
     });
 
-    test('foreground task preserves the existing browser focus path', () => {
+    test('foreground task only reports existing browser focus without moving it', () => {
         const artifacts = createArtifacts(false);
 
-        expect(artifacts.browserFocusActiveWebview()).toBe(true);
-        expect(artifacts.ensureBrowserReady).toHaveBeenCalledTimes(1);
-        expect(artifacts._browser.focusActiveWebview).toHaveBeenCalledTimes(1);
+        expect(artifacts.browserHasActiveWebviewFocus()).toBe(true);
+        expect(artifacts.ensureBrowserReady).not.toHaveBeenCalled();
+        expect(artifacts._browser.hasActiveWebviewFocus).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps an inactive browser panel renderable without exposing it over the user tab', () => {
+        const artifacts = createArtifacts(false) as ReturnType<typeof createArtifacts> & {
+            _browserVisible: boolean;
+            keepBrowserPanelRenderable: () => void;
+            restoreBrowserPanelLayout: () => void;
+        };
+        artifacts.shadowRoot!.innerHTML = `
+            <div class="tab-content" data-tab="workspace"></div>
+            <div class="tab-content" data-tab="browser" style="display:none"></div>
+        `;
+        artifacts._browserVisible = true;
+
+        artifacts.keepBrowserPanelRenderable();
+
+        const browserPanel = artifacts.shadowRoot!.querySelector<HTMLElement>('[data-tab="browser"]')!;
+        expect(browserPanel.style.display).toBe('');
+        expect(browserPanel.style.width).toBe('1280px');
+        expect(browserPanel.style.height).toBe('800px');
+        expect(browserPanel.style.opacity).toBe('0');
+        expect(browserPanel.style.pointerEvents).toBe('none');
+        expect(browserPanel.dataset.keepAlive).toBe('1');
+
+        artifacts.restoreBrowserPanelLayout();
+
+        expect(browserPanel.style.display).toBe('none');
+        expect(browserPanel.style.width).toBe('');
+        expect(browserPanel.style.height).toBe('');
+        expect(browserPanel.style.opacity).toBe('');
+        expect(browserPanel.style.pointerEvents).toBe('');
+        expect(browserPanel.dataset.keepAlive).toBeUndefined();
     });
 });

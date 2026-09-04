@@ -582,8 +582,10 @@
             function closeAllEditorOverlays() {
                 var artifacts = document.querySelectorAll('task-artifacts');
                 artifacts.forEach(function (el) {
-                    if (typeof el.exitPreview === 'function') {
-                        el.exitPreview();
+                    if (typeof el.suspendPreviewLayout === 'function') {
+                        el.suspendPreviewLayout();
+                    } else if (typeof el.closeEditor === 'function') {
+                        el.closeEditor();
                     }
                 });
             }

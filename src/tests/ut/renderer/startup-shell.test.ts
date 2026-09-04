@@ -13,6 +13,17 @@ function sourceBetween(source: string, start: string, end: string): string {
 }
 
 describe('renderer startup shell', () => {
+    test('global editor cleanup suspends preview layout without exiting the selected Browser tab', () => {
+        const cleanupSource = sourceBetween(
+            rendererHtml,
+            'function closeAllEditorOverlays()',
+            "document.addEventListener('sidebar-visibility-changed'"
+        );
+
+        expect(cleanupSource).toContain('suspendPreviewLayout');
+        expect(cleanupSource).not.toContain('el.exitPreview()');
+    });
+
     test('renders a dependency-free shell before the renderer module loads', () => {
         const shellSource = sourceBetween(rendererHtml, '<div id="startup-shell"', 'id="app-root"');
 

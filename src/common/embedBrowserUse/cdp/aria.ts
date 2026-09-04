@@ -138,14 +138,32 @@ function prependRefToTree(node: AriaNode, prefix: string): void {
     }
 }
 
+function selectFrameResult(
+    availableFrames: Array<[string, NestedJSResult]>,
+    frameIndex: number,
+    frameSrc: string | undefined
+): NestedJSResult | undefined {
+    if (frameSrc) {
+        const normalizedSrc = normalizeFrameUrl(frameSrc);
+        const urlMatches = availableFrames.filter(([, result]) => {
+            try {
+                return normalizeFrameUrl(parseFrameResult(result.mainResult).url) === normalizedSrc;
+            } catch {
+                return false;
+            }
+        });
+        if (urlMatches.length === 1) return urlMatches[0][1];
+    }
+    return availableFrames[frameIndex]?.[1];
+}
+
 /**
  * Walk the aria tree and merge child frame results.
  *
  * Strategy:
  * - Find iframe nodes (role === 'iframe') in the tree
- * - Match them to child frame results by DOM order (frameIndex)
- *   — NOT by URL, because iframe.src is the initial URL and doesn't
- *   reflect internal navigations within the iframe
+ * - Prefer a unique URL match, then fall back to DOM order (frameIndex)
+ *   for duplicate URLs, redirects, srcdoc and about:blank frames
  * - Prepend the iframe's ref (or frameIndex fallback) to all refs in the child tree
  * - Replace the iframe node's children with the child tree's children
  * - Recursively merge nested iframes within the child tree
@@ -154,11 +172,10 @@ function walkAndMerge(node: AriaNode, availableFrames: Array<[string, NestedJSRe
     // First pass: collect all iframe nodes at this level, merge them
     for (const child of node.children) {
         if (typeof child === 'string') continue;
-        if (child.role === 'iframe' && child.frameSrc && child.frameIndex !== undefined) {
+        if (child.role === 'iframe' && child.frameIndex !== undefined) {
             const idx = child.frameIndex;
-            if (idx >= 0 && idx < availableFrames.length) {
-                const [frameToken, frameResult] = availableFrames[idx];
-
+            const frameResult = selectFrameResult(availableFrames, idx, child.frameSrc);
+            if (frameResult) {
                 try {
                     const parsed = parseFrameResult(frameResult.mainResult);
 
@@ -835,42 +852,55 @@ export function buildRefMissNote(ref: string, prevUrl: string | undefined, curUr
  * Find the child WebFrameMain corresponding to an iframe element identified
  * by its data-od-ref in the given parent frame.
  *
- * Uses DOM order to match: the N-th <iframe> in the parent frame corresponds
- * to parentFrame.frames[N].  This works for cross-origin iframes because
- * Electron tracks all frames regardless of origin.
+ * Prefer a unique URL match, then fall back to DOM order. URL validation fixes
+ * the common case where Electron's child-frame order temporarily diverges from
+ * DOM order, while the index fallback still supports redirects and srcdoc.
  */
+function normalizeFrameUrl(url: string): string {
+    if (!url) return '';
+    try {
+        return new URL(url).href;
+    } catch {
+        return url;
+    }
+}
+
+export function selectChildFrame<T extends { url: string }>(
+    frames: readonly T[],
+    iframeIndex: number,
+    src: string
+): T | undefined {
+    if (src) {
+        const normalizedSrc = normalizeFrameUrl(src);
+        const urlMatches = frames.filter((frame) => normalizeFrameUrl(frame.url) === normalizedSrc);
+        if (urlMatches.length === 1) return urlMatches[0];
+    }
+    return frames[iframeIndex];
+}
+
 async function findChildFrame(parentFrame: Electron.WebFrameMain, iframeRef: string): Promise<Electron.WebFrameMain> {
-    // Get the iframe's index among all iframes in the parent DOM
-    const indexResult = await parentFrame.executeJavaScript(
+    const descriptorResult = await parentFrame.executeJavaScript(
         `(() => {
             var el = document.querySelector('[data-od-ref="${iframeRef}"]');
-            if (!el || el.tagName !== 'IFRAME') return -1;
+            if (!el || el.tagName !== 'IFRAME') return { index: -1, src: '' };
             var all = document.querySelectorAll('iframe');
             for (var i = 0; i < all.length; i++) {
-                if (all[i] === el) return i;
+                if (all[i] === el) return { index: i, src: el.src || '' };
             }
-            return -1;
+            return { index: -1, src: el.src || '' };
         })()`
     );
-    const iframeIndex = indexResult as number;
-    if (iframeIndex < 0 || iframeIndex >= parentFrame.frames.length) {
-        // Fallback: try URL-based matching
-        const srcResult = await parentFrame.executeJavaScript(
-            `(() => {
-                var el = document.querySelector('[data-od-ref="${iframeRef}"]');
-                return el ? (el.src || '') : '';
-            })()`
-        );
-        const src = srcResult as string;
-        const normalized = normalizeUrl(src);
-        const match = parentFrame.frames.find((f) => normalizeUrl(f.url) === normalized);
-        if (match) return match;
+    const descriptor = descriptorResult as { index?: number; src?: string };
+    const iframeIndex = Number.isInteger(descriptor?.index) ? descriptor.index! : -1;
+    const src = typeof descriptor?.src === 'string' ? descriptor.src : '';
+    const match = selectChildFrame(parentFrame.frames, iframeIndex, src);
+    if (!match) {
         throw new Error(
             `Cannot access iframe "${iframeRef}" (src: ${src}). ` +
                 'The iframe may be cross-origin and not tracked by Electron.'
         );
     }
-    return parentFrame.frames[iframeIndex];
+    return match;
 }
 
 // ---------------------------------------------------------------------------
@@ -969,9 +999,11 @@ export async function resolveNestedRefCoords(
                     text: (el.innerText || '').trim().slice(0, 80)
                 });
             })()`
-            : `(() => {
+            : `(async () => {
                 var el = document.querySelector('[data-od-ref="${currentRef}"]');
                 if (!el) return JSON.stringify({ error: 'Iframe ref "${currentRef}" not found. Page may have changed — call snapshot to refresh.' });
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
                 var rect = el.getBoundingClientRect();
                 return JSON.stringify({
                     x: rect.left, y: rect.top,
@@ -989,7 +1021,7 @@ export async function resolveNestedRefCoords(
         totalY += info.y;
 
         if (!isLast) {
-            // Navigate to child frame by DOM order
+            // Navigate using the same URL-validated/index-fallback policy as snapshot merging.
             currentFrame = await findChildFrame(currentFrame, currentRef);
         } else {
             return { x: totalX, y: totalY, tag: info.tag, text: info.text };

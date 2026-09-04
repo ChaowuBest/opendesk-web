@@ -1890,6 +1890,9 @@ class TaskView extends HTMLElement {
 
             const previousStatus = this.task_status;
             this.task_status = task_state.task_status || 'waiting';
+            if (this.task_status === 'running') {
+                this._cancelBrowserIdleTimer();
+            }
             if (previousStatus !== this.task_status || this.isEmbedded) {
                 this.emitTaskStatusChanged(this.task_status);
             }
@@ -2719,9 +2722,11 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
-        // 收起侧边栏时退出预览/编辑器状态
-        if (typeof rightSidebar.exitPreview === 'function') {
-            rightSidebar.exitPreview();
+        // 收起侧边栏时退出放大布局，但保留用户当前选择的 Browser / Workspace tab。
+        if (typeof rightSidebar.suspendPreviewLayout === 'function') {
+            rightSidebar.suspendPreviewLayout();
+        } else if (typeof rightSidebar.closeEditor === 'function') {
+            rightSidebar.closeEditor();
         }
 
         // 聚焦布局使用临时百分比宽度，不能写回用户的固定侧边栏宽度。
@@ -2786,8 +2791,8 @@ class TaskView extends HTMLElement {
             onRestore: () => {
                 if (this._browserPip) this._browserPip.hide();
                 const sidebar = this._getRightSidebarEl();
-                if (sidebar && typeof sidebar.ensureBrowserReady === 'function') {
-                    sidebar.ensureBrowserReady();
+                if (sidebar && typeof sidebar.forceBrowserActive === 'function') {
+                    sidebar.forceBrowserActive();
                 }
                 this._forceExpandRightSidebar();
                 this._updateSidebarToggleIcon(true);
@@ -2841,8 +2846,17 @@ class TaskView extends HTMLElement {
         if (!sidebar || typeof sidebar.isBrowserVisible !== 'function' || !sidebar.isBrowserVisible()) return;
         this._browserIdleTimer = setTimeout(() => {
             this._browserIdleTimer = null;
+            // 计时器可能来自上一轮任务。回调执行时必须重新确认当前状态，
+            // 避免 reload 先观察到 running、后续同状态通知被短路时误销毁浏览器。
+            if (this.task_status === 'running') return;
             const el = this._getRightSidebarEl();
-            if (el && typeof el.destroyBrowser === 'function') {
+            if (el && typeof el.isBrowserPresentedToUser === 'function' && el.isBrowserPresentedToUser()) {
+                this._startBrowserIdleTimer();
+                return;
+            }
+            if (el && typeof el.recycleBrowser === 'function') {
+                el.recycleBrowser();
+            } else if (el && typeof el.destroyBrowser === 'function') {
                 el.destroyBrowser();
             }
             if (this._browserPip) {
@@ -3318,6 +3332,9 @@ class TaskView extends HTMLElement {
         this._forceExpandRightSidebar();
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.browserAddTab === 'function') {
+            if (typeof sidebar.forceBrowserActive === 'function') {
+                sidebar.forceBrowserActive();
+            }
             sidebar.browserAddTab(url);
         }
     }
@@ -3569,20 +3586,31 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
-        // 尊重用户当前侧边栏状态：已展开则保持，已收起则通过画中画显示。
-        // 不调用 _forceExpandRightSidebar，避免每次浏览器事件都强制展开侧边栏，
-        // 导致聊天区域被向左挤压，造成布局突然向左平移。
-        this._ensureRightSidebarOpen();
-        sidebar._suppressBrowserAutoSwitch = false;
-        if (typeof sidebar.forceBrowserActive === 'function') {
-            sidebar.forceBrowserActive();
-        } else if (typeof sidebar.ensureBrowserReady === 'function') {
-            sidebar.ensureBrowserReady(true);
+        const initialBrowserUse =
+            typeof sidebar.consumeInitialBrowserAutoReveal === 'function'
+                ? sidebar.consumeInitialBrowserAutoReveal()
+                : false;
+        const shouldAutoReveal = initialBrowserUse && !this._shouldSuppressIncrementalRender();
+        sidebar._suppressBrowserAutoSwitch = !shouldAutoReveal;
+        if (shouldAutoReveal) {
+            this._ensureRightSidebarOpen();
+            if (typeof sidebar.forceBrowserActive === 'function') {
+                sidebar.forceBrowserActive();
+            } else if (typeof sidebar.ensureBrowserReady === 'function') {
+                sidebar.ensureBrowserReady(true);
+            }
+        } else {
+            if (typeof sidebar.ensureBrowserReady === 'function') {
+                sidebar.ensureBrowserReady(false);
+            }
+            if (typeof sidebar.keepBrowserPanelRenderable === 'function') {
+                sidebar.keepBrowserPanelRenderable();
+            }
         }
         sidebar[method](...args);
 
         // 若侧边栏已展开则保持不变；若已收起，尝试显示画中画浮窗
-        if (!this._rightSidebarExpanded) {
+        if (!this._rightSidebarExpanded && !this._shouldSuppressIncrementalRender()) {
             this._showBrowserPipIfNeeded();
             // 浏览器事件发生时立即刷新截图，而不是等待定时器
             if (this._browserPip && this._browserPip.isVisible()) {
@@ -3617,6 +3645,9 @@ class TaskView extends HTMLElement {
 
         if (typeof rightSidebar.refreshWorkspace === 'function') {
             rightSidebar.refreshWorkspace(this._taskWorkspace);
+        }
+        if (typeof rightSidebar.restoreSelectedBrowser === 'function') {
+            rightSidebar.restoreSelectedBrowser();
         }
     }
 

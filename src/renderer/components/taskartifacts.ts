@@ -26,7 +26,7 @@
 
 import { FileExplorer, getFileExplorerCSS, isHtmlFile } from './fileExplorer';
 import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, type WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
-import { EmbeddedBrowser } from '../browser';
+import { EmbeddedBrowser, type BrowserRestoreState } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
 import goalCss from '../styles/goal.css?inline';
@@ -38,6 +38,7 @@ import {
 import { formatCompactDuration } from '../../common/goal/format.js';
 import { filePathToFileUrl } from '../../common/file-url.js';
 import { dispatchAgentInputRequest } from '../input/agentInputRequest.js';
+import { browserAutoRevealState } from '../browserAutoRevealState.js';
 
 // ============================================================================
 // Types
@@ -198,9 +199,12 @@ class TaskArtifacts extends HTMLElement {
 
     private _fileExplorer = new FileExplorer();
     private _browser: EmbeddedBrowser | null = null;
+    private _browserRestoreState: BrowserRestoreState | null = null;
+    private _browserRevealPendingContent = false;
     private _settingUnsubscribe: (() => void) | null = null;
     private _workspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
     private _reportedWorkspaceFocusLayoutState: WorkspaceFocusLayoutState = { active: false, fullscreen: false };
+    private _browserFocusLayoutActive = false;
 
     private _taskPlanVisible = false;
     private _taskRunning = false;
@@ -229,6 +233,7 @@ class TaskArtifacts extends HTMLElement {
             translate: (key, params) => t(key, params)
         });
         this._fileExplorer.onOpenInBrowser = (filePath: string) => {
+            this.forceBrowserActive();
             this.browserAddTab(filePathToFileUrl(filePath));
         };
         this._fileExplorer.onWorkspaceFocusLayoutChange = (state) => {
@@ -501,12 +506,20 @@ class TaskArtifacts extends HTMLElement {
 
     /** Backward-compatible alias for callers that previously closed only the editor. */
     closeEditor(): void {
-        this.exitPreview();
+        this._fileExplorer.closeEditor();
+    }
+
+    /** Leave the enlarged preview layout without changing the user's selected tab. */
+    suspendPreviewLayout(): void {
+        this.closeEditor();
+        if (!this._browserFocusLayoutActive) return;
+        this._browserFocusLayoutActive = false;
+        this._syncWorkspaceFocusLayout();
     }
 
     /** Exit either a workspace file preview/editor or the focused browser preview. */
     exitPreview(): void {
-        this._fileExplorer.closeEditor();
+        this.closeEditor();
         if (this._activeTab === 'browser') {
             this._switchTab('workspace');
         }
@@ -831,6 +844,12 @@ class TaskArtifacts extends HTMLElement {
             this._fileExplorer.closeEditor();
         }
         this._activeTab = tabId;
+        this._browserFocusLayoutActive = tabId === 'browser';
+        if (tabId === 'browser') {
+            this._browserRevealPendingContent = !this._browser || !this._browser.hasActiveContent();
+        } else {
+            this._browserRevealPendingContent = false;
+        }
         const root = this.shadowRoot;
         if (!root) return;
         root.querySelectorAll<HTMLElement>('.tab-btn').forEach((btn) => {
@@ -843,6 +862,8 @@ class TaskArtifacts extends HTMLElement {
         if (tabId === 'workspace') {
             this._mountFileExplorer();
         } else if (tabId === 'browser') {
+            this.consumeInitialBrowserAutoReveal();
+            this.restoreBrowserPanelLayout();
             this._mountBrowser();
         } else if (tabId === 'changes') {
             this.refreshChanges();
@@ -853,7 +874,8 @@ class TaskArtifacts extends HTMLElement {
     private _syncWorkspaceFocusLayout(): void {
         const hostVisible = this._isHostTaskVisible();
         const wsFocusActive = hostVisible && this._activeTab === 'workspace' && this._workspaceFocusLayoutState.active;
-        const browserFocusActive = hostVisible && this._activeTab === 'browser' && this._browserVisible;
+        const browserFocusActive =
+            hostVisible && this._browserFocusLayoutActive && this._activeTab === 'browser' && this._browserVisible;
         const active = wsFocusActive || browserFocusActive;
         const fullscreen = active && (browserFocusActive || this._workspaceFocusLayoutState.fullscreen);
         this.toggleAttribute('data-workspace-focus-fullscreen', fullscreen);
@@ -904,7 +926,8 @@ class TaskArtifacts extends HTMLElement {
         }
 
         // Initialize browser with taskId so it can be identified by BrowserController
-        this._browser = new EmbeddedBrowser(panel, this._taskId || '');
+        this._browser = new EmbeddedBrowser(panel, this._taskId || '', this._browserRestoreState ?? undefined);
+        this._browserRestoreState = null;
 
         // Register with the preload bridge so main process IPC can reach this instance
         const browserAPI = (window as any).browserAPI;
@@ -929,6 +952,11 @@ class TaskArtifacts extends HTMLElement {
     private _isHostTaskVisible(): boolean {
         const taskView = this.closest('task-view') as HTMLElement | null;
         return !taskView || (!taskView.hasAttribute('data-background') && taskView.style.display !== 'none');
+    }
+
+    /** Consume this task's single automatic Browser Use layout reveal opportunity. */
+    consumeInitialBrowserAutoReveal(): boolean {
+        return browserAutoRevealState.consume(this._taskId || this._getTaskId());
     }
 
     /**
@@ -962,9 +990,8 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
-     * 销毁浏览器实例并释放关联资源（webview、CDP 等）。
-     * 任务空闲超时后由 TaskView 调用，减少持续内存开销。
-     * 下次工具调用时 ensureBrowserReady() 会重新创建。
+     * 完整销毁浏览器实例和逻辑会话。idle 回收应使用 recycleBrowser()，
+     * 避免把仍可恢复的任务无提示重置为空白页。
      */
     destroyBrowser(): void {
         if (this._browser) {
@@ -981,9 +1008,39 @@ class TaskArtifacts extends HTMLElement {
         this._browserVisible = false;
         this._rebuildTabBar();
         this._dispatchBrowserVisibilityChanged();
-        // 浏览器被回收后，若当前正在浏览器 tab 上则切到工作空间
+        // 完整销毁后，若当前正在浏览器 tab 上则切到工作空间。
         if (this._activeTab === 'browser') {
             this._switchTab('workspace');
+        }
+        this._browserRestoreState = null;
+        this._browserRevealPendingContent = false;
+    }
+
+    /**
+     * Release only the idle physical WebViews while retaining the task's logical
+     * tabs and selected Browser tab for a later invisible or user-requested restore.
+     */
+    recycleBrowser(): void {
+        if (!this._browser) return;
+        this._browserRestoreState = this._browser.getSessionState();
+        this._browser.onTabsChanged = null;
+        const browserAPI = (window as any).browserAPI;
+        if (browserAPI) {
+            this._browser.unregister(browserAPI);
+        }
+        this._browser.destroy();
+        this._browser = null;
+    }
+
+    /** Whether recycling now would visibly replace content the user is reading. */
+    isBrowserPresentedToUser(): boolean {
+        return this._activeTab === 'browser' && this._browserVisible && this._isHostTaskVisible();
+    }
+
+    /** Restore a recycled Browser only when this task already had that tab selected. */
+    restoreSelectedBrowser(): void {
+        if (this._activeTab === 'browser' && this._browserVisible && !this._browser) {
+            this._mountBrowser();
         }
     }
 
@@ -1001,7 +1058,7 @@ class TaskArtifacts extends HTMLElement {
 
     /**
      * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
-     * 自动切换到浏览器标签并展开侧边栏。
+     * 是否展示浏览器标签由调用方的宿主展示策略决定。
      */
     async browserNavigate(url: string): Promise<void> {
         this.ensureBrowserReady();
@@ -1099,15 +1156,12 @@ class TaskArtifacts extends HTMLElement {
         return this._browser.getWebContentsId();
     }
 
-    /**
-     * 外部调用：聚焦当前活动 webview，用于 pressKey 等键盘输入工具。
-     */
-    browserFocusActiveWebview(): boolean {
+    /** 外部调用：只查询焦点归属，绝不主动改变用户焦点。 */
+    browserHasActiveWebviewFocus(): boolean {
         if (!this._isHostTaskVisible()) {
             return false;
         }
-        this.ensureBrowserReady();
-        return this._browser?.focusActiveWebview() ?? false;
+        return this._browser?.hasActiveWebviewFocus() ?? false;
     }
 
     /**
@@ -1140,6 +1194,14 @@ class TaskArtifacts extends HTMLElement {
     private _syncBrowserActiveState(): void {
         if (!this._browser) return;
         const hasContent = this._browser.hasActiveContent();
+        if (hasContent) {
+            this._browserRevealPendingContent = false;
+        } else if (this._browserRevealPendingContent) {
+            // A newly mounted webview reports its initial about:blank asynchronously.
+            // Do not let that transient event undo an explicit Browser reveal before
+            // the first Browser Use navigation has reached the guest.
+            return;
+        }
         if (this._browserVisible !== hasContent) {
             this._browserVisible = hasContent;
             this._rebuildTabBar();
@@ -1165,6 +1227,11 @@ class TaskArtifacts extends HTMLElement {
         browserPanel.style.display = '';
         browserPanel.style.position = 'absolute';
         browserPanel.style.inset = '0';
+        browserPanel.style.width = '1280px';
+        browserPanel.style.height = '800px';
+        browserPanel.style.opacity = '0';
+        browserPanel.style.pointerEvents = 'none';
+        browserPanel.style.zIndex = '-1';
         browserPanel.dataset.keepAlive = '1';
     }
 
@@ -1180,6 +1247,11 @@ class TaskArtifacts extends HTMLElement {
         delete browserPanel.dataset.keepAlive;
         browserPanel.style.position = '';
         browserPanel.style.inset = '';
+        browserPanel.style.width = '';
+        browserPanel.style.height = '';
+        browserPanel.style.opacity = '';
+        browserPanel.style.pointerEvents = '';
+        browserPanel.style.zIndex = '';
         if (this._activeTab !== 'browser') {
             browserPanel.style.display = 'none';
         }

@@ -31,6 +31,10 @@ export function makeEnsureSidebarScript(taskId: string): string {
         if (el) {
             var tv = el.closest('task-view');
             var taskViewIsHidden = tv && (tv.hasAttribute('data-background') || tv.style.display === 'none');
+            var initialBrowserUse = typeof el.consumeInitialBrowserAutoReveal === 'function'
+                ? el.consumeInitialBrowserAutoReveal()
+                : false;
+            var shouldAutoReveal = !taskViewIsHidden && initialBrowserUse;
             var renderRoot = tv && tv.closest('#nonAppSlot');
             function resetOversizedArtifact() {
                 if (el.style.minWidth === '1280px') el.style.minWidth = '';
@@ -110,16 +114,18 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 恢复为侧边栏正常宽度。
                 resetOversizedArtifact();
             }
-            // 前台任务可以进入浏览器聚焦布局；后台任务只挂载可渲染的 webview，
-            // 不得通过文档级布局事件收起当前任务的左侧导航或改变其输入焦点。
-            if (tv && !taskViewIsHidden && typeof tv._ensureRightSidebarOpen === 'function') {
+            // 每个任务仅第一次 Browser Use 可以自动展示浏览器聚焦布局。
+            // 后台首次调用也会消费该机会，但不得延迟到用户以后打开任务时补做展示。
+            if (tv && shouldAutoReveal && typeof tv._ensureRightSidebarOpen === 'function') {
                 tv._ensureRightSidebarOpen();
             }
-            prepareBrowser(!taskViewIsHidden);
+            prepareBrowser(shouldAutoReveal);
+            if (!shouldAutoReveal && typeof el.keepBrowserPanelRenderable === 'function') {
+                el.keepBrowserPanelRenderable();
+            }
             if (tv && taskViewIsHidden) {
                 // prepareBrowser 首次调用会在这里才创建 .bw 和 webview，必须在挂载后
                 // 再应用一次尺寸，并保持 browser panel 可渲染。
-                if (typeof el.keepBrowserPanelRenderable === 'function') el.keepBrowserPanelRenderable();
                 setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));
             }
         }

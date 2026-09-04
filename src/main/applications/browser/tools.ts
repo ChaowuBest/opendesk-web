@@ -158,7 +158,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
     constructor(browserApp: BrowserApplication) {
         super(
             'navigate',
-            '在当前任务的嵌入式浏览器中打开指定的网页。支持在当前标签页或新标签页中打开。浏览器会自动切换到前台显示。',
+            '在当前任务的嵌入式浏览器中打开指定的网页。支持在当前标签页或新标签页中打开。当前可见任务首次使用时可自动展示；后续及后台任务保持静默，不改变用户当前布局或标签。',
             BrowserNavigateArgsSchema
         );
         this.browserApp = browserApp;
