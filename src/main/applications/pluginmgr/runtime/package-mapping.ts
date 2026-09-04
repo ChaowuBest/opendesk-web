@@ -88,15 +88,27 @@ export function resolveWorkspacePackageUrl(specifier: string, startDirectory: st
 
 /**
  * 从宿主模块解析链定位指定的包入口文件 URL。
- * 常规解析失败时退回应用根目录下的 workspace 包。
- * 两者都解析不到时返回 undefined（保持插件原有加载行为，不阻断）。
+ *
+ * 常规解析失败，或解析结果不可读时退回应用根目录下的 workspace 包。
+ * 不可读场景：Windows 上 `file:packages/*` 依赖在 node_modules 下是 junction，
+ * electron-packager 打包 asar 时会把它记录为指向构建机绝对路径的损坏链接，
+ * `require.resolve` 仍会"成功"返回坏路径（不抛 MODULE_NOT_FOUND），但文件实际
+ * 不存在。两者都解析不到时返回 undefined（保持插件原有加载行为，不阻断）。
  */
-function resolveHostPackageUrl(specifier: string): string | undefined {
+export function resolveHostPackageUrl(
+    specifier: string,
+    startDirectory: string = path.dirname(fileURLToPath(import.meta.url)),
+    resolveFromHost: (specifier: string) => string = (value) => hostRequire().resolve(value)
+): string | undefined {
     try {
-        return pathToFileURL(hostRequire().resolve(specifier)).href;
+        const resolved = resolveFromHost(specifier);
+        if (resolved && fs.existsSync(resolved)) {
+            return pathToFileURL(resolved).href;
+        }
     } catch {
-        return resolveWorkspacePackageUrl(specifier, path.dirname(fileURLToPath(import.meta.url)));
+        // 常规解析失败，走 workspace 兜底
     }
+    return resolveWorkspacePackageUrl(specifier, startDirectory);
 }
 
 function buildSpecifierMap(): Record<string, string> {
@@ -113,11 +125,11 @@ function buildLoaderSource(map: Record<string, string>): string {
 const map = ${JSON.stringify(map)};
 
 function isModuleNotFound(error) {
-    return Boolean(
-        error &&
-        typeof error === 'object' &&
-        (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND')
-    );
+    if (!error || typeof error !== 'object') return false;
+    const code = error.code;
+    // ENOENT 覆盖 asar 中损坏链接导致的解析失败（Windows junction 打包为
+    // 指向构建机绝对路径的坏链接，nextResolve 会抛 ENOENT 而非 MODULE_NOT_FOUND）。
+    return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND' || code === 'ENOENT';
 }
 
 export async function resolve(specifier, context, nextResolve) {

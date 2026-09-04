@@ -73,6 +73,51 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     }
 }
 
+/**
+ * 纵深防御：把 workspace 包链接物化为真实目录。
+ *
+ * Windows 下 npm 会把 `file:packages/*` 依赖在 node_modules 下建成 junction
+ * （绝对路径目标）。packagerConfig.derefSymlinks 已让复制阶段直接解引用链接，
+ * 产物里对应位置是真实目录；但保留该 hook 兜底 —— 若未来 derefSymlinks 被移除
+ * 或个别环境仍以链接形态进入 staged 目录，asar 打包时 junction 会被记录为指向
+ * 构建机绝对路径的损坏链接，导致打包版插件加载失败：
+ * `ENOENT, node_modules\@bitclub.ai\D:\... not found in app.asar`。
+ * 该 hook 在 prune 之后、打包 asar 之前执行（幂等），把这些链接替换为仓库内的
+ * 真实目录（排除子包自带的 node_modules / .git）。
+ */
+const WORKSPACE_PACKAGE_DIRECTORIES = {
+    'opendesk-app-sdk': 'app-sdk',
+    'opendesk-plugin-sdk': 'plugin-sdk'
+};
+
+function materializeWorkspacePackageLinks(buildPath, workspaceRoot = __dirname) {
+    const scopedDirectory = path.join(buildPath, 'node_modules', '@bitclub.ai');
+    if (!fs.existsSync(scopedDirectory)) return;
+    for (const packageName of Object.keys(WORKSPACE_PACKAGE_DIRECTORIES)) {
+        const linkPath = path.join(scopedDirectory, packageName);
+        let isLink = false;
+        try {
+            isLink = fs.lstatSync(linkPath).isSymbolicLink();
+        } catch {
+            continue; // 不存在，跳过
+        }
+        if (!isLink) continue; // 已是真实目录（如 CI 以 --install-links 安装），无需处理
+
+        const workspaceDirectory = path.join(workspaceRoot, 'packages', WORKSPACE_PACKAGE_DIRECTORIES[packageName]);
+        fs.rmSync(linkPath, { recursive: true, force: true });
+        if (!fs.existsSync(workspaceDirectory)) continue; // 异常场景：仓库内无对应 workspace
+        fs.cpSync(workspaceDirectory, linkPath, {
+            recursive: true,
+            filter(source) {
+                const relative = path.relative(workspaceDirectory, source);
+                if (!relative) return true;
+                const first = relative.split(path.sep)[0];
+                return first !== 'node_modules' && first !== '.git';
+            }
+        });
+    }
+}
+
 const extraResources = [
     path.join(__dirname, 'dist', 'plugins'),
     ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
@@ -265,6 +310,7 @@ function preserveWixInstallDirectory(creator) {
 
 module.exports = {
     ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
+    materializeWorkspacePackageLinks,
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
@@ -287,6 +333,12 @@ module.exports = {
             'icons',
             process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
         ),
+        // Windows 上 npm 把 file:packages/* 依赖建成 junction（绝对路径目标）。
+        // electron-packager 默认不 dereference 符号链接：复制时在目标创建 symlink
+        // 需要管理员/开发者模式（否则 EPERM），且 @electron/asar 会把 junction 的
+        // 绝对目标写成损坏链接，导致打包版插件加载 SDK 报 ENOENT。开启 derefSymlinks
+        // 让 workspace 依赖以真实目录进入产物，路径与安装位置无关。
+        derefSymlinks: true,
         extendInfo: {
             NSMicrophoneUsageDescription: 'OpenDesk uses the microphone to convert your speech into text.',
             NSSpeechRecognitionUsageDescription:
@@ -298,7 +350,7 @@ module.exports = {
         ignore: [/^[/\\]out(?:[/\\]|-)/, /^[/\\]dist[/\\]plugins(?:[/\\]|$)/, /^[/\\]resources[/\\]plugins(?:[/\\]|$)/],
         ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         extraResource: extraResources,
-        afterPrune: [pruneDarwinAppNativePrebuilds],
+        afterPrune: [pruneDarwinAppNativePrebuilds, materializeWorkspacePackageLinks],
         afterCopyExtraResources: [pruneDarwinExtraResources]
     },
     rebuildConfig: {},
