@@ -3718,10 +3718,26 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
+        const duplicateIndex = (this.currentData.providers || []).findIndex(
+            (p) => p.name === name && p !== this.currentData.providers[this._editingProviderIndex]
+        );
+        if (duplicateIndex !== -1) {
+            this.showFieldError(this.querySelector('#provider-name-input'), this._t('sp.providers.nameExists'));
+            return;
+        }
+
         const provider = { name, provider_type, base_url, api_key, no_proxy, no_ssl };
 
         if (this._editingProviderIndex >= 0) {
+            const oldName = this.currentData.providers[this._editingProviderIndex]?.name;
             this.currentData.providers[this._editingProviderIndex] = provider;
+            if (oldName && oldName !== name && Array.isArray(this.currentData.models)) {
+                this.currentData.models = this.currentData.models.map((m) =>
+                    m.provider_name === oldName ? { ...m, provider_name: name } : m
+                );
+                this.refreshModelsSection();
+                this.refreshDefaultModelsSection();
+            }
         } else {
             if (!this.currentData.providers) this.currentData.providers = [];
             this.currentData.providers.push(provider);

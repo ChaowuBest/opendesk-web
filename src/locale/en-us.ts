@@ -841,6 +841,7 @@ export const enUs: Record<string, string> = {
     'config.provider.field.api_key': 'API Key',
     'config.provider.field.no_proxy': 'Disable Proxy',
     'config.provider.field.no_ssl': 'Skip SSL Certificate Verification',
+    'config.provider.nameExists': 'Provider name already exists',
 
     // Config - Model
     'config.model.title': 'Model Config',
@@ -1665,6 +1666,7 @@ export const enUs: Record<string, string> = {
     'sp.providers.save': 'Save',
     'sp.providers.addBtn': 'Add',
     'sp.providers.nameRequired': 'Please enter a provider name',
+    'sp.providers.nameExists': 'Provider name already exists',
     'sp.providers.delete.title': 'Delete provider',
     'sp.providers.delete.confirmWithModels':
         'Provider "${name}" has ${count} associated models. Deleting the provider will also delete these models.',

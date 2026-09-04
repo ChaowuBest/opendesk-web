@@ -739,6 +739,101 @@ describe('setting-panel config management', () => {
         expect(panel.querySelector('#provider-name-input')?.classList.contains('od-sp-fi-error')).toBe(true);
     });
 
+    test('provider name duplicate shows inline error instead of saving', () => {
+        const panel = createPanel();
+        panel.currentData.providers = [
+            {
+                name: 'openai',
+                provider_type: 'openai',
+                base_url: 'https://api.openai.com/v1',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            },
+            {
+                name: 'anthropic',
+                provider_type: 'anthropic',
+                base_url: 'https://api.anthropic.com',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ];
+        panel.render();
+        panel.showProviderEditModal(-1);
+        (panel.querySelector('#provider-name-input') as HTMLInputElement).value = 'openai';
+
+        panel.saveProvider();
+
+        const group = panel.querySelector('#provider-name-input')?.closest('.od-sp-fg');
+        expect(group?.querySelector('.od-sp-field-error')?.textContent).toBe('提供方名称已存在');
+        expect(panel.querySelector('#provider-name-input')?.classList.contains('od-sp-fi-error')).toBe(true);
+        expect(panel.currentData.providers).toHaveLength(2);
+    });
+
+    test('editing provider name to same value does not trigger duplicate error', () => {
+        const panel = createPanel();
+        panel.currentData.providers = [
+            {
+                name: 'openai',
+                provider_type: 'openai',
+                base_url: 'https://api.openai.com/v1',
+                api_key: 'sk-1',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ];
+        panel.render();
+        panel.showProviderEditModal(0);
+        (panel.querySelector('#provider-name-input') as HTMLInputElement).value = 'openai';
+        (panel.querySelector('#provider-url-input') as HTMLInputElement).value = 'https://api.openai.com/v1/new';
+        panel.closeModal = jest.fn();
+        panel.refreshProvidersSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        panel.saveProvider();
+
+        expect(panel.querySelector('.od-sp-field-error')).toBeNull();
+        expect(panel.currentData.providers[0].base_url).toBe('https://api.openai.com/v1/new');
+        expect(panel.scheduleSave).toHaveBeenCalledTimes(1);
+    });
+
+    test('renaming provider updates provider_name in all associated models', () => {
+        const panel = createPanel();
+        panel.currentData.providers = [
+            {
+                name: 'openai',
+                provider_type: 'openai',
+                base_url: 'https://api.openai.com/v1',
+                api_key: '',
+                no_proxy: false,
+                no_ssl: false
+            }
+        ];
+        panel.currentData.models = [
+            { alias: 'gpt4o', provider_name: 'openai', model_name: 'gpt-4o', model_type: 'chat' },
+            { alias: 'embed3', provider_name: 'openai', model_name: 'text-embedding-3-small', model_type: 'embedding' },
+            { alias: 'other', provider_name: 'deepseek', model_name: 'deepseek-chat', model_type: 'chat' }
+        ];
+        panel.render();
+        panel.showProviderEditModal(0);
+        (panel.querySelector('#provider-name-input') as HTMLInputElement).value = 'openai-pro';
+        panel.closeModal = jest.fn();
+        panel.refreshProvidersSection = jest.fn();
+        panel.refreshModelsSection = jest.fn();
+        panel.refreshDefaultModelsSection = jest.fn();
+        panel.scheduleSave = jest.fn();
+
+        panel.saveProvider();
+
+        expect(panel.currentData.providers[0].name).toBe('openai-pro');
+        expect(panel.currentData.models[0].provider_name).toBe('openai-pro');
+        expect(panel.currentData.models[1].provider_name).toBe('openai-pro');
+        expect(panel.currentData.models[2].provider_name).toBe('deepseek');
+        expect(panel.refreshModelsSection).toHaveBeenCalledTimes(1);
+        expect(panel.refreshDefaultModelsSection).toHaveBeenCalledTimes(1);
+    });
+
     test('telemetry endpoint url required shows inline error instead of notification', () => {
         const panel = createPanel();
         panel.render();
