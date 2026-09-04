@@ -105,4 +105,37 @@ describe('agent-input auto-resize', () => {
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
         expect(textarea.style.height).toBe('30px');
     });
+
+    function mockDialogHeight(input: HTMLElement, height: number) {
+        (input as unknown as { closest: () => unknown }).closest = jest.fn(() => ({
+            querySelector: () => ({ clientHeight: height })
+        }));
+    }
+
+    test('对话框高度很小时，上限按比例缩小但保底最小高度', () => {
+        const { input, textarea } = setupInput();
+        // 对话框 100px，比例 0.5 → 50px，低于最小高度 56px，故保底 56px
+        mockDialogHeight(input, 100);
+        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+        input.autoResizeTextarea(textarea);
+        expect(textarea.style.height).toBe('56px');
+    });
+
+    test('对话框高度正常时，上限为对话框高度的 50%', () => {
+        const { input, textarea } = setupInput();
+        // 对话框 400px，比例 0.5 → 上限 200px
+        mockDialogHeight(input, 400);
+        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+        input.autoResizeTextarea(textarea);
+        expect(textarea.style.height).toBe('200px');
+    });
+
+    test('对话框高度很大时，封顶为绝对上限 240px', () => {
+        const { input, textarea } = setupInput();
+        // 对话框 1000px，比例 0.5 → 500px，超过绝对上限 240px，故封顶 240px
+        mockDialogHeight(input, 1000);
+        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+        input.autoResizeTextarea(textarea);
+        expect(textarea.style.height).toBe('240px');
+    });
 });
