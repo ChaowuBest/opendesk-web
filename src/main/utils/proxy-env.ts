@@ -200,7 +200,7 @@ function getEnvSystemProxy(): Promise<EffectiveSystemProxy | null> {
  */
 export async function resolveProxyEnvVars(): Promise<ProxyEnvVars> {
     const nc = Setting.getInstance().getData().network_config;
-    const useProxy = nc.use_proxy ?? 'none';
+    const useProxy = nc.use_proxy ?? 'system';
 
     if (useProxy === 'none') return {};
 

@@ -217,9 +217,9 @@ const GUIConfigSchema = z.object({
         .optional()
         .describe('关闭主窗口时的行为: quit=退出应用, minimize=最小化, 未设置时每次询问'),
     floating_window_mode: z
-        .enum(['pill', 'card'])
-        .optional()
-        .describe('悬浮窗显示模式: pill=单行胶囊, card=完整卡片, 未设置=关闭')
+        .enum(['pill', 'card', 'off'])
+        .default('card')
+        .describe('悬浮窗显示模式: pill=单行胶囊, card=完整卡片, off=关闭')
 });
 
 export const DEFAULT_SHORTCUTS = {
@@ -277,7 +277,7 @@ const NetworkConfigSchema = z.object({
     no_ssl: z.boolean().default(false).describe('跳过 SSL 证书校验（全局生效，优先级高于 Provider 级别的 no_ssl）'),
     use_proxy: z
         .enum(['system', 'custom', 'none'])
-        .default('none')
+        .default('system')
         .describe('代理模式：system=系统代理, custom=自定义代理, none=无代理'),
     custom_proxy_addr: z.string().default('').describe('自定义代理地址（仅 use_proxy=custom 时生效）'),
     no_proxy: z.string().default('').describe('不走代理的地址列表，格式与标准 NO_PROXY 一致')
@@ -445,7 +445,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,
-            use_proxy: 'none',
+            use_proxy: 'system',
             custom_proxy_addr: '',
             no_proxy: ''
         }),

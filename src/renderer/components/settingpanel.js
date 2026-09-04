@@ -2109,7 +2109,7 @@ class SettingPanel extends HTMLElement {
             : 'bottom-right';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
-        const useProxy = networkConfig.use_proxy || 'none';
+        const useProxy = networkConfig.use_proxy || 'system';
         const customProxyAddr = networkConfig.custom_proxy_addr || '';
         const noProxy = networkConfig.no_proxy || '';
 
@@ -3103,12 +3103,7 @@ class SettingPanel extends HTMLElement {
 
         this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
             if (!this.currentData.gui_config) this.currentData.gui_config = {};
-            const value = e.target.value;
-            if (value === 'off') {
-                delete this.currentData.gui_config.floating_window_mode;
-            } else {
-                this.currentData.gui_config.floating_window_mode = value;
-            }
+            this.currentData.gui_config.floating_window_mode = e.target.value;
             this.saveImmediately();
         });
 
@@ -4490,12 +4485,7 @@ class SettingPanel extends HTMLElement {
             });
             this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
                 if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                const value = e.target.value;
-                if (value === 'off') {
-                    delete this.currentData.gui_config.floating_window_mode;
-                } else {
-                    this.currentData.gui_config.floating_window_mode = value;
-                }
+                this.currentData.gui_config.floating_window_mode = e.target.value;
                 this.saveImmediately();
             });
             this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {

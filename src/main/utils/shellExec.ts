@@ -561,7 +561,7 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
     //   - system → 覆盖为系统代理（鸿蒙走 ArkTS 桥接，其他平台透传 env）
     //   - custom → 覆盖为 custom_proxy_addr
     // 缓存由 refreshProxyEnvCache() 预热，未就绪时不动 env（不阻塞 spawn）。
-    const useProxy = settingData.network_config?.use_proxy ?? 'none';
+    const useProxy = settingData.network_config?.use_proxy ?? 'system';
     if (useProxy === 'none') {
         delete env.HTTP_PROXY;
         delete env.HTTPS_PROXY;

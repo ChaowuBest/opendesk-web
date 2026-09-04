@@ -286,7 +286,14 @@ function preserveWixInstallDirectory(creator) {
             recursiveRootCleanupRef,
             '        <!-- Untracked files in the selected install root are preserved. -->'
         )
-        .replace(majorUpgradeTemplate, '    <MajorUpgrade AllowDowngrades="yes" />')
+        .replace(
+            majorUpgradeTemplate,
+            // AllowDowngrades 的检测范围是"不低于当前版本"的全部产品（含同版本不同
+            // ProductCode，日志可见同版本 MSI 以 operation=MajorUpgrade 被检测替换），
+            // 因此无需也不能再加 AllowSameVersionUpgrades（WiX CNDL0035 互斥校验），
+            // 任意版本的旧 MSI 都会被 RemoveExistingProducts 替换，MSI 层只保留一份。
+            '    <MajorUpgrade AllowDowngrades="yes" />'
+        )
         .replace(installPerUserProperty, '    <Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0" />')
         .replace(mediaTemplate, '    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="low"/>');
 
@@ -313,7 +320,10 @@ function preserveWixInstallDirectory(creator) {
                 root: 'HKLM',
                 key: wixInstallPathRegistryKey,
                 name: 'BundleInstall',
-                type: 'integer',
+                // 必须写 REG_SZ（字符串）。若写 REG_DWORD，MSI 的 RegistrySearch(raw) 读到的属性值是
+                // "#1"（带整数前缀），在修复（Repair）场景下条件 `<> "1"` 会被判定为 true，导致
+                // UninstallDisplayName 等 .msq 人工 ARP 组件被重新安装，控制面板出现多余的 MSI 条目。
+                type: 'string',
                 value: '1',
                 forceDeleteOnUninstall: 'yes'
             },
@@ -360,9 +370,15 @@ function preserveWixInstallDirectory(creator) {
             return component;
         }
 
-        component.xml = component.xml
-            .replace(new RegExp(`(<Component Id="${registry.id}"[^>]*)(>)`), '$1 Transitive="yes"$2')
-            .replace(/(\r?\n)(\s*)<RegistryKey/, `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`);
+        // 注意：不能给这些组件加 Transitive="yes"。MSI 在修复（Repair / REINSTALL）时会重新评估
+        // Transitive 组件的 Condition，而修复时 OPENDESK_BUNDLE_INSTALL 可能取到非法整数值
+        // （RegistrySearch 读到旧 REG_DWORD 时的 "#1"），导致 `<> "1"` 被判定为 true，使
+        // UninstallDisplayName 等 .msq ARP 组件被补装，控制面板里出现多余条目。不加 Transitive
+        // 后组件状态在安装时固化，修复/维护不再重新评估。
+        component.xml = component.xml.replace(
+            /(\r?\n)(\s*)<RegistryKey/,
+            `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`
+        );
         return component;
     };
 }
