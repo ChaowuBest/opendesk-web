@@ -44,7 +44,8 @@ import {
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { comparePluginVersions } from '../discovery/manifest.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
-import { matchesHintUrlPrefix, normalizeHintAddress, validateBrowserHint } from './browser-hints.js';
+import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
+import type { CompiledHintPattern } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
 import {
     parsePluginCommandArguments,
@@ -119,8 +120,10 @@ interface ContributionRecord<T> {
 interface BrowserHintRecord {
     pluginKey: string;
     pluginId: string;
-    /** 归一化后的地址前缀（不含协议） */
+    /** 展示用的声明 pattern（归一化前缀/通配符串，或 RegExp 字面量形式） */
     urlPrefix: string;
+    /** 注册时编译好的地址匹配器 */
+    pattern: CompiledHintPattern;
     generator: BrowserHintGenerator;
 }
 
@@ -450,17 +453,16 @@ export class PluginHost {
     }
 
     /**
-     * 汇总所有 urlPrefix 命中当前页面的插件 hint。
+     * 汇总所有 pattern 命中当前页面的插件 hint。
      *
      * 单个生成器失败只记录诊断并跳过，不影响其他插件与快照本身。
      */
     async getBrowserHints(context: BrowserContext): Promise<BrowserHint[]> {
-        const address = normalizeHintAddress(context.address || context.url);
         const hints: BrowserHint[] = [];
         for (const record of [...this.browserHints]) {
             const entry = this.entries.get(record.pluginKey);
             if (!entry) continue;
-            if (!matchesHintUrlPrefix(address, record.urlPrefix)) continue;
+            if (!record.pattern.matches(context.address || context.url)) continue;
             try {
                 const produced = await record.generator(context);
                 if (!Array.isArray(produced)) throw new Error('plugin.browser_hints_invalid');
@@ -941,17 +943,19 @@ export class PluginHost {
             },
             browser: {
                 hint: {
-                    register: (urlPrefix: string, generator: BrowserHintGenerator) => {
+                    register: (pattern: string | RegExp, generator: BrowserHintGenerator) => {
                         addCapability('browser');
-                        const normalized = normalizeHintAddress(typeof urlPrefix === 'string' ? urlPrefix : '');
-                        if (!normalized) throw new Error('plugin.browser_hint_url_prefix_invalid');
+                        // 入口处一次性编译 pattern：非法 pattern 在注册时立即报错，
+                        // 快照期间只做纯匹配，不再有解析开销
+                        const compiled = compileHintPattern(pattern);
                         if (typeof generator !== 'function') {
-                            throw new Error(`plugin.browser_hint_generator_invalid:${normalized}`);
+                            throw new Error(`plugin.browser_hint_generator_invalid:${compiled.display}`);
                         }
                         const record: BrowserHintRecord = {
                             pluginKey: entry.key,
                             pluginId: entry.id,
-                            urlPrefix: normalized,
+                            urlPrefix: compiled.display,
+                            pattern: compiled,
                             generator
                         };
                         this.browserHints.push(record);

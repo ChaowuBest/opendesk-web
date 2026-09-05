@@ -316,7 +316,7 @@ export interface BrowserContext {
     readonly url: string;
     /** 域名，如 www.bing.com */
     readonly domain: string;
-    /** 去掉协议与 `//` 后的地址，如 www.bing.com/search?q=x；urlPrefix 即与此字段做前缀匹配 */
+    /** 去掉协议与 `//` 后的地址，如 www.bing.com/search?q=x；hint 的地址匹配 pattern 即作用于此字段 */
     readonly address: string;
     /** 页面标题 */
     readonly title: string;
@@ -584,10 +584,15 @@ export interface PluginContext {
             /**
              * 为匹配的页面注册 hint 生成器。
              *
-             * @param urlPrefix 页面地址前缀，不含协议部分（如 `www.bing.com/search`）。
+             * @param pattern 页面地址匹配模式，不含协议部分（匹配对象为去协议后的
+             *   完整地址，如 `www.bing.com/search?q=x`）：
+             *   - 字符串不含 `*`：按前缀匹配，前缀需结束在 `/`、`?`、`#` 或地址末尾的边界上；
+             *   - 字符串含 `*`：按通配符整体匹配路径，`*` 匹配单段（不含 `/`），`**`
+             *     跨段，query 与 hash 不参与匹配；
+             *   - RegExp：对去协议后的完整地址做正则匹配。
              * @param generator 生成器函数，接收 BrowserContext 返回 hint 列表。
              */
-            register(urlPrefix: string, generator: BrowserHintGenerator): PluginRegistration;
+            register(pattern: string | RegExp, generator: BrowserHintGenerator): PluginRegistration;
         };
     };
     readonly events: {

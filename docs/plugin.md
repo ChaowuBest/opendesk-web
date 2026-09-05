@@ -355,7 +355,7 @@ export default definePlugin({
     id: 'browser-hint-example',
     capabilities: ['browser'],
     setup(ctx) {
-        // urlPrefix 不含协议部分，按前缀匹配页面地址
+        // 字符串不含 * 时按前缀匹配页面地址（不含协议部分）
         ctx.browser.hint.register('www.example.com', async (context) => [
             textHint('This site only supports English keywords.'),
             actionHint(
@@ -365,17 +365,27 @@ export default definePlugin({
                 '(args) => { document.querySelector("#q").value = args.keyword; document.querySelector("#go").click(); }'
             )
         ]);
+        // 字符串含 * 时按通配符整体匹配路径：* 匹配单段，** 跨段
+        ctx.browser.hint.register('www.example.com/repo/*/issues', () => [textHint('Issues list page.')]);
+        // RegExp 直接对去协议后的完整地址做正则匹配
+        ctx.browser.hint.register(/^www\.example\.com\/wiki(\/.*)?$/, () => [textHint('Wiki page.')]);
     }
 });
 ```
 
 - 生成器签名为 `(context: BrowserContext) => BrowserHint[] | Promise<BrowserHint[]>`。
-- `BrowserContext` 提供 `url`（含协议）、`domain`、`address`（去掉协议的地址，即与 `urlPrefix`
-  匹配的字段）、`title`，以及按需拉取原始 DOM 的 `dom()`；不调用 `dom()` 就不会产生额外页面通信。
+- `BrowserContext` 提供 `url`（含协议）、`domain`、`address`（去掉协议的地址，即地址匹配
+  pattern 的作用对象）、`title`，以及按需拉取原始 DOM 的 `dom()`；不调用 `dom()` 就不会产生额外页面通信。
+- 地址 pattern 支持三种写法：
+    - 字符串不含 `*`：按前缀匹配，前缀需结束在 `/`、`?`、`#` 或地址末尾的边界上
+      （因此 `www.example.com` 不会命中 `www.example.com.evil.com`）；
+    - 字符串含 `*`：按通配符整体匹配路径，`*` 匹配单段（不含 `/`），`**` 跨段（中段的
+      `/**/` 允许匹配零段），query 与 hash 不参与匹配；
+    - RegExp：对去协议后的完整地址（含 query）做正则匹配。
 - `textHint(content)` 产生 `TextHint`，作为一段约束或说明附加到快照上。
 - `actionHint(name, description, args, functionStr)` 产生 `ActionHint`。`functionStr` 是页面内可
   `eval` 为函数的 JS 源码，模型通过 browser 的 `trigger` 工具调用，宿主以 `fn(args)` 形式执行它。
-- 同一个 `urlPrefix` 可以注册多次，多个插件的 hint 会被合并；单个生成器抛错只记录插件诊断，
+- 同一个 pattern 可以注册多次，多个插件的 hint 会被合并；单个生成器抛错只记录插件诊断，
   不影响其他插件与快照本身。
 
 快照会在最前面按分类输出命中的提示：
