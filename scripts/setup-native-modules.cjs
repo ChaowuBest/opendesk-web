@@ -154,18 +154,41 @@ try {
  * and makes packaging work on any VS install.
  *
  * Idempotent: skips once the marker is already 'false'.
+ * Windows-only: Spectre mitigation / MSB8040 is an MSVC concept, no effect on Linux/macOS.
+ * Robust: handles read-only files (chmod) and EACCES without crashing postinstall.
  */
 (function patchNodePtySpectre() {
+    if (process.platform !== 'win32') return;
     const gypFiles = [
         path.join(projectRoot, 'node_modules', 'node-pty', 'binding.gyp'),
         path.join(projectRoot, 'node_modules', 'node-pty', 'deps', 'winpty', 'src', 'winpty.gyp')
     ];
     for (const gypPath of gypFiles) {
         if (!fs.existsSync(gypPath)) continue;
-        let src = fs.readFileSync(gypPath, 'utf8');
+        let src;
+        try {
+            src = fs.readFileSync(gypPath, 'utf8');
+        } catch (e) {
+            console.warn(
+                `[setup] Warning: could not read ${path.basename(gypPath)} (${e.code ?? e.message}), skipping.`
+            );
+            continue;
+        }
         if (!src.includes("'SpectreMitigation': 'Spectre'")) continue; // already patched
         src = src.replace(/'SpectreMitigation': 'Spectre'/g, "'SpectreMitigation': 'false'");
-        fs.writeFileSync(gypPath, src, 'utf8');
+        try {
+            try {
+                fs.chmodSync(gypPath, 0o644);
+            } catch (_) {
+                /* ignore chmod failure, try write anyway */
+            }
+            fs.writeFileSync(gypPath, src, 'utf8');
+        } catch (e) {
+            console.warn(
+                `[setup] Warning: could not patch ${path.basename(gypPath)} (${e.code ?? e.message}), skipping Spectre workaround.`
+            );
+            continue;
+        }
         console.log(`[setup] Patched ${path.basename(gypPath)} to disable Spectre mitigation (MSB8040 workaround)`);
     }
 })();
