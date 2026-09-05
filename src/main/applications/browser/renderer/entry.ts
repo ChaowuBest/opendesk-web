@@ -12,6 +12,8 @@
 import type { WebviewTag } from 'electron';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+// 注册 <content-loading-view> 加载中组件，用于页面加载反馈
+import '../../../../renderer/components/loading.js';
 import {
     WINDOW_OPEN_PROXY_SCRIPT,
     OPENER_BRIDGE_SCRIPT,
@@ -24,6 +26,8 @@ const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
 const STORAGE_KEY_BOOKMARKS = 'opendesk-browser-bookmarks';
 const MAX_HISTORY_ITEMS = 2000;
 const MAX_SUGGESTIONS = 8;
+// 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
+const LOADING_OVERLAY_DELAY_MS = 300;
 
 let nextTabId = 1;
 
@@ -41,6 +45,8 @@ interface BrowserTab {
     lastActiveTime?: number;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
+    /** 加载指示器延迟显示的定时器句柄 */
+    loadingTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 interface HistoryEntry {
@@ -197,6 +203,7 @@ class BrowserEntryWidget extends HTMLElement {
             this._removeZoomListener = null;
         }
         for (const tab of this.tabs) {
+            this.hideTabLoading(tab);
             tab.wrapEl?.remove();
             tab.webview = null;
             tab.wrapEl = null;
@@ -448,6 +455,19 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-webview-wrap.wb-wv-active { display: block; }
             .wb-webview {
                 width: 100%; height: 100%; border: none;
+            }
+            .wb-loading-overlay {
+                position: absolute; top: 0; left: 0;
+                width: 100%; height: 100%;
+                display: flex; align-items: center; justify-content: center;
+                background: var(--od-bg-elevated, #ffffff);
+                z-index: 10;
+                pointer-events: none;
+                animation: wb-loading-fade-in 0.2s ease;
+            }
+            @keyframes wb-loading-fade-in {
+                from { opacity: 0; }
+                to { opacity: 1; }
             }
 
             /* ---- Home page (legacy container, hidden by default now) ---- */
@@ -2687,6 +2707,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         if (this.tabs.length === 1) {
             const onlyTab = this.tabs[0];
+            this.hideTabLoading(onlyTab);
             try {
                 (onlyTab.webview as any)?.closeDevTools?.();
             } catch {
@@ -2717,6 +2738,7 @@ class BrowserEntryWidget extends HTMLElement {
         }
 
         const tab = this.tabs[idx];
+        this.hideTabLoading(tab);
         try {
             (tab.webview as any)?.closeDevTools?.();
         } catch {
@@ -2904,6 +2926,15 @@ class BrowserEntryWidget extends HTMLElement {
             this.closeTab(tab.id);
         });
 
+        // 慢加载页面在导航 commit 前会一直停留在旧页面上，这里通过
+        // did-start-loading / did-stop-loading 显示加载中遮罩给出反馈
+        wv.addEventListener('did-start-loading', () => {
+            this.showTabLoading(tab);
+        });
+        wv.addEventListener('did-stop-loading', () => {
+            this.hideTabLoading(tab);
+        });
+
         const onPopupBlocked = (event: Event) => {
             const detail = (event as CustomEvent).detail;
             if (!detail || !detail.url) return;
@@ -2944,6 +2975,9 @@ class BrowserEntryWidget extends HTMLElement {
         window.addEventListener('browser-webview-close-requested', onWebviewCloseRequested);
 
         wv.addEventListener('did-navigate', (event: any) => {
+            // 导航 commit 后页面内容已开始渲染，立即撤掉加载遮罩，
+            // 避免把已经显示出来的部分内容盖住（did-stop-loading 要等全部资源完成）
+            this.hideTabLoading(tab);
             // 成功导航时清除错误状态
             if (tab.errorInfo) {
                 tab.errorInfo = undefined;
@@ -2963,6 +2997,8 @@ class BrowserEntryWidget extends HTMLElement {
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
+            // 页内导航发生在已渲染的文档内，同样立即撤掉加载遮罩
+            this.hideTabLoading(tab);
             tab.url = event.url;
             if (tab.id === this.activeTabId) {
                 this.syncUrlBar();
@@ -3061,6 +3097,8 @@ class BrowserEntryWidget extends HTMLElement {
             const { errorCode, errorDescription, validatedURL, isMainFrame } = event;
             // 忽略子资源加载失败和非真正的错误
             if (!isMainFrame) return;
+            // 无论何种失败（含 ERR_ABORTED 主动中断），加载都不会再 commit，撤掉遮罩
+            this.hideTabLoading(tab);
             if (errorCode === -3) return; // ERR_ABORTED：用户主动导航中断
 
             const userMessage = getErrorMessage(errorDescription);
@@ -3095,6 +3133,34 @@ class BrowserEntryWidget extends HTMLElement {
         wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
             /* ignore */
         });
+    }
+
+    /**
+     * 延迟显示加载中遮罩：加载开始后 LOADING_OVERLAY_DELAY_MS 内完成的
+     * 页面不会闪烁遮罩，慢页面则会在旧内容上叠加明确的加载反馈。
+     */
+    private showTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) return;
+        tab.loadingTimer = setTimeout(() => {
+            tab.loadingTimer = null;
+            const wrap = tab.wrapEl;
+            if (!wrap || wrap.querySelector('.wb-loading-overlay')) return;
+            const overlay = document.createElement('div');
+            overlay.className = 'wb-loading-overlay';
+            const loadingView = document.createElement('content-loading-view');
+            loadingView.setAttribute('data-message', '正在加载页面...');
+            overlay.appendChild(loadingView);
+            wrap.appendChild(overlay);
+        }, LOADING_OVERLAY_DELAY_MS);
+    }
+
+    /** 取消未触发的加载遮罩定时器并移除已显示的遮罩 */
+    private hideTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) {
+            clearTimeout(tab.loadingTimer);
+            tab.loadingTimer = null;
+        }
+        tab.wrapEl?.querySelector('.wb-loading-overlay')?.remove();
     }
 
     /**
@@ -3347,27 +3413,31 @@ class BrowserEntryWidget extends HTMLElement {
         // If already on homepage, do nothing
         if (tab.internalUrl === 'opendesk://homepage/') return;
 
-        // Hide current webview if any
-        if (tab.webview) {
-            tab.wrapEl?.classList.remove('wb-wv-active');
-        }
-
         tab.isHomePage = false;
         tab.internalUrl = 'opendesk://homepage/';
         tab.url = 'opendesk://homepage/';
         tab.title = '新标签页';
+        tab.errorInfo = undefined;
+        tab.pendingUrl = null;
+        tab.ready = false;
 
-        // Create wrapper for internal page if needed
-        if (!tab.wrapEl) {
-            const wrapEl = document.createElement('div');
-            wrapEl.className = 'wb-webview-wrap';
-            wrapEl.dataset.tabId = String(tab.id);
-            this.webviewContainer?.appendChild(wrapEl);
-            tab.wrapEl = wrapEl;
+        // 彻底销毁当前 webview 及其 wrapper。主页 DOM 会整体覆写 wrapEl 内容，
+        // 若保留 tab.webview 的脏引用，后续 navigateTo 会对已脱离文档的
+        // webview 调 loadURL，表现为地址栏更新但页面不导航。
+        this.hideTabLoading(tab);
+        try {
+            (tab.webview as any)?.closeDevTools?.();
+        } catch {
+            /* ignore */
         }
+        if (tab.wrapEl) {
+            tab.wrapEl.remove();
+            tab.wrapEl = null;
+        }
+        tab.webview = null;
 
-        tab.wrapEl.classList.add('wb-wv-active');
-        this.renderHomepageInternal(tab.wrapEl, tab);
+        this.createInternalPageForTab(tab);
+        tab.wrapEl?.classList.add('wb-wv-active');
 
         this.syncUrlBar();
         this.syncNavButtons();

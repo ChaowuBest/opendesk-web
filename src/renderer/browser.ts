@@ -20,6 +20,8 @@ import {
     NAV_INTERCEPT_CONSOLE_PREFIX
 } from './webviewScripts';
 import { createRendererTranslator } from './locale.js';
+// 注册 <content-loading-view> 加载中组件，用于页面加载反馈
+import './components/loading.js';
 
 export type { BrowserState, TabInfo };
 
@@ -30,6 +32,8 @@ export interface BrowserRestoreState {
 
 const HOME_PAGE = 'about:blank';
 const fallbackT = createRendererTranslator();
+// 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
+const LOADING_OVERLAY_DELAY_MS = 300;
 
 function browserT(key: string): string {
     const runtimeTranslator = (window as any).__odT;
@@ -49,6 +53,8 @@ interface BrowserTab {
     errorInfo?: ErrorInfo;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
+    /** 加载指示器延迟显示的定时器句柄 */
+    loadingTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -455,6 +461,19 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-webview {
                 width: 100%; height: 100%; border: none;
             }
+            .bw-loading-overlay {
+                position: absolute; top: 0; left: 0;
+                width: 100%; height: 100%;
+                display: flex; align-items: center; justify-content: center;
+                background: #ffffff;
+                z-index: 10;
+                pointer-events: none;
+                animation: bw-loading-fade-in 0.2s ease;
+            }
+            @keyframes bw-loading-fade-in {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
             .bw-sep {
                 width: 1px; height: 14px;
                 background: #e5e7eb; margin: 0 1px; flex-shrink: 0;
@@ -569,6 +588,9 @@ export class EmbeddedBrowser extends BrowserInstance {
             :host([data-theme="dark"]) .bw-webview-container {
                 background: #1e1e1e !important;
                 box-shadow: inset 0 2px 6px rgba(0,0,0,0.3) !important;
+            }
+            :host([data-theme="dark"]) .bw-loading-overlay {
+                background: #1e1e1e !important;
             }
             :host([data-theme="dark"]) .bw-sep {
                 background: rgba(255, 255, 255, 0.12) !important;
@@ -975,6 +997,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             return;
         }
 
+        this.hideTabLoading(tab);
         try {
             (tab.webview as any)?.closeDevTools?.();
         } catch {
@@ -1132,6 +1155,15 @@ export class EmbeddedBrowser extends BrowserInstance {
             this.closeTab(tab.id);
         });
 
+        // 慢加载页面在导航 commit 前会一直停留在旧页面上，这里通过
+        // did-start-loading / did-stop-loading 显示加载中遮罩给出反馈
+        wv.addEventListener('did-start-loading', () => {
+            this.showTabLoading(tab);
+        });
+        wv.addEventListener('did-stop-loading', () => {
+            this.hideTabLoading(tab);
+        });
+
         // 拦截 window.open / target="_blank" 等打开新窗口的行为，
         // 改为在当前浏览器面板中开新标签页，
         // 避免 PiP 模式下弹出独立窗口导致用户体验割裂。
@@ -1175,6 +1207,9 @@ export class EmbeddedBrowser extends BrowserInstance {
         window.addEventListener('browser-webview-close-requested', onWebviewCloseRequested);
 
         wv.addEventListener('did-navigate', (event: any) => {
+            // 导航 commit 后页面内容已开始渲染，立即撤掉加载遮罩，
+            // 避免把已经显示出来的部分内容盖住（did-stop-loading 要等全部资源完成）
+            this.hideTabLoading(tab);
             // 成功导航时清除错误状态
             if (tab.errorInfo) {
                 tab.errorInfo = undefined;
@@ -1190,6 +1225,8 @@ export class EmbeddedBrowser extends BrowserInstance {
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
+            // 页内导航发生在已渲染的文档内，同样立即撤掉加载遮罩
+            this.hideTabLoading(tab);
             tab.url = event.url;
             if (tab.id === this.activeTabId) this.syncUrlBar();
             if (tab.ready) this.syncNavButtons();
@@ -1278,6 +1315,8 @@ export class EmbeddedBrowser extends BrowserInstance {
             const { errorCode, errorDescription, validatedURL, isMainFrame } = event;
             // 忽略子资源加载失败和非真正的错误
             if (!isMainFrame) return;
+            // 无论何种失败（含 ERR_ABORTED 主动中断），加载都不会再 commit，撤掉遮罩
+            this.hideTabLoading(tab);
             if (errorCode === -3) return; // ERR_ABORTED：用户主动导航中断
 
             const userMessage = getErrorMessage(errorDescription);
@@ -1309,6 +1348,34 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
             /* ignore */
         });
+    }
+
+    /**
+     * 延迟显示加载中遮罩：加载开始后 LOADING_OVERLAY_DELAY_MS 内完成的
+     * 页面不会闪烁遮罩，慢页面则会在旧内容上叠加明确的加载反馈。
+     */
+    private showTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) return;
+        tab.loadingTimer = setTimeout(() => {
+            tab.loadingTimer = null;
+            const wrap = tab.wrapEl;
+            if (!wrap || wrap.querySelector('.bw-loading-overlay')) return;
+            const overlay = document.createElement('div');
+            overlay.className = 'bw-loading-overlay';
+            const loadingView = document.createElement('content-loading-view');
+            loadingView.setAttribute('data-message', browserT('renderer.browser.loadingPage'));
+            overlay.appendChild(loadingView);
+            wrap.appendChild(overlay);
+        }, LOADING_OVERLAY_DELAY_MS);
+    }
+
+    /** 取消未触发的加载遮罩定时器并移除已显示的遮罩 */
+    private hideTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) {
+            clearTimeout(tab.loadingTimer);
+            tab.loadingTimer = null;
+        }
+        tab.wrapEl?.querySelector('.bw-loading-overlay')?.remove();
     }
 
     /**
@@ -1648,6 +1715,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             this._removeZoomListener = null;
         }
         for (const tab of this.tabs) {
+            this.hideTabLoading(tab);
             try {
                 (tab.webview as any)?.closeDevTools?.();
             } catch {

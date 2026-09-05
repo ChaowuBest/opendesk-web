@@ -2308,6 +2308,7 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Browser
     'renderer.browser.exitPreview': 'Exit preview',
+    'renderer.browser.loadingPage': 'Loading page...',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': 'Restore browser panel',

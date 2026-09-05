@@ -2247,6 +2247,7 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Browser
     'renderer.browser.exitPreview': '退出预览',
+    'renderer.browser.loadingPage': '正在加载页面...',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': '恢复浏览器面板',
