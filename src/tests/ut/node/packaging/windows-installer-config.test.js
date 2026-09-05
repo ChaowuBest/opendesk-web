@@ -26,6 +26,40 @@ test('excludes top-level build output directories from packaged application file
     assert.ok(ignorePatterns.some((pattern) => pattern.test('/out/opendesk-win32-x64/opendesk.exe')));
     assert.ok(ignorePatterns.some((pattern) => pattern.test('/out-wix-preview/opendesk-win32-x64/opendesk.exe')));
     assert.ok(ignorePatterns.every((pattern) => !pattern.test('/resources/package/installer/ui.xml')));
+
+    // 开发期垃圾不应进 asar，否则会膨胀体积并拖慢 WiX light 的压缩耗时
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/temp/x.log')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/docs/appguide.md')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/benchmarks/run.py')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/scripts/setup-native-modules.cjs')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/.opendesk/memory/memory.json')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/.husky/pre-commit')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/node_modules/.vite/deps/x.js')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/AGENTS.md')));
+    assert.ok(ignorePatterns.some((pattern) => pattern.test('/package-lock.json')));
+});
+
+test('afterPrune workspace-link hook always invokes its callback so packaging does not hang', () => {
+    const hook = forgeConfig.materializeWorkspacePackageLinks;
+    assert.equal(typeof hook, 'function');
+
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(new Error('materializeWorkspacePackageLinks never called its callback (packager would hang)')),
+            5000
+        );
+        // electron-packager invokes afterPrune hooks through util.promisify with
+        // (buildPath, electronVersion, platform, arch, callback). The path does not
+        // exist here, but the hook must still signal completion.
+        hook(path.join(projectRoot, 'temp', '__nonexistent_packaging_dir__'), '39.8.10', 'win32', 'x64', (err) => {
+            clearTimeout(timer);
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve();
+        });
+    });
 });
 
 test('keeps the MSI upgrade identity while enabling the branded Chinese x64 installer', async () => {
@@ -113,6 +147,18 @@ test('keeps versioned application directories without recursively purging the se
     assert.doesNotMatch(creator.wixTemplate, /RemoveFolderEx/);
     assert.doesNotMatch(creator.wixTemplate, /<Component Id="PurgeOnUninstall"/);
     assert.doesNotMatch(creator.wixTemplate, /<ComponentRef Id="PurgeOnUninstall"/);
+    assert.match(creator.wixTemplate, /<MajorUpgrade AllowDowngrades="yes"\s*\/>/);
+    assert.doesNotMatch(creator.wixTemplate, /DowngradeErrorMessage|AllowDowngrades="no"|AllowSameVersionUpgrades/);
+    assert.doesNotMatch(creator.wixTemplate, /<Property Id="ALLUSERS"[^>]*\/>/); // InstallScope=perMachine 会隐式声明 ALLUSERS，显式声明会 LGHT0091 重复
+    assert.match(
+        creator.wixTemplate,
+        /<Condition Message="!\(loc\.AdminRequiredMessage\)">Installed OR Privileged<\/Condition>/
+    );
+    assert.match(creator.wixTemplate, /<Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0"\s*\/>/);
+    assert.match(
+        creator.wixTemplate,
+        /<Media Id="1" Cabinet="product\.cab" EmbedCab="yes" CompressionLevel="low"\s*\/>/
+    );
     assert.deepEqual(await creator.getSpecialFiles(), [
         { name: 'opendesk.exe', path: 'temporary-launcher.exe' },
         { name: '.installInfo.json', path: 'temporary-install-info.json' }
@@ -145,7 +191,8 @@ test('keeps versioned application directories without recursively purging the se
             root: 'HKLM',
             key: 'SOFTWARE\\OpenDesk\\Installer',
             name: 'BundleInstall',
-            type: 'integer',
+            // 写 REG_SZ（字符串），避免 RegistrySearch(raw) 读 REG_DWORD 得到 "#1" 导致修复时条件误判
+            type: 'string',
             value: '1',
             forceDeleteOnUninstall: 'yes'
         },
@@ -180,16 +227,18 @@ test('keeps versioned application directories without recursively purging the se
     ]);
     assert.match(
         creator.getRegistryComponent({ id: 'UninstallDisplayName' }, 0).xml,
-        /<Component Id="UninstallDisplayName"[^>]+Transitive="yes">\s*<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"<\/Condition>/
+        /<Component Id="UninstallDisplayName"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"<\/Condition>/
     );
+    assert.doesNotMatch(creator.getRegistryComponent({ id: 'UninstallDisplayName' }, 0).xml, /Transitive="yes"/);
     assert.doesNotMatch(
         creator.getRegistryComponent({ id: 'RegistryInstallPath' }, 0).xml,
         /Transitive="yes"|OPENDESK_BUNDLE_INSTALL/
     );
     assert.match(
         creator.getRegistryComponent({ id: 'RegistryBundleInstallMode' }, 0).xml,
-        /Transitive="yes">\s*<Condition>OPENDESK_BUNDLE_INSTALL = "1"<\/Condition>/
+        /<Component Id="RegistryBundleInstallMode"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL = "1"<\/Condition>/
     );
+    assert.doesNotMatch(creator.getRegistryComponent({ id: 'RegistryBundleInstallMode' }, 0).xml, /Transitive="yes"/);
 });
 
 test('uses an editable MSI install directory page instead of the feature tree', () => {
@@ -243,6 +292,11 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 
     assert.match(bundle, /BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost"/);
+    // WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明
+    assert.match(bundle, /ForcePerMachine="yes"/);
+    // WiX v3 的 <Bundle> 不支持 Id 属性（candle CNDL0004），同版本重复安装的重复条目
+    // 由 BA 在 Plan 阶段把 related bundle 改写为 Absent 来清理
+    assert.match(bundle, /OnPlanRelatedBundle/);
     assert.match(bundle, /Payload[^>]+Name="OpenDesk\.Bootstrapper\.dll"/);
     assert.match(bundle, /Variable="InstallFolder"[^>]+Key="SOFTWARE\\OpenDesk\\Installer"/);
     assert.match(bundle, /<MsiProperty Name="APPLICATIONROOTDIRECTORY" Value="\[InstallFolder\]"\s*\/>/);
@@ -266,9 +320,105 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(bootstrapper, /private void SaveOptions\(\)[\s\S]*?InstallerPath\.Normalize\(folderTextBox\.Text\)/);
     assert.match(bootstrapper, /AppendDefaultDirectory[\s\S]*?Path\.Combine\(normalized, "opendesk"\)/);
     assert.match(bootstrapper, /DetectRelatedMsiPackage \+= OnDetectRelatedMsiPackage/);
+    assert.match(bootstrapper, /DetectRelatedBundle \+= OnDetectRelatedBundle/);
+    // 历史 bundle 统一交给 Burn 引擎卸载：Plan 阶段把 related bundle 改写为 Absent。
+    // 引擎默认只卸载版本更低的（RelationType=Upgrade），同版本重装默认 None 会留下重复条目。
+    assert.match(bootstrapper, /PlanRelatedBundle \+= OnPlanRelatedBundle/);
+    assert.match(
+        bootstrapper,
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install[\s\S]*?FindBundleCachePath\(e\.BundleId\)[\s\S]*?RequestState\.None\s*:\s*RequestState\.Absent/
+    );
+    // 缓存丢失的 bundle 无法卸载，只清孤儿注册键；不能计划 Absent（会让安装整体失败）
+    assert.match(bootstrapper, /private static string FindBundleCachePath\(string bundleId\)/);
+    // 作为 related bundle 被调起（升级时旧版被自动卸载）必须全程静默：
+    // Burn 会把主安装程序的显示级别传给旧版 Setup.exe，旧版若按 Display.Full 弹维护页，
+    // 窗口会落在主程序后面，用户只看到进度条不动。
+    assert.match(
+        bootstrapper,
+        /public bool RunsWithoutUserInteraction[\s\S]*?Command\.Display == Display\.None[\s\S]*?Command\.Display == Display\.Embedded[\s\S]*?Command\.Relation != RelationType\.None/
+    );
+    assert.doesNotMatch(bootstrapper, /if \(Command\.Display == Display\.None\)/);
+    // 提权交给 Burn 引擎在 Apply 阶段完成（bundle 保持 asInvoker）。
+    // 不能在 BA 里调 Engine.Elevate：UAC 请求是同步的，会阻塞 BA 消息循环，
+    // 界面卡在"正在准备安装"且无法取消。
+    assert.doesNotMatch(bootstrapper, /Engine\.Elevate/);
+    // 也不要改写 bundle 引擎的清单为 requireAdministrator：insignia 往返会破坏 bundle 结构
+    assert.doesNotMatch(buildScript, /insignia|-outputresource|requireAdministrator/);
+    assert.match(
+        bootstrapper,
+        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(action\);/
+    );
+    // 卸载时忽略 MSI 的 dependency provider：历史重复安装的 bundle 会在 provider 下残留
+    // dependent，引擎因此跳过 MSI 卸载（日志 w327 found dependents + execute: None），
+    // 表现为"卸载秒成功但应用还在"。OpenDesk 的 MSI 只被自身 bundle 引用，忽略登记是安全的。
+    assert.match(bootstrapper, /Engine\.StringVariables\["IGNOREDEPENDENCIES"\] = "ALL";/);
+    assert.match(
+        bootstrapper,
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install && activeAction != LaunchAction\.Uninstall/
+    );
+    // 静默模式/被父 bundle 调起时，apply 完成后必须能真正关闭窗体退出；
+    // 若走 busy 守卫会弹隐藏的确认框，/quiet 下永远没人点，进程不退出
+    assert.match(
+        bootstrapper,
+        /OnFormClosing[\s\S]*?if \(application\.RunsWithoutUserInteraction\)\s*\{[\s\S]*?return;[\s\S]*?\}/
+    );
+    // BA 进程未提权（Burn 只提升 Apply 阶段的独立进程），清理必须"先只读枚举、有目标才申请写权限"，
+    // 否则首次安装（无残留）就会因以写权限打开 HKLM 抛 SecurityException 而崩溃
+    assert.match(
+        bootstrapper,
+        /List<string> staleKeyNames = new List<string>\(\);\s*using \(RegistryKey uninstallKey = baseKey\.OpenSubKey\(uninstallKeyPath\)\)/
+    );
+    assert.match(
+        bootstrapper,
+        /if \(staleKeyNames\.Count == 0\) continue;\s*using \(RegistryKey writableKey = baseKey\.OpenSubKey\(uninstallKeyPath, true\)\)/
+    );
+    assert.doesNotMatch(bootstrapper, /WindowsPrincipal|WindowsBuiltInRole|IsProcessElevated/);
+    // UAC 提权后 Windows 会把发起提权的窗口压到别的窗口后面（有时还最小化），
+    // 用户授权完看不到安装界面。从 ApplyBegin 开始轮询观察，失去前台后抢回来。
+    assert.match(bootstrapper, /ApplyBegin \+= delegate[\s\S]*?KeepVisibleThroughElevation\(\)/);
+    assert.match(bootstrapper, /Elevate \+= delegate[\s\S]*?elevationRequested = true/);
+    assert.match(
+        bootstrapper,
+        /public void KeepVisibleThroughElevation\(\)[\s\S]*?elevationVisibilityTimer = new Timer\(\)[\s\S]*?BringBackToForegroundIfDisplaced\(\)/
+    );
+    // 关键：不能用"是否最小化"提前退出——UAC 之后窗口通常没被最小化，只是被压在后面
+    assert.doesNotMatch(bootstrapper, /WindowState != FormWindowState\.Minimized[\s\S]{0,80}return false/);
+    // 只在提权已发起、且前台不属于本进程时才抢（否则会盖掉自己的 MessageBox / 打扰用户主动切窗）
+    assert.match(
+        bootstrapper,
+        /BringBackToForegroundIfDisplaced\(\)[\s\S]*?application\.ElevationRequested[\s\S]*?IsForegroundWindowInCurrentProcess\(\)[\s\S]*?NativeMethods\.ForceForeground\(this\)/
+    );
+    assert.match(bootstrapper, /private volatile bool elevationRequested;/);
+    assert.match(bootstrapper, /if \(restored \|\| elapsedMilliseconds >= ElevationVisibilityWatchDuration\)/);
+    // SetForegroundWindow 在前台归属他进程时会被忽略，必须借 AttachThreadInput 拿前台权限；
+    // 且返回值不可信，要以 GetForegroundWindow 的实际结果判定是否成功
+    assert.match(
+        bootstrapper,
+        /ForceForeground\(Control control\)[\s\S]*?AttachThreadInput\(currentThreadId, foregroundThreadId, true\)[\s\S]*?SetForegroundWindow\(handle\)[\s\S]*?AttachThreadInput\(currentThreadId, foregroundThreadId, false\)[\s\S]*?return GetForegroundWindow\(\) == handle;/
+    );
+    // 定时器必须在关闭时释放，避免残留后台开销
+    assert.match(bootstrapper, /OnFormClosing[\s\S]*?StopElevationVisibilityWatch\(\)/);
+    assert.match(
+        bootstrapper,
+        /StopElevationVisibilityWatch\(\)[\s\S]*?elevationVisibilityTimer\.Dispose\(\)[\s\S]*?elevationVisibilityTimer = null/
+    );
+    assert.match(
+        bootstrapper,
+        /private void CleanupStaleInstallations\(\)[\s\S]*?catch \(Exception exception\)[\s\S]*?Engine\.Log\(LogLevel\.Error/
+    );
+    assert.match(bootstrapper, /private void CleanupStaleInstallations\(\)/);
+    assert.match(bootstrapper, /keyName\.EndsWith\("\.msq", StringComparison\.OrdinalIgnoreCase\)\) return true;/);
+    assert.match(bootstrapper, /subKey\.GetValue\("BundleCachePath"\) as string/);
+    // 当前 bundle Id 运行时从引擎变量获取（WiX v3 bundle PackageId 每次编译随机）
+    assert.match(bootstrapper, /Engine\.FormatString\("\[WixBundleProviderKey\]"\)/);
+    assert.match(bootstrapper, /DeleteStaleRegistryEntries\(GetCurrentBundleId\(\)\)/);
     assert.match(
         bootstrapper,
         /OnDetectRelatedMsiPackage[\s\S]*?e\.PackageId == PackageId[\s\S]*?RelatedOperation\.MajorUpgrade[\s\S]*?RelatedOperation\.MinorUpdate[\s\S]*?relatedMsiUpgradeDetected = true/
+    );
+    assert.match(
+        bootstrapper,
+        /OnDetectRelatedMsiPackage[\s\S]*?RelatedOperation\.MajorUpgrade[\s\S]*?RelatedOperation\.MinorUpdate[\s\S]*?RelatedOperation\.Downgrade[\s\S]*?relatedMsiUpgradeDetected = true/
     );
     assert.match(bootstrapper, /OnDetectRelatedMsiPackage[\s\S]*?RestoreRelatedMsiInstallFolder\(e\.ProductCode\)/);
     assert.match(bootstrapper, /FindRelatedMsiInstallFolder\(string productCode\)[\s\S]*?productCode \+ "\.msq"/);
@@ -308,6 +458,7 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
         /IsExecutableInsideInstallFolder\(string executablePath, string installFolder\)[\s\S]*?Path\.GetFileName\(normalizedExecutablePath\)[\s\S]*?"opendesk\.exe"[\s\S]*?StartsWith\(normalizedInstallFolder/
     );
     assert.match(bootstrapper, /QueryFullProcessImageName/);
+    // 禁止强杀用户进程或等待用户进程退出；检测到 OpenDesk 在跑时提示用户自己关闭
     assert.doesNotMatch(bootstrapper, /CloseMainWindow\(\)|\.Kill\(\)|WaitForExit\(/);
     assert.match(bootstrapper, /OnApplyComplete[\s\S]*?e\.Restart != ApplyRestart\.None[\s\S]*?ShowRestartRequired/);
     assert.match(bootstrapper, /OnDetectComplete[\s\S]*?ErrorFailNoActionReboot[\s\S]*?ShowRestartRequired/);
@@ -330,9 +481,12 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.match(localization, /<String Id="UpgradeHeader">更新 OpenDesk<\/String>/);
     assert.match(localization, /<String Id="UpgradeInstallButton">开始更新<\/String>/);
     assert.doesNotMatch(localization, /LegacyInstall|检测到旧版安装目录|旧版 OpenDesk/);
-    assert.equal(packageJson.scripts['make:win32'], 'electron-forge make --platform=win32');
+    assert.equal(
+        packageJson.scripts['make:win32'],
+        'npm run build && electron-forge make --platform=win32 && npm run make:wix-bootstrapper'
+    );
     assert.equal(packageJson.scripts['make:wix-bootstrapper'], 'node scripts/build-wix-bootstrapper.mjs');
-    assert.equal(packageJson.scripts['make:win32:setup'], 'npm run make:win32 && npm run make:wix-bootstrapper');
+    assert.ok(!packageJson.scripts['make:win32:setup'], 'make:win32:setup 已并入 make:win32，不应再单独存在');
     assert.doesNotMatch(buildScript, /npmExecutable|npmCliPath|make:win32|spawnSync\(['"]npm\.cmd['"]/);
     assert.match(buildScript, /if \(!fs\.existsSync\(msiPath\)\)/);
 });

@@ -12,6 +12,7 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const DARWIN_PRUNED_NATIVE_PATHS = [
@@ -73,6 +74,71 @@ function pruneDarwinExtraResources(buildPath, electronVersion, platform, arch, c
     }
 }
 
+/**
+ * 纵深防御：把 workspace 包链接物化为真实目录。
+ *
+ * Windows 下 npm 会把 `file:packages/*` 依赖在 node_modules 下建成 junction
+ * （绝对路径目标）。packagerConfig.derefSymlinks 已让复制阶段直接解引用链接，
+ * 产物里对应位置是真实目录；但保留该 hook 兜底 —— 若未来 derefSymlinks 被移除
+ * 或个别环境仍以链接形态进入 staged 目录，asar 打包时 junction 会被记录为指向
+ * 构建机绝对路径的损坏链接，导致打包版插件加载失败：
+ * `ENOENT, node_modules\@bitclub.ai\D:\... not found in app.asar`。
+ * 该 hook 在 prune 之后、打包 asar 之前执行（幂等），把这些链接替换为仓库内的
+ * 真实目录（排除子包自带的 node_modules / .git）。
+ */
+const WORKSPACE_PACKAGE_DIRECTORIES = {
+    'opendesk-app-sdk': 'app-sdk',
+    'opendesk-plugin-sdk': 'plugin-sdk'
+};
+
+function materializeWorkspacePackageLinks(buildPath, electronVersion, platform, arch, callback) {
+    // electron-packager 通过 util.promisify 逐个调用 afterPrune hooks，同步函数若
+    // 不调用 callback，promisify 生成的 promise 永不 resolve，打包会永久挂在
+    // afterPrune 阶段（asar 打包、move 到 out 都不再执行）。因此这里以 callback
+    // 风格收尾。workspaceRoot 固定为仓库根，避免被 promisify 传入的 electronVersion
+    // 当作第二个参数覆盖。
+    const workspaceRoot = __dirname;
+    try {
+        const scopedDirectory = path.join(buildPath, 'node_modules', '@bitclub.ai');
+        if (fs.existsSync(scopedDirectory)) {
+            for (const packageName of Object.keys(WORKSPACE_PACKAGE_DIRECTORIES)) {
+                const linkPath = path.join(scopedDirectory, packageName);
+                let isLink = false;
+                try {
+                    isLink = fs.lstatSync(linkPath).isSymbolicLink();
+                } catch {
+                    continue; // 不存在，跳过
+                }
+                if (!isLink) continue; // 已是真实目录（如 CI 以 --install-links 安装），无需处理
+
+                const workspaceDirectory = path.join(
+                    workspaceRoot,
+                    'packages',
+                    WORKSPACE_PACKAGE_DIRECTORIES[packageName]
+                );
+                fs.rmSync(linkPath, { recursive: true, force: true });
+                if (!fs.existsSync(workspaceDirectory)) continue; // 异常场景：仓库内无对应 workspace
+                fs.cpSync(workspaceDirectory, linkPath, {
+                    recursive: true,
+                    filter(source) {
+                        const relative = path.relative(workspaceDirectory, source);
+                        if (!relative) return true;
+                        const first = relative.split(path.sep)[0];
+                        return first !== 'node_modules' && first !== '.git';
+                    }
+                });
+            }
+        }
+        if (typeof callback === 'function') {
+            callback();
+        }
+    } catch (error) {
+        if (typeof callback === 'function') {
+            callback(error);
+        }
+    }
+}
+
 const extraResources = [
     path.join(__dirname, 'dist', 'plugins'),
     ...(process.platform === 'darwin' ? [] : [path.join(__dirname, 'native')])
@@ -96,7 +162,33 @@ const wixPublicUninstallComponentIds = new Set([
     'UninstallString',
     'UninstallDisplayIcon'
 ]);
-const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR;
+
+/**
+ * 从 @electron/get 的本地缓存目录复用 Electron zip，避免每次打包都重新走网络下载。
+ *
+ * @electron/get 会把下载的 zip 缓存在 `%LOCALAPPDATA%\electron\Cache\<hash>\electron-v<ver>-<platform>-<arch>.zip`。
+ * electron-packager 只有在显式设置 `electronZipDir` 时才会用本地 zip，否则每次 package 都会调用
+ * downloadArtifact（缓存命中也要重新校验、网络波动即失败）。这里在未显式指定 OPENDESK_ELECTRON_ZIP_DIR
+ * 时自动找缓存 zip；找不到则返回 undefined，回落到 @electron/get 的默认下载（下载一次后即可复用）。
+ */
+function resolveCachedElectronZipDir() {
+    const electronPkgPath = path.join(__dirname, 'node_modules', 'electron', 'package.json');
+    if (!fs.existsSync(electronPkgPath)) return undefined;
+    const electronVersion = JSON.parse(fs.readFileSync(electronPkgPath, 'utf8')).version;
+    const cacheRoot = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const cacheDir = path.join(cacheRoot, 'electron', 'Cache');
+    if (!fs.existsSync(cacheDir)) return undefined;
+    const zipName = `electron-v${electronVersion}-${process.platform}-x64.zip`;
+    for (const entry of fs.readdirSync(cacheDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (fs.existsSync(path.join(cacheDir, entry.name, zipName))) {
+            return path.join(cacheDir, entry.name);
+        }
+    }
+    return undefined;
+}
+
+const electronZipDir = process.env.OPENDESK_ELECTRON_ZIP_DIR || resolveCachedElectronZipDir();
 const forgeOutDir = process.env.OPENDESK_FORGE_OUT_DIR;
 
 function preserveWixInstallDirectory(creator) {
@@ -107,6 +199,11 @@ function preserveWixInstallDirectory(creator) {
     const recursiveRootCleanup =
         / {4}<DirectoryRef Id="APPLICATIONROOTDIRECTORY">\s*<Component Id="PurgeOnUninstall"[\s\S]*?<\/DirectoryRef>/;
     const recursiveRootCleanupRef = / {8}<ComponentRef Id="PurgeOnUninstall" \/>/;
+    const majorUpgradeTemplate =
+        / {4}<MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A later version of this product is already installed\. Setup will now exit\."\s*\/>/;
+    const installPerUserProperty =
+        / {4}<Property Id="MSIINSTALLPERUSER" Secure="yes" Value="\{\{InstallPerUser\}\}" \/>/;
+    const mediaTemplate = / {4}<Media Id="1" Cabinet="product\.cab" EmbedCab="yes"\s*\/>/;
 
     if (
         !installPathProperty.test(creator.wixTemplate) ||
@@ -114,6 +211,9 @@ function preserveWixInstallDirectory(creator) {
         !desktopShortcutComponent.test(creator.wixTemplate) ||
         !recursiveRootCleanup.test(creator.wixTemplate) ||
         !recursiveRootCleanupRef.test(creator.wixTemplate) ||
+        !majorUpgradeTemplate.test(creator.wixTemplate) ||
+        !installPerUserProperty.test(creator.wixTemplate) ||
+        !mediaTemplate.test(creator.wixTemplate) ||
         typeof creator.getRegistryKeys !== 'function' ||
         typeof creator.getRegistryComponent !== 'function'
     ) {
@@ -122,7 +222,8 @@ function preserveWixInstallDirectory(creator) {
 
     creator.wixTemplate = creator.wixTemplate.replace(
         installPathProperty,
-        `    <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
+        `    <Condition Message="!(loc.AdminRequiredMessage)">Installed OR Privileged</Condition>
+    <Property Id="APPLICATIONROOTDIRECTORY" Secure="yes" />
     <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="CREATE_START_MENU_SHORTCUT" Secure="yes" Value="1" />
     <Property Id="INSTALL_PATH_CUSTOMIZED" Secure="yes" Value="1" />
@@ -184,7 +285,17 @@ function preserveWixInstallDirectory(creator) {
         .replace(
             recursiveRootCleanupRef,
             '        <!-- Untracked files in the selected install root are preserved. -->'
-        );
+        )
+        .replace(
+            majorUpgradeTemplate,
+            // AllowDowngrades 的检测范围是"不低于当前版本"的全部产品（含同版本不同
+            // ProductCode，日志可见同版本 MSI 以 operation=MajorUpgrade 被检测替换），
+            // 因此无需也不能再加 AllowSameVersionUpgrades（WiX CNDL0035 互斥校验），
+            // 任意版本的旧 MSI 都会被 RemoveExistingProducts 替换，MSI 层只保留一份。
+            '    <MajorUpgrade AllowDowngrades="yes" />'
+        )
+        .replace(installPerUserProperty, '    <Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0" />')
+        .replace(mediaTemplate, '    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="low"/>');
 
     const getRegistryKeys = creator.getRegistryKeys.bind(creator);
     creator.getRegistryKeys = () => {
@@ -209,7 +320,10 @@ function preserveWixInstallDirectory(creator) {
                 root: 'HKLM',
                 key: wixInstallPathRegistryKey,
                 name: 'BundleInstall',
-                type: 'integer',
+                // 必须写 REG_SZ（字符串）。若写 REG_DWORD，MSI 的 RegistrySearch(raw) 读到的属性值是
+                // "#1"（带整数前缀），在修复（Repair）场景下条件 `<> "1"` 会被判定为 true，导致
+                // UninstallDisplayName 等 .msq 人工 ARP 组件被重新安装，控制面板出现多余的 MSI 条目。
+                type: 'string',
                 value: '1',
                 forceDeleteOnUninstall: 'yes'
             },
@@ -256,15 +370,22 @@ function preserveWixInstallDirectory(creator) {
             return component;
         }
 
-        component.xml = component.xml
-            .replace(new RegExp(`(<Component Id="${registry.id}"[^>]*)(>)`), '$1 Transitive="yes"$2')
-            .replace(/(\r?\n)(\s*)<RegistryKey/, `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`);
+        // 注意：不能给这些组件加 Transitive="yes"。MSI 在修复（Repair / REINSTALL）时会重新评估
+        // Transitive 组件的 Condition，而修复时 OPENDESK_BUNDLE_INSTALL 可能取到非法整数值
+        // （RegistrySearch 读到旧 REG_DWORD 时的 "#1"），导致 `<> "1"` 被判定为 true，使
+        // UninstallDisplayName 等 .msq ARP 组件被补装，控制面板里出现多余条目。不加 Transitive
+        // 后组件状态在安装时固化，修复/维护不再重新评估。
+        component.xml = component.xml.replace(
+            /(\r?\n)(\s*)<RegistryKey/,
+            `$1$2<Condition>${condition}</Condition>$1$2<RegistryKey`
+        );
         return component;
     };
 }
 
 module.exports = {
     ...(forgeOutDir ? { outDir: path.resolve(forgeOutDir) } : {}),
+    materializeWorkspacePackageLinks,
     packagerConfig: {
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
@@ -287,6 +408,12 @@ module.exports = {
             'icons',
             process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
         ),
+        // Windows 上 npm 把 file:packages/* 依赖建成 junction（绝对路径目标）。
+        // electron-packager 默认不 dereference 符号链接：复制时在目标创建 symlink
+        // 需要管理员/开发者模式（否则 EPERM），且 @electron/asar 会把 junction 的
+        // 绝对目标写成损坏链接，导致打包版插件加载 SDK 报 ENOENT。开启 derefSymlinks
+        // 让 workspace 依赖以真实目录进入产物，路径与安装位置无关。
+        derefSymlinks: true,
         extendInfo: {
             NSMicrophoneUsageDescription: 'OpenDesk uses the microphone to convert your speech into text.',
             NSSpeechRecognitionUsageDescription:
@@ -295,10 +422,20 @@ module.exports = {
         asar: {
             unpack: '**/node_modules/{sharp,@img}/**/*'
         },
-        ignore: [/^[/\\]out(?:[/\\]|-)/, /^[/\\]dist[/\\]plugins(?:[/\\]|$)/, /^[/\\]resources[/\\]plugins(?:[/\\]|$)/],
+        // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
+        // 文档、日志等），会膨胀体积并显著拖慢 WiX light 的压缩耗时。
+        ignore: [
+            /^[/\\]out(?:[/\\]|-)/,
+            /^[/\\]dist[/\\]plugins(?:[/\\]|$)/,
+            /^[/\\]resources[/\\]plugins(?:[/\\]|$)/,
+            /^[/\\](docs|benchmarks|scripts|temp)(?:[/\\]|$)/,
+            /^[/\\]\.(opendesk|husky|git|github)(?:[/\\]|$)/,
+            /^[/\\](AGENTS\.md|NOTICE|README.*|\.gitignore|\.prettier.*|\.nvmrc|postcss\.config\.js|eslint\.config\.mjs|jest\.config\.ts|electron\.vite\.config\.ts|esbuild\.config\.ts|tsconfig.*|package-lock\.json)$/,
+            /^[/\\]node_modules[/\\]\.(vite|cache|bin)(?:[/\\]|$)/
+        ],
         ...(electronZipDir ? { electronZipDir: path.resolve(electronZipDir) } : {}),
         extraResource: extraResources,
-        afterPrune: [pruneDarwinAppNativePrebuilds],
+        afterPrune: [pruneDarwinAppNativePrebuilds, materializeWorkspacePackageLinks],
         afterCopyExtraResources: [pruneDarwinExtraResources]
     },
     rebuildConfig: {},

@@ -43,4 +43,5 @@ See the Mulan PSL v2 for more details.
     <String Id="ExitDialog_Title">OpenDesk 安装程序</String>
     <String Id="ExitDialogTitle">{\WixUI_Font_Bigger}OpenDesk 已准备就绪</String>
     <String Id="ExitDialogDescription">OpenDesk 已成功安装到这台电脑。单击“完成”退出安装程序。</String>
+    <String Id="AdminRequiredMessage">OpenDesk 需要管理员权限才能安装到本机。请以管理员身份重新运行安装程序。</String>
 </WixLocalization>

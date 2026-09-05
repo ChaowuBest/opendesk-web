@@ -12,6 +12,10 @@ See the Mulan PSL v2 for more details.
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+    <!-- 注意：WiX v3 的 <Bundle> 不支持 Id 属性（candle CNDL0004），bundle 的 PackageId 每次编译随机。
+         因此"同版本重复安装"会各留一个 ARP 条目（引擎默认只对版本更低的 related bundle 计划卸载）。
+         该场景由 BA 的 OnPlanRelatedBundle 把所有 related bundle 统一改写为 Absent 来处理，
+         使引擎在本次安装/修复/卸载中先卸载全部历史 bundle，再完成当前操作。 -->
     <Bundle Name="OpenDesk"
             Version="$(var.BundleVersion)"
             Manufacturer="OpenDesk Team, Openharmony"
@@ -35,6 +39,10 @@ See the Mulan PSL v2 for more details.
         <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="InstallPathCustomized" Type="numeric" Value="0" bal:Overridable="yes" />
+        <!-- 卸载时由 BA 置为 "ALL"：burn 的 MSI 依赖检查（w327 "Will not uninstall package ...
+             found dependents"）读取的是经下方 MsiProperty 映射后的包属性 IGNOREDEPENDENCIES，
+             仅设置 bundle 字符串变量不会生效，两处必须配套。 -->
+        <Variable Name="IGNOREDEPENDENCIES" Type="string" Value="" Hidden="yes" />
         <util:RegistrySearch Id="FindPreviousInstallFolder"
                              Variable="PreviousInstallFolder"
                              Root="HKLM"
@@ -55,8 +63,11 @@ See the Mulan PSL v2 for more details.
                              Win64="yes" />
 
         <Chain>
+            <!-- WiX v3 无 Bundle/@PerMachine（v4+ 语法）；per-machine 通过 MsiPackage/@ForcePerMachine 声明，
+                 burn engine 检测到 per-machine 包后会把整个 bundle 按 per-machine 处理并自动触发提升 -->
             <MsiPackage Id="OpenDeskMsi"
                         SourceFile="$(var.MsiPath)"
+                        ForcePerMachine="yes"
                         DisplayInternalUI="no"
                         Visible="no"
                         Vital="yes">
@@ -65,6 +76,7 @@ See the Mulan PSL v2 for more details.
                 <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
                 <MsiProperty Name="INSTALL_PATH_CUSTOMIZED" Value="[InstallPathCustomized]" />
                 <MsiProperty Name="OPENDESK_BUNDLE_INSTALL" Value="1" />
+                <MsiProperty Name="IGNOREDEPENDENCIES" Value="[IGNOREDEPENDENCIES]" />
             </MsiPackage>
         </Chain>
     </Bundle>

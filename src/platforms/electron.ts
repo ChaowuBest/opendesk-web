@@ -173,7 +173,7 @@ export class ElectronPlatform extends WorkerPlatform {
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
         const networkConfig = Setting.getInstance().getData().network_config;
-        const useProxy = networkConfig.use_proxy ?? 'none';
+        const useProxy = networkConfig.use_proxy ?? 'system';
         const customProxyUrl = networkConfig.custom_proxy_addr.trim();
         const bypassProxy =
             !!options?.bypassProxy ||
