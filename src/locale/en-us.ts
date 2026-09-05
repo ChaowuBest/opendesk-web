@@ -2134,6 +2134,10 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.menu.continueHint': 'Delete later content, then resend this user message to continue.',
     'renderer.taskview.menu.operationTitle': 'Task Message',
     'renderer.taskview.menu.operationFailed': 'Operation Failed',
+    'renderer.taskview.file.missing.title': 'File not found',
+    'renderer.taskview.file.missing.hint':
+        'This path does not currently exist, or has been moved or deleted. Unable to open preview.',
+    'renderer.taskview.file.missing.close': 'Close',
     'renderer.taskview.thinking': 'Waiting for model response...',
     'renderer.taskview.scrollToBottom': 'Scroll to bottom',
     'renderer.taskview.prevUserMessage': 'Previous message',

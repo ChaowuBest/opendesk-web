@@ -599,10 +599,11 @@
 
             async function openTask(taskId) {
                 ensureSlots();
+                var loadingEl = null;
                 if (taskId !== null) {
-                    // 后端尚未就绪时，先在右侧面板显示 loading
+                    // 任务加载 + 首屏渲染期间，用跑步上岗占位覆盖整个过程
                     hideAllNonAppChildren();
-                    var loadingEl = document.createElement('content-loading-view');
+                    loadingEl = document.createElement('content-loading-view');
                     loadingEl.setAttribute('data-type', 'tb');
                     if (window.__odT) {
                         loadingEl.setAttribute('data-message', window.__odT('renderer.task.loading'));
@@ -612,24 +613,11 @@
                     if (appFramesContainer) appFramesContainer.style.display = 'none';
                     nonAppSlot.style.display = '';
                     await window.applicationRegistryAPI.ensureFullyLoaded();
-                    // 淡出 loading：提升到 rightPanelInner 覆盖层，让内容在下方渲染
+                    // 提升 loading 到覆盖层，让内容在下方渲染（脱离 nonAppSlot 后不受 clear/hide 影响）
                     var overlayParent = nonAppSlot.parentElement;
                     if (overlayParent) {
                         overlayParent.appendChild(loadingEl);
                         loadingEl.style.cssText = 'position:absolute;inset:0;z-index:50;width:100%;height:100%;';
-                        void loadingEl.offsetHeight; // force reflow
-                        loadingEl.style.transition = 'opacity 0.25s ease-out';
-                        loadingEl.style.opacity = '0';
-                        var __done = false;
-                        var __cleanup = function () {
-                            if (__done) return;
-                            __done = true;
-                            loadingEl.remove();
-                        };
-                        loadingEl.addEventListener('transitionend', __cleanup, { once: true });
-                        setTimeout(__cleanup, 400);
-                    } else {
-                        loadingEl.remove();
                     }
                 }
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
@@ -637,40 +625,72 @@
                 closeAllEditorOverlays();
                 hideAllNonAppChildren();
 
-                if (taskId === null) {
-                    clearNonTaskContent();
-                    var homePage = document.createElement('home-page');
-                    homePage.id = 'home-page';
-                    homePage.className = 'h-full w-full';
-                    homePage.style.cssText = 'width:100%;height:100%;';
-                    nonAppSlot.appendChild(homePage);
-                    currentNonAppContent = 'home';
-                    currentOpenAppBundleName = null;
-                } else {
-                    clearNonTaskContent();
-                    var isNewTaskView = !taskViewCache[taskId];
-                    if (isNewTaskView) {
-                        var el = document.createElement('task-view');
-                        el.setAttribute('task_id', taskId);
-                        el.setAttribute('data-task-view-cached', '1');
-                        el.style.cssText = 'width:100%;height:100%;';
-                        nonAppSlot.appendChild(el);
-                        taskViewCache[taskId] = el;
+                var contentReady = Promise.resolve();
+                try {
+                    if (taskId === null) {
+                        clearNonTaskContent();
+                        var homePage = document.createElement('home-page');
+                        homePage.id = 'home-page';
+                        homePage.className = 'h-full w-full';
+                        homePage.style.cssText = 'width:100%;height:100%;';
+                        nonAppSlot.appendChild(homePage);
+                        currentNonAppContent = 'home';
+                        currentOpenAppBundleName = null;
+                    } else {
+                        clearNonTaskContent();
+                        var isNewTaskView = !taskViewCache[taskId];
+                        if (isNewTaskView) {
+                            var el = document.createElement('task-view');
+                            el.setAttribute('task_id', taskId);
+                            el.setAttribute('data-task-view-cached', '1');
+                            el.style.cssText = 'width:100%;height:100%;';
+                            nonAppSlot.appendChild(el);
+                            taskViewCache[taskId] = el;
+                        }
+                        var tv = taskViewCache[taskId];
+                        tv.removeAttribute('data-background');
+                        tv.style.cssText = 'width:100%;height:100%;';
+                        tv.style.display = '';
+                        // 等待首屏内容就绪信号（reload 完成时由 task-view 派发）；
+                        // 超时兜底，防止异常路径下占位永不消失。
+                        contentReady = new Promise(function (resolve) {
+                            var done = false;
+                            var finish = function () {
+                                if (done) return;
+                                done = true;
+                                tv.removeEventListener('task-view-content-ready', finish);
+                                resolve();
+                            };
+                            tv.addEventListener('task-view-content-ready', finish, { once: true });
+                            setTimeout(finish, 10000);
+                        });
+                        // 切回缓存视图时，调用 reload() 补齐后台运行期间跳过的更新
+                        if (!isNewTaskView) {
+                            tv.reload();
+                        }
+                        if (taskViewCache[taskId].syncRightSidebarState) {
+                            taskViewCache[taskId].syncRightSidebarState();
+                        }
+                        currentNonAppContent = 'task:' + taskId;
                     }
-                    var tv = taskViewCache[taskId];
-                    tv.removeAttribute('data-background');
-                    tv.style.cssText = 'width:100%;height:100%;';
-                    tv.style.display = '';
-                    // 切回缓存视图时，调用 reload() 补齐后台运行期间跳过的更新
-                    if (!isNewTaskView) {
-                        tv.reload();
-                    }
-                    if (taskViewCache[taskId].syncRightSidebarState) {
-                        taskViewCache[taskId].syncRightSidebarState();
-                    }
-                    currentNonAppContent = 'task:' + taskId;
+                } finally {
+                    showNonApp();
                 }
-                showNonApp();
+                if (loadingEl) {
+                    await contentReady;
+                    // 淡出占位：内容已在下方渲染完成
+                    void loadingEl.offsetHeight; // force reflow
+                    loadingEl.style.transition = 'opacity 0.25s ease-out';
+                    loadingEl.style.opacity = '0';
+                    var __done = false;
+                    var __cleanup = function () {
+                        if (__done) return;
+                        __done = true;
+                        loadingEl.remove();
+                    };
+                    loadingEl.addEventListener('transitionend', __cleanup, { once: true });
+                    setTimeout(__cleanup, 400);
+                }
                 // 同步侧边栏活跃任务高亮
                 var sidebar = document.getElementById('main-sidebar');
                 if (sidebar) {

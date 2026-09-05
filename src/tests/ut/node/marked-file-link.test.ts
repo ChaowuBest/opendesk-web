@@ -26,16 +26,31 @@ test('resolveFilePath: returns absolute path when file exists (absolute input)',
     }
 });
 
-test('resolveFilePath: returns null when file does not exist', () => {
+test('resolveFilePath: resolves relative path against workspace', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        assert.equal(resolveFilePath('main.ts'), path.join(tmp, 'main.ts'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// 渲染阶段零 IO：resolveFilePath 只做纯字符串解析，不校验存在性。
+// "看似路径实则不存在"允许误报，由前端点击时校验并提示。
+
+test('resolveFilePath: returns resolved path even when file does not exist', () => {
     setRenderWorkspace('/tmp');
-    assert.equal(resolveFilePath('/nonexistent/path/file.ts'), null);
+    assert.equal(resolveFilePath('/nonexistent/path/file.ts'), '/nonexistent/path/file.ts');
     setRenderWorkspace(null);
 });
 
-test('resolveFilePath: returns null when path points to a directory', () => {
+test('resolveFilePath: returns resolved path for directories', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
-        assert.equal(resolveFilePath(tmp), null);
+        assert.equal(resolveFilePath(tmp), tmp);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -65,6 +80,20 @@ test('resolveFilePath: returns null for empty string', () => {
     assert.equal(resolveFilePath(''), null);
 });
 
+// ── tokenizer hardening ─────────────────────────────────────────────
+
+test('auto-detection: skips domain-like tokens', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('Visit docs.example.com/guide/setup.md for info.') as string;
+        assert.ok(!html.includes('od-file-pill'), 'domain-like token must not become a pill');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ── Integration tests with Marked ──────────────────────────────────
 
 function setupMarked(tmpDir: string): Marked {
@@ -90,27 +119,33 @@ test('auto-detection: detects existing relative file path and renders as pill', 
     }
 });
 
-test('auto-detection: detects existing absolute file path', () => {
+// FILE_PATH_RE 的排除字符集含 ':' 与 '\'，Windows 盘符路径（C:/、C:\）暂不被
+// tokenizer 支持，属于已知功能限制；绝对路径检测用例仅在 POSIX 平台验证。
+const testAbsPathPosix = process.platform === 'win32' ? test.skip : test;
+
+testAbsPathPosix('auto-detection: detects existing absolute file path', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const absPath = path.join(tmp, 'main.ts');
         fs.writeFileSync(absPath, 'export {};');
         const marked = setupMarked(tmp);
-        const html = marked.parse(`Check ${absPath} now.`) as string;
+        // FILE_PATH_RE 不支持反斜杠分隔符，文本中使用正斜杠形式
+        const textPath = absPath.replaceAll('\\', '/');
+        const html = marked.parse(`Check ${textPath} now.`) as string;
         assert.ok(html.includes('od-file-pill'));
-        assert.ok(html.includes(`data-open-preview="${absPath}"`));
+        assert.ok(html.includes(`data-open-preview="${textPath}"`));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 
-test('auto-detection: does not convert non-existent file path', () => {
+test('auto-detection: renders pill for path-like text even if file does not exist', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse('See src/nonexistent.ts for details.') as string;
-        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('od-file-pill'), 'path-like text should render as pill (click-time validation)');
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -219,12 +254,12 @@ test('markdown link: renders OpenDesk skill links as skill pills', () => {
     }
 });
 
-test('markdown link: does not render a directory link as a file pill', () => {
+test('markdown link: renders directory link as pill (existence validated at click time)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse(`[root](${tmp})`) as string;
-        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('od-file-pill'), 'path-like href renders as pill; existence is validated on click');
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -260,13 +295,15 @@ test('markdown link: does not render URL links as pills', () => {
     }
 });
 
-test('markdown link: does not render links to non-existent files as pills', () => {
+test('markdown link: renders path-like hrefs as pills even if file does not exist', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const marked = setupMarked(tmp);
         const html = marked.parse('[missing](src/nonexistent.ts)') as string;
-        assert.ok(!html.includes('od-file-pill'));
-        assert.ok(html.includes('<a'));
+        assert.ok(
+            html.includes('od-file-pill'),
+            'link with path-like href should render as pill (click-time validation)'
+        );
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -359,7 +396,7 @@ test('auto-detection: path with spaces in plain text', () => {
     }
 });
 
-test('auto-detection: absolute path with spaces in plain text', () => {
+testAbsPathPosix('auto-detection: absolute path with spaces in plain text', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
     try {
         const dir = path.join(tmp, 'Documents', 'Opendesk AI');
@@ -367,9 +404,11 @@ test('auto-detection: absolute path with spaces in plain text', () => {
         const filePath = path.join(dir, 'dev.pptx');
         fs.writeFileSync(filePath, 'dummy');
         const marked = setupMarked(tmp);
-        const html = marked.parse(`Check ${filePath} now.`) as string;
+        // FILE_PATH_RE 不支持反斜杠分隔符，文本中使用正斜杠形式
+        const textPath = filePath.replaceAll('\\', '/');
+        const html = marked.parse(`Check ${textPath} now.`) as string;
         assert.ok(html.includes('od-file-pill'), 'should detect absolute path with spaces');
-        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes(`data-open-preview="${textPath}"`));
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

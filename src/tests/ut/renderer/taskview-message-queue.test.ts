@@ -246,6 +246,51 @@ describe('task-view message queue', () => {
         expect(cancelBrowserIdleTimer).toHaveBeenCalledTimes(1);
     });
 
+    test('signals first-screen readiness when reload completes', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: { messages: [] }
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => [])
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-ready-success';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const readyListener = jest.fn();
+        taskView.addEventListener('task-view-content-ready', readyListener);
+
+        await taskView.reload();
+
+        // openTask 的加载占位依赖该信号淡出，正常加载完成必须派发
+        expect(readyListener).toHaveBeenCalledTimes(1);
+    });
+
+    test('signals first-screen readiness even when reload fails', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => {
+                throw new Error('task load failed');
+            })
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-ready-failure';
+        const readyListener = jest.fn();
+        taskView.addEventListener('task-view-content-ready', readyListener);
+
+        // 加载异常时也必须派发，否则 openTask 的加载占位要等到超时兜底才消失
+        await expect(taskView.reload()).rejects.toThrow('task load failed');
+        expect(readyListener).toHaveBeenCalledTimes(1);
+    });
+
     test('a stale idle timer rechecks task status before recycling the browser', () => {
         jest.useFakeTimers();
         try {
@@ -2840,20 +2885,21 @@ describe('task-view message queue', () => {
         expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
     });
 
-    test('opens a workspace file through the existing right sidebar', () => {
+    test('opens a workspace file through the existing right sidebar', async () => {
         const sidebar = {
             openFilePreview: jest.fn()
         };
         const taskView = document.createElement('task-view') as HTMLElement & {
             _forceExpandRightSidebar: jest.Mock;
             _getRightSidebarEl: jest.Mock;
-            openFileInSidebar: (filePath: string, line?: number, onSwitchBlocked?: () => void) => void;
+            openFileInSidebar: (filePath: string, line?: number, onSwitchBlocked?: () => void) => Promise<void>;
         };
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._getRightSidebarEl = jest.fn(() => sidebar);
         const onSwitchBlocked = jest.fn();
 
-        taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
+        // openFileInSidebar 现在会先经 fsAPI 校验存在性（测试环境无 fsAPI，跳过校验）
+        await taskView.openFileInSidebar('/workspace/deck.pptx', undefined, onSwitchBlocked);
         expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
         expect(sidebar.openFilePreview).toHaveBeenCalledWith('/workspace/deck.pptx', undefined, onSwitchBlocked);
     });
