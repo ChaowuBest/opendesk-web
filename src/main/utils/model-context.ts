@@ -40,7 +40,7 @@ interface ModelInfo {
 
 /**
  * 已知模型信息查找表。
- * 数据来源：各厂商官方文档 + llmdb.xyz + opencode.ai 交叉验证（2026-08）。
+ * 数据来源：各厂商官方文档 + llmdb.xyz + opencode.ai 交叉验证（2026-09）。
  */
 const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
@@ -500,6 +500,12 @@ const KNOWN_MODELS: Record<string, ModelInfo> = {
     // ═══════════════════════════════════════════════
     // GLM / Zhipu
     // ═══════════════════════════════════════════════
+    'glm-5-3-flash': {
+        contextSize: 1000000,
+        maxOutputTokens: 128000,
+        vision: true,
+        reasoningEfforts: ['low', 'high', 'max']
+    },
     'glm-5-3': {
         contextSize: 1000000,
         maxOutputTokens: 128000,
