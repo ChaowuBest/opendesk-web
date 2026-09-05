@@ -212,6 +212,13 @@ function getEffortIconSVG(effortValue) {
 /** 主页 AgentInput 草稿文本，在组件销毁/重建之间持久化 */
 let _homeDraftText = '';
 
+/** 输入框最小高度（px），对应 class 的 min-h-14。 */
+const INPUT_MIN_HEIGHT = 56;
+/** 输入框绝对上限高度（px），对应 class 的 max-h-60，防止对话框很大时输入框无限增长。 */
+const INPUT_ABSOLUTE_MAX_HEIGHT = 240;
+/** 输入框高度相对对话框可见高度的上限比例。 */
+const INPUT_DIALOG_HEIGHT_RATIO = 0.5;
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -701,8 +708,47 @@ class AgentInput extends HTMLElement {
         const textarea = this.querySelector('#agent-input-textarea');
         if (textarea) {
             textarea.value = text || '';
+            this.autoResizeTextarea(textarea);
             this.updateSendButtonState();
         }
+    }
+
+    /**
+     * 获取对话框可见高度（px）。输入框位于 task-view 内，对话框为其内部的 #taskview-chat-history。
+     * 若宿主不是 task-view（如主页输入框），返回 0。
+     * @returns {number}
+     */
+    getDialogHeight() {
+        const host = this.closest('task-view');
+        const history = host?.querySelector('#taskview-chat-history');
+        return history ? history.clientHeight : 0;
+    }
+
+    /**
+     * 计算输入框当前允许的最大高度（px）。
+     * 上限 = min(对话框高度 × 比例, 绝对上限)，但始终不低于最小高度。
+     * @returns {number}
+     */
+    computeInputMaxHeight() {
+        const dialogHeight = this.getDialogHeight();
+        if (dialogHeight <= 0) {
+            return INPUT_ABSOLUTE_MAX_HEIGHT;
+        }
+        const byRatio = dialogHeight * INPUT_DIALOG_HEIGHT_RATIO;
+        const capped = Math.min(byRatio, INPUT_ABSOLUTE_MAX_HEIGHT);
+        return Math.max(INPUT_MIN_HEIGHT, capped);
+    }
+
+    /**
+     * 根据内容自动调整输入框高度（最小高度由 min-h-14 保证，上限随对话框高度动态变化）。
+     * @param {HTMLTextAreaElement} textarea
+     */
+    autoResizeTextarea(textarea) {
+        if (!textarea) return;
+        // 先归零再按内容高度赋值，避免删除内容时高度残留
+        textarea.style.height = 'auto';
+        const maxHeight = this.computeInputMaxHeight();
+        textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px';
     }
 
     /**
@@ -728,6 +774,10 @@ class AgentInput extends HTMLElement {
         if (this._toolbarResizeObserver) {
             this._toolbarResizeObserver.disconnect();
             this._toolbarResizeObserver = null;
+        }
+        if (this._dialogResizeObserver) {
+            this._dialogResizeObserver.disconnect();
+            this._dialogResizeObserver = null;
         }
     }
 
@@ -1264,7 +1314,7 @@ class AgentInput extends HTMLElement {
                             id="agent-input-textarea"
                             placeholder="${inputPlaceholder}"
                             aria-label="${inputPlaceholder}"
-                            class="w-full h-14 resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
+                            class="w-full min-h-14 max-h-60 overflow-y-auto resize-none border-none outline-none text-gray-700 text-[13px] leading-relaxed"
                         ></textarea>
                         <div id="agent-input-placeholder" class="agent-input-placeholder" aria-hidden="true">${inputPlaceholderHTML}</div>
                     </div>
@@ -1417,6 +1467,33 @@ class AgentInput extends HTMLElement {
         this.updateModeIndicator();
         this._renderImagePreviews();
         this._initToolbarOverflow();
+        this._initDialogHeightObserver();
+    }
+
+    /**
+     * 监听对话框（#taskview-chat-history）高度变化，在高度缩小时收缩输入框，
+     * 保证「输入框高度 / 对话框高度」始终不超过设定比例。
+     * 仅收缩不增长：增长由 input 事件驱动，避免形成振荡。
+     */
+    _initDialogHeightObserver() {
+        if (this._dialogResizeObserver) {
+            this._dialogResizeObserver.disconnect();
+        }
+        const history = this.closest('task-view')?.querySelector('#taskview-chat-history');
+        if (!history) return;
+        this._dialogResizeObserver = new ResizeObserver(() => {
+            requestAnimationFrame(() => {
+                const textarea = this.querySelector('#agent-input-textarea');
+                if (!textarea) return;
+                const maxHeight = this.computeInputMaxHeight();
+                const current = textarea.style.height ? parseFloat(textarea.style.height) : 0;
+                // 当前高度超过新上限才收缩，避免与输入事件驱动的增长互相干扰
+                if (current > maxHeight) {
+                    this.autoResizeTextarea(textarea);
+                }
+            });
+        });
+        this._dialogResizeObserver.observe(history);
     }
 
     /**
@@ -2897,6 +2974,8 @@ class AgentInput extends HTMLElement {
             );
             // 检测 / 和 @ 触发补全
             this.handleAutocompleteInput(textarea);
+            // 根据内容自动调整高度
+            this.autoResizeTextarea(textarea);
             // 更新发送按钮状态
             this.updateSendButtonState();
         });
@@ -3359,6 +3438,7 @@ class ApplicationAgentInput extends HTMLElement {
                 });
                 this.dispatchEvent(submitEvent);
                 textarea.value = '';
+                this.autoResizeTextarea(textarea);
             }
         });
 
