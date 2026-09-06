@@ -190,6 +190,60 @@ namespace OpenDesk.Installer
             StartAction(LaunchAction.Install);
         }
 
+        /// <summary>
+        /// 安装开始前对用户选择的目标盘做空间预检查（issue #288）。
+        ///
+        /// 背景：Windows Installer 的磁盘空间检查（OutOfDiskSpace）只针对本次安装的目标卷，
+        /// 而安装过程还会在系统盘消耗额外空间（%TEMP% 提权工作目录、C:\ProgramData\Package Cache
+        /// 中的 bundle/MSI 缓存）。旧版安装器没有任何预检查：C 盘剩余空间不足时，用户即使把安装
+        /// 位置切到 D 盘，也会在复制文件阶段以"空间不足"失败，报错还可能指错盘符。
+        ///
+        /// 这里在用户点击"开始安装"时立即校验所选目录所在卷的剩余空间是否装得下安装内容
+        /// （RequiredInstallSize，构建期由 staged 应用目录体积乘以安全系数注入），不足则弹窗提示并中止，
+        /// 用户可以换盘重试，而不是等到复制一半才失败。
+        /// </summary>
+        public bool HasEnoughSpaceForInstall(string folder)
+        {
+            try
+            {
+                long required = GetRequiredInstallSize();
+                long available = InstallerPath.GetAvailableFreeSpace(folder);
+                // required 为 0 表示构建脚本未注入（异常场景），不做拦截交由 Windows Installer 兜底。
+                if (required > 0 && available >= 0 && available < required)
+                {
+                    Engine.Log(
+                        LogLevel.Error,
+                        string.Format(
+                            "OpenDesk: not enough disk space on target drive: required {0} bytes, available {1} bytes, folder: {2}",
+                            required,
+                            available,
+                            folder
+                        )
+                    );
+                    form.ShowInsufficientDiskSpace(required, available);
+                    return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                // 预检查失败不阻断安装：读不到可用空间时交由 Windows Installer 的正式检查兜底。
+                Engine.Log(LogLevel.Error, "OpenDesk: disk space pre-check failed: " + exception.Message);
+            }
+            return true;
+        }
+
+        private long GetRequiredInstallSize()
+        {
+            try
+            {
+                return Convert.ToInt64(Engine.NumericVariables["RequiredInstallSize"]);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         public void Repair()
         {
             StartAction(LaunchAction.Repair);
@@ -1080,6 +1134,47 @@ namespace OpenDesk.Installer
             );
         }
 
+        /// <summary>
+        /// 磁盘空间不足提示页。展示目标盘所需空间与当前可用空间，用户点击"返回"后
+        /// 回到"安装选项"页更换目录重试（选项页里的输入在空间检查前已记录）。
+        /// </summary>
+        public void ShowInsufficientDiskSpace(long requiredBytes, long availableBytes)
+        {
+            busy = false;
+            RenderPage(delegate
+            {
+                SetActiveStep(-1);
+                AddLabel(
+                    rightBody,
+                    "InsufficientSpaceHeader",
+                    T("InsufficientSpaceHeader"),
+                    46,
+                    110,
+                    540,
+                    58,
+                    HeadingFont,
+                    Color.FromArgb(178, 59, 49)
+                );
+                string message = string.Format(
+                    T("InsufficientSpaceMessage"),
+                    FormatSize(requiredBytes),
+                    FormatSize(availableBytes)
+                );
+                AddLabel(rightBody, "InsufficientSpaceMessage", message, 46, 190, 540, 60, BodyFont, MutedColor);
+                AddLabel(rightBody, "InsufficientSpaceHint", T("InsufficientSpaceHint"), 46, 265, 540, 60, SmallFont, MutedColor);
+                AddFooterButton("InsufficientSpaceBackButton", T("InsufficientSpaceBackButton"), 470, ShowOptions);
+            });
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            const long MB = 1024 * 1024;
+            const long GB = 1024 * MB;
+            return bytes >= GB
+                ? string.Format("{0:F1} GB", (double)bytes / GB)
+                : string.Format("{0:F0} MB", (double)bytes / MB);
+        }
+
         public void ShowRestartRequired(bool operationCompleted)
         {
             busy = false;
@@ -1347,6 +1442,12 @@ namespace OpenDesk.Installer
 
         private void StartInstallFromWelcome()
         {
+            // 空间预检查失败时保持当前页面，用户可换目录重试（issue #288）。
+            if (!application.HasEnoughSpaceForInstall(selectedFolder))
+            {
+                return;
+            }
+
             application.Install(
                 selectedFolder,
                 selectedDesktopShortcut,
@@ -1370,10 +1471,18 @@ namespace OpenDesk.Installer
                 return;
             }
 
+            // 先记录用户输入再校验空间：空间不足会切换到提示页并销毁选项页，
+            // 返回选项页时由这些字段重建输入框，避免用户刚填的目录与勾选项丢失。
             selectedFolder = folder;
             selectedDesktopShortcut = desktopShortcutCheckBox.Checked;
             selectedStartMenuShortcut = startMenuShortcutCheckBox.Checked;
             selectedInstallPathCustomized = editingInstallPathCustomized;
+
+            if (!application.HasEnoughSpaceForInstall(folder))
+            {
+                return;
+            }
+
             ShowWelcome(true);
         }
 
@@ -1599,6 +1708,29 @@ namespace OpenDesk.Installer
 
     internal static class InstallerPath
     {
+        /// <summary>
+        /// 目标目录所在卷的可用剩余空间（字节）。目录不存在时按其根盘符查询
+        /// （DriveInfo 挂载即可读取）；读不到返回 -1，由调用方决定是否放行。
+        /// </summary>
+        public static long GetAvailableFreeSpace(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return -1;
+            }
+
+            try
+            {
+                string root = Path.GetPathRoot(Path.GetFullPath(folder.Trim()));
+                DriveInfo drive = new DriveInfo(root);
+                return drive.IsReady ? drive.AvailableFreeSpace : -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
         public static string Normalize(string folder)
         {
             if (string.IsNullOrWhiteSpace(folder))

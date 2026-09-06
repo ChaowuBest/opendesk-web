@@ -52,6 +52,10 @@ See the Mulan PSL v2 for more details.
     <String Id="InvalidInstallPathMessage">请输入完整的本地文件夹路径，并确认对应磁盘已经挂载。</String>
     <String Id="OpenDeskRunningTitle">OpenDesk 正在运行</String>
     <String Id="OpenDeskRunningMessage">请先关闭正在运行的 OpenDesk，然后单击“重试”继续。&#xA;&#xA;安装目录：{0}</String>
+    <String Id="InsufficientSpaceHeader">磁盘空间不足</String>
+    <String Id="InsufficientSpaceMessage">所选磁盘的可用空间不足以完成安装。安装需要约 {0} 可用空间，当前仅有 {1}。</String>
+    <String Id="InsufficientSpaceHint">请在“安装选项”中选择其他磁盘（例如 D:\、E:\）后重试，或清理该磁盘的剩余空间。</String>
+    <String Id="InsufficientSpaceBackButton">返回</String>
     <String Id="RestartRequiredHeader">需要重新启动 Windows</String>
     <String Id="RestartRequiredCompletedMessage">操作已经完成，但 Windows 必须重新启动才能完成文件清理。请重启系统后再运行 OpenDesk 或安装程序。</String>
     <String Id="RestartRequiredPendingMessage">Windows 中仍有 OpenDesk 文件等待重启后处理，本次操作尚未执行。请先重启系统，然后重新运行安装程序。</String>
