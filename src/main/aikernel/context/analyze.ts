@@ -32,7 +32,7 @@ function estimateToolTokens(toolId: string, tool: BaseTool<any>): number {
     return (
         estimateTextTokens(toolId) +
         estimateTextTokens(tool.description) +
-        estimateTextTokens(JSON.stringify(tool.params.toJSONSchema()))
+        estimateTextTokens(JSON.stringify(tool.getJsonSchema()))
     );
 }
 

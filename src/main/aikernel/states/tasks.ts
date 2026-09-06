@@ -2629,9 +2629,10 @@ export class TaskState {
 
             args = validation.data as Record<string, unknown>;
             tool_call.args_object = args;
-            // 仅当 validate 钩子确实替换了参数对象时才回写 args_string，避免覆盖
-            // jsonrepair 已修复的合法 JSON（未改动时保留原始修复字符串，见 sanitize-outbound 测试）
-            if (hookModifiedArgs) {
+            // 钩子替换过参数对象，或校验阶段发生过自动修复（如 CallSkillTool 平铺参数还原）时，
+            // 将规范化参数回写 args_string（修复即回写策略），保证历史回放/持久化看到的是实际执行的参数；
+            // 否则保留原始修复字符串，避免覆盖 jsonrepair 已修复的合法 JSON（见 sanitize-outbound 测试）
+            if (hookModifiedArgs || validation.repaired) {
                 tool_call.args_string = JSON.stringify(args);
             }
             tool_call.status = 'running';

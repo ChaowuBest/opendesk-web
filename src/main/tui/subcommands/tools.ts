@@ -88,7 +88,7 @@ export function registerToolsCommand(prog: Command): void {
                 `执行方式:   ${tool.universalExecutor ? 'universalExecutor (流式)' : tool.executor ? 'executor' : '(无)'}`
             );
             console.log(`InputSchema:`);
-            console.log(JSON.stringify(tool.params.toJSONSchema(), null, 2));
+            console.log(JSON.stringify(tool.getJsonSchema(), null, 2));
             process.exit(0);
         });
 

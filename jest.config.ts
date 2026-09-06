@@ -9,7 +9,28 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
 import type { Config } from 'jest';
+
+// jest 需要 Node 启动时携带 --experimental-vm-modules 才能执行 ESM（default-esm 预设
+// 及 src/main 下的原生 .js ESM 源码都依赖它）。npm test 已显式携带该 flag；
+// 为让 `npx jest` 等绕过 npm script 的直接调用也能工作，检测到 flag 缺失时
+// 以相同参数重启一次 jest：透传 execArgv（保留 IDE 调试用的 --inspect 类 flag）、
+// 原样透传命令行参数与退出码，guard 环境变量防止递归。
+const vmModulesEnabled = typeof vm.SourceTextModule === 'function';
+const invokedAsJestCli = process.argv[1]?.endsWith('jest.js') ?? false;
+if (!vmModulesEnabled && invokedAsJestCli && !process.env.OPENDESK_JEST_ESM_REEXEC) {
+    const result = spawnSync(
+        process.execPath,
+        [...process.execArgv, '--experimental-vm-modules', ...process.argv.slice(1)],
+        {
+            stdio: 'inherit',
+            env: { ...process.env, OPENDESK_JEST_ESM_REEXEC: '1' }
+        }
+    );
+    process.exit(result.status ?? 1);
+}
 
 const shared: Config = {
     preset: 'ts-jest/presets/default-esm',
