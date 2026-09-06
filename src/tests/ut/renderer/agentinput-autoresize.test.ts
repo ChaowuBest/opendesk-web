@@ -2,6 +2,8 @@ import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globa
 import { parseHTML } from 'linkedom';
 
 describe('agent-input auto-resize', () => {
+    const resizeObserverCallbacks = new Map<Element, ResizeObserverCallback>();
+
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
         Object.assign(globalThis, {
@@ -19,7 +21,15 @@ describe('agent-input auto-resize', () => {
             },
             cancelAnimationFrame: () => undefined,
             ResizeObserver: class {
-                observe() {}
+                private readonly callback: ResizeObserverCallback;
+
+                constructor(callback: ResizeObserverCallback) {
+                    this.callback = callback;
+                }
+
+                observe(target: Element) {
+                    resizeObserverCallbacks.set(target, this.callback);
+                }
                 disconnect() {}
             }
         });
@@ -53,6 +63,7 @@ describe('agent-input auto-resize', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
+        resizeObserverCallbacks.clear();
         window.taskManagerAPI = {
             getAttachmentFileSupport: jest.fn(async () => ({
                 supportedExtensions: ['doc', 'pdf'],
@@ -106,36 +117,120 @@ describe('agent-input auto-resize', () => {
         expect(textarea.style.height).toBe('30px');
     });
 
-    function mockDialogHeight(input: HTMLElement, height: number) {
-        (input as unknown as { closest: () => unknown }).closest = jest.fn(() => ({
-            querySelector: () => ({ clientHeight: height })
-        }));
+    function setupInputWithHeightBudget(initialHeight: number, hostSelector = 'task-view') {
+        let heightBudget = initialHeight;
+        const heightReference = document.createElement('div');
+        Object.defineProperty(heightReference, 'clientHeight', {
+            get: () => heightBudget,
+            configurable: true
+        });
+        const input = document.createElement('agent-input') as HTMLElement & {
+            render: () => void;
+            autoResizeTextarea: (textarea: HTMLTextAreaElement) => void;
+            addImage: (dataUrl: string, name?: string) => void;
+            removeImage: (index: number) => void;
+        };
+        (input as unknown as { closest: (selector: string) => unknown }).closest = jest.fn((selector: string) => {
+            if (selector === '[data-agent-input-height-reference]') return heightReference;
+            if (selector !== hostSelector) return null;
+            return {
+                querySelector: (childSelector: string) =>
+                    childSelector === '[data-agent-input-height-reference]' ? heightReference : null
+            };
+        });
+        input.render();
+        const textarea = input.querySelector('#agent-input-textarea') as HTMLTextAreaElement;
+        Object.defineProperty(textarea, 'offsetHeight', {
+            get: () => parseFloat(textarea.style.height) || 56,
+            configurable: true
+        });
+        Object.defineProperty(input, 'offsetHeight', {
+            get: () => {
+                const previews = input.querySelector('#agent-input-image-previews');
+                const previewHeight = previews?.style.display === 'none' ? 0 : 80;
+                return textarea.offsetHeight + 64 + previewHeight;
+            },
+            configurable: true
+        });
+        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+
+        return {
+            input,
+            textarea,
+            resizeTo(nextHeight: number) {
+                heightBudget = nextHeight;
+                const callback = resizeObserverCallbacks.get(heightReference);
+                expect(callback).toBeDefined();
+                callback?.([], {} as ResizeObserver);
+            }
+        };
     }
 
-    test('对话框高度很小时，上限按比例缩小但保底最小高度', () => {
-        const { input, textarea } = setupInput();
-        // 对话框 100px，比例 0.5 → 50px，低于最小高度 56px，故保底 56px
-        mockDialogHeight(input, 100);
-        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+    test('可用高度很小时优先保证 textarea 最小高度', () => {
+        const { input, textarea } = setupInputWithHeightBudget(100);
         input.autoResizeTextarea(textarea);
         expect(textarea.style.height).toBe('56px');
+        expect(input.offsetHeight).toBe(120);
     });
 
-    test('对话框高度正常时，上限为对话框高度的 50%', () => {
-        const { input, textarea } = setupInput();
-        // 对话框 400px，比例 0.5 → 上限 200px
-        mockDialogHeight(input, 400);
-        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+    test('整个输入组件不超过任务内容区高度的 50%', () => {
+        const { input, textarea } = setupInputWithHeightBudget(400);
         input.autoResizeTextarea(textarea);
-        expect(textarea.style.height).toBe('200px');
+        expect(textarea.style.height).toBe('136px');
+        expect(input.offsetHeight).toBe(200);
     });
 
-    test('对话框高度很大时，封顶为绝对上限 240px', () => {
-        const { input, textarea } = setupInput();
-        // 对话框 1000px，比例 0.5 → 500px，超过绝对上限 240px，故封顶 240px
-        mockDialogHeight(input, 1000);
-        Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });
+    test('可用高度很大时，textarea 仍封顶为绝对上限 240px', () => {
+        const { input, textarea } = setupInputWithHeightBudget(1000);
         input.autoResizeTextarea(textarea);
         expect(textarea.style.height).toBe('240px');
+        expect(input.offsetHeight).toBe(304);
+    });
+
+    test('父容器从高变矮时，textarea 被压缩到新的稳定高度', () => {
+        const { input, textarea, resizeTo } = setupInputWithHeightBudget(600);
+        resizeTo(600);
+        expect(textarea.style.height).toBe('236px');
+        expect(input.offsetHeight).toBe(300);
+
+        resizeTo(300);
+        expect(textarea.style.height).toBe('86px');
+        expect(input.offsetHeight).toBe(150);
+    });
+
+    test('父容器从矮恢复高时，textarea 根据原有 scrollHeight 恢复', () => {
+        const { input, textarea, resizeTo } = setupInputWithHeightBudget(300);
+        resizeTo(300);
+        expect(textarea.style.height).toBe('86px');
+        expect(input.offsetHeight).toBe(150);
+
+        resizeTo(600);
+        expect(textarea.style.height).toBe('236px');
+        expect(input.offsetHeight).toBe(300);
+    });
+
+    test('首页输入组件也不超过页面可用高度的 50%', () => {
+        const { input, textarea, resizeTo } = setupInputWithHeightBudget(300, 'home-page');
+        input.autoResizeTextarea(textarea);
+        expect(textarea.style.height).toBe('86px');
+        expect(input.offsetHeight).toBe(150);
+
+        resizeTo(600);
+        expect(textarea.style.height).toBe('236px');
+        expect(input.offsetHeight).toBe(300);
+    });
+
+    test('图片预览区变化时重新分配整个输入组件的高度额度', () => {
+        const { input, textarea } = setupInputWithHeightBudget(400);
+        input.autoResizeTextarea(textarea);
+        expect(textarea.style.height).toBe('136px');
+
+        input.addImage('data:image/png;base64,AA==', 'preview.png');
+        expect(textarea.style.height).toBe('56px');
+        expect(input.offsetHeight).toBe(200);
+
+        input.removeImage(0);
+        expect(textarea.style.height).toBe('136px');
+        expect(input.offsetHeight).toBe(200);
     });
 });

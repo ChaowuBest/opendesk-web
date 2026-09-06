@@ -4429,7 +4429,7 @@ class TaskView extends HTMLElement {
 
     _renderEmbedded() {
         this.innerHTML = `
-        <div class="bg-gray-30 h-full flex flex-col">
+        <div class="bg-gray-30 h-full flex flex-col" data-agent-input-height-reference>
             <div class="relative flex-1 overflow-hidden min-h-0">
                 <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-3"></div>
                 <!-- 滚动控制按钮组 -->
@@ -4491,7 +4491,7 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
-                <div class="flex-1 flex flex-col min-w-0">
+                <div class="flex-1 flex flex-col min-w-0" data-agent-input-height-reference>
                     <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
                         <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
