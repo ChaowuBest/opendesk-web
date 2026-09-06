@@ -23,7 +23,6 @@ import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
-import { getToolDisplayNameKey, humanizeToolName } from '../../common/tool-display-name.ts';
 import { enhanceWebLinks } from '../utils/web-linkify.ts';
 import {
     GoalController,
@@ -1075,9 +1074,7 @@ class TaskView extends HTMLElement {
     }
 
     static _toolDisplayName(tool) {
-        const toolName = tool?.tool_name;
-        const key = getToolDisplayNameKey(toolName);
-        return key ? taskViewT(key) : humanizeToolName(toolName) || taskViewT('renderer.taskview.output.tool');
+        return tool?.tool_name || taskViewT('renderer.taskview.output.tool');
     }
 
     static _compactProcessPhrase(value, maxLength = 18) {
@@ -1110,7 +1107,10 @@ class TaskView extends HTMLElement {
             const listedNames = names
                 .slice(0, 2)
                 .join(taskViewT('renderer.taskview.output.processSummary.listSeparator'));
-            return taskViewT('renderer.taskview.output.processSummary.usedTools', { tools: listedNames });
+            return taskViewT('renderer.taskview.output.processSummary.usedTools', {
+                tools: listedNames,
+                count: tools.length
+            });
         };
         if (toolNames.length > 0) {
             toolSummary = summarizeTools(toolNames);

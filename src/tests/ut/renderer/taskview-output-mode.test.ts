@@ -151,9 +151,9 @@ describe('task-view GUI output modes', () => {
         expect(
             Array.from(view.querySelectorAll('.od-process-summary-text')).map((element) => element.textContent)
         ).toEqual([
-            '深度思考 · 调用了Tool1、Tool2等工具',
-            '深度思考 · 调用了Tool11、Tool12等工具',
-            '深度思考 · 调用了Tool21、Tool22等工具'
+            '深度思考 · 调用了Tool1、Tool2等 10个工具',
+            '深度思考 · 调用了Tool11、Tool12等 10个工具',
+            '深度思考 · 调用了Tool21、Tool22等 10个工具'
         ]);
         expect(view.textContent).not.toContain('工具调用 · 10 个工具');
         expect(view.textContent).not.toMatch(/工具调用 \d+[–-]\d+/);
@@ -515,7 +515,9 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelectorAll('.od-process-segment')).toHaveLength(1);
         expect(view.querySelectorAll('.od-stage-body')).toHaveLength(1);
         expect(view.querySelector('.od-stage-body')?.textContent).toContain('第一段正文');
-        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe('深度思考 · 调用了Tool1、Tool2等工具');
+        expect(view.querySelector('.od-process-summary-text')?.textContent).toBe(
+            '深度思考 · 调用了Tool1、Tool2等 10个工具'
+        );
         expect(view.querySelector('[data-running-output-toggle]')?.getAttribute('aria-expanded')).toBe('false');
         const flow = view.querySelector('.od-assistant-output-flow') as HTMLElement;
         expect(flow.lastElementChild?.classList.contains('od-running-status')).toBe(true);
@@ -564,7 +566,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在调用 读取文件…');
+        expect(status).toContain('正在调用 filemgr-readFile…');
         expect(status).not.toContain('package.json');
     });
 
@@ -631,7 +633,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了读取文件、搜索文件内容等工具');
+        expect(summary).toBe('深度思考 · 调用了filemgr-rea…等 3个工具');
         expect(summary).not.toContain('分析项目结构');
     });
 
@@ -648,9 +650,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了加载技能、搜索网页等工具');
-        expect(summary).not.toContain('skill-manager');
-        expect(summary).not.toContain('WebSearch');
+        expect(summary).toBe('深度思考 · 调用了skill-manag…等 2个工具');
     });
 
     test('a failed child tool does not replace the process summary icon', () => {
@@ -692,7 +692,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了读取网页等工具');
+        expect(summary).toBe('深度思考 · 调用了webFetch等 1个工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -717,7 +717,7 @@ describe('task-view GUI output modes', () => {
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
         expect(Array.from(summary).length).toBeLessThanOrEqual(40);
-        expect(summary).toBe('深度思考 · 调用了very / long…等工具');
+        expect(summary).toBe('深度思考 · 调用了very-long-s…等 4个工具');
     });
 
     test('process details reuse mainline reasoning and tool card classes', () => {
