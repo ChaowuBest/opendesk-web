@@ -23,7 +23,6 @@ import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
-import { enhanceWebLinks } from '../utils/web-linkify.ts';
 import {
     GoalController,
     canShowWaitingAssistantPlaceholder,
@@ -1480,7 +1479,6 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
-        enhanceWebLinks(historyContainer);
         this._syncReasoningTimers(historyContainer);
         this._syncPendingGoalEditToArtifacts();
     }
@@ -1512,7 +1510,6 @@ class TaskView extends HTMLElement {
                 for (const element of insertedElements) {
                     enhanceCodeBlocks(element);
                     enhanceToolPreviewCards(element);
-                    enhanceWebLinks(element);
                 }
             }
 
@@ -1774,7 +1771,6 @@ class TaskView extends HTMLElement {
         });
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
-        enhanceWebLinks(message_content);
         this._syncReasoningTimers(message_content);
         this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
 
@@ -1899,7 +1895,6 @@ class TaskView extends HTMLElement {
             });
             enhanceCodeBlocks(message_content);
             enhanceToolPreviewCards(message_content);
-            enhanceWebLinks(message_content);
         }
         this._syncReasoningTimers(message_content);
         this._restoreProcessScrollFollowState(message_content, processScrollFollowState);
@@ -3661,7 +3656,6 @@ class TaskView extends HTMLElement {
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
-            enhanceWebLinks(messageContent);
             this._syncReasoningTimers(messageContent);
         }
 
@@ -3714,7 +3708,6 @@ class TaskView extends HTMLElement {
             }
             enhanceCodeBlocks(messageContent);
             enhanceToolPreviewCards(messageContent);
-            enhanceWebLinks(messageContent);
             return;
         }
         const processToggle = e.target.closest('[data-process-toggle]');

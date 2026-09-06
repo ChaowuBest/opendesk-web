@@ -760,25 +760,6 @@ describe('task-view GUI output modes', () => {
         expect(taskViewStyles).not.toMatch(/\.od-process-detail\{[^}]*overscroll-behavior:contain;/);
     });
 
-    test('plain web URLs in tool output become clickable external links', () => {
-        const view = createView();
-        view.task_id = 'task-link-output';
-        view.innerHTML = '<div id="taskview-chat-history"></div>';
-        const tool = toolPart(1, 1);
-        tool.rendered = '<div class="od-inline-toolcall-container">网址：https://example.com/result。</div>';
-
-        view.handleAssistantReplace({
-            task_status: 'stopped',
-            message_id: 'message-link-output',
-            parts: [tool, { type: 'text', rendered: '<p>完成</p>' }]
-        });
-
-        const link = view.querySelector('.od-web-output-link');
-        expect(link?.getAttribute('href')).toBe('https://example.com/result');
-        expect(link?.getAttribute('target')).toBe('_blank');
-        expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
-    });
-
     test('minimal running output preserves the expanded execution timeline while streaming', () => {
         const view = createView();
         view.task_id = 'task-1';
