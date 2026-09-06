@@ -24,6 +24,30 @@ function stubWebview(wv: any): void {
     wv.loadURL = jest.fn();
 }
 
+/** 主框架真实导航（跳转/刷新）：遮罩的唯一触发来源 */
+function mainFrameNav(): Event {
+    const event = new window.Event('did-start-navigation');
+    (event as any).isMainFrame = true;
+    (event as any).isInPlace = false;
+    return event;
+}
+
+/** 子框架导航（iframe 加载）：不应触发遮罩 */
+function subFrameNav(): Event {
+    const event = new window.Event('did-start-navigation');
+    (event as any).isMainFrame = false;
+    (event as any).isInPlace = false;
+    return event;
+}
+
+/** 同文档导航（pushState/hash）：不应触发遮罩 */
+function inPlaceNav(): Event {
+    const event = new window.Event('did-start-navigation');
+    (event as any).isMainFrame = true;
+    (event as any).isInPlace = true;
+    return event;
+}
+
 describe('browser entry widget navigation', () => {
     let widget: TestWidget;
 
@@ -106,7 +130,7 @@ describe('browser entry widget navigation', () => {
         stubWebview(tab.webview);
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         // 延迟显示，避免快速加载时闪烁
         expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).toBeNull();
 
@@ -125,7 +149,7 @@ describe('browser entry widget navigation', () => {
         stubWebview(tab.webview);
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         tab.webview.dispatchEvent(new CustomEvent('did-stop-loading'));
         jest.advanceTimersByTime(400);
 
@@ -138,7 +162,7 @@ describe('browser entry widget navigation', () => {
         stubWebview(tab.webview);
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         widget.goHome();
         jest.advanceTimersByTime(400);
 
@@ -153,7 +177,7 @@ describe('browser entry widget navigation', () => {
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
         // 慢服务器：commit 之前 loading 已持续超过延迟阈值，遮罩出现
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         jest.advanceTimersByTime(400);
         expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).not.toBeNull();
 
@@ -174,7 +198,7 @@ describe('browser entry widget navigation', () => {
         stubWebview(tab.webview);
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         jest.advanceTimersByTime(400);
         expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).not.toBeNull();
 
@@ -190,7 +214,7 @@ describe('browser entry widget navigation', () => {
         stubWebview(tab.webview);
         tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         jest.advanceTimersByTime(400);
         expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).not.toBeNull();
 
@@ -200,6 +224,29 @@ describe('browser entry widget navigation', () => {
         (failEvent as any).validatedURL = 'https://example.com/';
         (failEvent as any).isMainFrame = true;
         tab.webview.dispatchEvent(failEvent);
+        expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).toBeNull();
+    });
+
+    test('subframe navigation does not flash the loading overlay', () => {
+        widget.navigateTo('https://example.com');
+        const tab = activeTab();
+        stubWebview(tab.webview);
+        tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
+
+        // 已加载完的页面上 iframe 轮换刷新不应让遮罩反复闪现
+        tab.webview.dispatchEvent(subFrameNav());
+        jest.advanceTimersByTime(400);
+        expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).toBeNull();
+    });
+
+    test('same-document navigation does not trigger the loading overlay', () => {
+        widget.navigateTo('https://example.com');
+        const tab = activeTab();
+        stubWebview(tab.webview);
+        tab.webview.dispatchEvent(new CustomEvent('dom-ready'));
+
+        tab.webview.dispatchEvent(inPlaceNav());
+        jest.advanceTimersByTime(400);
         expect(tab.wrapEl!.querySelector('.wb-loading-overlay')).toBeNull();
     });
 });

@@ -2313,6 +2313,11 @@ export const enUs: Record<string, string> = {
     // Renderer - Browser
     'renderer.browser.exitPreview': 'Exit preview',
     'renderer.browser.loadingPage': 'Loading page...',
+    'renderer.browser.pageHints': 'Page hints',
+    'renderer.browser.pageHintsEmpty': 'No hints match this page',
+    'renderer.browser.pageHintsTextSection': 'Text hints',
+    'renderer.browser.pageHintsActionSection': 'Page actions',
+    'renderer.browser.pageHintsArgs': 'Arguments',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': 'Restore browser panel',

@@ -53,12 +53,36 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         wv.loadURL = jest.fn();
     }
 
+    /** 主框架真实导航（跳转/刷新）：遮罩的唯一触发来源 */
+    function mainFrameNav(): Event {
+        const event = new window.Event('did-start-navigation');
+        (event as any).isMainFrame = true;
+        (event as any).isInPlace = false;
+        return event;
+    }
+
+    /** 子框架导航（iframe 加载）：不应触发遮罩 */
+    function subFrameNav(): Event {
+        const event = new window.Event('did-start-navigation');
+        (event as any).isMainFrame = false;
+        (event as any).isInPlace = false;
+        return event;
+    }
+
+    /** 同文档导航（pushState/hash）：不应触发遮罩 */
+    function inPlaceNav(): Event {
+        const event = new window.Event('did-start-navigation');
+        (event as any).isMainFrame = true;
+        (event as any).isInPlace = true;
+        return event;
+    }
+
     test('slow navigation shows a loading overlay until loading stops', () => {
         const browser = createBrowser();
         const tab = browser.tabs[0];
         stubWebview(tab.webview);
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         expect(tab.wrapEl.querySelector('.bw-loading-overlay')).toBeNull();
 
         jest.advanceTimersByTime(400);
@@ -77,7 +101,7 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         const tab = browser.tabs[0];
         stubWebview(tab.webview);
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         tab.webview.dispatchEvent(new CustomEvent('did-stop-loading'));
         jest.advanceTimersByTime(400);
 
@@ -89,7 +113,7 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         const tab = browser.tabs[0];
         stubWebview(tab.webview);
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         browser.destroy();
         jest.advanceTimersByTime(400);
 
@@ -101,7 +125,7 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         const tab = browser.tabs[0];
         stubWebview(tab.webview);
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         jest.advanceTimersByTime(400);
         expect(tab.wrapEl.querySelector('.bw-loading-overlay')).not.toBeNull();
 
@@ -121,7 +145,7 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         const tab = browser.tabs[0];
         stubWebview(tab.webview);
 
-        tab.webview.dispatchEvent(new CustomEvent('did-start-loading'));
+        tab.webview.dispatchEvent(mainFrameNav());
         jest.advanceTimersByTime(400);
         expect(tab.wrapEl.querySelector('.bw-loading-overlay')).not.toBeNull();
 
@@ -131,6 +155,27 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         (failEvent as any).validatedURL = 'https://example.com/';
         (failEvent as any).isMainFrame = true;
         tab.webview.dispatchEvent(failEvent);
+        expect(tab.wrapEl.querySelector('.bw-loading-overlay')).toBeNull();
+    });
+
+    test('subframe navigation does not flash the loading overlay', () => {
+        const browser = createBrowser();
+        const tab = browser.tabs[0];
+        stubWebview(tab.webview);
+
+        // 已加载完的页面上 iframe 轮换刷新不应让遮罩反复闪现
+        tab.webview.dispatchEvent(subFrameNav());
+        jest.advanceTimersByTime(400);
+        expect(tab.wrapEl.querySelector('.bw-loading-overlay')).toBeNull();
+    });
+
+    test('same-document navigation does not trigger the loading overlay', () => {
+        const browser = createBrowser();
+        const tab = browser.tabs[0];
+        stubWebview(tab.webview);
+
+        tab.webview.dispatchEvent(inPlaceNav());
+        jest.advanceTimersByTime(400);
         expect(tab.wrapEl.querySelector('.bw-loading-overlay')).toBeNull();
     });
 });

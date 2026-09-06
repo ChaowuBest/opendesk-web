@@ -2251,6 +2251,11 @@ export const zhCn: Record<string, string> = {
     // Renderer - Browser
     'renderer.browser.exitPreview': '退出预览',
     'renderer.browser.loadingPage': '正在加载页面...',
+    'renderer.browser.pageHints': '页面提示',
+    'renderer.browser.pageHintsEmpty': '当前页面没有匹配的提示',
+    'renderer.browser.pageHintsTextSection': '文本提示',
+    'renderer.browser.pageHintsActionSection': '页面动作',
+    'renderer.browser.pageHintsArgs': '参数',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': '恢复浏览器面板',

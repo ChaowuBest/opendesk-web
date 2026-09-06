@@ -87,6 +87,47 @@ export async function collectBrowserHints(
     return await getPluginHost().getBrowserHints(buildBrowserContext(evaluate, page));
 }
 
+/**
+ * 地址栏「页面提示」面板使用的 hint 摘要形态。
+ *
+ * 与快照链路不同，UI 只需要展示信息：剥离 `functionStr` 等重负载字段，
+ * 避免把可执行源码经 IPC 传给 renderer。
+ */
+export type BrowserHintSummary =
+    | { kind: 'text'; content: string }
+    | {
+          kind: 'action';
+          name: string;
+          /** 如 `SearchItem(keyword, category)` */
+          signature: string;
+          description: string;
+          args: Record<string, string>;
+      };
+
+/** 把 hint 列表转换为地址栏面板展示用的摘要 */
+export function summarizeBrowserHints(hints: readonly BrowserHint[]): BrowserHintSummary[] {
+    return hints.map((hint) => {
+        if (hint.kind === 'text') {
+            return { kind: 'text' as const, content: hint.content };
+        }
+        return {
+            kind: 'action' as const,
+            name: hint.name,
+            signature: renderActionSignature(hint),
+            description: hint.description,
+            args: { ...(hint.args ?? {}) }
+        };
+    });
+}
+
+/** 拉取当前页面命中的 hint 并转换为地址栏面板需要的摘要形态 */
+export async function collectBrowserHintSummaries(
+    evaluate: BrowserPageEvaluator,
+    page: BrowserPageInfo
+): Promise<BrowserHintSummary[]> {
+    return summarizeBrowserHints(await collectBrowserHints(evaluate, page));
+}
+
 function renderActionSignature(hint: ActionHint): string {
     const args = Object.keys(hint.args ?? {}).join(', ');
     return `${hint.name}(${args})`;
