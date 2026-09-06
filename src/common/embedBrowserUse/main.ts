@@ -1318,6 +1318,16 @@ export class BrowserController {
                 const isolatedClickScript = `(() => {
                     var el = ${targetExpr};
                     if (!el) return JSON.stringify({ error: 'Element not found' });
+                    // Synthetic (isTrusted=false) mouse events never trigger the
+                    // browser's default focus-on-mousedown behavior, so clicking
+                    // a text-entry control would leave document.activeElement on
+                    // <body> and later focus-dependent input would land nowhere.
+                    // Focus in-page first: el.focus() only moves
+                    // document.activeElement inside the guest, it never steals OS
+                    // focus from the user, so this stays safe for background tasks.
+                    if (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) {
+                        try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+                    }
                     var opts = {
                         bubbles: true, cancelable: true, view: window,
                         button: ${button === 'right' ? 2 : button === 'middle' ? 1 : 0},
@@ -1568,9 +1578,12 @@ export class BrowserController {
 
             if (textToInsert) {
                 if (!useNativeInput) {
-                    // Isolated input intentionally does not focus the guest. This
-                    // is required for background tasks and for a foreground task
-                    // while the user is typing in another OpenDesk control.
+                    // Isolated input never steals OS focus from the guest
+                    // webview — required for background tasks and for a
+                    // foreground task while the user is typing in another
+                    // OpenDesk control. The contenteditable branch below still
+                    // focuses the editor *in-page* (document.activeElement) so
+                    // execCommand inserts into the right element.
                     const escapedText = JSON.stringify(textToInsert);
                     if (slowly) {
                         for (const ch of textToInsert) {
@@ -1590,6 +1603,15 @@ export class BrowserController {
                                         if (setter) setter.call(el, v.slice(0, start) + ch + v.slice(el.selectionEnd || start));
                                         el.selectionStart = el.selectionEnd = start + ch.length;
                                     } else if (el.isContentEditable) {
+                                        // execCommand inserts into the focused
+                                        // element — make sure the editor has
+                                        // in-page focus first, otherwise the
+                                        // text lands on <body> and vanishes.
+                                        try {
+                                            if (document.activeElement !== el) el.focus({ preventScroll: true });
+                                        } catch (e2) {
+                                            if (document.activeElement !== el) el.focus();
+                                        }
                                         document.execCommand('insertText', false, ch);
                                     }
                                     el.dispatchEvent(new KeyboardEvent('keydown', {
@@ -1611,17 +1633,32 @@ export class BrowserController {
                         await executeTargetScript(
                             `(() => {
                                 var el = ${targetExpr};
-                                if (!el) return;
+                                if (!el) return 'no-element';
                                 var text = ${escapedText};
                                 if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
                                     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
                                     var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
                                     if (setter) setter.call(el, text);
-                                } else if (el.isContentEditable) {
-                                    el.textContent = text;
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return 'value';
                                 }
-                                el.dispatchEvent(new Event('input', { bubbles: true }));
-                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (el.isContentEditable) {
+                                    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+                                    // Route through execCommand so the page sees a
+                                    // real editing event stream (beforeinput/input).
+                                    // A direct textContent assignment bypasses
+                                    // controlled editors — taobao IM wipes the
+                                    // injected text right back out.
+                                    var ok = false;
+                                    try { ok = document.execCommand('insertText', false, text); } catch (e) { ok = false; }
+                                    if (ok) return 'insertText';
+                                    el.textContent = text;
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return 'textContent';
+                                }
+                                return 'unsupported';
                             })()`
                         );
                     }

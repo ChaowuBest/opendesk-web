@@ -1,0 +1,16 @@
+{
+    "schemaVersion": 1,
+    "id": "browserboost",
+    "displayName": {
+        "en": "BrowserBoost",
+        "zh": "浏览器增强"
+    },
+    "description": {
+        "en": "Browser hints & one-click actions for popular websites",
+        "zh": "为常用网站注入浏览器提示与一步动作"
+    },
+    "version": "0.1.0",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["browser"]
+}

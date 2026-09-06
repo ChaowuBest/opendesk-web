@@ -187,6 +187,17 @@ export const SNAPSHOT_INJECTION = `(() => {
         var explicit = getExplicitRole(el);
         if (explicit !== undefined) return explicit;
 
+        // Chromium exposes contenteditable HOSTS as text boxes in its AX tree.
+        // Without this mapping an empty contenteditable editor (taobao IM
+        // input) falls through to 'generic' and gets dropped by the
+        // generic-cleanup passes, leaving only the placeholder sibling for the
+        // agent to click — which never focuses the real editor.
+        // isContentEditable is inherited by EVERY descendant of an editing
+        // host, so gate on the parent to map only the host itself; descendants
+        // keep their own implicit roles (a link inside a rich-text editor
+        // stays a link instead of turning into a nested textbox).
+        if (el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable)) return 'textbox';
+
         var fn = implicitRoles[el.tagName];
         if (fn) return fn(el);
 
@@ -587,8 +598,15 @@ export const SNAPSHOT_INJECTION = `(() => {
         if (node.nodeType === 3) {
             if (!parentVisible) return;
             var text = node.nodeValue;
-            if (parentAriaNode.role !== 'textbox' && text)
-                parentAriaNode.children.push(text);
+            // A textbox's child text IS its value (contenteditable editors
+            // carry no .value property) — keep it so the snapshot shows what
+            // has already been typed. Native input/textarea fields already
+            // publish el.value through the dedicated capture in toAriaNode,
+            // so pushing their raw text node too would duplicate the value.
+            var parentIsNativeField = !!parentAriaNode.el &&
+                (parentAriaNode.el instanceof HTMLInputElement ||
+                 parentAriaNode.el instanceof HTMLTextAreaElement);
+            if (text && !parentIsNativeField) parentAriaNode.children.push(text);
             return;
         }
 
