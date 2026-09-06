@@ -22,6 +22,7 @@ import { escapeHtml } from '../../common/utils/escape.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
+import { buildTaskExportHtml } from '../utils/task-export.ts';
 import { createWebLinkContextMenuItems } from '../utils/web-link-context-menu.ts';
 import {
     GoalController,
@@ -3771,6 +3772,90 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 用与 GUI 完全相同的渲染管线输出全量历史消息 HTML 分片，供导出使用。
+     * DOM 中只渲染尾部窗口（虚拟化），这里必须显式覆盖全量消息；
+     * 未锚定到具体消息的 goal evaluation 卡片与初始渲染保持一致地追加在末尾。
+     * 返回分片数组而非单个巨串，避免超大任务的一次性字符串拼接开销。
+     */
+    _renderFullHistoryForExport() {
+        const messages = this._historyMessages;
+        let lastAssistantIdx = -1;
+        for (let i = 0; i < messages.length; i++) {
+            if (messages[i]?.role === 'assistant') lastAssistantIdx = i;
+        }
+        const htmlParts = [this._renderHistoryRangeToHtml(0, messages.length, { usageAssistantIdx: lastAssistantIdx })];
+        const unanchoredGoalEvaluationHtml = renderGoalEvaluationRecordsHtml(
+            getUnanchoredGoalEvaluationRecords(this._historyGoalEvaluationRecords, messages),
+            this.task_id,
+            taskViewT
+        );
+        if (unanchoredGoalEvaluationHtml) {
+            htmlParts.push(unanchoredGoalEvaluationHtml);
+        }
+        return htmlParts;
+    }
+
+    /**
+     * 收集导出 header 所需的任务元数据（模型/起止时间/累计 token 消耗）。
+     * getTaskInfo 失败时返回 null，header 相应降级为仅标题 + 导出时间。
+     */
+    async _buildExportHeaderInfo() {
+        const formatDateTime = (value) => {
+            if (!value) return null;
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return null;
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        };
+        const exportedAt = taskViewT('renderer.taskview.export.meta.exportedAt', {
+            time: formatDateTime(Date.now())
+        });
+        const labels = {
+            model: taskViewT('renderer.taskview.export.meta.model'),
+            startedAt: '',
+            exportedAt,
+            totalTokens: taskViewT('renderer.taskStatusWidget.totalTokens'),
+            inputTokens: taskViewT('renderer.taskStatusWidget.inputTokens'),
+            outputTokens: taskViewT('renderer.taskStatusWidget.outputTokens'),
+            toggleToLight: taskViewT('renderer.sidebar.themeToggleToLight'),
+            toggleToDark: taskViewT('renderer.sidebar.themeToggleToDark')
+        };
+        const header = {
+            title: this._taskName || this.task_id || 'OpenDesk',
+            exportedAt,
+            labels
+        };
+        try {
+            const info = await window.taskManagerAPI.getTaskInfo(this.task_id);
+            if (info.model) header.model = info.model;
+            const startedAt = formatDateTime(info.started_at || info.created_at);
+            if (startedAt) {
+                header.startedAt = startedAt;
+                labels.startedAt = taskViewT('renderer.taskStatusWidget.startedAt', { time: startedAt });
+            }
+            const usage = info.usage_summary;
+            if (usage && typeof usage.total_tokens === 'number') {
+                header.usage = {
+                    total: usage.total_tokens,
+                    input: usage.input_tokens,
+                    output: usage.output_tokens
+                };
+            }
+        } catch (error) {
+            console.warn('Failed to load task info for export header:', error);
+        }
+        try {
+            const version = await window.settingAPI.getVersion();
+            if (version) {
+                header.generatedBy = taskViewT('renderer.taskview.export.meta.generatedBy', { version });
+            }
+        } catch (error) {
+            console.warn('Failed to load app version for export header:', error);
+        }
+        return header;
+    }
+
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
@@ -3791,9 +3876,24 @@ class TaskView extends HTMLElement {
             }
 
             const filePath = saveResult.filePath;
+            const chatHistory = this.getHistoryContainer();
+            if (!chatHistory) {
+                return;
+            }
 
-            // 2. 保存文件
-            await window.taskManagerAPI.exportTask(this.task_id, filePath);
+            // 2. 复用 task view 的渲染管线与实时样式构建导出文档，保证显示效果与 GUI 对齐
+            const header = await this._buildExportHeaderInfo();
+            const { html, fontUrls } = buildTaskExportHtml({
+                taskName: header.title,
+                contentHtml: this._renderFullHistoryForExport(),
+                chatHistory,
+                doc: document,
+                reasoningCollapseLabel: taskViewT('reasoning.hide.content'),
+                header
+            });
+
+            // 3. 交由主进程内联字体并写盘
+            await window.taskManagerAPI.saveExportHtml(filePath, html, fontUrls);
         } catch (error) {
             console.error('Failed to export task:', error);
             alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
