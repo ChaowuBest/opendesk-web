@@ -960,6 +960,19 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 后台首次 Browser Use 时记录本任务期望的大屏预览状态：
+     * 不立即生效，待用户切回本任务时由 syncRightSidebarState 应用。
+     */
+    markPendingBrowserAutoReveal(): void {
+        browserAutoRevealState.markPendingReveal(this._taskId || this._getTaskId());
+    }
+
+    /** 任务对用户可见时调用：返回是否应立即进入浏览器大屏布局，并消费该待应用状态。 */
+    applyPendingBrowserAutoReveal(): boolean {
+        return browserAutoRevealState.takePendingReveal(this._taskId || this._getTaskId());
+    }
+
+    /**
      * Ensure the browser tab is active and the EmbeddedBrowser is mounted.
      * Called before any browser operation from tools.
      * @param autoSwitch 若为 false，则不自动切换到浏览器 tab（面板已展开时避免打断用户）
@@ -1014,6 +1027,8 @@ class TaskArtifacts extends HTMLElement {
         }
         this._browserRestoreState = null;
         this._browserRevealPendingContent = false;
+        // 浏览器已不存在，后台记录的待应用大屏预览状态随之失效。
+        browserAutoRevealState.clearPendingReveal(this._taskId || this._getTaskId());
     }
 
     /**

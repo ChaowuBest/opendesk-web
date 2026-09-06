@@ -35,6 +35,11 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 ? el.consumeInitialBrowserAutoReveal()
                 : false;
             var shouldAutoReveal = !taskViewIsHidden && initialBrowserUse;
+            if (tv && initialBrowserUse && taskViewIsHidden && typeof el.markPendingBrowserAutoReveal === 'function') {
+                // 后台首次 Browser Use：仅按任务记录大屏预览期望，待用户切回任务时生效，
+                // 不打断当前前台布局（与 consume 的一次性机会一一对应，不重复记录）。
+                el.markPendingBrowserAutoReveal();
+            }
             var renderRoot = tv && tv.closest('#nonAppSlot');
             function resetOversizedArtifact() {
                 if (el.style.minWidth === '1280px') el.style.minWidth = '';
@@ -114,8 +119,8 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 // 恢复为侧边栏正常宽度。
                 resetOversizedArtifact();
             }
-            // 每个任务仅第一次 Browser Use 可以自动展示浏览器聚焦布局。
-            // 后台首次调用也会消费该机会，但不得延迟到用户以后打开任务时补做展示。
+            // 每个任务在本次会话内仅第一次 Browser Use 可以自动展示浏览器聚焦布局。
+            // 前台首次使用立即生效；后台首次使用标记为待应用，待用户切回任务时展示。
             if (tv && shouldAutoReveal && typeof tv._ensureRightSidebarOpen === 'function') {
                 tv._ensureRightSidebarOpen();
             }

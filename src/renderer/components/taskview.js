@@ -3661,6 +3661,10 @@ class TaskView extends HTMLElement {
                 sidebar.ensureBrowserReady(true);
             }
         } else {
+            if (initialBrowserUse && typeof sidebar.markPendingBrowserAutoReveal === 'function') {
+                // 后台/隐藏期间的首次 Browser Use：记录大屏预览状态，待用户切回任务时生效
+                sidebar.markPendingBrowserAutoReveal();
+            }
             if (typeof sidebar.ensureBrowserReady === 'function') {
                 sidebar.ensureBrowserReady(false);
             }
@@ -3687,7 +3691,17 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        if (this._rightSidebarExpanded) {
+        // 后台首次 Browser Use 记录的大屏预览状态：按任务维度延迟到切回任务时生效，
+        // 不受上次离开时的折叠状态影响（_expandRightSidebar 内部会隐藏画中画）。
+        const pendingBrowserReveal =
+            typeof rightSidebar.applyPendingBrowserAutoReveal === 'function' &&
+            rightSidebar.applyPendingBrowserAutoReveal();
+        if (pendingBrowserReveal) {
+            this._forceExpandRightSidebar();
+            if (typeof rightSidebar.forceBrowserActive === 'function') {
+                rightSidebar.forceBrowserActive();
+            }
+        } else if (this._rightSidebarExpanded) {
             this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
             rightSidebar.style.width = this._workspaceFocusLayout.getTargetPanelWidth();
