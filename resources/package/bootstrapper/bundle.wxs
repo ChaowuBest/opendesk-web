@@ -36,6 +36,14 @@ See the Mulan PSL v2 for more details.
                   Type="string"
                   Value="[ProgramFiles64Folder]opendesk"
                   bal:Overridable="yes" />
+        <!-- 安装所需空间的预估值（staged 应用目录体积 × 安全系数），由 scripts/build-wix-bootstrapper.mjs 在构建期以
+             -dRequiredInstallSize=... 注入。BA 用它在用户选择的盘上做空间预检查，避免
+             "切到 D 盘仍按 C 盘报空间不足"（issue #288）：MSI 的 InstallValidate 阶段
+             只校验目标盘，而此处需提前拦截目标盘不足的情况。 -->
+        <Variable Name="RequiredInstallSize"
+                  Type="numeric"
+                  Value="$(var.RequiredInstallSize)"
+                  bal:Overridable="no" />
         <Variable Name="CreateDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
         <Variable Name="InstallPathCustomized" Type="numeric" Value="0" bal:Overridable="yes" />
