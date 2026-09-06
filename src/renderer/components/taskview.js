@@ -2034,6 +2034,13 @@ class TaskView extends HTMLElement {
                     this._autoSendQueueMessages();
                 }
             }
+            // 首屏内容就绪信号：供外层（openTask）的加载占位淡出使用。
+            // 放在 finally 以覆盖任务损坏、加载异常等提前返回路径；元素已
+            // 被移除时 disconnectedCallback 会递增版本号，同样要派发，否则
+            // 占位会一直挂到 openTask 侧的超时兜底才消失。
+            if (version === this._reloadVersion || !this.isConnected) {
+                this.dispatchEvent(new CustomEvent('task-view-content-ready'));
+            }
         }
     }
 
@@ -3320,12 +3327,61 @@ class TaskView extends HTMLElement {
     /**
      * 公开方法：在当前任务的右侧工作空间中打开文件。
      */
-    openFileInSidebar(filePath, line, onSwitchBlocked) {
+    async openFileInSidebar(filePath, line, onSwitchBlocked) {
+        // 渲染阶段不校验文件存在性（允许路径样式文本的误报 pill），
+        // 点击时在此处统一校验：不存在则弹模态提示，不再进入预览流程。
+        try {
+            const exists = await window.fsAPI?.fileExists?.(filePath);
+            if (exists === false) {
+                this._showFileMissingModal(filePath);
+                return;
+            }
+        } catch {
+            // 存在性校验失败时不阻塞打开，由后续打开流程自行处理
+        }
         this._forceExpandRightSidebar();
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFilePreview === 'function') {
             sidebar.openFilePreview(filePath, line, onSwitchBlocked);
         }
+    }
+
+    /**
+     * 文件不存在时的模态提示弹窗（简单展示类：遮罩点击可关闭）。
+     */
+    _showFileMissingModal(filePath) {
+        document.getElementById('od-file-missing-modal')?.remove();
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+
+        const overlay = document.createElement('div');
+        overlay.id = 'od-file-missing-modal';
+        overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/40';
+        overlay.innerHTML = `
+            <div class="${dark ? 'bg-[#26262a] text-gray-100 ring-white/10' : 'bg-white text-gray-800 ring-black/10'} max-w-[460px] w-[88%] rounded-2xl p-5 shadow-2xl ring-1 flex flex-col gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-red-500 flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                    </span>
+                    <span class="font-semibold text-sm">${escapeHtml(taskViewT('renderer.taskview.file.missing.title'))}</span>
+                </div>
+                <div class="text-xs leading-relaxed ${dark ? 'text-gray-400' : 'text-gray-500'}">${escapeHtml(taskViewT('renderer.taskview.file.missing.hint'))}</div>
+                <div class="text-xs font-mono break-all rounded-lg px-3 py-2 ${dark ? 'bg-white/5 text-gray-300' : 'bg-gray-50 text-gray-600'}">${escapeHtml(filePath)}</div>
+                <div class="flex justify-end">
+                    <button type="button" class="od-file-missing-close text-xs font-medium rounded-lg px-3.5 py-1.5 ${dark ? 'bg-white/10 hover:bg-white/15 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} transition-colors">
+                        ${escapeHtml(taskViewT('renderer.taskview.file.missing.close'))}
+                    </button>
+                </div>
+            </div>`;
+
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        overlay.querySelector('.od-file-missing-close')?.addEventListener('click', close);
+        document.body.appendChild(overlay);
     }
 
     /**

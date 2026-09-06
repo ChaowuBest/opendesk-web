@@ -1,6 +1,6 @@
 import { PluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import {
-    matchesHintUrlPrefix,
+    compileHintPattern,
     normalizeHintAddress
 } from '../../../main/applications/pluginmgr/runtime/browser-hints.js';
 import { actionHint, definePlugin, textHint } from '../../../../packages/plugin-sdk/src/index.js';
@@ -18,7 +18,7 @@ function context(url: string, overrides: Partial<BrowserContext> = {}): BrowserC
     };
 }
 
-describe('normalizeHintAddress / matchesHintUrlPrefix', () => {
+describe('normalizeHintAddress', () => {
     test.each([
         ['https://www.bing.com/search', 'www.bing.com/search'],
         ['http://www.bing.com/', 'www.bing.com'],
@@ -28,15 +28,82 @@ describe('normalizeHintAddress / matchesHintUrlPrefix', () => {
     ])('归一化去掉协议与尾部斜杠：%s', (input, expected) => {
         expect(normalizeHintAddress(input)).toBe(expected);
     });
+});
 
-    test('前缀匹配忽略协议差异', () => {
-        expect(matchesHintUrlPrefix('https://www.bing.com/search?q=x', 'www.bing.com/search')).toBe(true);
-        expect(matchesHintUrlPrefix('https://www.bing.com/search?q=x', 'https://www.bing.com')).toBe(true);
-        expect(matchesHintUrlPrefix('https://www.bing.com/maps', 'www.bing.com/search')).toBe(false);
+describe('compileHintPattern 前缀模式（字符串不含通配符）', () => {
+    test('前缀命中路径、query 与 hash 延伸', () => {
+        expect(compileHintPattern('www.bing.com').matches('https://www.bing.com/search?q=x')).toBe(true);
+        expect(compileHintPattern('www.bing.com/search').matches('https://www.bing.com/search?q=x')).toBe(true);
+        expect(compileHintPattern('www.bing.com/search').matches('https://www.bing.com/search#top')).toBe(true);
+        expect(compileHintPattern('https://www.bing.com').matches('https://www.bing.com/search?q=x')).toBe(true);
+        expect(compileHintPattern('www.bing.com/search').matches('https://www.bing.com/maps')).toBe(false);
     });
 
-    test('空前缀不匹配任何页面', () => {
-        expect(matchesHintUrlPrefix('https://www.bing.com', '')).toBe(false);
+    test('前缀必须结束在段边界，不误命中仿冒域名', () => {
+        expect(compileHintPattern('www.bing.com').matches('https://www.bing.com.evil.com/')).toBe(false);
+        expect(compileHintPattern('www.bing.com/search').matches('https://www.bing.com/searchx')).toBe(false);
+    });
+
+    test('空 pattern 抛错', () => {
+        expect(() => compileHintPattern('  ')).toThrow('plugin.browser_hint_url_prefix_invalid');
+    });
+});
+
+describe('compileHintPattern 通配符模式（字符串含 *）', () => {
+    test('* 匹配单段，不跨 /', () => {
+        const pattern = compileHintPattern('www.example.com/repo/*/issues');
+        expect(pattern.matches('https://www.example.com/repo/123/issues')).toBe(true);
+        expect(pattern.matches('https://www.example.com/repo/a/b/issues')).toBe(false);
+    });
+
+    test('含通配符时整体锚定路径，不误匹配深路径', () => {
+        const pattern = compileHintPattern('www.example.com/repo/*');
+        expect(pattern.matches('https://www.example.com/repo/open')).toBe(true);
+        expect(pattern.matches('https://www.example.com/repo/open/pulls')).toBe(false);
+    });
+
+    test('query 与 hash 不参与通配符匹配', () => {
+        const pattern = compileHintPattern('www.example.com/repo/*');
+        expect(pattern.matches('https://www.example.com/repo/open?tab=readme')).toBe(true);
+        expect(pattern.matches('https://www.example.com/repo/open#readme')).toBe(true);
+    });
+
+    test('** 跨任意段，可与 * 组合', () => {
+        const pattern = compileHintPattern('*.example.com/docs/**/search/*');
+        expect(pattern.matches('https://a.example.com/docs/search/kw')).toBe(true);
+        expect(pattern.matches('https://a.example.com/docs/guide/start/search/kw')).toBe(true);
+        expect(pattern.matches('https://a.example.com/api/docs/search/kw')).toBe(false);
+    });
+
+    test('正则元字符按字面处理', () => {
+        const pattern = compileHintPattern('www.example.com/file.php?id=*');
+        expect(pattern.matches('https://www.example.com/file.php?id=1')).toBe(true);
+        expect(pattern.matches('https://www.example.com/filexphp?id=1')).toBe(false);
+    });
+
+    test('display 保留归一化后的 pattern', () => {
+        expect(compileHintPattern('https://www.example.com/repo/*/issues/').display).toBe(
+            'www.example.com/repo/*/issues'
+        );
+    });
+});
+
+describe('compileHintPattern 正则模式（RegExp 实例）', () => {
+    test('对归一化后的完整地址整体匹配', () => {
+        const pattern = compileHintPattern(/^www\.example\.com\/(user|org)\/\d+$/);
+        expect(pattern.matches('https://www.example.com/user/42')).toBe(true);
+        expect(pattern.matches('https://www.example.com/user/abc')).toBe(false);
+    });
+
+    test('g/y 标志不产生 lastIndex 残留', () => {
+        const pattern = compileHintPattern(/open/g);
+        expect(pattern.matches('https://a.com/open')).toBe(true);
+        expect(pattern.matches('https://a.com/open')).toBe(true);
+        expect(pattern.matches('https://a.com/closed')).toBe(false);
+    });
+
+    test('display 为 RegExp 字面量形式', () => {
+        expect(compileHintPattern(/^a.+$/gi).display).toBe('/^a.+$/gi');
     });
 });
 
@@ -128,6 +195,40 @@ describe('PluginHost browser capability', () => {
         expect(entry.diagnostics).toContainEqual(
             expect.objectContaining({ code: 'plugin.setup_failed', detail: expectedError })
         );
+    });
+
+    test('支持通配符与 RegExp pattern 注册', async () => {
+        const host = new PluginHost();
+        const entry = await host.activate(
+            definePlugin({
+                id: 'pattern-hints',
+                capabilities: ['browser'],
+                setup(ctx) {
+                    ctx.browser.hint.register('www.example.com/repo/*/issues', () => [textHint('issues page')]);
+                    ctx.browser.hint.register(/^www\.example\.com\/wiki(\/.*)?$/, () => [textHint('wiki page')]);
+                }
+            }),
+            { origin: 'test:pattern-hints' }
+        );
+
+        expect(entry.status).toBe('active');
+        expect(host.listBrowserHintPrefixes()).toEqual([
+            { pluginId: 'pattern-hints', urlPrefix: 'www.example.com/repo/*/issues' },
+            { pluginId: 'pattern-hints', urlPrefix: String(/^www\.example\.com\/wiki(\/.*)?$/) }
+        ]);
+        expect(await host.getBrowserHints(context('https://www.example.com/repo/9/issues'))).toEqual([
+            { kind: 'text', content: 'issues page' }
+        ]);
+        expect(await host.getBrowserHints(context('https://www.example.com/repo/9/issues?tab=all'))).toEqual([
+            { kind: 'text', content: 'issues page' }
+        ]);
+        expect(await host.getBrowserHints(context('https://www.example.com/repo/9/pulls'))).toEqual([]);
+        expect(await host.getBrowserHints(context('https://www.example.com/wiki'))).toEqual([
+            { kind: 'text', content: 'wiki page' }
+        ]);
+        expect(await host.getBrowserHints(context('https://www.example.com/wiki/Start'))).toEqual([
+            { kind: 'text', content: 'wiki page' }
+        ]);
     });
 
     test('生成器抛错或返回非法 hint 时记录诊断且不影响其他插件', async () => {

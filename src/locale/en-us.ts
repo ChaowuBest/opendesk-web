@@ -2134,6 +2134,10 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.menu.continueHint': 'Delete later content, then resend this user message to continue.',
     'renderer.taskview.menu.operationTitle': 'Task Message',
     'renderer.taskview.menu.operationFailed': 'Operation Failed',
+    'renderer.taskview.file.missing.title': 'File not found',
+    'renderer.taskview.file.missing.hint':
+        'This path does not currently exist, or has been moved or deleted. Unable to open preview.',
+    'renderer.taskview.file.missing.close': 'Close',
     'renderer.taskview.thinking': 'Waiting for model response...',
     'renderer.taskview.scrollToBottom': 'Scroll to bottom',
     'renderer.taskview.prevUserMessage': 'Previous message',
@@ -2308,6 +2312,12 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Browser
     'renderer.browser.exitPreview': 'Exit preview',
+    'renderer.browser.loadingPage': 'Loading page...',
+    'renderer.browser.pageHints': 'Page hints',
+    'renderer.browser.pageHintsEmpty': 'No hints match this page',
+    'renderer.browser.pageHintsTextSection': 'Text hints',
+    'renderer.browser.pageHintsActionSection': 'Page actions',
+    'renderer.browser.pageHintsArgs': 'Arguments',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': 'Restore browser panel',

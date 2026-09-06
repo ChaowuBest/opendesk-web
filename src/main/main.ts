@@ -1144,6 +1144,10 @@ const registerUsageAPIHandlers = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
+    // session memory 渲染缓存：内容未变化时直接复用上次 rendered，
+    // 省去周期性轮询的重复 parse 开销。任务删除时一并清理，避免条目长期驻留。
+    const sessionMemoryRenderCache = new Map<string, { content: string; rendered: string }>();
+
     ipcMain.handle('taskManager:listFrontendTailCardSections', (_event, taskId: unknown) => {
         if (typeof taskId !== 'string') {
             return { status: 'error', message: 'taskId must be a string' };
@@ -1318,6 +1322,9 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        for (const removedId of removedTaskIds) {
+            sessionMemoryRenderCache.delete(removedId);
+        }
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok', data: taskId };
     });
@@ -1391,6 +1398,7 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         const removedTaskIds = globalState.taskManagerState.clearAllTasks();
+        sessionMemoryRenderCache.clear();
         publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok' };
     });
@@ -1815,13 +1823,19 @@ const registerTaskManagerAPIHandlers = () => {
         task.skipRetryDelay();
         return { status: 'ok' };
     });
+    // session memory 渲染缓存
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
             const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
             }
+            const cached = sessionMemoryRenderCache.get(taskId);
+            if (cached && cached.content === content) {
+                return { status: 'ok', data: { raw: content, rendered: cached.rendered } };
+            }
             const rendered = await marked.parse(content);
+            sessionMemoryRenderCache.set(taskId, { content, rendered });
             return { status: 'ok', data: { raw: content, rendered } };
         } catch {
             return { status: 'ok', data: null };
@@ -3533,7 +3547,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

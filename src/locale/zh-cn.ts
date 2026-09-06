@@ -2076,6 +2076,9 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.menu.continueHint': '删除后续内容，然后重新发送这条用户消息继续对话。',
     'renderer.taskview.menu.operationTitle': '任务消息',
     'renderer.taskview.menu.operationFailed': '操作失败',
+    'renderer.taskview.file.missing.title': '文件不存在',
+    'renderer.taskview.file.missing.hint': '该路径当前不存在或已被移动、删除，无法打开预览。',
+    'renderer.taskview.file.missing.close': '关闭',
     'renderer.taskview.thinking': '正在等待模型响应',
     'renderer.taskview.scrollToBottom': '滚动到底部',
     'renderer.taskview.prevUserMessage': '上一条消息',
@@ -2247,6 +2250,12 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Browser
     'renderer.browser.exitPreview': '退出预览',
+    'renderer.browser.loadingPage': '正在加载页面...',
+    'renderer.browser.pageHints': '页面提示',
+    'renderer.browser.pageHintsEmpty': '当前页面没有匹配的提示',
+    'renderer.browser.pageHintsTextSection': '文本提示',
+    'renderer.browser.pageHintsActionSection': '页面动作',
+    'renderer.browser.pageHintsArgs': '参数',
 
     // Renderer - Browser PiP
     'renderer.browserPip.restore': '恢复浏览器面板',

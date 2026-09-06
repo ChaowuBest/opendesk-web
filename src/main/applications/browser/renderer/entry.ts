@@ -13,6 +13,14 @@ import type { WebviewTag } from 'electron';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 import {
+    createBrowserHintPanel,
+    fetchBrowserHintsForPage,
+    type BrowserHintPanelHandle
+} from '../../../../renderer/components/browserHintPanel.js';
+import { createRendererTranslator } from '../../../../renderer/locale.js';
+// 注册 <content-loading-view> 加载中组件，用于页面加载反馈
+import '../../../../renderer/components/loading.js';
+import {
     WINDOW_OPEN_PROXY_SCRIPT,
     OPENER_BRIDGE_SCRIPT,
     NOTIFY_POPUP_CLOSED_SCRIPT,
@@ -24,6 +32,14 @@ const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
 const STORAGE_KEY_BOOKMARKS = 'opendesk-browser-bookmarks';
 const MAX_HISTORY_ITEMS = 2000;
 const MAX_SUGGESTIONS = 8;
+// 页面加载指示器的延迟显示时间：快速加载的页面不闪烁 loading 遮罩
+const LOADING_OVERLAY_DELAY_MS = 300;
+
+// 与任务级浏览器一致：优先用主窗口注入的运行时翻译器，失败时回退到本地语言包
+function browserT(key: string): string {
+    const runtimeTranslator = (window as any).__odT;
+    return typeof runtimeTranslator === 'function' ? runtimeTranslator(key) : createRendererTranslator()(key);
+}
 
 let nextTabId = 1;
 
@@ -41,6 +57,8 @@ interface BrowserTab {
     lastActiveTime?: number;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
+    /** 加载指示器延迟显示的定时器句柄 */
+    loadingTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 interface HistoryEntry {
@@ -130,6 +148,12 @@ class BrowserEntryWidget extends HTMLElement {
     private static readonly CLEANUP_DELAY_MS = 900_000; // 15 minutes
     private _cachedUserAgent: string = '';
 
+    // 页面提示（Browser Hints）面板状态
+    private hintPanel: BrowserHintPanelHandle | null = null;
+    private _hintRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    private _hintSeq: number = 0;
+    private _lastHintKey: string = '';
+
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
     private downloads: DownloadState[] = [];
@@ -186,6 +210,14 @@ class BrowserEntryWidget extends HTMLElement {
         this.removeAttribute('data-od-browser-focus-scope');
         this.removeEventListener('keydown', this._focusTrapKeydown);
 
+        // 清理页面提示面板与防抖定时器
+        if (this._hintRefreshTimer !== null) {
+            clearTimeout(this._hintRefreshTimer);
+            this._hintRefreshTimer = null;
+        }
+        this.hintPanel?.destroy();
+        this.hintPanel = null;
+
         // 清理所有定时器
         for (const timer of this._cleanupTimers.values()) {
             clearTimeout(timer);
@@ -197,6 +229,7 @@ class BrowserEntryWidget extends HTMLElement {
             this._removeZoomListener = null;
         }
         for (const tab of this.tabs) {
+            this.hideTabLoading(tab);
             tab.wrapEl?.remove();
             tab.webview = null;
             tab.wrapEl = null;
@@ -321,6 +354,16 @@ class BrowserEntryWidget extends HTMLElement {
             }
             .wb-tab-add-btn:hover { background: #d1d5db; color: #374151; }
             .wb-tab-add-btn:active { background: #c1c5cb; }
+            /* 深色模式取值与任务级浏览器（bw-tab-add-btn）保持一致 */
+            html[data-theme='dark'] .wb-tab-add-btn {
+                background: #333333;
+                color: #ababab;
+            }
+            html[data-theme='dark'] .wb-tab-add-btn:hover {
+                background: #3f3f46;
+                color: #cccccc;
+            }
+            html[data-theme='dark'] .wb-tab-add-btn:active { background: #4a4a4f; }
 
             /* ---- Toolbar ---- */
             .wb-toolbar {
@@ -402,6 +445,30 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-sg-icon { color: #9ca3af; font-size: var(--fs-sm); flex-shrink: 0; width: 16px; text-align: center; }
             .wb-sg-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             .wb-sg-url { color: #9ca3af; font-size: var(--fs-sm); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+            /* 深色模式：地址栏建议下拉（浏览器应用为 light DOM，html 携带 data-theme） */
+            html[data-theme='dark'] .wb-suggestions {
+                background: #252526;
+                border-color: rgba(255, 255, 255, 0.12);
+                box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            }
+            html[data-theme='dark'] .wb-suggestion-item { color: #cccccc; }
+            html[data-theme='dark'] .wb-suggestion-item:hover,
+            html[data-theme='dark'] .wb-suggestion-item.wb-sg-active { background: #2f2f31; }
+            html[data-theme='dark'] .wb-sg-icon,
+            html[data-theme='dark'] .wb-sg-url { color: #8a8a8a; }
+            /* 滚动条：按 docs/specifications/scrollbar_specification.md 二级（Compact）规格 */
+            .wb-suggestions::-webkit-scrollbar { width: 4px; }
+            .wb-suggestions::-webkit-scrollbar-track { background: transparent; }
+            .wb-suggestions::-webkit-scrollbar-thumb {
+                background: #d1d5db;
+                border-radius: 2px;
+            }
+            html[data-theme='dark'] .wb-suggestions::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.18) !important;
+            }
+            html[data-theme='dark'] .wb-suggestions::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.28) !important;
+            }
 
             /* ---- Bookmark bar ---- */
             .wb-bookmark-bar {
@@ -448,6 +515,19 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-webview-wrap.wb-wv-active { display: block; }
             .wb-webview {
                 width: 100%; height: 100%; border: none;
+            }
+            .wb-loading-overlay {
+                position: absolute; top: 0; left: 0;
+                width: 100%; height: 100%;
+                display: flex; align-items: center; justify-content: center;
+                background: var(--od-bg-elevated, #ffffff);
+                z-index: 10;
+                pointer-events: none;
+                animation: wb-loading-fade-in 0.2s ease;
+            }
+            @keyframes wb-loading-fade-in {
+                from { opacity: 0; }
+                to { opacity: 1; }
             }
 
             /* ---- Home page (legacy container, hidden by default now) ---- */
@@ -976,6 +1056,7 @@ class BrowserEntryWidget extends HTMLElement {
                     <input type="text" class="wb-url-input" placeholder="搜索或输入网址…" value="" autocomplete="off">
                     <div class="wb-suggestions"></div>
                 </div>
+                <div class="wb-hint-slot"></div>
                 <button class="wb-btn wb-star-btn" title="收藏此页"><i class="fas fa-star"></i></button>
                 <div class="wb-sep"></div>
                 <button class="wb-btn wb-home-btn" title="主页"><i class="fas fa-house"></i></button>
@@ -1003,6 +1084,20 @@ class BrowserEntryWidget extends HTMLElement {
         this.historyPanelEl = this.querySelector('.wb-history-panel') as HTMLElement;
         this.bookmarkMgrEl = this.querySelector('.wb-bookmark-mgr-panel') as HTMLElement;
         this.downloadPanelEl = this.querySelector('.wb-downloads-panel') as HTMLElement;
+
+        // 地址栏右侧的页面提示（Browser Hints）入口
+        const hintSlot = this.querySelector('.wb-hint-slot') as HTMLElement;
+        this.hintPanel = createBrowserHintPanel({
+            labels: {
+                title: browserT('renderer.browser.pageHints'),
+                emptyText: browserT('renderer.browser.pageHintsEmpty'),
+                textSection: browserT('renderer.browser.pageHintsTextSection'),
+                actionSection: browserT('renderer.browser.pageHintsActionSection'),
+                argsSection: browserT('renderer.browser.pageHintsArgs')
+            },
+            buttonClass: 'wb-btn'
+        });
+        hintSlot.appendChild(this.hintPanel.root);
 
         this._initZoomSync();
         this.bindToolbarEvents();
@@ -2687,6 +2782,7 @@ class BrowserEntryWidget extends HTMLElement {
 
         if (this.tabs.length === 1) {
             const onlyTab = this.tabs[0];
+            this.hideTabLoading(onlyTab);
             try {
                 (onlyTab.webview as any)?.closeDevTools?.();
             } catch {
@@ -2717,6 +2813,7 @@ class BrowserEntryWidget extends HTMLElement {
         }
 
         const tab = this.tabs[idx];
+        this.hideTabLoading(tab);
         try {
             (tab.webview as any)?.closeDevTools?.();
         } catch {
@@ -2904,6 +3001,19 @@ class BrowserEntryWidget extends HTMLElement {
             this.closeTab(tab.id);
         });
 
+        // 慢加载页面在导航 commit 前会一直停留在旧页面上，这里在主框架导航
+        // 开始时显示加载中遮罩给出反馈。不用 did-start-loading：它对 iframe
+        // 等子框架加载也会触发，广告轮换等周期性子框架刷新会让已加载完的
+        // 页面反复闪现加载遮罩；同文档导航（pushState/hash）也不需要遮罩。
+        wv.addEventListener('did-start-navigation', (event: any) => {
+            if (event.isMainFrame && !event.isInPlace) {
+                this.showTabLoading(tab);
+            }
+        });
+        wv.addEventListener('did-stop-loading', () => {
+            this.hideTabLoading(tab);
+        });
+
         const onPopupBlocked = (event: Event) => {
             const detail = (event as CustomEvent).detail;
             if (!detail || !detail.url) return;
@@ -2944,6 +3054,9 @@ class BrowserEntryWidget extends HTMLElement {
         window.addEventListener('browser-webview-close-requested', onWebviewCloseRequested);
 
         wv.addEventListener('did-navigate', (event: any) => {
+            // 导航 commit 后页面内容已开始渲染，立即撤掉加载遮罩，
+            // 避免把已经显示出来的部分内容盖住（did-stop-loading 要等全部资源完成）
+            this.hideTabLoading(tab);
             // 成功导航时清除错误状态
             if (tab.errorInfo) {
                 tab.errorInfo = undefined;
@@ -2963,6 +3076,8 @@ class BrowserEntryWidget extends HTMLElement {
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
+            // 页内导航发生在已渲染的文档内，同样立即撤掉加载遮罩
+            this.hideTabLoading(tab);
             tab.url = event.url;
             if (tab.id === this.activeTabId) {
                 this.syncUrlBar();
@@ -3061,6 +3176,8 @@ class BrowserEntryWidget extends HTMLElement {
             const { errorCode, errorDescription, validatedURL, isMainFrame } = event;
             // 忽略子资源加载失败和非真正的错误
             if (!isMainFrame) return;
+            // 无论何种失败（含 ERR_ABORTED 主动中断），加载都不会再 commit，撤掉遮罩
+            this.hideTabLoading(tab);
             if (errorCode === -3) return; // ERR_ABORTED：用户主动导航中断
 
             const userMessage = getErrorMessage(errorDescription);
@@ -3095,6 +3212,34 @@ class BrowserEntryWidget extends HTMLElement {
         wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
             /* ignore */
         });
+    }
+
+    /**
+     * 延迟显示加载中遮罩：加载开始后 LOADING_OVERLAY_DELAY_MS 内完成的
+     * 页面不会闪烁遮罩，慢页面则会在旧内容上叠加明确的加载反馈。
+     */
+    private showTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) return;
+        tab.loadingTimer = setTimeout(() => {
+            tab.loadingTimer = null;
+            const wrap = tab.wrapEl;
+            if (!wrap || wrap.querySelector('.wb-loading-overlay')) return;
+            const overlay = document.createElement('div');
+            overlay.className = 'wb-loading-overlay';
+            const loadingView = document.createElement('content-loading-view');
+            loadingView.setAttribute('data-message', '正在加载页面...');
+            overlay.appendChild(loadingView);
+            wrap.appendChild(overlay);
+        }, LOADING_OVERLAY_DELAY_MS);
+    }
+
+    /** 取消未触发的加载遮罩定时器并移除已显示的遮罩 */
+    private hideTabLoading(tab: BrowserTab): void {
+        if (tab.loadingTimer != null) {
+            clearTimeout(tab.loadingTimer);
+            tab.loadingTimer = null;
+        }
+        tab.wrapEl?.querySelector('.wb-loading-overlay')?.remove();
     }
 
     /**
@@ -3193,6 +3338,57 @@ class BrowserEntryWidget extends HTMLElement {
                 this.urlInput.value = tab.isHomePage ? '' : tab.url || '';
             }
             this.updateLockIcon(tab.internalUrl ? '' : tab.isHomePage ? '' : tab.url);
+        }
+        this.scheduleHintsRefresh();
+    }
+
+    // =====================================================================
+    //  页面提示（Browser Hints）
+    // =====================================================================
+
+    /**
+     * 延迟刷新地址栏的页面提示：导航过程 URL 可能连续变化，
+     * 防抖后只对最终页面发起一次 hint 匹配。
+     */
+    private scheduleHintsRefresh(): void {
+        if (this._hintRefreshTimer !== null) {
+            clearTimeout(this._hintRefreshTimer);
+        }
+        this._hintRefreshTimer = setTimeout(() => {
+            this._hintRefreshTimer = null;
+            void this.refreshHints();
+        }, 250);
+    }
+
+    private async refreshHints(): Promise<void> {
+        const seq = ++this._hintSeq;
+        const tab = this.getActiveTab();
+        const url = tab?.url || '';
+        // hint 的 pattern 只对 http(s) 页面有意义，内部页与空白页直接清空
+        if (!/^https?:/i.test(url)) {
+            this._lastHintKey = '';
+            this.hintPanel?.setHints([]);
+            return;
+        }
+        const key = `${tab?.id ?? ''}|${url}`;
+        if (key === this._lastHintKey) return;
+
+        let webContentsId: number | undefined;
+        try {
+            webContentsId = (tab?.webview as any)?.getWebContentsId();
+        } catch {
+            webContentsId = undefined;
+        }
+
+        try {
+            const hints = await fetchBrowserHintsForPage({ url, title: tab?.title, webContentsId });
+            if (seq !== this._hintSeq) return;
+            this._lastHintKey = key;
+            this.hintPanel?.setHints(hints);
+        } catch {
+            // hint 属于附加信息：拉取失败按无提示处理，等待下次导航再重试
+            if (seq !== this._hintSeq) return;
+            this.hintPanel?.setHints([]);
         }
     }
 
@@ -3347,27 +3543,31 @@ class BrowserEntryWidget extends HTMLElement {
         // If already on homepage, do nothing
         if (tab.internalUrl === 'opendesk://homepage/') return;
 
-        // Hide current webview if any
-        if (tab.webview) {
-            tab.wrapEl?.classList.remove('wb-wv-active');
-        }
-
         tab.isHomePage = false;
         tab.internalUrl = 'opendesk://homepage/';
         tab.url = 'opendesk://homepage/';
         tab.title = '新标签页';
+        tab.errorInfo = undefined;
+        tab.pendingUrl = null;
+        tab.ready = false;
 
-        // Create wrapper for internal page if needed
-        if (!tab.wrapEl) {
-            const wrapEl = document.createElement('div');
-            wrapEl.className = 'wb-webview-wrap';
-            wrapEl.dataset.tabId = String(tab.id);
-            this.webviewContainer?.appendChild(wrapEl);
-            tab.wrapEl = wrapEl;
+        // 彻底销毁当前 webview 及其 wrapper。主页 DOM 会整体覆写 wrapEl 内容，
+        // 若保留 tab.webview 的脏引用，后续 navigateTo 会对已脱离文档的
+        // webview 调 loadURL，表现为地址栏更新但页面不导航。
+        this.hideTabLoading(tab);
+        try {
+            (tab.webview as any)?.closeDevTools?.();
+        } catch {
+            /* ignore */
         }
+        if (tab.wrapEl) {
+            tab.wrapEl.remove();
+            tab.wrapEl = null;
+        }
+        tab.webview = null;
 
-        tab.wrapEl.classList.add('wb-wv-active');
-        this.renderHomepageInternal(tab.wrapEl, tab);
+        this.createInternalPageForTab(tab);
+        tab.wrapEl?.classList.add('wb-wv-active');
 
         this.syncUrlBar();
         this.syncNavButtons();
