@@ -635,7 +635,7 @@ export class SkillMgrApplication extends BaseApplication {
                 if (skill.toolsets) {
                     for (const toolset of skill.toolsets) {
                         for (const [, tool] of toolset.tools) {
-                            const jsonSchema = tool.params.toJSONSchema();
+                            const jsonSchema = tool.getJsonSchema();
                             const required: string[] = Array.isArray(jsonSchema['required'])
                                 ? jsonSchema['required']
                                 : [];

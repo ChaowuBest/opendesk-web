@@ -166,7 +166,7 @@ export function buildToolDefinitions(chatContext: ChatContext): AdapterToolDefin
     return Array.from(chatContext.getTools().entries()).map(([toolId, tool]) => ({
         name: toolId,
         description: tool.description,
-        parameters: tool.params.toJSONSchema()
+        parameters: tool.getJsonSchema()
     }));
 }
 
