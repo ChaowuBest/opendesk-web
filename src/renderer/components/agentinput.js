@@ -752,9 +752,21 @@ class AgentInput extends HTMLElement {
     autoResizeTextarea(textarea) {
         if (!textarea) return;
         const maxHeight = this.computeInputMaxHeight(textarea);
+        const container = this.querySelector('#agent-input-container');
+        // 读取 scrollHeight 会触发强制同步布局，此时 textarea 因 height='auto' 瞬时塌缩，
+        // flex 布局会让上方消息历史区瞬时变高、最大滚动位置回退，浏览器随即把已钉在
+        // 底部的 scrollTop 钳制回退（历史区被裁掉底部内容）。冻结容器高度让瞬时布局
+        // 不改变历史区几何，避免该回滚；测量完成后立即恢复。
+        const frozenMinHeight = container?.style.minHeight || '';
+        if (container) {
+            container.style.minHeight = container.offsetHeight + 'px';
+        }
         // 先归零再按内容高度赋值，避免删除内容时高度残留
         textarea.style.height = 'auto';
         textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px';
+        if (container) {
+            container.style.minHeight = frozenMinHeight;
+        }
     }
 
     _scheduleAutoResizeTextarea() {
