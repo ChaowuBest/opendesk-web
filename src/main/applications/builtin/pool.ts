@@ -176,7 +176,8 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
         super(
             'CreateSubTaskPool',
             '创建子任务池，批量并发执行结构相似的子任务，支持自动重试和进度追踪',
-            CreateSubTaskPoolArgsSchema
+            CreateSubTaskPoolArgsSchema,
+            'tools.builtin.CreateSubTaskPool.name'
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }

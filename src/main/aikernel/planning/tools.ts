@@ -507,7 +507,7 @@ const CreateSubTaskArgsSchema = z.object({
 
 export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> {
     constructor() {
-        super('createSubTask', '创建并执行一个上下文隔离的子任务', CreateSubTaskArgsSchema);
+        super('createSubTask', '创建并执行一个上下文隔离的子任务', CreateSubTaskArgsSchema, 'tools.createSubTask.name');
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
@@ -855,7 +855,8 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         super(
             'waitSubTask',
             '等待一个异步子任务完成并返回其结果。输入是 createSubTask 异步模式返回的 subtask_id。',
-            WaitSubTaskArgsSchema
+            WaitSubTaskArgsSchema,
+            'tools.waitSubTask.name'
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
@@ -1019,7 +1020,8 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
         super(
             'attachToSubTask',
             '向已存在的子任务追加新消息，用于在子任务需要补充信息时向其追加内容',
-            AttachToSubTaskArgsSchema
+            AttachToSubTaskArgsSchema,
+            'tools.attachToSubTask.name'
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
@@ -1126,7 +1128,12 @@ const AttemptCompletionSubTaskArgsSchema = z.object({
 
 export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptCompletionSubTaskArgsSchema> {
     constructor() {
-        super('attemptCompletion', '完成子任务并返回结果', AttemptCompletionSubTaskArgsSchema);
+        super(
+            'attemptCompletion',
+            '完成子任务并返回结果',
+            AttemptCompletionSubTaskArgsSchema,
+            'tools.planning.attemptCompletion.name'
+        );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 

@@ -190,6 +190,8 @@ export class ToolResult implements ToolResultWriter {
 
 export class BaseTool<T extends z.ZodType> {
     name: string;
+    /** Locale key for the tool's canonical user-facing name. */
+    displayNameKey?: string;
     description: string;
     params: T;
     /**
@@ -215,8 +217,9 @@ export class BaseTool<T extends z.ZodType> {
     private jsonSchemaCache?: Record<string, any>;
     private jsonSchemaCacheSource?: z.ZodType;
 
-    constructor(name: string, description: string, params: T) {
+    constructor(name: string, description: string, params: T, displayNameKey?: string) {
         this.name = name;
+        this.displayNameKey = displayNameKey;
         this.description = description;
         this.params = params;
         this.executor = undefined;
@@ -240,6 +243,7 @@ export class BaseTool<T extends z.ZodType> {
     toJSON() {
         return {
             name: this.name,
+            displayNameKey: this.displayNameKey,
             description: this.description,
             params: this.getJsonSchema(),
             agentIds: this.agentIds
@@ -250,7 +254,8 @@ export class BaseTool<T extends z.ZodType> {
         const tool = new BaseTool(
             jsonObject['name'],
             jsonObject['description'],
-            z.fromJSONSchema(jsonObject['params'])
+            z.fromJSONSchema(jsonObject['params']),
+            jsonObject['displayNameKey']
         );
         tool.agentIds = Array.isArray(jsonObject['agentIds']) ? jsonObject['agentIds'] : undefined;
         return tool;

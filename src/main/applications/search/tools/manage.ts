@@ -36,7 +36,8 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
         super(
             'configureSearchTool',
             '配置搜索工具，包括设置渠道API密钥和切换默认搜索引擎。使用此工具来配置Tavily、Brave、博查、Exa等需要API的渠道，或切换默认网页搜索/学术搜索引擎。',
-            ConfigureSearchToolArgsSchema
+            ConfigureSearchToolArgsSchema,
+            'tools.search.configureSearchTool.name'
         );
         this.searchApp = searchApp;
         this.setExecutor(this.configure.bind(this));
@@ -144,7 +145,12 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
     private searchApp: SearchApplication;
 
     constructor(searchApp: SearchApplication) {
-        super('listSearchTools', '列出所有可用的搜索渠道及其配置状态', ListSearchToolsArgsSchema);
+        super(
+            'listSearchTools',
+            '列出所有可用的搜索渠道及其配置状态',
+            ListSearchToolsArgsSchema,
+            'tools.search.listSearchTools.name'
+        );
         this.searchApp = searchApp;
         this.setExecutor(this.list.bind(this));
     }
@@ -256,7 +262,8 @@ export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSc
         super(
             'toggleSearchTool',
             '切换默认搜索引擎。传入渠道ID将其设为默认，传入空字符串将重置为默认。',
-            ToggleSearchToolArgsSchema
+            ToggleSearchToolArgsSchema,
+            'tools.search.toggleSearchTool.name'
         );
         this.searchApp = searchApp;
         this.setExecutor(this.toggle.bind(this));

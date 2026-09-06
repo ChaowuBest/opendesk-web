@@ -351,6 +351,27 @@ describe('TaskView chunk handling', () => {
         expect(output).not.toContain('CUSTOM TOOL 1');
     });
 
+    test('minimal running status uses the localized tool name', async () => {
+        setRuntimeLocale('zh-CN');
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.setOutputDisplayLevel('minimal');
+        taskView.startStreaming();
+        const toolPart = createNamedToolPart(1, 'search-webFetch');
+        toolPart.toolcalls[0].status = 'running';
+        toolPart.toolcalls[0].display_name_key = 'search.webfetch.name';
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: toolPart
+        });
+
+        expect(stripAnsi(taskView.render(100).join('\n'))).toContain('正在执行 网页获取…');
+    });
+
     test('minimal mode distinguishes live reasoning from waiting for a response', async () => {
         const waitingTaskView = new TaskView({ requestRender: jest.fn() } as any);
         waitingTaskView.setOutputDisplayLevel('minimal');
@@ -739,9 +760,13 @@ describe('TaskView chunk handling', () => {
         taskView.setOutputDisplayLevel('minimal');
         taskView.startStreaming();
         const toolGroup = new ToolCallMessagePart();
-        toolGroup.toolcalls.push(...createNamedToolPart(1, 'todomgr-TodoWrite').toolcalls);
-        toolGroup.toolcalls.push(...createNamedToolPart(2, 'search-webSearch').toolcalls);
-        toolGroup.toolcalls.push(...createNamedToolPart(3, 'filemgr-readFile').toolcalls);
+        const todoWrite = createNamedToolPart(1, 'todomgr-TodoWrite').toolcalls[0];
+        todoWrite.display_name_key = 'tools.todoWrite.name';
+        const webSearch = createNamedToolPart(2, 'search-webSearch').toolcalls[0];
+        webSearch.display_name_key = 'search.websearch.name';
+        const readFile = createNamedToolPart(3, 'filemgr-readFile').toolcalls[0];
+        readFile.display_name_key = 'filemgr.readFile.name';
+        toolGroup.toolcalls.push(todoWrite, webSearch, readFile);
         const parts = [
             new ReasoningMessagePart('private reasoning', 'reasoning_content'),
             toolGroup,
@@ -762,11 +787,11 @@ describe('TaskView chunk handling', () => {
         chalk.level = 3;
         const rawOutput = taskView.render(100).join('\n');
         const output = stripAnsi(rawOutput);
-        expect(output).toContain('✓ 深度思考 · 使用了 todomgr-Tod…、search-webS… 等 3个工具');
+        expect(output).toContain('✓ 深度思考 · 使用了 更新任务计划、搜索网页 等 3个工具');
         expect(output).not.toContain('4个工具');
         expect(output).not.toContain('已执行工具');
         expect(rawOutput).toContain(
-            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 todomgr-Tod…、search-webS… 等 3个工具')}`
+            `${chalk.greenBright('✓')} ${chalk.dim('深度思考 · 使用了 更新任务计划、搜索网页 等 3个工具')}`
         );
     });
 

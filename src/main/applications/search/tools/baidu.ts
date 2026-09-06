@@ -67,7 +67,8 @@ export class BaiduSearchTool extends BaseTool<typeof BaiduSearchArgsSchema> {
         super(
             'baiduSearch',
             '使用百度搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，自动过滤广告结果',
-            BaiduSearchArgsSchema
+            BaiduSearchArgsSchema,
+            'search.baidu.name'
         );
         this.setExecutor(this.search.bind(this));
     }

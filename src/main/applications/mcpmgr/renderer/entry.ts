@@ -689,7 +689,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const listTool = new RendererTool(
             'listMcpServers',
             this._t('renderer.tool.listMcpServers.description'),
-            z.object({})
+            z.object({}),
+            'tools.mcpmgr.listMcpServers.name'
         );
         listTool.setExecutor(async () => {
             return JSON.stringify(

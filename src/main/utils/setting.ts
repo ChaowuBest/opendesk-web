@@ -518,6 +518,8 @@ export interface BuiltinModelProvider {
     readonly providerName: string;
     resolveInstance(model: Model, expectedType?: ModelType): ModelInstance | null;
     refreshModels(fetchImpl?: BuiltinModelFetch): Promise<Model[]>;
+}
+
 function migrateLegacyTuiOutputDisplay(settingRawObject: unknown): boolean {
     if (!settingRawObject || typeof settingRawObject !== 'object' || Array.isArray(settingRawObject)) return false;
     const cliConfig = (settingRawObject as Record<string, unknown>).cli_config;

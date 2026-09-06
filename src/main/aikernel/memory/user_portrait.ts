@@ -198,7 +198,8 @@ export class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitAr
         super(
             UPDATE_USER_PORTRAIT_TOOL_NAME,
             '写入全局用户画像 user.md。必须传入完整 Markdown 内容，而不是增量 patch。',
-            UpdateUserPortraitArgsSchema
+            UpdateUserPortraitArgsSchema,
+            'tools.memory.updateUserPortrait.name'
         );
         this.onWrite = onWrite;
         this.expectedContent = expectedContent;

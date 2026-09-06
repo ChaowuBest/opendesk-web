@@ -22,7 +22,11 @@ export class DblpSearchTool extends BaseAcademicSearchEngine {
     protected cliIcon = '📚';
 
     constructor() {
-        super('dblpSearch', '使用DBLP API搜索计算机科学领域的学术论文。返回论文的标题、作者、年份、会议/期刊等信息。');
+        super(
+            'dblpSearch',
+            '使用DBLP API搜索计算机科学领域的学术论文。返回论文的标题、作者、年份、会议/期刊等信息。',
+            'search.dblp.name'
+        );
     }
 
     // ───────────────────── 搜索实现 ─────────────────────

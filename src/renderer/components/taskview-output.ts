@@ -15,6 +15,7 @@ export type GuiReasonDisplayMode = 'inline' | 'bubble';
 
 export interface GuiToolCall {
     tool_name?: string;
+    display_name_key?: string;
     requires_user_attention?: boolean;
 }
 

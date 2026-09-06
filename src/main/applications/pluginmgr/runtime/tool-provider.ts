@@ -144,7 +144,7 @@ class PluginDefinedTool extends BaseTool<any> {
         description: string,
         parameters: ToolDefinition['parameters']
     ) {
-        super(source.name, description, parameters);
+        super(source.name, description, parameters, source.displayNameKey);
         this.agentIds = source.agentIds;
         this.serialExecution = source.serialExecution;
     }

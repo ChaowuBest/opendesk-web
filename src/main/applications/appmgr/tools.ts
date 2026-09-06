@@ -21,7 +21,12 @@ export class InstallAppTool extends BaseTool<typeof InstallAppArgsSchema> {
     private app: AppMgrApplication;
 
     constructor(app: AppMgrApplication) {
-        super('installApp', '从本地 zip 文件安装一个 OpenDesk 后装应用', InstallAppArgsSchema);
+        super(
+            'installApp',
+            '从本地 zip 文件安装一个 OpenDesk 后装应用',
+            InstallAppArgsSchema,
+            'tools.appmgr.installApp.name'
+        );
         this.app = app;
         this.executor = this.install.bind(this);
     }
@@ -37,7 +42,12 @@ export class ListAppsTool extends BaseTool<typeof ListAppsArgsSchema> {
     private app: AppMgrApplication;
 
     constructor(app: AppMgrApplication) {
-        super('listApps', '获取 OpenDesk 应用列表，包括用户安装应用和系统内置应用', ListAppsArgsSchema);
+        super(
+            'listApps',
+            '获取 OpenDesk 应用列表，包括用户安装应用和系统内置应用',
+            ListAppsArgsSchema,
+            'tools.appmgr.listApps.name'
+        );
         this.app = app;
         this.executor = this.list.bind(this);
     }
@@ -55,7 +65,12 @@ export class GetAppInfoTool extends BaseTool<typeof GetAppInfoArgsSchema> {
     private app: AppMgrApplication;
 
     constructor(app: AppMgrApplication) {
-        super('getAppInfo', '获取指定应用的详细信息、版本列表和当前版本', GetAppInfoArgsSchema);
+        super(
+            'getAppInfo',
+            '获取指定应用的详细信息、版本列表和当前版本',
+            GetAppInfoArgsSchema,
+            'tools.appmgr.getAppInfo.name'
+        );
         this.app = app;
         this.executor = this.get.bind(this);
     }

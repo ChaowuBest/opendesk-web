@@ -92,6 +92,7 @@ export interface BaseChatToolCall {
     index: number;
     id: string;
     tool_name: string;
+    display_name_key?: string;
     args_string: string;
     args_object: unknown;
     status: 'pending' | 'running' | 'success' | 'error';

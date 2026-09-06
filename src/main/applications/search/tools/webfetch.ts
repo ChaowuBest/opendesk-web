@@ -32,6 +32,7 @@ const FETCH_TIMEOUT_BACKOFF_MS = [2000, 5000, 15000];
 const BODY_READ_TIMEOUT_MS = 15000;
 const MIN_CONTENT_LENGTH = 500;
 const MIN_EXTRACTION_RATIO = 0.01;
+const WEB_FETCH_DISPLAY_NAME_KEY = 'search.webfetch.name';
 
 /**
  * 域名黑名单：匹配到的域名将直接拒绝抓取，避免在反爬严格的站点上浪费时间。
@@ -78,7 +79,8 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         super(
             'webFetch',
             '从指定URL获取网页内容，并将其转换为结构化的Markdown格式返回。适用于阅读网页文章、文档、博客等场景',
-            WebFetchArgsSchema
+            WebFetchArgsSchema,
+            WEB_FETCH_DISPLAY_NAME_KEY
         );
 
         this.turndownService = this.createTurndownService();
@@ -94,7 +96,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         const url = toolcall.args_object?.['url'] as string | undefined;
         const base = renderSearchToolCall({
             icon: 'fas fa-globe',
-            title: t('search.webfetch.name'),
+            title: t(WEB_FETCH_DISPLAY_NAME_KEY),
             toolcall,
             query: url,
             resultCountExtractor: (result) => {
@@ -143,7 +145,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         return new Card({
             icon: '🔍',
-            title: '网页获取',
+            title: t(WEB_FETCH_DISPLAY_NAME_KEY),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);

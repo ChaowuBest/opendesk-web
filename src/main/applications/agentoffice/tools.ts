@@ -55,7 +55,12 @@ class SendReplyTool extends BaseTool<typeof SendReplySchema> {
     constructor(
         private readonly sendReply: (text: string | undefined, files: string[], taskState?: TaskState) => Promise<void>
     ) {
-        super('sendReply', t('agentoffice.tool.sendReply.description'), SendReplySchema);
+        super(
+            'sendReply',
+            t('agentoffice.tool.sendReply.description'),
+            SendReplySchema,
+            'tools.agentoffice.sendReply.name'
+        );
         this.setExecutor(async (args, taskState) => {
             await this.sendReply(args.text, args.files, taskState);
             return t('agentoffice.tool.sendReply.success');
@@ -73,7 +78,12 @@ class SendReplyTool extends BaseTool<typeof SendReplySchema> {
 
 class GetHistoryMessagesTool extends BaseTool<typeof GetHistoryMessagesSchema> {
     constructor(private readonly getHistory: (query: HistoryQuery) => Promise<unknown>) {
-        super('getHistoryMessages', t('agentoffice.tool.getHistory.description'), GetHistoryMessagesSchema);
+        super(
+            'getHistoryMessages',
+            t('agentoffice.tool.getHistory.description'),
+            GetHistoryMessagesSchema,
+            'tools.agentoffice.getHistoryMessages.name'
+        );
         this.setExecutor(async (args) => {
             const cursor = args.cursor ? { cursor: args.cursor } : {};
             const query: HistoryQuery =

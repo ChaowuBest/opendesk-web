@@ -113,7 +113,8 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         super(
             'bochaSearch',
             '使用博查搜索引擎搜索网页信息，专为AI设计的中文搜索API，返回优化过的搜索结果。支持摘要生成和时间范围筛选功能',
-            BochaSearchArgsSchema
+            BochaSearchArgsSchema,
+            'search.bocha.name'
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));

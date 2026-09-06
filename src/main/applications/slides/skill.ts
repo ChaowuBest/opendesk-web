@@ -27,10 +27,7 @@ export type SlidesCapabilityExecutor = (
     input: Record<string, unknown>
 ) => Promise<SlidesCapabilityExecution>;
 
-export type SlidesPresentationOpener = (
-    taskId: string,
-    filePath: string
-) => Promise<SlidesPresentationOpenResult>;
+export type SlidesPresentationOpener = (taskId: string, filePath: string) => Promise<SlidesPresentationOpenResult>;
 
 const SLIDES_ACTION_CATEGORIES = ['read', 'text', 'layout', 'slide', 'insert', 'chart', 'table'] as const;
 type SlidesActionCategory = (typeof SLIDES_ACTION_CATEGORIES)[number];
@@ -166,7 +163,8 @@ export function buildSlidesSkill(
     const openPresentationTool = new BaseTool(
         'open_presentation',
         '目标路径明确时，在当前任务中打开或切换到该 .pptx，并等待编辑器就绪',
-        OpenPresentationSchema
+        OpenPresentationSchema,
+        'tools.slides.open_presentation.name'
     ).setExecutor(async ({ filePath }, taskState) => {
         const taskId = taskState?.task_id;
         if (!taskId) throw new Error(t('error.taskContextRequired'));
@@ -177,7 +175,8 @@ export function buildSlidesSkill(
     const listActions = new BaseTool(
         'list_actions',
         '按固定类别枚举 PPT 动作；不执行关键词或语义搜索',
-        ListActionsSchema
+        ListActionsSchema,
+        'tools.slides.list_actions.name'
     ).setExecutor(async ({ category }) =>
         JSON.stringify(
             actions
@@ -195,7 +194,8 @@ export function buildSlidesSkill(
     const getActionDefinition = new BaseTool(
         'get_action_definition',
         '按精确名称获取一个 PPT 动作的完整 Office 参数定义',
-        GetActionDefinitionSchema
+        GetActionDefinitionSchema,
+        'tools.slides.get_action_definition.name'
     ).setExecutor(async ({ name }) => {
         const action = getAction(name);
         return JSON.stringify(
@@ -213,7 +213,8 @@ export function buildSlidesSkill(
     const executeAction = new BaseTool(
         'execute_action',
         '按精确名称校验并执行一个已确认参数定义的 PPT 动作',
-        ExecuteActionSchema
+        ExecuteActionSchema,
+        'tools.slides.execute_action.name'
     ).setExecutor(async ({ name, input }, taskState) => {
         const action = getAction(name);
         const validatedInput = action.validator.validateArgs(input);

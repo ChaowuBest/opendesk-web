@@ -35,7 +35,8 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
         super(
             'listKnowledgeBases',
             '列出所有知识库清单，包括各知识库的ID、名称、描述、文档数量等信息',
-            ListKnowledgeBasesArgsSchema
+            ListKnowledgeBasesArgsSchema,
+            'tools.knowledgebase.listKnowledgeBases.name'
         );
         this.app = app;
         this.setExecutor(this.list.bind(this));
@@ -180,7 +181,8 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
         super(
             'retrieveFromKnowledgeBase',
             '从指定知识库中检索相关内容片段，返回按相似度排序的结果',
-            RetrieveFromKnowledgeBaseArgsSchema
+            RetrieveFromKnowledgeBaseArgsSchema,
+            'tools.knowledgebase.retrieveFromKnowledgeBase.name'
         );
         this.app = app;
         this.setExecutor(this.retrieve.bind(this));
@@ -266,7 +268,8 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
         super(
             'askKnowledgeBase',
             '在指定知识库上下文中提问，大模型会结合知识库内容生成回答',
-            AskKnowledgeBaseArgsSchema
+            AskKnowledgeBaseArgsSchema,
+            'tools.knowledgebase.askKnowledgeBase.name'
         );
         this.app = app;
         this.setExecutor(this.ask.bind(this));
@@ -347,7 +350,8 @@ export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowl
         super(
             'addFilesToKnowledgeBase',
             '将本地文件或目录下的文件添加到知识库中。支持递归添加目录中所有受支持格式的文件',
-            AddFilesToKnowledgeBaseArgsSchema
+            AddFilesToKnowledgeBaseArgsSchema,
+            'tools.knowledgebase.addFilesToKnowledgeBase.name'
         );
         this.app = app;
         this.setExecutor(this.addFiles.bind(this));

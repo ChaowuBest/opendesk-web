@@ -553,12 +553,13 @@ describe('task-view GUI output modes', () => {
         expect(view.textContent).not.toContain('正在思考…');
     });
 
-    test('running tool status uses the mainline tool name without exposing parameters', () => {
+    test('running tool status uses the localized tool name without exposing parameters', () => {
         const view = createView();
         const fileTool = toolPart(1, 1);
         fileTool.toolcalls[0] = {
             ...fileTool.toolcalls[0],
-            tool_name: 'filemgr-readFile'
+            tool_name: 'filemgr-readFile',
+            display_name_key: 'filemgr.readFile.name'
         };
         view.innerHTML = view._renderAssistantOutputHtml([fileTool], {
             isRunning: true,
@@ -566,7 +567,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const status = view.querySelector('.od-running-status')?.textContent || '';
-        expect(status).toContain('正在调用 filemgr-readFile…');
+        expect(status).toContain('正在调用 读取文件…');
         expect(status).not.toContain('package.json');
     });
 
@@ -613,9 +614,21 @@ describe('task-view GUI output modes', () => {
         const view = createView();
         const fileTools = toolPart(1, 3);
         fileTools.toolcalls = [
-            { ...fileTools.toolcalls[0], tool_name: 'filemgr-readFile' },
-            { ...fileTools.toolcalls[1], tool_name: 'filemgr-readFile' },
-            { ...fileTools.toolcalls[2], tool_name: 'filemgr-grepFiles' }
+            {
+                ...fileTools.toolcalls[0],
+                tool_name: 'filemgr-readFile',
+                display_name_key: 'filemgr.readFile.name'
+            },
+            {
+                ...fileTools.toolcalls[1],
+                tool_name: 'filemgr-readFile',
+                display_name_key: 'filemgr.readFile.name'
+            },
+            {
+                ...fileTools.toolcalls[2],
+                tool_name: 'filemgr-grepFiles',
+                display_name_key: 'filemgr.grep.name'
+            }
         ];
         view.innerHTML = view._renderAssistantOutputHtml(
             [
@@ -633,7 +646,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了filemgr-rea…等 3个工具');
+        expect(summary).toBe('深度思考 · 调用了读取文件、内容搜索等 3个工具');
         expect(summary).not.toContain('分析项目结构');
     });
 
@@ -641,8 +654,16 @@ describe('task-view GUI output modes', () => {
         const view = createView();
         const tools = toolPart(1, 2);
         tools.toolcalls = [
-            { ...tools.toolcalls[0], tool_name: 'skill-manager-LoadSkill' },
-            { ...tools.toolcalls[1], tool_name: 'search-WebSearch' }
+            {
+                ...tools.toolcalls[0],
+                tool_name: 'skill-manager-LoadSkill',
+                display_name_key: 'tools.loadSkill.name'
+            },
+            {
+                ...tools.toolcalls[1],
+                tool_name: 'search-WebSearch',
+                display_name_key: 'search.websearch.name'
+            }
         ];
         view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', rendered: '分析请求。' }, tools], {
             isRunning: false,
@@ -650,7 +671,7 @@ describe('task-view GUI output modes', () => {
         });
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了skill-manag…等 2个工具');
+        expect(summary).toBe('深度思考 · 调用了加载技能、搜索网页等 2个工具');
     });
 
     test('a failed child tool does not replace the process summary icon', () => {
@@ -667,7 +688,7 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-process-tool-status')).toBeNull();
     });
 
-    test('process labels use the mainline tool name instead of reasoning or parameters', () => {
+    test('process labels use a readable fallback tool name instead of reasoning or parameters', () => {
         const view = createView();
         const browserTool = toolPart(1, 1);
         browserTool.toolcalls[0] = {
@@ -692,7 +713,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
-        expect(summary).toBe('深度思考 · 调用了webFetch等 1个工具');
+        expect(summary).toBe('深度思考 · 调用了web Fetch等 1个工具');
         expect(summary).not.toContain('meta');
         expect(summary).not.toContain('developer.huawei.com');
     });
@@ -717,7 +738,7 @@ describe('task-view GUI output modes', () => {
 
         const summary = view.querySelector('.od-process-summary-text')?.textContent || '';
         expect(Array.from(summary).length).toBeLessThanOrEqual(40);
-        expect(summary).toBe('深度思考 · 调用了very-long-s…等 4个工具');
+        expect(summary).toBe('深度思考 · 调用了very / long…等 4个工具');
     });
 
     test('process details reuse mainline reasoning and tool card classes', () => {

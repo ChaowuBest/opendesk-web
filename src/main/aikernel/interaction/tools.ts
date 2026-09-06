@@ -159,7 +159,8 @@ export class AskUserTool extends InteractiveTool<typeof AskUserArgsSchema> {
             'askUser',
             '向用户提出多选问题以收集信息、澄清需求或让用户在多个方案中做出选择。' +
                 '工具会阻塞直到用户回答。仅在主任务中可用，子任务不可调用此工具。',
-            AskUserArgsSchema
+            AskUserArgsSchema,
+            'tools.askUser.name'
         );
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }

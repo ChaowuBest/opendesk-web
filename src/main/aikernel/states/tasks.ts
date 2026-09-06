@@ -2568,7 +2568,12 @@ export class TaskState {
     }
 
     async ensureToolsResolved() {
-        return ensureToolsResolvedForTask(this);
+        let historicalInteractionToolset = this.interactionToolset;
+        if (!historicalInteractionToolset && this.parent_id === null) {
+            historicalInteractionToolset = getPlatform().createInteractionToolset(this);
+            this.interactionToolset = historicalInteractionToolset;
+        }
+        return ensureToolsResolvedForTask(this, historicalInteractionToolset ? [historicalInteractionToolset] : []);
     }
 
     resolveAllToolCalls() {

@@ -19,6 +19,7 @@ import { showConfirmModal } from './confirmModal.ts';
 import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { resolveToolDisplayName } from '../../common/tool-display-name.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
@@ -1071,7 +1072,7 @@ class TaskView extends HTMLElement {
     }
 
     static _toolDisplayName(tool) {
-        return tool?.tool_name || taskViewT('renderer.taskview.output.tool');
+        return resolveToolDisplayName(tool?.tool_name, tool?.display_name_key, taskViewT);
     }
 
     static _compactProcessPhrase(value, maxLength = 18) {
@@ -2387,6 +2388,13 @@ class TaskView extends HTMLElement {
                 if (shouldAutoSendQueuedMessage) {
                     this._autoSendQueueMessages();
                 }
+            }
+            // 首屏内容就绪信号：供外层（openTask）的加载占位淡出使用。
+            // 放在 finally 以覆盖任务损坏、加载异常等提前返回路径；元素已
+            // 被移除时 disconnectedCallback 会递增版本号，同样要派发，否则
+            // 占位会一直挂到 openTask 侧的超时兜底才消失。
+            if (version === this._reloadVersion || !this.isConnected) {
+                this.dispatchEvent(new CustomEvent('task-view-content-ready'));
             }
         }
     }

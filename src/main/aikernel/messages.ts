@@ -25,6 +25,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileLinkExtension } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
+import { resolveToolDisplayName } from '../../common/tool-display-name.js';
+import { t } from '../../locale/index.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -400,6 +402,7 @@ export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
     tool_name: string;
+    display_name_key?: string;
     args_string: string;
     args_object: any = {};
     status: 'pending' | 'running' | 'success' | 'error' = 'pending';
@@ -489,6 +492,7 @@ export class ToolCall implements BaseChatToolCall {
             index: this.index,
             id: this.id,
             tool_name: this.tool_name,
+            ...(this.display_name_key ? { display_name_key: this.display_name_key } : {}),
             status: this.status,
             rendered: this.rendered,
             ...(requiresUserAttention ? { requires_user_attention: true } : {})
@@ -658,6 +662,7 @@ export class ToolCall implements BaseChatToolCall {
 
     setTool(tool: BaseTool<any>) {
         this.tool = tool;
+        this.display_name_key = tool.displayNameKey;
     }
 
     requiresUserAttention(): boolean {
@@ -707,10 +712,12 @@ export class ToolCall implements BaseChatToolCall {
                 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
                 : '';
 
+        const displayName = resolveToolDisplayName(this.tool_name, this.display_name_key, t);
+
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
-                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(this.tool_name)}</span>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(displayName)}</span>
                 ${statusIcon}
             </div>
         </div>`;
@@ -720,12 +727,13 @@ export class ToolCall implements BaseChatToolCall {
     private renderError(): string {
         const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         const errText = (this.result || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const displayName = resolveToolDisplayName(this.tool_name, this.display_name_key, t);
         return `<div class="od-inline-toolcall-container">
             <div class="flex flex-col min-w-0">
                 <input type="checkbox" id="${errId}" class="peer hidden">
                 <div class="flex items-center gap-1.5">
                     <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
-                    <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(this.tool_name)}</span>
+                    <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(displayName)}</span>
                     <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
                     <label for="${errId}" class="text-xs text-rose-500 cursor-pointer select-none hover:text-rose-600 transition-colors">失败</label>
                 </div>

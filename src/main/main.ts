@@ -34,7 +34,8 @@ import {
     getTaskDirectory,
     getTaskArtifactDirectory,
     getLogDirectory,
-    isDeveloperModeEnabled
+    isDeveloperModeEnabled,
+    isDebugLogEnabled
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
@@ -45,13 +46,21 @@ import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs, getLogFilename } from './utils/logger.js';
+import {
+    LogStream,
+    logger,
+    setDebugMode,
+    useConsoleTransport,
+    dropDeprecatedLogs,
+    getLogFilename
+} from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
+import { scanSupportedShells } from './applications/terminal/scan.js';
 import {
     initializeRegistry,
     initializeRegistryWorker,
@@ -69,7 +78,10 @@ import {
     ElectronPlatform,
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
-import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
+import * as taskTransfer from './aikernel/task/transfer.js';
+import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -104,6 +116,7 @@ import { submitFeedback } from './utils/feedback.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
+import { registerDesktopAPIHandlers } from './desktop/handlers.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -139,11 +152,14 @@ import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states
 import { getLocale, t } from '../locale/index.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { switchTaskMode } from './aikernel/task/mode.js';
+import { normalizeShadowResizeDirection } from './windows/linux-window-shadow.js';
+import { endShadowResizeSession, startShadowResizeSession } from './windows/shadow-resize.js';
 import {
     initTaskStatusWidget,
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
+import { registerElectronUpdateService } from './updater/electron-service.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
 function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
@@ -200,6 +216,7 @@ declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+setDebugMode(isDebugLogEnabled());
 initializeHarmonyRuntimeEnvironment();
 initializeHarmonyLocalRuntimeState();
 initTempDir();
@@ -924,6 +941,30 @@ const createWindow = () => {
     BrowserManager.setMainWindow(mainWindow);
 };
 
+// renderer 侧诊断日志转发到主进程日志文件。
+const registerRendererLogHandler = () => {
+    ipcMain.on('renderer:log', (_event, level, message) => {
+        const msg = String(message ?? '')
+            .replace(/[\r\n]+/g, ' ')
+            .trim();
+        if (!msg) return;
+        const tagged = `[renderer] ${msg}`;
+        switch (level) {
+            case 'debug':
+                logger.debug(tagged);
+                break;
+            case 'warn':
+                logger.warn(tagged);
+                break;
+            case 'error':
+                logger.error(tagged);
+                break;
+            default:
+                logger.info(tagged);
+        }
+    });
+};
+
 const registerModeAPIHandlers = () => {
     ipcMain.handle('mode:getSupportedModes', () => {
         try {
@@ -1143,6 +1184,7 @@ const registerUsageAPIHandlers = () => {
 
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
+    registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
 
     ipcMain.handle('taskManager:listFrontendTailCardSections', (_event, taskId: unknown) => {
         if (typeof taskId !== 'string') {
@@ -1200,6 +1242,8 @@ const registerTaskManagerAPIHandlers = () => {
     type CreateTaskOptions = {
         modeId?: string;
         selectedExecutionNodeId?: string | null;
+        internal?: boolean;
+        taskName?: string;
     };
 
     function normalizeCreateTaskOptions(raw: unknown): CreateTaskOptions {
@@ -1210,7 +1254,9 @@ const registerTaskManagerAPIHandlers = () => {
                 selectedExecutionNodeId:
                     typeof obj.selectedExecutionNodeId === 'string' || obj.selectedExecutionNodeId === null
                         ? obj.selectedExecutionNodeId
-                        : undefined
+                        : undefined,
+                internal: obj.internal === true,
+                taskName: typeof obj.taskName === 'string' ? obj.taskName : undefined
             };
         }
         return {
@@ -1263,7 +1309,11 @@ const registerTaskManagerAPIHandlers = () => {
         if (initialNodeId && !getExecutionNode(initialNodeId)) {
             return { status: 'error', message: `node ${initialNodeId} not connected` };
         }
-        const task = globalState.taskManagerState.createTask();
+        await ApplicationRegistry.ensureFullyLoaded();
+        const task = globalState.taskManagerState.createTask(undefined, {
+            internal: options.internal,
+            taskName: options.taskName
+        });
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = AgentRegistry.getMainAgent();
         const modes = agentDecl.supportedModes();
@@ -1733,7 +1783,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.ensureValidModelOrFallback();
         }
         if (details.reasoningEffort !== undefined) {
-            task.reasoningEffort = details.reasoningEffort || undefined;
+            task.reasoningEffort = details.reasoningEffort;
         }
         if (Object.prototype.hasOwnProperty.call(details, 'selectedExecutionNodeId')) {
             const result = await setTaskExecutionNode(taskId, details.selectedExecutionNodeId ?? null);
@@ -1764,7 +1814,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: err?.message || String(err) };
         }
     });
-    ipcMain.handle('taskManager:setTaskModel', async (_event, taskId, modelAlias) => {
+    ipcMain.handle('taskManager:setTaskModel', async (_event, taskId, modelAlias, reasoningEffort) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
@@ -1774,6 +1824,9 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const previous = task.model;
         task.model = modelAlias || undefined;
+        if (reasoningEffort !== undefined) {
+            task.reasoningEffort = reasoningEffort;
+        }
         task.persistLater();
         // 模型切换后立即重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，
         // 否则运行中的 turn 会在后续请求中继续调用已不匹配的工具并报"模型不支持视觉"错误。
@@ -1925,6 +1978,28 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: htmlContent };
         } catch (error: any) {
             logger.error('exporting task failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('taskManager:saveExportHtml', async (event, filePath, html, fontUrls) => {
+        try {
+            await saveTaskExportHtml(filePath, html, fontUrls);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('saving export html failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('taskManager:exportTaskJson', async (event, taskId, filePath) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            await exportTaskJsonToFile(task, filePath);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('exporting task json failed', error);
             return { status: 'error', message: error.message };
         }
     });
@@ -2171,6 +2246,7 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
     });
+    ipcMain.handle('setting:listShells', () => scanSupportedShells());
 
     ipcMain.handle('model:checkVisionSupport', (_event, models) => {
         if (!Array.isArray(models)) {
@@ -2242,6 +2318,12 @@ const registerSettingAPIHandlers = () => {
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
+            // 调试日志开关变更后立即生效
+            const debugLogChanged =
+                !!oldSettings?.debug?.debug_log !== !!Setting.getInstance().getData().debug?.debug_log;
+            if (debugLogChanged) {
+                setDebugMode(!!Setting.getInstance().getData().debug?.debug_log);
+            }
             // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
             void onNetworkConfigChanged();
             try {
@@ -2607,6 +2689,19 @@ const registerSettingAPIHandlers = () => {
         globalMainWindow.webContents.openDevTools();
         return { status: 'ok' };
     }),
+        ipcMain.handle('setting:isFullscreen', () => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
+        ipcMain.handle('setting:setFullscreen', (_event, fullscreen: boolean) => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            globalMainWindow.setFullScreen(!!fullscreen);
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
         ipcMain.handle('setting:openConfigDirectory', async () => {
             try {
                 const configDir = getOpendeskDirectory();
@@ -2712,6 +2807,12 @@ const registerSettingAPIHandlers = () => {
             }
             return { status: 'ok', data: globalMainWindow.isMaximized() };
         }),
+        ipcMain.handle('setting:isFullScreen', () => {
+            if (globalMainWindow === null) {
+                return { status: 'error', message: 'main window not found' };
+            }
+            return { status: 'ok', data: globalMainWindow.isFullScreen() };
+        }),
         ipcMain.handle('setting:getAppVersion', () => {
             return { status: 'ok', data: app.getVersion() };
         }),
@@ -2726,6 +2827,30 @@ const registerSettingAPIHandlers = () => {
             if (!modelName || typeof modelName !== 'string') return { status: 'ok', data: 0 };
             return { status: 'ok', data: lookupKnownMaxOutputTokens(modelName) };
         }));
+};
+
+const registerShadowResizeHandlers = () => {
+    if (process.platform !== 'linux') {
+        return;
+    }
+    ipcMain.on('window:shadowResizeStart', (event, direction: unknown) => {
+        const normalized = normalizeShadowResizeDirection(direction);
+        if (normalized === null) {
+            return;
+        }
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) {
+            return;
+        }
+        const [minWidth, minHeight] = win.getMinimumSize();
+        startShadowResizeSession(win, normalized, minWidth, minHeight);
+    });
+    ipcMain.on('window:shadowResizeEnd', () => {
+        endShadowResizeSession();
+    });
+    app.on('before-quit', () => {
+        endShadowResizeSession();
+    });
 };
 
 // === 屏幕缩放适配 ===
@@ -3289,6 +3414,7 @@ async function startApplication(): Promise<void> {
         registerElectronAccountIntegration();
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
+        registerRendererLogHandler();
         registerThemeHandlers();
         registerEmbeddedOpenDeskOffice();
         AgentRegistry.initBuiltinAgents();
@@ -3306,6 +3432,17 @@ async function startApplication(): Promise<void> {
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
         registerTaskManagerAPIHandlers();
+        registerElectronUpdateService({
+            getMainWindow: () => globalMainWindow,
+            prepareWindowsForQuit: requestCloseOpenDeskOfficeContents,
+            quitForRestart: () => {
+                officeQuitApproved = true;
+                isAppQuitting = true;
+                app.quit();
+            },
+            logInfo: (message) => logger.info(message),
+            logError: (message) => logger.error(message)
+        });
         initTaskStatusWidget({
             getPreloadPath: getRendererPreloadPath,
             getMainWindow: () => globalMainWindow,
@@ -3494,6 +3631,7 @@ async function startApplication(): Promise<void> {
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
         registerUsageAPIHandlers();
+        registerDesktopAPIHandlers();
         // registerTaskManagerAPIHandlers() 已在同步恢复 GlobalState 后注册；首次让出主进程
         // 事件循环前 handler 已就绪，可响应 renderer sidebar 的 taskManager:getTaskList。
         registerFSAPIHandlers();
@@ -3588,6 +3726,7 @@ async function startApplication(): Promise<void> {
         // 确保主窗口加载期间 renderer 的 notification-panel 能正常订阅通知。
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
+        registerShadowResizeHandlers();
         registerAuthAPIHandlers();
         registerDisplayZoomHandlers();
         // registerThemeHandlers() 已在 createWindow 之前提前注册，
@@ -3662,6 +3801,14 @@ async function startApplication(): Promise<void> {
                             events,
                             counts
                         });
+                    }
+                });
+                ipcMain.handle('agentgate:cleanupStorage', async () => {
+                    try {
+                        const data = await (agApp as any).cleanupStorage();
+                        return { status: 'ok', data };
+                    } catch (error) {
+                        return { status: 'error', message: String(error) };
                     }
                 });
             }

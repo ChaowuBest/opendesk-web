@@ -60,7 +60,8 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
         super(
             'braveSearch',
             '使用Brave搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。基于Brave独立网络索引，覆盖超过300亿个网页',
-            BraveSearchArgsSchema
+            BraveSearchArgsSchema,
+            'search.brave.name'
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));

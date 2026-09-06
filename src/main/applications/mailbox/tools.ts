@@ -205,7 +205,8 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         super(
             'addMailAccount',
             '添加邮箱账号。内置常见邮箱服务商（QQ、163、126、Outlook、Gmail等）的服务器预设，只需提供邮箱地址、密码/授权码和收信协议（imap或pop3）即可完成配置。对于不在预设列表中的邮箱（如企业邮箱、自建邮箱），需要额外提供收信服务器地址（imapHost/pop3Host）和SMTP发信服务器地址（smtpHost），端口和TLS可选（有合理默认值）。',
-            AddMailAccountArgsSchema
+            AddMailAccountArgsSchema,
+            'tools.mailbox.addMailAccount.name'
         );
         this.mailApp = mailApp;
         this.executor = this.addAccount.bind(this);
@@ -554,7 +555,12 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
     private mailApp: MailboxApplication;
 
     constructor(mailApp: MailboxApplication) {
-        super('listMailAccounts', '列出当前已配置的所有邮箱账号', ListMailAccountsArgsSchema);
+        super(
+            'listMailAccounts',
+            '列出当前已配置的所有邮箱账号',
+            ListMailAccountsArgsSchema,
+            'tools.mailbox.listMailAccounts.name'
+        );
         this.mailApp = mailApp;
         this.executor = this.listAccounts.bind(this);
     }
@@ -648,7 +654,12 @@ export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgs
     private mailApp: MailboxApplication;
 
     constructor(mailApp: MailboxApplication) {
-        super('removeMailAccount', '删除已配置的邮箱账号', RemoveMailAccountArgsSchema);
+        super(
+            'removeMailAccount',
+            '删除已配置的邮箱账号',
+            RemoveMailAccountArgsSchema,
+            'tools.mailbox.removeMailAccount.name'
+        );
         this.mailApp = mailApp;
         this.executor = this.removeAccount.bind(this);
     }
@@ -753,7 +764,8 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
         super(
             'switchMailAccount',
             '切换当前使用的邮箱账号。切换后，后续的邮件收发操作将使用该账号。',
-            SwitchMailAccountArgsSchema
+            SwitchMailAccountArgsSchema,
+            'tools.mailbox.switchMailAccount.name'
         );
         this.mailApp = mailApp;
         this.executor = this.switchAccount.bind(this);
@@ -1093,7 +1105,12 @@ export function buildReplyHtml(
 
 export class GetEmailListTool extends BaseTool<typeof GetEmailListSchema> {
     constructor() {
-        super('getEmailList', '获取当前邮箱的邮件列表，返回 uid、主题、发件人、日期、已读状态等。', GetEmailListSchema);
+        super(
+            'getEmailList',
+            '获取当前邮箱的邮件列表，返回 uid、主题、发件人、日期、已读状态等。',
+            GetEmailListSchema,
+            'tools.mailbox.getEmailList.name'
+        );
         this.setExecutor(async (args) => {
             const data = await callMailWorker('getEmailHeaderList', args.offset ?? 0, args.limit ?? 20);
             const emails: any[] = Array.isArray(data) ? data : [];
@@ -1137,7 +1154,12 @@ export class GetEmailListTool extends BaseTool<typeof GetEmailListSchema> {
 
 export class GetEmailContentTool extends BaseTool<typeof GetEmailContentSchema> {
     constructor() {
-        super('getEmailContent', '获取指定 uid 邮件的完整正文（纯文本），用于查看详情或摘要。', GetEmailContentSchema);
+        super(
+            'getEmailContent',
+            '获取指定 uid 邮件的完整正文（纯文本），用于查看详情或摘要。',
+            GetEmailContentSchema,
+            'tools.mailbox.getEmailContent.name'
+        );
         this.setExecutor(async (args) => {
             const content = await callMailWorker('getEmailContent', args.uid);
             if (!content) return JSON.stringify({ error: '未找到该邮件' });
@@ -1177,7 +1199,8 @@ export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
         super(
             'searchEmails',
             '按条件搜索邮件，支持主题/发件人/收件人/正文/日期/已读/收藏/附件名等组合搜索。',
-            SearchEmailsSchema
+            SearchEmailsSchema,
+            'tools.mailbox.searchEmails.name'
         );
 
         this.setExecutor(async (args) => {
@@ -1235,7 +1258,12 @@ export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
 
 export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
     constructor() {
-        super('sendEmail', '发送邮件，需提供收件人、主题和内容，可选抄送、密送和附件。', SendEmailSchema);
+        super(
+            'sendEmail',
+            '发送邮件，需提供收件人、主题和内容，可选抄送、密送和附件。',
+            SendEmailSchema,
+            'tools.mailbox.sendEmail.name'
+        );
         this.setExecutor(async (args) => {
             try {
                 const to = normalizeRecipients(args.to);
@@ -1302,7 +1330,12 @@ export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
 
 export class ReplyEmailTool extends BaseTool<typeof ReplyEmailSchema> {
     constructor() {
-        super('replyEmail', '回复邮件，需提供原邮件 uid 和回复内容。', ReplyEmailSchema);
+        super(
+            'replyEmail',
+            '回复邮件，需提供原邮件 uid 和回复内容。',
+            ReplyEmailSchema,
+            'tools.mailbox.replyEmail.name'
+        );
         this.setExecutor(async (args) => {
             try {
                 const emailMeta = await callMailWorker('getEmailMeta', args.uid);
@@ -1379,7 +1412,12 @@ export class ReplyEmailTool extends BaseTool<typeof ReplyEmailSchema> {
 
 export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
     constructor() {
-        super('markEmailReadStatus', '标记邮件已读/未读。', MarkEmailReadSchema);
+        super(
+            'markEmailReadStatus',
+            '标记邮件已读/未读。',
+            MarkEmailReadSchema,
+            'tools.mailbox.markEmailReadStatus.name'
+        );
         this.setExecutor(async (args) => {
             try {
                 if (args.read) await callMailWorker('markEmailAsRead', args.uid);
@@ -1422,7 +1460,7 @@ export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
 
 export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
     constructor() {
-        super('starEmail', '收藏或取消收藏邮件。', StarEmailSchema);
+        super('starEmail', '收藏或取消收藏邮件。', StarEmailSchema, 'tools.mailbox.starEmail.name');
         this.setExecutor(async (args) => {
             try {
                 await callMailWorker('starEmail', { uid: args.uid, starred: args.starred });
@@ -1464,7 +1502,7 @@ export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
 
 export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
     constructor() {
-        super('deleteEmail', '删除指定邮件。', DeleteEmailSchema);
+        super('deleteEmail', '删除指定邮件。', DeleteEmailSchema, 'tools.mailbox.deleteEmail.name');
         this.setExecutor(async (args) => {
             try {
                 await callMailWorker('deleteEmail', args.uid);
@@ -1507,7 +1545,8 @@ export class GetMailSyncStatusTool extends BaseTool<typeof GetMailSyncStatusSche
         super(
             'getMailSyncStatus',
             '查询邮件同步状态。在配置邮箱账号后，用于检查同步是否完成、当前正在同步哪个账号、上次同步时间及结果。',
-            GetMailSyncStatusSchema
+            GetMailSyncStatusSchema,
+            'tools.mailbox.getMailSyncStatus.name'
         );
         this.setExecutor(async () => {
             const status = await callMailWorker('getSyncStatus');
@@ -1550,7 +1589,8 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsSchema
         super(
             'getCalendarItems',
             '获取指定日期的日程/会议列表。当用户想查看某天的安排、检查时间冲突，或需要将邮件中的会议信息与日历比对时使用。',
-            GetCalendarItemsSchema
+            GetCalendarItemsSchema,
+            'tools.mailbox.getCalendarItems.name'
         );
         this.setExecutor(async (args) => {
             const result = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', args.dateString);
@@ -1588,7 +1628,8 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemSchema> 
         super(
             'addCalendarItem',
             '添加新日程/会议。当用户要求根据邮件内容创建日程、安排会议、或设置提醒时使用。',
-            AddCalendarItemSchema
+            AddCalendarItemSchema,
+            'tools.mailbox.addCalendarItem.name'
         );
         this.setExecutor(async (args) => {
             const { subject, dateString, startTime, endTime, location, isAllDay } = args;
@@ -1663,7 +1704,12 @@ const DeleteCalendarItemSchema = z.object({
 });
 export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemSchema> {
     constructor() {
-        super('deleteCalendarItem', '删除指定的日程项。当用户要求取消某个日程、会议时使用。', DeleteCalendarItemSchema);
+        super(
+            'deleteCalendarItem',
+            '删除指定的日程项。当用户要求取消某个日程、会议时使用。',
+            DeleteCalendarItemSchema,
+            'tools.mailbox.deleteCalendarItem.name'
+        );
         this.setExecutor(async (args) => {
             const result = await ApplicationRegistry.callWorker('calendar', 'deleteCalendarItem', args.uid);
             if (result?.status !== 'ok')
@@ -1680,7 +1726,8 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeSchema> {
         super(
             'getCurrentTime',
             '获取当前精确的日期和时间。在需要知道"今天"、"明天"等相对日期时使用。',
-            GetCurrentTimeSchema
+            GetCurrentTimeSchema,
+            'tools.getCurrentTime.name'
         );
         this.setExecutor(async () => {
             const now = new Date();

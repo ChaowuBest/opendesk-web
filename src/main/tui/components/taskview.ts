@@ -50,6 +50,7 @@ import {
     getGoalSupplementDisplayText,
     shouldRenderGoalUserMessage as shouldRenderTuiUserMessage
 } from '../../../common/goal/user-message-display.js';
+import { resolveToolDisplayName } from '../../../common/tool-display-name.js';
 import { TaskViewGoalController } from './taskview-goal/controller.js';
 import {
     getGoalTerminalTimestamp,
@@ -647,10 +648,15 @@ function getMinimalRunningIcon(): string {
     return chalk.blueBright(MINIMAL_RUNNING_SPINNER_FRAMES[frame]);
 }
 
+function getMinimalToolDisplayName(toolCall: ToolCall): string {
+    if (!toolCall.display_name_key) return toolCall.tool_name;
+    return resolveToolDisplayName(toolCall.tool_name, toolCall.display_name_key, t);
+}
+
 function getMinimalRunningAction(toolCall: ToolCall | undefined, isReasoning: boolean): string {
     if (toolCall) {
         return t('display.minimal.running.tool', {
-            tool: toolCall.tool_name
+            tool: getMinimalToolDisplayName(toolCall)
         });
     }
     return t(isReasoning ? 'display.minimal.running.thinking' : 'display.minimal.running.waiting');
@@ -668,7 +674,9 @@ function compactMinimalToolName(value: string, maxLength: number = 12): string {
 
 function formatMinimalProcessSummary(toolCalls: ToolCall[], hasReasoning: boolean): string {
     const toolNames = Array.from(
-        new Set(toolCalls.map((toolCall) => compactMinimalToolName(toolCall.tool_name)).filter(Boolean))
+        new Set(
+            toolCalls.map((toolCall) => compactMinimalToolName(getMinimalToolDisplayName(toolCall))).filter(Boolean)
+        )
     );
     const listedNames = toolNames.slice(0, 2).join(t('display.minimal.tools.summary.listSeparator'));
     const tools = listedNames
