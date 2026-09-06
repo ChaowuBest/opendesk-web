@@ -6,15 +6,9 @@
 import { definePlugin } from '@bitclub.ai/opendesk-plugin-sdk';
 import { FeishuChannel } from './feishu.mjs';
 
+// 展示名称等静态元数据统一声明在 opendesk.plugin.json，入口只保留运行时字段。
 export default definePlugin({
     id: 'feishu',
-    displayName: { en: 'Feishu', zh: '飞书' },
-    description: {
-        en: 'Feishu/Lark channel (WebSocket long connection + open-apis)',
-        zh: '飞书/Lark 消息渠道（WebSocket 长连接 + open-apis）'
-    },
-    apiVersion: 1,
-    capabilities: ['channel'],
     setup(ctx) {
         const channel = new FeishuChannel();
         ctx.channels.register(channel);
