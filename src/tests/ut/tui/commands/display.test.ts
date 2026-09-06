@@ -42,7 +42,9 @@ describe('/display command', () => {
                     return true;
                 })
             },
-            setOutputDisplayLevel: jest.fn((nextLevel) => persistOutputDisplayLevel(nextLevel))
+            setOutputDisplayLevel: jest.fn((nextLevel, options) => {
+                if (options?.persist) persistOutputDisplayLevel(nextLevel);
+            })
         } as any;
         registerDisplayCommand(tui);
 

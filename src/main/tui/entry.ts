@@ -75,7 +75,7 @@ import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
 import { resolveTaskMode } from '../aikernel/task/mode.js';
 import { syncPluginTuiCommands } from '../applications/pluginmgr/index.js';
-import { getConfiguredOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
+import { getConfiguredOutputDisplayLevel, persistOutputDisplayLevel, type OutputDisplayLevel } from './display.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -509,7 +509,11 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
-    public setOutputDisplayLevel(level: OutputDisplayLevel): OutputDisplayLevel {
+    public setOutputDisplayLevel(level: OutputDisplayLevel, options: { persist?: boolean } = {}): OutputDisplayLevel {
+        if (options.persist) {
+            persistOutputDisplayLevel(level);
+            this.lastConfiguredOutputDisplayLevel = level;
+        }
         if (this.activeTaskId) {
             this.taskOutputDisplayLevels ??= new Map<string, OutputDisplayLevel>();
             this.taskOutputDisplayLevels.set(this.activeTaskId, level);

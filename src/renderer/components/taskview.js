@@ -77,8 +77,7 @@ import { WORKSPACE_FOCUS_LAYOUT_CHANGE_EVENT, WorkspaceFocusLayoutController } f
 import { listenForAgentInputRequests } from '../input/agentInputRequest.js';
 import {
     buildAssistantOutputItems,
-    getDefaultProcessExpanded,
-    getDefaultReasoningExpanded,
+    getDefaultExpanded,
     getVisibleAssistantOutputItems,
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
@@ -1027,8 +1026,7 @@ class TaskView extends HTMLElement {
             !isStreaming && elapsedSeconds != null
                 ? `（${formatReasoningElapsedTime(elapsedSeconds, (rendered || '').length)}）`
                 : '';
-        const expanded =
-            typeof expandedOverride === 'boolean' ? expandedOverride : getDefaultReasoningExpanded(guiOutputMode);
+        const expanded = typeof expandedOverride === 'boolean' ? expandedOverride : getDefaultExpanded(guiOutputMode);
 
         if (guiReasonDisplayMode === 'bubble') {
             const bubbleOpen = isStreaming || expanded;
@@ -1172,7 +1170,7 @@ class TaskView extends HTMLElement {
     _renderProcessItem(item, messageId, disclosureState) {
         const processKey = `${messageId}-${item.key}`;
         const stored = disclosureState?.get(processKey);
-        const expanded = stored === undefined ? getDefaultProcessExpanded(guiOutputMode) : stored;
+        const expanded = stored === undefined ? getDefaultExpanded(guiOutputMode) : stored;
         const detailId = `od-${this.widget_id}-${processKey}-detail`;
         const summary = TaskView._processSummary(item);
         return `

@@ -466,7 +466,7 @@ describe('PluginToolsetProvider', () => {
             { origin: 'test:attention-demo' }
         );
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolset.getTool('attention-demo-authorize');
+        const tool = toolset.getTool('authorize');
         const call = new ToolCall(0, 'call-1', 'attention-demo-authorize', '{}');
         call.args_object = {};
         call.status = 'running';
@@ -506,7 +506,7 @@ describe('PluginToolsetProvider', () => {
             { origin: 'test:legacy-attention' }
         );
         const [toolset] = await new PluginToolsetProvider(host).listAvailableToolsets();
-        const tool = toolset.getTool('legacy-attention-authorize');
+        const tool = toolset.getTool('authorize');
         const call = new ToolCall(0, 'call-legacy', 'legacy-attention-authorize', '{}');
         call.status = 'running';
         call.result_object = { ui: { requiresUserAttention: true } };

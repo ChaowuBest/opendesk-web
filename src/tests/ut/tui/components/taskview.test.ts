@@ -346,9 +346,37 @@ describe('TaskView chunk handling', () => {
         const output = stripAnsi(taskView.render(100).join('\n'));
         expect(output).toContain('Running filemgr-readFile…');
         expect(output.match(/[✣✤✥✦]/g)).toHaveLength(1);
-        expect(output).toContain('1 tool');
+        expect(output).not.toContain('1 tool');
         expect(output).not.toContain('private reasoning');
         expect(output).not.toContain('CUSTOM TOOL 1');
+    });
+
+    test('minimal mode distinguishes live reasoning from waiting for a response', async () => {
+        const waitingTaskView = new TaskView({ requestRender: jest.fn() } as any);
+        waitingTaskView.setOutputDisplayLevel('minimal');
+        waitingTaskView.startStreaming();
+
+        let output = stripAnsi(waitingTaskView.render(100).join('\n'));
+        expect(output).toContain('Generating response…');
+        expect(output).not.toContain('0 tools');
+
+        setRuntimeLocale('zh-CN');
+        const reasoningTaskView = new TaskView({ requestRender: jest.fn() } as any);
+        reasoningTaskView.setOutputDisplayLevel('minimal');
+        reasoningTaskView.startStreaming();
+        await reasoningTaskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            last_part: new ReasoningMessagePart('private reasoning', 'reasoning_content')
+        });
+
+        output = stripAnsi(reasoningTaskView.render(100).join('\n'));
+        expect(output).toContain('正在思考…');
+        expect(output).not.toContain('正在生成回复…');
+        expect(output).not.toContain('0 个工具');
     });
 
     test('minimal mode keeps a running tool visible when it requires user attention', async () => {
@@ -632,7 +660,7 @@ describe('TaskView chunk handling', () => {
 
         const renderedLines = taskView.render(100).map((line) => stripAnsi(line));
         const bodyLine = renderedLines.findIndex((line) => line.includes('Body with trailing markdown breaks'));
-        const statusLine = renderedLines.findIndex((line) => line.includes('1 tool'));
+        const statusLine = renderedLines.findIndex((line) => line.includes('Generating response…'));
         expect(bodyLine).toBeGreaterThanOrEqual(0);
         expect(statusLine - bodyLine).toBe(2);
     });

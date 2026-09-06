@@ -647,11 +647,13 @@ function getMinimalRunningIcon(): string {
     return chalk.blueBright(MINIMAL_RUNNING_SPINNER_FRAMES[frame]);
 }
 
-function getMinimalToolAction(toolCall?: ToolCall): string {
-    if (!toolCall) return t('display.minimal.running.waiting');
-    return t('display.minimal.running.tool', {
-        tool: toolCall.tool_name
-    });
+function getMinimalRunningAction(toolCall: ToolCall | undefined, isReasoning: boolean): string {
+    if (toolCall) {
+        return t('display.minimal.running.tool', {
+            tool: toolCall.tool_name
+        });
+    }
+    return t(isReasoning ? 'display.minimal.running.thinking' : 'display.minimal.running.waiting');
 }
 
 function compactMinimalToolName(value: string, maxLength: number = 12): string {
@@ -920,16 +922,12 @@ export class AssistantMessageView implements Component {
         return truncateToWidth(`${color('●')} ${color(label)} ${chalk.dim(`· ${metadata}`)}`, width, '', true);
     }
 
-    private renderMinimalRunning(toolCalls: ToolCall[], width: number): string {
-        const count = toolCalls.length;
+    private renderMinimalRunning(toolCalls: ToolCall[], isReasoning: boolean, width: number): string {
         const activeToolCall = toolCalls.findLast(
             (toolCall) => toolCall.status === 'pending' || toolCall.status === 'running'
         );
-        const action = getMinimalToolAction(activeToolCall);
-        const meta = t(count === 1 ? 'display.minimal.running.meta.one' : 'display.minimal.running.meta.many', {
-            count
-        });
-        return truncateToWidth(`${getMinimalRunningIcon()} ${action}  ${chalk.dim(meta)}`, width, '', true);
+        const action = getMinimalRunningAction(activeToolCall, isReasoning);
+        return truncateToWidth(`${getMinimalRunningIcon()} ${action}`, width, '', true);
     }
 
     private renderMinimal(width: number): string[] {
@@ -951,6 +949,7 @@ export class AssistantMessageView implements Component {
         );
         const hasAttentionToolCall = allToolCalls.some((toolCall) => toolCall.requiresUserAttention());
         const isStreamingText = this.parts[this.parts.length - 1] instanceof TextMessagePartView;
+        const isStreamingReasoning = this.parts[this.parts.length - 1] instanceof ReasoningMessagePartView;
         let pendingToolCalls: ToolCall[] = [];
         let completionRendered = false;
 
@@ -1009,7 +1008,7 @@ export class AssistantMessageView implements Component {
         } else if (this.lifecycle === 'sealed') {
             flushPendingTools();
         } else if (!hasAttentionToolCall && (hasActiveToolCall || !isStreamingText)) {
-            appendBlock([this.renderMinimalRunning(allToolCalls, width)]);
+            appendBlock([this.renderMinimalRunning(allToolCalls, isStreamingReasoning, width)]);
         }
         return lines.length === 0 ? [] : ['', ...lines, ''];
     }
@@ -1859,16 +1858,10 @@ export class TaskView implements Component {
         this.cachedOutput = this.messageLayout.render(width);
         const lastAssistant = this.getLastAssistantView();
         if (this._streaming && this.outputDisplayLevel === 'minimal' && (!lastAssistant || !lastAssistant.isActive())) {
-            const meta = t('display.minimal.running.meta.many', { count: 0 });
             this.cachedOutput = [
                 ...this.cachedOutput,
                 '',
-                truncateToWidth(
-                    `${getMinimalRunningIcon()} ${t('display.minimal.running.waiting')}  ${chalk.dim(meta)}`,
-                    width,
-                    '',
-                    true
-                ),
+                truncateToWidth(`${getMinimalRunningIcon()} ${t('display.minimal.running.waiting')}`, width, '', true),
                 ''
             ];
         }

@@ -1,7 +1,6 @@
 import {
     buildAssistantOutputItems,
-    getDefaultProcessExpanded,
-    getDefaultReasoningExpanded,
+    getDefaultExpanded,
     getVisibleAssistantOutputItems,
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
@@ -180,9 +179,7 @@ describe('GUI assistant output model', () => {
     });
 
     test('process and completed reasoning defaults differ by output mode', () => {
-        expect(getDefaultProcessExpanded('minimal')).toBe(false);
-        expect(getDefaultProcessExpanded('verbose')).toBe(true);
-        expect(getDefaultReasoningExpanded('minimal')).toBe(false);
-        expect(getDefaultReasoningExpanded('verbose')).toBe(true);
+        expect(getDefaultExpanded('minimal')).toBe(false);
+        expect(getDefaultExpanded('verbose')).toBe(true);
     });
 });

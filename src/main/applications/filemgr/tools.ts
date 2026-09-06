@@ -27,7 +27,6 @@ import { cleanPathInput } from '../../../utils/path.js';
 import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
 import { FILEMGR_SEARCH_MAX_PATHS } from './search/indexed.js';
-import { getFileToolCallPresentation } from './tool-presentation.js';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';

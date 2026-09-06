@@ -67,11 +67,7 @@ export function normalizeGuiReasonDisplayMode(value: unknown): GuiReasonDisplayM
     return value === 'bubble' ? 'bubble' : 'inline';
 }
 
-export function getDefaultProcessExpanded(mode: OutputDisplayLevel): boolean {
-    return mode === 'verbose';
-}
-
-export function getDefaultReasoningExpanded(mode: OutputDisplayLevel): boolean {
+export function getDefaultExpanded(mode: OutputDisplayLevel): boolean {
     return mode === 'verbose';
 }
 

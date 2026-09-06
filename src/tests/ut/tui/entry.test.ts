@@ -322,7 +322,8 @@ describe('OpenDeskTUI active task view state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: { task_id: 'task-1' },
-                clearMessages: jest.fn()
+                clearMessages: jest.fn(),
+                setOutputDisplayLevel: jest.fn()
             },
             todoList: {
                 clear: clearTodos
