@@ -9,6 +9,7 @@ import {
     setRenderWorkspace,
     resolveFilePath,
     parseFileReference,
+    parseLineAnchor,
     renderFilePillFromText
 } from '../../../main/aikernel/marked-file-link.js';
 import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
@@ -74,6 +75,14 @@ test('resolveFilePath: returns null for URLs', () => {
 
 test('resolveFilePath: returns null for hash links', () => {
     assert.equal(resolveFilePath('#section'), null);
+});
+
+test('resolveFilePath: returns null for paths containing ellipsis', () => {
+    setRenderWorkspace('/tmp');
+    assert.equal(resolveFilePath('…\\agent.ts'), null);
+    assert.equal(resolveFilePath('src/…/utils.ts'), null);
+    assert.equal(resolveFilePath('D:\\proj\\…\\main.ts'), null);
+    setRenderWorkspace(null);
 });
 
 test('resolveFilePath: returns null for empty string', () => {
@@ -430,6 +439,40 @@ test('markdown link: URL-encoded href with spaces is decoded', () => {
     }
 });
 
+test('markdown link: #L anchor works with %20-encoded spaces', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'My Documents'));
+        const filePath = path.join(tmp, 'My Documents', 'report.pptx');
+        fs.writeFileSync(filePath, 'dummy');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[report:3](My%20Documents/report.pptx#L3)') as string;
+        assert.ok(html.includes('od-file-pill'), 'anchor must be parsed after %20 decoding');
+        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: angle-bracket destination with spaces and #L anchor', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'My Docs'));
+        const filePath = path.join(tmp, 'My Docs', 'report.pptx');
+        fs.writeFileSync(filePath, 'dummy');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[report:3](<My Docs/report.pptx#L3>)') as string;
+        assert.ok(html.includes('od-file-pill'), 'angle-bracket destination must support spaces');
+        assert.ok(html.includes(`data-open-preview="${filePath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ── File path + line reference parsing ───────────────────────────────
 
 test('parseFileReference: strips trailing line number', () => {
@@ -553,6 +596,211 @@ test('codespan: absolute path with line number renders pill with data-preview-li
     }
 });
 
+// ── #L line anchor hrefs (markdown links) ────────────────────────────
+
+test('parseLineAnchor: parses single line anchor', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L134'), {
+        filePath: 'src/utils.ts',
+        line: 134,
+        lineEnd: null
+    });
+});
+
+test('parseLineAnchor: parses line range anchor', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L12-20'), {
+        filePath: 'src/utils.ts',
+        line: 12,
+        lineEnd: 20
+    });
+});
+
+test('parseLineAnchor: parses GitHub-style range anchor with second L', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L12-L20'), {
+        filePath: 'src/utils.ts',
+        line: 12,
+        lineEnd: 20
+    });
+});
+
+test('parseLineAnchor: returns null without anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts'), null);
+});
+
+test('parseLineAnchor: returns null for non-line anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts#section'), null);
+});
+
+test('parseLineAnchor: returns null for zero line anchor', () => {
+    assert.equal(parseLineAnchor('src/utils.ts#L0'), null);
+});
+
+test('parseLineAnchor: drops reversed range', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L20-L5'), {
+        filePath: 'src/utils.ts',
+        line: 20,
+        lineEnd: null
+    });
+});
+
+test('parseLineAnchor: collapses single-line range', () => {
+    assert.deepEqual(parseLineAnchor('src/utils.ts#L5-L5'), {
+        filePath: 'src/utils.ts',
+        line: 5,
+        lineEnd: null
+    });
+});
+
+test('markdown link: #L anchor renders pill with line badge and clean path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        const filePath = path.join(tmp, 'src', 'utils.ts');
+        fs.writeFileSync(filePath, 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts#L134)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes(`data-open-preview="${filePath}"`), 'anchor must be stripped from the opened path');
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(html.includes('od-file-pill-line">:134'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: #L range anchor renders range badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts](src/utils.ts#L12-20)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12-20'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: ranged label with start-only anchor keeps full range', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        // ZCode 风格：文字带起止区间，锚点只带起始行；区间信息不能丢失，也不能重复展示
+        const html = marked.parse('[utils.ts:12-20](src/utils.ts#L12)') as string;
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12-20'));
+        assert.ok(!html.includes(':12-20:12'), 'label range must not duplicate with href badge');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: reversed range in label falls back to single line badge', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts:12-5](src/utils.ts#L12)') as string;
+        assert.ok(html.includes('data-preview-line="12"'));
+        assert.ok(html.includes('od-file-pill-line">:12</span>'), 'invalid range must collapse to single line');
+        assert.ok(!html.includes(':12-5'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: legacy href line suffix is not duplicated in label', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.mkdirSync(path.join(tmp, 'src'));
+        fs.writeFileSync(path.join(tmp, 'src', 'utils.ts'), 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[utils.ts:134](src/utils.ts:134)') as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes('data-preview-line="134"'));
+        assert.ok(!html.includes(':134:134'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: backslash absolute href with #L anchor renders pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const absPath = path.join(tmp, 'main.ts');
+        fs.writeFileSync(absPath, 'export {};');
+        const marked = setupMarked(tmp);
+        const html = marked.parse(`[main.ts](${absPath}#L3)`) as string;
+        assert.ok(html.includes('od-file-pill'));
+        assert.ok(html.includes(`data-open-preview="${absPath}"`));
+        assert.ok(html.includes('data-preview-line="3"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: URL href with #L anchor stays a normal link', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[example](https://example.com/file.ts#L2)') as string;
+        assert.ok(!html.includes('od-file-pill'));
+        assert.ok(html.includes('href="https://example.com/file.ts#L2"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('auto-detection: ellipsis-abbreviated path stays plain text', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('See src/…/utils.ts for details.') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis-abbreviated path must not become a pill');
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('codespan: ellipsis-abbreviated path stays as code', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('打开 `…\\agent.ts` 查看。') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis-abbreviated path must not become a pill');
+        assert.ok(html.includes('<code>'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('markdown link: ellipsis href renders as normal link, not pill', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        const marked = setupMarked(tmp);
+        const html = marked.parse('[agent.ts](src/…/agent.ts)') as string;
+        assert.ok(!html.includes('od-file-pill'), 'ellipsis href must not become a pill');
+        // marked 默认渲染器会对 href 做 percent-encode（… → %E2%80%A6）
+        assert.ok(html.includes('<a href="src/%E2%80%A6/agent.ts"'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ── renderFilePillFromText ───────────────────────────────────────────
 
 test('renderFilePillFromText: single file path with line renders pill with line badge', () => {
@@ -581,6 +829,19 @@ test('renderFilePillFromText: single file path without line renders pill without
         assert.ok(html);
         assert.ok(html.includes('od-file-pill'));
         assert.ok(!html.includes('od-file-pill-line'));
+    } finally {
+        setRenderWorkspace(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('renderFilePillFromText: ellipsis-abbreviated path returns null', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mfl-'));
+    try {
+        fs.writeFileSync(path.join(tmp, 'main.ts'), 'export {};');
+        setRenderWorkspace(tmp);
+        assert.equal(renderFilePillFromText('…\\agent.ts'), null);
+        assert.equal(renderFilePillFromText('src/…/utils.ts'), null);
     } finally {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });

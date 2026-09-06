@@ -40,6 +40,12 @@ export function resolveFilePath(rawPath: string): string | null {
         return null;
     }
 
+    // 含省略号（…）的是缩写展示路径（如 `…\agent.ts`、`src/…/utils.ts`）：
+    // 模型在正文中常用它指代过长路径，永远无法真实打开，不能渲染为 pill。
+    if (rawPath.includes('…')) {
+        return null;
+    }
+
     if (path.isAbsolute(rawPath)) {
         return rawPath;
     }
@@ -152,9 +158,19 @@ function getFileType(filePath: string): string {
     return TYPE_MAP[ext] ?? 'default';
 }
 
-function buildPillHTML(filePath: string, label: string, line: number | null = null): string {
+function buildPillHTML(
+    filePath: string,
+    label: string,
+    line: number | null = null,
+    lineEnd: number | null = null
+): string {
     const lineAttr = line != null && line > 0 ? ` data-preview-line="${line}"` : '';
-    const lineSpan = line != null && line > 0 ? `<span class="od-file-pill-line">:${line}</span>` : '';
+    let lineSpan = '';
+    if (line != null && line > 0) {
+        // 区间必须递增：锚点解析已校验，但 label 补全出的结束行（如 [f.ts:12-5](p#L12)）可能不合法，回退为单行
+        const rangeText = lineEnd != null && lineEnd > line ? `-${lineEnd}` : '';
+        lineSpan = `<span class="od-file-pill-line">:${line}${rangeText}</span>`;
+    }
     return (
         `<a class="od-file-pill" data-type="${getFileType(filePath)}" data-open-preview="${escapeHtml(filePath)}"${lineAttr} title="${escapeHtml(filePath)}">` +
         `${FILE_ICON_SVG}<span class="od-file-pill-name">${escapeHtml(label)}</span>${lineSpan}</a>`
@@ -180,6 +196,31 @@ export function parseFileReference(rawPath: string): { filePath: string; line: n
         }
     }
     return { filePath: rawPath, line: null };
+}
+
+// 匹配 href 末尾的 "#L<line>" 或 "#L<start>-<end>" 行锚点（结束行可带第二个 L，
+// 兼容 GitHub 风格 #L12-L20）。仅用于 Markdown 链接 href；纯文本与 codespan
+// 路径仍沿用 ":行号" 后缀约定。
+const LINE_ANCHOR_RE = /#L(\d+)(?:-L?(\d+))?$/;
+
+/**
+ * 解析 Markdown 链接 href 末尾的 "#L" 行锚点。
+ * 无锚点、锚点非行号或行号非法时返回 null，由调用方回退到 parseFileReference。
+ */
+export function parseLineAnchor(rawHref: string): { filePath: string; line: number; lineEnd: number | null } | null {
+    const match = LINE_ANCHOR_RE.exec(rawHref);
+    if (!match) {
+        return null;
+    }
+    const line = parseInt(match[1], 10);
+    if (line <= 0) {
+        return null;
+    }
+    let lineEnd = match[2] ? parseInt(match[2], 10) : null;
+    if (lineEnd != null && lineEnd <= line) {
+        lineEnd = null;
+    }
+    return { filePath: rawHref.slice(0, match.index), line, lineEnd };
 }
 
 /**
@@ -297,11 +338,26 @@ export const fileLinkExtension: MarkedExtension = {
             } catch {
                 // ignore malformed URI – use raw href
             }
-            const { filePath, line } = parseFileReference(decodedHref);
+            // "#L行号" 行锚点优先；无锚点时回退到旧版 ":行号" 后缀
+            const anchor = parseLineAnchor(decodedHref);
+            const { filePath, line } = anchor ?? parseFileReference(decodedHref);
+            let lineEnd = anchor ? anchor.lineEnd : null;
             const absPath = resolveFilePath(filePath);
             if (absPath) {
-                const label = this.parser.parseInline(tokens);
-                return buildPillHTML(absPath, label || path.basename(absPath), line);
+                let label = this.parser.parseInline(tokens);
+                if (line != null) {
+                    // 链接文字常写成 "file.ts:12-20" 形式：锚点未带结束行时用文字
+                    // 中的区间补全（如 [file.ts:1-11](path#L1)），再剥掉与行号 badge
+                    // 重复的后缀
+                    if (anchor && lineEnd == null) {
+                        const labelRange = new RegExp(`:${line}-(\\d+)$`).exec(label);
+                        if (labelRange) {
+                            lineEnd = parseInt(labelRange[1], 10);
+                        }
+                    }
+                    label = label.replace(new RegExp(`:${line}(?:-\\d+)?$`), '');
+                }
+                return buildPillHTML(absPath, label || path.basename(absPath), line, lineEnd);
             }
             return false;
         },

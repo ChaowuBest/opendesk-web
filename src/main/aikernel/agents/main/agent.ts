@@ -146,6 +146,16 @@ Always respond in English. Use English for all explanations, comments, and commu
 Technical terms and code identifiers should remain in their original form.`;
 }
 
+// ─── Section 6.6: File Links ──────────────────────────────────────
+function getFileLinkSection(): string {
+    return `# 文件引用
+
+- 除非另有说明，引用本地文件时返回 Markdown 链接：链接文字使用文件名，链接地址使用绝对路径或基于当前工作空间可解析的相对路径，如 [main.ts](/home/user/proj/src/main.ts)；地址含空格等字符时必须进行 URL 编码（空格写作 "%20"）或用尖括号包裹整个地址，否则链接无法成立；
+- 引用代码的具体位置时，在链接地址末尾追加 "#L行号" 行锚点：单行写 [main.ts:42](/home/user/proj/src/main.ts#L42)，行区间写 [agent.ts:265-321](src/main/aikernel/agents/main/agent.ts#L265-L321)，链接文字相应使用 "文件名:行号" 或 "文件名:起始行-结束行"；
+- 行号只通过 "#L" 锚点携带，不要在链接地址中使用 ":42" 后缀或 "#line-42" 等其他锚点形式；
+- 本地网络地址同样返回 Markdown 链接，如 [调试首页](http://127.0.0.1:8080)。`;
+}
+
 // ─── Section 7: Output Efficiency ─────────────────────────────────
 function getOutputEfficiencySection(): string {
     return `# 输出效率
@@ -288,6 +298,7 @@ export class MainAgentDecl extends AgentDecl {
             getUsingToolsSection(),
             getToneAndStyleSection(soulName, soulUid, soulContent),
             getLanguageSection(),
+            getFileLinkSection(),
             getOutputEfficiencySection()
         ].filter((s): s is string => s !== null);
 
