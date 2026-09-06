@@ -456,7 +456,7 @@ class HomePage extends HTMLElement {
             }
         </style>
         <!-- 主内容居中 -->
-        <div id="hp-container" class="w-full h-full px-8 flex flex-col items-center justify-center">
+        <div id="hp-container" class="w-full h-full px-8 flex flex-col items-center justify-center" data-agent-input-height-reference>
             <!-- 问候语 -->
             <div class="mb-4 text-center">
                 <h1 class="text-3xl font-medium text-gray-800 mb-1">
