@@ -22,6 +22,8 @@
  *   const confirmed = await showConfirmModal({ title, message, variant: 'danger' });
  */
 
+import { escapeHtml } from '../../common/utils/escape.js';
+
 export type ModalVariant = 'danger' | 'info' | 'warn' | 'success';
 
 export interface ConfirmModalOptions {
@@ -53,6 +55,8 @@ export interface ConfirmModalOptions {
     mountTarget?: HTMLElement;
     /** 是否允许按回车默认触发"确认"（默认 false，仅个别弹窗显式开启） */
     enterToConfirm?: boolean;
+    /** 打开后自动聚焦"确认"按钮（信息提示类弹窗使用，回车/空格可直接关闭） */
+    autoFocusConfirm?: boolean;
 }
 
 const ANIM_DURATION_IN = 250;
@@ -502,6 +506,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             challenge,
             challengeHint,
             enterToConfirm = false,
+            autoFocusConfirm = false,
             mountTarget = document.body
         } = options;
 
@@ -622,7 +627,56 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         }
 
         mountTarget.appendChild(overlay);
+        if (autoFocusConfirm) {
+            confirmBtn.focus();
+        }
     });
+}
+
+export interface InfoModalOptions {
+    /** 语义类型，决定色带颜色，默认 info */
+    variant?: ModalVariant;
+    /** 图标的 FontAwesome class，覆盖语义默认图标 */
+    icon?: string;
+    /** 弹窗标题 */
+    title: string;
+    /** 弹窗内容描述（支持 HTML；纯文本请先转义并转换换行） */
+    message: string;
+    /** 确认按钮文本（默认 "确定"） */
+    confirmText?: string;
+    /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
+    mountTarget?: HTMLElement;
+}
+
+/**
+ * 信息提示弹窗 — window.alert 的页内替代。
+ *
+ * 渲染进程中不要使用 window.alert：它是原生阻塞式对话框，Windows 下关闭后
+ * 窗口焦点无法可靠恢复，导致输入框失焦无法输入（issue #265）。此弹窗为页内
+ * DOM 实现，打开时聚焦"确定"按钮，关闭（按钮 / ESC / 关闭图标）后 Promise
+ * resolve，调用方可在 await 之后恢复输入框焦点。
+ */
+export function showInfoModal(options: InfoModalOptions): Promise<void> {
+    return showConfirmModal({
+        variant: options.variant ?? 'info',
+        icon: options.icon,
+        title: options.title,
+        message: options.message,
+        confirmText: options.confirmText ?? '确定',
+        cancelText: null,
+        autoFocusConfirm: true,
+        enterToConfirm: true,
+        mountTarget: options.mountTarget
+    }).then(() => undefined);
+}
+
+/**
+ * 将纯文本转换为弹窗正文 HTML：转义 HTML 特殊字符并保留换行。
+ * showConfirmModal / showInfoModal 的 message 按 HTML 渲染，
+ * 插入用户可见的纯文本（错误消息、接口返回内容等）前必须经过此转换。
+ */
+export function escapeModalText(text: string): string {
+    return escapeHtml(text).replace(/\n/g, '<br>');
 }
 
 /* ================ 关闭窗口确认弹窗 ================ */

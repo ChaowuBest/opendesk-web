@@ -444,7 +444,7 @@ class TaskArtifacts extends HTMLElement {
      * 打开 goal 创建表单（由外部"创建目标"按钮触发）。
      */
     showGoalCreationForm(): void {
-        this._goalController.showGoalCreationForm();
+        void this._goalController.showGoalCreationForm();
     }
 
     private _syncTaskPlanVisibility(): void {

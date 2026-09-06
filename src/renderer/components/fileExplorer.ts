@@ -22,7 +22,7 @@
  *   - 点击文件弹出文本预览（>50 KB / 二进制 → 拒绝提示）
  */
 
-import { showConfirmModal } from './confirmModal';
+import { showConfirmModal, showInfoModal, escapeModalText } from './confirmModal';
 import { showImageLightbox } from './imageLightbox.js';
 import { createRendererTranslator } from '../locale';
 import { marked } from 'marked';
@@ -1446,7 +1446,8 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            (HTMLElement & { getWebContentsId?: () => number }) | null;
+            | (HTMLElement & { getWebContentsId?: () => number })
+            | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -1683,7 +1684,11 @@ export class FileExplorer {
             this.softRefresh();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            window.alert(t('renderer.fileExplorer.delete.failed', { msg }));
+            await showInfoModal({
+                title: t('renderer.fileExplorer.delete.title', { type: typeLabel }),
+                message: escapeModalText(t('renderer.fileExplorer.delete.failed', { msg })),
+                confirmText: t('common.confirm')
+            });
         }
     }
 

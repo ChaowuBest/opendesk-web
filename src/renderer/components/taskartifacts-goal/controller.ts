@@ -11,6 +11,7 @@
 
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { formatLocalDateTime, getGoalEvaluationDisplayTimestamp } from '../../../common/goal/format.js';
+import { showInfoModal, escapeModalText } from '../confirmModal.js';
 import {
     getGoalEvaluationDisplayKind,
     getLatestGoalEvaluationDisplay,
@@ -304,9 +305,9 @@ export class TaskArtifactsGoalController {
     /**
      * 打开 goal 创建表单（由外部“创建目标”按钮触发）。
      */
-    showGoalCreationForm(): void {
+    async showGoalCreationForm(): Promise<void> {
         if (this._goalState && !this._isTerminalGoal(this._goalState)) {
-            window.alert(this._t('goal.create.requires_clear'));
+            await this._showGoalInfoDialog(this._t('goal.create.requires_clear'));
             this._host.switchToTaskPlan();
             return;
         }
@@ -363,6 +364,18 @@ export class TaskArtifactsGoalController {
 
     private _t(key: string, params?: Record<string, string | number>): string {
         return this._host.translate(key, params);
+    }
+
+    /**
+     * goal 面板内的信息提示统一走页内模态弹窗：window.alert 是原生阻塞式
+     * 对话框，Windows 下关闭后会使窗口失去焦点（issue #265）。
+     */
+    private async _showGoalInfoDialog(message: string): Promise<void> {
+        await showInfoModal({
+            title: this._t('goal.renderer.title'),
+            message: escapeModalText(message),
+            confirmText: this._t('common.confirm')
+        });
     }
 
     private _isTerminalGoal(goal: GoalRenderSummaryLike): boolean {
@@ -778,7 +791,7 @@ export class TaskArtifactsGoalController {
                 this._goalCreationObjectiveDraft = rawObjective;
                 const objective = rawObjective.trim();
                 if (!objective) {
-                    window.alert(this._t('goal.renderer.empty_objective'));
+                    await this._showGoalInfoDialog(this._t('goal.renderer.empty_objective'));
                     if (button) button.disabled = false;
                     return;
                 }
@@ -794,7 +807,7 @@ export class TaskArtifactsGoalController {
                             this._dispatchGoalStateChanged();
                             return;
                         }
-                        window.alert(
+                        await this._showGoalInfoDialog(
                             this._t(createResult.messageKey || 'goal.error.unknown', createResult.messageArgs || {})
                         );
                         if (button) button.disabled = false;
@@ -826,14 +839,14 @@ export class TaskArtifactsGoalController {
                     return;
                 } catch (error: any) {
                     const message = error?.message || String(error);
-                    window.alert(this._t('goal.renderer.action_failed', { message }));
+                    await this._showGoalInfoDialog(this._t('goal.renderer.action_failed', { message }));
                     if (button) button.disabled = false;
                     return;
                 }
             } else if (action === 'edit-start') {
                 const editUnavailableMessage = this._getGoalEditUnavailableMessage();
                 if (editUnavailableMessage) {
-                    window.alert(editUnavailableMessage);
+                    await this._showGoalInfoDialog(editUnavailableMessage);
                     return;
                 }
                 this._goalEditing = true;
@@ -846,14 +859,14 @@ export class TaskArtifactsGoalController {
             } else if (action === 'edit-save') {
                 const editUnavailableMessage = this._getGoalEditUnavailableMessage();
                 if (editUnavailableMessage) {
-                    window.alert(editUnavailableMessage);
+                    await this._showGoalInfoDialog(editUnavailableMessage);
                     return;
                 }
                 const currentObjective = this._goalState?.objective || '';
                 const input = shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
                 const trimmedObjective = input?.value.trim() ?? '';
                 if (!trimmedObjective) {
-                    window.alert(this._t('goal.renderer.empty_objective'));
+                    await this._showGoalInfoDialog(this._t('goal.renderer.empty_objective'));
                     return;
                 }
                 const objectiveChanged = trimmedObjective !== currentObjective.trim();
@@ -872,7 +885,9 @@ export class TaskArtifactsGoalController {
             }
 
             if (result?.ok === false) {
-                window.alert(this._t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+                await this._showGoalInfoDialog(
+                    this._t(result.messageKey || 'goal.error.unknown', result.messageArgs || {})
+                );
                 return;
             }
             if (result?.summary) {
@@ -913,7 +928,7 @@ export class TaskArtifactsGoalController {
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            window.alert(this._t('goal.renderer.action_failed', { message }));
+            await this._showGoalInfoDialog(this._t('goal.renderer.action_failed', { message }));
         } finally {
             if (button) button.disabled = false;
         }
