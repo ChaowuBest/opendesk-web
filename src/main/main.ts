@@ -34,7 +34,8 @@ import {
     getTaskDirectory,
     getTaskArtifactDirectory,
     getLogDirectory,
-    isDeveloperModeEnabled
+    isDeveloperModeEnabled,
+    isDebugLogEnabled
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
@@ -45,7 +46,14 @@ import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs, getLogFilename } from './utils/logger.js';
+import {
+    LogStream,
+    logger,
+    setDebugMode,
+    useConsoleTransport,
+    dropDeprecatedLogs,
+    getLogFilename
+} from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
@@ -925,6 +933,33 @@ const createWindow = () => {
     BrowserManager.setMainWindow(mainWindow);
 };
 
+// renderer 侧诊断日志转发到主进程日志文件（如侧边栏任务列表刷新被跳过等）。
+// 与 taskManager 无关的通用通道，故独立注册；来自 renderer 的内容不可信，
+// 折叠换行避免伪造多行日志条目。
+const registerRendererLogHandler = () => {
+    ipcMain.on('renderer:log', (_event, level, message) => {
+        const msg = String(message ?? '')
+            .replace(/[\r\n]+/g, ' ')
+            .trim();
+        if (!msg) return;
+        const tagged = `[renderer] ${msg}`;
+        switch (level) {
+            // debug 级别仅在调试模式开启时落盘（winston 级别随 setDebugMode 切换）
+            case 'debug':
+                logger.debug(tagged);
+                break;
+            case 'warn':
+                logger.warn(tagged);
+                break;
+            case 'error':
+                logger.error(tagged);
+                break;
+            default:
+                logger.info(tagged);
+        }
+    });
+};
+
 const registerModeAPIHandlers = () => {
     ipcMain.handle('mode:getSupportedModes', () => {
         try {
@@ -1612,25 +1647,6 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.on('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
         globalState.taskManagerState.removeSubscriber(subscriptionId);
     });
-    // renderer 侧诊断日志转发到主进程日志文件（如侧边栏任务列表刷新被跳过等）
-    ipcMain.on('renderer:log', (_event, level, message) => {
-        const msg = String(message ?? '').trim();
-        if (!msg) return;
-        const tagged = `[renderer] ${msg}`;
-        switch (level) {
-            case 'debug':
-                logger.info(`[debug] ${tagged}`);
-                break;
-            case 'warn':
-                logger.warn(tagged);
-                break;
-            case 'error':
-                logger.error(tagged);
-                break;
-            default:
-                logger.info(tagged);
-        }
-    });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         if (!event.senderFrame) {
             return { status: 'error', message: 'sender frame not found' };
@@ -2217,6 +2233,9 @@ const registerFSAPIHandlers = () => {
 };
 
 const registerSettingAPIHandlers = () => {
+    // 启动时按持久化配置同步调试日志级别（GUI 无 CLI 的 /debug 入口，靠设置项驱动）
+    setDebugMode(isDebugLogEnabled());
+
     const withResolvedLocale = (data: any) => ({
         ...data,
         resolved_locale: getLocale()
@@ -2306,6 +2325,12 @@ const registerSettingAPIHandlers = () => {
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
+            // 调试日志开关变更后立即生效（winston 级别随 setDebugMode 切换）
+            const debugLogChanged =
+                !!oldSettings?.debug?.debug_log !== !!Setting.getInstance().getData().debug?.debug_log;
+            if (debugLogChanged) {
+                setDebugMode(!!Setting.getInstance().getData().debug?.debug_log);
+            }
             // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
             void onNetworkConfigChanged();
             try {
@@ -3353,6 +3378,7 @@ async function startApplication(): Promise<void> {
         registerElectronAccountIntegration();
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded);
         registerNotificationAPIHandlers();
+        registerRendererLogHandler();
         registerThemeHandlers();
         registerEmbeddedOpenDeskOffice();
         AgentRegistry.initBuiltinAgents();
@@ -3597,7 +3623,8 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

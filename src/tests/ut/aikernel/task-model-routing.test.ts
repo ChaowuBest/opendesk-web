@@ -36,7 +36,7 @@ describe('task model routing', () => {
     });
 
     test('generateTaskName uses task model instead of default model', async () => {
-        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>任务名</taskname>');
         const task = new TaskState(new TaskManagerState());
         task.model = 'mock-b';
 
@@ -60,7 +60,7 @@ describe('task model routing', () => {
             ],
             models: [{ alias: 'glm53', provider_name: 'p', model_name: 'glm-5.3' }]
         });
-        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>任务名</taskname>');
         const task = new TaskState(new TaskManagerState());
         task.model = 'glm53';
 
@@ -71,7 +71,7 @@ describe('task model routing', () => {
     });
 
     test('generateTaskName forwards the task to the model request', async () => {
-        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>任务名</taskname>');
         const task = new TaskState(new TaskManagerState());
         task.task_id = 'task-name';
         task.model = 'mock-b';
@@ -108,7 +108,7 @@ describe('task model routing', () => {
 
     test('invalid task model falls back to global default model', async () => {
         configureModels(['mock-a'], 'mock-a');
-        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>任务名</taskname>');
         const manager = new TaskManagerState();
         manager.save = jest.fn();
         const task = new TaskState(manager);

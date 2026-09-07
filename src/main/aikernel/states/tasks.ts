@@ -2297,7 +2297,8 @@ export class TaskState {
             const quickModel = Setting.getInstance().getData().default_quick_model;
             const model = quickModel || this.ensureValidModelOrFallback();
             const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-                请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
+                请输出一个简洁明了的任务名称，不要超过10个字符。
+                只输出单行内容，格式为 <taskname>{生成的任务名}</taskname>，不要输出任何其他内容。
                 `;
 
             const output = await LLM.ask(prompt.trim(), model, {
@@ -2310,13 +2311,22 @@ export class TaskState {
                 return null;
             });
 
-            if (output) {
-                const lines = output.trim().split('\n');
-                if (lines.length > 0) {
-                    this.task_name = lines[lines.length - 1].trim();
-                    operation.setAttribute('task.name', this.task_name);
+            // 某些模型会把思维链和正文混在同一输出里，逐行取末行不可靠；
+            // 改为从 <taskname></taskname> 标签中提取，标签可能出现在输出任意位置
+            const match = output?.match(/<taskname>([\s\S]*?)<\/taskname>/);
+            // 标签内容可能跨行或含连续空白，折叠为单个空格，避免任务名在列表中折行显示
+            const generatedName = match?.[1]?.replace(/\s+/g, ' ').trim();
+            if (generatedName) {
+                this.task_name = generatedName;
+            } else {
+                // 解析失败时回退为用户消息前 10 个字符。
+                // 按 Unicode 码点截断，避免把汉字/emoji 的代理对截半产生乱码
+                const fallbackName = Array.from(user_message).slice(0, 10).join('').trim();
+                if (fallbackName) {
+                    this.task_name = fallbackName;
                 }
             }
+            operation.setAttribute('task.name', this.task_name);
         });
     }
 

@@ -289,7 +289,8 @@ type Model = z.infer<typeof ModelSchema>;
 const DebugModeSchema = z.object({
     developer_mode: z.boolean().default(false).describe('是否启用开发者模式'),
     experimental_feature: z.boolean().default(false).describe('是否启用试验性功能'),
-    log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志')
+    log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志'),
+    debug_log: z.boolean().default(false).describe('是否开启调试日志（logger.debug 级别写入日志文件）')
 });
 
 const TelemetryEndpointSchema = z.object({
@@ -1167,6 +1168,22 @@ function setDeveloperModeEnabled(enabled: boolean): void {
     });
 }
 
+function isDebugLogEnabled(): boolean {
+    return !!Setting.getInstance().getData().debug?.debug_log;
+}
+
+function setDebugLogEnabled(enabled: boolean): void {
+    const setting = Setting.getInstance();
+    const data = setting.getData();
+    setting.setData({
+        ...data,
+        debug: {
+            ...data.debug,
+            debug_log: enabled
+        }
+    });
+}
+
 export {
     getOpendeskDirectory,
     getDefaultOpendeskDirectory,
@@ -1183,6 +1200,8 @@ export {
     getShortcuts,
     isDeveloperModeEnabled,
     setDeveloperModeEnabled,
+    isDebugLogEnabled,
+    setDebugLogEnabled,
     isLogRawLlmRequestEnabled,
     TelemetrySchema,
     type TelemetryConfig,
