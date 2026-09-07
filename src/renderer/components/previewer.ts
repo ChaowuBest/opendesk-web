@@ -318,6 +318,9 @@ interface MermaidPipeline {
 
 let mermaidPipelinePromise: Promise<MermaidPipeline> | null = null;
 let mermaidSeq = 0;
+const MERMAID_CACHE_LIMIT = 100;
+const mermaidSvgCache = new Map<string, string>();
+const mermaidRenderInFlight = new Map<string, Promise<string>>();
 
 export function createMermaidConfig(darkTheme: boolean) {
     return {
@@ -373,6 +376,14 @@ export function mountMermaidSvg(host: HTMLElement, sanitizedSvg: string): SVGSVG
     return svg;
 }
 
+function cacheMermaidSvg(encoded: string, svg: string): void {
+    if (mermaidSvgCache.size >= MERMAID_CACHE_LIMIT) {
+        const oldestKey = mermaidSvgCache.keys().next().value;
+        if (oldestKey !== undefined) mermaidSvgCache.delete(oldestKey);
+    }
+    mermaidSvgCache.set(encoded, svg);
+}
+
 /**
  * Lazily load and initialize mermaid + DOMPurify.
  * Mermaid is large, so it is only fetched via dynamic import when the first
@@ -403,10 +414,68 @@ function loadMermaidPipeline(): Promise<MermaidPipeline> {
  * function safe to call repeatedly (e.g. during streaming).
  */
 export function renderMermaidBlocks(container: HTMLElement): void {
-    const blocks = container.querySelectorAll<HTMLElement>('.mermaid-block:not([data-mermaid-rendered])');
+    const blocks = container.querySelectorAll<HTMLElement>(
+        '.mermaid-block:not([data-mermaid-rendered]):not([data-mermaid-rendering])'
+    );
     for (const block of blocks) {
         void renderMermaidBlock(block);
     }
+}
+
+function applyMermaidRender(block: HTMLElement, source: string, sanitized: string): void {
+    delete block.dataset.mermaidRendering;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mermaid-rendered';
+    mountMermaidSvg(wrapper, sanitized);
+
+    // 源码视图（默认隐藏，切换开关后显示）
+    const sourcePre = document.createElement('pre');
+    sourcePre.className = 'mermaid-source';
+    sourcePre.textContent = source;
+    sourcePre.style.display = 'none';
+
+    // header + 预览开关（默认显示渲染结果，可切到源码）
+    const header = document.createElement('div');
+    header.className = 'mermaid-block-header';
+    const langLabel = document.createElement('span');
+    langLabel.className = 'mermaid-block-lang';
+    langLabel.textContent = 'Mermaid';
+    header.appendChild(langLabel);
+    const toggle = createToggleButton(true);
+    header.appendChild(toggle);
+    const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+    checkbox.addEventListener('change', () => {
+        const showPreview = checkbox.checked;
+        sourcePre.style.display = showPreview ? 'none' : '';
+        wrapper.style.display = showPreview ? '' : 'none';
+        toggle.title = showPreview ? '切换到源码' : '切换到预览';
+    });
+
+    block.replaceChildren(header, sourcePre, wrapper);
+    block.dataset.mermaidRendered = 'true';
+}
+
+function getOrCreateMermaidSvg(encoded: string, source: string): Promise<string> {
+    const existing = mermaidRenderInFlight.get(encoded);
+    if (existing) return existing;
+
+    const pending = (async () => {
+        const pipeline = await loadMermaidPipeline();
+        mermaidSeq += 1;
+        const id = `od-mermaid-${mermaidSeq}`;
+        const { svg } = await pipeline.render(id, source);
+        const sanitized = sanitizeMermaidStyleContent(pipeline.sanitize(svg));
+        cacheMermaidSvg(encoded, sanitized);
+        return sanitized;
+    })();
+    mermaidRenderInFlight.set(encoded, pending);
+    const clearPending = () => {
+        if (mermaidRenderInFlight.get(encoded) === pending) {
+            mermaidRenderInFlight.delete(encoded);
+        }
+    };
+    void pending.then(clearPending, clearPending);
+    return pending;
 }
 
 async function renderMermaidBlock(block: HTMLElement): Promise<void> {
@@ -426,44 +495,20 @@ async function renderMermaidBlock(block: HTMLElement): Promise<void> {
         block.dataset.mermaidRendered = 'error';
         return;
     }
+    const cached = mermaidSvgCache.get(encoded);
+    if (cached !== undefined) {
+        applyMermaidRender(block, source, cached);
+        return;
+    }
+
+    block.dataset.mermaidRendering = 'true';
     try {
-        const pipeline = await loadMermaidPipeline();
-        mermaidSeq += 1;
-        const id = `od-mermaid-${mermaidSeq}`;
-        const { svg } = await pipeline.render(id, source);
-        const sanitized = sanitizeMermaidStyleContent(pipeline.sanitize(svg));
-        const wrapper = document.createElement('div');
-        wrapper.className = 'mermaid-rendered';
-        mountMermaidSvg(wrapper, sanitized);
-
-        // 源码视图（默认隐藏，切换开关后显示）
-        const sourcePre = document.createElement('pre');
-        sourcePre.className = 'mermaid-source';
-        sourcePre.textContent = source;
-        sourcePre.style.display = 'none';
-
-        // header + 预览开关（默认显示渲染结果，可切到源码）
-        const header = document.createElement('div');
-        header.className = 'mermaid-block-header';
-        const langLabel = document.createElement('span');
-        langLabel.className = 'mermaid-block-lang';
-        langLabel.textContent = 'Mermaid';
-        header.appendChild(langLabel);
-        const toggle = createToggleButton(true);
-        header.appendChild(toggle);
-        const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
-        checkbox.addEventListener('change', () => {
-            const showPreview = checkbox.checked;
-            sourcePre.style.display = showPreview ? 'none' : '';
-            wrapper.style.display = showPreview ? '' : 'none';
-            toggle.title = showPreview ? '切换到源码' : '切换到预览';
-        });
-
-        block.replaceChildren(header, sourcePre, wrapper);
-        block.dataset.mermaidRendered = 'true';
+        const sanitized = await getOrCreateMermaidSvg(encoded, source);
+        applyMermaidRender(block, source, sanitized);
     } catch (err) {
         // 渲染失败：暴露真实错误便于诊断；回退显示源码避免出现空白占位。
         // 不标记 data-mermaid-rendered，流式阶段下一帧会重新尝试渲染。
+        delete block.dataset.mermaidRendering;
         console.error('[mermaid] render failed:', err);
         showMermaidSourceFallback(block, source);
     }
