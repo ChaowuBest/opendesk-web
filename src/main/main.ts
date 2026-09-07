@@ -1612,6 +1612,25 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.on('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
         globalState.taskManagerState.removeSubscriber(subscriptionId);
     });
+    // renderer 侧诊断日志转发到主进程日志文件（如侧边栏任务列表刷新被跳过等）
+    ipcMain.on('renderer:log', (_event, level, message) => {
+        const msg = String(message ?? '').trim();
+        if (!msg) return;
+        const tagged = `[renderer] ${msg}`;
+        switch (level) {
+            case 'debug':
+                logger.info(`[debug] ${tagged}`);
+                break;
+            case 'warn':
+                logger.warn(tagged);
+                break;
+            case 'error':
+                logger.error(tagged);
+                break;
+            default:
+                logger.info(tagged);
+        }
+    });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         if (!event.senderFrame) {
             return { status: 'error', message: 'sender frame not found' };

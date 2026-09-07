@@ -332,6 +332,7 @@ class SideBar extends HTMLElement {
 
     setUpEventListeners() {
         let pendingRafId;
+        let coalescedTaskListUpdates = 0;
         window.taskManagerAPI
             .subscribeTaskListUpdate((taskList) => {
                 this.taskList = taskList;
@@ -340,11 +341,38 @@ class SideBar extends HTMLElement {
                     this._needsTaskListRefresh = true;
                     return;
                 }
+                // 防抖调度列表刷新。requestAnimationFrame 在页面被节流/遮挡/冻结时
+                // 回调可能被丢弃，若仅依赖它，pendingRafId 会永久占用，导致此后所有
+                // 任务列表更新都被跳过、列表不再刷新（用户创建新任务后任务栏不出现的根因）。
+                // 因此加超时兜底：RAF 回调未在限期内执行时，由 setTimeout 强制刷新并解除占用。
                 if (pendingRafId === undefined) {
-                    pendingRafId = requestAnimationFrame(() => {
+                    const rafId = requestAnimationFrame(() => {
                         pendingRafId = undefined;
+                        if (coalescedTaskListUpdates > 0) {
+                            window.taskManagerAPI?.log?.(
+                                'debug',
+                                `[sidebar] task list refresh: ${coalescedTaskListUpdates} update(s) coalesced while RAF pending`
+                            );
+                            coalescedTaskListUpdates = 0;
+                        }
                         this.reloadTaskList();
                     });
+                    pendingRafId = rafId;
+                    setTimeout(() => {
+                        if (pendingRafId === rafId) {
+                            cancelAnimationFrame(rafId);
+                            pendingRafId = undefined;
+                            // 到达此处说明 RAF 回调在 400ms 内未执行（页面被节流/遮挡/冻结），
+                            // 兜底强制刷新。此日志用于诊断"任务列表停止刷新"类问题。
+                            window.taskManagerAPI?.log?.(
+                                'warn',
+                                '[sidebar] task list refresh: RAF callback was dropped (page throttled/occluded/frozen), forced refresh via setTimeout fallback'
+                            );
+                            this.reloadTaskList();
+                        }
+                    }, 400);
+                } else {
+                    coalescedTaskListUpdates += 1;
                 }
                 document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
             })
