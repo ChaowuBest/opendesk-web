@@ -1,7 +1,8 @@
 @import 'tailwindcss';
 @import 'katex/dist/katex.min.css';
 @import '@fortawesome/fontawesome-free/css/all.min.css';
-@import 'lxgw-wenkai-screen-webfont/lxgwwenkaiscreen.css';
+/* 内嵌字体（HarmonyOS Sans / Maple Mono / LXGW WenKai）与字体变量统一在 fonts.css */
+@import './fonts.css';
 
 @source "../../**/*.{html,js,ts,jsx,tsx}";
 
@@ -14,15 +15,8 @@
         monospace;
 }
 
-/* 显式在 :root 上定义 CSS 变量，确保不被 Vite CSS code splitting 拆分到其他 chunk */
+/* 显式在 :root 上定义 CSS 变量，确保不被 Vite CSS code splitting 拆分到其他 chunk（字体变量见 fonts.css） */
 :root {
-    --font-sans:
-        'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-        'Helvetica Neue', Arial, sans-serif;
-    --font-mono:
-        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
-        monospace;
-
     /* ===== 统一字号体系 ===== */
     /* 文本字号阶梯 */
     --fs-2xs: 9px; /* 微文本：徽章、状态指示、极小元数据 */
@@ -63,52 +57,7 @@
     font-size: var(--fs-xl);
 }
 
-/* font_preset: lxgwwenkai */
-html[data-font-preset='lxgwwenkai'] {
-    --font-sans:
-        'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-        Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-html[data-font-preset='lxgwwenkai'],
-html[data-font-preset='lxgwwenkai'] body {
-    font-family:
-        'LXGW WenKai Screen',
-        'HarmonyOS Sans',
-        'PingFang SC',
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        'Helvetica Neue',
-        Arial,
-        sans-serif;
-}
-/* 排除 FontAwesome 图标和代码字体 */
-html[data-font-preset='lxgwwenkai']
-    body
-    *:not(.fa):not(.fas):not(.far):not(.fab):not(.fa-brands):not(.fa-solid):not(.fa-regular):not(i):not(code):not(
-        pre
-    ):not(.monospace):not(.font-mono):not(.diff-body):not(.code-block-body):not(.code-table):not(
-        .terminal-tool-output
-    ):not(.code-ln):not(.code-line):not([class*='hljs']):not(
-        :has(.font-mono, .monospace, code, pre, .diff-body, .code-block-body, .hljs)
-    ) {
-    font-family:
-        'LXGW WenKai Screen',
-        'PingFang SC',
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        'Helvetica Neue',
-        Arial,
-        sans-serif !important;
-}
-html[data-font-preset='lxgwwenkai'] .markdown-body {
-    font-family: 'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', sans-serif;
-}
+/* 字体预设覆盖规则（lxgwwenkai 等）统一在 fonts.css 中定义，独立窗口页面同样生效 */
 
 /* 等宽字体元素继承父元素字体 - 确保 diff 和代码块使用等宽字体 */
 .font-mono,
@@ -122,44 +71,7 @@ code,
     font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
 }
 
-/* HarmonyOS Sans SC — bundled sans-serif font for Chinese (shared across all renderer pages) */
-@font-face {
-    font-family: 'HarmonyOS Sans';
-    src: url('/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2') format('woff2');
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-/* Maple Mono — bundled monospace font (shared across all renderer pages) */
-@font-face {
-    font-family: 'Maple Mono';
-    src: url('/fonts/maplemono/MapleMono-Regular.ttf.woff2') format('woff2');
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: 'Maple Mono';
-    src: url('/fonts/maplemono/MapleMono-Italic.ttf.woff2') format('woff2');
-    font-weight: 400;
-    font-style: italic;
-    font-display: swap;
-}
-@font-face {
-    font-family: 'Maple Mono';
-    src: url('/fonts/maplemono/MapleMono-Bold.ttf.woff2') format('woff2');
-    font-weight: 700;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: 'Maple Mono';
-    src: url('/fonts/maplemono/MapleMono-BoldItalic.ttf.woff2') format('woff2');
-    font-weight: 700;
-    font-style: italic;
-    font-display: swap;
-}
+/* 内嵌字体 @font-face 与 --font-sans / --font-mono 变量统一在 fonts.css 中定义（见文件顶部 @import） */
 
 button {
     cursor: pointer;

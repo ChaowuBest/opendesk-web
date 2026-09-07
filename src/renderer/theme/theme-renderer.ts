@@ -25,6 +25,8 @@ declare global {
             getResolvedTheme: () => Promise<{ status: string; data?: ResolvedTheme; message?: string }>;
             setPreference: (pref: string) => Promise<{ status: string; data?: ResolvedTheme; message?: string }>;
             onThemeChanged: (callback: (resolved: ResolvedTheme) => void) => () => void;
+            getFontPreset: () => Promise<{ status: string; data?: string; message?: string }>;
+            onFontPresetChanged: (callback: (preset: string) => void) => () => void;
         };
         broadcastThemeSettings?: (resolved: ResolvedTheme) => void;
     }

@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { normalizeFontPreset } from '../theme/font-preset.ts';
 
 const t = createRendererTranslator();
 
@@ -39,8 +40,9 @@ const WIDGET_CSS = `
     display: block;
     width: 100%;
     height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue',
-        'Microsoft YaHei', sans-serif;
+    /* 与主窗口一致的默认字体（fonts.css 定义于 :root，CSS 变量可穿透 shadow DOM 继承） */
+    font-family: var(--font-sans, 'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont,
+        'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
     color-scheme: light dark;
     -webkit-font-smoothing: antialiased;
 
@@ -63,7 +65,8 @@ const WIDGET_CSS = `
     --amber-soft: rgba(226, 162, 59, 0.15);
     --blue: #7aa2e8;
     --purple: #b98ae0;
-    --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    --mono: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular,
+        Menlo, Consolas, monospace);
 }
 
 :host([data-theme='light']) {
@@ -898,6 +901,7 @@ export class TaskStatusWidget extends HTMLElement {
         this._summary = { count: 0, total: 0, tasks: [], mode: 'pill' };
         this._unsubscribeSummary = null;
         this._unsubscribeTheme = null;
+        this._unsubscribeFontPreset = null;
         this._unsubscribeTodo = null;
         this._tickTimer = null;
         this._theme = systemTheme();
@@ -916,6 +920,7 @@ export class TaskStatusWidget extends HTMLElement {
 
     connectedCallback() {
         this._bindTheme();
+        this._bindFontPreset();
         this._bindData();
         this._bindTodoUpdates();
         this._startTicker();
@@ -931,6 +936,10 @@ export class TaskStatusWidget extends HTMLElement {
         if (this._unsubscribeTheme) {
             this._unsubscribeTheme();
             this._unsubscribeTheme = null;
+        }
+        if (this._unsubscribeFontPreset) {
+            this._unsubscribeFontPreset();
+            this._unsubscribeFontPreset = null;
         }
         if (this._unsubscribeTodo) {
             this._unsubscribeTodo();
@@ -956,6 +965,24 @@ export class TaskStatusWidget extends HTMLElement {
 
         this._unsubscribeTheme =
             window.themeAPI?.onThemeChanged?.((res) => apply(extractEffectiveTheme(res) ?? systemTheme())) ?? null;
+    }
+
+    /**
+     * 跟随系统设置中的字体预设（gui_config.font_preset）：应用到浮窗页面的
+     * documentElement，fonts.css 中对应预设的 CSS 变量即可穿透 shadow DOM 生效；
+     * 设置变更由主进程经 theme:fontPresetChanged 推送。
+     */
+    _bindFontPreset() {
+        const apply = (raw) => {
+            document.documentElement.setAttribute('data-font-preset', normalizeFontPreset(raw));
+        };
+
+        window.themeAPI
+            ?.getFontPreset?.()
+            .then((res) => apply(res?.data))
+            .catch(() => {});
+
+        this._unsubscribeFontPreset = window.themeAPI?.onFontPresetChanged?.((preset) => apply(preset)) ?? null;
     }
 
     _bindData() {

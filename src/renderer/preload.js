@@ -518,6 +518,14 @@ function exposeThemeAPI() {
             const handler = (_event, resolved) => callback(resolved);
             ipcRenderer.on('theme:changed', handler);
             return () => ipcRenderer.removeListener('theme:changed', handler);
+        },
+        getFontPreset: async () => {
+            return ipcRenderer.invoke('theme:getFontPreset');
+        },
+        onFontPresetChanged: (callback) => {
+            const handler = (_event, preset) => callback(preset);
+            ipcRenderer.on('theme:fontPresetChanged', handler);
+            return () => ipcRenderer.removeListener('theme:fontPresetChanged', handler);
         }
     });
 }

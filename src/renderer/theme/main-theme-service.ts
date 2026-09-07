@@ -24,6 +24,7 @@ import {
     getCachedOhosSystemDarkMode
 } from '../../platforms/bridges/harmonyos/system-theme.js';
 import { ThemeManager, type ResolvedTheme, type ThemePreference } from './theme-manager.js';
+import { FONT_PRESET_CHANNEL, normalizeFontPreset } from './font-preset.js';
 import { initSystemTheme, detectPlatform, type SystemThemeModuleOptions } from './system-theme.js';
 
 const THEME_CHANNEL = 'theme:changed';
@@ -48,6 +49,11 @@ function persistPreference(preference: ThemePreference): void {
         ...data,
         gui_config: { ...(data.gui_config || {}), theme_preference: preference }
     });
+}
+
+/** 读取设置中的字体预设（未设置或非法值回退 default）。 */
+function readFontPreset(): string {
+    return normalizeFontPreset(Setting.getInstance().getData().gui_config?.font_preset);
 }
 
 /**
@@ -84,6 +90,7 @@ function buildOhosNativeListenerRegistrar(): SystemThemeModuleOptions['registerO
 
 export class MainThemeService {
     private manager: ThemeManager | null = null;
+    private fontPresetHookInstalled = false;
 
     init(): void {
         if (this.manager) {
@@ -113,7 +120,35 @@ export class MainThemeService {
         });
 
         this.broadcast(this.manager.getResolvedTheme());
+        this.installFontPresetHook();
         logger.info(`[theme] initialized effective=${this.manager.getResolvedTheme().effective}`);
+    }
+
+    /**
+     * 设置面板修改 gui_config.font_preset（保存设置触发 setData）后，向所有窗口
+     * （含任务浮窗等独立 BrowserWindow）广播最新预设，让未挂接设置面板的页面跟随。
+     */
+    private installFontPresetHook(): void {
+        if (this.fontPresetHookInstalled) {
+            return;
+        }
+        this.fontPresetHookInstalled = true;
+        Setting.afterSetDataCallbacks.push(() => {
+            this.broadcastFontPreset(readFontPreset());
+        });
+    }
+
+    getFontPreset(): string {
+        this.init();
+        return readFontPreset();
+    }
+
+    private broadcastFontPreset(preset: string): void {
+        for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) {
+                safeSendToWebContents(win.webContents, FONT_PRESET_CHANNEL, preset);
+            }
+        }
     }
 
     getResolvedTheme(): ResolvedTheme {
@@ -177,6 +212,14 @@ export function registerThemeHandlers(): void {
         try {
             service.init();
             return { status: 'ok', data: service.getResolvedTheme() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('theme:getFontPreset', () => {
+        try {
+            return { status: 'ok', data: service.getFontPreset() };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
