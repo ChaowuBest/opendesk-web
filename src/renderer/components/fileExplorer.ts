@@ -24,8 +24,9 @@
 
 import { showConfirmModal, showInfoModal, escapeModalText } from './confirmModal';
 import { showImageLightbox } from './imageLightbox.js';
+import { renderMermaidBlocks } from './previewer.js';
 import { createRendererTranslator } from '../locale';
-import { marked } from 'marked';
+import { Marked, type Tokens } from 'marked';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import 'ace-builds/css/ace.css';
 import aceCss from 'ace-builds/css/ace.css?inline';
@@ -42,7 +43,23 @@ import { OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 const t = createRendererTranslator();
 
-marked.use(cjkAutolinkFix);
+const filePreviewMarkdown = new Marked();
+filePreviewMarkdown.use(cjkAutolinkFix);
+filePreviewMarkdown.use({
+    renderer: {
+        code({ text, lang }: Tokens.Code): string | false {
+            if (lang?.toLowerCase() !== 'mermaid') return false;
+            const bytes = new TextEncoder().encode(text);
+            let binary = '';
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            return `<div class="mermaid-block" data-mermaid-code="${btoa(binary)}"></div>`;
+        }
+    }
+});
+
+export function renderFilePreviewMarkdown(source: string): string {
+    return filePreviewMarkdown.parse(source, { async: false }) as string;
+}
 
 // ============================================================================
 // Types
@@ -1073,6 +1090,87 @@ const MARKDOWN_PREVIEW_CSS = `
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body img { max-width: 100%; border-radius: 4px; }
     .markdown-body strong { font-weight: 600; }
+    .markdown-body .mermaid-block {
+        margin: 0.6em 0;
+        border: 1px solid var(--od-md-border, #e5e7eb);
+        border-radius: 8px;
+        width: 100%;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+    .markdown-body .mermaid-block:not([data-mermaid-rendered]) {
+        min-height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+    }
+    .markdown-body .mermaid-block-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0.35em 0.75em;
+        background: var(--od-md-pre-bg, #f8fafc);
+        border-bottom: 1px solid var(--od-md-border, #e5e7eb);
+    }
+    .markdown-body .mermaid-block-lang {
+        font-size: var(--fs-sm);
+        font-weight: 600;
+        color: var(--od-md-blockquote-color, #6b7280);
+        user-select: none;
+    }
+    .markdown-body .code-preview-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        user-select: none;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+    .markdown-body .code-preview-toggle-input { display: none; }
+    .markdown-body .code-preview-toggle-slider {
+        position: relative;
+        width: 28px;
+        height: 16px;
+        background: #cbd5e1;
+        border-radius: 8px;
+    }
+    .markdown-body .code-preview-toggle-slider::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 12px;
+        height: 12px;
+        background: #fff;
+        border-radius: 50%;
+    }
+    .markdown-body .code-preview-toggle-input:checked + .code-preview-toggle-slider { background: #3b82f6; }
+    .markdown-body .code-preview-toggle-input:checked + .code-preview-toggle-slider::after {
+        transform: translateX(12px);
+    }
+    .markdown-body .code-preview-toggle-label {
+        font-size: var(--fs-xs);
+        font-weight: 500;
+        color: var(--od-md-blockquote-color, #6b7280);
+        line-height: 1;
+    }
+    .markdown-body .mermaid-rendered {
+        width: 100%;
+        overflow-x: auto;
+        padding: 12px;
+        box-sizing: border-box;
+    }
+    .markdown-body .mermaid-source,
+    .markdown-body .mermaid-fallback {
+        margin: 0;
+        padding: 12px;
+        width: 100%;
+        white-space: pre-wrap;
+        word-break: break-word;
+        box-sizing: border-box;
+    }
 `;
 
 // ============================================================================
@@ -1958,8 +2056,9 @@ export class FileExplorer {
         shadow.appendChild(style);
         const container = document.createElement('div');
         container.className = 'markdown-body';
-        container.innerHTML = marked.parse(this._previewState.data.content, { async: false }) as string;
+        container.innerHTML = renderFilePreviewMarkdown(this._previewState.data.content);
         shadow.appendChild(container);
+        renderMermaidBlocks(container);
     }
 
     // ----- Tree HTML -----

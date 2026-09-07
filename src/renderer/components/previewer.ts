@@ -319,6 +319,60 @@ interface MermaidPipeline {
 let mermaidPipelinePromise: Promise<MermaidPipeline> | null = null;
 let mermaidSeq = 0;
 
+export function createMermaidConfig(darkTheme: boolean) {
+    return {
+        startOnLoad: false,
+        securityLevel: 'strict' as const,
+        htmlLabels: false,
+        flowchart: {
+            htmlLabels: false
+        },
+        theme: darkTheme ? ('dark' as const) : ('default' as const)
+    };
+}
+
+/**
+ * DOMPurify sanitizes the SVG nodes and attributes, but CSS inside an allowed
+ * SVG <style> element still needs a URL policy of its own.
+ */
+export function sanitizeMermaidStyleContent(svg: string): string {
+    return svg.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_match, open, css, close) => {
+        const withoutImports = String(css).replace(/@import\s+[^;]*(?:;|$)/gi, '');
+        const safeCss = withoutImports.replace(
+            /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+            (urlMatch: string, _quote: string, value: string) => (value.trim().startsWith('#') ? urlMatch : 'none')
+        );
+        return `${open}${safeCss}${close}`;
+    });
+}
+
+export function normalizeMermaidSvgSize(svg: SVGSVGElement): void {
+    const viewBox = svg
+        .getAttribute('viewBox')
+        ?.trim()
+        .split(/[\s,]+/)
+        .map(Number);
+    const naturalWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : null;
+
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.display = 'block';
+    svg.style.width = naturalWidth === null ? '100%' : `${naturalWidth}px`;
+    svg.style.maxWidth = '100%';
+    svg.style.height = 'auto';
+    svg.style.margin = '0 auto';
+}
+
+/** Mount each diagram in its own style boundary so TaskView sanitization cannot
+ * remove Mermaid's generated theme rules or let them leak into the page. */
+export function mountMermaidSvg(host: HTMLElement, sanitizedSvg: string): SVGSVGElement | null {
+    const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+    shadowRoot.innerHTML = sanitizedSvg;
+    const svg = shadowRoot.querySelector<SVGSVGElement>('svg');
+    if (svg) normalizeMermaidSvgSize(svg);
+    return svg;
+}
+
 /**
  * Lazily load and initialize mermaid + DOMPurify.
  * Mermaid is large, so it is only fetched via dynamic import when the first
@@ -329,12 +383,7 @@ function loadMermaidPipeline(): Promise<MermaidPipeline> {
         mermaidPipelinePromise = (async () => {
             const [mermaidMod, dompurifyMod] = await Promise.all([import('mermaid'), import('dompurify')]);
             const mermaid = mermaidMod.default;
-            mermaid.initialize({
-                startOnLoad: false,
-                securityLevel: 'strict',
-                htmlLabels: false,
-                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default'
-            });
+            mermaid.initialize(createMermaidConfig(document.documentElement.getAttribute('data-theme') === 'dark'));
             return {
                 render: (id: string, code: string) => mermaid.render(id, code),
                 sanitize: (svg: string) =>
@@ -382,15 +431,10 @@ async function renderMermaidBlock(block: HTMLElement): Promise<void> {
         mermaidSeq += 1;
         const id = `od-mermaid-${mermaidSeq}`;
         const { svg } = await pipeline.render(id, source);
-        const sanitized = pipeline.sanitize(svg);
+        const sanitized = sanitizeMermaidStyleContent(pipeline.sanitize(svg));
         const wrapper = document.createElement('div');
         wrapper.className = 'mermaid-rendered';
-        wrapper.innerHTML = sanitized;
-        const svgEl = wrapper.querySelector('svg');
-        if (svgEl) {
-            svgEl.style.maxWidth = '100%';
-            svgEl.style.height = 'auto';
-        }
+        mountMermaidSvg(wrapper, sanitized);
 
         // 源码视图（默认隐藏，切换开关后显示）
         const sourcePre = document.createElement('pre');
