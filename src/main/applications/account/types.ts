@@ -9,6 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import type {
+    PluginAccountKind,
+    PluginAccountSession,
+    PluginAccountUser
+} from '../../../../packages/plugin-sdk/src/index.js';
+
 /**
  * 账号接入相关类型定义。
  *
@@ -18,71 +24,19 @@
  */
 
 /** 账号来源类型。 */
-export type AccountKind = 'personal' | 'enterprise';
+export type AccountKind = PluginAccountKind;
 
 /** 登录模式，由向导写入配置。 */
 export type AccountMode = 'personal' | 'enterprise' | 'nologin';
 
 /** 登录用户信息（对齐后端 UserOut 的常用字段）。 */
-export interface AccountUser {
-    id: string;
-    username: string;
-    email?: string;
-    display_name?: string;
-    avatar_url?: string;
-}
+export type AccountUser = PluginAccountUser;
 
 /** 当前账号会话。 */
-export interface AccountSession {
-    kind: AccountKind;
-    baseUrl: string;
-    accessToken: string;
-    tokenType: string;
-    user: AccountUser;
-}
-
-/** 持久化到磁盘的会话文件结构。 */
-export interface AccountSessionFile {
-    version: 1;
-    kind: AccountKind;
-    baseUrl: string;
-    accessToken: string;
-    tokenType: string;
-    user: AccountUser;
-}
+export type AccountSession = PluginAccountSession;
 
 export interface AccountConfig {
     mode: AccountMode;
     default_base_url: string;
     enterprise_base_url: string;
-}
-
-export interface AccountSessionStore {
-    load(): AccountSessionFile | null;
-    save(session: AccountSessionFile): void;
-    clear(): void;
-}
-
-export interface AccountAuthClient {
-    login(credentials: { username: string; password: string }): Promise<{
-        access_token: string;
-        token_type: string;
-    }>;
-    getMe(): Promise<AccountUserResponse>;
-    updateMe(profile: { display_name: string }): Promise<AccountUserResponse>;
-    refresh(): Promise<{ access_token: string; token_type: string }>;
-    logout(): Promise<unknown>;
-}
-
-export interface AccountClient {
-    auth: AccountAuthClient;
-    setToken(token: string): void;
-}
-
-export interface AccountUserResponse {
-    id: string;
-    username: string;
-    email?: string | null;
-    display_name?: string | null;
-    avatar_url?: string | null;
 }

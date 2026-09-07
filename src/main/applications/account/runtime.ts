@@ -13,18 +13,14 @@ import { AccountConfigController } from './config.js';
 import { AccountService } from './service.js';
 
 export class AccountRuntime {
-    private initialized = false;
-
     constructor(
         private readonly service: AccountService,
         readonly config: AccountConfigController
     ) {}
 
+    /** 返回共享的账号服务；后端尚未注册时 init() 返回 false，后续调用会继续重试。 */
     getService(): AccountService {
-        if (!this.initialized) {
-            this.service.init();
-            this.initialized = true;
-        }
+        this.service.init();
         return this.service;
     }
 }

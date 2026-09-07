@@ -9,14 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AuthenticationError, OpenDeskClient } from '@bitclub.ai/opendesk-server-sdk';
-import { getPlatform } from '../../../platforms/base.js';
 import { Setting } from '../../utils/setting.js';
 import { AccountConfigController, type AccountConfigRepository } from './config.js';
 import { AccountRuntime } from './runtime.js';
 import { AccountService } from './service.js';
-import { AccountTokenStore } from './token-store.js';
-import type { AccountClient, AccountConfig } from './types.js';
+import type { AccountConfig } from './types.js';
+import { accountBackendRegistry } from './backend-registry.js';
 
 class SettingAccountConfigRepository implements AccountConfigRepository {
     get(): AccountConfig {
@@ -39,14 +37,8 @@ export function getAccountRuntime(): AccountRuntime {
     }
     const config = new AccountConfigController(new SettingAccountConfigRepository());
     const service = new AccountService({
-        store: new AccountTokenStore(),
         getBaseUrl: (kind) => config.getBaseUrl(kind),
-        clientFactory: (baseUrl): AccountClient =>
-            new OpenDeskClient({
-                baseUrl,
-                fetch: (input, init) => getPlatform().fetch(input as string | URL, init)
-            }),
-        isAuthenticationError: (error) => error instanceof AuthenticationError
+        getBackend: (kind) => (kind ? accountBackendRegistry.resolve(kind) : accountBackendRegistry.getDefault())
     });
     runtime = new AccountRuntime(service, config);
     return runtime;
