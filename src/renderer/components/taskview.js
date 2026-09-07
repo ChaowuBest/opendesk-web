@@ -38,6 +38,10 @@ const SIDEBAR_TOGGLE_SVG =
     '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6.5 3v10"/></svg>';
 const EXPORT_DOWNLOAD_SVG =
     '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v6.5M8 9.5 5.5 7M8 9.5 10.5 7"/><path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>';
+const EXPORT_WEBPAGE_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+const EXPORT_JSON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M10 11c-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1 .6 0 1 .4 1 1v1c0 .6.4 1 1 1"/><path d="M14 11c.6 0 1 .4 1 1v1c0 .6.4 1 1 1-.6 0-1 .4-1 1v1c0 .6-.4 1-1 1"/></svg>';
 
 const COPY_ICON_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
@@ -3870,10 +3874,110 @@ class TaskView extends HTMLElement {
         return header;
     }
 
+    /**
+     * 弹出导出下拉菜单（锚定在工具栏导出按钮下方）。
+     * 再次点击导出按钮时关闭菜单（mousedown 处理器忽略按钮自身区域的点击）。
+     */
+    _openExportMenu(anchorEl) {
+        if (!anchorEl) return;
+        if (document.getElementById('od-taskview-export-menu') || this._exportMenuDismissHandler) {
+            this._dismissExportMenu();
+            return;
+        }
+
+        const dark =
+            this.dataset.theme === 'dark' ||
+            document.documentElement.dataset.theme === 'dark' ||
+            document.body.dataset.theme === 'dark';
+        const menu = document.createElement('div');
+        menu.id = 'od-taskview-export-menu';
+        menu.className = 'ctx-menu' + (dark ? ' ctx-menu-dark' : '');
+        menu.style.minWidth = '150px';
+
+        const items = [
+            { action: 'export-html', icon: EXPORT_WEBPAGE_SVG, label: taskViewT('renderer.taskview.export.menu.html') },
+            { action: 'export-json', icon: EXPORT_JSON_SVG, label: taskViewT('renderer.taskview.export.menu.json') }
+        ];
+        menu.innerHTML = items
+            .map(
+                (item) =>
+                    `<button class="ctx-item" data-action="${item.action}">` +
+                    `<span class="ctx-icon-sm">${item.icon}</span>` +
+                    `<span class="ctx-label">${item.label}</span></button>`
+            )
+            .join('');
+
+        const rect = anchorEl.getBoundingClientRect();
+        // 菜单与按钮右缘对齐，锚定在按钮下方；待真实尺寸渲染后在 rAF 中修正越界
+        menu.style.left = `${Math.max(8, rect.right - 150)}px`;
+        menu.style.top = `${rect.bottom + 6}px`;
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const margin = 8;
+            const menuRect = menu.getBoundingClientRect();
+            const left = Math.max(
+                margin,
+                Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - margin)
+            );
+            let top = rect.bottom + 6;
+            if (top + menuRect.height > window.innerHeight - margin) {
+                top = Math.max(margin, rect.top - menuRect.height - 6);
+            }
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+        });
+
+        menu.querySelector('[data-action="export-html"]').addEventListener('click', () => {
+            this._dismissExportMenu();
+            void this.exportTask();
+        });
+        menu.querySelector('[data-action="export-json"]').addEventListener('click', () => {
+            this._dismissExportMenu();
+            void this.exportTaskJson();
+        });
+
+        this._exportMenuDismissHandler = (ev) => {
+            if (!menu.contains(ev.target) && !anchorEl.contains(ev.target)) {
+                this._dismissExportMenu();
+            }
+        };
+        document.addEventListener('mousedown', this._exportMenuDismissHandler);
+    }
+
+    _dismissExportMenu() {
+        document.getElementById('od-taskview-export-menu')?.remove();
+        if (this._exportMenuDismissHandler) {
+            document.removeEventListener('mousedown', this._exportMenuDismissHandler);
+            this._exportMenuDismissHandler = null;
+        }
+    }
+
+    async exportTaskJson() {
+        try {
+            // .task.json 的默认导出名与任务存储文件名一致，便于后续 /import task 导回
+            const saveResult = await window.fsAPI.saveFile({
+                title: taskViewT('renderer.taskview.export.jsonTitle'),
+                defaultPath: `${this.task_id}.json`,
+                filters: [
+                    { name: 'JSON Files', extensions: ['json'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ]
+            });
+            if (saveResult.canceled || !saveResult.filePath) {
+                return; // 用户取消了操作
+            }
+            await window.taskManagerAPI.exportTaskJson(this.task_id, saveResult.filePath);
+        } catch (error) {
+            console.error('Failed to export task json:', error);
+            alert(taskViewT('renderer.taskview.export.failed', { message: error.message }));
+        }
+    }
+
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
-            const defaultFileName = `conversation-${timestamp}.html`;
+            const defaultFileName = `task-${this.task_id}-${timestamp}.html`;
 
             // 1. 显示保存文件对话框（Electron 会自动处理文件覆盖确认）
             const saveResult = await window.fsAPI.saveFile({
@@ -4163,8 +4267,8 @@ class TaskView extends HTMLElement {
                         iconSvg: EXPORT_DOWNLOAD_SVG,
                         label: taskViewT('renderer.taskview.toolbar.export'),
                         expandLabel: true,
-                        action: () => {
-                            this.exportTask();
+                        action: (event) => {
+                            this._openExportMenu(event?.currentTarget);
                         }
                     },
                     {
@@ -4460,6 +4564,7 @@ class TaskView extends HTMLElement {
         this._dismissFilePillContextMenu();
         this.removeEventListener('contextmenu', this._handleLinkContextMenu);
         this._dismissLinkContextMenu();
+        this._dismissExportMenu();
         this.removeEventListener('click', this._handleReasoningToggleClick);
         this._disconnectAgentInputRequests?.();
         this._disconnectAgentInputRequests = null;

@@ -12,6 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../aikernel/states/tasks';
+import { atomicWriteFile } from './temp.js';
 import type {
     UserMessage,
     AssistantMessage,
@@ -154,6 +155,24 @@ export async function exportTaskToHtml(task: TaskState, filePath: string): Promi
         fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(filePath, html, 'utf-8');
+}
+
+/**
+ * 将任务导出为 .task.json 文件。
+ * 序列化走内存态而非直接复制磁盘文件：任务可能存在尚未落盘的脏数据
+ * （persistLater 有 2s 节流），内存序列化保证导出内容始终完整且与
+ * _writeAll 落盘格式（4 空格缩进）一致。
+ */
+export async function exportTaskJsonToFile(task: TaskState, filePath: string): Promise<void> {
+    if (!filePath || typeof filePath !== 'string') {
+        throw new Error('invalid export file path');
+    }
+    task.ensureLoaded();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    await atomicWriteFile(filePath, JSON.stringify(task.toJSON(), null, 4));
 }
 
 export async function generateTaskHtml(task: TaskState): Promise<string> {

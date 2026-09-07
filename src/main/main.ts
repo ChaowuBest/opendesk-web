@@ -69,7 +69,7 @@ import {
     ElectronPlatform,
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
-import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './utils/export.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
@@ -1959,6 +1959,20 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    // 将任务的 .task.json 导出到用户选择的路径
+    ipcMain.handle('taskManager:exportTaskJson', async (event, taskId, filePath) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            await exportTaskJsonToFile(task, filePath);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('exporting task json failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
 };
 
 const registerFSAPIHandlers = () => {
@@ -3564,8 +3578,7 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({

@@ -296,6 +296,45 @@ describe('collectUsedCss', () => {
         expect(cssText).not.toContain('KaTeX_Main');
     });
 
+    test('相对字体 URL 按样式表地址解析为绝对 URL（含 @font-face 内的改写）', () => {
+        // 构建产物中 FA/KaTeX 的 @font-face 是相对路径（url(./fa-xxx.woff2)），
+        // 主进程无法解析相对路径导致字体不内联、导出页图标不可见
+        const container = document.createElement('div');
+        container.innerHTML = '<i class="fas fa-wrench"></i>';
+        const { cssText, fontUrls } = collectUsedCss(
+            makeDoc([
+                {
+                    href: 'file:///C:/app/dist/renderer/assets/common.css',
+                    cssRules: [
+                        fontFaceRule('Font Awesome 7 Free', './fa-solid-900.woff2'),
+                        styleRule('.fas', ".fas { font-family: 'Font Awesome 7 Free' }")
+                    ]
+                }
+            ]),
+            { liveRoot: null, container }
+        );
+        expect(fontUrls).toEqual(['file:///C:/app/dist/renderer/assets/fa-solid-900.woff2']);
+        expect(cssText).toContain('file:///C:/app/dist/renderer/assets/fa-solid-900.woff2');
+        expect(cssText).not.toContain('./fa-solid-900.woff2');
+    });
+
+    test('无法解析基准地址时字体 URL 保持原样', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<div class="od-user-msg">hi</div>';
+        const { fontUrls } = collectUsedCss(
+            makeDoc([
+                {
+                    cssRules: [
+                        styleRule('body', "body { font-family: 'HarmonyOS Sans', sans-serif }"),
+                        fontFaceRule('HarmonyOS Sans', '/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2')
+                    ]
+                }
+            ]),
+            { liveRoot: null, container }
+        );
+        expect(fontUrls).toEqual(['/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2']);
+    });
+
     test('伪元素选择器剥离后仍可命中', () => {
         const container = document.createElement('div');
         container.innerHTML = '<div id="taskview-chat-history"></div>';
@@ -516,6 +555,33 @@ describe('buildTaskExportHtml', () => {
         // 非 .fa-* 规则仍按命中过滤
         expect(html).not.toContain('--fa: "\\f222"');
         expect(html).toContain('color: red');
+    });
+
+    test('内容包含 fa 图标时以 CDN 兜底引入 Font Awesome（load 后异步加载，不阻塞渲染）', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg"><i class="fas fa-list-check"></i></div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起'
+        });
+        expect(html).toContain('fontawesome-free');
+        expect(html).toContain("addEventListener('load'");
+    });
+
+    test('内容不含 fa 图标时不引入 Font Awesome CDN', () => {
+        const doc = setupExportDoc([]);
+        const chatHistory = doc.querySelector('#taskview-chat-history');
+        const { html } = buildTaskExportHtml({
+            taskName: 't',
+            contentHtml: '<div class="od-user-msg">plain</div>',
+            chatHistory,
+            doc,
+            reasoningCollapseLabel: '收起'
+        });
+        expect(html).not.toContain('fontawesome-free');
     });
 
     test('导出内容经过交互清理', () => {

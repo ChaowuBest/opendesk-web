@@ -392,6 +392,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        exportTaskJson: async (taskId, filePath) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTaskJson', taskId, filePath);
+            if (result.status !== 'ok') {
+                console.error('exporting task json failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getSessionMemory: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getSessionMemory', taskId);
             if (result.status === 'ok') {
