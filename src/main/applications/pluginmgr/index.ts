@@ -85,6 +85,7 @@ export {
     installPlugin,
     uninstallPlugin,
     listInstalledPlugins,
+    listVisiblePlugins,
     setPluginEnabled,
     verifyInstalledPlugin
 } from './management/manager.js';

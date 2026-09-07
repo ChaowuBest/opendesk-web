@@ -285,7 +285,21 @@ interface FontFaceRecord {
 
 const FONT_URL_PATTERN = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
-function extractFontFaceRecord(rule: unknown): FontFaceRecord | null {
+/**
+ * 相对字体 URL（构建产物中的 url(./fa-xxx.woff2) 等）按样式表地址解析为
+ * 绝对 URL：主进程只认 file://、localhost http 与 / 开头的应用根相对路径，
+ * 相对路径解析失败会导致字体不内联、导出页图标（FA/KaTeX）不可见。
+ */
+function resolveFontUrl(rawUrl: string, baseHref: string | null): string {
+    if (!baseHref) return rawUrl;
+    try {
+        return new URL(rawUrl, baseHref).href;
+    } catch {
+        return rawUrl;
+    }
+}
+
+function extractFontFaceRecord(rule: unknown, baseHref: string | null): FontFaceRecord | null {
     const typed = rule as { style?: CSSStyleDeclaration; cssText?: string };
     let cssText = '';
     let family = '';
@@ -307,7 +321,13 @@ function extractFontFaceRecord(rule: unknown): FontFaceRecord | null {
     if (!family) return null;
     const urls: string[] = [];
     for (const match of src.matchAll(FONT_URL_PATTERN)) {
-        if (match[2]) urls.push(match[2]);
+        if (!match[2]) continue;
+        const resolved = resolveFontUrl(match[2], baseHref);
+        if (!urls.includes(resolved)) urls.push(resolved);
+        // 输出的 cssText 同步改写为绝对 URL，主进程才能按 URL 定位并替换为 data URI
+        if (resolved !== match[2]) {
+            cssText = cssText.split(match[2]).join(resolved);
+        }
     }
     return { cssText, family, urls };
 }
@@ -560,12 +580,14 @@ interface SelectorMatchContext {
 /**
  * 遍历 CSSOM 规则树，收集命中导出内容的规则文本与字体声明。
  * 分组规则（@media/@supports/@layer 块）递归处理后仅保留命中的子规则。
+ * baseHref 为所在样式表的地址，用于解析字体相对 URL。
  */
 function walkCssRules(
     rules: CSSRuleList | CSSRule[],
     ctx: SelectorMatchContext,
     out: string[],
-    fontFaces: FontFaceRecord[]
+    fontFaces: FontFaceRecord[],
+    baseHref: string | null
 ): void {
     for (const rule of Array.from(rules)) {
         const typed = rule as {
@@ -593,7 +615,7 @@ function walkCssRules(
                 continue;
             }
             const inner: string[] = [];
-            walkCssRules(typed.cssRules, ctx, inner, fontFaces);
+            walkCssRules(typed.cssRules, ctx, inner, fontFaces, baseHref);
             if (inner.length === 0) continue;
             if (typed.media !== undefined && typed.conditionText) {
                 out.push(`@media ${typed.conditionText} {\n${inner.join('\n')}\n}`);
@@ -607,7 +629,7 @@ function walkCssRules(
             continue;
         }
         if (typed.style && typed.selectorText === undefined && (typed as { keyText?: string }).keyText === undefined) {
-            const record = extractFontFaceRecord(rule);
+            const record = extractFontFaceRecord(rule, baseHref);
             if (record) fontFaces.push(record);
             continue;
         }
@@ -616,7 +638,7 @@ function walkCssRules(
         if (!cssText) continue;
         // 无 style 属性的 @font-face 形态（测试桩/部分 CSSOM 实现）：从 cssText 提取
         if (/^@font-face\b/i.test(cssText.trim())) {
-            const record = extractFontFaceRecord(rule);
+            const record = extractFontFaceRecord(rule, baseHref);
             if (record) {
                 fontFaces.push(record);
                 continue;
@@ -677,7 +699,11 @@ export function collectUsedCss(
             continue; // 跨源样式表不可枚举，跳过
         }
         if (!rules) continue;
-        walkCssRules(rules, ctx, rulesOut, fontFaces);
+        // 字体相对 URL 的解析基准：优先样式表自身地址（link 加载），
+        // 退回文档地址（style 注入/dev server 场景）
+        const sheetHref = (sheet as CSSStyleSheet).href || null;
+        const baseHref = sheetHref || doc.baseURI || null;
+        walkCssRules(rules, ctx, rulesOut, fontFaces, baseHref);
     }
     const bodyCss = rulesOut.join('\n');
     // 只保留正文 CSS 真正引用到的字体族，避免把未使用的 KaTeX/LXGW 字体全部内联
@@ -723,6 +749,9 @@ export function buildTaskExportHtml(options: TaskExportBuildOptions): TaskExport
     const htmlAttrs = copyElementAttributes(doc.documentElement, ['lang', 'data-theme', 'data-font-preset']);
     const content = container.innerHTML;
     const headerHtml = header ? buildExportHeaderHtml(header) : '';
+    // 字体以内联 data URI 为主；CDN 仅作为字体解析失败时的兜底（load 后异步
+    // 加载，离线打开不阻塞渲染，也不产生无谓请求——内容无 fa 图标时不注入）
+    const faCdnLoader = container.querySelector('[class*="fa-"]') ? buildFaCdnLoaderScript() : '';
 
     const html = `<!DOCTYPE html>
 <html ${htmlAttrs}>
@@ -758,6 +787,7 @@ ${header ? buildThemeToggleHtml() : ''}
 <script>
 ${buildExportScript(reasoningCollapseLabel, header)}
 </script>
+${faCdnLoader}
 </body>
 </html>`;
 
@@ -860,6 +890,24 @@ const EXPORT_EXTRA_STYLES = `
 .reasoning-block-od .reasoning-preview-area {
     transition: none !important;
 }`;
+
+/**
+ * Font Awesome CDN 兜底样式表地址。版本需与 package.json 中
+ * @fortawesome/fontawesome-free 保持一致，避免字形集合/码点漂移。
+ */
+const FA_CDN_CSS_URL = 'https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.3.1/css/all.min.css';
+
+/** load 后异步注入 FA CDN 样式表：不阻塞首帧渲染，离线时静默失败 */
+function buildFaCdnLoaderScript(): string {
+    return `<script>
+window.addEventListener('load', function () {
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '${FA_CDN_CSS_URL}';
+    document.head.appendChild(link);
+});
+</script>`;
+}
 
 const SUN_ICON_SVG =
     '<svg class="od-export-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';

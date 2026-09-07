@@ -19,6 +19,7 @@ jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => 
     installPlugin: mockInstallPlugin,
     uninstallPlugin: mockUninstallPlugin,
     listInstalledPlugins: jest.fn(),
+    listVisiblePlugins: jest.fn(),
     setPluginEnabled: mockSetPluginEnabled,
     reloadPluginHost: mockReloadPluginHost
 }));
