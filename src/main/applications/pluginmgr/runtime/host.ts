@@ -47,6 +47,8 @@ import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import type { CompiledHintPattern } from './browser-hints.js';
 import { qualifyPluginToolName } from './tool-names.js';
+import { createAccountsContext } from './account-context.js';
+import { HostRegistration } from './registration.js';
 import {
     parsePluginCommandArguments,
     preparePluginCommandDefinition,
@@ -149,18 +151,6 @@ interface ApplicationEventRecord {
     pluginId: string;
     filter: PluginApplicationEventFilter;
     callback: PluginApplicationEventCallback;
-}
-
-class HostRegistration implements PluginRegistration {
-    private disposed = false;
-
-    constructor(private readonly disposeCallback: () => void | Promise<void>) {}
-
-    async dispose(): Promise<void> {
-        if (this.disposed) return;
-        this.disposed = true;
-        await this.disposeCallback();
-    }
 }
 
 function qualifyPluginCommandName(pluginId: string, localName: string): string {
@@ -1004,7 +994,12 @@ export class PluginHost {
                         })
                     );
                 }
-            }
+            },
+            accounts: createAccountsContext({
+                pluginId: entry.id,
+                addCapability,
+                track
+            })
         };
     }
 

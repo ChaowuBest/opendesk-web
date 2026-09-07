@@ -25,6 +25,7 @@ import { appRootCandidatesFrom } from '../management/paths.js';
 export const HOST_PACKAGE_SPECIFIERS = [
     '@bitclub.ai/opendesk-plugin-sdk',
     '@bitclub.ai/opendesk-plugin-sdk/package',
+    '@bitclub.ai/opendesk-server-sdk',
     'zod'
 ] as const;
 

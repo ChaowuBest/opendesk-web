@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 1,
+    "id": "opendesk-account",
+    "displayName": {
+        "en": "OpenDesk Account",
+        "zh": "OpenDesk 账号"
+    },
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["account"]
+}

@@ -101,7 +101,8 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'event',
     'agent',
     'browser',
-    'channel'
+    'channel',
+    'account'
 ] as const;
 
 export type PluginCapability = (typeof OPENDESK_PLUGIN_CAPABILITIES)[number];
@@ -191,6 +192,100 @@ export interface PluginHookRegistrationOptions {
 
 export interface PluginRegistration {
     dispose(): Promise<void>;
+}
+
+export type PluginAccountKind = 'personal' | 'enterprise';
+
+export interface PluginAccountUser {
+    id: string;
+    username: string;
+    email?: string;
+    display_name?: string;
+    avatar_url?: string;
+}
+
+export interface PluginAccountSession {
+    backendId: string;
+    kind: PluginAccountKind;
+    baseUrl: string;
+    user: PluginAccountUser;
+}
+
+export interface PluginAccountLoginContext {
+    kind: PluginAccountKind;
+    baseUrl: string;
+}
+
+export type PluginAccountLoginFieldType = 'text' | 'password' | 'email';
+
+export interface PluginAccountLoginField {
+    id: string;
+    type: PluginAccountLoginFieldType;
+    label: PluginDisplayName;
+    placeholder?: PluginDisplayName;
+    autocomplete?: string;
+    required?: boolean;
+}
+
+export interface PluginAccountFormLoginMethod {
+    id: string;
+    type: 'form';
+    displayName: PluginDisplayName;
+    fields: readonly PluginAccountLoginField[];
+}
+
+export interface PluginAccountBrowserLoginMethod {
+    id: string;
+    type: 'browser';
+    displayName: PluginDisplayName;
+}
+
+export interface PluginAccountDeviceCodeLoginMethod {
+    id: string;
+    type: 'device-code';
+    displayName: PluginDisplayName;
+}
+
+export type PluginAccountLoginMethod =
+    PluginAccountFormLoginMethod | PluginAccountBrowserLoginMethod | PluginAccountDeviceCodeLoginMethod;
+
+export interface PluginAccountLoginFlowRequest extends PluginAccountLoginContext {
+    methodId: string;
+}
+
+export type PluginAccountLoginFlowState =
+    | { status: 'ready' }
+    | { status: 'opening-browser'; url: string }
+    | { status: 'waiting'; message?: PluginDisplayName }
+    | { status: 'device-code'; code: string; verificationUrl: string }
+    | { status: 'completed'; session: PluginAccountSession }
+    | { status: 'failed'; errorCode: string };
+
+export interface PluginAccountLoginFlow {
+    getState(): PluginAccountLoginFlowState;
+    start?(): Promise<PluginAccountLoginFlowState>;
+    submit?(values: Readonly<Record<string, string>>): Promise<PluginAccountLoginFlowState>;
+    poll?(): Promise<PluginAccountLoginFlowState>;
+    cancel(): Promise<void>;
+}
+
+export interface PluginAccountBackend {
+    readonly id: string;
+    readonly kinds: readonly PluginAccountKind[];
+    initialize(): void;
+    getSession(): PluginAccountSession | null;
+    getUserInfo(): Promise<PluginAccountUser | null>;
+    getLoginMethods(context: PluginAccountLoginContext): Promise<readonly PluginAccountLoginMethod[]>;
+    createLoginFlow(request: PluginAccountLoginFlowRequest): Promise<PluginAccountLoginFlow>;
+    updateDisplayName(displayName: string): Promise<PluginAccountUser>;
+    refreshToken(): Promise<PluginAccountSession>;
+    logout(): Promise<void>;
+}
+
+export interface PluginAccountSecretStore {
+    load(): unknown;
+    save(value: unknown): void;
+    clear(): void;
 }
 
 export type PluginSetupResult = void | PluginRegistration | (() => void | Promise<void>);
@@ -594,6 +689,16 @@ export interface PluginContext {
              */
             register(pattern: string | RegExp, generator: BrowserHintGenerator): PluginRegistration;
         };
+    };
+    readonly accounts: {
+        readonly network: {
+            fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+        };
+        readonly auth: {
+            openExternal(url: string): Promise<void>;
+        };
+        readonly secrets: PluginAccountSecretStore;
+        registerBackend(backend: PluginAccountBackend): PluginRegistration;
     };
     readonly events: {
         onApplication(
