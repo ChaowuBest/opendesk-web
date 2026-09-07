@@ -24,6 +24,7 @@ import {
     installPlugin,
     uninstallPlugin,
     listInstalledPlugins,
+    listVisiblePlugins,
     setPluginEnabled,
     verifyInstalledPlugin,
     formatPluginInstallError
@@ -140,8 +141,9 @@ export function registerPluginsCommand(prog: Command): void {
     pluginsCmd
         .command('list')
         .description(t('plugin.list.description'))
-        .action(() => {
-            const records = listInstalledPlugins();
+        .action((_options: unknown, command: Command) => {
+            applyGlobalOptions(command);
+            const records = listVisiblePlugins();
             if (records.length === 0) {
                 console.log(t('plugin.list.empty'));
             } else {
@@ -155,6 +157,7 @@ export function registerPluginsCommand(prog: Command): void {
                             id: r.id,
                             spec: r.spec ?? r.path,
                             status,
+                            source: t(`plugin.list.source.${r.source}`),
                             installedAt: r.installedAt ?? '-'
                         })}`
                     );

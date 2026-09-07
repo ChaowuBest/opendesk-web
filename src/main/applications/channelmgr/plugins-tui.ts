@@ -14,10 +14,23 @@ import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';
 import { InfoOverlay } from '../../tui/components/notice';
-import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../pluginmgr/index.js';
-import type { PluginRegistryRecord } from '../pluginmgr/index.js';
+import { uninstallPlugin, listVisiblePlugins, setPluginEnabled } from '../pluginmgr/index.js';
+import type { PluginRegistryRecord, PluginSourceKind } from '../pluginmgr/index.js';
+import { t } from '../../../locale/index.js';
 
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
+
+function pluginSourceLabel(source: PluginSourceKind): string {
+    // 'managed' 仅存在于旧版注册表数据中，对外统一视为本地插件。
+    switch (source) {
+        case 'builtin':
+            return t('plugin.list.source.builtin');
+        case 'external':
+            return t('plugin.list.source.external');
+        default:
+            return t('plugin.list.source.managed');
+    }
+}
 
 export class PluginsListOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -33,13 +46,14 @@ export class PluginsListOverlay implements Component {
     constructor(openDeskTUI: OpenDeskTUI, onReload?: () => Promise<void>) {
         this.openDeskTUI = openDeskTUI;
         this.onReload = onReload;
-        this.header = new Text(chalk.bold(' 插件管理'));
+        this.header = new Text(chalk.bold(t('plugin.tui.title')));
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
     }
 
     private refreshPlugins() {
-        this.plugins = listInstalledPlugins();
+        // 与 GUI 插件管理页同口径：registry 记录 + discovery 候选（含内置插件）
+        this.plugins = listVisiblePlugins();
     }
 
     private cleanup() {
@@ -54,18 +68,20 @@ export class PluginsListOverlay implements Component {
         this.state = 'list';
         this.list = undefined;
         this.refreshPlugins();
-        this.header = new Text(chalk.bold(' 插件管理'));
+        this.header = new Text(chalk.bold(t('plugin.tui.title')));
 
         if (this.plugins.length === 0) {
-            const items = [{ value: '__empty__', label: chalk.gray('暂无已安装的插件') }];
+            const items = [{ value: '__empty__', label: chalk.gray(t('plugin.tui.empty')) }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
             const items = this.plugins.map((r) => {
-                const status = r.enabled ? chalk.green('✓ 已启用') : chalk.red('✗ 已禁用');
+                const status = r.enabled
+                    ? chalk.green(`✓ ${t('plugin.list.status.enabled')}`)
+                    : chalk.red(`✗ ${t('plugin.list.status.disabled')}`);
                 const spec = r.spec ?? r.path;
                 return {
                     value: r.id,
-                    label: `${chalk.bold(r.id)} ${chalk.dim(`(${spec})`)} [${status}]`
+                    label: `${chalk.bold(r.id)} ${chalk.dim(`[${pluginSourceLabel(r.source)}]`)} ${chalk.dim(`(${spec})`)} [${status}]`
                 };
             });
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
@@ -98,15 +114,15 @@ export class PluginsListOverlay implements Component {
         this.showConfirmToggle(plugin);
     }
 
-    private showConfirmToggle(plugin: PluginInstallRecord) {
+    private showConfirmToggle(plugin: PluginRegistryRecord) {
         this.cleanup();
         this.state = 'confirm-toggle';
-        const action = plugin.enabled ? '禁用' : '启用';
-        this.header = new Text(chalk.bold.yellow(` 确认${action}: ${plugin.id}`));
+        const action = plugin.enabled ? t('plugin.tui.action.disable') : t('plugin.tui.action.enable');
+        this.header = new Text(chalk.bold.yellow(t('plugin.tui.confirmToggle', { action, id: plugin.id })));
 
         const items = [
-            { value: 'confirm', label: chalk.green(`确认${action}`) },
-            { value: 'cancel', label: chalk.red('取消') }
+            { value: 'confirm', label: chalk.green(t('plugin.tui.confirm', { action })) },
+            { value: 'cancel', label: chalk.red(t('plugin.tui.cancel')) }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -125,8 +141,8 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private async performToggle(plugin: PluginInstallRecord) {
-        const action = plugin.enabled ? '禁用' : '启用';
+    private async performToggle(plugin: PluginRegistryRecord) {
+        const action = plugin.enabled ? t('plugin.tui.action.disable') : t('plugin.tui.action.enable');
         const ok = setPluginEnabled(plugin.id, !plugin.enabled);
         if (ok) {
             if (this.onReload) {
@@ -137,10 +153,10 @@ export class PluginsListOverlay implements Component {
                 }
             }
             this.showList();
-            this.showResultMessage(`插件已${action}: ${plugin.id}\n\n消息渠道已自动重新加载。`);
+            this.showResultMessage(t('plugin.tui.toggleDone', { action, id: plugin.id }));
         } else {
             this.showList();
-            this.showResultMessage(`未找到插件: ${plugin.id}`);
+            this.showResultMessage(t('plugin.tui.notFound', { id: plugin.id }));
         }
     }
 
@@ -149,18 +165,27 @@ export class PluginsListOverlay implements Component {
     private onUninstallKey() {
         const plugin = this.getSelectedPlugin();
         if (!plugin) return;
+        // 与 GUI 的 removable 口径一致：内置与外部路径插件不可卸载
+        if (plugin.source === 'builtin' || plugin.source === 'external') {
+            const key =
+                plugin.source === 'builtin'
+                    ? 'plugin.tui.uninstallBlocked.builtin'
+                    : 'plugin.tui.uninstallBlocked.external';
+            this.showResultMessage(t(key, { id: plugin.id }));
+            return;
+        }
         this.pendingPlugin = plugin;
         this.showConfirmUninstall(plugin);
     }
 
-    private showConfirmUninstall(plugin: PluginInstallRecord) {
+    private showConfirmUninstall(plugin: PluginRegistryRecord) {
         this.cleanup();
         this.state = 'confirm-uninstall';
-        this.header = new Text(chalk.bold.red(` 确认卸载: ${plugin.id}`));
+        this.header = new Text(chalk.bold.red(t('plugin.tui.confirmUninstall', { id: plugin.id })));
 
         const items = [
-            { value: 'confirm', label: chalk.red('确认卸载') },
-            { value: 'cancel', label: chalk.green('取消') }
+            { value: 'confirm', label: chalk.red(t('plugin.tui.uninstallConfirm')) },
+            { value: 'cancel', label: chalk.green(t('plugin.tui.cancel')) }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -179,16 +204,16 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private async performUninstall(plugin: PluginInstallRecord) {
+    private async performUninstall(plugin: PluginRegistryRecord) {
         this.cleanup();
         this.state = 'uninstalling';
         this.list = undefined;
-        this.header = new Text(chalk.bold(' 卸载中'));
+        this.header = new Text(chalk.bold(t('plugin.tui.uninstalling')));
         this.loader = new Loader(
             this.openDeskTUI.tui,
             (s: string) => chalk.cyan(s),
             (s: string) => chalk.hex('#e0e0e0')(s),
-            `正在卸载插件: ${plugin.id} ...`
+            t('plugin.tui.uninstallingDetail', { id: plugin.id })
         );
         this.renderBox();
 
@@ -204,14 +229,14 @@ export class PluginsListOverlay implements Component {
             this.cleanup();
             this.showList();
             if (result.success) {
-                this.showResultMessage(`插件已卸载: ${plugin.id}\n\n消息渠道已自动重新加载。`);
+                this.showResultMessage(t('plugin.tui.uninstallDone', { id: plugin.id }));
             } else {
-                this.showResultMessage(`插件卸载失败: ${result.error}`);
+                this.showResultMessage(t('plugin.tui.uninstallFail', { error: result.error ?? '-' }));
             }
         } catch (err: any) {
             this.cleanup();
             this.showList();
-            this.showResultMessage(`插件卸载出错: ${err?.message ?? err}`);
+            this.showResultMessage(t('plugin.tui.uninstallError', { error: err?.message ?? String(err) }));
         }
     }
 
@@ -220,7 +245,7 @@ export class PluginsListOverlay implements Component {
     private showResultMessage(message: string) {
         this.close();
         new InfoOverlay(this.openDeskTUI, {
-            title: '插件管理',
+            title: t('plugin.tui.title'),
             message
         }).show();
     }
@@ -243,10 +268,10 @@ export class PluginsListOverlay implements Component {
 
         if (this.state === 'list') {
             this.box.addChild(new Text(''));
-            this.box.addChild(new Text(chalk.dim('  D 启用/禁用  U 卸载  Esc 关闭')));
+            this.box.addChild(new Text(chalk.dim(t('plugin.tui.help.list'))));
         } else if (this.state === 'confirm-toggle' || this.state === 'confirm-uninstall') {
             this.box.addChild(new Text(''));
-            this.box.addChild(new Text(chalk.dim('  ↑↓ 选择  Enter 确认  Esc 取消')));
+            this.box.addChild(new Text(chalk.dim(t('plugin.tui.help.confirm'))));
         }
 
         this.openDeskTUI.tui.requestRender();
