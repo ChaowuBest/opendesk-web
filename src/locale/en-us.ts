@@ -1316,9 +1316,10 @@ export const enUs: Record<string, string> = {
     // Renderer - Settings
     'renderer.settings.memorySystem': 'Memory',
     'renderer.settings.developerMode': 'Developer Mode',
+    'renderer.settings.debugLog': 'Enable Debug Logging',
     'renderer.settings.experimentalFeature': 'Enable experimental features',
     'renderer.settings.logRawLlmRequest': 'Log Raw LLM Response',
-    'renderer.settings.debugMode': 'Debug Mode',
+    'renderer.settings.debugMode': 'OpenDesk Development & Debugging',
     'renderer.settings.telemetry': 'Telemetry',
     'renderer.settings.telemetryEndpoints': 'Telemetry Endpoints',
     'renderer.settings.telemetryEndpointsHint':

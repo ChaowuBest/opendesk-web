@@ -11,7 +11,7 @@
 
 import type { OpenDeskTUI } from '../entry.js';
 import { setDebugMode, getDebugMode, logger } from '../../utils/logger.js';
-import { isDeveloperModeEnabled, setDeveloperModeEnabled } from '../../utils/setting.js';
+import { isDeveloperModeEnabled, setDeveloperModeEnabled, setDebugLogEnabled } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
 import { t } from '../../../locale/index.js';
 
@@ -77,11 +77,13 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
             const subArg = parts[1];
 
             if (subCommand === 'log') {
-                // /debug log [on|off]
+                // /debug log [on|off]，持久化到 debug.debug_log，重启后仍生效
                 if (subArg === 'on') {
+                    setDebugLogEnabled(true);
                     setDebugMode(true);
                     logger.info(t('debug.log.enabled'));
                 } else if (subArg === 'off') {
+                    setDebugLogEnabled(false);
                     setDebugMode(false);
                     logger.info(t('debug.log.disabled'));
                 } else {

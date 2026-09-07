@@ -25,6 +25,7 @@ import {
     normalizeWorkspace
 } from '../sidebarTaskGroups.js';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
+import { TaskListRefreshScheduler } from './taskListRefreshScheduler.js';
 
 const TASK_PAGE_SIZE = 30;
 const TASK_VIEW_STORAGE_KEY = 'opendesk-sidebar-task-view';
@@ -331,49 +332,16 @@ class SideBar extends HTMLElement {
     }
 
     setUpEventListeners() {
-        let pendingRafId;
-        let coalescedTaskListUpdates = 0;
+        // 刷新调度（RAF 防抖 + setTimeout 兜底 + 隐藏期待刷新标记）抽到独立模块，便于单测
+        this._refreshScheduler = new TaskListRefreshScheduler({
+            refresh: () => this.reloadTaskList(),
+            isWindowVisible: () => Boolean(window.__isWindowVisible),
+            log: (level, message) => window.taskManagerAPI?.log?.(level, message)
+        });
         window.taskManagerAPI
             .subscribeTaskListUpdate((taskList) => {
                 this.taskList = taskList;
-                // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
-                if (!window.__isWindowVisible) {
-                    this._needsTaskListRefresh = true;
-                    return;
-                }
-                // 防抖调度列表刷新。requestAnimationFrame 在页面被节流/遮挡/冻结时
-                // 回调可能被丢弃，若仅依赖它，pendingRafId 会永久占用，导致此后所有
-                // 任务列表更新都被跳过、列表不再刷新（用户创建新任务后任务栏不出现的根因）。
-                // 因此加超时兜底：RAF 回调未在限期内执行时，由 setTimeout 强制刷新并解除占用。
-                if (pendingRafId === undefined) {
-                    const rafId = requestAnimationFrame(() => {
-                        pendingRafId = undefined;
-                        if (coalescedTaskListUpdates > 0) {
-                            window.taskManagerAPI?.log?.(
-                                'debug',
-                                `[sidebar] task list refresh: ${coalescedTaskListUpdates} update(s) coalesced while RAF pending`
-                            );
-                            coalescedTaskListUpdates = 0;
-                        }
-                        this.reloadTaskList();
-                    });
-                    pendingRafId = rafId;
-                    setTimeout(() => {
-                        if (pendingRafId === rafId) {
-                            cancelAnimationFrame(rafId);
-                            pendingRafId = undefined;
-                            // 到达此处说明 RAF 回调在 400ms 内未执行（页面被节流/遮挡/冻结），
-                            // 兜底强制刷新。此日志用于诊断"任务列表停止刷新"类问题。
-                            window.taskManagerAPI?.log?.(
-                                'warn',
-                                '[sidebar] task list refresh: RAF callback was dropped (page throttled/occluded/frozen), forced refresh via setTimeout fallback'
-                            );
-                            this.reloadTaskList();
-                        }
-                    }, 400);
-                } else {
-                    coalescedTaskListUpdates += 1;
-                }
+                this._refreshScheduler.schedule();
                 document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
             })
             .then((unsubscribe) => {
@@ -385,8 +353,7 @@ class SideBar extends HTMLElement {
 
         // 窗口恢复可见时，如有待刷新的任务列表则刷新
         window.addEventListener('openDesk:visibilityChanged', (e) => {
-            if (e.detail && this._needsTaskListRefresh) {
-                this._needsTaskListRefresh = false;
+            if (e.detail && this._refreshScheduler?.consumePendingRefreshWhileHidden()) {
                 this.reloadTaskList();
             }
         });
@@ -910,7 +877,7 @@ class SideBar extends HTMLElement {
                 this._chatBadgeTimer = null;
                 // 窗口隐藏时遵循省电设计：只标记待刷新，由窗口恢复可见事件触发更新
                 if (!window.__isWindowVisible) {
-                    this._needsTaskListRefresh = true;
+                    this._refreshScheduler?.markPendingRefreshWhileHidden();
                     return;
                 }
                 this._updateChatBadge();
