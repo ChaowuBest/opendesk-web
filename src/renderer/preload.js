@@ -1805,8 +1805,28 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
-        login: async (kind, username, password) => {
-            const result = await ipcRenderer.invoke('account:login', kind, username, password);
+        getLoginMethods: async (kind) => {
+            const result = await ipcRenderer.invoke('account:getLoginMethods', kind);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        startLogin: async (kind, methodId) => {
+            const result = await ipcRenderer.invoke('account:startLogin', kind, methodId);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        submitLogin: async (flowId, values) => {
+            const result = await ipcRenderer.invoke('account:submitLogin', flowId, values);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        pollLogin: async (flowId) => {
+            const result = await ipcRenderer.invoke('account:pollLogin', flowId);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        cancelLogin: async (flowId) => {
+            const result = await ipcRenderer.invoke('account:cancelLogin', flowId);
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },

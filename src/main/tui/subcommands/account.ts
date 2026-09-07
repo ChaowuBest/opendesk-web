@@ -12,11 +12,26 @@
 import type { Command } from 'commander';
 import readline from 'readline';
 import process from 'process';
-import { t } from '../../../locale/index.js';
+import type { PluginAccountLoginMethod, PluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
+import { resolvePluginDisplayName } from '../../../../packages/plugin-sdk/src/index.js';
+import { t, getLocale } from '../../../locale/index.js';
 import { getAccountRuntime } from '../../applications/account/factory.js';
+import { describeLoginError, runLoginFlow, type LoginFlowIo } from '../../applications/account/login-flow.js';
 import type { AccountKind } from '../../applications/account/types.js';
+import { initializePluginHost } from '../../applications/pluginmgr/index.js';
 
 const DEFAULT_ENTERPRISE_URL = 'http://127.0.0.1:8000/api/v1';
+
+/** CLI 侧登录流 IO：文本/密码输入走 readline，状态直接打印。 */
+const cliIo: LoginFlowIo = {
+    resolveText: (displayName: PluginDisplayName | undefined) =>
+        resolvePluginDisplayName(displayName, getLocale()) ?? '',
+    promptText: (label) => promptLine(`${label}: `),
+    promptSecret: (label) => promptSecret(`${label}: `),
+    showStatus: (message) => console.log(`\n${message}`),
+    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now()
+};
 
 /** 交互式普通文本输入（回车确认）。 */
 function promptLine(question: string): Promise<string> {
@@ -90,24 +105,32 @@ async function promptEnterpriseBaseUrl(): Promise<string> {
     return baseUrl;
 }
 
+/** 多个登录方式时让用户按序号选择，单个方式时直接采用。 */
+async function promptLoginMethod(methods: readonly PluginAccountLoginMethod[]): Promise<PluginAccountLoginMethod> {
+    if (methods.length === 1) return methods[0];
+    const options = methods
+        .map((method, index) => `${index + 1}. ${cliIo.resolveText(method.displayName) || method.id}`)
+        .join('\n');
+    const answer = await promptLine(`${t('cli.account.select_method')}:\n${options}\n[1]: `);
+    const index = Number.parseInt(answer, 10);
+    return Number.isInteger(index) && index >= 1 && index <= methods.length ? methods[index - 1] : methods[0];
+}
+
 async function runCliLogin(): Promise<void> {
+    await initializePluginHost();
     const kind = await promptKind();
 
     if (kind === 'enterprise') {
         await promptEnterpriseBaseUrl();
     }
 
-    const username = await promptLine(`${t('cli.account.username')}: `);
-    if (!username) {
-        throw new Error(t('error.account.username_required'));
-    }
-    const password = await promptSecret(`${t('cli.account.password')}: `);
-    if (!password) {
-        throw new Error(t('error.account.password_required'));
-    }
-
     const service = getAccountRuntime().getService();
-    const session = await service.login(kind, username, password);
+    const methods = await service.getLoginMethods(kind);
+    if (methods.length === 0) {
+        throw new Error(t('cli.account.no_login_methods'));
+    }
+    const method = await promptLoginMethod(methods);
+    const session = await runLoginFlow(service, kind, method, cliIo);
     console.log(`\n✓ ${t('cli.account.login.success', { username: session.user.username })}`);
 }
 
@@ -121,8 +144,7 @@ export function registerAccountCommand(prog: Command): void {
             try {
                 await runCliLogin();
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                console.error(`✗ ${t('cli.account.login.failed', { detail: message })}`);
+                console.error(`✗ ${t('cli.account.login.failed', { detail: describeLoginError(err) })}`);
                 process.exit(1);
             }
             process.exit(0);
@@ -133,6 +155,7 @@ export function registerAccountCommand(prog: Command): void {
         .description(t('cli.account.logout.description'))
         .action(async () => {
             try {
+                await initializePluginHost();
                 const service = getAccountRuntime().getService();
                 await service.logout();
                 console.log(`\n✓ ${t('cli.account.logout.success')}`);
@@ -147,7 +170,8 @@ export function registerAccountCommand(prog: Command): void {
     acctCmd
         .command('status')
         .description(t('cli.account.status.description'))
-        .action(() => {
+        .action(async () => {
+            await initializePluginHost();
             const service = getAccountRuntime().getService();
             const session = service.getSession();
             if (!session) {
