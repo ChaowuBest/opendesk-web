@@ -7,6 +7,24 @@ import {
 } from 'node:timers';
 import { parseHTML } from 'linkedom';
 
+const showInfoModal = jest.fn(async () => undefined);
+
+jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
+    showConfirmModal: jest.fn(async () => true),
+    showInfoModal,
+    showCloseDialog: jest.fn(),
+    bindOverlayDismiss: jest.fn(),
+    detectDarkMode: jest.fn(() => false),
+    MODAL_CSS: '',
+    renderIcon: jest.fn(() => ''),
+    shouldConfirmOnEnter: jest.fn(() => false),
+    MODAL_ANIM_DURATION_IN: 250,
+    MODAL_ANIM_DURATION_OUT: 180,
+    // 与真实实现同构的轻量转换：转义 HTML 并保留换行
+    escapeModalText: (text: string) =>
+        text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+}));
+
 let lastBrowserConstructorArgs: unknown[] = [];
 let mockBrowserHasActiveContent = false;
 const restoredBrowserState = {
@@ -647,9 +665,7 @@ describe('task artifacts goal disclosure state', () => {
         }
     });
 
-    test('pending goal edit disables the objective edit entrypoint', () => {
-        const alertSpy = jest.fn();
-        (window as any).alert = alertSpy;
+    test('pending goal edit disables the objective edit entrypoint', async () => {
         const artifacts = createRunningTaskArtifacts() as HTMLElement & {
             setGoalState: (goal: any) => void;
             setGoalEditPending: (pending: boolean) => void;
@@ -667,21 +683,28 @@ describe('task artifacts goal disclosure state', () => {
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
-        expect(alertSpy).toHaveBeenCalledWith('Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。');
+        // goal 提示统一走页内模态弹窗（issue #265：原生 window.alert 关闭后使窗口失焦）
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。'
+            })
+        );
 
+        showInfoModal.mockClear();
         artifacts.setGoalEditPending(false);
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).not.toBeNull();
+        expect(showInfoModal).not.toHaveBeenCalled();
     });
 
-    test('terminal goal edit entrypoint shows an unavailable status message', () => {
-        const alertSpy = jest.fn();
-        (window as any).alert = alertSpy;
+    test('terminal goal edit entrypoint shows an unavailable status message', async () => {
         const artifacts = createRunningTaskArtifacts() as HTMLElement & {
             setGoalState: (goal: any) => void;
         };
@@ -697,8 +720,13 @@ describe('task artifacts goal disclosure state', () => {
         artifacts.shadowRoot
             ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
             ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise((resolve) => nativeSetTimeout(resolve, 0));
 
         expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
-        expect(alertSpy).toHaveBeenCalledWith('当前 Goal 状态不支持编辑。');
+        expect(showInfoModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: '当前 Goal 状态不支持编辑。'
+            })
+        );
     });
 });

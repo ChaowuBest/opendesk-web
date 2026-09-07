@@ -1,57 +1,64 @@
 import { describe, expect, test } from '@jest/globals';
 import { BrowserAutoRevealState } from '../../../renderer/browserAutoRevealState.js';
 
-class MemoryStorage {
-    private readonly values = new Map<string, string>();
-
-    getItem(key: string): string | null {
-        return this.values.get(key) ?? null;
-    }
-
-    setItem(key: string, value: string): void {
-        this.values.set(key, value);
-    }
-}
-
 describe('browser auto reveal state', () => {
-    test('allows automatic layout activation only once per task', () => {
-        const storage = new MemoryStorage();
+    test('allows automatic layout activation only once per task within a session', () => {
         const state = new BrowserAutoRevealState();
 
-        expect(state.consume('task-1', storage)).toBe(true);
-        expect(state.consume('task-1', storage)).toBe(false);
-        expect(state.consume('task-2', storage)).toBe(true);
+        expect(state.consume('task-1')).toBe(true);
+        expect(state.consume('task-1')).toBe(false);
+        expect(state.consume('task-2')).toBe(true);
     });
 
-    test('persists the consumed state across renderer state recreation', () => {
-        const storage = new MemoryStorage();
-        const initialState = new BrowserAutoRevealState();
+    test('re-grants the reveal opportunity to a new session after OpenDesk restarts', () => {
+        const firstSession = new BrowserAutoRevealState();
+        expect(firstSession.consume('task-1')).toBe(true);
 
-        expect(initialState.consume('task-1', storage)).toBe(true);
-
-        const recreatedState = new BrowserAutoRevealState();
-        expect(recreatedState.consume('task-1', storage)).toBe(false);
+        // 重启后 renderer 重新创建状态实例：不持久化历史，机会重新可用。
+        const restartedSession = new BrowserAutoRevealState();
+        expect(restartedSession.consume('task-1')).toBe(true);
     });
 
-    test('falls back to process memory when storage is unavailable', () => {
-        const unavailableStorage = {
-            getItem: () => {
-                throw new Error('storage unavailable');
-            },
-            setItem: () => {
-                throw new Error('storage unavailable');
-            }
-        };
+    test('applies a pending reveal exactly once when the task becomes visible', () => {
         const state = new BrowserAutoRevealState();
 
-        expect(state.consume('task-1', unavailableStorage)).toBe(true);
-        expect(state.consume('task-1', unavailableStorage)).toBe(false);
+        expect(state.takePendingReveal('task-1')).toBe(false);
+        state.markPendingReveal('task-1');
+        expect(state.takePendingReveal('task-1')).toBe(true);
+        expect(state.takePendingReveal('task-1')).toBe(false);
     });
 
-    test('does not consume an unidentified task', () => {
-        const storage = new MemoryStorage();
+    test('keeps pending reveal scoped to its own task', () => {
         const state = new BrowserAutoRevealState();
 
-        expect(state.consume('', storage)).toBe(false);
+        state.markPendingReveal('task-1');
+        expect(state.takePendingReveal('task-2')).toBe(false);
+        expect(state.takePendingReveal('task-1')).toBe(true);
+    });
+
+    test('discards a pending reveal when the browser is fully destroyed', () => {
+        const state = new BrowserAutoRevealState();
+
+        state.markPendingReveal('task-1');
+        state.clearPendingReveal('task-1');
+        expect(state.takePendingReveal('task-1')).toBe(false);
+    });
+
+    test('pending reveal survives across sessions but claim does not re-consume it', () => {
+        // pending 是运行中的任务状态（跟随进程），claim 是会话机会（重启即重置）。
+        const state = new BrowserAutoRevealState();
+        state.markPendingReveal('task-1');
+        expect(state.consume('task-1')).toBe(true);
+        expect(state.consume('task-1')).toBe(false);
+        expect(state.takePendingReveal('task-1')).toBe(true);
+    });
+
+    test('ignores unidentified tasks', () => {
+        const state = new BrowserAutoRevealState();
+
+        expect(state.consume('')).toBe(false);
+        state.markPendingReveal('');
+        expect(state.takePendingReveal('')).toBe(false);
+        state.clearPendingReveal('');
     });
 });

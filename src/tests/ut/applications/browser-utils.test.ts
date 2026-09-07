@@ -40,6 +40,7 @@ describe('browser utils', () => {
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
             consumeInitialBrowserAutoReveal?: jest.Mock;
+            markPendingBrowserAutoReveal?: jest.Mock;
             ensureBrowserReady?: jest.Mock;
             forceBrowserActive?: jest.Mock;
             keepBrowserPanelRenderable?: jest.Mock;
@@ -60,6 +61,7 @@ describe('browser utils', () => {
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.consumeInitialBrowserAutoReveal = jest.fn(() => true);
+        artifacts.markPendingBrowserAutoReveal = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
@@ -84,9 +86,11 @@ describe('browser utils', () => {
         expect(panel.style.minHeight).toBe('800px');
         expect(webview.style.minHeight).toBe('800px');
         // 后台任务只准备可渲染的 webview，不得激活会改变当前任务布局的侧边栏路径。
+        // 首次使用按任务记录待应用的大屏预览状态，切回任务时再生效。
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
         expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
         expect(artifacts._suppressBrowserAutoSwitch).toBe(true);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
@@ -108,6 +112,7 @@ describe('browser utils', () => {
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
             consumeInitialBrowserAutoReveal?: jest.Mock;
+            markPendingBrowserAutoReveal?: jest.Mock;
             ensureBrowserReady?: jest.Mock;
             forceBrowserActive?: jest.Mock;
         };
@@ -117,6 +122,7 @@ describe('browser utils', () => {
         taskView._forceExpandRightSidebar = jest.fn();
         taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.consumeInitialBrowserAutoReveal = jest.fn(() => true);
+        artifacts.markPendingBrowserAutoReveal = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
 
@@ -128,12 +134,13 @@ describe('browser utils', () => {
         expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
         expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
         expect(artifacts._suppressBrowserAutoSwitch).toBe(true);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
-    test('does not defer a background first-use reveal until the task becomes visible', () => {
+    test('defers a background first-use reveal to the task-visible transition without repeating it', () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" data-background="1">
@@ -147,6 +154,7 @@ describe('browser utils', () => {
         };
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             consumeInitialBrowserAutoReveal?: jest.Mock;
+            markPendingBrowserAutoReveal?: jest.Mock;
             ensureBrowserReady?: jest.Mock;
             forceBrowserActive?: jest.Mock;
             keepBrowserPanelRenderable?: jest.Mock;
@@ -159,17 +167,26 @@ describe('browser utils', () => {
             consumed = true;
             return true;
         });
+        artifacts.markPendingBrowserAutoReveal = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
 
+        // 后台首次使用：保持离屏渲染，不激活任何前台布局，仅记录待应用的预览状态。
         runScript(makeEnsureSidebarScript('task-1'));
+        expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
+
+        // 用户切回任务后的后续浏览器调用：机会已消费，钩子本身不再触碰布局
+        // （大屏预览由 syncRightSidebarState 消费 pending 状态时统一应用）。
         taskView.removeAttribute('data-background');
         taskView.style.cssText = 'width:100%;height:100%;';
         runScript(makeEnsureSidebarScript('task-1'));
 
         expect(artifacts.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(2);
+        expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
         expect(artifacts.ensureBrowserReady).toHaveBeenNthCalledWith(1, false);
@@ -228,6 +245,7 @@ describe('browser utils', () => {
         };
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             consumeInitialBrowserAutoReveal?: jest.Mock;
+            markPendingBrowserAutoReveal?: jest.Mock;
             ensureBrowserReady?: jest.Mock;
         };
 
@@ -238,12 +256,15 @@ describe('browser utils', () => {
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
         taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.consumeInitialBrowserAutoReveal = jest.fn(() => true);
+        artifacts.markPendingBrowserAutoReveal = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
 
         runScript(makeEnsureSidebarScript('task-1'));
 
         expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
+        // 前台首次使用立即生效，不走延迟应用路径。
+        expect(artifacts.markPendingBrowserAutoReveal).not.toHaveBeenCalled();
     });
 
     test('keeps repeated browser use in the current task from changing the user layout', () => {

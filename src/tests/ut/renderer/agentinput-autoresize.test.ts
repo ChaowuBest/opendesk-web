@@ -92,6 +92,36 @@ describe('agent-input auto-resize', () => {
         expect(textarea.style.height).toBe('84px');
     });
 
+    test('读取 scrollHeight 测量期间输入容器已冻结高度，测量后恢复', () => {
+        const { input, textarea } = setupInput();
+        const container = input.querySelector('#agent-input-container') as HTMLElement;
+        // 记录 scrollHeight 被读取（即 height='auto' 塌缩后强制布局）那一刻的容器状态
+        const observations: { containerMinHeight: string; textareaHeight: string }[] = [];
+        Object.defineProperty(textarea, 'scrollHeight', {
+            get() {
+                observations.push({
+                    containerMinHeight: container.style.minHeight,
+                    textareaHeight: textarea.style.height
+                });
+                return 120;
+            },
+            configurable: true
+        });
+        input.autoResizeTextarea(textarea);
+        // 测量时 textarea 已塌缩为 auto，此刻容器必须带非空 min-height 冻结，
+        // 否则宿主页面里 flex 布局会让消息历史区瞬时变高、
+        // 已钉底的 scrollTop 被浏览器钳制回退（底部消息不可见的根因）
+        expect(observations.length).toBeGreaterThan(0);
+        for (const obs of observations) {
+            expect(obs.textareaHeight).toBe('auto');
+            expect(typeof obs.containerMinHeight).toBe('string');
+            expect(obs.containerMinHeight.length).toBeGreaterThan(0);
+        }
+        // 测量结束后容器高度冻结必须恢复，避免残留 min-height 影响后续布局
+        expect(container.style.minHeight).toBe('');
+        expect(textarea.style.height).toBe('120px');
+    });
+
     test('当内容高度超过上限时，封顶为 240px', () => {
         const { input, textarea } = setupInput();
         Object.defineProperty(textarea, 'scrollHeight', { value: 400, configurable: true });

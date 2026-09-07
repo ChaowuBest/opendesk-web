@@ -1,0 +1,117 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/*
+ * 全局共享字体定义：内嵌字体的 @font-face 与 --font-sans / --font-mono 字体变量，
+ * 以及字体预设（gui_config.font_preset）的覆盖规则。主窗口经 common.css @import 引入；
+ * task_status_widget.html 等不加载 common.css 的独立窗口页面单独引入，保证浮窗等
+ * 界面与主窗口字体一致（含设置切换字体预设后的跟随）。修改字体栈时需同步 custom.css
+ * 的 :root 定义（由 font-consistency / task-status-widget-font 测试守护）。
+ */
+
+/* LXGW WenKai Screen — font_preset 用内嵌字体（仅在预设命中时按需加载） */
+@import 'lxgw-wenkai-screen-webfont/lxgwwenkaiscreen.css';
+
+/* HarmonyOS Sans SC — bundled sans-serif font for Chinese (shared across all renderer pages) */
+@font-face {
+    font-family: 'HarmonyOS Sans';
+    src: url('/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* Maple Mono — bundled monospace font (shared across all renderer pages) */
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Regular.ttf.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Italic.ttf.woff2') format('woff2');
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Bold.ttf.woff2') format('woff2');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-BoldItalic.ttf.woff2') format('woff2');
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+}
+
+/* 显式在 :root 上定义 CSS 变量，确保不被 Vite CSS code splitting 拆分到其他 chunk */
+:root {
+    --font-sans:
+        'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        'Helvetica Neue', Arial, sans-serif;
+    --font-mono:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+        monospace;
+}
+
+/* font_preset: lxgwwenkai */
+html[data-font-preset='lxgwwenkai'] {
+    --font-sans:
+        'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+html[data-font-preset='lxgwwenkai'],
+html[data-font-preset='lxgwwenkai'] body {
+    font-family:
+        'LXGW WenKai Screen',
+        'HarmonyOS Sans',
+        'PingFang SC',
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        'Helvetica Neue',
+        Arial,
+        sans-serif;
+}
+/* 排除 FontAwesome 图标和代码字体 */
+html[data-font-preset='lxgwwenkai']
+    body
+    *:not(.fa):not(.fas):not(.far):not(.fab):not(.fa-brands):not(.fa-solid):not(.fa-regular):not(i):not(code):not(
+        pre
+    ):not(.monospace):not(.font-mono):not(.diff-body):not(.code-block-body):not(.code-table):not(
+        .terminal-tool-output
+    ):not(.code-ln):not(.code-line):not([class*='hljs']):not(
+        :has(.font-mono, .monospace, code, pre, .diff-body, .code-block-body, .hljs)
+    ) {
+    font-family:
+        'LXGW WenKai Screen',
+        'PingFang SC',
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        'Helvetica Neue',
+        Arial,
+        sans-serif !important;
+}
+html[data-font-preset='lxgwwenkai'] .markdown-body {
+    font-family: 'LXGW WenKai Screen', 'HarmonyOS Sans', 'PingFang SC', sans-serif;
+}

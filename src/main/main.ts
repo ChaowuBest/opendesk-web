@@ -70,6 +70,7 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -1416,7 +1417,13 @@ const registerTaskManagerAPIHandlers = () => {
                 task_status: task.task_status,
                 task_json_path: taskJsonPath,
                 model: task.model,
-                parent_id: task.parent_id
+                parent_id: task.parent_id,
+                // 导出 header 需要的元数据：任务起止时间与累计 token 消耗
+                started_at: task.started_at,
+                created_at: task.created_at,
+                finished_at: task.finished_at,
+                total_elapsed_ms: task.total_elapsed_ms,
+                usage_summary: task.usage_summary
             }
         };
     });
@@ -1939,6 +1946,16 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: htmlContent };
         } catch (error: any) {
             logger.error('exporting task failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 保存 renderer 侧生成的任务导出 HTML（内联字体后写盘）
+    ipcMain.handle('taskManager:saveExportHtml', async (event, filePath, html, fontUrls) => {
+        try {
+            await saveTaskExportHtml(filePath, html, fontUrls);
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            logger.error('saving export html failed', error);
             return { status: 'error', message: error.message };
         }
     });

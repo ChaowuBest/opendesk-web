@@ -384,6 +384,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        saveExportHtml: async (filePath, html, fontUrls = []) => {
+            const result = await ipcRenderer.invoke('taskManager:saveExportHtml', filePath, html, fontUrls);
+            if (result.status !== 'ok') {
+                console.error('saving export html failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getSessionMemory: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getSessionMemory', taskId);
             if (result.status === 'ok') {
@@ -510,6 +518,14 @@ function exposeThemeAPI() {
             const handler = (_event, resolved) => callback(resolved);
             ipcRenderer.on('theme:changed', handler);
             return () => ipcRenderer.removeListener('theme:changed', handler);
+        },
+        getFontPreset: async () => {
+            return ipcRenderer.invoke('theme:getFontPreset');
+        },
+        onFontPresetChanged: (callback) => {
+            const handler = (_event, preset) => callback(preset);
+            ipcRenderer.on('theme:fontPresetChanged', handler);
+            return () => ipcRenderer.removeListener('theme:fontPresetChanged', handler);
         }
     });
 }

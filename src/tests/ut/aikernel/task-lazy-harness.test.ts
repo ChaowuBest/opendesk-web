@@ -54,9 +54,15 @@ function createManager(): TaskManagerState {
 }
 
 describe('lazy task harness initialization', () => {
-    afterEach(() => {
+    afterEach(async () => {
         for (const manager of managers) {
             manager.disposeLazyHarnessInit();
+        }
+        // 先把节流中的脏任务落盘到当前（临时）目录，再删除目录/重置自定义目录：
+        // persistLater() 调度的 2s 节流定时器若在 teardown 之后才触发，
+        // 会把测试数据写进真实用户目录（task-lazy-prompt.json 泄漏的根因）。
+        for (const manager of managers) {
+            await manager.flushAllPendingSaves();
         }
         managers = [];
         if (tempRootDir && fs.existsSync(tempRootDir)) {
@@ -257,6 +263,11 @@ describe('lazy task harness initialization', () => {
     });
 
     test('refreshes a lazy task system prompt with the mode used to initialize its harness', async () => {
+        // 该用例会触发 persistLater()，必须像其他用例一样隔离任务目录，
+        // 否则节流保存会把测试任务写进真实用户目录
+        tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-lazy-harness-'));
+        setCustomOpendeskDirectory(tempRootDir);
+
         const manager = createManager();
         const task = createTask(manager, 'task-lazy-prompt', '/workspace/shared');
         task.setSystemPrompt('system:old-mode');
