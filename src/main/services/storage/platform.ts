@@ -16,6 +16,7 @@
  * - openharmony：无 Node.js 原生模块支持
  * - win32 + arm64：better-sqlite3 / classic-level 无 prebuild，编译工具链缺失
  */
+import { createRequire } from 'module';
 import { logger } from '../../utils/logger.js';
 
 export function shouldUseWasm(): boolean {
@@ -69,4 +70,15 @@ export async function createWithNativeSqliteFallback<T>(
 
 export function shouldUseArkData(): boolean {
     return (process.platform as string) === 'openharmony' && process.env.ARKDATA_AVAILABLE === '1';
+}
+
+export function resolveSqliteVecExtensionPath(extensionPath: string): string {
+    // SQLite loads through the OS, which cannot resolve Electron's virtual ASAR paths.
+    return extensionPath.replace(/([/\\])app\.asar([/\\])/, '$1app.asar.unpacked$2');
+}
+
+export function loadSqliteVec(db: { loadExtension(extensionPath: string): void }): void {
+    const require = createRequire(import.meta.url);
+    const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
+    db.loadExtension(resolveSqliteVecExtensionPath(sqliteVec.getLoadablePath()));
 }

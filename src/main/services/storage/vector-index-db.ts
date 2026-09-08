@@ -24,11 +24,11 @@ import { SimilarityMetric } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { loadSqliteVec } from './platform.js';
 
 // createRequire keeps resolution lazy — see base-index-db.ts for context.
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof DatabaseType;
-const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
 
 export function probeVectorIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
     if (!fs.existsSync(dbPath)) return 'missing';
@@ -77,7 +77,7 @@ export class VectorIndexDB implements IVectorIndexDB {
         this.db = new Database(dbPath);
 
         // 加载 sqlite-vec 扩展
-        sqliteVec.load(this.db);
+        loadSqliteVec(this.db);
 
         // 启用 WAL 模式以提高并发性能
         this.db.pragma('journal_mode = WAL');
