@@ -610,6 +610,129 @@ describe('task-view message queue', () => {
         expect(unsubscribeTaskUpdate).toHaveBeenCalledWith('embedded-task', 'subscription-late');
     });
 
+    async function createStreamingSubscription() {
+        let receive!: (progress: Record<string, unknown>) => void;
+        window.taskManagerAPI = {
+            getFullTask: jest.fn(async () => ({ task_status: 'running', chat_context: { messages: [] } })),
+            getModelContextSize: jest.fn(async () => 0),
+            getTaskTodos: jest.fn(async () => []),
+            subscribeTaskUpdate: jest.fn(async (_id, callback) => {
+                receive = callback;
+                return 'stream-sub';
+            }),
+            unsubscribeTaskUpdate: jest.fn(async () => undefined)
+        };
+        const view = document.createElement('task-view') as any;
+        view.setAttribute('task_id', 'stream-task');
+        view.setAttribute('embedded', '');
+        document.body.appendChild(view);
+        for (let i = 0; i < 10 && !receive; i++) await Promise.resolve();
+        expect(receive).toBeDefined();
+        return { view, receive };
+    }
+
+    function streamedText(text: string, status = 'running') {
+        return {
+            type: 'assistant',
+            task_id: 'stream-task',
+            task_status: status,
+            message_id: 'stream-message',
+            last_part_index: 0,
+            last_part: { type: 'text', text, rendered: `<p>${text}</p>` }
+        };
+    }
+
+    test('coalesces subscribed text bursts and flushes final content before completion cleanup', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        const render = jest.spyOn(view, '_renderAssistantProgress');
+        jest.useFakeTimers();
+        try {
+            for (let i = 0; i < 100; i++) receive(streamedText(`answer ${i}`));
+            expect(render).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(50);
+            expect(render).toHaveBeenCalledTimes(1);
+            expect(view.querySelector('.markdown-body').textContent).toBe('answer 99');
+            receive(streamedText('pending tail'));
+            receive(streamedText('complete answer', 'stopped'));
+            expect(view.querySelector('.markdown-body').textContent).toBe('complete answer');
+            expect(view.task_status).toBe('stopped');
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+            jest.advanceTimersByTime(100);
+            expect(view.querySelector('.markdown-body').textContent).toBe('complete answer');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('manual stop flushes pending text without resurrecting running status or the cursor', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('last received text'));
+            view.task_status = 'stopped';
+            view._cleanupStreamingState();
+            expect(view.querySelector('.markdown-body').textContent).toBe('last received text');
+            expect(view.task_status).toBe('stopped');
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+            jest.advanceTimersByTime(100);
+            expect(view.querySelectorAll('.stream-cursor')).toHaveLength(0);
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test('replacement and tool boundaries cannot be overwritten by buffered text', async () => {
+        const { view, receive } = await createStreamingSubscription();
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('pending text'));
+            receive({
+                ...streamedText(''),
+                last_part_index: 1,
+                last_part: { type: 'tool_call', rendered: '<div>tool result</div>' }
+            });
+            expect(view.textContent).toContain('pending text');
+            expect(view.textContent).toContain('tool result');
+            receive(streamedText('queued correction'));
+            receive({
+                type: 'assistant_replace',
+                task_status: 'running',
+                message_id: 'stream-message',
+                parts: [{ type: 'text', rendered: '<p>authoritative replacement</p>' }]
+            });
+            jest.advanceTimersByTime(100);
+            expect(view.querySelector('.markdown-body').textContent).toBe('authoritative replacement');
+            expect(view.textContent).not.toContain('queued correction');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
+    test.each(['reload', 'remove', 'background'] as const)('discards buffered text on %s', async (action) => {
+        const { view, receive } = await createStreamingSubscription();
+        const render = jest.spyOn(view, '_renderAssistantProgress');
+        jest.useFakeTimers();
+        try {
+            receive(streamedText('stale text'));
+            if (action === 'reload') await view.reload();
+            if (action === 'remove') view.remove();
+            if (action === 'background') {
+                view.style.display = 'none';
+                receive(streamedText('hidden text'));
+                view.style.display = '';
+            }
+            jest.advanceTimersByTime(100);
+            expect(render).not.toHaveBeenCalled();
+            expect(view.textContent).not.toContain('stale text');
+        } finally {
+            view.remove();
+            restoreRealTimerGlobals();
+        }
+    });
+
     test('shows a thinking placeholder while waiting for the first assistant part', async () => {
         window.taskManagerAPI = {
             ...window.taskManagerAPI,
@@ -1672,6 +1795,43 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).not.toContain('old provisional text');
         expect(taskView.querySelector('.reasoning-content')?.textContent?.trim()).toBe('hidden reasoning');
         expect(taskView.textContent).toContain('visible answer');
+    });
+
+    test('streaming text keeps completed blocks and their controls while updating the tail', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-streaming-text';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+        const update = (rendered: string) =>
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'streaming-text',
+                    last_part_index: 0,
+                    last_part: { type: 'text', rendered }
+                },
+                history
+            );
+        const prefix = '<h2>Completed section</h2><div class="code-block-wrapper"><pre>const n = 1;</pre></div>';
+        update(prefix + '<p>Partial</p>');
+        const heading = taskView.querySelector('h2');
+        const block = taskView.querySelector('.code-block-wrapper')!;
+        const button = document.createElement('button');
+        const copy = jest.fn();
+        button.addEventListener('click', copy);
+        block.appendChild(button);
+
+        update(prefix + '<p>Partial answer</p>');
+        expect(taskView.querySelector('h2')).toBe(heading);
+        expect(taskView.querySelector('.code-block-wrapper')).toBe(block);
+        expect(taskView.contains(button)).toBe(true);
+        button.click();
+        expect(copy).toHaveBeenCalledTimes(1);
+        expect(taskView.querySelector('.markdown-body')?.textContent).toContain('Partial answer');
+        expect(taskView.querySelectorAll('.stream-cursor')).toHaveLength(1);
     });
 
     test('assistant progress without an explicit part index renders safely', () => {

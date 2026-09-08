@@ -1,0 +1,98 @@
+import { beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { parseHTML } from 'linkedom';
+import { updateStreamingText } from '../../../renderer/utils/streaming-text.js';
+import { enhanceCodeBlocks } from '../../../renderer/components/previewer.js';
+
+const clipboard = jest.fn(async (_text: string) => undefined);
+
+describe('streaming Markdown snapshots', () => {
+    beforeAll(() => {
+        const { window } = parseHTML('<!doctype html><html><body></body></html>');
+        Object.assign(globalThis, { document: window.document, Node: window.Node });
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { clipboard: { writeText: clipboard } },
+            configurable: true
+        });
+    });
+
+    function code(text: string, preview = false): string {
+        const attrs = preview
+            ? ` data-previewable="true" data-preview-lang="svg" data-raw-code="${Buffer.from(text).toString('base64')}"`
+            : '';
+        return `<div class="code-block-wrapper"${attrs}><div class="code-block-header">Code</div><div class="code-block-body"><table><tbody><tr><td class="code-line">${text.replaceAll('<', '&lt;')}</td></tr></tbody></table></div></div>`;
+    }
+
+    test('keeps copy listeners and preview state when another block grows', async () => {
+        const container = document.createElement('div');
+        const source = code('<svg><text>Hello</text></svg>', true);
+        updateStreamingText(container, source + '<p>Tail</p>');
+        enhanceCodeBlocks(container);
+        const copy = container.querySelector<HTMLButtonElement>('.code-copy-btn')!;
+        const preview = container.querySelector('.code-preview-shadow-host');
+        const toggle = container.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+        toggle.checked = false;
+        toggle.dispatchEvent(new document.defaultView!.Event('change'));
+        updateStreamingText(container, source + '<p>Tail grows</p>');
+        enhanceCodeBlocks(container);
+        expect(container.querySelector('.code-preview-shadow-host')).toBe(preview);
+        expect(container.querySelector('.code-copy-btn')).toBe(copy);
+        expect(toggle.checked).toBe(false);
+        expect(container.querySelector<HTMLElement>('.code-block-body')!.style.display).toBe('');
+        copy.click();
+        await Promise.resolve();
+        expect(clipboard).toHaveBeenLastCalledWith('<svg><text>Hello</text></svg>');
+    });
+
+    test('rebuilds a changed code block so its copy handler reads the new body', () => {
+        const container = document.createElement('div');
+        updateStreamingText(container, code('old'));
+        enhanceCodeBlocks(container);
+        const old = container.querySelector('.code-copy-btn');
+        updateStreamingText(container, code('new'));
+        enhanceCodeBlocks(container);
+        const button = container.querySelector<HTMLButtonElement>('.code-copy-btn')!;
+        expect(button).not.toBe(old);
+        button.click();
+        expect(clipboard).toHaveBeenLastCalledWith('new');
+        expect(container.querySelectorAll('.code-copy-btn')).toHaveLength(1);
+    });
+
+    test('updates earlier blocks when later Markdown resolves references or changes structure', () => {
+        const container = document.createElement('div');
+        const snapshots = [
+            '<p>[link][ref]</p><p>Heading</p>',
+            '<p><a href="https://example.com">link</a></p><h2>Heading</h2>',
+            '<ul><li>one</li><li>two</li></ul>\n<table><tbody><tr><td>x</td></tr></tbody></table>',
+            '<!-- comment -->text<p>replacement &amp; suffix</p>',
+            ''
+        ];
+        for (const html of snapshots) {
+            updateStreamingText(container, html);
+            const expected = document.createElement('div');
+            expected.innerHTML = html;
+            expect(container.innerHTML).toBe(expected.innerHTML);
+        }
+    });
+
+    test('handles history replacement and externally removed nodes', () => {
+        const container = document.createElement('div');
+        updateStreamingText(container, '<p>one</p><p>two</p>');
+        container.innerHTML = '<p>history reload</p>';
+        updateStreamingText(container, '<p>one</p><p>two</p>');
+        expect(container.innerHTML).toBe('<p>one</p><p>two</p>');
+        container.firstChild!.remove();
+        updateStreamingText(container, '<p>one</p><p>two</p>');
+        expect(container.innerHTML).toBe('<p>one</p><p>two</p>');
+    });
+
+    test('identical snapshots do not parse HTML or mutate content', () => {
+        const container = document.createElement('div');
+        updateStreamingText(container, '<p>same</p>');
+        const original = container.firstChild;
+        const create = jest.spyOn(document, 'createElement');
+        updateStreamingText(container, '<p>same</p>');
+        expect(create).not.toHaveBeenCalled();
+        expect(container.firstChild).toBe(original);
+        create.mockRestore();
+    });
+});
