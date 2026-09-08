@@ -249,9 +249,7 @@ export interface PluginAccountDeviceCodeLoginMethod {
 }
 
 export type PluginAccountLoginMethod =
-    | PluginAccountFormLoginMethod
-    | PluginAccountBrowserLoginMethod
-    | PluginAccountDeviceCodeLoginMethod;
+    PluginAccountFormLoginMethod | PluginAccountBrowserLoginMethod | PluginAccountDeviceCodeLoginMethod;
 
 export interface PluginAccountLoginFlowRequest extends PluginAccountLoginContext {
     methodId: string;
@@ -276,6 +274,11 @@ export interface PluginAccountLoginFlow {
 export interface PluginAccountBackend {
     readonly id: string;
     readonly kinds: readonly PluginAccountKind[];
+    /**
+     * 该账号类型在宿主/用户未配置 baseUrl 时由插件提供的默认地址。
+     * 未实现或返回 undefined 表示该类型必须由宿主/用户显式提供地址。
+     */
+    getDefaultBaseUrl?(kind: PluginAccountKind): string | undefined;
     initialize(): void;
     getSession(): PluginAccountSession | null;
     getUserInfo(): Promise<PluginAccountUser | null>;

@@ -143,8 +143,8 @@ const ModelSchema = z.preprocess(
 );
 
 type ModelType = z.infer<typeof ModelTypeSchema>;
-type ChatModel = z.infer<typeof ChatModelSchema>;
-type EmbeddingModel = z.infer<typeof EmbeddingModelSchema>;
+export type ChatModel = z.infer<typeof ChatModelSchema>;
+export type EmbeddingModel = z.infer<typeof EmbeddingModelSchema>;
 type ProviderType = 'openai' | 'anthropic';
 type NormalizedProviderType = ProviderType;
 
@@ -290,7 +290,7 @@ const NetworkConfigSchema = z.object({
 });
 
 type Provider = z.infer<typeof ProviderSchema>;
-type Model = z.infer<typeof ModelSchema>;
+export type Model = z.infer<typeof ModelSchema>;
 
 const ExperimentalApplicationsSchema = z.preprocess(
     (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {}),
@@ -400,20 +400,18 @@ type TelemetryConfig = z.infer<typeof TelemetrySchema>;
 type OpenTelemetryConfig = z.infer<typeof OpenTelemetryConfigSchema>;
 type LangfuseConfig = z.infer<typeof LangfuseConfigSchema>;
 
-const DEFAULT_PERSONAL_BASE_URL = 'http://127.0.0.1:8000/api/v1';
-
 const AccountConfigSchema = z
     .object({
         mode: z
             .enum(['personal', 'enterprise', 'nologin'])
             .default('nologin')
             .describe('账号登录方式: personal=个人账号, enterprise=企业账号, nologin=无账号登录'),
-        default_base_url: z.string().default(DEFAULT_PERSONAL_BASE_URL).describe('个人账号默认后端地址(来自配置文件)'),
+        default_base_url: z.string().default('').describe('个人账号默认后端地址(来自配置文件)'),
         enterprise_base_url: z.string().default('').describe('企业账号私有化部署后端地址(用户输入, 可留空)')
     })
     .default({
         mode: 'nologin',
-        default_base_url: DEFAULT_PERSONAL_BASE_URL,
+        default_base_url: '',
         enterprise_base_url: ''
     });
 
@@ -444,6 +442,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         telemetry: TelemetrySchema,
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
+        builtin_models: z.array(ModelSchema).describe('内置虚拟模型（账号等，登录后拉取）').default([]),
         gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
             theme_preference: 'system',
             scale_factor: 1,
@@ -497,6 +496,14 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
 export type SettingData = z.infer<ReturnType<typeof getSettingSchema>>;
 
 export type DebugModeConfig = z.infer<typeof DebugModeSchema>;
+
+export type BuiltinModelFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+export interface BuiltinModelProvider {
+    readonly providerName: string;
+    resolveInstance(model: Model, expectedType?: ModelType): ModelInstance | null;
+    refreshModels(fetchImpl?: BuiltinModelFetch): Promise<Model[]>;
+}
 
 export class ModelInstance {
     model_name: string;
@@ -632,6 +639,8 @@ export class Setting {
      * 应用启动后应检查此变量并通过模态弹窗提醒用户。
      */
     static _loadError: string | null = null;
+
+    static builtinModelProvider: BuiltinModelProvider | null = null;
 
     data: SettingData;
 
@@ -825,7 +834,10 @@ export class Setting {
     getModelInstance(model_alias: string, expectedType?: ModelType): ModelInstance | null {
         const modelRef = this.data.models.find((model: Model) => model.alias === model_alias);
         if (modelRef === undefined) {
-            return null;
+            const builtinModel = this.data.builtin_models.find((model: Model) => model.alias === model_alias);
+            return builtinModel
+                ? (Setting.builtinModelProvider?.resolveInstance(builtinModel, expectedType) ?? null)
+                : null;
         }
         if (expectedType !== undefined && modelRef.model_type !== expectedType) {
             return null;
@@ -932,6 +944,17 @@ export class Setting {
         let changed = false;
         for (const { field, expectedType } of defaultModelFields) {
             const alias = this.data[field] as string;
+            const providerName = Setting.builtinModelProvider?.providerName;
+            // 内置虚拟模型（如账号内置模型）不在 models 列表中，不因缺失而清除引用；
+            // 未登录时由解析层返回 null 做优雅降级。
+            // 同时兼顾启动时序：provider 尚未注册（providerName 为空）时，只要该别名
+            // 已持久化在 builtin_models 中，也应予以保留，避免默认模型引用被过早清除。
+            const isBuiltinAlias =
+                (providerName !== undefined && alias.startsWith(`${providerName}/`)) ||
+                this.data.builtin_models.some((model) => model.alias === alias);
+            if (alias && isBuiltinAlias) {
+                continue;
+            }
             const actualType = modelTypes.get(alias);
             if (alias && (!actualType || (expectedType !== undefined && actualType !== expectedType))) {
                 (this.data as Record<string, unknown>)[field] = '';
@@ -1264,5 +1287,7 @@ export {
     type ProviderType,
     type NormalizedProviderType,
     type SettingData,
-    type DebugModeConfig
+    type DebugModeConfig,
+    type BuiltinModelProvider,
+    type BuiltinModelFetch
 };

@@ -10,6 +10,7 @@
  */
 
 import { Setting } from '../../utils/setting.js';
+import { registerAccountBuiltinModelProvider } from './model-provider.js';
 import { AccountConfigController, type AccountConfigRepository } from './config.js';
 import { AccountRuntime } from './runtime.js';
 import { AccountService } from './service.js';
@@ -35,6 +36,7 @@ export function getAccountRuntime(): AccountRuntime {
     if (runtime) {
         return runtime;
     }
+    registerAccountBuiltinModelProvider();
     const config = new AccountConfigController(new SettingAccountConfigRepository());
     const service = new AccountService({
         getBaseUrl: (kind) => config.getBaseUrl(kind),

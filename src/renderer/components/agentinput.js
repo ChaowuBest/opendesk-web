@@ -150,6 +150,14 @@ function filterChatModels(models) {
     return (models || []).filter(isChatModel);
 }
 
+/**
+ * 模型列表 = 用户配置模型 + 内置虚拟模型（如账号内置模型 opendesk/auto）。
+ * builtin_models 随 setting.json 持久化，登录时由主进程拉取刷新。
+ */
+export function mergeBuiltinModels(settingObj) {
+    return filterChatModels([...(settingObj.models || []), ...(settingObj.builtin_models || [])]);
+}
+
 // --- SVG icon tiles for toolbar (scheme E: soft-colored tiles) ---
 
 const MODE_SVG = {
@@ -330,7 +338,7 @@ class AgentInput extends HTMLElement {
             this._t = createRendererTranslator(newData);
             // 发送快捷键设置变化时实时同步 placeholder 与提交按钮提示
             this.applySendShortcutSetting(newData);
-            const newModels = filterChatModels(newData.models);
+            const newModels = mergeBuiltinModels(newData);
             this.availableModels = newModels;
             this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
                 ? newData.default_model
@@ -371,7 +379,7 @@ class AgentInput extends HTMLElement {
             const settingObj = await window.settingAPI.loadSettingObject();
             this._t = createRendererTranslator(settingObj);
             // 加载模型列表
-            this.availableModels = filterChatModels(settingObj.models);
+            this.availableModels = mergeBuiltinModels(settingObj);
             this.defaultModelAlias = this.availableModels.some((m) => m.alias === settingObj.default_model)
                 ? settingObj.default_model
                 : '';

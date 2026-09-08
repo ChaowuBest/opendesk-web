@@ -101,6 +101,7 @@ export const enUs: Record<string, string> = {
     'cli.account.errors.user_invalid': 'The account plugin returned invalid user information',
     'cli.account.errors.login_method_unavailable': 'Sign-in method unavailable: ${detail}',
     'cli.account.errors.login_incomplete': 'Sign-in flow ended unexpectedly: ${detail}',
+    'cli.account.errors.social_login_failed': 'Third-party sign-in failed. Please try again',
     'task.corrupted.title': 'Task Data Could Not Be Loaded',
     'task.corrupted.detail':
         'Task ${taskId} was removed from the task list because its data could not be loaded. The original task file, artifacts, and todos were preserved. Repair the data, then run /recover tasks to restore it.',
@@ -2088,6 +2089,10 @@ export const enUs: Record<string, string> = {
     'renderer.account.loginRequired': 'Please fill in all required fields',
     'renderer.account.loginFailed': 'Sign in failed',
     'renderer.account.loadingMethods': 'Loading sign-in methods...',
+    'renderer.account.browserLoginHint':
+        'The sign-in page has been opened in your browser. If it did not open, copy the link and open it manually.',
+    'renderer.account.copyLoginLink': 'Copy sign-in link',
+    'renderer.account.loginWithProvider': 'Sign in with ${provider}',
     'renderer.account.profileSettings': 'Profile settings',
     'renderer.account.edit': 'Edit',
     'renderer.account.save': 'Save',
@@ -2111,6 +2116,7 @@ export const enUs: Record<string, string> = {
     'renderer.account.errors.userInvalid': 'The account plugin returned invalid user information',
     'renderer.account.errors.loginMethodUnavailable': 'Sign-in method unavailable: ${detail}',
     'renderer.account.errors.loginIncomplete': 'Sign-in flow ended unexpectedly: ${detail}',
+    'renderer.account.errors.socialLoginFailed': 'Third-party sign-in failed. Please try again',
     'renderer.account.errors.fieldRequired': 'Please enter ${field}',
 
     // Renderer - Setup Wizard (account)

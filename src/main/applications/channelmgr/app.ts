@@ -769,9 +769,12 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 获取当前已配置的 chat 模型列表与默认模型（供 GUI 模型下拉选择）。 */
     getAvailableModels(): { models: string[]; defaultModel: string } {
         try {
-            const data = Setting.getInstance().getData() || {};
+            const setting = Setting.getInstance();
+            const data = setting.getData() || {};
             const rawModels = data.models as unknown as any[] | undefined;
-            const models = (rawModels || [])
+            // 合并内置虚拟模型（如账号内置模型 opendesk/auto，登录后可用）
+            const builtinAliases = (setting.getData().builtin_models ?? []).map((m) => m.alias);
+            const models = [...(rawModels || []), ...builtinAliases.map((alias) => ({ alias, model_type: 'chat' }))]
                 .filter((m: any) => m?.model_type === 'chat')
                 .map((m: any) => m?.alias)
                 .filter((alias: unknown): alias is string => typeof alias === 'string' && alias.length > 0);

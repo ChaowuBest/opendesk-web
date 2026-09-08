@@ -11,18 +11,54 @@
 
 import { BrowserWindow, ipcMain } from 'electron';
 import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { Setting } from '../../utils/setting.js';
+import { LLM } from '../../aikernel/llm.js';
+import { getLocale } from '../../../locale/index.js';
 import { accountBackendRegistry } from './backend-registry.js';
 import { getAccountRuntime } from './factory.js';
 import { registerAccountAPIHandlers } from './ipc.js';
 import type { AccountSession } from './types.js';
+import { refreshBuiltinModels } from './model-provider.js';
 
 export function registerElectronAccountIntegration(): void {
-    const publishSessionChanged = (session: AccountSession | null): void => {
+    const broadcast = (channel: string, payload: unknown): void => {
         for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed()) {
-                safeSendToWebContents(win.webContents, 'account:sessionChanged', session);
+                safeSendToWebContents(win.webContents, channel, payload);
             }
         }
+    };
+
+    const publishSessionChanged = (session: AccountSession | null): void => {
+        // 会话变化（登录/登出/刷新 token/插件重载）会影响内置模型凭据的可用性：
+        // 先清理 adapter 缓存并推送会话，让登录态 UI 立即切换；
+        // 内置模型目录依赖新会话换取到的 relay 凭据，必须重新拉取并持久化，
+        // 因此设置快照要等拉取完成后再推送，否则 renderer 会拿到空模型列表。
+        try {
+            LLM.clearAdapterCache();
+        } catch {
+            // aikernel 未初始化等场景忽略
+        }
+        broadcast('account:sessionChanged', session);
+        void (async () => {
+            try {
+                await refreshBuiltinModels();
+            } catch {
+                // 拉取失败时保持现有模型列表
+            }
+            let snapshot: unknown = null;
+            try {
+                snapshot = {
+                    ...Setting.getInstance().getData(),
+                    resolved_locale: getLocale()
+                };
+            } catch {
+                // 设置不可用时跳过快照广播
+            }
+            if (snapshot) {
+                broadcast('setting:changed', snapshot);
+            }
+        })();
     };
     registerAccountAPIHandlers({
         ipc: ipcMain,

@@ -53,7 +53,7 @@ export class AccountService {
     async getLoginMethods(kind: AccountKind): Promise<readonly PluginAccountLoginMethod[]> {
         const backend = this.selectBackend(kind);
         return normalizeAccountLoginMethods(
-            await backend.getLoginMethods({ kind, baseUrl: this.deps.getBaseUrl(kind) })
+            await backend.getLoginMethods({ kind, baseUrl: this.resolveBaseUrl(kind, backend) })
         );
     }
 
@@ -63,7 +63,11 @@ export class AccountService {
     ): Promise<{ flowId: string; state: PluginAccountLoginFlowState }> {
         await this.cancelActiveLogin();
         const backend = this.selectBackend(kind);
-        const flow = await backend.createLoginFlow({ kind, baseUrl: this.deps.getBaseUrl(kind), methodId });
+        const flow = await backend.createLoginFlow({
+            kind,
+            baseUrl: this.resolveBaseUrl(kind, backend),
+            methodId
+        });
         const flowId = `account-flow-${++this.nextLoginFlowId}`;
         this.loginFlow = { id: flowId, backend, flow };
         try {
@@ -143,6 +147,16 @@ export class AccountService {
         const active = this.loginFlow;
         this.loginFlow = null;
         if (active) await active.flow.cancel();
+    }
+
+    /**
+     * 生效地址 = 用户/宿主配置值，否则回退到插件声明的默认地址。
+     * 个人模式的官方地址由插件提供，宿主不再内置默认值。
+     */
+    private resolveBaseUrl(kind: AccountKind, backend: PluginAccountBackend): string {
+        const configured = this.deps.getBaseUrl(kind).trim();
+        if (configured) return configured;
+        return backend.getDefaultBaseUrl?.(kind)?.trim() ?? '';
     }
 
     private selectBackend(kind: AccountKind): PluginAccountBackend {

@@ -12,12 +12,16 @@
 export type WizardLoginChoice = 'opendesk' | 'enterprise' | 'nologin';
 export type WizardStep2View = 'personal-login' | 'enterprise-login' | 'model-config';
 
+/**
+ * 决定向导第二步展示的视图：
+ * - 选择个人/企业账号（且账号能力可用）时展示账号登录，登录完成后由调用方直接进入完成页，跳过模型配置；
+ * - 不登录或账号能力不可用时仍是原来的模型配置。
+ */
 export function resolveWizardStep2View(
     loginChoice: WizardLoginChoice,
-    accountLoginComplete: boolean,
     accountFeatureEnabled: boolean
 ): WizardStep2View {
-    if (!accountFeatureEnabled || loginChoice === 'nologin' || accountLoginComplete) {
+    if (!accountFeatureEnabled || loginChoice === 'nologin') {
         return 'model-config';
     }
     return loginChoice === 'enterprise' ? 'enterprise-login' : 'personal-login';

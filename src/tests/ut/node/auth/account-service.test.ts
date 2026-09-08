@@ -94,6 +94,36 @@ test('starting a login flow passes the private server address to the backend', a
     ]);
 });
 
+test('personal login falls back to the backend-declared default base URL when unconfigured', async () => {
+    const backend = createBackend();
+    backend.getDefaultBaseUrl = (kind) =>
+        kind === 'personal' ? 'https://plugin-default.example.com/api/v1' : undefined;
+    const service = new AccountService({ getBaseUrl: () => '', getBackend: () => backend });
+
+    await service.startLogin('personal', 'password');
+
+    assert.deepEqual(backend.requests, [
+        {
+            kind: 'personal',
+            baseUrl: 'https://plugin-default.example.com/api/v1',
+            methodId: 'password'
+        }
+    ]);
+});
+
+test('configured base URL takes precedence over the backend default', async () => {
+    const backend = createBackend();
+    backend.getDefaultBaseUrl = () => 'https://plugin-default.example.com/api/v1';
+    const service = new AccountService({
+        getBaseUrl: () => 'https://configured.example.com/api/v1',
+        getBackend: () => backend
+    });
+
+    await service.startLogin('personal', 'password');
+
+    assert.equal(backend.requests[0]?.baseUrl, 'https://configured.example.com/api/v1');
+});
+
 test('login flow operations reject stale flow ids', async () => {
     const backend = createBackend();
     const service = new AccountService({ getBaseUrl: () => '', getBackend: () => backend });

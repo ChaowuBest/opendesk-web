@@ -86,6 +86,22 @@ export function resolveLocalizedText(value: LocalizedText | undefined, locale?: 
     return resolveLocalizedTextWithLocale(value, locale ?? defaultRendererLocale());
 }
 
+/**
+ * 按 /auth/methods 语义拆分登录方式：
+ * - `passwordMethod` 为可选的用户名密码表单（最多一个）；
+ * - `providerMethods` 保持服务端返回顺序，渲染为“使用 xx 登录”。
+ */
+export function splitLoginMethods(methods: readonly AccountLoginMethod[] | null | undefined): {
+    passwordMethod: AccountLoginMethod | null;
+    providerMethods: AccountLoginMethod[];
+} {
+    const list = methods ?? [];
+    return {
+        passwordMethod: list.find((method) => method.type === 'form') ?? null,
+        providerMethods: list.filter((method) => method.type !== 'form')
+    };
+}
+
 type Translator = (key: string, params?: Record<string, string | number>) => string;
 
 /** renderer 错误码 key 约定：`renderer.account.errors.<camelCase>`。 */
@@ -108,8 +124,13 @@ export interface AccountLoginFlowOptions {
     method: AccountLoginMethod;
     /** form 方式的字段值；由调用方完成必填校验。 */
     values?: Record<string, string>;
-    /** 等待态回调（设备码 / 浏览器跳转 / 插件自定义等待文案）。 */
+    /** 等待态回调（设备码 / 插件自定义等待文案；浏览器跳转改由 onBrowserUrl 提供）。 */
     onStatus?: (message: string | undefined) => void;
+    /**
+     * 浏览器登录时回传授权链接，供上层渲染“复制链接”入口；
+     * 不直接把链接当作文案展示，避免浏览器跳转失败时用户无处可点。
+     */
+    onBrowserUrl?: (url: string) => void;
     onFlowStarted?: (flowId: string) => void;
     /** 覆盖默认语言解析（未提供时按 document/navigator 推断）。 */
     resolveText?: (value: LocalizedText | undefined) => string;
@@ -146,7 +167,11 @@ export async function runAccountLoginFlow(options: AccountLoginFlowOptions): Pro
         kind,
         method,
         values: options.values,
-        onState: (_state, statusText) => {
+        onState: (state, statusText) => {
+            if (state.status === 'opening-browser') {
+                options.onBrowserUrl?.(state.url);
+                return;
+            }
             if (statusText !== undefined) options.onStatus?.(statusText);
         },
         onFlowStarted: options.onFlowStarted,

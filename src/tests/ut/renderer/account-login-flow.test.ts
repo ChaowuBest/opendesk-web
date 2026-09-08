@@ -6,6 +6,7 @@ import {
     formatAccountLoginError,
     resolveLocalizedText,
     runAccountLoginFlow,
+    splitLoginMethods,
     type AccountApi,
     type AccountLoginMethod
 } from '../../../renderer/utils/account-login.ts';
@@ -98,6 +99,29 @@ describe('account login flow driver', () => {
         expect(result).toEqual(session);
     });
 
+    test('browser method routes the auth URL to onBrowserUrl instead of the status text', async () => {
+        const api = createApi([
+            { status: 'opening-browser', url: 'https://sso.example.com/authorize' },
+            { status: 'completed', session }
+        ]);
+        const browserUrls: string[] = [];
+        const statuses: string[] = [];
+        const result = await runAccountLoginFlow({
+            api,
+            kind: 'personal',
+            method: { id: 'gitcode', type: 'browser', displayName: 'GitCode' },
+            onStatus: (message) => {
+                if (message !== undefined) statuses.push(message);
+            },
+            onBrowserUrl: (url) => browserUrls.push(url),
+            delay: async () => {},
+            now: () => 0
+        });
+        expect(result).toEqual(session);
+        expect(browserUrls).toEqual(['https://sso.example.com/authorize']);
+        expect(statuses).toEqual([]);
+    });
+
     test('polling exceeds the timeout and fails with the shared timeout code', async () => {
         const api = createApi([
             { status: 'device-code', code: 'A', verificationUrl: 'https://example.com' },
@@ -156,6 +180,24 @@ describe('account error copy', () => {
         expect(formatAccountLoginError(new Error('account:login_timeout'), translate, '登录失败')).toBe(
             '登录失败：登录超时，请重试'
         );
+    });
+});
+
+describe('login method partitioning', () => {
+    const gitcode: AccountLoginMethod = { id: 'gitcode', type: 'browser', displayName: 'GitCode' };
+    const gitee: AccountLoginMethod = { id: 'gitee', type: 'browser', displayName: 'Gitee' };
+
+    test('keeps the password form separate and preserves provider order', () => {
+        const { passwordMethod, providerMethods } = splitLoginMethods([formMethod, gitcode, gitee]);
+        expect(passwordMethod?.id).toBe('password');
+        expect(providerMethods.map((method) => method.id)).toEqual(['gitcode', 'gitee']);
+    });
+
+    test('handles provider-only and empty method lists', () => {
+        expect(splitLoginMethods([gitcode]).passwordMethod).toBeNull();
+        expect(splitLoginMethods([gitcode]).providerMethods).toEqual([gitcode]);
+        expect(splitLoginMethods(null)).toEqual({ passwordMethod: null, providerMethods: [] });
+        expect(splitLoginMethods([])).toEqual({ passwordMethod: null, providerMethods: [] });
     });
 });
 

@@ -19,8 +19,7 @@ import { getAccountRuntime } from '../../applications/account/factory.js';
 import { describeLoginError, runLoginFlow, type LoginFlowIo } from '../../applications/account/login-flow.js';
 import type { AccountKind } from '../../applications/account/types.js';
 import { initializePluginHost } from '../../applications/pluginmgr/index.js';
-
-const DEFAULT_ENTERPRISE_URL = 'http://127.0.0.1:8000/api/v1';
+import { refreshBuiltinModels } from '../../applications/account/model-provider.js';
 
 /** CLI 侧登录流 IO：文本/密码输入走 readline，状态直接打印。 */
 const cliIo: LoginFlowIo = {
@@ -98,7 +97,7 @@ async function promptKind(): Promise<AccountKind> {
 /** 交互式询问企业 base_url 并持久化到 account_config（不改 mode）。 */
 async function promptEnterpriseBaseUrl(): Promise<string> {
     const cfg = getAccountRuntime().config.get();
-    const current = cfg.enterprise_base_url || DEFAULT_ENTERPRISE_URL;
+    const current = cfg.enterprise_base_url || cfg.default_base_url;
     const answer = await promptLine(`${t('cli.account.enterprise_url')} [${current}]: `);
     const baseUrl = (answer || current).trim();
     getAccountRuntime().config.configure({ enterprise_base_url: baseUrl });
@@ -132,6 +131,7 @@ async function runCliLogin(): Promise<void> {
     const method = await promptLoginMethod(methods);
     const session = await runLoginFlow(service, kind, method, cliIo);
     console.log(`\n✓ ${t('cli.account.login.success', { username: session.user.username })}`);
+    await refreshBuiltinModels();
 }
 
 export function registerAccountCommand(prog: Command): void {
@@ -158,6 +158,7 @@ export function registerAccountCommand(prog: Command): void {
                 await initializePluginHost();
                 const service = getAccountRuntime().getService();
                 await service.logout();
+                await refreshBuiltinModels();
                 console.log(`\n✓ ${t('cli.account.logout.success')}`);
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);

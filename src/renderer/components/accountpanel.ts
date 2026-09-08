@@ -17,6 +17,7 @@ import {
     getAccountApi,
     runAccountLoginFlow,
     resolveLocalizedText,
+    splitLoginMethods,
     type AccountApi,
     type AccountLoginField,
     type AccountLoginMethod,
@@ -47,9 +48,9 @@ class AccountPanel extends HTMLElement {
     private enterpriseBaseUrlDraft = '';
     private loginMethods: AccountLoginMethod[] | null = null;
     private loginMethodLoading = false;
-    private selectedLoginMethodId: string | null = null;
     private loginFieldValues: Record<string, string> = {};
     private loginStatusText: string | null = null;
+    private loginBrowserUrl: string | null = null;
     private displayNameDraft = '';
     private t = createRendererTranslator();
     private unsubscribeSession: (() => void) | null = null;
@@ -197,9 +198,10 @@ class AccountPanel extends HTMLElement {
         </button>`;
     }
 
-    private getSelectedLoginMethod(): AccountLoginMethod | null {
-        if (!this.loginMethods || this.loginMethods.length === 0) return null;
-        return this.loginMethods.find((method) => method.id === this.selectedLoginMethodId) ?? this.loginMethods[0];
+    private renderProviderButton(method: AccountLoginMethod): string {
+        const provider = resolveLocalizedText(method.displayName);
+        const label = this.t('renderer.account.loginWithProvider', { provider });
+        return `<button class="btn btn-provider" type="button" data-browser-method="${escapeHtml(method.id)}" ${this.busy ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
     }
 
     private renderEnterpriseUrlField(): string {
@@ -228,34 +230,40 @@ class AccountPanel extends HTMLElement {
     }
 
     private renderLoginForm(): string {
-        const method = this.getSelectedLoginMethod();
-        const methodOptions =
-            (this.loginMethods?.length ?? 0) > 1
-                ? `<div class="actions">${this.loginMethods!.map(
-                      (candidate) =>
-                          `<button class="btn ${candidate.id === method?.id ? 'btn-primary' : ''}" type="button" data-login-method="${escapeHtml(candidate.id)}">${escapeHtml(resolveLocalizedText(candidate.displayName))}</button>`
-                  ).join('')}</div>`
-                : '';
+        const { passwordMethod, providerMethods } = splitLoginMethods(this.loginMethods);
         const fields =
-            method?.type === 'form' ? method.fields.map((field) => this.renderLoginField(field)).join('') : '';
+            passwordMethod?.type === 'form'
+                ? passwordMethod.fields.map((field) => this.renderLoginField(field)).join('')
+                : '';
         const hint = this.loginMethodLoading
             ? `<p class="url-info">${escapeHtml(this.t('renderer.account.loadingMethods'))}</p>`
             : '';
-        const unavailable = !this.loginMethodLoading && !method;
+        const unavailable = !this.loginMethodLoading && !passwordMethod && providerMethods.length === 0;
         const status = this.loginStatusText ? `<p class="url-info">${escapeHtml(this.loginStatusText)}</p>` : '';
+        const browserHint = this.loginBrowserUrl
+            ? `<p class="url-info">${escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
+                <div class="actions"><button class="btn btn-ghost" type="button" data-action="copy-login-link">${escapeHtml(this.t('renderer.account.copyLoginLink'))}</button></div>`
+            : '';
+        const submit = passwordMethod
+            ? `<div class="actions">
+                    <button class="btn btn-primary" type="submit" data-submit ${this.busy ? 'disabled' : ''}>${escapeHtml(this.busy ? this.t('renderer.account.loggingIn') : this.t('renderer.account.loginSubmit'))}</button>
+                </div>`
+            : '';
+        const providers = providerMethods.length
+            ? `<div class="provider-logins">${providerMethods.map((method) => this.renderProviderButton(method)).join('')}</div>`
+            : '';
         return `
             <form data-form="login">
                 <h2 class="form-title">${escapeHtml(this.t('renderer.account.loginTitle'))}</h2>
                 ${this.mode === 'enterprise' ? this.renderEnterpriseUrlField() : ''}
-                ${methodOptions}
                 ${hint}
                 ${fields}
                 ${status}
+                ${browserHint}
                 ${this.error ? `<p class="error-text">${escapeHtml(this.error)}</p>` : ''}
                 ${unavailable && !this.error ? `<p class="error-text">${escapeHtml(this.t('renderer.account.accountServiceUnavailable'))}</p>` : ''}
-                <div class="actions">
-                    <button class="btn btn-primary" type="submit" data-submit ${this.busy || !method ? 'disabled' : ''}>${escapeHtml(this.busy ? this.t('renderer.account.loggingIn') : this.t('renderer.account.loginSubmit'))}</button>
-                </div>
+                ${submit}
+                ${providers}
             </form>
         `;
     }
@@ -357,14 +365,15 @@ class AccountPanel extends HTMLElement {
                 this.loginFieldValues[target.getAttribute('data-login-field') ?? ''] = target.value;
             });
         });
-        this.root.querySelectorAll<HTMLButtonElement>('[data-login-method]').forEach((button) => {
-            button.addEventListener('click', () => {
-                this.selectedLoginMethodId = button.getAttribute('data-login-method');
-                this.loginFieldValues = {};
-                this.error = null;
-                this.loginStatusText = null;
-                this.render();
+        this.root.querySelectorAll<HTMLButtonElement>('[data-browser-method]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                void this.handleBrowserLogin(button.getAttribute('data-browser-method') ?? '');
             });
+        });
+        this.root.querySelector('[data-action="copy-login-link"]')?.addEventListener('click', () => {
+            const url = this.loginBrowserUrl;
+            if (url) void navigator.clipboard?.writeText(url).catch(() => {});
         });
         this.root.querySelector('[data-enterprise-base-url]')?.addEventListener('input', (event) => {
             this.enterpriseBaseUrlDraft = (event.target as HTMLInputElement).value;
@@ -418,10 +427,8 @@ class AccountPanel extends HTMLElement {
             this.loginMethods = [
                 ...(await api.getLoginMethods(this.mode === 'enterprise' ? 'enterprise' : 'personal'))
             ];
-            this.selectedLoginMethodId = this.loginMethods[0]?.id ?? null;
         } catch (error) {
             this.loginMethods = null;
-            this.selectedLoginMethodId = null;
             this.error = error instanceof Error ? error.message : String(error);
         } finally {
             this.loginMethodLoading = false;
@@ -431,6 +438,33 @@ class AccountPanel extends HTMLElement {
 
     private async handleLogin(event: Event): Promise<void> {
         event.preventDefault();
+        const method = splitLoginMethods(this.loginMethods).passwordMethod;
+        if (!method || method.type !== 'form') {
+            return;
+        }
+        const values: Record<string, string> = {};
+        for (const field of method.fields) {
+            const value = this.loginFieldValues[field.id] ?? '';
+            values[field.id] = value;
+            if (field.required && !value.trim()) {
+                this.error = this.t('renderer.account.loginRequired');
+                this.render();
+                return;
+            }
+        }
+        await this.performLogin(method, values);
+    }
+
+    /** Provider 按钮直接发起浏览器登录，无需再经过表单提交。 */
+    private async handleBrowserLogin(methodId: string): Promise<void> {
+        const method = this.loginMethods?.find((candidate) => candidate.id === methodId);
+        if (!method) {
+            return;
+        }
+        await this.performLogin(method, {});
+    }
+
+    private async performLogin(method: AccountLoginMethod, values: Record<string, string>): Promise<void> {
         if (this.busy) {
             return;
         }
@@ -441,31 +475,16 @@ class AccountPanel extends HTMLElement {
             return;
         }
         const kind: 'personal' | 'enterprise' = this.mode === 'enterprise' ? 'enterprise' : 'personal';
-        const method = this.getSelectedLoginMethod();
-        if (!method) {
-            return;
-        }
         const baseUrl = this.enterpriseBaseUrlDraft.trim();
         if (kind === 'enterprise' && !baseUrl) {
             this.error = this.t('renderer.account.enterpriseBaseUrlRequired');
             this.render();
             return;
         }
-        const values: Record<string, string> = {};
-        if (method.type === 'form') {
-            for (const field of method.fields) {
-                const value = this.loginFieldValues[field.id] ?? '';
-                values[field.id] = value;
-                if (field.required && !value.trim()) {
-                    this.error = this.t('renderer.account.loginRequired');
-                    this.render();
-                    return;
-                }
-            }
-        }
         this.busy = true;
         this.error = null;
         this.loginStatusText = null;
+        this.loginBrowserUrl = null;
         this.render();
         try {
             if (kind === 'enterprise' && baseUrl !== this.enterpriseBaseUrl) {
@@ -479,12 +498,18 @@ class AccountPanel extends HTMLElement {
                 values,
                 onStatus: (message) => {
                     if (message !== undefined) this.setLoginStatus(message);
+                },
+                onBrowserUrl: (url) => {
+                    this.loginBrowserUrl = url;
+                    this.render();
                 }
             });
             this.expanded = false;
             this.loginFieldValues = {};
             this.loginStatusText = null;
+            this.loginBrowserUrl = null;
         } catch (error) {
+            this.loginBrowserUrl = null;
             this.error = formatAccountLoginError(error, this.t, this.t('renderer.account.loginFailed'));
         } finally {
             this.busy = false;

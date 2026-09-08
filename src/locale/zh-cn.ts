@@ -98,6 +98,7 @@ export const zhCn: Record<string, string> = {
     'cli.account.errors.user_invalid': '账号插件返回了无效的用户信息',
     'cli.account.errors.login_method_unavailable': '登录方式不可用：${detail}',
     'cli.account.errors.login_incomplete': '登录流程异常结束：${detail}',
+    'cli.account.errors.social_login_failed': '第三方登录失败，请重试',
     'task.corrupted.title': '任务数据无法加载',
     'task.corrupted.detail':
         '任务 ${taskId} 的数据无法加载，已仅从任务列表中移除。原始任务文件、产物和待办事项均已保留；修复数据后可运行 /recover tasks 恢复。',
@@ -2028,6 +2029,9 @@ export const zhCn: Record<string, string> = {
     'renderer.account.loginRequired': '请填写所有必填项',
     'renderer.account.loginFailed': '登录失败',
     'renderer.account.loadingMethods': '正在加载登录方式...',
+    'renderer.account.browserLoginHint': '已在浏览器中打开登录页；若未自动跳转，请复制链接后手动打开',
+    'renderer.account.copyLoginLink': '复制登录链接',
+    'renderer.account.loginWithProvider': '使用 ${provider} 登录',
     'renderer.account.profileSettings': '资料设置',
     'renderer.account.edit': '修改',
     'renderer.account.save': '保存',
@@ -2051,6 +2055,7 @@ export const zhCn: Record<string, string> = {
     'renderer.account.errors.userInvalid': '账号插件返回了无效的用户信息',
     'renderer.account.errors.loginMethodUnavailable': '登录方式不可用：${detail}',
     'renderer.account.errors.loginIncomplete': '登录流程异常结束：${detail}',
+    'renderer.account.errors.socialLoginFailed': '第三方登录失败，请重试',
     'renderer.account.errors.fieldRequired': '请输入${field}',
 
     // Renderer - Setup Wizard (account)

@@ -186,6 +186,31 @@
     border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
 }
 
+.provider-logins {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--pc-border, rgba(0, 0, 0, 0.08));
+}
+
+.provider-logins .btn-provider {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    align-self: stretch;
+    background: transparent;
+    color: var(--pc-heading, #1c1917);
+    border: 1px solid var(--pc-border, rgba(0, 0, 0, 0.15));
+}
+
+.btn-provider:hover:not(:disabled) {
+    background: var(--pc-hover, rgba(0, 0, 0, 0.04));
+}
+
 .profile {
     display: flex;
     align-items: center;
