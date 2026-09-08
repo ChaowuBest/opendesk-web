@@ -13,18 +13,30 @@ import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
 import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
+import { findExecutableInPath, findOpenHarmonyBash, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
-export function getOpenHarmonyTerminalBashPath(
+export type OpenHarmonyTerminalShell = { kind: 'zsh'; path: string } | { kind: 'bash'; path: string };
+
+export function getOpenHarmonyTerminalShell(
     state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
-): string | null {
-    const availability = getHarmonyLocalRuntimeFeatureAvailability('terminal', state);
-    return availability.available ? (state?.commands.bash ?? null) : null;
+): OpenHarmonyTerminalShell | null {
+    // feature gate 统一拦截 tablet 与 PC 上 zsh/bash 双缺，此处只做 shell 选择
+    if (!getHarmonyLocalRuntimeFeatureAvailability('terminal', state).available) return null;
+    if (state) {
+        // state 为已验证的探测快照：zsh 优先（交互模式加载 ~/.zshrc 环境），bash 兜底
+        if (state.commands.zsh) return { kind: 'zsh', path: state.commands.zsh };
+        return state.commands.bash ? { kind: 'bash', path: state.commands.bash } : null;
+    }
+    // 无宿主注入元数据（如 CLI 直跑）时退化为直接探测
+    const zshPath = findOpenHarmonyZsh();
+    if (zshPath) return { kind: 'zsh', path: zshPath };
+    const bashPath = findOpenHarmonyBash();
+    return bashPath ? { kind: 'bash', path: bashPath } : null;
 }
 
 export class TerminalApplication extends BaseApplication {
@@ -50,15 +62,15 @@ export class TerminalApplication extends BaseApplication {
                 break;
             }
             case 'openharmony': {
-                const state = getHarmonyLocalRuntimeState();
-                const ohBash = getOpenHarmonyTerminalBashPath(state);
-                if (ohBash) {
-                    toolset.addTool(new ExecuteBashTool(ohBash));
-                    toolset.addTool(new CheckShellStatusTool());
-                } else if (state === null && hasZsh()) {
-                    toolset.addTool(new ExecuteZshTool());
-                    toolset.addTool(new CheckShellStatusTool());
+                const shell = getOpenHarmonyTerminalShell();
+                if (shell?.kind === 'zsh') {
+                    toolset.addTool(new ExecuteZshTool(shell.path, true));
+                } else if (shell?.kind === 'bash') {
+                    toolset.addTool(new ExecuteBashTool(shell.path));
+                } else {
+                    break;
                 }
+                toolset.addTool(new CheckShellStatusTool());
                 break;
             }
             default:

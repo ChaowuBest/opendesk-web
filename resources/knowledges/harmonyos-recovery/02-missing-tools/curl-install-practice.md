@@ -1,4 +1,4 @@
-# 实践：修复带私有动态库的 curl
+# 实践：修复带私有动态库的 curl（executeBash 通道）
 
 本节保留一次完整实践，用来展示 cmd-pkgs 渠道安装的 curl 从“已安装但无法启动”到可用的处理过程。它是案例，不是所有工具都必须照搬的固定安装方案；通用原理参见[执行权限受限](../03-permission-denied/exec-permission.md)。
 
@@ -29,21 +29,22 @@ curl
 
 ## 2. 迁移到可执行的应用私有目录
 
-为工具创建独立前缀：
+可执行文件统一装到 `$CMD_PKGS_DIR/bin`（executeBash 通道 PATH 仅来自 OpenDesk env 注入的固定路径），私有库装到 `lib/external/curl-cmdpkg` 隔离子目录（避免与其他包的同名 `.so` 互相覆盖）：
 
 ```bash
-DST=<private-executable-prefix>/curl
-mkdir -p "$DST/bin" "$DST/lib/external"
+DST="$CMD_PKGS_DIR"
+LIBDIR="$DST/lib/external/curl-cmdpkg"
+mkdir -p "$DST/bin" "$LIBDIR"
 
 cp "$SRC/bin/curl" "$DST/bin/curl.source"
-cp "$SRC/lib/libcurl.so.4" "$DST/lib/libcurl.source.so.4"
+cp "$SRC/lib/libcurl.so.4" "$LIBDIR/libcurl.source.so.4"
 cp "$SRC/lib/external/libssl.so.3" \
-  "$DST/lib/external/libssl.source.so.3"
+  "$LIBDIR/libssl.source.so.3"
 cp "$SRC/lib/external/libcrypto.so.3" \
-  "$DST/lib/external/libcrypto.source.so.3"
+  "$LIBDIR/libcrypto.source.so.3"
 ```
 
-`<private-executable-prefix>` 必须替换为当前应用允许执行和加载原生代码的私有目录（如 `$CMD_PKGS_DIR/curl-cmdpkg`），不能仅因为某个目录可读写就假定它可执行 ELF。
+`$CMD_PKGS_DIR` 为当前应用允许执行和加载原生代码的私有目录（PATH 已前置其 bin），不能仅因为某个目录可读写就假定它可执行 ELF。
 
 ## 3. 修改各级 RUNPATH
 
@@ -51,27 +52,25 @@ cp "$SRC/lib/external/libcrypto.so.3" \
 
 ```bash
 cp "$DST/bin/curl.source" "$DST/bin/curl.work"
-cp "$DST/lib/libcurl.source.so.4" "$DST/lib/libcurl.work.so.4"
-cp "$DST/lib/external/libssl.source.so.3" \
-  "$DST/lib/external/libssl.work.so.3"
-cp "$DST/lib/external/libcrypto.source.so.3" \
-  "$DST/lib/external/libcrypto.work.so.3"
+cp "$LIBDIR/libcurl.source.so.4" "$LIBDIR/libcurl.work.so.4"
+cp "$LIBDIR/libssl.source.so.3" "$LIBDIR/libssl.work.so.3"
+cp "$LIBDIR/libcrypto.source.so.3" "$LIBDIR/libcrypto.work.so.3"
 
 llvm-objcopy --remove-section=.codesign "$DST/bin/curl.work"
-llvm-objcopy --remove-section=.codesign "$DST/lib/libcurl.work.so.4"
+llvm-objcopy --remove-section=.codesign "$LIBDIR/libcurl.work.so.4"
 llvm-objcopy --remove-section=.codesign \
-  "$DST/lib/external/libssl.work.so.3"
+  "$LIBDIR/libssl.work.so.3"
 llvm-objcopy --remove-section=.codesign \
-  "$DST/lib/external/libcrypto.work.so.3"
+  "$LIBDIR/libcrypto.work.so.3"
 
-patchelf --set-rpath "$DST/lib:$DST/lib/external" \
+patchelf --set-rpath "$LIBDIR" \
   "$DST/bin/curl.work"
-patchelf --set-rpath "$DST/lib:$DST/lib/external" \
-  "$DST/lib/libcurl.work.so.4"
-patchelf --set-rpath "$DST/lib/external" \
-  "$DST/lib/external/libssl.work.so.3"
-patchelf --set-rpath "$DST/lib/external" \
-  "$DST/lib/external/libcrypto.work.so.3"
+patchelf --set-rpath "$LIBDIR" \
+  "$LIBDIR/libcurl.work.so.4"
+patchelf --set-rpath "$LIBDIR" \
+  "$LIBDIR/libssl.work.so.3"
+patchelf --set-rpath "$LIBDIR" \
+  "$LIBDIR/libcrypto.work.so.3"
 ```
 
 本次实践使用绝对 RUNPATH，是因为相同环境中的 `$ORIGIN` 对照测试未按预期找到相邻库。其他系统版本应先验证 `$ORIGIN`，不要默认改成绝对路径。
@@ -85,25 +84,25 @@ binary-sign-tool sign -selfSign 1 \
   -signAlg SHA256withECDSA
 
 binary-sign-tool sign -selfSign 1 \
-  -inFile "$DST/lib/libcurl.work.so.4" \
-  -outFile "$DST/lib/libcurl.so.4" \
+  -inFile "$LIBDIR/libcurl.work.so.4" \
+  -outFile "$LIBDIR/libcurl.so.4" \
   -signAlg SHA256withECDSA
 
 binary-sign-tool sign -selfSign 1 \
-  -inFile "$DST/lib/external/libssl.work.so.3" \
-  -outFile "$DST/lib/external/libssl.so.3" \
+  -inFile "$LIBDIR/libssl.work.so.3" \
+  -outFile "$LIBDIR/libssl.so.3" \
   -signAlg SHA256withECDSA
 
 binary-sign-tool sign -selfSign 1 \
-  -inFile "$DST/lib/external/libcrypto.work.so.3" \
-  -outFile "$DST/lib/external/libcrypto.so.3" \
+  -inFile "$LIBDIR/libcrypto.work.so.3" \
+  -outFile "$LIBDIR/libcrypto.so.3" \
   -signAlg SHA256withECDSA
 
 chmod 755 \
   "$DST/bin/curl" \
-  "$DST/lib/libcurl.so.4" \
-  "$DST/lib/external/libssl.so.3" \
-  "$DST/lib/external/libcrypto.so.3"
+  "$LIBDIR/libcurl.so.4" \
+  "$LIBDIR/libssl.so.3" \
+  "$LIBDIR/libcrypto.so.3"
 ```
 
 签名后不要再执行 `patchelf`、`objcopy`、`strip` 或其他会修改 ELF 内容的操作。
@@ -113,9 +112,9 @@ chmod 755 \
 ```bash
 for FILE in \
   "$DST/bin/curl" \
-  "$DST/lib/libcurl.so.4" \
-  "$DST/lib/external/libssl.so.3" \
-  "$DST/lib/external/libcrypto.so.3"
+  "$LIBDIR/libcurl.so.4" \
+  "$LIBDIR/libssl.so.3" \
+  "$LIBDIR/libcrypto.so.3"
 do
   binary-sign-tool display-sign -inFile "$FILE"
   readelf -d "$FILE" | grep -E 'NEEDED|RPATH|RUNPATH|SONAME'

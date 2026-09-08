@@ -17,6 +17,7 @@
 
 import { execSync, type ChildProcess } from 'child_process';
 import { ToolResult } from '../../aikernel/tool';
+import { decodeShellOutput, filterShellEnvironmentWarnings } from '../../utils/shellExec.js';
 
 // ── 公共类型 ─────────────────────────────────────────────────────────────────
 
@@ -94,12 +95,12 @@ export class BackgroundProcessManager {
             finished: false
         };
 
-        proc.stdout?.on('data', (data: Buffer) => {
-            entry.output += data.toString();
-        });
-        proc.stderr?.on('data', (data: Buffer) => {
-            entry.output += data.toString();
-        });
+        // 与 executeShellCommand 的采集逻辑保持一致：解码 + 过滤交互模式终端序列噪音
+        const appendFiltered = (data: Buffer) => {
+            entry.output += filterShellEnvironmentWarnings(decodeShellOutput(data));
+        };
+        proc.stdout?.on('data', appendFiltered);
+        proc.stderr?.on('data', appendFiltered);
 
         const markFinished = (code: number | null) => {
             if (entry.finished) return;
