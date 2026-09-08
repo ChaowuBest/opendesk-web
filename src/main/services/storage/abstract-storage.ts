@@ -538,11 +538,28 @@ export class BaseStorage {
     async initialize(): Promise<void> {
         this.ensureUsable();
         // VectorIndexer first (may throw DimMismatchError — caller decides whether to wipe and reinit)
-        if (this.vectorIndexer) await this.vectorIndexer.initialize();
-        await this.baseIndexer.initialize();
-        if (this.bm25Indexer) await this.bm25Indexer.initialize();
-        if (this.tagIndexer) await this.tagIndexer.initialize();
-        if (this.chunkIndexer) await this.chunkIndexer.initialize();
+        try {
+            if (this.vectorIndexer) await this.vectorIndexer.initialize();
+            await this.baseIndexer.initialize();
+            if (this.bm25Indexer) await this.bm25Indexer.initialize();
+            if (this.tagIndexer) await this.tagIndexer.initialize();
+            if (this.chunkIndexer) await this.chunkIndexer.initialize();
+        } catch (error) {
+            for (const indexer of [
+                this.chunkIndexer,
+                this.tagIndexer,
+                this.bm25Indexer,
+                this.baseIndexer,
+                this.vectorIndexer
+            ]) {
+                try {
+                    indexer?.close();
+                } catch {
+                    // Continue cleanup without masking the original initialization error.
+                }
+            }
+            throw error;
+        }
     }
 
     async probeBaseIndexStore(): Promise<BaseIndexStoreProbeResult> {

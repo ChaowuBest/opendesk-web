@@ -69,10 +69,19 @@ export class ChunkIndexDB implements IChunkIndexDB {
         }
 
         this.db = new Database(dbPath);
-        loadSqliteVec(this.db);
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('busy_timeout = 5000');
-        this.initializeTable();
+        try {
+            loadSqliteVec(this.db);
+            this.db.pragma('journal_mode = WAL');
+            this.db.pragma('busy_timeout = 5000');
+            this.initializeTable();
+        } catch (error) {
+            try {
+                this.db.close();
+            } catch {
+                // Preserve the initialization error if cleanup also fails.
+            }
+            throw error;
+        }
     }
 
     private initializeTable(): void {
