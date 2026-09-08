@@ -169,7 +169,13 @@ jest.unstable_mockModule('../../../main/applications/agentgate/skillAttribution.
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/hooks.js', () => ({
-    GlobalHooks: { beforeToolCall: jest.fn(), afterFinishTurn: jest.fn() }
+    // registry.ts → aikernel/skill.js 顶层会调 GlobalHooks.afterToolcallParse 注册钩子，
+    // mock 必须提供全部被顶层调用的方法，否则模块加载即 TypeError
+    GlobalHooks: {
+        beforeToolCall: jest.fn(),
+        afterFinishTurn: jest.fn(),
+        afterToolcallParse: jest.fn()
+    }
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/states/tasks.js', () => ({
@@ -177,7 +183,13 @@ jest.unstable_mockModule('../../../main/aikernel/states/tasks.js', () => ({
 }));
 
 jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
-    logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
+    logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+    // ESM loader 对命名导入严格校验：app.ts → ApplicationRegistry 的 import 链会连带
+    // 加载 aikernel/messages.ts（import { logger, getDebugMode }）等模块，
+    // mock 必须覆盖真实模块的全部被引用导出，否则 SyntaxError: does not provide an export
+    getDebugMode: jest.fn().mockReturnValue(false),
+    setDebugMode: jest.fn(),
+    LogStream: class {}
 }));
 
 jest.unstable_mockModule('../../../main/utils/setting.js', () => {
