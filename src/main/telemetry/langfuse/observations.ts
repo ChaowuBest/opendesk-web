@@ -20,6 +20,7 @@ import {
 } from '@langfuse/tracing';
 import { logger } from '../../utils/logger.js';
 import type { ToolCall } from '../../aikernel/messages.js';
+import { SkillRegistry } from '../../aikernel/skill.js';
 import { flushLangfuseTelemetry, getActiveLangfuseConfig } from './init.js';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -48,6 +49,7 @@ export interface StartLangfuseTaskTurnInput {
     turnId: string;
     workspace?: string;
     traceId?: string;
+    observationName?: string;
     input?: unknown;
     model?: unknown;
     recordGenerations?: boolean;
@@ -163,6 +165,26 @@ function parseJsonMaybe(value: unknown): unknown {
     } catch {
         return value;
     }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatSkillInput(value: unknown): unknown {
+    if (!isRecord(value)) return value;
+    const { skillName, ...input } = value;
+    return typeof skillName === 'string' && skillName.length > 0 ? { ...input, name: skillName } : input;
+}
+
+function getSkillSource(value: unknown): string {
+    if (!isRecord(value)) return 'opendesk';
+    const bundleName = typeof value.bundleName === 'string' ? value.bundleName : '';
+    const skillName =
+        typeof value.skillName === 'string' ? value.skillName : typeof value.name === 'string' ? value.name : '';
+    const skill = SkillRegistry.getInstance().getCachedSkill(bundleName, skillName);
+    if (!skill?.directory || skill.attribution) return 'opendesk';
+    return skill.directory.toLowerCase().includes('.skillhub') ? 'hubOfficial' : 'myagentOfficial';
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
@@ -316,7 +338,7 @@ export function startTaskTurn(input: StartLangfuseTaskTurnInput): LangfuseTaskTu
         );
         const turnInput = toJsonSafe(input.input, config.maxPayloadChars);
         const turnObservation = startObservation(
-            'task.turn',
+            input.observationName ?? 'task.turn',
             {
                 input: turnInput,
                 metadata,
@@ -535,13 +557,14 @@ export function recordTool(task: { task_id?: string; turn_id?: string }, toolCal
         const isSkill = rawToolName === 'skill-manager-LoadSkill' || rawToolName === 'skill';
         const observationName = isSkill ? 'skill' : rawToolName;
         const args = toolCall.args_object ?? parseJsonMaybe(toolCall.args_string);
+        const observationInput = isSkill ? formatSkillInput(args) : args;
         const resultObject = (toolCall as ToolCall & { result_object?: unknown }).result_object;
         const parentObservation =
             context.lastDoStreamObservation ?? context.lastGenerationObservation ?? context.turnObservation;
         const toolObservation: LangfuseTool = parentObservation.startObservation(
             observationName,
             {
-                input: toJsonSafe(args, context.maxPayloadChars),
+                input: toJsonSafe(observationInput, context.maxPayloadChars),
                 output: toJsonSafe(toolCall.result ?? resultObject ?? '', context.maxPayloadChars),
                 level: toolCall.status === 'error' ? 'ERROR' : 'DEFAULT',
                 statusMessage: toolCall.status === 'error' ? String(toolCall.result ?? '') : undefined,
@@ -549,7 +572,8 @@ export function recordTool(task: { task_id?: string; turn_id?: string }, toolCal
                     {
                         originalToolName: rawToolName,
                         toolCallId: toolCall.id,
-                        status: toolCall.status
+                        status: toolCall.status,
+                        ...(isSkill ? { skillSource: getSkillSource(args) } : {})
                     },
                     context.maxPayloadChars
                 ),

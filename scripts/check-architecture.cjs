@@ -24,7 +24,7 @@ const path = require('path');
 
 const LAYER_DEPS = {
     utils: [],
-    telemetry: ['utils'],
+    telemetry: ['utils', 'aikernel'],
     aikernel: ['utils', 'tui', 'telemetry'],
     services: ['utils', 'aikernel', 'telemetry'],
     applications: ['aikernel', 'services', 'tui', 'utils', 'plugins', 'telemetry']

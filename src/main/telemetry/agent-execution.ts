@@ -11,6 +11,7 @@
 
 export interface TaskTurnInstrumentationExternalContext {
     traceId?: string;
+    observationName?: string;
     input?: unknown;
     metadata?: Record<string, unknown>;
     output?: {
@@ -18,6 +19,7 @@ export interface TaskTurnInstrumentationExternalContext {
         mode?: string;
         agent?: string;
         cost?: number;
+        event?: string;
     };
 }
 
@@ -30,6 +32,7 @@ export function normalizeTurnContext(
     const traceId = context.traceId?.trim();
     return {
         traceId: traceId || undefined,
+        observationName: context.observationName,
         input: context.input,
         metadata: context.metadata ? { ...context.metadata } : undefined,
         output: context.output ? { ...context.output } : undefined
