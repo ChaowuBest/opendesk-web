@@ -217,7 +217,7 @@ function isSecurityGatewayEnabled(): boolean {
 /**
  * 检查恶意技能检测是否启用（拦截归因 + 会话结束弹窗 + 加入黑名单）。
  * 独立于总开关：总开关关闭时 onBeforeToolCall 不会走到 deny 分支，recordInterception 不会被调用；
- * 此开关用于在总开关开启的前提下，单独关闭恶意 skill 分析链路。默认 true。
+ * 此开关用于在总开关开启的前提下，单独关闭恶意 skill 分析链路。默认 false（显式开启才生效）。
  * 注意：关闭后已存在的黑名单条目仍由 skillmgr 的 filter 生效，不会被放出。
  */
 function isMaliciousSkillDetectionEnabled(): boolean {
@@ -225,7 +225,7 @@ function isMaliciousSkillDetectionEnabled(): boolean {
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
         const agConfig = data?.applications?.agentgate || {};
-        return agConfig.maliciousSkillDetection !== false;
+        return agConfig.maliciousSkillDetection === true;
     } catch {
         return false;
     }

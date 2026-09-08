@@ -3102,7 +3102,7 @@ class AgentGateEntryWidget extends HTMLElement {
                     // 同步总开关状态（直接从广播数据读取，避免 IPC 往返时序问题）
                     if (ms) _tog(ms, agCfg.enabled === true);
                     // 同步恶意技能检测开关
-                    if (ms2) _tog(ms2, agCfg.maliciousSkillDetection !== false);
+                    if (ms2) _tog(ms2, agCfg.maliciousSkillDetection === true);
                     // 同步多 session 分析开关
                     if (msess) _tog(msess, agCfg.multiSessionAnalysis === true);
                 });

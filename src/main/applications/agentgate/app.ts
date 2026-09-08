@@ -77,7 +77,7 @@ class AgentGateApplication extends BaseApplication {
             floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度'),
             maliciousSkillDetection: z
                 .boolean()
-                .default(true)
+                .default(false)
                 .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）'),
             multiSessionAnalysis: z
                 .boolean()
@@ -186,10 +186,10 @@ class AgentGateApplication extends BaseApplication {
         this._syncBridgeState();
     }
 
-    /** 获取恶意技能检测开关（拦截归因 + 弹窗 + 黑名单），默认 true */
+    /** 获取恶意技能检测开关（拦截归因 + 弹窗 + 黑名单），默认 false */
     getMaliciousSkillDetection(): boolean {
         const cfg = this.getConfig() as any;
-        return cfg?.maliciousSkillDetection !== false;
+        return cfg?.maliciousSkillDetection === true;
     }
 
     /** 设置恶意技能检测开关（不启停服务，仅控制恶意 skill 分析链路） */
