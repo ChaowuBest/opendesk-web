@@ -11,6 +11,13 @@ test('mermaid code block renders as placeholder with base64 source', () => {
     assert.ok(m, 'placeholder should carry data-mermaid-code');
     const decoded = Buffer.from(m![1], 'base64').toString('utf8');
     assert.equal(decoded, src);
+    assert.ok(html.includes('data-mermaid-complete="true"'), 'closed fence should be ready to render');
+});
+
+test('unclosed mermaid code fence stays pending during streaming', () => {
+    const html = messagesMarked.parse('```mermaid\nflowchart TD\n  A --> B') as string;
+    assert.ok(html.includes('mermaid-block'), 'should emit mermaid placeholder while streaming');
+    assert.ok(html.includes('data-mermaid-complete="false"'), 'unclosed fence should not render yet');
 });
 
 test('mermaid language tag is case-insensitive', () => {

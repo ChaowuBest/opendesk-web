@@ -1119,6 +1119,27 @@ const MARKDOWN_PREVIEW_CSS = `
         color: var(--od-md-blockquote-color, #6b7280);
         user-select: none;
     }
+    .markdown-body .code-copy-btn {
+        order: 2;
+        padding: 2px;
+        border: none;
+        background: transparent;
+        color: var(--od-md-blockquote-color, #6b7280);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        border-radius: 4px;
+        flex-shrink: 0;
+        opacity: 0.55;
+    }
+    .markdown-body .code-copy-btn:hover {
+        opacity: 1;
+        color: var(--od-md-link-color, #2563eb);
+    }
+    .markdown-body .code-copy-btn--copied {
+        color: #22c55e;
+        opacity: 1;
+    }
     .markdown-body .code-preview-toggle {
         display: inline-flex;
         align-items: center;
@@ -1544,8 +1565,7 @@ export class FileExplorer {
         if (this._officeClosePending) return true;
 
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
-            | (HTMLElement & { getWebContentsId?: () => number })
-            | null;
+            (HTMLElement & { getWebContentsId?: () => number }) | null;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 

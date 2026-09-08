@@ -2167,6 +2167,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.scrollToBottom': 'Scroll to bottom',
     'renderer.taskview.prevUserMessage': 'Previous message',
     'renderer.taskview.nextUserMessage': 'Next message',
+    'renderer.previewer.preview': 'Preview',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': 'Open agent chat',
     'renderer.applicationAgent.close': 'Collapse agent chat',

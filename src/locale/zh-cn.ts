@@ -2108,6 +2108,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.scrollToBottom': '滚动到底部',
     'renderer.taskview.prevUserMessage': '上一条消息',
     'renderer.taskview.nextUserMessage': '下一条消息',
+    'renderer.previewer.preview': '预览',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': '打开智能体对话',
     'renderer.applicationAgent.close': '收起智能体对话',

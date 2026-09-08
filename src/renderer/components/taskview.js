@@ -1498,7 +1498,7 @@ class TaskView extends HTMLElement {
         }
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
-        renderMermaidBlocks(message_content);
+        renderMermaidBlocks(message_content, { defer: isRunning });
 
         const usageEl = message_container.querySelector('.message-usage');
         if (TaskView.hasDisplayableUsage(progress.usage)) {
@@ -1592,7 +1592,7 @@ class TaskView extends HTMLElement {
 
         if (progress.last_part.type === 'text') {
             enhanceCodeBlocks(last_part_element);
-            renderMermaidBlocks(last_part_element);
+            renderMermaidBlocks(last_part_element, { defer: progress.task_status === 'running' });
         }
 
         // 流式光标：任务运行中且当前 part 为文本时，在末尾追加闪烁光标

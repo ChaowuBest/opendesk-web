@@ -82,7 +82,11 @@ describe('file explorer', () => {
         const markdownBody = root
             .querySelector<HTMLElement>('.ws-preview-md-host')
             ?.shadowRoot?.querySelector('.markdown-body');
+        const previewStyles = root
+            .querySelector<HTMLElement>('.ws-preview-md-host')
+            ?.shadowRoot?.querySelector('style');
         expect(markdownBody).not.toBeNull();
+        expect(previewStyles?.textContent).toContain('.markdown-body .code-copy-btn');
         expect(renderMermaidBlocks).toHaveBeenCalledWith(markdownBody);
     });
 

@@ -143,7 +143,7 @@ const ANALYSIS_RESULT_VISUALIZER_SKILL = `
 name: analysis-result-visualizer
 description: >
   在分析结果包含复杂结构、流程、关系、时序、分支、层级或对比时，
-  使用可内联预览的 SVG 图形帮助用户理解，而不是只输出大段纯文本。
+  使用可内联预览的 Mermaid 或 SVG 图形帮助用户理解，而不是只输出大段纯文本。
   适用于系统架构、业务流程、数据流、调用关系、事件时间线、依赖关系、
   状态变化、因果链、方案对比、概念解释和问题诊断等场景。
   仅在图形能明显降低理解成本且信息已经足够明确时使用；
@@ -152,7 +152,7 @@ description: >
 
 # 分析结果可视化
 
-将复杂分析中的关键关系转换成紧凑、可读的图形。
+将复杂分析中的关键关系转换成紧凑、可读的 Mermaid 或 SVG 图形。
 图形用于呈现文本不擅长表达的空间和结构关系，解释、结论与限制仍放在普通回答中。
 
 ## 何时使用
@@ -180,6 +180,18 @@ description: >
 如果后续信息改变了关键结构，可以更新原图或补充一张表达新增关系的图，
 不要生成内容高度重复的多张图。
 
+## 图形格式路由
+
+先选择能准确表达关系且源码最容易维护的格式，不要默认使用 SVG：
+
+- 用户明确指定 Mermaid 或 SVG 时，遵循用户指定的格式；
+- 时序图优先使用 Mermaid \`sequenceDiagram\`；
+- 标准流程图和依赖图优先使用 Mermaid \`flowchart\`；
+- 状态转换优先使用 Mermaid \`stateDiagram-v2\`；
+- 数据库 schema 和 ERD 使用 Mermaid \`erDiagram\`；
+- 自由布局、精细视觉控制、空间隐喻或插画式表达使用 SVG；
+- Mermaid 无法准确表达目标结构时，回退到 SVG。
+
 ## 选择图形类型
 
 根据用户需要理解的关系选择图形，不要默认使用流程图：
@@ -192,7 +204,6 @@ description: >
 - **Illustrative diagram**：用空间隐喻解释抽象概念或运行机制。
 
 真正的循环或大量阶段优先使用 HTML stepper，不要强行画成环。
-数据库 schema 或 ERD 优先使用 Mermaid \`erDiagram\`。
 数据量较大且重点是数值趋势时，应使用适合的图表能力，而不是手绘 SVG 图表。
 
 ## 组织内容
@@ -207,7 +218,19 @@ description: >
 ## 输出规范
 
 - 先用普通文字给出结论和图形用途，再输出图形；
-- 一次输出一张 SVG，放在一个 \`svg\` fenced code block 中，供 OpenDesk 内联预览；
+- 一次输出一张可视化，供 OpenDesk 内联预览；
+- 选择 Mermaid 时，将合法的 Mermaid 源码放在一个 \`mermaid\` fenced code block 中，不要再包裹 SVG；
+- 选择 SVG 时，将完整的 SVG 放在一个 \`svg\` fenced code block 中；
+
+### Mermaid 输出规范
+
+- 根据格式路由使用 \`sequenceDiagram\`、\`flowchart\`、\`stateDiagram-v2\` 或 \`erDiagram\`；
+- 保持节点和标签简短，复杂解释、证据和限制放在代码块外；
+- 使用 OpenDesk 当前 Mermaid 渲染器支持的标准语法，不使用初始化指令、脚本或外部资源；
+- 输出前检查声明类型、节点标识、连接关系和分支标签是否完整有效。
+
+### SVG 输出规范
+
 - 根元素使用 \`viewBox="0 0 680 H"\`、\`width="100%"\` 和 \`role="img"\`；
 - 第一个子元素是 \`<title>\`，第二个子元素是 \`<desc>\`；
 - 在 \`<defs>\` 中包含箭头 marker；
@@ -224,11 +247,12 @@ ${ANALYSIS_RESULT_VISUALIZER_DESIGN_PROMPT}
 
 - 图形是否比纯文本更容易理解？
 - 图形类型是否匹配要表达的关系？
+- 是否按照格式路由选择了 Mermaid 或 SVG，并遵循用户明确指定的格式？
 - 是否只保留了必要信息？
 - 每个节点、连接和标签是否有信息依据？
 - 是否将解释、限制和不确定性留在图外？
-- 是否满足透明背景、680 宽 viewBox、title/desc 和箭头 marker？
-- 是否没有小字、渐变、阴影、emoji 和无意义装饰？
+- Mermaid 是否使用合法的标准语法，SVG 是否满足透明背景、680 宽 viewBox、title/desc 和箭头 marker？
+- SVG 是否没有小字、渐变、阴影、emoji 和无意义装饰？
 `;
 
 export function loadAnalysisResultVisualizerSkill(): Skill {

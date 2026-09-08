@@ -390,7 +390,7 @@ task-view .markdown-body .mermaid-block-lang {
         color 0.15s;
 }
 /* 无 preview toggle 时，copy button 自身靠右 */
-.markdown-body .code-copy-btn:last-child {
+.markdown-body .code-block-header .code-copy-btn:last-child {
     margin-left: auto;
 }
 .markdown-body .code-copy-btn:hover {
