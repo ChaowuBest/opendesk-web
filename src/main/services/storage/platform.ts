@@ -33,7 +33,17 @@ function getNativeSqliteErrorDetails(error: unknown): { code: string; message: s
     };
 }
 
+export class SqliteVecLoadError extends Error {
+    constructor(cause: unknown) {
+        const { message } = getNativeSqliteErrorDetails(cause);
+        // 文案里保留 sqlite-vec：跨 bundle 时 instanceof 可能失效，靠 message 规则兜底。
+        super(`Failed to load the sqlite-vec extension: ${message}`, { cause });
+        this.name = 'SqliteVecLoadError';
+    }
+}
+
 export function isNativeSqliteUnavailable(error: unknown): boolean {
+    if (error instanceof SqliteVecLoadError) return true;
     const { code, message } = getNativeSqliteErrorDetails(error);
     const lower = message.toLowerCase();
 
@@ -78,7 +88,11 @@ export function resolveSqliteVecExtensionPath(extensionPath: string): string {
 }
 
 export function loadSqliteVec(db: { loadExtension(extensionPath: string): void }): void {
-    const require = createRequire(import.meta.url);
-    const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
-    db.loadExtension(resolveSqliteVecExtensionPath(sqliteVec.getLoadablePath()));
+    try {
+        const require = createRequire(import.meta.url);
+        const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
+        db.loadExtension(resolveSqliteVecExtensionPath(sqliteVec.getLoadablePath()));
+    } catch (error) {
+        throw new SqliteVecLoadError(error);
+    }
 }

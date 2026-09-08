@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +9,13 @@ import { setCustomOpendeskDirectory } from '../../../../../main/utils/setting.js
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-vec-extension-profile-'));
 setCustomOpendeskDirectory(profile);
-const { loadSqliteVec, resolveSqliteVecExtensionPath } =
-    await import('../../../../../main/services/storage/platform.js');
+const {
+    loadSqliteVec,
+    resolveSqliteVecExtensionPath,
+    SqliteVecLoadError,
+    createWithNativeSqliteFallback,
+    isNativeSqliteUnavailable
+} = await import('../../../../../main/services/storage/platform.js');
 after(() => fs.rmSync(profile, { recursive: true, force: true }));
 
 test('maps packaged extension paths on macOS, Windows and Linux', () => {
@@ -77,4 +83,80 @@ test('Forge unpack rule extracts each sqlite-vec platform library', async () => 
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+test('localized extension load errors retain their cause and trigger WASM fallback', async () => {
+    for (const message of ['找不到指定的模块。', 'The specified module could not be found.']) {
+        const cause = Object.assign(new Error(message), { code: 'SQLITE_ERROR' });
+        let fallbackCalls = 0;
+        const result = await createWithNativeSqliteFallback(
+            async () => {
+                try {
+                    loadSqliteVec({
+                        loadExtension() {
+                            throw cause;
+                        }
+                    });
+                } catch (error) {
+                    assert.ok(error instanceof SqliteVecLoadError);
+                    assert.equal(error.cause, cause);
+                    assert.ok(error.message.includes(message));
+                    throw error;
+                }
+                assert.fail('extension loading must fail');
+            },
+            async () => {
+                fallbackCalls++;
+                return 'wasm';
+            },
+            { forceWasm: false }
+        );
+        assert.equal(result, 'wasm');
+        assert.equal(fallbackCalls, 1);
+    }
+});
+
+test('extension path resolution failures receive the same error type', () => {
+    const require = createRequire(import.meta.url);
+    const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
+    const original = sqliteVec.getLoadablePath;
+    const cause = new Error('extension path unavailable');
+    try {
+        sqliteVec.getLoadablePath = () => {
+            throw cause;
+        };
+        assert.throws(
+            () =>
+                loadSqliteVec({
+                    loadExtension() {
+                        assert.fail('must not load without a path');
+                    }
+                }),
+            (error: unknown) => error instanceof SqliteVecLoadError && error.cause === cause
+        );
+    } finally {
+        sqliteVec.getLoadablePath = original;
+    }
+});
+
+test('the same unwrapped localized error outside extension loading does not trigger fallback', async () => {
+    const cause = new Error('找不到指定的模块。');
+    await assert.rejects(
+        () =>
+            createWithNativeSqliteFallback(
+                async () => {
+                    throw cause;
+                },
+                async () => {
+                    assert.fail('unclassified errors must not trigger fallback');
+                },
+                { forceWasm: false }
+            ),
+        (error: unknown) => error === cause
+    );
+});
+
+test('the wrapper message alone classifies the failure when instanceof cannot', () => {
+    const wrapped = new SqliteVecLoadError(new Error('找不到指定的模块。'));
+    assert.ok(isNativeSqliteUnavailable(new Error(wrapped.message)));
 });
