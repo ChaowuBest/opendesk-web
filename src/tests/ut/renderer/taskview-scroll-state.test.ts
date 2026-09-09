@@ -206,6 +206,21 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         expect(taskView.auto_scrolling_to_bottom).toBe(true);
     });
 
+    test('快速导航内的方向键不应被识别为聊天区滚动意图', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        const rail = taskView.querySelector('.od-chat-nav-rail');
+        const button = document.createElement('button');
+        rail.append(button);
+        taskView._lastUserScrollTs = 0;
+        taskView.setAutoScrollingToBottom(true);
+        mockScrolledAway(history);
+        taskView._historyScrollKeydownHandler({ key: 'ArrowDown', target: button });
+        dispatchScroll(history);
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        taskView._chatNavigation.destroy();
+    });
+
     test('Ctrl+滚轮缩放（wheel + ctrlKey）不应解除底部锁定', () => {
         const taskView = createTaskView();
         const history = getHistory(taskView);

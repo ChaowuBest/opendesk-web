@@ -14,6 +14,7 @@ import { morphDomChildren } from '../utils/dom-morph.js';
 import { updateStreamingText } from '../utils/streaming-text.js';
 import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
 import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
+import { ChatNavigation, buildConversationStops, mergeRenderedConversationStops } from './chatNavigation.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -449,6 +450,7 @@ class TaskView extends HTMLElement {
 
     /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
     _markUserScrollIntent(direction = 0) {
+        this._conversationJumpInProgress = false;
         this._lastUserScrollTs = Date.now();
         this._lastUserScrollDirection = direction;
     }
@@ -1167,6 +1169,7 @@ class TaskView extends HTMLElement {
     }
 
     _renderInitialHistoryWindow(messages, options = {}) {
+        this._navigationHistorySource = null;
         this._historyMessages = Array.isArray(messages) ? messages : [];
         this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
         this._historyRenderStartIndex = TaskView.findHistoryBatchStart(
@@ -1231,8 +1234,9 @@ class TaskView extends HTMLElement {
         if (nextStartIndex >= previousStartIndex) return false;
 
         const historyContainer = this.getHistoryContainer();
-        const previousScrollHeight = historyContainer.scrollHeight;
-        const previousScrollTop = historyContainer.scrollTop;
+        const preserveScrollPosition = options.preserveScrollPosition !== false;
+        const previousScrollHeight = preserveScrollPosition ? historyContainer.scrollHeight : 0;
+        const previousScrollTop = preserveScrollPosition ? historyContainer.scrollTop : 0;
 
         this._loadingOlderHistory = true;
         try {
@@ -1253,7 +1257,7 @@ class TaskView extends HTMLElement {
                 }
             }
 
-            if (options.preserveScrollPosition !== false) {
+            if (preserveScrollPosition) {
                 const scrollDelta = historyContainer.scrollHeight - previousScrollHeight;
                 historyContainer.scrollTop = previousScrollTop + scrollDelta;
             }
@@ -1296,6 +1300,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserProgressToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1317,6 +1323,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserReplaceToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1331,6 +1339,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantProgressToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1345,6 +1355,8 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantReplaceToHistory(progress) {
+        this._navigationHistorySource = null;
+        this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) return;
         const message = this._historyMessages[index];
@@ -1768,6 +1780,44 @@ class TaskView extends HTMLElement {
             }
         }
         return null;
+    }
+
+    _getConversationStops() {
+        const attachmentLabel = taskViewT('renderer.taskview.navigation.attachment');
+        if (this._navigationHistorySource !== this._historyMessages) {
+            this._navigationHistorySource = this._historyMessages;
+            this._navigationHistoryStops = buildConversationStops(
+                this._historyMessages,
+                shouldRenderUserHistoryMessage,
+                attachmentLabel,
+                getGoalSupplementDisplayText
+            );
+        }
+        return mergeRenderedConversationStops(
+            this._navigationHistoryStops,
+            this.getHistoryContainer(),
+            attachmentLabel
+        );
+    }
+
+    _navigateConversation(messageId) {
+        const history = this.getHistoryContainer();
+        if (!history || typeof messageId !== 'string' || messageId.length === 0) return;
+        if (!this._findGoalMessageTarget(messageId) && this._getHistoryMessageIndexById(messageId) < 0) return;
+        this.setAutoScrollingToBottom(false);
+        this._ensureHistoryLoadedThroughMessage(messageId);
+        const target = this._findGoalMessageTarget(messageId);
+        if (!target) return;
+        const requestedTop =
+            history.scrollTop + target.getBoundingClientRect().top - history.getBoundingClientRect().top - 20;
+        const top = Math.max(0, Math.min(requestedTop, history.scrollHeight - history.clientHeight));
+        // Browsers do not emit scrollend when the clamped destination is already reached.
+        this._conversationJumpInProgress = Math.abs(history.scrollTop - top) > 0.5;
+        if (!this._conversationJumpInProgress) return;
+        history.scrollTo({
+            top,
+            behavior: 'instant'
+        });
     }
 
     _scrollToGoalMessage(messageId, options = {}) {
@@ -4575,6 +4625,8 @@ class TaskView extends HTMLElement {
 
     disconnectedCallback() {
         this._assistantProgressBuffer.clear();
+        this._chatNavigation?.destroy();
+        this._chatNavigation = null;
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
@@ -4728,6 +4780,9 @@ class TaskView extends HTMLElement {
     }
 
     render() {
+        this._conversationJumpInProgress = false;
+        this._chatNavigation?.destroy();
+        this._chatNavigation = null;
         if (this.isEmbedded) {
             this._renderEmbedded();
             return;
@@ -4967,8 +5022,20 @@ class TaskView extends HTMLElement {
         }
 
         const chatHistory = this.querySelector('#taskview-chat-history');
+        this._chatNavigation?.destroy();
+        this._chatNavigation = new ChatNavigation(chatHistory, {
+            navigate: (messageId) => this._navigateConversation(messageId),
+            translate: (key, params) => taskViewT(key, params),
+            refresh: () => this._getConversationStops()
+        });
+        this._chatNavigation.setStops(this._getConversationStops());
+        chatHistory.addEventListener('scrollend', () => {
+            this._conversationJumpInProgress = false;
+        });
         chatHistory.addEventListener('scroll', () => {
             if (this._programmaticScrolling) return;
+            // Keep streamed output detached until the navigation scroll has completed.
+            if (this._conversationJumpInProgress) return;
             if (chatHistory.scrollTop <= TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX) {
                 this._loadOlderHistoryFromScroll();
             }
@@ -5059,6 +5126,7 @@ class TaskView extends HTMLElement {
         this._historyScrollKeydownHandler = (e) => {
             if (e.ctrlKey || e.metaKey) return; // Ctrl/⌘+方向键为跳词，⌘+± 为缩放
             const target = e.target;
+            if (target?.closest?.('.od-chat-nav')) return;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)) {
                 return;
             }
