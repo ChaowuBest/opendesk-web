@@ -13,7 +13,7 @@ import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
 import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath, findOpenHarmonyBash, findOpenHarmonyZsh } from '../../utils/shellExec.js';
+import { findExecutableInPath, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
     getHarmonyLocalRuntimeState,
@@ -25,18 +25,18 @@ export type OpenHarmonyTerminalShell = { kind: 'zsh'; path: string } | { kind: '
 export function getOpenHarmonyTerminalShell(
     state: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
 ): OpenHarmonyTerminalShell | null {
-    // feature gate 统一拦截 tablet 与 PC 上 zsh/bash 双缺，此处只做 shell 选择
+    // tablet，或 PC 上 zsh/bash 都不存在
     if (!getHarmonyLocalRuntimeFeatureAvailability('terminal', state).available) return null;
+    // PC
     if (state) {
         // state 为已验证的探测快照：zsh 优先（交互模式加载 ~/.zshrc 环境），bash 兜底
         if (state.commands.zsh) return { kind: 'zsh', path: state.commands.zsh };
         return state.commands.bash ? { kind: 'bash', path: state.commands.bash } : null;
     }
-    // 无宿主注入元数据（如 CLI 直跑）时退化为直接探测
+    // CLI
     const zshPath = findOpenHarmonyZsh();
     if (zshPath) return { kind: 'zsh', path: zshPath };
-    const bashPath = findOpenHarmonyBash();
-    return bashPath ? { kind: 'bash', path: bashPath } : null;
+    return null;
 }
 
 export class TerminalApplication extends BaseApplication {

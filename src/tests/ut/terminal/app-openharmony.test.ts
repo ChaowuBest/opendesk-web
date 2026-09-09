@@ -121,8 +121,9 @@ describe('TerminalApplication toolset on OpenHarmony', () => {
         expect(toolset.hasTool('checkShellStatus')).toBe(true);
     });
 
-    test('registers ExecuteBashTool when zsh is not runnable and state is absent', async () => {
-        // CLI 直跑等场景无宿主元数据（state null）：zsh 探测失败后回退到直接探测 HNP bash
+    test('registers no shell tool when zsh is not runnable and state is absent', async () => {
+        // CLI 直跑等场景无宿主元数据（state null）：只认 zsh 作为终端工具入口，
+        // 即使 bash 存在且可运行也不注册 executeBash
         existsSyncMock.mockImplementation((p: unknown) => typeof p === 'string' && String(p).endsWith('/bash'));
         spawnSyncMock.mockImplementation((cmd: string) =>
             cmd === '/usr/bin/zsh'
@@ -132,11 +133,8 @@ describe('TerminalApplication toolset on OpenHarmony', () => {
 
         const app = new TerminalApplication();
         const toolsets = await app.getToolsets();
-        const toolset = toolsets[0];
 
-        expect(toolset.hasTool('executeZsh')).toBe(false);
-        expect(toolset.hasTool('executeBash')).toBe(true);
-        expect(toolset.hasTool('checkShellStatus')).toBe(true);
+        expect(toolsets).toHaveLength(0);
     });
 
     test('registers no shell tool when neither zsh nor bash is available', async () => {
