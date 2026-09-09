@@ -548,7 +548,7 @@ class IMAPEmailClient extends EmailContentHelper {
     static buildImapIdInfo(host) {
         return {
             name: 'OpenDesk',
-            version: '0.3.6',
+            version: '0.3.7',
             vendor: 'OpenDesk',
             'support-email': 'support@opendesk.local'
         };
@@ -2672,10 +2672,9 @@ class MailboxWorker extends BaseWorker {
             const draftUid =
                 sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             const messageId =
-                sendEmailSchema.messageId ||
-                `<fillipdesk-${Date.now()}-${Math.random().toString(36).slice(2)}@fillipdesk>`;
+                sendEmailSchema.messageId || `<opendesk-${Date.now()}-${Math.random().toString(36).slice(2)}@opendesk>`;
 
-            const sentHeaders = { 'X-Fillipdesk-UID': sentUid };
+            const sentHeaders = { 'X-OpenDesk-UID': sentUid };
             const sentMailOptions = {
                 from: `"${profile.name}" <${smtpAccount}>`,
                 to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.join(', ') : sendEmailSchema.to,
@@ -2741,7 +2740,7 @@ class MailboxWorker extends BaseWorker {
                 }
             } else if (!result && storage) {
                 // 发送失败，保存到草稿箱
-                const draftHeaders = { 'X-Fillipdesk-UID': draftUid };
+                const draftHeaders = { 'X-OpenDesk-UID': draftUid };
                 const emailHeader = {
                     subject: sendEmailSchema.subject,
                     from: [{ name: profile.name, address: profile.username }],
@@ -2810,7 +2809,7 @@ class MailboxWorker extends BaseWorker {
         if (!profile || !storage) throw new Error('No active profile');
 
         const uid = draftSchema.uid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const messageId = draftSchema.messageId || `<fillipdesk-${uid}@fillipdesk>`;
+        const messageId = draftSchema.messageId || `<opendesk-${uid}@opendesk>`;
         const emailHeader = {
             subject: draftSchema.subject,
             from: [{ name: profile.name, address: profile.username }],
@@ -2861,7 +2860,7 @@ class MailboxWorker extends BaseWorker {
                         html: draftSchema.html,
                         attachments: draftSchema.attachments,
                         messageId: messageId,
-                        headers: { 'X-Fillipdesk-UID': uid }
+                        headers: { 'X-OpenDesk-UID': uid }
                     };
                     IMAPEmailClient.applyDraftEnvelope(mailOptions, profile.username);
                     const rawMessage = await IMAPEmailClient.buildRawEmailMessage(mailOptions);

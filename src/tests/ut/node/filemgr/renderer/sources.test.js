@@ -109,7 +109,7 @@ test('formatDisplayPath keeps stable user-facing path text', () => {
         ['/Users/liumingxing/claude-code-main', '…/claude-code-main'],
         ['/Users/liumingxing/刘明星-毕设', '…/刘明星-毕设'],
         ['/Users/liumingxing/Papers/学长学姐论文/孟菲毕业设计', '…/孟菲毕业设计'],
-        ['C:\\Users\\Stella\\Projects\\FillipDesk', '…\\FillipDesk']
+        ['C:\\Users\\Stella\\Projects\\OpenDesk', '…\\OpenDesk']
     ];
 
     for (const [input, expected] of cases) {

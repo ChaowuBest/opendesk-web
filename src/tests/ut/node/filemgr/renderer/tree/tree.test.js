@@ -67,7 +67,7 @@ test('file tree initializes with a single home entry in the first column', async
     window.settingAPI = {
         async loadSettingObject() {
             return {
-                default_workspace: '/Users/liumingxing/FillipDesk',
+                default_workspace: '/Users/liumingxing/OpenDesk',
                 applications: {
                     filemgr: {
                         entries: []
@@ -132,7 +132,7 @@ test('home action navigates to a single home entry in the first column', () => {
     globalThis.window = window;
     setPlatform('darwin');
     setSystemHomePath('/Users/liumingxing');
-    setDefaultWorkspace('/Users/liumingxing/FillipDesk');
+    setDefaultWorkspace('/Users/liumingxing/OpenDesk');
 
     try {
         const actions = createActions(document.querySelector('main'), {
@@ -172,7 +172,7 @@ test('workspace action expands from the home entry instead of the home parent', 
     globalThis.window = window;
     setPlatform('darwin');
     setSystemHomePath('/Users/liumingxing');
-    setDefaultWorkspace('/Users/liumingxing/FillipDesk');
+    setDefaultWorkspace('/Users/liumingxing/OpenDesk');
 
     try {
         const actions = createActions(document.querySelector('main'), {
@@ -198,7 +198,7 @@ test('workspace action expands from the home entry instead of the home parent', 
         );
         workspaceButton?.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
-        assert.deepEqual(calls, [['setRootEntryAndExpandTo', '/Users/liumingxing', '/Users/liumingxing/FillipDesk']]);
+        assert.deepEqual(calls, [['setRootEntryAndExpandTo', '/Users/liumingxing', '/Users/liumingxing/OpenDesk']]);
 
         actions.destroy();
     } finally {
@@ -233,14 +233,14 @@ test('file tree expands workspace under a virtual home root', async () => {
             '/Users/liumingxing',
             [
                 { path: '/Users/liumingxing/Desktop', name: 'Desktop', isDirectory: true },
-                { path: '/Users/liumingxing/FillipDesk', name: 'FillipDesk', isDirectory: true }
+                { path: '/Users/liumingxing/OpenDesk', name: 'OpenDesk', isDirectory: true }
             ]
         ],
         [
-            '/Users/liumingxing/FillipDesk',
-            [{ path: '/Users/liumingxing/FillipDesk/project', name: 'project', isDirectory: true }]
+            '/Users/liumingxing/OpenDesk',
+            [{ path: '/Users/liumingxing/OpenDesk/project', name: 'project', isDirectory: true }]
         ],
-        ['/Users/liumingxing/FillipDesk/project', []]
+        ['/Users/liumingxing/OpenDesk/project', []]
     ]);
 
     try {
@@ -259,20 +259,20 @@ test('file tree expands workspace under a virtual home root', async () => {
 
         await tree.setRootEntryAndExpandTo(
             { path: '/Users/liumingxing', name: 'liumingxing', isDirectory: true },
-            '/Users/liumingxing/FillipDesk/project'
+            '/Users/liumingxing/OpenDesk/project'
         );
 
         assert.equal(listedPaths.includes('/Users'), false);
         assert.deepEqual(
             tree._columns.map((column) => column.parentPath),
-            ['/Users/liumingxing', '/Users/liumingxing', '/Users/liumingxing/FillipDesk']
+            ['/Users/liumingxing', '/Users/liumingxing', '/Users/liumingxing/OpenDesk']
         );
         assert.equal(tree._columns.length, 3);
         assert.deepEqual(
             tree._columns.map((column) => column.selectedPath),
-            ['/Users/liumingxing', '/Users/liumingxing/FillipDesk', '/Users/liumingxing/FillipDesk/project']
+            ['/Users/liumingxing', '/Users/liumingxing/OpenDesk', '/Users/liumingxing/OpenDesk/project']
         );
-        assert.equal(tree.selectedPath, '/Users/liumingxing/FillipDesk/project');
+        assert.equal(tree.selectedPath, '/Users/liumingxing/OpenDesk/project');
 
         const firstColumnRows = Array.from(
             document.querySelectorAll('.fs-tree-col[data-col-idx="0"] .fs-tree-row')
@@ -407,7 +407,7 @@ test('file tree shows overlay until worker snapshot arrives, then renders', asyn
     globalThis.cancelAnimationFrame = () => {};
     window.settingAPI = {
         async loadSettingObject() {
-            return { default_workspace: '/Users/liumingxing/FillipDesk', applications: { filemgr: { entries: [] } } };
+            return { default_workspace: '/Users/liumingxing/OpenDesk', applications: { filemgr: { entries: [] } } };
         }
     };
     window.workspaceAPI = {
@@ -471,7 +471,7 @@ test('overlay swaps to error text on timeout, then recovers when snapshot finall
     globalThis.cancelAnimationFrame = () => {};
     window.settingAPI = {
         async loadSettingObject() {
-            return { default_workspace: '/Users/liumingxing/FillipDesk', applications: { filemgr: { entries: [] } } };
+            return { default_workspace: '/Users/liumingxing/OpenDesk', applications: { filemgr: { entries: [] } } };
         }
     };
     window.workspaceAPI = {
@@ -540,7 +540,7 @@ test('late-path render error surfaces via overlay text and onError', async () =>
     globalThis.cancelAnimationFrame = () => {};
     window.settingAPI = {
         async loadSettingObject() {
-            return { default_workspace: '/Users/liumingxing/FillipDesk', applications: { filemgr: { entries: [] } } };
+            return { default_workspace: '/Users/liumingxing/OpenDesk', applications: { filemgr: { entries: [] } } };
         }
     };
     window.workspaceAPI = {

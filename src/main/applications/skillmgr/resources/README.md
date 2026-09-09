@@ -2,8 +2,8 @@
 
 本目录为**示例与模板**。要启用本地技能，请将需要的技能子目录（如 `example`）**复制到应用数据目录下的 `skills` 文件夹**：
 
-- **Windows**: `%APPDATA%/fillipdesk/skills/`
-- **macOS**: `~/Library/Application Support/fillipdesk/skills/`
+- **Windows**: `%APPDATA%/opendesk/skills/`
+- **macOS**: `~/Library/Application Support/opendesk/skills/`
 
 复制后重启应用或调用 `skillRegistry:refresh`，主进程对话即可自动发现并调用这些技能。
 
@@ -50,10 +50,10 @@ metadata:
 
 ## OpenDesk 扩展（可选执行）
 
-未配置执行器时，主进程调用技能会返回上述渐进式加载的完整内容。若需“执行并返回结果”，可在 frontmatter 中增加 `fillipdesk` 扩展：
+未配置执行器时，主进程调用技能会返回上述渐进式加载的完整内容。若需“执行并返回结果”，可在 frontmatter 中增加 `opendesk` 扩展：
 
 ```yaml
-fillipdesk:
+opendesk:
     handler:
         type: module # 或 script / url
         path: handler.js # 相对技能目录
