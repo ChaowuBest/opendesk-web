@@ -29,6 +29,7 @@ namespace OpenDesk.Installer
     public sealed class OpenDeskBootstrapperApplication : BootstrapperApplication
     {
         private const string PackageId = "OpenDeskMsi";
+        private const string CleanupRelatedBundlesPackageId = "CleanupRelatedBundles";
         private const int ErrorFailNoActionReboot = unchecked((int)0x8007015E);
         private InstallerForm form;
         private PackageState packageState = PackageState.Unknown;
@@ -55,13 +56,8 @@ namespace OpenDesk.Installer
                     form.SetProgressStatus("ProgressCaching", "ProgressRepairCaching", "ProgressUninstallPreparing");
                 });
             };
-            ExecutePackageBegin += delegate
-            {
-                Post(delegate
-                {
-                    form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
-                });
-            };
+            ExecutePackageBegin += OnExecutePackageBegin;
+            ExecutePackageComplete += OnExecutePackageComplete;
             Progress += OnProgress;
             ExecuteProgress += OnExecuteProgress;
             Error += OnError;
@@ -794,6 +790,46 @@ namespace OpenDesk.Installer
         {
             e.Result = cancelRequested ? Result.Cancel : Result.Ok;
             Post(delegate { form.UpdateProgress(e.OverallPercentage); });
+        }
+
+        private void OnExecutePackageBegin(object sender, ExecutePackageBeginEventArgs e)
+        {
+            // CleanupRelatedBundles 是普通 ExePackage，引擎无法跟踪其内部进度；升级/修复场景下
+            // 它可能静默运行一两分钟（等旧版安装器退出、兜底强杀、删缓存目录）。此时把进度页
+            // 文案切到"正在清理旧版本"，避免用户误以为安装卡死。仅在 detect 阶段发现过历史
+            // bundle 时才切换：全新安装中该包也会执行但秒退，不该展示清理文案。
+            if (e.PackageId == CleanupRelatedBundlesPackageId && relatedMsiUpgradeDetected)
+            {
+                Post(delegate
+                {
+                    form.SetProgressStatus(
+                        "ProgressCleaningOldBundles",
+                        "ProgressCleaningOldBundles",
+                        "ProgressCleaningOldBundles"
+                    );
+                });
+                return;
+            }
+
+            Post(delegate
+            {
+                form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
+            });
+        }
+
+        private void OnExecutePackageComplete(object sender, ExecutePackageCompleteEventArgs e)
+        {
+            if (e.PackageId != CleanupRelatedBundlesPackageId)
+            {
+                return;
+            }
+
+            // 清理包结束后恢复常规文案：若之后没有其他包的 ExecutePackageBegin（例如没有
+            // related bundle 需要引擎处理），不让"正在清理旧版本"一直停留到完成页。
+            Post(delegate
+            {
+                form.SetProgressStatus("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling");
+            });
         }
 
         private void OnError(

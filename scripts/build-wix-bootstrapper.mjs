@@ -62,6 +62,8 @@ const objectPath = path.join(outputDir, 'opendesk-bootstrapper.wixobj');
 const setupPath = path.join(outputDir, `OpenDesk-${packageJson.version}-Setup.exe`);
 const bootstrapperSourcePath = path.join(resourcesDir, 'OpenDeskBootstrapper.cs');
 const bootstrapperAssemblyPath = path.join(outputDir, 'OpenDesk.Bootstrapper.dll');
+const cleanupSourcePath = path.join(resourcesDir, 'CleanupRelatedBundles.cs');
+const cleanupExePath = path.join(outputDir, 'CleanupRelatedBundles.exe');
 
 function run(executable, args) {
     const result = spawnSync(executable, args, {
@@ -107,6 +109,16 @@ run(csharpCompiler, [
     bootstrapperSourcePath
 ]);
 
+run(csharpCompiler, [
+    '/nologo',
+    '/target:winexe',
+    '/optimize+',
+    '/platform:x64',
+    `/out:${cleanupExePath}`,
+    '/reference:System.dll',
+    cleanupSourcePath
+]);
+
 run(path.join(wixBinDir, 'candle.exe'), [
     '-nologo',
     '-arch',
@@ -121,6 +133,7 @@ run(path.join(wixBinDir, 'candle.exe'), [
     `-dIconPath=${path.join(projectRoot, 'resources', 'package', 'icons', 'icon_round.ico')}`,
     `-dBootstrapperApplicationPath=${bootstrapperAssemblyPath}`,
     `-dBootstrapperConfigPath=${path.join(resourcesDir, 'BootstrapperCore.config')}`,
+    `-dCleanupExePath=${cleanupExePath}`,
     `-dLocalizationPath=${path.join(resourcesDir, 'zh-cn.wxl')}`,
     `-dBackgroundPath=${path.join(resourcesDir, 'background.png')}`,
     '-out',

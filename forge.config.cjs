@@ -361,10 +361,14 @@ function preserveWixInstallDirectory(creator) {
     const getRegistryComponent = creator.getRegistryComponent.bind(creator);
     creator.getRegistryComponent = (registry, indent) => {
         const component = getRegistryComponent(registry, indent);
+        // 条件必须同时认可 "1" 与 "#1"：机器上残留旧版本写入的 REG_DWORD BundleInstall 时，
+        // MSI 的 AppSearch 会用 RegistrySearch(raw) 读到的 "#1" 覆盖 burn 命令行传入的 "1"，
+        // 条件若只认 "1"，bundle 升级安装中就会把 UninstallDisplayName 等 .msq ARP 展示组件
+        // 装出来，控制面板出现第二个 OpenDesk 条目（仅版本号、无体积）。
         const condition = wixPublicUninstallComponentIds.has(registry.id)
-            ? 'OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"'
+            ? 'OPENDESK_BUNDLE_INSTALL &lt;&gt; "1" AND OPENDESK_BUNDLE_INSTALL &lt;&gt; "#1"'
             : registry.id === 'RegistryBundleInstallMode'
-              ? 'OPENDESK_BUNDLE_INSTALL = "1"'
+              ? 'OPENDESK_BUNDLE_INSTALL = "1" OR OPENDESK_BUNDLE_INSTALL = "#1"'
               : null;
         if (!condition) {
             return component;
