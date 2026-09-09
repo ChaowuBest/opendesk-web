@@ -1,20 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getOpenHarmonyTerminalBashPath } from '../../../main/applications/terminal/app.js';
+import { getOpenHarmonyTerminalShell } from '../../../main/applications/terminal/app.js';
 import { getMcpServerLocalRuntimeAvailability } from '../../../main/applications/mcpmgr/worker.js';
 import type { HarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const TABLET_STATE: HarmonyLocalRuntimeState = {
     variant: 'tablet',
-    capabilities: { bash: false, node: false, python: false, uv: false },
+    capabilities: { zsh: false, bash: false, node: false, python: false, uv: false },
     commands: {},
-    missing: ['bash', 'node', 'python', 'uv'],
+    missing: ['zsh', 'bash', 'node', 'python', 'uv'],
     status: 'tablet-disabled'
 };
 
 const INCOMPLETE_PC_STATE: HarmonyLocalRuntimeState = {
     variant: 'pc',
-    capabilities: { bash: true, node: true, python: false, uv: false },
+    capabilities: { zsh: false, bash: true, node: true, python: false, uv: false },
     commands: {
         bash: '/data/service/hnp/bin/bash',
         node: '/data/service/hnp/bin/node'
@@ -23,10 +23,36 @@ const INCOMPLETE_PC_STATE: HarmonyLocalRuntimeState = {
     status: 'incomplete'
 };
 
-test('Terminal registers only the verified HNP bash on Harmony PC', () => {
-    assert.equal(getOpenHarmonyTerminalBashPath(null), null);
-    assert.equal(getOpenHarmonyTerminalBashPath(TABLET_STATE), null);
-    assert.equal(getOpenHarmonyTerminalBashPath(INCOMPLETE_PC_STATE), '/data/service/hnp/bin/bash');
+const SHELL_MISSING_PC_STATE: HarmonyLocalRuntimeState = {
+    variant: 'pc',
+    capabilities: { zsh: false, bash: false, node: true, python: false, uv: false },
+    commands: { node: '/data/service/hnp/bin/node' },
+    missing: ['zsh', 'bash', 'python', 'uv'],
+    status: 'incomplete'
+};
+
+const ZSH_PC_STATE: HarmonyLocalRuntimeState = {
+    variant: 'pc',
+    capabilities: { zsh: true, bash: true, node: false, python: false, uv: false },
+    commands: {
+        zsh: '/usr/bin/zsh',
+        bash: '/data/service/hnp/bin/bash'
+    },
+    missing: ['node', 'python', 'uv'],
+    status: 'incomplete'
+};
+
+test('terminal shell resolver prefers zsh and falls back to bash on Harmony PC', () => {
+    assert.equal(getOpenHarmonyTerminalShell(TABLET_STATE), null);
+    assert.equal(getOpenHarmonyTerminalShell(SHELL_MISSING_PC_STATE), null);
+    assert.deepEqual(getOpenHarmonyTerminalShell(INCOMPLETE_PC_STATE), {
+        kind: 'bash',
+        path: '/data/service/hnp/bin/bash'
+    });
+    assert.deepEqual(getOpenHarmonyTerminalShell(ZSH_PC_STATE), {
+        kind: 'zsh',
+        path: '/usr/bin/zsh'
+    });
 });
 
 test('tablet rejects stdio MCP before transport creation while remote MCP remains available', () => {

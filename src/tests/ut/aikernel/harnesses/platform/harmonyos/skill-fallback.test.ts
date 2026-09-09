@@ -116,6 +116,23 @@ describe('HarmonyOS fallback hooks', () => {
         expect(hasFailedBashBefore(task, current)).toBe(true);
     });
 
+    test('finds a failed Zsh within the five-call sliding window', () => {
+        const task = new TaskState(new TaskManagerState());
+        addCall(task, 'terminal-executeZsh', { command: 'A failed' }, { exitCode: 1 }, 'A error');
+        for (let index = 0; index < 4; index++) {
+            addCall(task, 'unrelatedTool', { index }, {});
+        }
+        const current = addCall(
+            task,
+            'devicemgr-executeNodeShell',
+            { command: 'final fallback chosen by the LLM' },
+            { exitCode: 0, nodeId: 'opendesk-headless-localhost' },
+            'ok'
+        );
+
+        expect(hasFailedBashBefore(task, current)).toBe(true);
+    });
+
     test('ignores a failed Bash outside the five-call sliding window', () => {
         const task = new TaskState(new TaskManagerState());
         addCall(task, 'terminal-executeBash', { command: 'old failure' }, { exitCode: 1 });
@@ -148,7 +165,7 @@ describe('HarmonyOS fallback hooks', () => {
             'node output'
         );
 
-        await onAfterExecuteNodeShell(task, current);
+        await onAfterExecuteNodeShell({ task, toolCall: current });
 
         expect(append).toHaveBeenCalledTimes(1);
         const prompt = append.mock.calls[0]?.[0] ?? '';
@@ -173,7 +190,7 @@ describe('HarmonyOS fallback hooks', () => {
         addCall(task, 'executeBash', { command: 'failed' }, { exitCode: 1 });
         const current = addCall(task, 'executeNodeShell', { command: 'node' }, details);
 
-        await onAfterExecuteNodeShell(task, current);
+        await onAfterExecuteNodeShell({ task, toolCall: current });
         expect(append).not.toHaveBeenCalled();
     });
 
@@ -188,7 +205,7 @@ describe('HarmonyOS fallback hooks', () => {
             { exitCode: 0, nodeId: 'opendesk-headless-localhost' }
         );
 
-        await onAfterExecuteNodeShell(task, current);
+        await onAfterExecuteNodeShell({ task, toolCall: current });
         expect(append).not.toHaveBeenCalled();
     });
 

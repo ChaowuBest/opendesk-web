@@ -1,7 +1,24 @@
 import { jest } from '@jest/globals';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
-import { installTimeoutBackgrounding } from '../../../main/applications/terminal/background';
+
+// setting.ts 含 create(import.meta.url) 写法，ts-jest 编译为 CJS 后与 require 标识符冲突，mock 掉
+// （background.ts 经 shellExec.ts 间接依赖 setting.ts）
+jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
+    Setting: class {
+        static getInstance() {
+            return {
+                getData: () => {
+                    throw new Error('Setting not initialized in test');
+                },
+                getEffectiveWorkspace: () => '/'
+            };
+        }
+    },
+    getOpendeskDirectory: () => '/tmp/opendesk-test'
+}));
+
+const { installTimeoutBackgrounding } = await import('../../../main/applications/terminal/background.js');
 
 describe('installTimeoutBackgrounding', () => {
     afterEach(() => {
