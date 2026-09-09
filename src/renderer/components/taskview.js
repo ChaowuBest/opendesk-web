@@ -20,6 +20,7 @@ import './skills/skill-detail-card.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { getSafeWebUrl } from '../../common/web-link.js';
+import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import { createRendererTranslator } from '../locale.ts';
 import { renderSafeMarkdown } from '../utils/markdown.ts';
 import { buildTaskExportHtml } from '../utils/task-export.ts';
@@ -2944,7 +2945,7 @@ class TaskView extends HTMLElement {
         if (!target) return;
         e.preventDefault();
         e.stopPropagation();
-        const filePath = target.dataset.openEditor;
+        const filePath = normalizeDriveRootPath(target.dataset.openEditor || '');
         if (!filePath) return;
         const lineAttr = target.dataset.editorLine;
         const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
@@ -3089,6 +3090,8 @@ class TaskView extends HTMLElement {
      */
     _openFileContextMenu(filePath, x, y) {
         this._dismissFilePillContextMenu();
+        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，菜单全部动作统一使用规范化路径
+        filePath = normalizeDriveRootPath(filePath);
 
         const dark =
             this.dataset.theme === 'dark' ||
@@ -3335,6 +3338,8 @@ class TaskView extends HTMLElement {
     async openFileInSidebar(filePath, line, onSwitchBlocked) {
         // 渲染阶段不校验文件存在性（允许路径样式文本的误报 pill），
         // 点击时在此处统一校验：不存在则弹模态提示，不再进入预览流程。
+        // 历史消息的 rendered HTML 可能仍存有 "/C:/..." 形式的路径，入口统一规范化。
+        filePath = normalizeDriveRootPath(filePath);
         try {
             const exists = await window.fsAPI?.fileExists?.(filePath);
             if (exists === false) {

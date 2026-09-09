@@ -81,6 +81,7 @@ See the Mulan PSL v2 for more details.
     <String Id="ProgressFinishing">正在完成 Windows Installer 注册...</String>
     <String Id="ProgressRepairFinishing">正在完成修复...</String>
     <String Id="ProgressUninstallFinishing">正在完成卸载...</String>
+    <String Id="ProgressCleaningOldBundles">正在清理旧版本安装...</String>
     <String Id="ProgressCanceling">正在安全取消安装...</String>
     <String Id="ProgressRepairCanceling">正在取消修复...</String>
     <String Id="ProgressUninstallCanceling">正在取消卸载...</String>

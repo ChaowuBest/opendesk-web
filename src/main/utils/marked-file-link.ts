@@ -11,6 +11,7 @@
 
 import path from 'path';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { normalizeDriveRootPath } from '../../common/utils/path.js';
 import type { MarkedExtension, Tokens } from 'marked';
 
 // ── Workspace context ──────────────────────────────────────────────
@@ -46,13 +47,17 @@ export function resolveFilePath(rawPath: string): string | null {
         return null;
     }
 
-    if (path.isAbsolute(rawPath)) {
-        return rawPath;
+    // POSIX 语境下误写的 "/C:/foo"（前导斜杠 + 盘符）先规范化为 "C:/foo"，
+    // 否则 Windows 存在性检查会把它解析为"当前盘根目录下的 C: 目录"而误报。
+    // 规范化命中的路径本身就是绝对路径形式，直接返回（POSIX 平台的 isAbsolute 不识别盘符）。
+    const candidate = normalizeDriveRootPath(rawPath);
+    if (candidate !== rawPath || path.isAbsolute(candidate)) {
+        return candidate;
     }
     if (_renderWorkspace) {
-        return path.resolve(_renderWorkspace, rawPath);
+        return path.resolve(_renderWorkspace, candidate);
     }
-    return path.resolve(rawPath);
+    return path.resolve(candidate);
 }
 
 // ── Regex for file path detection ──────────────────────────────────

@@ -225,18 +225,28 @@ test('keeps versioned application directories without recursively purging the se
         },
         { id: 'UninstallDisplayName', key: 'product-specific-key' }
     ]);
+    // 条件必须同时认可 "1" 与 "#1"：机器上残留旧版本写入的 REG_DWORD BundleInstall 时，
+    // MSI 的 AppSearch 会用 RegistrySearch(raw) 读到的 "#1"（整数前缀）覆盖 burn 命令行
+    // 传入的 "1"，条件若只认 "1" 就会误判为独立 MSI 安装，把 UninstallDisplayName 等
+    // .msq 展示组件装出来，控制面板出现第二个 OpenDesk 条目（版本 0.3.6、无体积）。
     assert.match(
         creator.getRegistryComponent({ id: 'UninstallDisplayName' }, 0).xml,
-        /<Component Id="UninstallDisplayName"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1"<\/Condition>/
+        /<Component Id="UninstallDisplayName"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1" AND OPENDESK_BUNDLE_INSTALL &lt;&gt; "#1"<\/Condition>/
+    );
+    assert.match(
+        creator.getRegistryComponent({ id: 'UninstallString' }, 0).xml,
+        /<Condition>OPENDESK_BUNDLE_INSTALL &lt;&gt; "1" AND OPENDESK_BUNDLE_INSTALL &lt;&gt; "#1"<\/Condition>/
     );
     assert.doesNotMatch(creator.getRegistryComponent({ id: 'UninstallDisplayName' }, 0).xml, /Transitive="yes"/);
     assert.doesNotMatch(
         creator.getRegistryComponent({ id: 'RegistryInstallPath' }, 0).xml,
         /Transitive="yes"|OPENDESK_BUNDLE_INSTALL/
     );
+    // 命中 "#1"（旧 REG_DWORD 残留）时同样视为 bundle 安装模式：本组件会把 REG_DWORD
+    // 重写为 REG_SZ "1"，让机器在下一次会话起自愈。
     assert.match(
         creator.getRegistryComponent({ id: 'RegistryBundleInstallMode' }, 0).xml,
-        /<Component Id="RegistryBundleInstallMode"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL = "1"<\/Condition>/
+        /<Component Id="RegistryBundleInstallMode"[^>]*>\s*<Condition>OPENDESK_BUNDLE_INSTALL = "1" OR OPENDESK_BUNDLE_INSTALL = "#1"<\/Condition>/
     );
     assert.doesNotMatch(creator.getRegistryComponent({ id: 'RegistryBundleInstallMode' }, 0).xml, /Transitive="yes"/);
 });
@@ -344,17 +354,37 @@ test('builds a custom bootstrapper that passes location and shortcut choices to 
     assert.doesNotMatch(bootstrapper, /Engine\.Elevate/);
     // 也不要改写 bundle 引擎的清单为 requireAdministrator：insignia 往返会破坏 bundle 结构
     assert.doesNotMatch(buildScript, /insignia|-outputresource|requireAdministrator/);
+    // 清理 stale 注册键发生在 Install 与 Repair 两条路径上（修复同样要求应用列表只剩当前实例）；
+    // 仅用户直接发起的卸载（RelationType.None）才忽略依赖登记，related bundle 卸载不能忽略
     assert.match(
         bootstrapper,
-        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(action\);/
+        /form\.ShowProgress\(action\);[\s\S]*?if \(action == LaunchAction\.Install \|\| action == LaunchAction\.Repair\)\s*\{\s*CleanupStaleInstallations\(\);\s*\}[\s\S]*?if \(action == LaunchAction\.Uninstall && Command\.Relation == RelationType\.None\)\s*\{\s*IgnorePackageDependencies\(\);\s*\}[\s\S]*?Engine\.Plan\(action\);/
     );
     // 卸载时忽略 MSI 的 dependency provider：历史重复安装的 bundle 会在 provider 下残留
     // dependent，引擎因此跳过 MSI 卸载（日志 w327 found dependents + execute: None），
     // 表现为"卸载秒成功但应用还在"。OpenDesk 的 MSI 只被自身 bundle 引用，忽略登记是安全的。
     assert.match(bootstrapper, /Engine\.StringVariables\["IGNOREDEPENDENCIES"\] = "ALL";/);
+    // 清理旧版本的 ExePackage 没有内部进度可跟踪，升级/修复时可能静默运行一两分钟。
+    // BA 必须在它开始执行时把进度页文案切到"正在清理旧版本"，结束后恢复常规文案，
+    // 避免用户误以为安装卡死；仅在 detect 阶段发现过历史 bundle 时才展示。
+    assert.match(bundle, /<ExePackage Id="CleanupRelatedBundles"/);
+    assert.match(bootstrapper, /CleanupRelatedBundlesPackageId = "CleanupRelatedBundles"/);
     assert.match(
         bootstrapper,
-        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install && activeAction != LaunchAction\.Uninstall/
+        /ExecutePackageBegin \+= OnExecutePackageBegin;\s*ExecutePackageComplete \+= OnExecutePackageComplete;/
+    );
+    assert.match(
+        bootstrapper,
+        /OnExecutePackageBegin\(object sender, ExecutePackageBeginEventArgs e\)[\s\S]*?e\.PackageId == CleanupRelatedBundlesPackageId[\s\S]*?relatedMsiUpgradeDetected[\s\S]*?SetProgressStatus\(\s*"ProgressCleaningOldBundles"/
+    );
+    assert.match(
+        bootstrapper,
+        /OnExecutePackageComplete\(object sender, ExecutePackageCompleteEventArgs e\)[\s\S]*?e\.PackageId != CleanupRelatedBundlesPackageId[\s\S]*?SetProgressStatus\("ProgressInstalling", "ProgressRepairing", "ProgressUninstalling"\)/
+    );
+    assert.match(localization, /<String Id="ProgressCleaningOldBundles">[^<]*正在清理旧版本安装/);
+    assert.match(
+        bootstrapper,
+        /OnPlanRelatedBundle\(object sender, PlanRelatedBundleEventArgs e\)[\s\S]*?activeAction != LaunchAction\.Install\s*&&\s*activeAction != LaunchAction\.Repair\s*&&\s*activeAction != LaunchAction\.Uninstall/
     );
     // 静默模式/被父 bundle 调起时，apply 完成后必须能真正关闭窗体退出；
     // 若走 busy 守卫会弹隐藏的确认框，/quiet 下永远没人点，进程不退出
@@ -497,7 +527,7 @@ test('renders every bootstrapper page transition atomically', () => {
     assert.match(bootstrapper, /class BufferedPanel : Panel/);
     assert.match(bootstrapper, /OptimizedDoubleBuffer/);
     assert.match(bootstrapper, /WM_SETREDRAW/);
-    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 7);
+    assert.equal((bootstrapper.match(/RenderPage\(delegate/g) || []).length, 8);
     assert.match(bootstrapper, /Opacity = 0D/);
     assert.match(bootstrapper, /ShowDetected[\s\S]*?Opacity = 1D/);
     assert.doesNotMatch(bootstrapper, /rightBody\.BackColor = Color\.Transparent/);
