@@ -11,6 +11,7 @@ import {
     buildMemoryReviewSystemPrompt,
     formatConversationForMemoryReview,
     MemoryReviewQueue,
+    MEMORY_REVIEW_ALLOWED_TOOLS,
     MEMORY_REVIEW_TASK_NAME,
     registerMemoryReviewHook
 } from '../../../main/aikernel/memory/review';
@@ -59,6 +60,13 @@ describe('联合长期记忆回顾', () => {
         expect(GlobalHooks.onTaskReviewHooks).toHaveLength(1);
     });
 
+    test('回顾任务允许工具包含 updateMemory 原地更新工具', () => {
+        expect(MEMORY_REVIEW_ALLOWED_TOOLS).toContain('updateMemory');
+        expect(MEMORY_REVIEW_ALLOWED_TOOLS).toEqual(
+            expect.arrayContaining(['updateUserPortrait', 'addMemory', 'removeMemory', 'searchMemory', 'getMemory'])
+        );
+    });
+
     test('联合 system prompt 同时维护用户画像和关键事实记忆', () => {
         const prompt = buildMemoryReviewSystemPrompt(
             '/tmp/memory/user.md',
@@ -74,6 +82,19 @@ describe('联合长期记忆回顾', () => {
         expect(prompt).toContain('项目事实不要写入用户画像');
     });
 
+    test('联合 system prompt 指示同一事实优先原地更新', () => {
+        const prompt = buildMemoryReviewSystemPrompt(
+            '/tmp/memory/user.md',
+            '/workspace/.opendesk/memory/memory.json',
+            '/tmp/memory/memory.json'
+        );
+
+        expect(prompt).toContain('updateMemory(uid, title, content)');
+        expect(prompt).toContain('保持 uid、heat 和创建时间不变');
+        expect(prompt).toContain('同一事实发生变化');
+        expect(prompt).not.toContain('先 removeMemory 删除旧 uid，再 addMemory');
+    });
+
     test('联合 review prompt 包含当前画像、事实记忆索引和本轮对话', () => {
         const prompt = buildMemoryReviewPrompt(
             '# 用户画像\n\n- 偏好简洁输出。',
@@ -85,6 +106,7 @@ describe('联合长期记忆回顾', () => {
         expect(prompt).toContain('abc123');
         expect(prompt).toContain('用户: 项目使用 npm run build 构建。');
         expect(prompt).toContain('逐条判断候选信息属于用户画像、workspace 关键事实、global 关键事实');
+        expect(prompt).toContain('updateMemory');
     });
 
     test('联合回顾对话只截取 startMessageIndex 之后的用户和助手文本', () => {
