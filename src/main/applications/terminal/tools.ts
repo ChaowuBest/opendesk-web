@@ -60,8 +60,17 @@ export { buildInterpretersEnv, hasUserPythonEnvironment, shouldUseIsolatedPython
 // re-export for backward compatibility
 export { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
 
-function getZshPath(): string | null {
-    return findExecutableInPath('zsh');
+// 一个 OpenDesk 实例只会使用一个 bash / zsh 路径，作为模块级全局变量共享，
+// 由 terminal 应用按平台探测后经 setBashPath / setZshPath 写入；未配置时为 null。
+let bashPath: string | null = null;
+let zshPath: string | null = null;
+
+export function setBashPath(path: string): void {
+    bashPath = path;
+}
+
+export function setZshPath(path: string): void {
+    zshPath = path;
 }
 
 function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
@@ -393,24 +402,17 @@ const ExecuteBashArgsSchema = z.object({
 });
 
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
-    private bashPath: string;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
-    /**
-     * @param bashPath bash 可执行文件路径，默认为 '/bin/bash'
-     *   - Windows: 可传入 'bash' 自动从 PATH 中查找，或传入完整路径如 'C:\\Program Files\\Git\\bin\\bash.exe'
-     *   - macOS/Linux: 默认 '/bin/bash'
-     */
-    constructor(bashPath: string = '/bin/bash') {
+    constructor() {
         super(
             'executeBash',
             '该工具可以执行Bash终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
             ExecuteBashArgsSchema
         );
 
-        this.bashPath = bashPath;
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
@@ -450,8 +452,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
+        if (!bashPath) {
+            result.updateResult('错误：未找到 bash 可执行文件。请确保 bash 已安装并位于 PATH 环境变量中。');
+            return;
+        }
+
         await executeShellCommand({
-            shellPath: this.bashPath,
+            shellPath: bashPath,
             shellArgs: ['-c', command],
             command,
             cwd,
@@ -486,24 +493,21 @@ const ExecuteZshArgsSchema = z.object({
 });
 
 export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
-    private zshPath: string | null;
     private interactive: boolean;
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
     /**
-     * @param zshPath zsh 可执行文件路径；未传入时运行时通过 PATH 动态查找
      * @param interactive 为 true 时以 `-i -c` 启动（交互模式，加载 ~/.zshrc 环境变量设置）
      */
-    constructor(zshPath?: string, interactive = false) {
+    constructor(interactive = false) {
         super(
             'executeZsh',
             '该工具可以执行Zsh终端命令, 并且默认已经将标准错误流和标准输出流合并, 无需额外配置 2>&1。不要用 || true、; true、| head 等兜底后缀或管道吞掉退出码；让命令以真实退出码结束，系统依赖退出码判定命令成败',
             ExecuteZshArgsSchema
         );
 
-        this.zshPath = zshPath ?? null;
         this.interactive = interactive;
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
@@ -535,7 +539,6 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
-        const zshPath = this.zshPath ?? getZshPath();
         if (!zshPath) {
             result.updateResult('错误：未找到 zsh 可执行文件。请确保 zsh 已安装并位于 PATH 环境变量中。');
             return;

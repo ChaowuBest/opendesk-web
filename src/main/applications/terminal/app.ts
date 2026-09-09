@@ -12,7 +12,14 @@
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { t } from './locale/index.js';
-import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
+import {
+    ExecutePowerShellTool,
+    ExecuteBashTool,
+    ExecuteZshTool,
+    CheckShellStatusTool,
+    setBashPath,
+    setZshPath
+} from './tools.js';
 import { findExecutableInPath, findOpenHarmonyZsh } from '../../utils/shellExec.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
@@ -57,16 +64,19 @@ export class TerminalApplication extends BaseApplication {
                 // 检测 Windows 下是否有 bash.exe（如 Git Bash、WSL 等）
                 const bashPath = findExecutableInPath('bash');
                 if (bashPath) {
-                    toolset.addTool(new ExecuteBashTool(bashPath));
+                    setBashPath(bashPath);
+                    toolset.addTool(new ExecuteBashTool());
                 }
                 break;
             }
             case 'openharmony': {
                 const shell = getOpenHarmonyTerminalShell();
                 if (shell?.kind === 'zsh') {
-                    toolset.addTool(new ExecuteZshTool(shell.path, true));
+                    setZshPath(shell.path);
+                    toolset.addTool(new ExecuteZshTool(true));
                 } else if (shell?.kind === 'bash') {
-                    toolset.addTool(new ExecuteBashTool(shell.path));
+                    setBashPath(shell.path);
+                    toolset.addTool(new ExecuteBashTool());
                 } else {
                     break;
                 }
@@ -75,7 +85,8 @@ export class TerminalApplication extends BaseApplication {
             }
             default:
                 // macOS/Linux 默认使用 /bin/bash
-                toolset.addTool(new ExecuteBashTool('/bin/bash'));
+                setBashPath('/bin/bash');
+                toolset.addTool(new ExecuteBashTool());
                 break;
         }
 

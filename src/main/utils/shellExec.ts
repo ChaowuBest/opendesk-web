@@ -107,8 +107,9 @@ export function findOpenHarmonyBash(): string | null {
 /**
  * 解析 OpenHarmony 上可用的 zsh 路径。
  *
- * 真机验证 zsh 固定安装于 /usr/bin/zsh，直接写死路径。
- * 用 spawnSync 做一次轻量执行验证。
+ * 真机验证 zsh 固定安装于 /usr/bin/zsh，优先写死路径并用 spawnSync 做一次
+ * 轻量执行验证；固定路径不存在或运行验证失败时，回退到 PATH 中查找 zsh
+ * （与 findOpenHarmonyBash 的结构保持一致）。
  */
 export function findOpenHarmonyZsh(): string | null {
     const zshPath = '/usr/bin/zsh';
@@ -120,9 +121,9 @@ export function findOpenHarmonyZsh(): string | null {
             return zshPath;
         }
     } catch {
-        // zsh 不可用
+        // 固定路径不可用，回退到 PATH 查找
     }
-    return null;
+    return findExecutableInPath('zsh');
 }
 
 // 探测结果按 zsh 路径缓存：/etc/zshrc 在运行期不会变化

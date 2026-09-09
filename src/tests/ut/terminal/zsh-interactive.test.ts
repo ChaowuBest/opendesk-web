@@ -39,7 +39,7 @@ jest.unstable_mockModule('child_process', () => ({
     execSync: jest.fn()
 }));
 
-const { ExecuteZshTool } = await import('../../../main/applications/terminal/tools.js');
+const { ExecuteZshTool, setZshPath } = await import('../../../main/applications/terminal/tools.js');
 const { clearZshExitNoiseCache } = await import('../../../main/utils/shellExec.js');
 const { ToolResult } = await import('../../../main/aikernel/tool.js');
 
@@ -54,6 +54,7 @@ function createFakeProc() {
 }
 
 function resetMocks() {
+    setZshPath('/usr/bin/zsh');
     spawnMock.mockReset();
     spawnSyncMock.mockReset();
     // 探测默认返回干净输出（/etc/zshrc source smartshell.zsh 等无噪音 trap 环境）
@@ -91,7 +92,7 @@ describe('ExecuteZshTool custom path and interactive mode', () => {
             stdout: 'saving history...\ncompleted.\n',
             stderr: ''
         }));
-        const tool = new ExecuteZshTool('/usr/bin/zsh', true);
+        const tool = new ExecuteZshTool(true);
         const result = await runTool(tool, 'echo hi');
 
         expect(spawnSyncMock).toHaveBeenCalledWith('/usr/bin/zsh', ['-i', '-c', 'true'], expect.anything());
@@ -104,7 +105,7 @@ describe('ExecuteZshTool custom path and interactive mode', () => {
     test('spawn keeps command untouched when probe is clean (smartshell variants)', async () => {
         // /etc/zshrc 仅 source /etc/smartshell.zsh 的版本：探测干净则原样执行，
         // 不得用 trap - EXIT 误伤 smartshell 可能依赖的 EXIT trap
-        const tool = new ExecuteZshTool('/usr/bin/zsh', true);
+        const tool = new ExecuteZshTool(true);
         await runTool(tool, 'echo hi');
 
         expect(spawnSyncMock).toHaveBeenCalledWith('/usr/bin/zsh', ['-i', '-c', 'true'], expect.anything());
@@ -118,7 +119,7 @@ describe('stdout noise filtering in interactive mode', () => {
     test('filters OSC shell-integration event sequences (BEL-terminated) from stdout', async () => {
         // 复现 OpenHarmony 真机场景：.zshrc 中的 shell integration 在启动时向 stdout
         // 输出 OSC 9278 事件（如 \x1b]9278;f;{"event": "SetupComplete"}\x07），与命令输出同流
-        const tool = new ExecuteZshTool('/usr/bin/zsh', true);
+        const tool = new ExecuteZshTool(true);
         const result = new ToolResult();
         const proc = createFakeProc();
         spawnWithEvents(proc, (p) => {
@@ -139,7 +140,7 @@ describe('stdout noise filtering in interactive mode', () => {
     });
 
     test('filters OSC sequences with ST terminator and cwd warnings from stdout', async () => {
-        const tool = new ExecuteZshTool('/usr/bin/zsh', true);
+        const tool = new ExecuteZshTool(true);
         const result = new ToolResult();
         const proc = createFakeProc();
         spawnWithEvents(proc, (p) => {
@@ -169,7 +170,7 @@ describe('stdout noise filtering in interactive mode', () => {
         // 终止 BEL 分离写入，中间夹着 ls 的输出。若 payload 允许跨行，从悬空起始符到
         // 迟到 BEL 之间的命令输出会被整体当作 payload 吞掉（result 仅剩
         // "saving history...\ncompleted."）。信息保全优先：无终止符的残段整体保留
-        const tool = new ExecuteZshTool('/usr/bin/zsh', true);
+        const tool = new ExecuteZshTool(true);
         const result = new ToolResult();
         const proc = createFakeProc();
         spawnWithEvents(proc, (p) => {

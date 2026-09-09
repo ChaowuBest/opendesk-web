@@ -79,17 +79,19 @@ describe('findOpenHarmonyZsh', () => {
         process.env.PATH = originalPath;
     });
 
-    test('returns null when /usr/bin/zsh does not exist', () => {
+    test('falls back to PATH lookup when /usr/bin/zsh does not exist', () => {
         accessSyncMock.mockImplementation((p: unknown) => {
             if (p === ZSH_PATH) throw new Error('ENOENT');
         });
-        expect(findOpenHarmonyZsh()).toBeNull();
+        // PATH 查找不做 spawnSync 验证，命中 accessSync 可用的 /bin/zsh
+        expect(findOpenHarmonyZsh()).toBe('/bin/zsh');
         expect(spawnSyncMock).not.toHaveBeenCalled();
     });
 
-    test('returns null when zsh exists but fails runtime verification', () => {
+    test('falls back to PATH lookup when zsh exists but fails runtime verification', () => {
         spawnSyncMock.mockReturnValueOnce({ status: 127, error: undefined } as SpawnSyncReturns<Buffer>);
-        expect(findOpenHarmonyZsh()).toBeNull();
+        // 验证失败后回退到 PATH 查找（仅 accessSync 级别），仍命中 /usr/bin/zsh
+        expect(findOpenHarmonyZsh()).toBe(ZSH_PATH);
     });
 
     test('returns fixed /usr/bin/zsh when runtime verification passes', () => {
@@ -134,12 +136,13 @@ describe('getDefaultShell on OpenHarmony', () => {
     });
 
     test('falls back to bash when zsh is not runnable', () => {
-        // findOpenHarmonyBash 优先 HNP bash：accessSync 通过且 spawnSync 验证成功
+        // /usr/bin/zsh 运行验证失败，且 PATH 中亦无 zsh，最终回退到 HNP bash
         spawnSyncMock.mockImplementation((cmd: string) =>
             cmd.endsWith('zsh')
                 ? ({ status: 127, error: undefined } as SpawnSyncReturns<Buffer>)
                 : ({ status: 0, error: undefined } as SpawnSyncReturns<Buffer>)
         );
+        existsSyncMock.mockImplementation((p: unknown) => typeof p === 'string' && p.endsWith('/bash'));
 
         const shell = getDefaultShell();
         expect(shell).toEqual({ shellPath: '/data/service/hnp/bin/bash', shellArgs: ['-c'] });
