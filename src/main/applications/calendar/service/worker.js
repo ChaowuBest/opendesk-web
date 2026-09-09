@@ -14,6 +14,7 @@ import { logger } from '../../../utils/logger.js';
 import { OutlookUtils } from '../../../utils/outlook.js';
 import { CalendarItemSchema } from '../common.js';
 import { NotificationManager } from '../../../utils/notificationmgr.js';
+import { t } from '../locale/index.js';
 import nedb from 'nedb-promises';
 import path from 'path';
 import fs from 'fs';
@@ -214,9 +215,11 @@ class CalendarWorker extends BaseWorker {
                         const timeStr = this._formatTime(item.startTime);
                         notifier.sendNotification(
                             'warning',
-                            '日历',
+                            t('app.name'),
                             `📅 ${item.subject}`,
-                            `日程将在 ${minutesLeft} 分钟后开始（${timeStr}）${item.location ? ' 📍' + item.location : ''}`
+                            `${t('notification.upcoming.body', { minutes: minutesLeft, time: timeStr })}${
+                                item.location ? ' 📍' + item.location : ''
+                            }`
                         );
                         logger.info(`[calendar-reminder] sent 15-min warning reminder: ${item.uid} - ${item.subject}`);
                     }

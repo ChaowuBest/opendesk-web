@@ -52,7 +52,12 @@ export function resolveRendererLocale(localeSource?: RendererLocaleSource): stri
     return resolveLocaleSetting(localeSource, getRendererPreferredLanguages());
 }
 
-export function createRendererTranslator(
+/**
+ * 基于给定词表创建翻译函数，供各应用在 renderer 侧复用自己的 locale 词条。
+ * 词条缺失时回退到 zh-CN，再回退到 key 本身。
+ */
+export function createTranslator(
+    translations: Record<string, Record<string, string>>,
     localeSetting?: RendererLocaleSource
 ): (key: string, params?: Record<string, string | number>) => string {
     const locale = resolveRendererLocale(localeSetting);
@@ -65,4 +70,10 @@ export function createRendererTranslator(
         }
         return text;
     };
+}
+
+export function createRendererTranslator(
+    localeSetting?: RendererLocaleSource
+): (key: string, params?: Record<string, string | number>) => string {
+    return createTranslator(translations, localeSetting);
 }

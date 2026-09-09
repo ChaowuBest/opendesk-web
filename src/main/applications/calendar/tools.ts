@@ -14,11 +14,9 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { escapeHtml } from '../../../common/utils/escape.js';
+import { t } from './locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-
-const MONTH_LABELS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-const WEEKDAY_LABELS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
 function fmtTimeGui(ts: number): string {
     const d = new Date(ts);
@@ -30,16 +28,21 @@ function fmtTimeGui(ts: number): string {
 }
 
 function fmtDateFullGui(d: Date): string {
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+    return t('date.format.full', {
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+        monthName: t(`date.month.${d.getMonth() + 1}`)
+    });
 }
 
 function renderCalendarItemCard(item: any, title: string, status: string): string {
     const start = new Date(item.startTime);
-    const monthLabel = MONTH_LABELS[start.getMonth()];
+    const monthLabel = t(`date.month.${start.getMonth() + 1}`);
     const subject = escapeHtml(item.subject);
     const location = item.location ? escapeHtml(item.location) : '';
-    const timeStr = item.isAllDay ? '全天' : `${fmtTimeGui(item.startTime)} — ${fmtTimeGui(item.endTime)}`;
-    const dateStr = `${fmtDateFullGui(start)} ${WEEKDAY_LABELS[start.getDay()]}`;
+    const timeStr = item.isAllDay ? t('common.allDay') : `${fmtTimeGui(item.startTime)} — ${fmtTimeGui(item.endTime)}`;
+    const dateStr = `${fmtDateFullGui(start)} ${t(`date.weekday.${start.getDay()}`)}`;
     const surface = 'var(--od-bg-elevated, #fff)';
     const surfaceMuted = 'var(--od-bg-muted, #FAFAFA)';
     const text = 'var(--od-text, #1d1d1f)';
@@ -116,22 +119,22 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
         const body: string[] = [];
 
         if (dateString) {
-            body.push(chalk.dim('日期: ') + chalk.cyan(String(dateString)));
+            body.push(chalk.dim(t('tool.label.date')) + chalk.cyan(String(dateString)));
         }
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 正在获取日程…'));
+            body.push(chalk.dim(`  ⏳ ${t('tool.query.running')}`));
         } else if (toolcall.status === 'success' && toolcall.result) {
             const lines = toolcall.result.split('\n').filter((l) => l.startsWith('- '));
             if (lines.length === 0) {
-                body.push(chalk.dim('  ∅ 当日暂无日程'));
+                body.push(chalk.dim(`  ∅ ${t('tool.query.empty')}`));
             } else {
-                body.push(chalk.dim(`  共 ${chalk.white(String(lines.length))} 项日程:`));
+                body.push(chalk.dim(`  ${t('tool.query.total', { count: chalk.white(String(lines.length)) })}`));
                 for (const line of lines.slice(0, 5)) {
                     body.push(chalk.hex('#c0c0c0')(truncText(line, width - 8)));
                 }
                 if (lines.length > 5) {
-                    body.push(chalk.dim(`  … 还有 ${lines.length - 5} 项`));
+                    body.push(chalk.dim(`  ${t('tool.query.more', { count: lines.length - 5 })}`));
                 }
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
@@ -140,7 +143,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
 
         return new Card({
             icon: '📅',
-            title: '查询日程',
+            title: t('tool.get.title'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -193,7 +196,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const item = JSON.parse(toolcall.result);
-                return renderCalendarItemCard(item, '已添加日程', toolcall.status);
+                return renderCalendarItemCard(item, t('tool.add.done'), toolcall.status);
             } catch {
                 /* fall through */
             }
@@ -215,7 +218,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
                     location: args['location'] || '',
                     isAllDay: !!args['isAllDay']
                 };
-                return renderCalendarItemCard(pseudo, '正在添加日程…', toolcall.status);
+                return renderCalendarItemCard(pseudo, t('tool.add.running'), toolcall.status);
             }
         }
         return undefined;
@@ -226,26 +229,26 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
         const body: string[] = [];
 
         if (args?.['subject']) {
-            body.push(chalk.dim('标题: ') + chalk.white(truncText(String(args['subject']), width - 16)));
+            body.push(chalk.dim(t('tool.label.subject')) + chalk.white(truncText(String(args['subject']), width - 16)));
         }
         if (args?.['dateString']) {
-            body.push(chalk.dim('日期: ') + chalk.cyan(String(args['dateString'])));
+            body.push(chalk.dim(t('tool.label.date')) + chalk.cyan(String(args['dateString'])));
         }
         if (args?.['isAllDay']) {
-            body.push(chalk.dim('时间: ') + chalk.hex('#FFAB00')('全天'));
+            body.push(chalk.dim(t('tool.label.time')) + chalk.hex('#FFAB00')(t('common.allDay')));
         } else if (args?.['startTime'] && args?.['endTime']) {
-            body.push(chalk.dim('时间: ') + chalk.cyan(`${args['startTime']} — ${args['endTime']}`));
+            body.push(chalk.dim(t('tool.label.time')) + chalk.cyan(`${args['startTime']} — ${args['endTime']}`));
         }
         if (args?.['location']) {
-            body.push(chalk.dim('地点: ') + chalk.hex('#4A90D9')(String(args['location'])));
+            body.push(chalk.dim(t('tool.label.location')) + chalk.hex('#4A90D9')(String(args['location'])));
         }
 
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
-                body.push(chalk.dim('  ✓ 日程已添加，ID: ') + chalk.green(String(result.uid)));
+                body.push(chalk.dim('  ' + t('tool.add.successWithId')) + chalk.green(String(result.uid)));
             } catch {
-                body.push(chalk.dim('  ✓ 日程已添加'));
+                body.push(chalk.dim('  ' + t('tool.add.success')));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -253,7 +256,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
 
         return new Card({
             icon: '📝',
-            title: '添加日程',
+            title: t('tool.add.title'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -320,18 +323,18 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
         const body: string[] = [];
 
         if (uid) {
-            body.push(chalk.dim('ID: ') + chalk.cyan(truncText(String(uid), width - 12)));
+            body.push(chalk.dim(t('tool.label.id')) + chalk.cyan(truncText(String(uid), width - 12)));
         }
 
         if (toolcall.status === 'success') {
-            body.push(chalk.dim('  ✓ 日程已删除'));
+            body.push(chalk.dim('  ' + t('tool.delete.success')));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
         return new Card({
             icon: '🗑',
-            title: '删除日程',
+            title: t('tool.delete.title'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -373,7 +376,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const item = JSON.parse(toolcall.result);
-                return renderCalendarItemCard(item, '已修改日程', toolcall.status);
+                return renderCalendarItemCard(item, t('tool.edit.done'), toolcall.status);
             } catch {
                 /* fall through */
             }
@@ -395,7 +398,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
                     location: args['location'] || '',
                     isAllDay: !!args['isAllDay']
                 };
-                return renderCalendarItemCard(pseudo, '正在修改日程…', toolcall.status);
+                return renderCalendarItemCard(pseudo, t('tool.edit.running'), toolcall.status);
             }
         }
         return undefined;
@@ -406,29 +409,29 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
         const body: string[] = [];
 
         if (args?.['itemId']) {
-            body.push(chalk.dim('ID: ') + chalk.cyan(truncText(String(args['itemId']), width - 12)));
+            body.push(chalk.dim(t('tool.label.id')) + chalk.cyan(truncText(String(args['itemId']), width - 12)));
         }
         if (args?.['subject']) {
-            body.push(chalk.dim('标题: ') + chalk.white(truncText(String(args['subject']), width - 16)));
+            body.push(chalk.dim(t('tool.label.subject')) + chalk.white(truncText(String(args['subject']), width - 16)));
         }
         if (args?.['dateString']) {
-            body.push(chalk.dim('日期: ') + chalk.cyan(String(args['dateString'])));
+            body.push(chalk.dim(t('tool.label.date')) + chalk.cyan(String(args['dateString'])));
         }
         if (args?.['isAllDay']) {
-            body.push(chalk.dim('时间: ') + chalk.hex('#FFAB00')('全天'));
+            body.push(chalk.dim(t('tool.label.time')) + chalk.hex('#FFAB00')(t('common.allDay')));
         } else if (args?.['startTime'] && args?.['endTime']) {
-            body.push(chalk.dim('时间: ') + chalk.cyan(`${args['startTime']} — ${args['endTime']}`));
+            body.push(chalk.dim(t('tool.label.time')) + chalk.cyan(`${args['startTime']} — ${args['endTime']}`));
         }
         if (args?.['location']) {
-            body.push(chalk.dim('地点: ') + chalk.hex('#4A90D9')(String(args['location'])));
+            body.push(chalk.dim(t('tool.label.location')) + chalk.hex('#4A90D9')(String(args['location'])));
         }
 
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const result = JSON.parse(toolcall.result);
-                body.push(chalk.dim('  ✓ 日程已修改，ID: ') + chalk.green(String(result.uid)));
+                body.push(chalk.dim('  ' + t('tool.edit.successWithId')) + chalk.green(String(result.uid)));
             } catch {
-                body.push(chalk.dim('  ✓ 日程已修改'));
+                body.push(chalk.dim('  ' + t('tool.edit.success')));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -436,7 +439,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
 
         return new Card({
             icon: '✏️',
-            title: '修改日程',
+            title: t('tool.edit.title'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);

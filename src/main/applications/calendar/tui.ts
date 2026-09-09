@@ -24,6 +24,8 @@ import { HorizontalLayout } from '../../tui/components/layout';
 import { defaultSelectListTheme } from '../../tui/theme';
 import type { OpenDeskTUI } from '../../tui/entry';
 import { ApplicationRegistry } from '../../applications/registry';
+import { t } from './locale/index.js';
+import { getLocale } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 
@@ -80,31 +82,38 @@ function sanitizeLine(line: string): string {
     return line.replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\r]/g, '').replace(/\t/g, '   ');
 }
 
-const WEEKDAY_NAMES = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 const WEEKDAY_SHORT_EN = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+function weekdayName(date: Date): string {
+    return t(`date.weekday.${date.getDay()}`);
+}
 
 function formatTime(ts: number): string {
     const d = new Date(ts);
-    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDateFull(date: Date): string {
-    return (
-        date.toLocaleDateString('zh-CN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        }) +
-        ' ' +
-        WEEKDAY_NAMES[date.getDay()]
-    );
+    return t('date.format.fullWithWeekday', {
+        date: t('date.format.full', {
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            monthName: t(`date.month.${date.getMonth() + 1}`)
+        }),
+        weekday: weekdayName(date)
+    });
 }
 
 function formatDateShort(date: Date): string {
-    const m = date.getMonth() + 1;
-    const d = date.getDate();
-    const wd = WEEKDAY_NAMES[date.getDay()];
-    return `${m}月${d}日 ${wd}`;
+    return t('date.format.monthDayWithWeekday', {
+        monthDay: t('date.format.monthDay', {
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            monthName: t(`date.month.${date.getMonth() + 1}`)
+        }),
+        weekday: weekdayName(date)
+    });
 }
 
 function toDateString(date: Date): string {
@@ -137,7 +146,7 @@ export class CalendarOverlay implements Component {
     private events: CalendarItem[] = [];
     private nextDayEvents: CalendarItem[] = [];
     private selectedEvent?: CalendarItem;
-    private loadingText = '正在加载日历...';
+    private loadingText = t('tui.loading');
     private errorText?: string;
 
     private eventList?: SelectList;
@@ -238,7 +247,7 @@ export class CalendarOverlay implements Component {
 
     private async loadEvents() {
         this.state = 'loading';
-        this.loadingText = '正在加载日程...';
+        this.loadingText = t('tui.loading');
         this.errorText = undefined;
         this.openDeskTUI.tui.requestRender();
 
@@ -265,7 +274,9 @@ export class CalendarOverlay implements Component {
             this.buildCalendarView();
         } catch (err: any) {
             logger.error(`加载日程失败: ${err}`);
-            this.errorText = `加载失败: ${err?.message || '未知错误'}`;
+            this.errorText = t('tui.error.loadFailed', {
+                message: err?.message || t('tui.error.unknown')
+            });
             this.events = [];
             this.nextDayEvents = [];
             this.buildCalendarView();
@@ -320,7 +331,7 @@ export class CalendarOverlay implements Component {
         }));
 
         if (items.length === 0) {
-            items.push({ value: '__empty__', label: CC.dim('  暂无日程') });
+            items.push({ value: '__empty__', label: CC.dim(`  ${t('tui.empty')}`) });
         }
 
         this.eventList = new SelectList(items, visibleCount, calendarSelectListTheme);
@@ -343,11 +354,15 @@ export class CalendarOverlay implements Component {
     }
 
     private formatEventItem(event: CalendarItem): string {
-        const timeStr = event.isAllDay ? CC.amber('全天  ') : CC.dim(formatTime(event.startTime).padEnd(6));
+        const timeStr = event.isAllDay
+            ? CC.amber(`${t('common.allDay')}  `)
+            : CC.dim(formatTime(event.startTime).padEnd(6));
 
         const cancelledTag = event.isCancelled ? CC.red('✕ ') : '';
 
-        const subject = event.isCancelled ? CC.dim(event.subject || '(无标题)') : CC.text(event.subject || '(无标题)');
+        const subject = event.isCancelled
+            ? CC.dim(event.subject || t('common.noTitle'))
+            : CC.text(event.subject || t('common.noTitle'));
 
         const location = event.location ? CC.ghost(' · ' + event.location) : '';
 
@@ -443,7 +458,7 @@ class CalendarHeaderBar implements Component {
     invalidate() {}
     render(width: number): string[] {
         const logo = CC.cyanBold('◈');
-        const title = CC.cyanBold(' CALENDAR');
+        const title = CC.cyanBold(` ${t('app.name').toUpperCase()}`);
         const dateInfo = CC.muted(formatDateFull(this.currentDate));
 
         const leftPart = `  ${logo}${title}`;
@@ -491,21 +506,6 @@ class MultiMonthPanel implements Component {
 }
 
 class MiniMonth implements Component {
-    private static MONTH_NAMES = [
-        '1月',
-        '2月',
-        '3月',
-        '4月',
-        '5月',
-        '6月',
-        '7月',
-        '8月',
-        '9月',
-        '10月',
-        '11月',
-        '12月'
-    ];
-
     constructor(
         private year: number,
         private month: number,
@@ -518,7 +518,7 @@ class MiniMonth implements Component {
         const cellW = Math.min(4, Math.max(3, Math.floor((width - 2) / 7)));
         const indent = '  ';
 
-        const titleText = `${MiniMonth.MONTH_NAMES[this.month]} ${this.year}`;
+        const titleText = `${t(`date.month.${this.month + 1}`)} ${this.year}`;
         const titleLine = indent + CC.bright(titleText);
 
         const weekdayLine =
@@ -608,9 +608,12 @@ class EventsPanel implements Component {
         const today = new Date();
 
         const isToday = isSameDay(this.selectedDate, today);
-        const dayLabel = isToday ? '今天' : formatDateShort(this.selectedDate);
+        const dayLabel = isToday ? t('tui.today') : formatDateShort(this.selectedDate);
         const eventCount = this.events.length;
-        const countInfo = eventCount > 0 ? CC.muted(` · ${eventCount}项日程`) : CC.dim(' · 无日程');
+        const countInfo =
+            eventCount > 0
+                ? CC.muted(` ${t('tui.eventCount', { count: eventCount })}`)
+                : CC.dim(` ${t('tui.noEvents')}`);
 
         lines.push(CC.section(`  ${dayLabel}`) + countInfo);
         lines.push(CC.ghost('  ' + '─'.repeat(Math.max(1, width - 4))));
@@ -627,21 +630,22 @@ class EventsPanel implements Component {
 
         const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
         const isTomorrow = isSameDay(this.nextDay, tomorrow);
-        const nextLabel = isTomorrow ? '明天' : formatDateShort(this.nextDay);
+        const nextLabel = isTomorrow ? t('tui.tomorrow') : formatDateShort(this.nextDay);
         const nextCount = this.nextDayEvents.length;
-        const nextCountInfo = nextCount > 0 ? CC.muted(` · ${nextCount}项日程`) : CC.dim(' · 无日程');
+        const nextCountInfo =
+            nextCount > 0 ? CC.muted(` ${t('tui.eventCount', { count: nextCount })}`) : CC.dim(` ${t('tui.noEvents')}`);
 
         lines.push(CC.section(`  ${nextLabel}`) + nextCountInfo);
         lines.push(CC.ghost('  ' + '─'.repeat(Math.max(1, width - 4))));
 
         if (this.nextDayEvents.length === 0) {
-            lines.push(CC.dim('  暂无日程'));
+            lines.push(CC.dim(`  ${t('tui.empty')}`));
         } else {
             for (const event of this.nextDayEvents.slice(0, 6)) {
                 lines.push(this.fmtEvent(event, width));
             }
             if (this.nextDayEvents.length > 6) {
-                lines.push(CC.dim(`  +${this.nextDayEvents.length - 6} 更多`));
+                lines.push(CC.dim(`  ${t('tui.more', { count: this.nextDayEvents.length - 6 })}`));
             }
         }
 
@@ -649,10 +653,14 @@ class EventsPanel implements Component {
     }
 
     private fmtEvent(event: CalendarItem, width: number): string {
-        const timeStr = event.isAllDay ? CC.amber('全天  ') : CC.dim(formatTime(event.startTime).padEnd(6));
+        const timeStr = event.isAllDay
+            ? CC.amber(`${t('common.allDay')}  `)
+            : CC.dim(formatTime(event.startTime).padEnd(6));
 
         const cancelledTag = event.isCancelled ? CC.red('✕ ') : '';
-        const subject = event.isCancelled ? CC.dim(event.subject || '(无标题)') : CC.text(event.subject || '(无标题)');
+        const subject = event.isCancelled
+            ? CC.dim(event.subject || t('common.noTitle'))
+            : CC.text(event.subject || t('common.noTitle'));
 
         return truncateToWidth(`  ${timeStr} ${cancelledTag}${subject}`, width, '…');
     }
@@ -688,13 +696,13 @@ class CalendarFooter implements Component {
     invalidate() {}
     render(width: number): string[] {
         const hints = [
-            CC.cyan('h/l') + CC.dim(' 切日'),
-            CC.cyan('j/k') + CC.dim(' 切周'),
-            CC.cyan('[]') + CC.dim(' 切月'),
-            CC.cyan('t') + CC.dim(' 今天'),
-            CC.cyan('↑↓') + CC.dim(' 选择'),
-            CC.cyan('⏎') + CC.dim(' 详情'),
-            CC.cyan('ESC') + CC.dim(' 关闭')
+            CC.cyan('h/l') + CC.dim(` ${t('tui.footer.switchDay')}`),
+            CC.cyan('j/k') + CC.dim(` ${t('tui.footer.switchWeek')}`),
+            CC.cyan('[]') + CC.dim(` ${t('tui.footer.switchMonth')}`),
+            CC.cyan('t') + CC.dim(` ${t('tui.footer.today')}`),
+            CC.cyan('↑↓') + CC.dim(` ${t('tui.footer.select')}`),
+            CC.cyan('⏎') + CC.dim(` ${t('tui.footer.detail')}`),
+            CC.cyan('ESC') + CC.dim(` ${t('tui.footer.close')}`)
         ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
@@ -713,8 +721,8 @@ class EventDetailView implements Component {
         const e = this.event;
 
         const logo = CC.cyanBold('◈');
-        const title = CC.cyanBold(' 日程详情');
-        const hint = CC.dim('ESC 返回');
+        const title = CC.cyanBold(` ${t('tui.detail.title')}`);
+        const hint = CC.dim(t('tui.detail.escBack'));
         const leftPart = `  ${logo}${title}`;
         const leftVis = visibleWidth(leftPart);
         const rightVis = visibleWidth(hint);
@@ -731,36 +739,38 @@ class EventDetailView implements Component {
         lines.push(CC.ghost('─'.repeat(width)));
         lines.push('');
 
-        const cancelTag = e.isCancelled ? CC.red(' [已取消]') : '';
-        lines.push(truncateToWidth(`  ${CC.bright(e.subject || '(无标题)')}${cancelTag}`, width, '…'));
+        const cancelTag = e.isCancelled ? CC.red(` [${t('tui.detail.cancelled')}]`) : '';
+        lines.push(truncateToWidth(`  ${CC.bright(e.subject || t('common.noTitle'))}${cancelTag}`, width, '…'));
         lines.push('');
 
         const metaLine = (label: string, value: string) =>
             truncateToWidth(`  ${CC.dim(label + '  ')}${value}`, width, '…');
 
         if (e.isAllDay) {
-            lines.push(metaLine('时  间', CC.amber('全天')));
+            lines.push(metaLine(t('tui.detail.time'), CC.amber(t('common.allDay'))));
         } else {
-            lines.push(metaLine('时  间', CC.text(`${formatTime(e.startTime)} — ${formatTime(e.endTime)}`)));
+            lines.push(
+                metaLine(t('tui.detail.time'), CC.text(`${formatTime(e.startTime)} — ${formatTime(e.endTime)}`))
+            );
         }
 
         const startDate = new Date(e.startTime);
-        lines.push(metaLine('日  期', CC.text(formatDateFull(startDate))));
+        lines.push(metaLine(t('tui.detail.date'), CC.text(formatDateFull(startDate))));
 
         if (!e.isAllDay) {
             const durationMin = Math.round((e.endTime - e.startTime) / 60000);
             const hours = Math.floor(durationMin / 60);
             const mins = durationMin % 60;
             let durationStr = '';
-            if (hours > 0) durationStr += `${hours}小时`;
-            if (mins > 0) durationStr += `${mins}分钟`;
+            if (hours > 0) durationStr += t('duration.hours', { hours });
+            if (mins > 0) durationStr += t('duration.minutes', { minutes: mins });
             if (durationStr) {
-                lines.push(metaLine('时  长', CC.dim(durationStr)));
+                lines.push(metaLine(t('tui.detail.duration'), CC.dim(durationStr)));
             }
         }
 
         if (e.location) {
-            lines.push(metaLine('地  点', CC.accent(e.location)));
+            lines.push(metaLine(t('tui.detail.location'), CC.accent(e.location)));
         }
 
         lines.push('');
@@ -770,7 +780,7 @@ class EventDetailView implements Component {
             lines.push('');
         }
 
-        const footerHints = [CC.cyan('q/ESC') + CC.dim(' 返回')];
+        const footerHints = [CC.cyan('q/ESC') + CC.dim(` ${t('tui.detail.back')}`)];
         lines.push(truncateToWidth('  ' + footerHints.join('   '), width, '…'));
 
         return lines;
