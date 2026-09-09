@@ -11,6 +11,9 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
+import { updateStreamingText } from '../utils/streaming-text.js';
+import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
+import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -315,6 +318,13 @@ class TaskView extends HTMLElement {
         this._contextSizeModel = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
         this._messageContainerCache = new Map();
+        this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
+            if (this._shouldSuppressIncrementalRender()) return;
+            const historyContainer = this.getHistoryContainer();
+            if (!historyContainer) return;
+            this._renderAssistantProgress(progress, historyContainer);
+            this.tryScrollToEnd();
+        });
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
@@ -419,6 +429,8 @@ class TaskView extends HTMLElement {
     /** @type {number} 最近一次用户主动滚动输入的时间戳，用于区分缩放等引起的被动 scroll。 */
     _lastUserScrollTs = 0;
 
+    _lastUserScrollDirection = 0;
+
     /** @type {((e: KeyboardEvent) => void) | null} document 级键盘滚动意图监听，组件销毁时移除。 */
     _historyScrollKeydownHandler = null;
 
@@ -436,8 +448,9 @@ class TaskView extends HTMLElement {
     }
 
     /** 记录一次用户主动滚动输入（滚轮/触摸/滚动键），缩放等被动滚动不应调用。 */
-    _markUserScrollIntent() {
+    _markUserScrollIntent(direction = 0) {
         this._lastUserScrollTs = Date.now();
+        this._lastUserScrollDirection = direction;
     }
 
     /** 判断最近是否刚发生过用户主动滚动，避免把缩放引起的被动 scroll 当作手动离开底部。 */
@@ -1577,6 +1590,9 @@ class TaskView extends HTMLElement {
             TaskView.scheduleReasoningPreviewUpdate(last_part_element, progress.last_part.rendered || '');
         } else if (progress.last_part.type === 'tool_call') {
             TaskView.morphDomChildren(last_part_element, progress.last_part.rendered || '');
+        } else if (progress.last_part.type === 'text') {
+            message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
+            updateStreamingText(last_part_element, progress.last_part.rendered || '');
         } else {
             last_part_element.innerHTML = progress.last_part.rendered || '';
         }
@@ -1886,6 +1902,7 @@ class TaskView extends HTMLElement {
     };
 
     async reload() {
+        this._assistantProgressBuffer.clear();
         this._reloading = true;
         const version = ++this._reloadVersion;
         let shouldAutoSendQueuedMessage = false;
@@ -2433,6 +2450,7 @@ class TaskView extends HTMLElement {
      * 结束分支被 _handleTaskStatusUpdate 短路跳过、活跃 reasoning 块永不 finalize。
      */
     _cleanupStreamingState(timestamp = Date.now()) {
+        this._assistantProgressBuffer.flush();
         const historyContainer = this.getHistoryContainer();
         if (!historyContainer) return;
         // 完成所有活跃 reasoning 块的计时（清除每秒计时器、定格耗时）
@@ -4444,6 +4462,7 @@ class TaskView extends HTMLElement {
                     // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                     // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
                     if (this._shouldSuppressIncrementalRender()) {
+                        this._assistantProgressBuffer.clear();
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
                             this._handleGoalEvalProgress(progress, { renderToConversation: false });
@@ -4451,6 +4470,8 @@ class TaskView extends HTMLElement {
                         return;
                     }
 
+                    // Control/replacement events must observe all preceding text.
+                    if (progress.type !== 'assistant') this._assistantProgressBuffer.flush();
                     const history_container = this.getHistoryContainer();
 
                     if (progress.type === 'user_replace') {
@@ -4491,7 +4512,7 @@ class TaskView extends HTMLElement {
                     } else if (progress.type === 'goal_eval') {
                         this._handleGoalEvalProgress(progress);
                     } else {
-                        this._renderAssistantProgress(progress, history_container);
+                        this._assistantProgressBuffer.push(progress);
                         // 有 assistant token 输出 → 移除过渡中的 goal supplement 卡片
                         this.resolvePendingGoalSupplements();
                         // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
@@ -4553,6 +4574,7 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._assistantProgressBuffer.clear();
         this._connectionEpoch += 1;
         this._reloadVersion += 1;
         this._reloading = false;
@@ -4954,6 +4976,8 @@ class TaskView extends HTMLElement {
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             // 使用更宽松的阈值避免因内容增长导致的误 detach
             if (distanceToBottom < 80) {
+                // A small upward gesture must not immediately reattach at the bottom.
+                if (this._lastUserScrollDirection < 0 && this._hasRecentUserScrollIntent()) return;
                 if (!this.auto_scrolling_to_bottom) {
                     this.setAutoScrollingToBottom(true);
                 }
@@ -4975,14 +4999,14 @@ class TaskView extends HTMLElement {
                 // 忽略浏览器缩放/捏合手势（Ctrl/⌘ + 滚轮、触控板捏合），
                 // 缩放不应改变“锁定底部自动更新”的状态
                 if (e.ctrlKey || e.metaKey) return;
+                if (e.deltaY !== 0 && nestedScrollerConsumesWheel(chatHistory, e)) return;
                 if (e.deltaY !== 0) {
-                    this._markUserScrollIntent();
+                    this._markUserScrollIntent(Math.sign(e.deltaY));
                 }
                 // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
                 if (e.deltaY < 0) {
-                    const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
-                    const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
-                    if (distanceToBottom >= 80 && this.auto_scrolling_to_bottom) {
+                    // Unlock before native scrolling; a queued render must not win the race.
+                    if (chatHistory.scrollTop > 0 && this.auto_scrolling_to_bottom) {
                         this.setAutoScrollingToBottom(false);
                     }
                 } else if (e.deltaY > 0) {

@@ -150,11 +150,18 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         container.dispatchEvent(new window.Event('scroll'));
     }
 
-    function dispatchWheel(container: HTMLElement, deltaY: number, ctrlKey = false, metaKey = false) {
-        const event = new window.Event('wheel');
+    function dispatchWheel(
+        container: HTMLElement,
+        deltaY: number,
+        ctrlKey = false,
+        metaKey = false,
+        composedPath?: EventTarget[]
+    ) {
+        const event = new window.Event('wheel', { bubbles: true });
         Object.defineProperty(event, 'deltaY', { value: deltaY });
         Object.defineProperty(event, 'ctrlKey', { value: ctrlKey });
         Object.defineProperty(event, 'metaKey', { value: metaKey });
+        if (composedPath) Object.defineProperty(event, 'composedPath', { value: () => composedPath });
         container.dispatchEvent(event);
     }
 
@@ -232,6 +239,95 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
         dispatchWheel(history, -100);
 
         expect(taskView.auto_scrolling_to_bottom).toBe(false);
+    });
+
+    test('向上滚轮在底部立即解锁，阻止待执行的自动滚动抢回位置', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        taskView.setAutoScrollingToBottom(true);
+        setScrollMetrics(history, 2500, 3000, 500);
+        taskView._programmaticScrolling = true;
+        dispatchWheel(history, -20);
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
+
+        taskView._programmaticScrolling = false;
+        setScrollMetrics(history, 2480, 3000, 500);
+        dispatchScroll(history);
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
+        setScrollMetrics(history, 2480, 3100, 500);
+        taskView.tryScrollToEnd();
+        expect(history.scrollTop).toBe(2480);
+
+        setScrollMetrics(history, 2590, 3100, 500);
+        dispatchWheel(history, 20);
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+    });
+
+    test('内层终端可以消费向上滚轮时不解除外层自动跟随', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        setScrollMetrics(history, 2500, 3000, 500);
+        const terminal = document.createElement('div');
+        terminal.style.overflowY = 'auto';
+        history.appendChild(terminal);
+        setScrollMetrics(terminal as any, 200, 1000, 200);
+        const original = window.getComputedStyle;
+        window.getComputedStyle = ((el: HTMLElement) => el.style) as any;
+        try {
+            dispatchWheel(terminal, -100);
+            expect(taskView.auto_scrolling_to_bottom).toBe(true);
+            setScrollMetrics(terminal as any, 0, 1000, 200);
+            terminal.style.overscrollBehaviorY = 'contain';
+            dispatchWheel(terminal, -100);
+            expect(taskView.auto_scrolling_to_bottom).toBe(true);
+            terminal.style.overscrollBehaviorY = 'auto';
+            dispatchWheel(terminal, -100);
+            expect(taskView.auto_scrolling_to_bottom).toBe(false);
+        } finally {
+            window.getComputedStyle = original;
+        }
+    });
+
+    test.each([
+        { scrollTop: 200, deltaY: -100, overscroll: 'auto', before: true, after: true },
+        { scrollTop: 0, deltaY: -100, overscroll: 'auto', before: true, after: false },
+        { scrollTop: 0, deltaY: -100, overscroll: 'contain', before: true, after: true },
+        { scrollTop: 400, deltaY: 100, overscroll: 'auto', before: false, after: false },
+        { scrollTop: 800, deltaY: 100, overscroll: 'auto', before: false, after: true },
+        { scrollTop: 800, deltaY: 100, overscroll: 'none', before: false, after: false }
+    ])('Shadow DOM 预览按真实滚动路径决定跟随状态：%j', (scenario) => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        setScrollMetrics(history, 2500, 3000, 500);
+        taskView.setAutoScrollingToBottom(scenario.before);
+        const host = document.createElement('div');
+        history.appendChild(host);
+        const shadow = host.attachShadow({ mode: 'open' });
+        const scroller = document.createElement('div');
+        scroller.style.overflowY = 'auto';
+        scroller.style.overscrollBehaviorY = scenario.overscroll;
+        shadow.appendChild(scroller);
+        const content = document.createElement('span');
+        scroller.appendChild(content);
+        setScrollMetrics(scroller as any, scenario.scrollTop, 1000, 200);
+        const original = window.getComputedStyle;
+        window.getComputedStyle = ((el: HTMLElement) => el.style) as any;
+        try {
+            // linkedom 不模拟 Shadow DOM 的事件重定向；显式提供浏览器的 target/path 组合。
+            dispatchWheel(host, scenario.deltaY, false, false, [content, scroller, shadow, host, history]);
+            expect(taskView.auto_scrolling_to_bottom).toBe(scenario.after);
+        } finally {
+            window.getComputedStyle = original;
+            taskView.disconnectedCallback();
+        }
+    });
+
+    test('无可滚动历史时向上滚轮不解除底部锁定', () => {
+        const taskView = createTaskView();
+        const history = getHistory(taskView);
+        setScrollMetrics(history, 0, 500, 500);
+        dispatchWheel(history, -20);
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
     });
 
     test('用户主动滚动意图后 scroll 离开底部时正常解除锁定', () => {
