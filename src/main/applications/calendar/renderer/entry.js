@@ -14,6 +14,7 @@
  * ═══════════════════════════════════════════════════ */
 
 import { createTranslatorForCalendar } from '../locale/renderer.js';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
 
 const EVENT_TYPES = [
     { id: 'meeting', icon: 'fa-users', color: '#34C759', bg: '#ECFDF5' },
@@ -1004,6 +1005,8 @@ class CalendarEntryWidget extends HTMLElement {
     constructor() {
         super();
         this._t = createTranslatorForCalendar();
+        this._locale = undefined;
+        this._settingUnsubscribe = null;
         this.currentDate = new Date();
         this.viewMode = 'month';
         this.selectedEvent = null;
@@ -1012,13 +1015,16 @@ class CalendarEntryWidget extends HTMLElement {
     }
 
     async connectedCallback() {
+        let setting;
         try {
-            this._t = createTranslatorForCalendar(await window.settingAPI?.loadSettingObject?.());
+            setting = await window.settingAPI?.loadSettingObject?.();
         } catch {
-            this._t = createTranslatorForCalendar();
+            setting = undefined;
         }
+        this._applyLocaleSetting(setting);
         // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素启动定时器和渲染
         if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this._injectStyles();
         this._initDrag();
         this._render();
@@ -1029,7 +1035,25 @@ class CalendarEntryWidget extends HTMLElement {
 
     disconnectedCallback() {
         if (this._nowTimer) clearInterval(this._nowTimer);
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         this._dragCleanup();
+    }
+
+    _applyLocaleSetting(setting) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForCalendar(setting);
+    }
+
+    /* 语言设置变化时重建翻译器并刷新整个界面（打开中的弹窗为用户输入态，不重建） */
+    _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            this._applyLocaleSetting(setting);
+            this._refreshAll();
+        });
     }
 
     _injectStyles() {
