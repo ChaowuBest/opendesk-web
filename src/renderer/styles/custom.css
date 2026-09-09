@@ -1082,8 +1082,20 @@ pre.terminal-tool-output {
     gap: 4px;
     flex: 1;
     min-width: 0;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     flex-wrap: nowrap;
+    scrollbar-width: thin;
+}
+.agent-input-toolbar-left::-webkit-scrollbar {
+    height: 1px;
+}
+.agent-input-toolbar-left::-webkit-scrollbar-track {
+    background: transparent;
+}
+.agent-input-toolbar-left::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
 }
 .agent-input-toolbar-right {
     display: flex;

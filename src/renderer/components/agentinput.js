@@ -798,9 +798,10 @@ class AgentInput extends HTMLElement {
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
         this.speechSession = null;
-        if (this._toolbarResizeObserver) {
-            this._toolbarResizeObserver.disconnect();
-            this._toolbarResizeObserver = null;
+        const toolbar = this.querySelector('.agent-input-toolbar-left');
+        if (toolbar && this._toolbarWheelHandler) {
+            toolbar.removeEventListener('wheel', this._toolbarWheelHandler);
+            this._toolbarWheelHandler = null;
         }
         if (this._inputHeightResizeObserver) {
             this._inputHeightResizeObserver.disconnect();
@@ -1516,62 +1517,23 @@ class AgentInput extends HTMLElement {
     }
 
     /**
-     * 监听工具栏容器宽度变化，从右向左隐藏优先级低的工具项。
-     * priority 数值越大越先隐藏。
+     * 工具栏宽度不足时不再隐藏按钮，而是允许左侧区域横向滚动，
+     * 并支持鼠标滚轮纵向滚动转换为横向滚动。
      */
     _initToolbarOverflow() {
-        if (this._toolbarResizeObserver) {
-            this._toolbarResizeObserver.disconnect();
-        }
-
         const toolbar = this.querySelector('.agent-input-toolbar-left');
         if (!toolbar) return;
 
-        const items = Array.from(toolbar.querySelectorAll('.agent-input-toolbar-item'));
-        if (items.length === 0) return;
-
-        // 按 priority 降序排列（高优先级数值 = 最先隐藏）
-        const sortedByHidePriority = [...items].sort(
-            (a, b) => parseInt(b.dataset.toolbarPriority || '0', 10) - parseInt(a.dataset.toolbarPriority || '0', 10)
-        );
-
-        const rightButtons = this.querySelector('.agent-input-toolbar-right');
-        const rightWidth = rightButtons ? rightButtons.offsetWidth : 120;
-
-        const recalc = () => {
-            const containerEl = toolbar.closest('.agent-input-toolbar');
-            if (!containerEl) return;
-            const availableWidth = containerEl.clientWidth - rightWidth - 24;
-
-            // 先全部显示以测量真实宽度
-            for (const item of items) {
-                item.style.display = '';
-            }
-
-            let totalWidth = 0;
-            for (const item of items) {
-                totalWidth += item.offsetWidth + 6;
-            }
-
-            if (totalWidth <= availableWidth) return;
-
-            // 从高 priority 开始隐藏
-            for (const item of sortedByHidePriority) {
-                if (totalWidth <= availableWidth) break;
-                totalWidth -= item.offsetWidth + 6;
-                item.style.display = 'none';
+        // 鼠标滚轮（纵向）在溢出时转换为横向滚动，触控板水平手势由浏览器原生支持
+        const onWheel = (event) => {
+            if (toolbar.scrollWidth <= toolbar.clientWidth + 1) return;
+            if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                toolbar.scrollLeft += event.deltaY;
+                event.preventDefault();
             }
         };
-
-        recalc();
-
-        this._toolbarResizeObserver = new ResizeObserver(() => {
-            requestAnimationFrame(recalc);
-        });
-        const containerEl = toolbar.closest('.agent-input-toolbar');
-        if (containerEl) {
-            this._toolbarResizeObserver.observe(containerEl);
-        }
+        toolbar.addEventListener('wheel', onWheel, { passive: false });
+        this._toolbarWheelHandler = onWheel;
     }
 
     /**
