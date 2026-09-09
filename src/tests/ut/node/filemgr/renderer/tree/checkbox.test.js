@@ -43,7 +43,7 @@ test('path helpers handle ancestors, relative paths, defaults, user patterns, su
         true
     );
     assert.equal(hasUserExcludesInSubtree(entry('/proj', [...defaults(), 'docs/**']), '/proj', '/proj/src'), false);
-    assert.equal(getHomeRoot('/Users/stella/Projects/FillipDesk'), '/Users/stella');
+    assert.equal(getHomeRoot('/Users/stella/Projects/OpenDesk'), '/Users/stella');
     assert.equal(getParentPath('/Users/stella'), '/Users');
     assert.equal(getParentPath('/Users'), '/');
     assert.equal(getParentPath('/'), '/');

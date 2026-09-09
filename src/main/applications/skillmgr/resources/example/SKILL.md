@@ -6,7 +6,7 @@ metadata:
     version: '1.0.0'
     author: OpenDesk
 # OpenDesk 扩展：配置后主进程会执行并返回结果；不配置则仅返回下方正文供模型参考
-fillipdesk:
+opendesk:
     handler:
         type: module
         path: handler.js
@@ -31,7 +31,7 @@ fillipdesk:
 - **description** 描述能力与适用场景
 - 正文为 Markdown，可写使用说明与步骤
 
-配置 `fillipdesk.handler` 后，主进程对话会调用对应脚本/模块并返回执行结果；未配置时仅将本正文提供给模型作为参考。
+配置 `opendesk.handler` 后，主进程对话会调用对应脚本/模块并返回执行结果；未配置时仅将本正文提供给模型作为参考。
 
 ## 使用示例
 
