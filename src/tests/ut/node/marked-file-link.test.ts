@@ -11,7 +11,7 @@ import {
     parseFileReference,
     parseLineAnchor,
     renderFilePillFromText
-} from '../../../main/aikernel/marked-file-link.js';
+} from '../../../main/utils/marked-file-link.js';
 import { marked as messagesMarked } from '../../../main/aikernel/messages.js';
 
 test('resolveFilePath: returns absolute path when file exists (absolute input)', () => {
@@ -799,6 +799,50 @@ test('markdown link: ellipsis href renders as normal link, not pill', () => {
         setRenderWorkspace(null);
         fs.rmSync(tmp, { recursive: true, force: true });
     }
+});
+
+// ── POSIX-style drive-root paths (/C:/...) ───────────────────────────
+
+test('resolveFilePath: normalizes POSIX-style drive-root path (/C:/...)', () => {
+    setRenderWorkspace(null);
+    assert.equal(
+        resolveFilePath('/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py'),
+        'C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py'
+    );
+});
+
+test('resolveFilePath: normalizes lowercase drive-root path and backslash form', () => {
+    setRenderWorkspace(null);
+    assert.equal(resolveFilePath('/c:/Users/me/file.ts'), 'c:/Users/me/file.ts');
+    assert.equal(resolveFilePath('/C:\\Users\\me\\file.ts'), 'C:\\Users\\me\\file.ts');
+});
+
+test('resolveFilePath: POSIX absolute paths are not affected', () => {
+    setRenderWorkspace(null);
+    assert.equal(resolveFilePath('/home/user/file.ts'), '/home/user/file.ts');
+    // 盘符必须为单字母，多段名（如 /cc:/）不是盘符根路径
+    assert.equal(resolveFilePath('/cc:/file.ts'), '/cc:/file.ts');
+});
+
+test('markdown link: POSIX-style drive-root href with #L anchor renders normalized pill', () => {
+    const marked = setupMarked('C:/Projects/OpenDesk-ohos/ohos_hap');
+    const html = marked.parse(
+        '[build_hap.py:1938-1954](/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py#L1938-L1954)'
+    ) as string;
+    assert.ok(html.includes('od-file-pill'), 'drive-root href should render as pill');
+    assert.ok(
+        html.includes('data-open-preview="C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py"'),
+        'leading slash before the drive letter must be stripped'
+    );
+    assert.ok(html.includes('data-preview-line="1938"'));
+    assert.ok(html.includes('od-file-pill-line">:1938-1954'));
+});
+
+test('renderFilePillFromText: POSIX-style drive-root path renders normalized pill', () => {
+    setRenderWorkspace(null);
+    const html = renderFilePillFromText('/C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py');
+    assert.ok(html);
+    assert.ok(html.includes('data-open-preview="C:/Projects/OpenDesk-ohos/ohos_hap/build_hap.py"'));
 });
 
 // ── renderFilePillFromText ───────────────────────────────────────────

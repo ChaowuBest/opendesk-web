@@ -38,7 +38,7 @@ import {
     imageToDataUri,
     type RuntimeMetadata
 } from '../messages.js';
-import { setRenderWorkspace } from '../marked-file-link.js';
+import { setRenderWorkspace } from '../../utils/marked-file-link.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
