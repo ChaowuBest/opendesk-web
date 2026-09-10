@@ -290,6 +290,54 @@ interface CachedSkillInfo {
 let _cachedUserInvocableSkills: CachedSkillInfo[] = [];
 
 /**
+ * 记录「刚通过自动补全选择了技能」的一次性标记。
+ * 供 AgentInputArea.onSubmit 在 Enter 提交时判断：若刚选了技能，
+ * 则不提交消息，而是把 /skillname + 空格 留在输入框让用户继续输入。
+ */
+let _pendingSkillCompletion = false;
+/** 补全技能后的完整文本（含尾随空格）与光标行列，供 onSubmit 恢复输入框 */
+let _pendingSkillCompletionText: string | null = null;
+let _pendingSkillCompletionLine = 0;
+let _pendingSkillCompletionCol = 0;
+
+/** 读取并清除「刚选择技能」标记 */
+export function consumePendingSkillCompletion(): boolean {
+    const pending = _pendingSkillCompletion;
+    _pendingSkillCompletion = false;
+    return pending;
+}
+
+/** 清除「刚选择技能」标记（用户继续输入时调用） */
+export function clearPendingSkillCompletion(): void {
+    _pendingSkillCompletion = false;
+    _pendingSkillCompletionText = null;
+}
+
+/**
+ * 设置「刚选择技能」标记（仅供单元测试，不对外导出）。
+ * applyCompletion 在命中 [skill] 项时由 pi-tui 的 tui.select.confirm
+ * 分支调用并置位此标记，onSubmit 读取后清除。
+ * 未提供文本时（单元测试直接置位）回退为 onSubmit 收到的 text。
+ */
+export function _setPendingSkillCompletionForTest(value: boolean, text?: string, col?: number): void {
+    _pendingSkillCompletion = value;
+    if (text !== undefined) {
+        _pendingSkillCompletionText = text;
+        const lines = text.split('\n');
+        _pendingSkillCompletionLine = lines.length - 1;
+        _pendingSkillCompletionCol = col ?? lines[lines.length - 1].length;
+    }
+}
+
+/** 读取并清除待恢复的技能补全文本（内部使用） */
+function consumePendingSkillCompletionText(): { text: string; line: number; col: number } | null {
+    const result = _pendingSkillCompletionText;
+    _pendingSkillCompletionText = null;
+    if (result === null) return null;
+    return { text: result, line: _pendingSkillCompletionLine, col: _pendingSkillCompletionCol };
+}
+
+/**
  * 异步刷新 user-invocable skill 缓存
  */
 async function refreshSkillCache() {
@@ -555,8 +603,12 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
             return { lines: newLines, cursorLine, cursorCol: newCol };
         }
 
-        // 行内 /skillname 补全：替换 /prefix 为 /skillname + 空格
-        if (prefix.startsWith('/') && item.description?.startsWith('[skill]')) {
+        // 行首 /skillname 补全（由 FileAwareAutocompleteProvider 合并进结果）：
+        // 与行内 /skill 补全一样，插入 /skillname + 空格，不触发提交
+        if (item.description?.startsWith('[skill]')) {
+            // 标记「刚选择了技能」：pi-tui 在行首 / 的 Enter 补全会 fall-through 到 submit，
+            // 我们需要在 AgentInputArea.onSubmit 中拦截，避免直接开聊
+            _pendingSkillCompletion = true;
             const before = currentLine.slice(0, cursorCol);
             const after = currentLine.slice(cursorCol);
             const prefixStart = cursorCol - prefix.length;
@@ -564,6 +616,12 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
             const newLines = [...lines];
             newLines[cursorLine] = newLine;
             const newCol = prefixStart + item.value.length + 2; // +2 for "/" and space
+            // 记录补全后的完整文本与光标位置。
+            // submitValue() 会 trim 掉行尾空格，onSubmit 里直接恢复记录值，
+            // 保证补全后光标紧跟在 "/skillname " 之后，方便继续追加参数。
+            _pendingSkillCompletionText = newLines.join('\n');
+            _pendingSkillCompletionLine = cursorLine;
+            _pendingSkillCompletionCol = newCol;
             return { lines: newLines, cursorLine, cursorCol: newCol };
         }
 
@@ -708,10 +766,37 @@ export class AgentInputArea implements Component {
         this.input.onChange = (text: string) => {
             this.updateShellCommandMode(text);
             this.tryTriggerInlineSkillAutocomplete();
+            // 用户输入/编辑产生非空文本时清除「刚选择技能」标记，避免误拦截后续正常提交。
+            // 注意：submitValue() 在调用 onSubmit 前会先回调 onChange("") 清空编辑器，
+            // 此时传空串必须保留标记，供紧随其后的 onSubmit 消费（否则 Enter 选技能仍会直接开聊）。
+            if (text.trim() !== '') {
+                clearPendingSkillCompletion();
+            }
         };
 
         this.input.onSubmit = (text: string) => {
             if (text.trim() === '') return;
+            // 刚通过自动补全选择技能（/skillname + 空格）时，Enter 不应立即提交，
+            // 而是保留在输入框让用户继续追加参数（与 GUI 行为一致）。
+            if (consumePendingSkillCompletion()) {
+                // 把文本恢复进输入框（submitValue 已清空编辑器，这里重新填入）。
+                // 优先使用 applyCompletion 记录的确切文本（含尾随空格），
+                // 保证补全后光标紧跟在 "/skillname " 之后，方便继续追加参数。
+                const pending = consumePendingSkillCompletionText();
+                const restoreText = pending?.text ?? text;
+                this.input.setText(restoreText);
+                if (pending) {
+                    // pi-tui 没有公开的光标 setter；setText 默认将光标移到全文末尾。
+                    // 恢复逻辑集中在此处，并使用 setCursorCol 重置垂直移动的黏滞列状态。
+                    const editor = this.input as unknown as {
+                        state: { cursorLine: number };
+                        setCursorCol(col: number): void;
+                    };
+                    editor.state.cursorLine = pending.line;
+                    editor.setCursorCol(pending.col);
+                }
+                return;
+            }
             this.input.addToHistory(text);
             this.handleSubmit(text);
         };
@@ -755,6 +840,14 @@ export class AgentInputArea implements Component {
 
         // 检测行内 / 或 /xxx 模式（前面有空格）
         if (/\s\/[a-z0-9]?[-a-z0-9]*$/.test(textBeforeCursor)) {
+            // 若末尾 /token 已是某个技能的完整名称（刚通过补全插入），
+            // 不再重新弹出菜单，避免后续 Enter 被 select.confirm 吞掉
+            // （否则行内补全后无法像行首那样直接再回车提交）。
+            const tokenMatch = textBeforeCursor.match(/\s\/([a-z0-9][-a-z0-9]*)$/);
+            if (tokenMatch) {
+                const name = tokenMatch[1];
+                if (_cachedUserInvocableSkills.some((s) => s.name === name)) return;
+            }
             if (_cachedUserInvocableSkills.length > 0) {
                 editor.tryTriggerAutocomplete();
             }

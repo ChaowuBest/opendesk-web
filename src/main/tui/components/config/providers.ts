@@ -119,6 +119,7 @@ export class ProviderConfigPage implements Component {
     private templateList?: SelectList;
     private form?: ConfigForm;
     private editingIndex = -1;
+    private validationError?: string;
 
     constructor(tui: TUI, onClose: () => void) {
         this.tui = tui;
@@ -128,6 +129,7 @@ export class ProviderConfigPage implements Component {
 
     private showList() {
         this.state = 'list';
+        this.validationError = undefined;
         this.form?.deactivate();
         this.form = undefined;
         this.templateList = undefined;
@@ -193,6 +195,7 @@ export class ProviderConfigPage implements Component {
 
     private showEditForm(provider: ProviderData) {
         this.state = 'edit';
+        this.validationError = undefined;
         this.list = undefined;
         this.templateList = undefined;
 
@@ -247,8 +250,21 @@ export class ProviderConfigPage implements Component {
         const data = { ...(setting.getData() as any) };
         data.providers = [...(data.providers ?? [])];
 
+        const name = String(values.name ?? '').trim();
+        this.validationError = undefined;
+
+        // 检查提供方名称是否重复（新增时检查所有提供方，编辑时排除自身）
+        const duplicateIndex = data.providers.findIndex(
+            (p: ProviderData, i: number) => p.name === name && i !== this.editingIndex
+        );
+        if (duplicateIndex !== -1) {
+            this.validationError = t('config.provider.nameExists');
+            this.tui.requestRender();
+            return;
+        }
+
         const provider: ProviderData = {
-            name: values.name ?? '',
+            name,
             provider_type: values.provider_type === 'anthropic' ? 'anthropic' : 'openai',
             base_url: values.base_url ?? '',
             api_key: values.api_key ?? '',
@@ -257,7 +273,13 @@ export class ProviderConfigPage implements Component {
         };
 
         if (this.editingIndex >= 0) {
+            const oldName = data.providers[this.editingIndex]?.name;
             data.providers[this.editingIndex] = provider;
+            if (oldName && oldName !== name && Array.isArray(data.models)) {
+                data.models = data.models.map((m: { provider_name: string }) =>
+                    m.provider_name === oldName ? { ...m, provider_name: name } : m
+                );
+            }
         } else {
             data.providers.push(provider);
         }
@@ -302,6 +324,9 @@ export class ProviderConfigPage implements Component {
                 break;
 
             case 'edit':
+                if (this.validationError) {
+                    lines.push(chalk.red(`  ${this.validationError}`), '');
+                }
                 if (this.form) lines.push(...this.form.render(width));
                 break;
         }

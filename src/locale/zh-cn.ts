@@ -845,6 +845,7 @@ export const zhCn: Record<string, string> = {
     'config.provider.field.api_key': 'API 密钥',
     'config.provider.field.no_proxy': '禁用代理',
     'config.provider.field.no_ssl': '跳过SSL证书校验',
+    'config.provider.nameExists': '提供方名称已存在',
 
     // Config - Model
     'config.model.title': '模型配置',
@@ -1644,6 +1645,7 @@ export const zhCn: Record<string, string> = {
     'sp.providers.save': '保存',
     'sp.providers.addBtn': '添加',
     'sp.providers.nameRequired': '请输入提供方名称',
+    'sp.providers.nameExists': '提供方名称已存在',
     'sp.providers.delete.title': '删除提供方',
     'sp.providers.delete.confirmWithModels':
         '提供方「${name}」下有 ${count} 个关联模型，删除提供方将同时删除这些模型。',
@@ -1713,6 +1715,8 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.skill.install': '安装技能',
     'renderer.agentInput.skill.empty.search': '未找到匹配的技能',
     'renderer.agentInput.skill.empty.none': '暂无已安装的技能',
+    'renderer.agentInput.autocomplete.preview.command': '命令',
+    'renderer.agentInput.autocomplete.preview.skill': '技能',
     'renderer.agentInput.recording.hint': '正在录音，点击麦克风按钮可停止录制',
     'renderer.agentInput.recording.stopTitle': '正在录音，点击停止',
     'renderer.agentInput.recording.endTitle': '正在录音，点击结束',

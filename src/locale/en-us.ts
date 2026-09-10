@@ -865,6 +865,7 @@ export const enUs: Record<string, string> = {
     'config.provider.field.api_key': 'API Key',
     'config.provider.field.no_proxy': 'Disable Proxy',
     'config.provider.field.no_ssl': 'Skip SSL Certificate Verification',
+    'config.provider.nameExists': 'Provider name already exists',
 
     // Config - Model
     'config.model.title': 'Model Config',
@@ -1695,6 +1696,7 @@ export const enUs: Record<string, string> = {
     'sp.providers.save': 'Save',
     'sp.providers.addBtn': 'Add',
     'sp.providers.nameRequired': 'Please enter a provider name',
+    'sp.providers.nameExists': 'Provider name already exists',
     'sp.providers.delete.title': 'Delete provider',
     'sp.providers.delete.confirmWithModels':
         'Provider "${name}" has ${count} associated models. Deleting the provider will also delete these models.',
@@ -1764,6 +1766,8 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.skill.install': 'Install skill',
     'renderer.agentInput.skill.empty.search': 'No matching skills found',
     'renderer.agentInput.skill.empty.none': 'No installed skills',
+    'renderer.agentInput.autocomplete.preview.command': 'Command',
+    'renderer.agentInput.autocomplete.preview.skill': 'Skill',
     'renderer.agentInput.recording.hint': 'Recording, click the microphone to stop',
     'renderer.agentInput.recording.stopTitle': 'Recording, click to stop',
     'renderer.agentInput.recording.endTitle': 'Recording, click to finish',
