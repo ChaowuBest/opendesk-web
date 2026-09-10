@@ -43,12 +43,17 @@ class CalendarApplication extends BaseApplication {
                     const next = upcoming[0];
                     const diffMin = Math.round((next.startTime - now.getTime()) / 60000);
                     const timeStr =
-                        diffMin <= 60 ? `${diffMin}分钟后` : `${Math.floor(diffMin / 60)}h${diffMin % 60}m后`;
-                    const subject = (next.subject || '').slice(0, 16) || '(无标题)';
+                        diffMin <= 60
+                            ? t('status.inMinutes', { minutes: diffMin })
+                            : t('status.afterHoursMinutes', {
+                                  hours: Math.floor(diffMin / 60),
+                                  minutes: diffMin % 60
+                              });
+                    const subject = (next.subject || '').slice(0, 16) || t('common.noTitle');
                     const colorFn = diffMin <= 15 ? chalk.hex('#FF1744') : chalk.hex('#448AFF');
                     return `📅 ${colorFn(`${timeStr}: ${subject}`)}`;
                 }
-                return `📅 今日 ${res.data.length} 项`;
+                return `📅 ${t('status.todayCount', { count: res.data.length })}`;
             }
             return null;
         } catch {
@@ -66,7 +71,7 @@ class CalendarApplication extends BaseApplication {
                 .object({
                     outlook: z
                         .object({
-                            enabled: z.boolean().default(false).describe('是否同步Outlook日历数据')
+                            enabled: z.boolean().default(false).describe(t('config.dataSources.outlook.enabled'))
                         })
                         .optional()
                 })
@@ -78,7 +83,7 @@ class CalendarApplication extends BaseApplication {
         return [
             {
                 name: 'calendar',
-                description: '打开日历',
+                description: t('cli.command.open.description'),
                 execute: async () => {
                     try {
                         const calendarOverlay = new CalendarOverlay(tui);

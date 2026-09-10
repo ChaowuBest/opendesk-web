@@ -13,12 +13,15 @@
  *  CONSTANTS
  * ═══════════════════════════════════════════════════ */
 
+import { createTranslatorForCalendar } from '../locale/renderer.js';
+import { resolveRendererLocale } from '../../../../renderer/locale.js';
+
 const EVENT_TYPES = [
-    { id: 'meeting', label: '会议', icon: 'fa-users', color: '#34C759', bg: '#ECFDF5' },
-    { id: 'video', label: '视频通话', icon: 'fa-video', color: '#AF52DE', bg: '#F5F3FF' },
-    { id: 'deadline', label: '截止日期', icon: 'fa-flag-checkered', color: '#FF3B30', bg: '#FEF2F2' },
-    { id: 'followup', label: '跟进', icon: 'fa-phone', color: '#007AFF', bg: '#EFF6FF' },
-    { id: 'other', label: '其他', icon: 'fa-calendar', color: '#FF9500', bg: '#FFFBEB' }
+    { id: 'meeting', icon: 'fa-users', color: '#34C759', bg: '#ECFDF5' },
+    { id: 'video', icon: 'fa-video', color: '#AF52DE', bg: '#F5F3FF' },
+    { id: 'deadline', icon: 'fa-flag-checkered', color: '#FF3B30', bg: '#FEF2F2' },
+    { id: 'followup', icon: 'fa-phone', color: '#007AFF', bg: '#EFF6FF' },
+    { id: 'other', icon: 'fa-calendar', color: '#FF9500', bg: '#FFFBEB' }
 ];
 
 const EVENT_PALETTES = [
@@ -32,11 +35,7 @@ const EVENT_PALETTES = [
     { bg: '#FFFBEB', border: '#F59E0B', text: '#B45309' }
 ];
 
-const MONTH_NAMES_SHORT = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 const HOUR_HEIGHT = 60;
-const WEEK_DAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'];
-const WEEK_DAYS_FULL = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-const WEEK_HEADER_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 /* ═══════════════════════════════════════════════════
  *  CSS
@@ -959,26 +958,9 @@ function dateKey(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function fmtTime(ts) {
-    const d = new Date(ts);
-    const h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, '0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    return `${h12}:${m} ${ampm}`;
-}
-
 function fmtTime24(ts) {
     const d = new Date(ts);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function fmtDateFull(d) {
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-function fmtMonthDay(d) {
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 function getWeekStart(d) {
@@ -1022,6 +1004,9 @@ function layoutOverlapping(events) {
 class CalendarEntryWidget extends HTMLElement {
     constructor() {
         super();
+        this._t = createTranslatorForCalendar();
+        this._locale = undefined;
+        this._settingUnsubscribe = null;
         this.currentDate = new Date();
         this.viewMode = 'month';
         this.selectedEvent = null;
@@ -1029,7 +1014,17 @@ class CalendarEntryWidget extends HTMLElement {
         this._nowTimer = null;
     }
 
-    connectedCallback() {
+    async connectedCallback() {
+        let setting;
+        try {
+            setting = await window.settingAPI?.loadSettingObject?.();
+        } catch {
+            setting = undefined;
+        }
+        this._applyLocaleSetting(setting);
+        // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素启动定时器和渲染
+        if (!this.isConnected) return;
+        this._subscribeLocaleChanges();
         this._injectStyles();
         this._initDrag();
         this._render();
@@ -1040,7 +1035,25 @@ class CalendarEntryWidget extends HTMLElement {
 
     disconnectedCallback() {
         if (this._nowTimer) clearInterval(this._nowTimer);
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         this._dragCleanup();
+    }
+
+    _applyLocaleSetting(setting) {
+        this._locale = resolveRendererLocale(setting);
+        this._t = createTranslatorForCalendar(setting);
+    }
+
+    /* 语言设置变化时重建翻译器并刷新整个界面（打开中的弹窗为用户输入态，不重建） */
+    _subscribeLocaleChanges() {
+        if (this._settingUnsubscribe) return;
+        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+            if (!this.isConnected) return;
+            if (resolveRendererLocale(setting) === this._locale) return;
+            this._applyLocaleSetting(setting);
+            this._refreshAll();
+        });
     }
 
     _injectStyles() {
@@ -1167,6 +1180,32 @@ class CalendarEntryWidget extends HTMLElement {
         return this.eventsMap.get(dk) || [];
     }
 
+    fmtTime(ts) {
+        const d = new Date(ts);
+        const h = d.getHours();
+        const m = String(d.getMinutes()).padStart(2, '0');
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${h12}:${m} ${ampm}`;
+    }
+
+    fmtDateFull(d) {
+        return this._t('renderer.calendar.date.full', {
+            year: d.getFullYear(),
+            month: d.getMonth() + 1,
+            day: d.getDate(),
+            monthName: this._t(`renderer.calendar.month.${d.getMonth() + 1}`)
+        });
+    }
+
+    fmtMonthDay(d) {
+        return this._t('renderer.calendar.date.monthDay', {
+            month: d.getMonth() + 1,
+            day: d.getDate(),
+            monthName: this._t(`renderer.calendar.month.${d.getMonth() + 1}`)
+        });
+    }
+
     _findEvent(uid) {
         for (const arr of this.eventsMap.values()) {
             const found = arr.find((e) => e.uid === uid);
@@ -1186,9 +1225,9 @@ class CalendarEntryWidget extends HTMLElement {
         const sub = this.querySelector('#cal-left-date-sub');
         if (!badge || !big || !sub) return;
 
-        badge.textContent = MONTH_NAMES_SHORT[d.getMonth()];
-        big.textContent = `${fmtDateFull(d)}`;
-        sub.textContent = WEEK_DAYS_FULL[d.getDay()];
+        badge.textContent = this._t(`renderer.calendar.month.${d.getMonth() + 1}`);
+        big.textContent = `${this.fmtDateFull(d)}`;
+        sub.textContent = this._t(`renderer.calendar.weekday.${d.getDay()}`);
     }
 
     /* ═══════════════════════════════════════════════════
@@ -1202,7 +1241,10 @@ class CalendarEntryWidget extends HTMLElement {
 
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth();
-        title.textContent = `${y}年 ${m + 1}月`;
+        title.textContent = this._t('renderer.calendar.date.monthYear', {
+            year: y,
+            monthName: this._t(`renderer.calendar.month.${m + 1}`)
+        });
 
         const today = new Date();
         const firstDay = new Date(y, m, 1);
@@ -1210,9 +1252,8 @@ class CalendarEntryWidget extends HTMLElement {
         const startDate = new Date(y, m, 1 - dow);
 
         let html = '';
-        const headers = ['一', '二', '三', '四', '五', '六', '日'];
-        for (const h of headers) {
-            html += `<div class="cal-mini-header-cell">${h}</div>`;
+        for (let i = 1; i <= 7; i++) {
+            html += `<div class="cal-mini-header-cell">${this._t(`renderer.calendar.weekdayShort.${i}`)}</div>`;
         }
 
         for (let i = 0; i < 42; i++) {
@@ -1263,14 +1304,14 @@ class CalendarEntryWidget extends HTMLElement {
             const dk = dateKey(this.currentDate);
             const dayEvents = this._eventsFor(dk);
 
-            let html = `<div class="cal-detail-title">${fmtDateFull(this.currentDate)} ${WEEK_DAYS_FULL[this.currentDate.getDay()]}</div>`;
+            let html = `<div class="cal-detail-title">${this.fmtDateFull(this.currentDate)} ${this._t(`renderer.calendar.weekday.${this.currentDate.getDay()}`)}</div>`;
 
             const allDayEvents = dayEvents.filter((e) => e.isAllDay);
             const timedEvents = dayEvents.filter((e) => !e.isAllDay);
 
             if (allDayEvents.length > 0) {
                 html += '<div style="margin-bottom:12px;">';
-                html += '<div class="cal-detail-label">全天</div>';
+                html += `<div class="cal-detail-label">${this._t('renderer.calendar.allDay')}</div>`;
                 for (const ev of allDayEvents) {
                     const c = getEventColor(ev);
                     html += `<div style="display:flex;gap:12px;padding:10px 12px;border-radius:12px;background:${c.bg};margin-bottom:4px;cursor:pointer;border-left:4px solid ${c.border};" data-detail-uid="${ev.uid}">
@@ -1288,8 +1329,8 @@ class CalendarEntryWidget extends HTMLElement {
                     <div class="cal-detail-empty-icon-wrap">
                         <i class="fa-regular fa-calendar text-xl cal-detail-empty-icon"></i>
                     </div>
-                    <p class="cal-detail-empty-title">暂无日程</p>
-                    <p class="cal-detail-empty-subtitle">右键点击日历来添加新日程</p>
+                    <p class="cal-detail-empty-title">${this._t('renderer.calendar.noEvents')}</p>
+                    <p class="cal-detail-empty-subtitle">${this._t('renderer.calendar.noEventsHint')}</p>
                 </div>`;
             } else if (timedEvents.length > 0) {
                 html += '<div style="display:flex;flex-direction:column;gap:8px;">';
@@ -1299,7 +1340,7 @@ class CalendarEntryWidget extends HTMLElement {
                         <div style="width:4px;border-radius:4px;background:${c.border};flex-shrink:0;"></div>
                         <div style="flex:1;min-width:0;">
                             <div class="cal-detail-event-title">${ev.subject}</div>
-                            <div class="cal-detail-event-time">${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}</div>
+                            <div class="cal-detail-event-time">${this.fmtTime(ev.startTime)} — ${this.fmtTime(ev.endTime)}</div>
                             ${ev.location ? `<div class="cal-detail-event-location"><i class="fa-solid fa-location-dot" style="font-size:10px;margin-right:4px;"></i>${ev.location}</div>` : ''}
                         </div>
                     </div>`;
@@ -1321,13 +1362,13 @@ class CalendarEntryWidget extends HTMLElement {
         const c = getEventColor(ev);
         const start = new Date(ev.startTime);
         const typeDef = EVENT_TYPES.find((t) => t.id === ev.type);
-        const monthLabel = MONTH_NAMES_SHORT[start.getMonth()];
+        const monthLabel = this._t(`renderer.calendar.month.${start.getMonth() + 1}`);
 
         el.innerHTML = `
         <div class="cal-detail-card">
             <button id="cal-detail-back" class="cal-detail-back-btn">
                 <svg width="8" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
-                返回
+                ${this._t('renderer.calendar.back')}
             </button>
 
             <div class="cal-detail-card-title">${ev.subject}</div>
@@ -1335,7 +1376,7 @@ class CalendarEntryWidget extends HTMLElement {
                 typeDef
                     ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:6px;background:${c.bg};margin-bottom:20px;">
                 <span style="width:6px;height:6px;border-radius:50%;background:${c.border};"></span>
-                <span style="font-size:12px;font-weight:600;color:${c.text};">${typeDef.label}</span>
+                <span style="font-size:12px;font-weight:600;color:${c.text};">${this._t(`renderer.calendar.eventType.${typeDef.id}`)}</span>
             </div>`
                     : ''
             }
@@ -1348,11 +1389,11 @@ class CalendarEntryWidget extends HTMLElement {
                 <div style="display:flex;flex-direction:column;gap:6px;padding-top:2px;">
                     <div class="cal-detail-date-time">
                         <i class="fa-regular fa-clock cal-detail-date-time-icon"></i>
-                        ${ev.isAllDay ? '全天' : `${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}`}
+                        ${ev.isAllDay ? this._t('renderer.calendar.allDay') : `${this.fmtTime(ev.startTime)} — ${this.fmtTime(ev.endTime)}`}
                     </div>
                     <div class="cal-detail-date-info">
                         <i class="fa-regular fa-calendar" style="font-size:13px;"></i>
-                        ${fmtDateFull(start)} ${WEEK_DAYS_FULL[start.getDay()]}
+                        ${this.fmtDateFull(start)} ${this._t(`renderer.calendar.weekday.${start.getDay()}`)}
                     </div>
                     ${
                         ev.location
@@ -1367,10 +1408,10 @@ class CalendarEntryWidget extends HTMLElement {
 
             <div style="display:flex;gap:8px;">
                 <button id="cal-detail-edit" class="cal-detail-edit-btn">
-                    <i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i>编辑
+                    <i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i>${this._t('renderer.calendar.edit')}
                 </button>
                 <button id="cal-detail-delete" class="cal-detail-delete-btn">
-                    <i class="fa-solid fa-trash-can" style="font-size:11px;margin-right:4px;"></i>删除
+                    <i class="fa-solid fa-trash-can" style="font-size:11px;margin-right:4px;"></i>${this._t('renderer.calendar.delete')}
                 </button>
             </div>
         </div>`;
@@ -1402,15 +1443,15 @@ class CalendarEntryWidget extends HTMLElement {
             <button id="cal-nav-next" class="cal-toolbar-btn">
                 <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
-            <button id="cal-nav-today" class="cal-today-btn">今天</button>
+            <button id="cal-nav-today" class="cal-today-btn">${this._t('renderer.calendar.today')}</button>
             <div class="cal-seg" id="cal-seg" style="margin-left:8px;">
                 <div class="cal-seg-indicator" id="cal-seg-ind"></div>
-                <button class="cal-seg-btn ${this.viewMode === 'day' ? 'active' : ''}" data-view="day">日</button>
-                <button class="cal-seg-btn ${this.viewMode === 'week' ? 'active' : ''}" data-view="week">周</button>
-                <button class="cal-seg-btn ${this.viewMode === 'month' ? 'active' : ''}" data-view="month">月</button>
+                <button class="cal-seg-btn ${this.viewMode === 'day' ? 'active' : ''}" data-view="day">${this._t('renderer.calendar.view.day')}</button>
+                <button class="cal-seg-btn ${this.viewMode === 'week' ? 'active' : ''}" data-view="week">${this._t('renderer.calendar.view.week')}</button>
+                <button class="cal-seg-btn ${this.viewMode === 'month' ? 'active' : ''}" data-view="month">${this._t('renderer.calendar.view.month')}</button>
             </div>
             <button id="cal-add-btn" class="cal-add-event-btn" style="margin-left:8px;">
-                <i class="fa-solid fa-plus" style="font-size:12px;"></i> 添加日程
+                <i class="fa-solid fa-plus" style="font-size:12px;"></i> ${this._t('renderer.calendar.addEvent')}
             </button>
         </div>`;
 
@@ -1434,14 +1475,17 @@ class CalendarEntryWidget extends HTMLElement {
         if (!el) return;
         const d = this.currentDate;
         if (this.viewMode === 'month') {
-            el.textContent = `${d.getFullYear()}年 ${d.getMonth() + 1}月`;
+            el.textContent = this._t('renderer.calendar.date.monthYear', {
+                year: d.getFullYear(),
+                monthName: this._t(`renderer.calendar.month.${d.getMonth() + 1}`)
+            });
         } else if (this.viewMode === 'week') {
             const ws = getWeekStart(d);
             const we = new Date(ws);
             we.setDate(we.getDate() + 6);
-            el.textContent = `${fmtMonthDay(ws)} — ${fmtMonthDay(we)}, ${ws.getFullYear()}`;
+            el.textContent = `${this.fmtMonthDay(ws)} — ${this.fmtMonthDay(we)}, ${ws.getFullYear()}`;
         } else {
-            el.textContent = `${fmtDateFull(d)} ${WEEK_DAYS_FULL[d.getDay()]}`;
+            el.textContent = `${this.fmtDateFull(d)} ${this._t(`renderer.calendar.weekday.${d.getDay()}`)}`;
         }
     }
 
@@ -1526,9 +1570,8 @@ class CalendarEntryWidget extends HTMLElement {
         let html = '';
 
         html += '<div class="cal-month-header-row">';
-        const dayHeaders = ['Mon', 'Tues', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        for (const dh of dayHeaders) {
-            html += `<div class="cal-month-header-cell">${dh}</div>`;
+        for (let i = 1; i <= 7; i++) {
+            html += `<div class="cal-month-header-cell">${this._t(`renderer.calendar.weekdayShort.${i}`)}</div>`;
         }
         html += '</div>';
 
@@ -1558,7 +1601,7 @@ class CalendarEntryWidget extends HTMLElement {
             for (let j = 0; j < Math.min(evts.length, maxShow); j++) {
                 const ev = evts[j];
                 const c = getEventColor(ev);
-                const timeLabel = ev.isAllDay ? '全天' : fmtTime(ev.startTime);
+                const timeLabel = ev.isAllDay ? this._t('renderer.calendar.allDay') : this.fmtTime(ev.startTime);
                 html += `<div class="cal-month-pill" style="background:${c.bg};color:${c.text};" data-event-uid="${ev.uid}">
                     <div class="cal-month-pill-dot" style="background:${c.border};"></div>
                     <span class="cal-month-pill-time">${timeLabel}</span>
@@ -1566,7 +1609,7 @@ class CalendarEntryWidget extends HTMLElement {
                 </div>`;
             }
             if (evts.length > maxShow) {
-                html += `<div class="cal-month-more">+${evts.length - maxShow} more…</div>`;
+                html += `<div class="cal-month-more">${this._t('renderer.calendar.more', { count: evts.length - maxShow })}</div>`;
             }
             html += '</div>';
 
@@ -1604,9 +1647,9 @@ class CalendarEntryWidget extends HTMLElement {
             const d = days[i];
             const isToday = isSameDay(d, today);
             const isSel = dateKey(d) === selKey && !isToday;
-            const monthStr = `${d.getMonth() + 1}月${d.getDate()}日`;
+            const monthStr = this.fmtMonthDay(d);
             html += `<div class="cal-time-grid-header-cell ${isToday ? 'today-col' : ''} ${isSel ? 'selected-hdr' : ''}" data-date="${dateKey(d)}">
-                <div class="cal-wh-weekday">${WEEK_HEADER_FULL[i]}</div>
+                <div class="cal-wh-weekday">${this._t(`renderer.calendar.weekday.${(i + 1) % 7}`)}</div>
                 <div class="cal-wh-day ${isToday ? 'today-circle' : ''}">${d.getDate()}</div>
                 <div class="cal-wh-date-label">${monthStr}</div>
             </div>`;
@@ -1623,7 +1666,7 @@ class CalendarEntryWidget extends HTMLElement {
         }
         if (hasAllDay) {
             html += '<div class="cal-allday-bar">';
-            html += '<div class="cal-allday-gutter">全天</div>';
+            html += `<div class="cal-allday-gutter">${this._t('renderer.calendar.allDay')}</div>`;
             html += '<div class="cal-allday-cols">';
             for (let i = 0; i < 7; i++) {
                 const dk = dateKey(days[i]);
@@ -1676,7 +1719,7 @@ class CalendarEntryWidget extends HTMLElement {
                 const compact = height < 36;
                 html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
                     <div class="cal-ev-block-title">${ev.subject}</div>
-                    <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${fmtTime(ev.startTime)} – ${fmtTime(ev.endTime)}`}</div>
+                    <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${this.fmtTime(ev.startTime)} – ${this.fmtTime(ev.endTime)}`}</div>
                 </div>`;
             }
             html += '</div>';
@@ -1719,7 +1762,7 @@ class CalendarEntryWidget extends HTMLElement {
 
         if (allDayEvts.length > 0) {
             html += '<div class="cal-allday-bar">';
-            html += '<div class="cal-allday-gutter">全天</div>';
+            html += `<div class="cal-allday-gutter">${this._t('renderer.calendar.allDay')}</div>`;
             html +=
                 '<div class="cal-allday-cols"><div class="cal-allday-col" style="flex-direction:row;flex-wrap:wrap;gap:4px;padding:6px 8px;">';
             for (const ev of allDayEvts) {
@@ -1759,7 +1802,7 @@ class CalendarEntryWidget extends HTMLElement {
             const compact = height < 36;
             html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 4px);width:calc(${width}% - 8px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
                 <div class="cal-ev-block-title" style="${compact ? '' : 'font-size:13px;'}">${ev.subject}</div>
-                <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}`}</div>
+                <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${this.fmtTime(ev.startTime)} — ${this.fmtTime(ev.endTime)}`}</div>
                 ${!compact && ev.location ? `<div style="font-size:10px;opacity:0.6;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:8px;margin-right:3px;"></i>${ev.location}</div>` : ''}
             </div>`;
         }
@@ -1902,11 +1945,11 @@ class CalendarEntryWidget extends HTMLElement {
         if (!ctx) return;
 
         let html = '<div class="cal-ctx">';
-        html += `<div class="cal-ctx-item" data-action="add"><i class="fa-solid fa-plus"></i>添加日程</div>`;
+        html += `<div class="cal-ctx-item" data-action="add"><i class="fa-solid fa-plus"></i>${this._t('renderer.calendar.addEvent')}</div>`;
         if (eventUid) {
             html += '<div class="cal-ctx-sep"></div>';
-            html += `<div class="cal-ctx-item" data-action="edit" data-uid="${eventUid}"><i class="fa-solid fa-pen"></i>修改日程</div>`;
-            html += `<div class="cal-ctx-item danger" data-action="delete" data-uid="${eventUid}"><i class="fa-solid fa-trash-can"></i>删除日程</div>`;
+            html += `<div class="cal-ctx-item" data-action="edit" data-uid="${eventUid}"><i class="fa-solid fa-pen"></i>${this._t('renderer.calendar.editEvent')}</div>`;
+            html += `<div class="cal-ctx-item danger" data-action="delete" data-uid="${eventUid}"><i class="fa-solid fa-trash-can"></i>${this._t('renderer.calendar.deleteEvent')}</div>`;
         }
         html += '</div>';
         ctx.innerHTML = html;
@@ -1958,7 +2001,10 @@ class CalendarEntryWidget extends HTMLElement {
         const endTimeStr = `${String(dEnd.getHours()).padStart(2, '0')}:${String(dEnd.getMinutes()).padStart(2, '0')}`;
 
         const typeOptions = EVENT_TYPES.map(
-            (t) => `<option value="${t.id}" ${event?.type === t.id ? 'selected' : ''}>${t.label}</option>`
+            (t) =>
+                `<option value="${t.id}" ${event?.type === t.id ? 'selected' : ''}>${this._t(
+                    `renderer.calendar.eventType.${t.id}`
+                )}</option>`
         ).join('');
 
         modal.innerHTML = `
@@ -1969,8 +2015,8 @@ class CalendarEntryWidget extends HTMLElement {
                         <i class="fa-solid fa-calendar-plus"></i>
                     </div>
                     <div class="cal-modal-banner-text">
-                        <div class="cal-modal-banner-title">${isEdit ? '修改日程' : '添加日程'}</div>
-                        <div class="cal-modal-banner-subtitle">填写日程信息</div>
+                        <div class="cal-modal-banner-title">${isEdit ? this._t('renderer.calendar.editEvent') : this._t('renderer.calendar.addEvent')}</div>
+                        <div class="cal-modal-banner-subtitle">${this._t('renderer.calendar.modal.subtitle')}</div>
                     </div>
                     <button id="cal-modal-close" class="cal-modal-banner-close">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1980,47 +2026,47 @@ class CalendarEntryWidget extends HTMLElement {
 
                     <div style="display:flex;flex-direction:column;gap:18px;">
                         <div>
-                            <label class="cal-label">标题</label>
-                            <input id="cal-m-subject" class="cal-input" type="text" placeholder="日程标题" value="${event?.subject || ''}" />
+                            <label class="cal-label">${this._t('renderer.calendar.modal.labelTitle')}</label>
+                            <input id="cal-m-subject" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderTitle')}" value="${event?.subject || ''}" />
                         </div>
 
                         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                             <div>
-                                <label class="cal-label">日期</label>
+                                <label class="cal-label">${this._t('renderer.calendar.modal.labelDate')}</label>
                                 <input id="cal-m-date" class="cal-input" type="date" value="${dateStr}" />
                             </div>
                             <div>
-                                <label class="cal-label">开始时间</label>
+                                <label class="cal-label">${this._t('renderer.calendar.modal.labelStart')}</label>
                                 <input id="cal-m-start" class="cal-input" type="time" value="${startTimeStr}" />
                             </div>
                             <div>
-                                <label class="cal-label">结束时间</label>
+                                <label class="cal-label">${this._t('renderer.calendar.modal.labelEnd')}</label>
                                 <input id="cal-m-end" class="cal-input" type="time" value="${endTimeStr}" />
                             </div>
                         </div>
 
                         <div>
-                            <label class="cal-label">类型</label>
+                            <label class="cal-label">${this._t('renderer.calendar.modal.labelType')}</label>
                             <select id="cal-m-type" class="cal-select">
-                                <option value="">选择类型</option>
+                                <option value="">${this._t('renderer.calendar.modal.placeholderType')}</option>
                                 ${typeOptions}
                             </select>
                         </div>
 
                         <div>
-                            <label class="cal-label">地点</label>
-                            <input id="cal-m-location" class="cal-input" type="text" placeholder="地点（可选）" value="${event?.location || ''}" />
+                            <label class="cal-label">${this._t('renderer.calendar.modal.labelLocation')}</label>
+                            <input id="cal-m-location" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderLocation')}" value="${event?.location || ''}" />
                         </div>
 
                         <div class="cal-modal-allday">
                             <input id="cal-m-allday" type="checkbox" />
-                            <label for="cal-m-allday" class="cal-modal-allday-label">全天</label>
+                            <label for="cal-m-allday" class="cal-modal-allday-label">${this._t('renderer.calendar.allDay')}</label>
                         </div>
                     </div>
 
                     <div class="cal-modal-footer">
-                        <button id="cal-modal-cancel" class="cal-btn-secondary">取消</button>
-                        <button id="cal-modal-save" class="cal-btn-primary">${isEdit ? '保存修改' : '添加'}</button>
+                        <button id="cal-modal-cancel" class="cal-btn-secondary">${this._t('renderer.calendar.modal.cancel')}</button>
+                        <button id="cal-modal-save" class="cal-btn-primary">${isEdit ? this._t('renderer.calendar.modal.save') : this._t('renderer.calendar.modal.add')}</button>
                     </div>
                 </div>
             </div>
@@ -2177,7 +2223,7 @@ class CalendarEntryWidget extends HTMLElement {
             if (!this._drag.ghost) {
                 this._drag.ghost = document.createElement('div');
                 this._drag.ghost.className = 'cal-drag-ghost';
-                this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+                this._drag.ghost.innerHTML = `<div class="cal-drag-ghost-label">${this._t('renderer.calendar.drag.hint')}</div>`;
                 this._drag.ghost.style.position = 'fixed';
                 this._drag.ghost.style.height = '28px';
                 this._drag.ghost.style.zIndex = '9990';
@@ -2248,7 +2294,7 @@ class CalendarEntryWidget extends HTMLElement {
         if (!this._drag.ghost) {
             this._drag.ghost = document.createElement('div');
             this._drag.ghost.className = 'cal-drag-ghost';
-            this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+            this._drag.ghost.innerHTML = `<div class="cal-drag-ghost-label">${this._t('renderer.calendar.drag.hint')}</div>`;
             document.body.appendChild(this._drag.ghost);
         }
 
@@ -2303,8 +2349,7 @@ class CalendarEntryWidget extends HTMLElement {
         if (targetCell) {
             const ghost = document.createElement('div');
             ghost.className = 'cal-drag-ghost-month';
-            ghost.innerHTML =
-                '<div class="cal-drag-ghost-label" style="padding:4px 6px;font-size:10px;">按 Esc 取消</div>';
+            ghost.innerHTML = `<div class="cal-drag-ghost-label" style="padding:4px 6px;font-size:10px;">${this._t('renderer.calendar.drag.hint')}</div>`;
             ghost.style.position = 'absolute';
             ghost.style.inset = '0';
             targetCell.style.position = 'relative';
@@ -2402,8 +2447,8 @@ class CalendarEntryWidget extends HTMLElement {
 
         const origS = new Date(ev.startTime);
         const formatRange = (s, e, allDay) => {
-            if (allDay) return fmtDateFull(s) + ' 全天';
-            return `${fmtDateFull(s)} ${fmtTime24(s.getTime())} — ${fmtTime24(e.getTime())}`;
+            if (allDay) return `${this.fmtDateFull(s)} ${this._t('renderer.calendar.allDay')}`;
+            return `${this.fmtDateFull(s)} ${fmtTime24(s.getTime())} — ${fmtTime24(e.getTime())}`;
         };
 
         modal.innerHTML = `
@@ -2414,7 +2459,7 @@ class CalendarEntryWidget extends HTMLElement {
                         <i class="fa-solid fa-arrows-up-down-left-right"></i>
                     </div>
                     <div class="cal-modal-banner-text">
-                        <div class="cal-modal-banner-title">移动日程</div>
+                        <div class="cal-modal-banner-title">${this._t('renderer.calendar.drag.title')}</div>
                     </div>
                     <button id="cal-drag-close" class="cal-modal-banner-close">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -2425,18 +2470,18 @@ class CalendarEntryWidget extends HTMLElement {
                         <div class="cal-drag-subject">${ev.subject}</div>
                         <div style="display:flex;flex-direction:column;gap:8px;">
                             <div style="display:flex;align-items:center;gap:8px;">
-                                <span class="cal-drag-label-old">原</span>
+                                <span class="cal-drag-label-old">${this._t('renderer.calendar.drag.old')}</span>
                                 <span class="cal-drag-value-old">${formatRange(origS, new Date(ev.endTime), ev.isAllDay)}</span>
                             </div>
                             <div style="display:flex;align-items:center;gap:8px;">
-                                <span class="cal-drag-label-new">新</span>
+                                <span class="cal-drag-label-new">${this._t('renderer.calendar.drag.new')}</span>
                                 <span class="cal-drag-value-new">${formatRange(newStart, newEnd, ev.isAllDay)}</span>
                             </div>
                         </div>
                     </div>
                     <div class="cal-drag-footer">
-                        <button id="cal-drag-cancel" class="cal-btn-secondary">取消</button>
-                        <button id="cal-drag-confirm" class="cal-btn-primary">确认移动</button>
+                        <button id="cal-drag-cancel" class="cal-btn-secondary">${this._t('renderer.calendar.modal.cancel')}</button>
+                        <button id="cal-drag-confirm" class="cal-btn-primary">${this._t('renderer.calendar.drag.confirm')}</button>
                     </div>
                 </div>
             </div>
