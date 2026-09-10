@@ -26,11 +26,21 @@ import {
     GET_MEMORY_TOOL_NAME,
     REMOVE_MEMORY_TOOL_NAME,
     SEARCH_MEMORY_TOOL_NAME,
+    UPDATE_MEMORY_TOOL_NAME,
     createMemoryToolset
 } from './tools.js';
 import { formatMemoryIndexForReview } from './factorial_memory.js';
 
 export const MEMORY_REVIEW_TASK_NAME = '[记忆更新] 长期记忆';
+
+export const MEMORY_REVIEW_ALLOWED_TOOLS = [
+    UPDATE_USER_PORTRAIT_TOOL_NAME,
+    ADD_MEMORY_TOOL_NAME,
+    UPDATE_MEMORY_TOOL_NAME,
+    REMOVE_MEMORY_TOOL_NAME,
+    SEARCH_MEMORY_TOOL_NAME,
+    GET_MEMORY_TOOL_NAME
+];
 
 const MAX_REVIEW_TRANSCRIPT_CHARS = 24_000;
 
@@ -113,9 +123,10 @@ export function buildMemoryReviewSystemPrompt(
 可用工具:
 - ${UPDATE_USER_PORTRAIT_TOOL_NAME}(content): 写入完整 user.md Markdown 内容。
 - ${ADD_MEMORY_TOOL_NAME}(scope, title, content): 创建关键事实记忆片段，scope 只能是 workspace 或 global。
+- ${UPDATE_MEMORY_TOOL_NAME}(uid, title, content): 原地更新一条关键事实记忆的标题和内容，保持 uid、heat 和创建时间不变。
 - ${REMOVE_MEMORY_TOOL_NAME}(uid): 删除一条关键事实记忆片段。
 - ${SEARCH_MEMORY_TOOL_NAME}(keyword): 搜索关键事实记忆标题和内容，只返回 uid/title 列表。
-- ${GET_MEMORY_TOOL_NAME}(uid): 读取关键事实记忆全文并使 heat +1。
+- ${GET_MEMORY_TOOL_NAME}(uid): 读取关键事实记忆全文（维护读取，不增加热度）。
 
 分类优先级:
 1. 用户画像: 用户身份、称呼、角色、职业背景、稳定个人偏好、沟通风格、输出格式偏好、技术栈偏好、长期协作要求。
@@ -130,7 +141,8 @@ export function buildMemoryReviewSystemPrompt(
 - 同一句话同时包含用户偏好和项目事实时，拆分处理：用户相关部分写入 user.md，项目事实写入 memory.json。
 - 关键事实记忆必须原子化，每条只承载一件事实或一组不可分割的事实。
 - 关键事实应写成陈述性事实，不要写成对你的命令或永久行为指令。
-- 发现旧关键事实过时、冲突或需要重写时，先 removeMemory 删除旧 uid，再 addMemory 创建更新后的原子事实。
+- 同一事实发生变化（过时、纠错、补充细节、被新决策取代）时，优先调用 ${UPDATE_MEMORY_TOOL_NAME}(uid, 新标题, 新内容) 原地更新，保留原有热度与历史。
+- 只有需要拆分成多条、合并多条记忆，或新内容与旧记忆已不是同一事实时，才 ${REMOVE_MEMORY_TOOL_NAME} 删除旧 uid 后 ${ADD_MEMORY_TOOL_NAME} 创建新的原子事实。
 - 避免重复保存；必要时用 searchMemory/getMemory 检查已有记忆。
 
 用户画像更新规则:
@@ -153,7 +165,7 @@ export function buildMemoryReviewPrompt(currentPortrait: string, memoryIndex: st
 审查步骤:
 1. 逐条判断候选信息属于用户画像、workspace 关键事实、global 关键事实，还是不应保存。
 2. 对用户画像变化，调用 ${UPDATE_USER_PORTRAIT_TOOL_NAME}(content) 写入完整 user.md。
-3. 对关键事实变化，按需调用 ${SEARCH_MEMORY_TOOL_NAME}/${GET_MEMORY_TOOL_NAME}/${REMOVE_MEMORY_TOOL_NAME}/${ADD_MEMORY_TOOL_NAME} 维护 memory.json。
+3. 对关键事实变化，按需调用 ${SEARCH_MEMORY_TOOL_NAME}/${GET_MEMORY_TOOL_NAME}/${UPDATE_MEMORY_TOOL_NAME}/${REMOVE_MEMORY_TOOL_NAME}/${ADD_MEMORY_TOOL_NAME} 维护 memory.json。
 4. 没有变化时不要调用工具，直接回复“无长期记忆更新。”。
 
 当前 user.md:
@@ -192,16 +204,10 @@ export async function startMemoryReviewTask(
     reviewTask.markAsInternal();
     await options.initializeReviewTask(reviewTask);
     reviewTask.rename(MEMORY_REVIEW_TASK_NAME);
-    reviewTask.allowedTools = [
-        UPDATE_USER_PORTRAIT_TOOL_NAME,
-        ADD_MEMORY_TOOL_NAME,
-        REMOVE_MEMORY_TOOL_NAME,
-        SEARCH_MEMORY_TOOL_NAME,
-        GET_MEMORY_TOOL_NAME
-    ];
+    reviewTask.allowedTools = [...MEMORY_REVIEW_ALLOWED_TOOLS];
     reviewTask.disabledTools = [];
     setExpectedUserPortraitContentForTask(reviewTask, currentPortrait);
-    await reviewTask.attachToolset(createMemoryToolset());
+    await reviewTask.attachToolset(createMemoryToolset({ maintenance: true }));
     reviewTask.agentId = undefined;
     reviewTask.setSystemPrompt(
         buildMemoryReviewSystemPrompt(

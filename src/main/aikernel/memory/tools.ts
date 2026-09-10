@@ -33,6 +33,7 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 
 export const ADD_MEMORY_TOOL_NAME = 'addMemory';
 export const REMOVE_MEMORY_TOOL_NAME = 'removeMemory';
+export const UPDATE_MEMORY_TOOL_NAME = 'updateMemory';
 export const SEARCH_MEMORY_TOOL_NAME = 'searchMemory';
 export const GET_MEMORY_TOOL_NAME = 'getMemory';
 
@@ -279,12 +280,17 @@ const GetMemoryArgsSchema = z.object({
 });
 
 class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
-    constructor() {
+    private readonly maintenance: boolean;
+
+    constructor(options: { maintenance?: boolean } = {}) {
         super(
             GET_MEMORY_TOOL_NAME,
-            '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
+            options.maintenance
+                ? '根据 UID 获取一条关键事实记忆的全文。记忆维护任务读取不增加热度。'
+                : '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
             GetMemoryArgsSchema
         );
+        this.maintenance = options.maintenance === true;
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -364,7 +370,7 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
 
     private async handleExecute(args: z.output<typeof GetMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
         const registry = FactorialMemoryStore.getInstance(taskState?.getWorkspace() || undefined);
-        const memory = await registry.getMemory(args.uid, { incrementHeat: true });
+        const memory = await registry.getMemory(args.uid, this.maintenance ? undefined : { incrementHeat: true });
         if (!memory) {
             return JSON.stringify({
                 found: false,
@@ -380,14 +386,103 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
     }
 }
 
-export function createMemoryToolset(): BaseToolset {
+const UpdateMemoryArgsSchema = z.object({
+    uid: z.string().min(1).describe('要原地更新的记忆 UID'),
+    title: z.string().trim().min(1).describe('更新后的记忆标题'),
+    content: z.string().trim().min(1).describe('更新后的原子化记忆内容')
+});
+
+class UpdateMemoryTool extends BaseTool<typeof UpdateMemoryArgsSchema> {
+    constructor() {
+        super(
+            UPDATE_MEMORY_TOOL_NAME,
+            '原地更新一条关键事实记忆的标题和内容，保持 uid、heat 和创建时间不变。仅用于同一事实发生变化（过时、纠错、补充细节、被新决策取代）；需要拆分、合并或更换为不同事实时应使用 removeMemory 和 addMemory。',
+            UpdateMemoryArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof UpdateMemoryArgsSchema> | undefined;
+        const body: string[] = [];
+        if (args?.uid) {
+            body.push(cliField(t('tools.memory.uid'), args.uid, width));
+        }
+        if (args?.title) {
+            body.push(cliField(t('tools.memory.title'), args.title, width));
+        }
+        if (args?.content) {
+            body.push(cliField(t('tools.memory.content'), truncMemoryText(args.content, 160), width));
+        }
+        if (toolcall.status === 'success' && toolcall.result) {
+            const result = parseToolResult<{ updated?: boolean }>(toolcall);
+            body.push(
+                result?.updated
+                    ? chalk.greenBright(`  ✓ ${t('tools.memory.updated')}`)
+                    : chalk.yellowBright(`  ${t('tools.memory.notFound')}`)
+            );
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '✎',
+            title: t('tools.memory.update.name'),
+            body
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof UpdateMemoryArgsSchema> | undefined;
+        const result = parseToolResult<{ updated?: boolean }>(toolcall);
+        const rows: string[] = [];
+        if (args?.uid) {
+            rows.push(metaRowHtml(t('tools.memory.uid'), args.uid, { mono: true }));
+        }
+        if (args?.title) {
+            rows.push(metaRowHtml(t('tools.memory.title'), args.title));
+        }
+        if (args?.content) {
+            rows.push(textBlockHtml(args.content));
+        }
+        if (toolcall.status === 'success') {
+            rows.push(
+                metaRowHtml(
+                    t('tools.memory.result'),
+                    result?.updated ? t('tools.memory.updated') : t('tools.memory.notFound')
+                )
+            );
+        }
+
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-pen-to-square',
+            title: t('tools.memory.update.name'),
+            subtitle: args?.title,
+            bodyHtml: rows.join('')
+        });
+    }
+
+    private async handleExecute(args: z.output<typeof UpdateMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
+        const registry = FactorialMemoryStore.getInstance(taskState?.getWorkspace() || undefined);
+        return JSON.stringify(await registry.updateMemory(args.uid, args.title, args.content));
+    }
+}
+
+export interface MemoryToolsetOptions {
+    /** 记忆维护任务（长期记忆回顾）专用配置：额外提供 updateMemory 原地更新工具 */
+    maintenance?: boolean;
+}
+
+export function createMemoryToolset(options: MemoryToolsetOptions = {}): BaseToolset {
     const toolset = new BaseToolset('memory');
     toolset.addTools(
         new AddMemoryTool(),
         new RemoveMemoryTool(),
         new SearchMemoryTool(),
-        new GetMemoryTool(),
+        new GetMemoryTool({ maintenance: options.maintenance === true }),
         new UpdateUserPortraitTool()
     );
+    if (options.maintenance) {
+        toolset.addTools(new UpdateMemoryTool());
+    }
     return toolset;
 }

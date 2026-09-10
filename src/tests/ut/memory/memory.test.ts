@@ -306,6 +306,16 @@ describe('关键事实记忆', () => {
         ).not.toThrow();
     });
 
+    test('maintenance 工具集额外提供 updateMemory，默认工具集不提供', () => {
+        expect(createMemoryToolset().getTool('updateMemory')).toBeUndefined();
+        const maintenance = createMemoryToolset({ maintenance: true });
+
+        expect(maintenance.getTool('updateMemory')).toBeDefined();
+        for (const name of ['addMemory', 'removeMemory', 'searchMemory', 'getMemory', 'updateUserPortrait']) {
+            expect(maintenance.getTool(name)).toBeDefined();
+        }
+    });
+
     test('addMemory 工具缺省 title 时从 content 派生标题并保存', async () => {
         const { workspaceDir } = setup();
         const tool = createMemoryToolset().getTool('addMemory');
@@ -372,8 +382,93 @@ describe('关键事实记忆', () => {
         expect(fs.existsSync(path.join(workspaceDir, '.opendesk', 'memory', 'memory.json'))).toBe(false);
     });
 
+    test('updateMemory 工具原地更新并保留 uid、heat 和创建时间', async () => {
+        const { registry, workspaceDir } = setup();
+        const created = await registry.addMemory('workspace', '旧标题', '旧内容');
+        await registry.getMemory(created.uid, { incrementHeat: true });
+
+        const before = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        const tool = createMemoryToolset({ maintenance: true }).getTool('updateMemory');
+
+        const result = await tool!.execute(
+            {
+                uid: created.uid,
+                title: '新标题',
+                content: '新内容'
+            },
+            undefined,
+            { getWorkspace: () => workspaceDir } as any
+        );
+
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result)).toMatchObject({
+            success: true,
+            updated: true,
+            uid: created.uid,
+            scope: 'workspace'
+        });
+
+        const after = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        expect(after.uid).toBe(before.uid);
+        expect(after.heat).toBe(before.heat);
+        expect(after.createdAt).toBe(before.createdAt);
+        expect(after.title).toBe('新标题');
+        expect(after.content).toBe('新内容');
+    });
+
+    test('updateMemory 工具更新不存在的 uid 返回 updated:false', async () => {
+        const { workspaceDir } = setup();
+        const tool = createMemoryToolset({ maintenance: true }).getTool('updateMemory');
+
+        const result = await tool!.execute(
+            {
+                uid: 'deadbeef0000ffff',
+                title: '新标题',
+                content: '新内容'
+            },
+            undefined,
+            { getWorkspace: () => workspaceDir } as any
+        );
+
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result)).toMatchObject({
+            success: true,
+            updated: false,
+            uid: 'deadbeef0000ffff'
+        });
+    });
+
+    test('getMemory 工具维护变体读取不增加热度也不刷新更新时间', async () => {
+        const { registry, workspaceDir } = setup();
+        const created = await registry.addMemory('workspace', '维护对象', '回顾查重会读取的内容。');
+        const before = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        const tool = createMemoryToolset({ maintenance: true }).getTool('getMemory');
+
+        const result = await tool!.execute({ uid: created.uid }, undefined, {
+            getWorkspace: () => workspaceDir
+        } as any);
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result).found).toBe(true);
+
+        const after = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        expect(after.heat).toBe(0);
+        expect(after.updatedAt).toBe(before.updatedAt);
+    });
+
+    test('getMemory 工具默认变体读取全文时增加热度', async () => {
+        const { registry, workspaceDir } = setup();
+        const created = await registry.addMemory('workspace', '普通对象', '普通任务会读取的内容。');
+        const tool = createMemoryToolset().getTool('getMemory');
+
+        await tool!.execute({ uid: created.uid }, undefined, { getWorkspace: () => workspaceDir } as any);
+        await tool!.execute({ uid: created.uid }, undefined, { getWorkspace: () => workspaceDir } as any);
+
+        const memory = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        expect(memory.heat).toBe(2);
+    });
+
     test('记忆工具均提供 GUI 和 TUI 卡片渲染', async () => {
-        const toolset = createMemoryToolset();
+        const toolset = createMemoryToolset({ maintenance: true });
         const samples: Array<[string, object, unknown, string]> = [
             [
                 'addMemory',
@@ -386,6 +481,12 @@ describe('关键事实记忆', () => {
                 '项目命令'
             ],
             ['removeMemory', { uid: 'abc123' }, { removed: true }, 'abc123'],
+            [
+                'updateMemory',
+                { uid: 'abc123', title: '项目命令 v2', content: '项目使用 pnpm 构建。' },
+                { success: true, updated: true, uid: 'abc123', scope: 'workspace' },
+                '项目命令 v2'
+            ],
             ['searchMemory', { keyword: '构建' }, [{ uid: 'abc123', title: '项目命令 <script>' }], 'abc123'],
             [
                 'getMemory',
