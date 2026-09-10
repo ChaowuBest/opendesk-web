@@ -270,6 +270,8 @@ class AgentInput extends HTMLElement {
         this.autocompleteMode = null;
         /** 当前文件补全的工作区根目录 */
         this._workspacePath = '';
+        /** 任务绑定的工作空间路径；设置后 @ 文件补全优先使用它而非全局工作空间 */
+        this._taskWorkspace = null;
         /** 防抖定时器 */
         this._fileCompleteTimer = null;
         /** 触发补全时的光标像素位置（用于固定菜单位置） */
@@ -692,6 +694,15 @@ class AgentInput extends HTMLElement {
      */
     setReasoningEffort(effort) {
         this.selectedReasoningEffort = effort || '';
+    }
+
+    /**
+     * 外部设置任务绑定的工作空间路径。
+     * 设置后 @ 文件补全总是使用该任务工作空间；未设置时回退到全局工作空间。
+     * @param {string | null} workspace 任务工作空间路径，传 null 表示解除绑定
+     */
+    setTaskWorkspace(workspace) {
+        this._taskWorkspace = typeof workspace === 'string' && workspace.length > 0 ? workspace : null;
     }
 
     /**
@@ -2356,8 +2367,12 @@ class AgentInput extends HTMLElement {
      */
     async loadFileCompletions(query, textarea) {
         try {
-            // 每次触发补全都重新读取当前有效工作空间，避免切换工作空间后补全范围仍停留在旧目录
-            if (window.workspaceAPI?.getEffectiveWorkspace) {
+            // 任务级工作空间优先：打开历史任务时补全跟随任务绑定的目录，
+            // 任务切换工作空间后也随之更新；未绑定时回退到全局有效工作空间
+            if (this._taskWorkspace) {
+                this._workspacePath = this._taskWorkspace.replace(/\\/g, '/');
+            } else if (window.workspaceAPI?.getEffectiveWorkspace) {
+                // 每次触发补全都重新读取当前有效工作空间，避免切换工作空间后补全范围仍停留在旧目录
                 const effective = await window.workspaceAPI.getEffectiveWorkspace();
                 if (effective) {
                     this._workspacePath = effective.replace(/\\/g, '/');
