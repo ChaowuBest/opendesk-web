@@ -3730,7 +3730,7 @@ class SettingPanel extends HTMLElement {
         }
 
         const duplicateIndex = (this.currentData.providers || []).findIndex(
-            (p) => p.name === name && p !== this.currentData.providers[this._editingProviderIndex]
+            (p, i) => p.name === name && i !== this._editingProviderIndex
         );
         if (duplicateIndex !== -1) {
             this.showFieldError(this.querySelector('#provider-name-input'), this._t('sp.providers.nameExists'));

@@ -295,8 +295,9 @@ let _cachedUserInvocableSkills: CachedSkillInfo[] = [];
  * 则不提交消息，而是把 /skillname + 空格 留在输入框让用户继续输入。
  */
 let _pendingSkillCompletion = false;
-/** 补全技能后的完整文本（含尾随空格）与光标列，供 onSubmit 恢复输入框 */
+/** 补全技能后的完整文本（含尾随空格）与光标行列，供 onSubmit 恢复输入框 */
 let _pendingSkillCompletionText: string | null = null;
+let _pendingSkillCompletionLine = 0;
 let _pendingSkillCompletionCol = 0;
 
 /** 读取并清除「刚选择技能」标记 */
@@ -322,16 +323,18 @@ export function _setPendingSkillCompletionForTest(value: boolean, text?: string,
     _pendingSkillCompletion = value;
     if (text !== undefined) {
         _pendingSkillCompletionText = text;
-        _pendingSkillCompletionCol = col ?? text.length;
+        const lines = text.split('\n');
+        _pendingSkillCompletionLine = lines.length - 1;
+        _pendingSkillCompletionCol = col ?? lines[lines.length - 1].length;
     }
 }
 
 /** 读取并清除待恢复的技能补全文本（内部使用） */
-function consumePendingSkillCompletionText(): { text: string; col: number } | null {
+function consumePendingSkillCompletionText(): { text: string; line: number; col: number } | null {
     const result = _pendingSkillCompletionText;
     _pendingSkillCompletionText = null;
     if (result === null) return null;
-    return { text: result, col: _pendingSkillCompletionCol };
+    return { text: result, line: _pendingSkillCompletionLine, col: _pendingSkillCompletionCol };
 }
 
 /**
@@ -616,7 +619,8 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
             // 记录补全后的完整文本与光标位置。
             // submitValue() 会 trim 掉行尾空格，onSubmit 里直接恢复记录值，
             // 保证补全后光标紧跟在 "/skillname " 之后，方便继续追加参数。
-            _pendingSkillCompletionText = newLine;
+            _pendingSkillCompletionText = newLines.join('\n');
+            _pendingSkillCompletionLine = cursorLine;
             _pendingSkillCompletionCol = newCol;
             return { lines: newLines, cursorLine, cursorCol: newCol };
         }
@@ -781,7 +785,16 @@ export class AgentInputArea implements Component {
                 const pending = consumePendingSkillCompletionText();
                 const restoreText = pending?.text ?? text;
                 this.input.setText(restoreText);
-                this.input.setCursorCol?.(pending?.col ?? restoreText.length);
+                if (pending) {
+                    // pi-tui 没有公开的光标 setter；setText 默认将光标移到全文末尾。
+                    // 恢复逻辑集中在此处，并使用 setCursorCol 重置垂直移动的黏滞列状态。
+                    const editor = this.input as unknown as {
+                        state: { cursorLine: number };
+                        setCursorCol(col: number): void;
+                    };
+                    editor.state.cursorLine = pending.line;
+                    editor.setCursorCol(pending.col);
+                }
                 return;
             }
             this.input.addToHistory(text);

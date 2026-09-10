@@ -91,6 +91,8 @@ describe('AgentInput autocomplete slash preview card', () => {
     });
 
     beforeEach(() => {
+        // 先触发组件清理，避免 linkedom 清空 body 时遍历到已被销毁回调移除的兄弟节点。
+        document.querySelectorAll('agent-input').forEach((input: HTMLElement) => input.remove());
         document.body.innerHTML = '';
         filterSlashCommands.mockClear();
         filterSlashCommands.mockReturnValue([
