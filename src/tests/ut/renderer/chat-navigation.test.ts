@@ -43,7 +43,17 @@ const message = (role: string, id: string, text: string) => ({
     content: [{ type: 'text', text }]
 });
 
+// Modern fake timers mis-detect global property ownership in Node 26's Jest VM
+// and delete native timers on restore. These timeout-only tests use the legacy clock.
 describe('conversation quick navigation', () => {
+    test('restoring fake timers preserves native timeout functions for subsequent tests', () => {
+        const timers = [globalThis.setTimeout, globalThis.clearTimeout];
+        jest.useFakeTimers({ legacyFakeTimers: true });
+        jest.useRealTimers();
+        expect(globalThis.setTimeout).toBe(timers[0]);
+        expect(globalThis.clearTimeout).toBe(timers[1]);
+    });
+
     test('many turns share bounded listeners and nested events still follow a reordered turn', () => {
         const navigate = jest.fn();
         const listen = jest.spyOn(window.HTMLElement.prototype, 'addEventListener');
@@ -67,7 +77,7 @@ describe('conversation quick navigation', () => {
     });
 
     test('streaming without a visible preview does not rebuild the index or summaries', async () => {
-        jest.useFakeTimers();
+        jest.useFakeTimers({ legacyFakeTimers: true });
         let deliver: MutationCallback;
         // linkedom reports the observed root as every mutation's target. Supply the
         // actual browser record shape here; Electron profiling exercises native delivery.
@@ -110,7 +120,7 @@ describe('conversation quick navigation', () => {
     });
 
     test('locates the active turn in a thousand-message view with logarithmic layout reads', () => {
-        jest.useFakeTimers();
+        jest.useFakeTimers({ legacyFakeTimers: true });
         const { host, history, nav } = createNavigation();
         let scrollTop = 0;
         const readRect = jest.fn((index: number) => ({ top: index * 100 - scrollTop }) as DOMRect);
@@ -156,7 +166,7 @@ describe('conversation quick navigation', () => {
     });
 
     test('ordinary scrolling only updates position, while content changes refresh summaries and teardown cancels pending work', () => {
-        jest.useFakeTimers();
+        jest.useFakeTimers({ legacyFakeTimers: true });
         const refresh = jest.fn(() => []);
         const { host, history, nav } = createNavigation('', { refresh });
         history.dispatchEvent(new window.Event('scroll'));
@@ -175,7 +185,7 @@ describe('conversation quick navigation', () => {
     });
 
     test('keeps the hovered preview, tick shape and rail position when clicking loads and jumps to history', async () => {
-        jest.useFakeTimers();
+        jest.useFakeTimers({ legacyFakeTimers: true });
         const stops = [
             { id: 'u1', title: 'Earlier question', preview: 'Earlier answer' },
             { id: 'u2', title: 'Latest question', preview: 'Latest answer' }
