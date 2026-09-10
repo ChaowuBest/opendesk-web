@@ -236,6 +236,17 @@ html[data-theme='dark'],
 .ctx-submenu-wrap:focus-within > .ctx-submenu {
     display: block;
 }
+/* 悬停桥：子菜单通过 left: calc(100% + 4px) 与父项之间留有 4px 视觉空隙，
+   鼠标从父项移向子菜单时穿过空隙会导致 :hover 瞬间失效、子菜单关闭后无法恢复。
+   用透明伪元素向左延伸覆盖空隙并压入父项 2px，保证移动路径上命中区无缝衔接。 */
+.ctx-submenu::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    width: 6px;
+}
 
 /* ===== 面包屑下拉树（bc = breadcrumb）===== */
 .bc-dropdown {
