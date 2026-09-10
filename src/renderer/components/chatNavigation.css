@@ -1,0 +1,120 @@
+/*
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND.
+ */
+
+#taskview-chat-history.od-chat-has-nav {
+    padding-left: 40px;
+}
+
+.od-chat-nav {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+    color: var(--od-text);
+    contain: strict;
+}
+
+.od-chat-nav[hidden],
+.od-chat-nav-preview[hidden] {
+    display: none;
+}
+
+.od-chat-nav-rail {
+    position: absolute;
+    top: 50%;
+    left: 4px;
+    transform: translate3d(0, -50%, 0);
+    width: 32px;
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    pointer-events: auto;
+    contain: layout paint style;
+}
+
+.od-chat-nav-rail::-webkit-scrollbar {
+    display: none;
+}
+
+.od-chat-nav-stop {
+    display: flex;
+    align-items: center;
+    width: 32px;
+    height: 10px;
+    padding: 0 4px;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.od-chat-nav-stop span {
+    width: 26px;
+    height: 2px;
+    background: var(--od-text-muted);
+    opacity: 0.4;
+    transform: scaleX(var(--tick-scale, 0.230769));
+    transform-origin: left center;
+    transition: transform 140ms ease-out;
+    pointer-events: none;
+}
+
+.od-chat-nav-stop[aria-current='location'] span {
+    background: var(--od-text);
+    opacity: 0.9;
+}
+
+.od-chat-nav-stop.is-previewed span,
+.od-chat-nav-stop:focus-visible span {
+    background: var(--od-text);
+    opacity: 1;
+}
+
+.od-chat-nav-stop:focus-visible {
+    outline: 1px solid var(--od-text-muted);
+    outline-offset: -1px;
+    border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .od-chat-nav-stop span {
+        transition: none;
+    }
+}
+
+.od-chat-nav-preview {
+    position: absolute;
+    left: 44px;
+    width: min(320px, calc(100% - 56px));
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--od-border);
+    border-radius: 16px;
+    background: var(--od-bg-muted);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
+    font-size: 13px;
+    line-height: 1.6;
+    overflow: hidden;
+}
+
+.od-chat-nav-title {
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.od-chat-nav-answer {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    color: var(--od-text-muted);
+    margin-top: 4px;
+}

@@ -135,6 +135,58 @@ describe('task-view _scrollToUserMessage with lazy-loaded history', () => {
         }
     }
 
+    test('快速定位可跳转到尚未渲染的最早消息，并解除底部跟随', () => {
+        const taskView = document.createElement('task-view') as any;
+        taskView.task_id = 'navigation-history';
+        taskView.render();
+        taskView.setUpEventListeners();
+        const messages = Array.from({ length: 60 }, (_, i) => createUserMessage(`u${i}`, `Question ${i}`));
+        taskView._renderInitialHistoryWindow(messages);
+        const history = taskView.getHistoryContainer();
+        history.scrollTop = 800;
+        history.scrollTo = jest.fn();
+        const readScrollHeight = jest.fn(() => 60000);
+        Object.defineProperty(history, 'scrollHeight', { get: readScrollHeight, configurable: true });
+        Object.defineProperty(history, 'clientHeight', { value: 500, configurable: true });
+        expect(history.querySelector('#user-msg-u0')).toBeNull();
+        expect(taskView._getConversationStops()).toHaveLength(60);
+        taskView.setAutoScrollingToBottom(true);
+        taskView._navigateConversation('u0');
+        expect(history.querySelector('#user-msg-u0')).not.toBeNull();
+        expect(history.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'instant' }));
+        expect(readScrollHeight).toHaveBeenCalledTimes(1);
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
+        Object.defineProperty(history, 'scrollHeight', { value: 1000, configurable: true });
+        Object.defineProperty(history, 'clientHeight', { value: 500, configurable: true });
+        history.scrollTop = 490;
+        history.dispatchEvent(new window.Event('scroll'));
+        expect(taskView.auto_scrolling_to_bottom).toBe(false);
+        history.dispatchEvent(new window.Event('scrollend'));
+        history.dispatchEvent(new window.Event('scroll'));
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        taskView._chatNavigation.destroy();
+    });
+
+    test('重复点击已到达的位置不等待不会发生的 scrollend；无效目标不改变跟随状态', () => {
+        const taskView = document.createElement('task-view') as any;
+        taskView.task_id = 'navigation-noop';
+        taskView.render();
+        taskView._renderInitialHistoryWindow([createUserMessage('u1', 'Question')]);
+        const history = taskView.getHistoryContainer();
+        history.scrollTop = 500;
+        history.scrollTo = jest.fn();
+        Object.defineProperty(history, 'scrollHeight', { value: 1000, configurable: true });
+        Object.defineProperty(history, 'clientHeight', { value: 500, configurable: true });
+        history.getBoundingClientRect = () => ({ top: 0 });
+        history.querySelector('#user-msg-u1').getBoundingClientRect = () => ({ top: 80 });
+        taskView._navigateConversation('u1');
+        expect(history.scrollTo).not.toHaveBeenCalled();
+        expect(taskView._conversationJumpInProgress).toBe(false);
+        taskView.setAutoScrollingToBottom(true);
+        taskView._navigateConversation('missing');
+        expect(taskView.auto_scrolling_to_bottom).toBe(true);
+    });
+
     test('topmostVisibleIdx === 0 且 _hasOlderHistory 为 true 时，应触发 _loadOlderHistoryBatch', () => {
         const taskView = document.createElement('task-view') as any;
         taskView.setAttribute('task_id', 'task-test-1');
