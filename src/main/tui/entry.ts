@@ -165,6 +165,7 @@ export class OpenDeskTUI {
     public model?: string;
     private lastGlobalDefaultModel: string = '';
     private pendingGlobalDefaultModelPrompt?: { previousDefault: string; newDefault: string; taskId: string };
+    private modelInfoRefreshGeneration = 0;
 
     /** 当前活跃的运行模式 */
     private _activeMode: ModeDecl;
@@ -1061,6 +1062,7 @@ export class OpenDeskTUI {
         this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.resetAccumulated();
         this.inputArea.statusBar.update({ totalTokens: 0 });
+        this.resolveModelInfo();
         this.tui.requestRender(true);
     }
 
@@ -1090,6 +1092,7 @@ export class OpenDeskTUI {
         this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.resetAccumulated();
         this.inputArea.statusBar.update({ totalTokens: 0 });
+        this.resolveModelInfo();
         this.tui.requestRender();
     }
 
@@ -1127,6 +1130,7 @@ export class OpenDeskTUI {
         // 同步任务的工作空间到状态栏
         const taskWorkspace = task.getWorkspace() || this.workspace;
         this.inputArea.statusBar.update({ workspace: taskWorkspace });
+        this.resolveModelInfo();
 
         // 检测任务工作空间与全局工作空间不一致时，显示提示
         if (taskWorkspace && taskWorkspace !== this.workspace) {
@@ -1230,6 +1234,7 @@ export class OpenDeskTUI {
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
+        this.resolveModelInfo();
 
         if (task.task_status === 'running') {
             this.inputArea.setStatus('running');
@@ -1489,6 +1494,7 @@ export class OpenDeskTUI {
      * 如果检测到没有配置模型（default_model 为空），则隐藏 taskview 并提醒用户配置。
      */
     public resolveModelInfo() {
+        const refreshGeneration = ++this.modelInfoRefreshGeneration;
         // getInstance() 已内置容错，不会抛异常
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
@@ -1545,6 +1551,7 @@ export class OpenDeskTUI {
             if (modelInstance) {
                 fetchContextSizeFromAPI(modelInstance)
                     .then((apiSize) => {
+                        if (refreshGeneration !== this.modelInfoRefreshGeneration) return;
                         if (apiSize > 0) {
                             this.inputArea.statusBar.update({ contextSize: apiSize });
                             logger.info(`model context size from API: ${apiSize}`);
@@ -1558,6 +1565,7 @@ export class OpenDeskTUI {
 
         LLM.supportsVision(aliasToUse)
             .then((vision) => {
+                if (refreshGeneration !== this.modelInfoRefreshGeneration) return;
                 const suffix = vision ? ' 📷' : '';
                 this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}${suffix}` });
             })

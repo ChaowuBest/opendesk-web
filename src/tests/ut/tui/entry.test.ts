@@ -1,9 +1,195 @@
 import { jest } from '@jest/globals';
 import { GoalController } from '../../../main/aikernel/goal/controller.js';
 import { GoalStates } from '../../../main/aikernel/goal/state.js';
+import { LLM } from '../../../main/aikernel/llm.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
+import { Setting } from '../../../main/utils/setting.js';
 
 describe('OpenDeskTUI active task view state', () => {
+    test('refreshes model info after creating a new task', async () => {
+        const previousTask = { task_id: 'task-a', message_queue: [] };
+        const newTask = {
+            task_id: 'task-b',
+            message_queue: [],
+            rebuildSystemPrompt: jest.fn(async () => undefined)
+        };
+        const resolveModelInfo = jest.fn(function (this: OpenDeskTUI) {
+            expect(this.activeTaskId).toBe(newTask.task_id);
+            expect(this.taskView.taskState).toBe(newTask);
+        });
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: previousTask.task_id,
+            model: undefined,
+            pendingTaskName: null,
+            taskManagerState: {
+                createTask: jest.fn(() => newTask),
+                getTask: jest.fn(() => previousTask)
+            },
+            taskView: {
+                taskState: previousTask,
+                clearMessages: jest.fn()
+            },
+            inputArea: {
+                getQueueSnapshot: jest.fn(() => []),
+                bindToTaskQueue: jest.fn(),
+                setStatus: jest.fn(),
+                statusBar: {
+                    stopTimer: jest.fn(),
+                    resetAccumulated: jest.fn(),
+                    update: jest.fn()
+                }
+            },
+            initTaskHarness: jest.fn(async () => undefined),
+            updateGoalPanelFromTask: jest.fn(),
+            syncRetryCommandAvailability: jest.fn(),
+            syncTaskName: jest.fn(),
+            resolveModelInfo,
+            tui: {
+                requestRender: jest.fn()
+            }
+        }) as any;
+
+        await tui.createNewTask();
+
+        expect(resolveModelInfo).toHaveBeenCalledTimes(1);
+    });
+
+    test('refreshes model info after switching to another task', async () => {
+        const previousTask = { task_id: 'task-a', message_queue: [] };
+        const nextTask = {
+            task_id: 'task-b',
+            task_status: 'stopped',
+            message_queue: [],
+            total_elapsed_ms: 0,
+            _corrupted: false,
+            ensureValidModelOrFallback: jest.fn(),
+            ensureToolsResolved: jest.fn(async () => undefined),
+            getWorkspace: jest.fn(() => '/workspace')
+        };
+        const resolveModelInfo = jest.fn(function (this: OpenDeskTUI) {
+            expect(this.activeTaskId).toBe(nextTask.task_id);
+            expect(this.taskView.taskState).toBe(nextTask);
+        });
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: previousTask.task_id,
+            workspace: '/workspace',
+            taskManagerState: {
+                refreshLazyTaskSystemPrompt: jest.fn(async () => undefined),
+                getTask: jest.fn(() => previousTask)
+            },
+            taskView: {
+                taskState: previousTask,
+                clearMessages: jest.fn(),
+                rebuildFromHistory: jest.fn()
+            },
+            inputArea: {
+                getQueueSnapshot: jest.fn(() => []),
+                bindToTaskQueue: jest.fn(),
+                setStatus: jest.fn(),
+                statusBar: {
+                    stopTimer: jest.fn(),
+                    setAccumulatedMs: jest.fn(),
+                    update: jest.fn()
+                }
+            },
+            updateGoalPanelFromTask: jest.fn(),
+            syncRetryCommandAvailability: jest.fn(),
+            syncTaskName: jest.fn(),
+            startRunningMonitorForTask: jest.fn(),
+            processPendingPrompts: jest.fn(),
+            resolveModelInfo,
+            tui: {
+                requestRender: jest.fn()
+            }
+        }) as any;
+
+        await tui.switchToTask(nextTask as any);
+
+        expect(resolveModelInfo).toHaveBeenCalledTimes(1);
+    });
+
+    test('ignores stale asynchronous model info after the active task changes', async () => {
+        let resolveClaudeVision!: (value: boolean) => void;
+        let resolveGptVision!: (value: boolean) => void;
+        const claudeVision = new Promise<boolean>((resolve) => {
+            resolveClaudeVision = resolve;
+        });
+        const gptVision = new Promise<boolean>((resolve) => {
+            resolveGptVision = resolve;
+        });
+        const settingData = {
+            locale: 'en-US',
+            default_model: 'gpt-5',
+            models: [
+                { alias: 'claude', model_name: 'claude', model_type: 'chat', context_length: 100_000 },
+                { alias: 'gpt-5', model_name: 'gpt-5', model_type: 'chat', context_length: 100_000 }
+            ]
+        };
+        const setting = {
+            data: settingData,
+            getData: () => ({
+                ...settingData
+            }),
+            getModelInstance: jest.fn()
+        };
+        const settingSpy = jest.spyOn(Setting, 'getInstance').mockReturnValue(setting as any);
+        const visionSpy = jest.spyOn(LLM, 'supportsVision').mockImplementation((model) => {
+            return model === 'claude' ? claudeVision : gptVision;
+        });
+        let activeTask = {
+            task_id: 'task-a',
+            model: 'claude',
+            ensureValidModelOrFallback: jest.fn(),
+            getWorkspace: jest.fn(() => '/workspace-a')
+        };
+        const update = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: activeTask.task_id,
+            lastGlobalDefaultModel: 'gpt-5',
+            modelInfoRefreshGeneration: 0,
+            workspace: '/workspace',
+            taskManagerState: {
+                getTask: () => activeTask
+            },
+            getActiveTask: () => activeTask,
+            isTaskStarted: () => true,
+            hideModelNotConfiguredNotice: jest.fn(),
+            inputArea: {
+                statusBar: { update }
+            },
+            tui: {
+                requestRender: jest.fn()
+            }
+        }) as any;
+
+        try {
+            tui.resolveModelInfo();
+            activeTask = {
+                task_id: 'task-b',
+                model: 'gpt-5',
+                ensureValidModelOrFallback: jest.fn(),
+                getWorkspace: jest.fn(() => '/workspace-b')
+            };
+            tui.activeTaskId = activeTask.task_id;
+            tui.resolveModelInfo();
+
+            resolveGptVision(true);
+            await gptVision;
+            await Promise.resolve();
+            resolveClaudeVision(false);
+            await claudeVision;
+            await Promise.resolve();
+
+            const modelUpdates = update.mock.calls
+                .map(([value]) => value.modelName)
+                .filter((value) => value !== undefined);
+            expect(modelUpdates.at(-1)).toBe('gpt-5 📷');
+        } finally {
+            visionSpy.mockRestore();
+            settingSpy.mockRestore();
+        }
+    });
+
     test('syncs input status from the current task instead of forcing idle', () => {
         const task = { task_id: 'task-1', task_status: 'running' };
         const setStatus = jest.fn();
@@ -35,6 +221,7 @@ describe('OpenDeskTUI active task view state', () => {
 
     test('clearActiveTask clears stale active task state', () => {
         const clearTodos = jest.fn();
+        const resolveModelInfo = jest.fn();
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: { task_id: 'task-1' },
@@ -45,6 +232,7 @@ describe('OpenDeskTUI active task view state', () => {
             },
             activeTaskId: 'task-1',
             goalEvaluationInProgressByTask: new Map(),
+            resolveModelInfo,
             syncRetryCommandAvailability: jest.fn(),
             inputArea: {
                 clearMessageQueue: jest.fn(),
@@ -67,6 +255,7 @@ describe('OpenDeskTUI active task view state', () => {
         expect(tui.activeTaskId).toBeUndefined();
         expect(clearTodos).toHaveBeenCalledTimes(1);
         expect(tui.inputArea.clearGoalSupplementQueuedHint).toHaveBeenCalled();
+        expect(resolveModelInfo).toHaveBeenCalledTimes(1);
         expect(tui.tui.requestRender).toHaveBeenCalled();
     });
 
