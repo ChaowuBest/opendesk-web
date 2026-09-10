@@ -126,7 +126,7 @@ export function buildMemoryReviewSystemPrompt(
 - ${UPDATE_MEMORY_TOOL_NAME}(uid, title, content): 原地更新一条关键事实记忆的标题和内容，保持 uid、heat 和创建时间不变。
 - ${REMOVE_MEMORY_TOOL_NAME}(uid): 删除一条关键事实记忆片段。
 - ${SEARCH_MEMORY_TOOL_NAME}(keyword): 搜索关键事实记忆标题和内容，只返回 uid/title 列表。
-- ${GET_MEMORY_TOOL_NAME}(uid): 读取关键事实记忆全文并使 heat +1。
+- ${GET_MEMORY_TOOL_NAME}(uid): 读取关键事实记忆全文（维护读取，不增加热度）。
 
 分类优先级:
 1. 用户画像: 用户身份、称呼、角色、职业背景、稳定个人偏好、沟通风格、输出格式偏好、技术栈偏好、长期协作要求。

@@ -93,6 +93,9 @@ describe('联合长期记忆回顾', () => {
         expect(prompt).toContain('保持 uid、heat 和创建时间不变');
         expect(prompt).toContain('同一事实发生变化');
         expect(prompt).not.toContain('先 removeMemory 删除旧 uid，再 addMemory');
+        // 回顾读取属于维护读取，不增加热度
+        expect(prompt).toContain('维护读取，不增加热度');
+        expect(prompt).not.toContain('并使 heat +1');
     });
 
     test('联合 review prompt 包含当前画像、事实记忆索引和本轮对话', () => {

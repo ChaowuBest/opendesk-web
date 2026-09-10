@@ -438,6 +438,35 @@ describe('关键事实记忆', () => {
         });
     });
 
+    test('getMemory 工具维护变体读取不增加热度也不刷新更新时间', async () => {
+        const { registry, workspaceDir } = setup();
+        const created = await registry.addMemory('workspace', '维护对象', '回顾查重会读取的内容。');
+        const before = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        const tool = createMemoryToolset({ maintenance: true }).getTool('getMemory');
+
+        const result = await tool!.execute({ uid: created.uid }, undefined, {
+            getWorkspace: () => workspaceDir
+        } as any);
+        expect(result.status).toBe('success');
+        expect(JSON.parse(result.result).found).toBe(true);
+
+        const after = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        expect(after.heat).toBe(0);
+        expect(after.updatedAt).toBe(before.updatedAt);
+    });
+
+    test('getMemory 工具默认变体读取全文时增加热度', async () => {
+        const { registry, workspaceDir } = setup();
+        const created = await registry.addMemory('workspace', '普通对象', '普通任务会读取的内容。');
+        const tool = createMemoryToolset().getTool('getMemory');
+
+        await tool!.execute({ uid: created.uid }, undefined, { getWorkspace: () => workspaceDir } as any);
+        await tool!.execute({ uid: created.uid }, undefined, { getWorkspace: () => workspaceDir } as any);
+
+        const memory = (await registry.listMemories('workspace')).find((chunk) => chunk.uid === created.uid)!;
+        expect(memory.heat).toBe(2);
+    });
+
     test('记忆工具均提供 GUI 和 TUI 卡片渲染', async () => {
         const toolset = createMemoryToolset({ maintenance: true });
         const samples: Array<[string, object, unknown, string]> = [

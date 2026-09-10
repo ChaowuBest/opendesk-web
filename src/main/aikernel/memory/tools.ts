@@ -280,12 +280,17 @@ const GetMemoryArgsSchema = z.object({
 });
 
 class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
-    constructor() {
+    private readonly maintenance: boolean;
+
+    constructor(options: { maintenance?: boolean } = {}) {
         super(
             GET_MEMORY_TOOL_NAME,
-            '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
+            options.maintenance
+                ? '根据 UID 获取一条关键事实记忆的全文。记忆维护任务读取不增加热度。'
+                : '根据 UID 获取一条关键事实记忆的全文。读取成功时该记忆热度会加 1。',
             GetMemoryArgsSchema
         );
+        this.maintenance = options.maintenance === true;
         this.setExecutor(this.handleExecute.bind(this));
     }
 
@@ -365,7 +370,7 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
 
     private async handleExecute(args: z.output<typeof GetMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
         const registry = FactorialMemoryStore.getInstance(taskState?.getWorkspace() || undefined);
-        const memory = await registry.getMemory(args.uid, { incrementHeat: true });
+        const memory = await registry.getMemory(args.uid, this.maintenance ? undefined : { incrementHeat: true });
         if (!memory) {
             return JSON.stringify({
                 found: false,
@@ -473,7 +478,7 @@ export function createMemoryToolset(options: MemoryToolsetOptions = {}): BaseToo
         new AddMemoryTool(),
         new RemoveMemoryTool(),
         new SearchMemoryTool(),
-        new GetMemoryTool(),
+        new GetMemoryTool({ maintenance: options.maintenance === true }),
         new UpdateUserPortraitTool()
     );
     if (options.maintenance) {
