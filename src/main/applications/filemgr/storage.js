@@ -35,7 +35,6 @@ const EMBED_API_BATCH_SIZE = 32;
 const EMBED_API_MAX_RETRIES = 8;
 const EMBED_API_RETRY_INITIAL_DELAY_MS = 2000;
 const EMBED_API_RETRY_MAX_DELAY_MS = 120 * 1000;
-const STARTUP_EMBEDDING_PROBE_TIMEOUT_MS = 10_000;
 const STARTUP_EMBEDDING_PROBE_RETRIES = 1;
 const OPENHARMONY_MAX_EMBED_DIM = 1024; // ArkData floatvector(dim) supports at most 1024 dimensions.
 const HARMONY_PER_ROOT_COUNT_CACHE_TTL_MS = 10_000;
@@ -973,7 +972,14 @@ class FSStorage {
         }
     }
 
-    async _probeDim(dimensions, { probeTimeoutMs = null, probeRetries = 2, rateLimitMaxRetries = 3 } = {}) {
+    async _probeDim(
+        dimensions,
+        {
+            probeTimeoutMs = Setting.getInstance().getDefaultEmbeddingModelInstance().getTimeoutMs(),
+            probeRetries = 2,
+            rateLimitMaxRetries = 3
+        } = {}
+    ) {
         const maxAttempts = Math.max(1, probeRetries + 1);
         let lastErr;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1331,7 +1337,6 @@ class FSStorage {
 
     async syncEmbeddingModeForStartup(reason) {
         return this.syncEmbeddingMode(reason, {
-            probeTimeoutMs: STARTUP_EMBEDDING_PROBE_TIMEOUT_MS,
             probeRetries: STARTUP_EMBEDDING_PROBE_RETRIES,
             rateLimitMaxRetries: 1
         });

@@ -16,6 +16,7 @@
  * - openharmony：无 Node.js 原生模块支持
  * - win32 + arm64：better-sqlite3 / classic-level 无 prebuild，编译工具链缺失
  */
+import { createRequire } from 'module';
 import { logger } from '../../utils/logger.js';
 
 export function shouldUseWasm(): boolean {
@@ -32,7 +33,17 @@ function getNativeSqliteErrorDetails(error: unknown): { code: string; message: s
     };
 }
 
+export class SqliteVecLoadError extends Error {
+    constructor(cause: unknown) {
+        const { message } = getNativeSqliteErrorDetails(cause);
+        // 文案里保留 sqlite-vec：跨 bundle 时 instanceof 可能失效，靠 message 规则兜底。
+        super(`Failed to load the sqlite-vec extension: ${message}`, { cause });
+        this.name = 'SqliteVecLoadError';
+    }
+}
+
 export function isNativeSqliteUnavailable(error: unknown): boolean {
+    if (error instanceof SqliteVecLoadError) return true;
     const { code, message } = getNativeSqliteErrorDetails(error);
     const lower = message.toLowerCase();
 
@@ -69,4 +80,19 @@ export async function createWithNativeSqliteFallback<T>(
 
 export function shouldUseArkData(): boolean {
     return (process.platform as string) === 'openharmony' && process.env.ARKDATA_AVAILABLE === '1';
+}
+
+export function resolveSqliteVecExtensionPath(extensionPath: string): string {
+    // SQLite loads through the OS, which cannot resolve Electron's virtual ASAR paths.
+    return extensionPath.replace(/([/\\])app\.asar([/\\])/, '$1app.asar.unpacked$2');
+}
+
+export function loadSqliteVec(db: { loadExtension(extensionPath: string): void }): void {
+    try {
+        const require = createRequire(import.meta.url);
+        const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
+        db.loadExtension(resolveSqliteVecExtensionPath(sqliteVec.getLoadablePath()));
+    } catch (error) {
+        throw new SqliteVecLoadError(error);
+    }
 }

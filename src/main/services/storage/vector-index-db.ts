@@ -24,11 +24,11 @@ import { SimilarityMetric } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { loadSqliteVec } from './platform.js';
 
 // createRequire keeps resolution lazy — see base-index-db.ts for context.
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof DatabaseType;
-const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
 
 export function probeVectorIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
     if (!fs.existsSync(dbPath)) return 'missing';
@@ -75,18 +75,26 @@ export class VectorIndexDB implements IVectorIndexDB {
 
         // 创建数据库连接
         this.db = new Database(dbPath);
+        try {
+            // 加载 sqlite-vec 扩展
+            loadSqliteVec(this.db);
 
-        // 加载 sqlite-vec 扩展
-        sqliteVec.load(this.db);
+            // 启用 WAL 模式以提高并发性能
+            this.db.pragma('journal_mode = WAL');
 
-        // 启用 WAL 模式以提高并发性能
-        this.db.pragma('journal_mode = WAL');
+            // 设置忙等待超时（毫秒）
+            this.db.pragma('busy_timeout = 5000');
 
-        // 设置忙等待超时（毫秒）
-        this.db.pragma('busy_timeout = 5000');
-
-        // 初始化表结构
-        this.initializeTable();
+            // 初始化表结构
+            this.initializeTable();
+        } catch (error) {
+            try {
+                this.db.close();
+            } catch {
+                // Preserve the initialization error if cleanup also fails.
+            }
+            throw error;
+        }
     }
 
     /**

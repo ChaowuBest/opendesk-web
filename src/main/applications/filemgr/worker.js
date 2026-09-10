@@ -252,7 +252,7 @@ class FSScanner {
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
         const previousMode = this.storage.mode;
-        await this.storage.syncEmbeddingMode('scan', { probeTimeoutMs: 10_000 });
+        await this.storage.syncEmbeddingMode('scan');
         if (this._shouldYield()) return;
         if (this.storage.mode !== previousMode) {
             void this._workerRef?._emitStatusChanged('mode');

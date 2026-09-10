@@ -26,11 +26,11 @@ import { SimilarityMetric } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { loadSqliteVec } from './platform.js';
 
 // createRequire keeps resolution lazy — see base-index-db.ts for context.
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof DatabaseType;
-const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
 
 export function probeChunkIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
     if (!fs.existsSync(dbPath)) return 'missing';
@@ -69,10 +69,19 @@ export class ChunkIndexDB implements IChunkIndexDB {
         }
 
         this.db = new Database(dbPath);
-        sqliteVec.load(this.db);
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('busy_timeout = 5000');
-        this.initializeTable();
+        try {
+            loadSqliteVec(this.db);
+            this.db.pragma('journal_mode = WAL');
+            this.db.pragma('busy_timeout = 5000');
+            this.initializeTable();
+        } catch (error) {
+            try {
+                this.db.close();
+            } catch {
+                // Preserve the initialization error if cleanup also fails.
+            }
+            throw error;
+        }
     }
 
     private initializeTable(): void {

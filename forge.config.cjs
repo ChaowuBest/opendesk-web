@@ -424,7 +424,7 @@ module.exports = {
                 'OpenDesk uses macOS speech recognition to convert your speech into text.'
         },
         asar: {
-            unpack: '**/node_modules/{sharp,@img}/**/*'
+            unpack: '**/node_modules/{sharp,@img,sqlite-vec-*}/**/*'
         },
         // 排除打包时不需带入的目录/文件。asar 里若混入开发期垃圾（vite 缓存、
         // 文档、日志等），会膨胀体积并显著拖慢 WiX light 的压缩耗时。
