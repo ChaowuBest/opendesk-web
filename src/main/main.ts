@@ -3486,9 +3486,9 @@ async function startApplication(): Promise<void> {
             ipcMain.on(
                 'skill:blacklist:add',
                 (_event, items: Array<{ bundleName: string; skillName: string; reason: string; evidence: string }>) => {
-                    // 恶意技能检测开关关闭时，拒绝新增黑名单（已有条目仍由 filter 生效）
+                    // 恶意技能检测开关未开启时，拒绝新增黑名单（已有条目仍由 filter 生效）
                     const agCfgAdd = Setting.getInstance().getApplicationConfig('agentgate') as any;
-                    if (agCfgAdd?.maliciousSkillDetection === false) return;
+                    if (agCfgAdd?.maliciousSkillDetection !== true) return;
                     const skillmgr = ApplicationRegistry.getApplication('skillmgr') as SkillMgrApplication | undefined;
                     skillmgr?.addSkillsToBlacklist(items);
                 }
@@ -3623,8 +3623,7 @@ async function startApplication(): Promise<void> {
                 // 确保应用已完成延迟加载
                 await ApplicationRegistry.getApplication(bundleName)?.ensureLoaded();
                 const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
-                    | Record<string, unknown>
-                    | undefined;
+                    Record<string, unknown> | undefined;
                 const appName = (appConfig?.name as string) || bundleName;
 
                 const appWindow = new BrowserWindow({
@@ -3755,7 +3754,27 @@ async function startApplication(): Promise<void> {
                         });
                     }
                 });
+
+                // 存储超限低频监控：跨阈值边沿推送 agentgate:storageOversize → 主窗口弹确认框。
+                // 独立于浮窗 eventsUpdate 链，浮窗关闭时仍能提醒。
+                agApp.startStorageMonitor((payload) => {
+                    if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+                        safeSendToWebContents(globalMainWindow.webContents, 'agentgate:storageOversize', payload);
+                    }
+                });
             }
+
+            // IPC handler：主窗口确认存储清理 → app.cleanupStorage（删除 tool_calls + 清空拦截记录）
+            ipcMain.handle('agentgate:cleanupStorage', async () => {
+                const agApp2 = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication | undefined;
+                if (!agApp2) return { status: 'error', message: 'agentgate application not found' };
+                try {
+                    const data = await (agApp2 as any).cleanupStorage();
+                    return { status: 'ok', data };
+                } catch (error) {
+                    return { status: 'error', message: String(error) };
+                }
+            });
         } catch (err) {
             logger.warn(`AgentGate bridge start failed: ${err}`);
         }

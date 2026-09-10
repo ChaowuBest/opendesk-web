@@ -36,6 +36,7 @@ import {
     getAllBlacklisted,
     addToBlacklist,
     clearInterceptionRecords,
+    clearAllInterceptionRecords as clearAllInterceptionRecordsImpl,
     isUserInstalledSkill
 } from './blacklist.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
@@ -439,6 +440,14 @@ export class SkillMgrApplication extends BaseApplication {
      */
     dismissInterceptions(taskId: string): void {
         clearInterceptionRecords(taskId);
+    }
+
+    /**
+     * 清除全部拦截记录（存储超限清理时与 AgentGate tool_calls 联动）。
+     * 返回清除的文件数，供调用方展示。
+     */
+    clearAllInterceptionRecords(): number {
+        return clearAllInterceptionRecordsImpl();
     }
 
     // ── 技能分析（委托给 SkillAnalyzer） ──

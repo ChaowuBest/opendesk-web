@@ -1008,8 +1008,8 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._gateEnabled = agentgateEnabled;
                 this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
-                // 同步恶意技能检测开关（默认 true）
-                this._malEnabled = agConfig.maliciousSkillDetection !== false;
+                // 同步恶意技能检测开关（默认 false，显式开启才生效）
+                this._malEnabled = agConfig.maliciousSkillDetection === true;
 
                 // Floating window should only show when experimental mode is on
                 const floatingWindowEnabled = agConfig.floatingWindowEnabled === true;

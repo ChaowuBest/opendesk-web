@@ -1585,6 +1585,11 @@ export const zhCn: Record<string, string> = {
     'main.closeDialog.minimize': '最小化',
     'main.closeDialog.dontAsk': '下次不再询问',
     'main.closeDialog.dontAskHint': '在"设置"界面的"通用设置"中可随时修改',
+    'agentgate.storageOversize.title': '安全网关存储空间即将占满',
+    'agentgate.storageOversize.message':
+        '本地安全记录已超过 {threshold} MB 阈值（当前约 {total} MB，共 {count} 条）。清理历史工具调用记录可释放空间。',
+    'agentgate.storageOversize.cleanup': '清理历史记录',
+    'agentgate.storageOversize.later': '稍后再说',
     'renderer.agentInput.clearInput': '清除输入',
     'sp.general.scale.tiny': '极小',
     'sp.general.scale.small': '小',

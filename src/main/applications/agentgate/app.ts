@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { BaseApplication } from '../base';
+import { ApplicationRegistry } from '../registry.js';
 import { t } from './locale/index.js';
 import { AgentGateBridge } from './agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
@@ -76,8 +77,14 @@ class AgentGateApplication extends BaseApplication {
             floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度'),
             maliciousSkillDetection: z
                 .boolean()
-                .default(true)
-                .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）')
+                .default(false)
+                .describe('恶意技能检测：拦截归因 + 会话结束弹窗 + 加入黑名单（不影响已存在的黑名单条目）'),
+            multiSessionAnalysis: z
+                .boolean()
+                .default(false)
+                .describe(
+                    '多 session 分析：让 AgentMoss 跨会话组合 AgentGate 存储的历史动作，检测跨会话组合攻击链（纯规则分析，无 LLM 调用）'
+                )
         });
     }
 
@@ -179,15 +186,27 @@ class AgentGateApplication extends BaseApplication {
         this._syncBridgeState();
     }
 
-    /** 获取恶意技能检测开关（拦截归因 + 弹窗 + 黑名单），默认 true */
+    /** 获取恶意技能检测开关（拦截归因 + 弹窗 + 黑名单），默认 false */
     getMaliciousSkillDetection(): boolean {
         const cfg = this.getConfig() as any;
-        return cfg?.maliciousSkillDetection !== false;
+        return cfg?.maliciousSkillDetection === true;
     }
 
     /** 设置恶意技能检测开关（不启停服务，仅控制恶意 skill 分析链路） */
     setMaliciousSkillDetection(enabled: boolean): void {
         this._updateAppConfig({ maliciousSkillDetection: enabled });
+    }
+
+    /** 获取多 session 分析开关状态（默认 false） */
+    getMultiSessionAnalysis(): boolean {
+        const cfg = this.getConfig() as any;
+        return cfg?.multiSessionAnalysis === true;
+    }
+
+    /** 设置多 session 分析开关（触发 bridge updateConfig 重启子进程生效） */
+    setMultiSessionAnalysis(enabled: boolean): void {
+        this._updateAppConfig({ multiSessionAnalysis: enabled });
+        this._syncBridgeState();
     }
 
     /**
@@ -581,6 +600,7 @@ class AgentGateApplication extends BaseApplication {
      * 由 main.ts 在 app.will-quit 时调用，best-effort。
      */
     stopRuntime(): void {
+        this._stopStorageMonitor();
         try {
             AgentGateBridge.getInstance().stop();
         } catch {
@@ -602,6 +622,118 @@ class AgentGateApplication extends BaseApplication {
 
     async beforeExit(): Promise<void> {
         this.stopRuntime();
+    }
+
+    // ── 存储超限监控（本地 tool_calls 长期增长 → 提醒用户清理） ──
+
+    private _monitorTimer: ReturnType<typeof setInterval> | null = null;
+    private _monitorPush: ((payload: object) => void) | null = null;
+    private _wasOversize = false;
+
+    /** 轮询周期：60s。tool_calls 每 2s 由 events-cache 拉一次，这里低频判断超限即可。 */
+    private static readonly MONITOR_INTERVAL_MS = 60_000;
+
+    /**
+     * 启动存储超限监控（低频轮询 AgentGate /api/v1/storage_stats）。
+     * 跨过阈值边沿（false→true）时通过 push 回调推送给主窗口弹确认框。
+     * 由 main.ts 在 startRuntime 后调用；不依赖浮窗开关。
+     */
+    startStorageMonitor(push: (payload: object) => void): void {
+        this._monitorPush = push;
+        if (this._monitorTimer) return;
+        const tick = async () => {
+            try {
+                const info = await this.getStorageOversize();
+                if (info.oversize && !this._wasOversize) {
+                    this._wasOversize = true;
+                    this._monitorPush?.({
+                        type: 'agentgate:storageOversize',
+                        ...info
+                    });
+                } else if (!info.oversize && this._wasOversize) {
+                    this._wasOversize = false;
+                }
+            } catch {
+                // AgentGate 未运行或接口暂不可用，静默跳过，下轮再试
+            }
+        };
+        // 初次立即探测一次（应用启动时若已超限，尽早提醒）
+        void tick();
+        this._monitorTimer = setInterval(tick, AgentGateApplication.MONITOR_INTERVAL_MS);
+    }
+
+    private _stopStorageMonitor(): void {
+        if (this._monitorTimer) {
+            clearInterval(this._monitorTimer);
+            this._monitorTimer = null;
+            this._wasOversize = false;
+        }
+        this._monitorPush = null;
+    }
+
+    /** 查询 AgentGate 存储规模并判定是否超阈（幂等，失败返回 oversize=false）。 */
+    async getStorageOversize(): Promise<{
+        oversize: boolean;
+        thresholdMB: number;
+        totalMB: number;
+        toolCalls: number;
+        storageType: string;
+    }> {
+        try {
+            const bridge = AgentGateBridge.getInstance();
+            const status = bridge.getStatus();
+            const gatePort = status.gatePort || 9100;
+            const resp = await fetch(`http://127.0.0.1:${gatePort}/api/v1/storage_stats`, {
+                signal: AbortSignal.timeout(5000)
+            });
+            if (!resp.ok)
+                return {
+                    oversize: false,
+                    thresholdMB: 100,
+                    totalMB: 0,
+                    toolCalls: 0,
+                    storageType: this.getStorageType()
+                };
+            const data = (await resp.json()) as {
+                stats?: { dbBytes?: number; toolCalls?: number; jsonBytes?: number; jsonFiles?: number };
+                oversize?: boolean;
+                thresholdMB?: number;
+            };
+            const dbMB = (data.stats?.dbBytes || 0) / 1024 / 1024;
+            const jsonMB = (data.stats?.jsonBytes || 0) / 1024 / 1024;
+            return {
+                oversize: data.oversize === true,
+                thresholdMB: data.thresholdMB ?? 100,
+                totalMB: Math.round((dbMB + jsonMB) * 10) / 10,
+                toolCalls: data.stats?.toolCalls ?? 0,
+                storageType: this.getStorageType()
+            };
+        } catch {
+            return { oversize: false, thresholdMB: 100, totalMB: 0, toolCalls: 0, storageType: this.getStorageType() };
+        }
+    }
+
+    /**
+     * 清理存储：删除全部 tool_calls（走 Worker，绕开 Electron canvas 的 native 冲突）
+     * + 清空 skillmgr 拦截记录。返回两边的删除数量。
+     */
+    async cleanupStorage(): Promise<{ deletedToolCalls: number; deletedInterceptions: number }> {
+        let deletedToolCalls = 0;
+        try {
+            deletedToolCalls = await this.deleteAllToolCalls();
+        } catch (err) {
+            logger.warn(`[AgentGate] cleanupStorage deleteAllToolCalls failed: ${String(err)}`);
+        }
+        let deletedInterceptions = 0;
+        try {
+            const skillmgr = ApplicationRegistry.getApplication('skillmgr');
+            if (skillmgr && typeof (skillmgr as any).clearAllInterceptionRecords === 'function') {
+                deletedInterceptions = Number((skillmgr as any).clearAllInterceptionRecords());
+            }
+        } catch (err) {
+            logger.warn(`[AgentGate] cleanupStorage clearAllInterceptionRecords failed: ${String(err)}`);
+        }
+        return { deletedToolCalls, deletedInterceptions };
     }
 
     // ── 平台钩子注册（GUI / CLI 各自调用，将 afterFinishTurn 逻辑收拢到 application 内） ──

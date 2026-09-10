@@ -1500,6 +1500,21 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    // AgentGate 存储超限提醒：主进程低频轮询 storage_stats，跨阈值边沿时推送此 channel。
+    // 与浮窗 eventsUpdate 独立——浮窗关闭时存储超限仍会提醒。
+    safeExposeInMainWorld('agentgateStorageAPI', {
+        onStorageOversize: (callback) => {
+            const listener = (_event, data) => callback(data);
+            ipcRenderer.on('agentgate:storageOversize', listener);
+            return () => ipcRenderer.removeListener('agentgate:storageOversize', listener);
+        },
+        // 主窗口确认后调用：删除全部 tool_calls + 清空拦截记录（main-process 转发，实际删除在 worker）
+        cleanupAll: async () => {
+            const result = await ipcRenderer.invoke('agentgate:cleanupStorage');
+            return result.status === 'ok' ? result.data : { error: result.message };
+        }
+    });
+
     // 任务状态浮窗 API：主窗口不在前台时右上角常驻小窗（胶囊/卡片）使用。
     safeExposeInMainWorld('taskStatusWidgetAPI', {
         getSummary: () => ipcRenderer.invoke('taskStatusWidget:getSummary'),

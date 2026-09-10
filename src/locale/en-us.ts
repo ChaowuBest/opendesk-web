@@ -1629,6 +1629,11 @@ export const enUs: Record<string, string> = {
     'sp.general.floatingWindowPosition.bottomRight': 'Bottom Right',
     'main.closeDialog.title': 'Close Window',
     'main.closeDialog.message': 'Do you want to quit OpenDesk or minimize to system tray?',
+    'agentgate.storageOversize.title': 'Security Gateway storage is near full',
+    'agentgate.storageOversize.message':
+        'Local security records have exceeded the {threshold} MB threshold (currently ~{total} MB, {count} records). Cleaning up historical tool call records can free space.',
+    'agentgate.storageOversize.cleanup': 'Clean up history',
+    'agentgate.storageOversize.later': 'Later',
     'main.closeDialog.cancel': 'Cancel',
     'main.closeDialog.quit': 'Quit',
     'main.closeDialog.minimize': 'Minimize',
